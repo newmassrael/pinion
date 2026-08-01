@@ -284,17 +284,30 @@ AXES = [
                 "cache_stats", "paint_cache", "frame_budget", "fixed_timestep",
             ]),
         ],
-        # R1522 re-judgment. R1519 said 50% on "measurement infra mature
-        # (R907 frame_timings + R925 jank profiler), measured hot-path opt 0".
-        # That 0 is now 2, both with counter guards and recorded before/after:
-        # R1520 scroll paint encode 1360us -> 42us, R1521 shape cache 27.4ms ->
-        # 1.59ms at 1200 leaves. Still absent: GPU-timestamp render time, a
-        # large-scene 60fps end-to-end measurement, and the paint walk's 2.6us
-        # per text node (glyph-run walk + draw_glyphs encoding), which R1521
-        # left as the dominant term.
-        "judged_at": 1522,
-        "completion": 60,
-        "evidence_snapshot": {"example-name": 4, "demo-body": 7, "round-axis": 2},
+        # R1527 re-judgment, forced by this axis's round count going 2 -> 3.
+        # R1519 said 50% on "measurement infra mature, measured hot-path opt
+        # 0"; R1522 said 60% when that 0 became 2 (R1520 scroll paint encode
+        # 1360us -> 42us, R1521 shape cache 27.4ms -> 1.59ms at 1200 leaves).
+        # R1527 is the third, and the first whose cost was being paid on
+        # ordinary interaction frames rather than a specific gesture: the
+        # fragment cache's sweep evicted every fragment a hit had replayed, so
+        # one keystroke in a data grid re-encoded the whole visible tree
+        # (hello-grid-nav 1 hit/83 misses -> 20/10; 1200 rows, one row changed,
+        # 17.1ms -> 1.4ms).
+        #
+        # It also measured what R1522 could only name. The "2.6us per text
+        # node" is now decomposed on a warm cache: vello encode 54%, parley
+        # glyph-run walk 37%, shape-cache lookup 9% — which killed this
+        # round's own first hypothesis (the lookup allocates an owned key per
+        # call, and is not the dominant term).
+        #
+        # Still absent, and why this is 65 and not higher: no GPU-timestamp
+        # render time, no large-scene 60fps end-to-end measurement, and the
+        # per-leaf encode cost is now attributed but NOT reduced — a
+        # cache-miss frame still walks and encodes at ~0.9us per text leaf.
+        "judged_at": 1527,
+        "completion": 65,
+        "evidence_snapshot": {"example-name": 4, "demo-body": 8, "round-axis": 3},
     },
     {
         "key": "osnative",

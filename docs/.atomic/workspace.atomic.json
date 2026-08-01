@@ -78300,6 +78300,138 @@
         "means the new signal only starts working for them from here."
       ]
     },
+    "Round 1527": {
+      "decision_summary": "The §5.16 paint cache's mark phase gets a trace step: a fragment is live if the walk consulted it or a live fragment subsumes it. R682 stated the bound correctly — the set of cacheable Containers actually painted in the most recent frame — and implemented a proxy for it, the set the walker consulted. Those coincide only while the cache is missing: a hit ends the walk, so everything under it is painted and never consulted, and the sweep read that silence as death. The divergence was therefore worst exactly where the cache worked best, and it collapsed the live set in a single idle frame. Containment is the edge a mark-and-sweep needs to follow, so no policy changes: no grace frames, no cap, and the short-circuit stays.",
+      "changes_bullets": [
+        "FragmentCache gains containment edges (`subsumes`) recorded at install time and a worklist trace in `end_paint`: a fragment is live if the walk consulted it OR a live fragment subsumes it. The mark phase had no trace step, so a hit that short-circuited the walk read its own descendants as dead.",
+        "`mark_painted` / `enter_subtree` attribute each consulted fragment to the innermost open miss-encode, which makes \"nearest cacheable descendant\" fall out of the stack rather than being computed; the pop-then-mark order in `insert_miss` is what puts a container in its PARENT's frame.",
+        "`run_demo` (tools/rpc_verify.py) now raises SystemExit instead of returning a status. An AST census over 474 demos found exactly 2 that dropped the value — r1520 and r1521, the cost-counter demos of the two prior perf rounds — making them incapable of failing the sweep, which judges by exit code.",
+        "r1520_scrolled_paint_cache section (C) asserted `entries == 1` after an idle frame, pinning the defect as expected behaviour; section (D) explained the consequence away in a comment. Both corrected.",
+        "New demo r1527_fragment_trace on hello-grid-nav (31 assertions, sections A-G) with a negative control (a dataset jump must re-encode) and a pixel witness (a retained fragment is not a stale one)."
+      ],
+      "verification_bullets": [
+        "Measured on hello-grid-nav, both ways (the \"before\" column is a real run with the trace removed, not an estimate): entries after one idle frame 1 -> 83; one ArrowDown 1 hit/83 misses -> 20 hits/10 misses.",
+        "Unit measurement, 1200 rows at one cacheable container each: changing ONE row cost 17.1 ms at 0 hits, against 1.4 ms at 1199 hits after the trace (12.2x); a second change 9.8 ms -> 1.3 ms.",
+        "Measure-first rejected the round's first hypothesis: the LayoutCache hit path allocates an owned key per lookup, but it is 83 ns/lookup = 9% of the walk, not the dominant term. Breakdown at 1200 leaves: vello encode 54%, glyph-run walk 37%, cache lookup 9%.",
+        "Three counterfactuals, one at a time, each rebuilt and run: remove the trace step (all 4 unit guards fail, printing the defect as `(0, 41)` vs `(39, 2)`); never sweep the edge map (exactly the memory-bound guard fails, 42 vs 5); mark before popping the frame (all 4 fail). The demo fails on the reverted build at section C, and section D fails independently when C is neutralised.",
+        "Sections F and G are negative controls and pass BOTH ways by design — they guard over-retention and staleness, which the pre-R1527 code also did not have.",
+        "Local gates: pinion-runtime 589 tests, pinion-shell 391, pinion-rpc 1019, all pass; clippy -D pedantic clean; cargo fmt --check clean; cargo doc --workspace clean (two public-doc links to the private `subsumes` field lowered to code spans). Demos r1520 / r1521 / r1527 pass with exit 0; r1527 run 5x consecutively, no flake.",
+        "Self-grep: mark-and-sweep-without-trace has exactly one site in the tree. ImageCache has no eviction at all; LayoutCache and ResourceCache are LRU. No lift."
+      ],
+      "impact_refs": [
+        "5.16",
+        "2",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "The vello encode (54%) and the parley glyph-run walk (37%) remain the paint walk's dominant terms on a cache MISS; this round removed the reason misses were happening, not the cost of one. 1200 leaves still cost ~1.06 ms uncached.",
+        "`subsumes` holds a Vec per fragment even for the leaf containers that subsume nothing. Measured cost is 8 bytes per edge against the encoded scenes it keeps alive, so it was not worth a niche representation, but it is an empty allocation per leaf fragment.",
+        "The trace runs every `end_paint` over the whole live set even when nothing was evicted. O(live entries) with no early exit; at 83 fragments this is invisible, at a 10k-fragment scene it is not measured.",
+        "`last_damage_region` could not be asserted on a keystroke frame: it describes the LAST frame and `paint_after` returns once paint_count advanced, which a 30fps idle tick can carry past. The counters aggregate correctly across that; this field does not. A demo helper that lands exactly one frame is the real fix.",
+        "R1520's registered debt named three candidate fixes, all of which change what R682 chose. None was taken, and the debt file must now be closed rather than left reading as open."
+      ],
+      "publishable_decision_summary": "The §5.16 paint cache's mark phase gets a trace step: a fragment is live if the walk consulted it or a live fragment subsumes it. R682 stated the bound correctly — the set of cacheable Containers actually painted in the most recent frame — and implemented a proxy for it, the set the walker consulted. Those coincide only while the cache is missing: a hit ends the walk, so everything under it is painted and never consulted, and the sweep read that silence as death. The divergence was therefore worst exactly where the cache worked best, and it collapsed the live set in a single idle frame. Containment is the edge a mark-and-sweep needs to follow, so no policy changes: no grace frames, no cap, and the short-circuit stays.",
+      "publishable_changes_bullets": [
+        "FragmentCache gains containment edges (`subsumes`) recorded at install time and a worklist trace in `end_paint`: a fragment is live if the walk consulted it OR a live fragment subsumes it. The mark phase had no trace step, so a hit that short-circuited the walk read its own descendants as dead.",
+        "`mark_painted` / `enter_subtree` attribute each consulted fragment to the innermost open miss-encode, which makes \"nearest cacheable descendant\" fall out of the stack rather than being computed; the pop-then-mark order in `insert_miss` is what puts a container in its PARENT's frame.",
+        "`run_demo` (tools/rpc_verify.py) now raises SystemExit instead of returning a status. An AST census over 474 demos found exactly 2 that dropped the value — r1520 and r1521, the cost-counter demos of the two prior perf rounds — making them incapable of failing the sweep, which judges by exit code.",
+        "r1520_scrolled_paint_cache section (C) asserted `entries == 1` after an idle frame, pinning the defect as expected behaviour; section (D) explained the consequence away in a comment. Both corrected.",
+        "New demo r1527_fragment_trace on hello-grid-nav (31 assertions, sections A-G) with a negative control (a dataset jump must re-encode) and a pixel witness (a retained fragment is not a stale one)."
+      ],
+      "publishable_verification_bullets": [
+        "Measured on hello-grid-nav, both ways (the \"before\" column is a real run with the trace removed, not an estimate): entries after one idle frame 1 -> 83; one ArrowDown 1 hit/83 misses -> 20 hits/10 misses.",
+        "Unit measurement, 1200 rows at one cacheable container each: changing ONE row cost 17.1 ms at 0 hits, against 1.4 ms at 1199 hits after the trace (12.2x); a second change 9.8 ms -> 1.3 ms.",
+        "Measure-first rejected the round's first hypothesis: the LayoutCache hit path allocates an owned key per lookup, but it is 83 ns/lookup = 9% of the walk, not the dominant term. Breakdown at 1200 leaves: vello encode 54%, glyph-run walk 37%, cache lookup 9%.",
+        "Three counterfactuals, one at a time, each rebuilt and run: remove the trace step (all 4 unit guards fail, printing the defect as `(0, 41)` vs `(39, 2)`); never sweep the edge map (exactly the memory-bound guard fails, 42 vs 5); mark before popping the frame (all 4 fail). The demo fails on the reverted build at section C, and section D fails independently when C is neutralised.",
+        "Sections F and G are negative controls and pass BOTH ways by design — they guard over-retention and staleness, which the pre-R1527 code also did not have.",
+        "Local gates: pinion-runtime 589 tests, pinion-shell 391, pinion-rpc 1019, all pass; clippy -D pedantic clean; cargo fmt --check clean; cargo doc --workspace clean (two public-doc links to the private `subsumes` field lowered to code spans). Demos r1520 / r1521 / r1527 pass with exit 0; r1527 run 5x consecutively, no flake.",
+        "Self-grep: mark-and-sweep-without-trace has exactly one site in the tree. ImageCache has no eviction at all; LayoutCache and ResourceCache are LRU. No lift."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "2",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The vello encode (54%) and the parley glyph-run walk (37%) remain the paint walk's dominant terms on a cache MISS; this round removed the reason misses were happening, not the cost of one. 1200 leaves still cost ~1.06 ms uncached.",
+        "`subsumes` holds a Vec per fragment even for the leaf containers that subsume nothing. Measured cost is 8 bytes per edge against the encoded scenes it keeps alive, so it was not worth a niche representation, but it is an empty allocation per leaf fragment.",
+        "The trace runs every `end_paint` over the whole live set even when nothing was evicted. O(live entries) with no early exit; at 83 fragments this is invisible, at a 10k-fragment scene it is not measured.",
+        "`last_damage_region` could not be asserted on a keystroke frame: it describes the LAST frame and `paint_after` returns once paint_count advanced, which a 30fps idle tick can carry past. The counters aggregate correctly across that; this field does not. A demo helper that lands exactly one frame is the real fix.",
+        "R1520's registered debt named three candidate fixes, all of which change what R682 chose. None was taken, and the debt file must now be closed rather than left reading as open."
+      ]
+    },
+    "Round 1527.1": {
+      "decision_summary": "Review clearance of R1527's own carry, in the round that created it. Three of the five items were not carry at all: two were costs R1527 introduced and one was an assertion it deleted rather than fixed. The trace made a steady idle frame 12x more expensive (405us at 4,000 fragments, essentially all bookkeeping) — removed by an early return on the frame that can prove its own sweep is a no-op, which needs BOTH zero installs and an unchanged consulted set. Leaf fragments no longer store an empty edge set. And the reason recorded for dropping the damage-region assertion was an unverified guess that turned out to be wrong: the helper's own tick was landing a second frame that overwrote the field.",
+      "changes_bullets": [
+        "FragmentCache gains containment edges (`subsumes`) recorded at install time and a worklist trace in `end_paint`: a fragment is live if the walk consulted it OR a live fragment subsumes it. The mark phase had no trace step, so a hit that short-circuited the walk read its own descendants as dead.",
+        "`mark_painted` / `enter_subtree` attribute each consulted fragment to the innermost open miss-encode, which makes \"nearest cacheable descendant\" fall out of the stack rather than being computed; the pop-then-mark order in `insert_miss` is what puts a container in its PARENT's frame.",
+        "`run_demo` (tools/rpc_verify.py) now raises SystemExit instead of returning a status. An AST census over 474 demos found exactly 2 that dropped the value — r1520 and r1521, the cost-counter demos of the two prior perf rounds — making them incapable of failing the sweep, which judges by exit code.",
+        "r1520_scrolled_paint_cache section (C) asserted `entries == 1` after an idle frame, pinning the defect as expected behaviour; section (D) explained the consequence away in a comment. Both corrected.",
+        "New demo r1527_fragment_trace on hello-grid-nav (31 assertions, sections A-G) with a negative control (a dataset jump must re-encode) and a pixel witness (a retained fragment is not a stale one).",
+        "R1527.1 (same round, after review) — `end_paint` early-returns when the paint installed nothing AND consulted exactly what the previous paint consulted. Both halves are load-bearing: zero misses alone is not sufficient, because a frame can orphan a subtree by consulting somewhere else.",
+        "`insert_miss` no longer stores an empty edge set. A leaf fragment subsumes nothing and most fragments are leaves (1200 of 1201 in a row grid); `remove` rather than skip-the-insert so a hash that became a leaf cannot keep a stale set.",
+        "The demo's `paint_after` gained `tick=False` for actions that arm their own redraw, which restores the `last_damage_region` assertion the first draft had DELETED rather than fixed."
+      ],
+      "verification_bullets": [
+        "Measured on hello-grid-nav, both ways (the \"before\" column is a real run with the trace removed, not an estimate): entries after one idle frame 1 -> 83; one ArrowDown 1 hit/83 misses -> 20 hits/10 misses.",
+        "Unit measurement, 1200 rows at one cacheable container each: changing ONE row cost 17.1 ms at 0 hits, against 1.4 ms at 1199 hits after the trace (12.2x); a second change 9.8 ms -> 1.3 ms.",
+        "Measure-first rejected the round's first hypothesis: the LayoutCache hit path allocates an owned key per lookup, but it is 83 ns/lookup = 9% of the walk, not the dominant term. Breakdown at 1200 leaves: vello encode 54%, glyph-run walk 37%, cache lookup 9%.",
+        "Three counterfactuals, one at a time, each rebuilt and run: remove the trace step (all 4 unit guards fail, printing the defect as `(0, 41)` vs `(39, 2)`); never sweep the edge map (exactly the memory-bound guard fails, 42 vs 5); mark before popping the frame (all 4 fail). The demo fails on the reverted build at section C, and section D fails independently when C is neutralised.",
+        "Sections F and G are negative controls and pass BOTH ways by design — they guard over-retention and staleness, which the pre-R1527 code also did not have.",
+        "Local gates: pinion-runtime 589 tests, pinion-shell 391, pinion-rpc 1019, all pass; clippy -D pedantic clean; cargo fmt --check clean; cargo doc --workspace clean (two public-doc links to the private `subsumes` field lowered to code spans). Demos r1520 / r1521 / r1527 pass with exit 0; r1527 run 5x consecutively, no flake.",
+        "Self-grep: mark-and-sweep-without-trace has exactly one site in the tree. ImageCache has no eviction at all; LayoutCache and ResourceCache are LRU. No lift.",
+        "R1527.1 — the review question \"why leave it?\" was right on three of the five carries. Measured: the trace made a steady idle frame 12x more expensive than pre-R1527 (1200 fragments 9.9us -> 119.9us; 4000 fragments 34.5us -> 405.6us), essentially all of it in end_paint. With the early return, end_paint is a flat 0.1us at every size and the idle frame is back to its pre-R1527 cost (9.8us / 34.1us) while now KEEPING the full cache.",
+        "The reason recorded for dropping the damage assertion was itself unverified and WRONG. Diagnosed: the app paints 0 frames spontaneously in 0.5s, and exactly 2 frames land per keystroke, deterministically — `tf.key` arms its own redraw and the helper's `tick` added a second, pure-hit frame that overwrote the field. Without the tick: 1 frame, damage published, 5/5.",
+        "New guard `r1527_a_frame_that_misses_nothing_can_still_owe_a_sweep` paints one row of a grid as the whole scene: 1 hit, 0 misses, and the root plus three siblings must still be collected. Counterfactual CF-4 (gate the fast path on zero misses alone) fails exactly this test, 5 vs 1, and no other.",
+        "The memory-bound guard now asserts the invariant rather than a count — every edge set belongs to a live fragment and every hash it points at is live — plus that a leaf stores no edge set at all.",
+        "Demo now 35 assertions, 5 consecutive runs, no flake. pinion-runtime 590 tests pass; fmt / clippy / cargo doc clean; r1520 / r1521 / r1527 demos exit 0."
+      ],
+      "impact_refs": [
+        "5.16",
+        "2",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "The vello encode (54%) and the parley glyph-run walk (37%) remain the paint walk's dominant terms on a cache MISS; this round removed the reason misses were happening, not the cost of one. 1200 leaves still cost ~1.06 ms uncached. This is the perf axis's next work, not debt from this round.",
+        "The idle fast path is exact but conservative: a frame that misses ONE fragment pays the full O(live) trace, even though only that fragment's neighbourhood can have changed. An incremental live set would make the trace proportional to the change rather than to the cache. Not measured as a problem — a frame with a miss already costs milliseconds.",
+        "`hello-grid-nav` publishes a full-surface damage region for a one-row selection change (400x480 for one 36px strip). Correct but maximally over-covering; the field over-covers by design, and nothing consumes it yet."
+      ],
+      "publishable_decision_summary": "Review clearance of R1527's own carry, in the round that created it. Three of the five items were not carry at all: two were costs R1527 introduced and one was an assertion it deleted rather than fixed. The trace made a steady idle frame 12x more expensive (405us at 4,000 fragments, essentially all bookkeeping) — removed by an early return on the frame that can prove its own sweep is a no-op, which needs BOTH zero installs and an unchanged consulted set. Leaf fragments no longer store an empty edge set. And the reason recorded for dropping the damage-region assertion was an unverified guess that turned out to be wrong: the helper's own tick was landing a second frame that overwrote the field.",
+      "publishable_changes_bullets": [
+        "FragmentCache gains containment edges (`subsumes`) recorded at install time and a worklist trace in `end_paint`: a fragment is live if the walk consulted it OR a live fragment subsumes it. The mark phase had no trace step, so a hit that short-circuited the walk read its own descendants as dead.",
+        "`mark_painted` / `enter_subtree` attribute each consulted fragment to the innermost open miss-encode, which makes \"nearest cacheable descendant\" fall out of the stack rather than being computed; the pop-then-mark order in `insert_miss` is what puts a container in its PARENT's frame.",
+        "`run_demo` (tools/rpc_verify.py) now raises SystemExit instead of returning a status. An AST census over 474 demos found exactly 2 that dropped the value — r1520 and r1521, the cost-counter demos of the two prior perf rounds — making them incapable of failing the sweep, which judges by exit code.",
+        "r1520_scrolled_paint_cache section (C) asserted `entries == 1` after an idle frame, pinning the defect as expected behaviour; section (D) explained the consequence away in a comment. Both corrected.",
+        "New demo r1527_fragment_trace on hello-grid-nav (31 assertions, sections A-G) with a negative control (a dataset jump must re-encode) and a pixel witness (a retained fragment is not a stale one).",
+        "R1527.1 (same round, after review) — `end_paint` early-returns when the paint installed nothing AND consulted exactly what the previous paint consulted. Both halves are load-bearing: zero misses alone is not sufficient, because a frame can orphan a subtree by consulting somewhere else.",
+        "`insert_miss` no longer stores an empty edge set. A leaf fragment subsumes nothing and most fragments are leaves (1200 of 1201 in a row grid); `remove` rather than skip-the-insert so a hash that became a leaf cannot keep a stale set.",
+        "The demo's `paint_after` gained `tick=False` for actions that arm their own redraw, which restores the `last_damage_region` assertion the first draft had DELETED rather than fixed."
+      ],
+      "publishable_verification_bullets": [
+        "Measured on hello-grid-nav, both ways (the \"before\" column is a real run with the trace removed, not an estimate): entries after one idle frame 1 -> 83; one ArrowDown 1 hit/83 misses -> 20 hits/10 misses.",
+        "Unit measurement, 1200 rows at one cacheable container each: changing ONE row cost 17.1 ms at 0 hits, against 1.4 ms at 1199 hits after the trace (12.2x); a second change 9.8 ms -> 1.3 ms.",
+        "Measure-first rejected the round's first hypothesis: the LayoutCache hit path allocates an owned key per lookup, but it is 83 ns/lookup = 9% of the walk, not the dominant term. Breakdown at 1200 leaves: vello encode 54%, glyph-run walk 37%, cache lookup 9%.",
+        "Three counterfactuals, one at a time, each rebuilt and run: remove the trace step (all 4 unit guards fail, printing the defect as `(0, 41)` vs `(39, 2)`); never sweep the edge map (exactly the memory-bound guard fails, 42 vs 5); mark before popping the frame (all 4 fail). The demo fails on the reverted build at section C, and section D fails independently when C is neutralised.",
+        "Sections F and G are negative controls and pass BOTH ways by design — they guard over-retention and staleness, which the pre-R1527 code also did not have.",
+        "Local gates: pinion-runtime 589 tests, pinion-shell 391, pinion-rpc 1019, all pass; clippy -D pedantic clean; cargo fmt --check clean; cargo doc --workspace clean (two public-doc links to the private `subsumes` field lowered to code spans). Demos r1520 / r1521 / r1527 pass with exit 0; r1527 run 5x consecutively, no flake.",
+        "Self-grep: mark-and-sweep-without-trace has exactly one site in the tree. ImageCache has no eviction at all; LayoutCache and ResourceCache are LRU. No lift.",
+        "R1527.1 — the review question \"why leave it?\" was right on three of the five carries. Measured: the trace made a steady idle frame 12x more expensive than pre-R1527 (1200 fragments 9.9us -> 119.9us; 4000 fragments 34.5us -> 405.6us), essentially all of it in end_paint. With the early return, end_paint is a flat 0.1us at every size and the idle frame is back to its pre-R1527 cost (9.8us / 34.1us) while now KEEPING the full cache.",
+        "The reason recorded for dropping the damage assertion was itself unverified and WRONG. Diagnosed: the app paints 0 frames spontaneously in 0.5s, and exactly 2 frames land per keystroke, deterministically — `tf.key` arms its own redraw and the helper's `tick` added a second, pure-hit frame that overwrote the field. Without the tick: 1 frame, damage published, 5/5.",
+        "New guard `r1527_a_frame_that_misses_nothing_can_still_owe_a_sweep` paints one row of a grid as the whole scene: 1 hit, 0 misses, and the root plus three siblings must still be collected. Counterfactual CF-4 (gate the fast path on zero misses alone) fails exactly this test, 5 vs 1, and no other.",
+        "The memory-bound guard now asserts the invariant rather than a count — every edge set belongs to a live fragment and every hash it points at is live — plus that a leaf stores no edge set at all.",
+        "Demo now 35 assertions, 5 consecutive runs, no flake. pinion-runtime 590 tests pass; fmt / clippy / cargo doc clean; r1520 / r1521 / r1527 demos exit 0."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "2",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The vello encode (54%) and the parley glyph-run walk (37%) remain the paint walk's dominant terms on a cache MISS; this round removed the reason misses were happening, not the cost of one. 1200 leaves still cost ~1.06 ms uncached. This is the perf axis's next work, not debt from this round.",
+        "The idle fast path is exact but conservative: a frame that misses ONE fragment pays the full O(live) trace, even though only that fragment's neighbourhood can have changed. An incremental live set would make the trace proportional to the change rather than to the cache. Not measured as a problem — a frame with a miss already costs milliseconds.",
+        "`hello-grid-nav` publishes a full-surface damage region for a one-row selection change (400x480 for one 36px strip). Correct but maximally over-covering; the field over-covers by design, and nothing consumes it yet."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

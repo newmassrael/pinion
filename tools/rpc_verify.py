@@ -2273,23 +2273,43 @@ def assert_pixel_eq(
         )
 
 
-def run_demo(name: str, body) -> int:
+def run_demo(name: str, body) -> NoReturn:
+    """Run one demo body and EXIT with its status. Never returns.
+
+    R1527 — this used to `return` the status, and the sweep
+    (`tools/sweep_headless.sh`) judges a demo by its exit code, so a
+    caller that dropped the value made its demo incapable of failing:
+    every assertion inside ran, printed `[demo] FAIL: ...`, and exited
+    0. Measured 2026-08-01, exactly two of 474 demos dropped it —
+    `r1520_scrolled_paint_cache` and `r1521_shape_cache_working_set`,
+    the cost-counter demos of the two rounds immediately before this
+    one, and the perf axis's own `demo-body` evidence.
+
+    Raising `SystemExit` here instead of returning a number makes that
+    unrepresentable rather than merely fixed: there is no longer a value
+    to drop. Every existing form keeps working unchanged —
+    `sys.exit(run_demo(...))` (451 demos), `raise SystemExit(...)` (8),
+    `return run_demo(...)` inside a `main()` reached by `sys.exit(main())`
+    (14) — because in each the wrapper only ever forwarded what this
+    function now raises, and no demo calls it twice or runs anything
+    after it (both verified by an AST census over `tools/demos/`).
+    """
     print(f"[demo] {name}")
     started = time.monotonic()
     try:
         body()
     except AssertionError as exc:
         print(f"[demo] FAIL: {exc}", file=sys.stderr)
-        return 1
+        sys.exit(1)
     except RpcError as exc:
         print(f"[demo] RPC ERROR: {exc}", file=sys.stderr)
-        return 2
+        sys.exit(2)
     except Exception as exc:
         print(f"[demo] UNEXPECTED: {exc!r}", file=sys.stderr)
-        return 3
+        sys.exit(3)
     elapsed = time.monotonic() - started
     print(f"[demo] PASS ({elapsed:.2f}s)")
-    return 0
+    sys.exit(0)
 
 
 def iter_demos() -> Iterator[str]:

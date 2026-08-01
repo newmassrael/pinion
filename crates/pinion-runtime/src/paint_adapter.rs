@@ -316,9 +316,74 @@ fn to_vello_inner<F>(
 /// Each [`to_vello_cached`] invocation brackets the encoder walk with
 /// [`Self::begin_paint`] / [`Self::end_paint`]; the begin clears the
 /// per-paint "seen" set, every hit / insert marks the hash, and the
-/// end drops entries the walker did not consult this paint. Memory
+/// end drops entries the most recent frame did not paint. Memory
 /// bounds itself to the set of cacheable Containers actually painted
 /// in the most recent frame — no LRU heuristic, no fixed cap.
+///
+/// ## The mark phase has a trace step (R1527)
+///
+/// R682 stated that bound correctly and then implemented a *proxy* for
+/// it: `retain(|h| seen.contains(h))`, where `seen` is the set the
+/// walker **consulted**. Painted and consulted are the same set only
+/// while the cache is missing. The moment a container hits, the walk
+/// returns without descending — so every fragment underneath it is
+/// painted (its pixels are in the replayed fragment) and not consulted,
+/// and the sweep reads that silence as death.
+///
+/// The divergence is therefore worst exactly where the cache works
+/// best, and it is not a slow leak but a collapse in one frame.
+/// Measured on a 1,200-row grid, one row per cacheable container:
+///
+/// | frame | entries | hits | misses | encode |
+/// |---|---:|---:|---:|---:|
+/// | first paint | 1,201 | 0 | 1,201 | 54.5 ms |
+/// | one idle frame | **1** | 1 | 0 | 0.33 ms |
+/// | one row changes | 1,201 | **0** | **1,201** | **17.1 ms** |
+///
+/// A single idle frame evicts 1,200 live fragments through the one root
+/// that subsumed them, so the next content change — a selection moving
+/// by one row, one cell committing an edit — re-encodes the whole grid
+/// at **0 hits**, 59-103% of a 60fps budget for a 1/1200 delta.
+///
+/// A mark-and-sweep collector that marks its roots and never follows an
+/// edge collects live objects; this had no edge to follow. Containment
+/// is that edge: the `subsumes` map records, at install time, the
+/// nearest cacheable descendants encoded inside each fragment, and
+/// [`Self::end_paint`] traces the seen set through it before retaining.
+/// A fragment is live if the walk consulted it **or** a live fragment
+/// subsumes it, which is what "painted this frame" means.
+///
+/// This changes no policy. R1520 registered the eviction as a debt with
+/// three candidate fixes — grace frames, an LRU with a byte budget, or
+/// descending past a hit to mark — and each trades away something R682
+/// chose deliberately (the absent cap, or the short-circuit that is the
+/// cache's whole benefit). None is needed: the invariant in the
+/// paragraph above was always the right one, and tracing is what makes
+/// the code compute it. Memory stays bounded by the painted set, the
+/// short-circuit stays intact, and no frame count or byte cap appears.
+///
+/// ## An idle frame proves its own sweep is a no-op (R1527.1)
+///
+/// The trace is O(live set), and the frame that most needs the fragments
+/// kept alive is the one with the least reason to recompute which they
+/// are. Measured before the early return below, on a grid of one
+/// cacheable container per row, a *single idle frame* spent 3.3µs at 40
+/// rows, 105µs at 1,200 and 335µs at 4,000 — essentially the whole frame,
+/// on bookkeeping, having painted one cached fragment. That is a cost
+/// this cache did not have before the trace, and it scales with how well
+/// the cache is working.
+///
+/// It is also entirely avoidable, because such a frame can prove the
+/// sweep would change nothing: the `subsumes` map is written only by
+/// the miss arm, so a paint that installed nothing left the
+/// containment forest untouched, and if it consulted exactly what the
+/// previous paint consulted then the closure is the same closure — which
+/// the previous sweep already retained. Both halves are needed. Zero
+/// misses alone is not sufficient: a frame can install nothing and still
+/// orphan a subtree by consulting somewhere *else* (paint one row of a
+/// grid as the whole scene and it hits, while the root above it and its
+/// siblings become unreachable). The comparison costs one integer and a
+/// set that holds one element on exactly the frames this protects.
 ///
 /// ## Fragments are transform-free (R1520 — closes the R682+1 carry)
 ///
@@ -374,8 +439,38 @@ pub struct FragmentCache {
     fragments: HashMap<u64, VelloScene>,
     /// Hashes consulted (hit or inserted) during the current paint
     /// pass — populated between [`Self::begin_paint`] and
-    /// [`Self::end_paint`], swept at end.
+    /// [`Self::end_paint`], traced through [`Self::subsumes`] and swept
+    /// at end.
     seen_this_paint: HashSet<u64>,
+    /// R1527 §5.16 — containment edges: the nearest cacheable
+    /// descendants encoded inside each stored fragment, recorded on the
+    /// miss that installed it. The trace step of the mark-and-sweep —
+    /// see the type doc's "The mark phase has a trace step".
+    ///
+    /// Keyed and valued by `paint_hash`, so the map costs 8 bytes per
+    /// edge against the encoded `vello::Scene` values it keeps alive.
+    /// Two containers with an equal hash have equal content and so
+    /// equal child hashes, which is why a shared entry may be
+    /// overwritten by either without the edge set changing.
+    subsumes: HashMap<u64, Vec<u64>>,
+    /// R1527 §5.16 — one frame per miss-encode currently in progress,
+    /// collecting the hashes consulted inside it. Pushed by
+    /// [`Self::enter_subtree`], popped by [`Self::insert_miss`] into
+    /// [`Self::subsumes`]; the pairing is what makes a frame's contents
+    /// exactly "the fragments encoded inside this container".
+    ///
+    /// Empty between paints — the walk unwinds every frame it pushes.
+    child_stack: Vec<Vec<u64>>,
+    /// R1527.1 §5.16 — the previous paint's [`Self::seen_this_paint`],
+    /// swapped in by [`Self::begin_paint`]. Held so [`Self::end_paint`]
+    /// can recognise a frame that cannot evict anything and skip the
+    /// trace entirely; see the "an idle frame proves its own sweep is a
+    /// no-op" section of the type doc.
+    seen_last_paint: HashSet<u64>,
+    /// R1527.1 §5.16 — [`Self::misses`] as of the matching
+    /// [`Self::begin_paint`], so `end_paint` can ask whether THIS paint
+    /// installed anything without a second counter to keep in step.
+    misses_at_begin: u64,
     /// R682 §5.16 atomic 2 — damage region accumulator for the
     /// current paint pass. Each cache-miss container's rect unions
     /// in; ends as the per-paint [`Self::last_damage_region`] published
@@ -443,17 +538,70 @@ impl FragmentCache {
     /// ([`Self::last_damage_region`] is published at
     /// [`Self::end_paint`] from this accumulator).
     pub fn begin_paint(&mut self) {
+        // R1527.1 — this paint's set becomes the previous one. The swap
+        // reuses both allocations, so remembering the last frame costs a
+        // pointer move rather than a clone.
+        std::mem::swap(&mut self.seen_this_paint, &mut self.seen_last_paint);
         self.seen_this_paint.clear();
+        self.misses_at_begin = self.misses;
         self.damage_acc_this_paint = None;
+        // Defensive: the walk pops every frame it pushes, so this is
+        // already empty. Clearing anyway keeps a panic unwinding out of
+        // a paint from leaking a frame into the next one, where it would
+        // silently attribute the next frame's fragments to a container
+        // that is no longer being encoded.
+        self.child_stack.clear();
     }
 
-    /// Close the current paint pass. Drops cache entries whose hashes
-    /// were not consulted between the matching [`Self::begin_paint`]
-    /// and this call; increments the paint counter; publishes the
-    /// per-paint damage accumulator into [`Self::last_damage_region`].
+    /// Close the current paint pass. Drops cache entries the frame did
+    /// not paint; increments the paint counter; publishes the per-paint
+    /// damage accumulator into [`Self::last_damage_region`].
+    ///
+    /// R1527 — "did not paint" is the seen set closed over
+    /// the `subsumes` containment map, not the seen set itself. A fragment
+    /// the walk never consulted because a hit above it short-circuited the
+    /// descent is painted, not dead; see the type doc.
+    ///
+    /// The closure is a worklist trace over the containment forest, so
+    /// it visits each live fragment once — O(live entries), no deeper
+    /// than the container nesting, and it cannot loop: `insert` gates
+    /// re-entry, which also makes the shared entry two equal-hash
+    /// containers may produce harmless.
     pub fn end_paint(&mut self) {
-        let seen = &self.seen_this_paint;
-        self.fragments.retain(|hash, _| seen.contains(hash));
+        // R1527.1 — a frame that installed nothing and consulted exactly
+        // what the last frame consulted cannot have orphaned anything:
+        // `subsumes` only changes on a miss, so the closure is the same
+        // closure, and the previous sweep already retained exactly it.
+        //
+        // This is the idle frame, and it is where skipping matters most,
+        // because the trace is O(live set) while `seen` is O(1) — the
+        // root alone. Measured on a grid of one cacheable container per
+        // row, `end_paint` before this early return: 3.3us at 40 rows,
+        // 105us at 1,200, 335us at 4,000 — pure bookkeeping on a frame
+        // that painted one cached fragment. The comparison that replaces
+        // it is one integer and a one-element set.
+        if self.misses == self.misses_at_begin && self.seen_this_paint == self.seen_last_paint {
+            self.paint_count = self.paint_count.saturating_add(1);
+            self.last_damage_region = self.damage_acc_this_paint;
+            return;
+        }
+        let mut live: HashSet<u64> = self.seen_this_paint.iter().copied().collect();
+        let mut work: Vec<u64> = live.iter().copied().collect();
+        while let Some(hash) = work.pop() {
+            let Some(children) = self.subsumes.get(&hash) else {
+                continue;
+            };
+            for &child in children {
+                if live.insert(child) {
+                    work.push(child);
+                }
+            }
+        }
+        self.fragments.retain(|hash, _| live.contains(hash));
+        // The edges of a dropped fragment describe an encode that no
+        // longer exists. Retaining them would keep a dead container's
+        // children reachable from nothing, and grow without bound.
+        self.subsumes.retain(|hash, _| live.contains(hash));
         self.paint_count = self.paint_count.saturating_add(1);
         self.last_damage_region = self.damage_acc_this_paint;
     }
@@ -573,12 +721,40 @@ impl FragmentCache {
     fn try_hit(&mut self, hash: u64, out: &mut VelloScene, transform: Affine) -> bool {
         if let Some(fragment) = self.fragments.get(&hash) {
             append_placed(out, fragment, transform);
-            self.seen_this_paint.insert(hash);
+            self.mark_painted(hash);
             self.hits = self.hits.saturating_add(1);
             true
         } else {
             false
         }
+    }
+
+    /// R1527 §5.16 — record that `hash` was painted this pass: mark it
+    /// seen, and attribute it to the miss-encode currently in progress
+    /// (if any) as one of that container's nearest cacheable
+    /// descendants.
+    ///
+    /// "Nearest" falls out of the stack rather than being computed: a
+    /// hit does not descend and a miss pushes its own frame, so the
+    /// innermost open frame always belongs to the closest enclosing
+    /// cacheable container, whatever non-cacheable nodes
+    /// ([`Scene::Scroll`], [`Scene::Box`]) the walk crossed to get here.
+    fn mark_painted(&mut self, hash: u64) {
+        self.seen_this_paint.insert(hash);
+        if let Some(frame) = self.child_stack.last_mut() {
+            frame.push(hash);
+        }
+    }
+
+    /// R1527 §5.16 — open a frame to collect the fragments encoded
+    /// inside one container's subtree. Called on the miss arm before
+    /// the walk descends; [`Self::insert_miss`] closes it.
+    ///
+    /// Every caller reaches `insert_miss` unconditionally after
+    /// descending, which is what keeps the stack balanced — see the
+    /// cacheable-container arm of [`to_vello_cached_inner`].
+    fn enter_subtree(&mut self) {
+        self.child_stack.push(Vec::new());
     }
 
     /// Install a freshly encoded fragment under `hash` and mark it as
@@ -627,7 +803,23 @@ impl FragmentCache {
         clip: Option<pinion_core::scene::Rect>,
     ) {
         self.fragments.insert(hash, fragment);
-        self.seen_this_paint.insert(hash);
+        // R1527 — close this container's frame first: it holds the
+        // fragments encoded *inside* it, and the container itself
+        // belongs to its parent's frame, which `mark_painted` reaches
+        // only once this one is popped.
+        let children = self.child_stack.pop().unwrap_or_default();
+        // R1527.1 — a leaf fragment subsumes nothing, and most fragments
+        // in a real scene are leaves (1,200 of the 1,201 in a row grid).
+        // Storing an edge set for them costs a map entry each and the
+        // trace reads it only to find it empty. `remove` rather than
+        // "skip the insert" so the map cannot keep a stale non-empty set
+        // under a hash that has since become a leaf.
+        if children.is_empty() {
+            self.subsumes.remove(&hash);
+        } else {
+            self.subsumes.insert(hash, children);
+        }
+        self.mark_painted(hash);
         self.misses = self.misses.saturating_add(1);
         let placed = match clip {
             Some(c) => intersection(screen_bounds(rect, placement), c),
@@ -964,6 +1156,12 @@ fn to_vello_cached_inner<F>(
         }
         // Cache miss: encode the entire subtree into a fresh sub-scene
         // under IDENTITY transform, then place + cache.
+        //
+        // R1527 — open the containment frame before descending so the
+        // fragments encoded below attribute to this container. Closed by
+        // `insert_miss` at the bottom of this arm, which every path from
+        // here reaches.
+        fragment_cache.enter_subtree();
         let mut sub = VelloScene::new();
         paint_box_decoration(&mut sub, c.rect, &c.style, c.style.fill, Affine::IDENTITY);
         for child in &c.children {
@@ -5177,6 +5375,217 @@ mod tests {
             (rotated.y, rotated.h),
             (10, 30),
             "the mapped y-extent comes from the corners, got {rotated:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // R1527 §5.16 — the mark phase has a trace step.
+    //
+    // A row grid: one cacheable Container per row under one cacheable
+    // root, which is the shape every Model/View binding paints and the
+    // shape that made R682's "consulted" proxy diverge from its own
+    // stated "painted" bound. `sel` marks one row's content as changed
+    // so a frame can move the selection by one row.
+    // ---------------------------------------------------------------
+
+    fn grid_row(i: u32, sel: Option<u32>) -> Scene {
+        let fill = if Some(i) == sel {
+            Color::rgb(0, 0, 255)
+        } else {
+            Color::rgb(255, 255, 255)
+        };
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+                Rect::new(0, i * 10, 400, 10),
+                fill,
+            ))])
+            .with_tag(format!("row_{i}")),
+        )
+    }
+
+    fn row_grid(rows: u32, sel: Option<u32>) -> Scene {
+        let children = (0..rows).map(|i| grid_row(i, sel)).collect();
+        Scene::Container(ContainerNode::new(children).with_tag("grid_root"))
+    }
+
+    /// Paint `scene` once through the production cached walk, returning
+    /// `(hits, misses, entries)` for that frame alone.
+    fn paint_frame(
+        scene: &Scene,
+        frag: &mut FragmentCache,
+        text: &mut LayoutCache,
+    ) -> (u64, u64, usize) {
+        let (h0, m0) = (frag.hits(), frag.misses());
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            scene,
+            &null_hook(),
+            text,
+            &mut ImageCache::new(),
+            frag,
+            &mut v,
+        );
+        (frag.hits() - h0, frag.misses() - m0, frag.stats().entries)
+    }
+
+    /// The collapse itself: one idle frame used to evict every fragment
+    /// the root subsumed, because the hit that served them stopped the
+    /// walk before it could consult them.
+    #[test]
+    fn r1527_an_idle_frame_keeps_the_fragments_its_root_subsumes() {
+        let scene = row_grid(40, None);
+        let (mut frag, mut text) = (FragmentCache::new(), LayoutCache::new());
+
+        let (_, misses, entries) = paint_frame(&scene, &mut frag, &mut text);
+        assert_eq!(misses, 41, "first paint installs the root + 40 rows");
+        assert_eq!(entries, 41);
+
+        let (hits, misses, entries) = paint_frame(&scene, &mut frag, &mut text);
+        assert_eq!((hits, misses), (1, 0), "the root answers the whole frame");
+        assert_eq!(
+            entries, 41,
+            "the 40 rows the root replayed were painted, so they survive the \
+             sweep; pre-R1527 this collapsed to 1"
+        );
+
+        // Idempotent — a second idle frame is not a slower leak.
+        let (_, _, entries) = paint_frame(&scene, &mut frag, &mut text);
+        assert_eq!(entries, 41);
+    }
+
+    /// What the collapse cost, and the load-bearing assertion of the
+    /// round: after idling, changing ONE row reused nothing. Both
+    /// numbers discriminate — pre-R1527 this frame was `(0, 41)`.
+    #[test]
+    fn r1527_one_changed_row_reuses_every_other_rows_fragment() {
+        let (mut frag, mut text) = (FragmentCache::new(), LayoutCache::new());
+        paint_frame(&row_grid(40, None), &mut frag, &mut text);
+        paint_frame(&row_grid(40, None), &mut frag, &mut text);
+
+        // A selection lands on row 7: the root's hash changes, so the
+        // walk descends — and finds 39 rows it painted last frame.
+        let (hits, misses, entries) = paint_frame(&row_grid(40, Some(7)), &mut frag, &mut text);
+        assert_eq!(
+            (hits, misses),
+            (39, 2),
+            "39 unchanged rows hit; the root and row 7 are the only encodes"
+        );
+        assert_eq!(entries, 41, "the grid is still fully cached");
+    }
+
+    /// The other half of the invariant, and the one a trace can break:
+    /// reachability must not become retention. Content that leaves the
+    /// tree is still collected, so the bound is still "what this frame
+    /// painted" and not "what any frame ever painted".
+    #[test]
+    fn r1527_fragments_of_a_dropped_subtree_are_collected_with_it() {
+        let (mut frag, mut text) = (FragmentCache::new(), LayoutCache::new());
+        paint_frame(&row_grid(40, None), &mut frag, &mut text);
+        let (_, _, entries) = paint_frame(&row_grid(40, None), &mut frag, &mut text);
+        assert_eq!(entries, 41);
+
+        // The grid shrinks to 4 rows. The 36 dropped row fragments are
+        // reachable from nothing live — the old root that subsumed them
+        // is itself gone — so both they and its edges go.
+        let (_, _, entries) = paint_frame(&row_grid(4, None), &mut frag, &mut text);
+        assert_eq!(
+            entries, 5,
+            "a fragment survives on being painted, not on having been painted"
+        );
+
+        // And the edge map does not outlive the fragments it describes.
+        // Stated as the invariant rather than a count, so it holds
+        // whatever the tree's shape: every edge set belongs to a live
+        // fragment, and every hash it points at is a live fragment too.
+        for (owner, children) in &frag.subsumes {
+            assert!(
+                frag.fragments.contains_key(owner),
+                "an edge set outlived the fragment it describes"
+            );
+            for child in children {
+                assert!(
+                    frag.fragments.contains_key(child),
+                    "an edge points at a fragment that was swept"
+                );
+            }
+        }
+        // R1527.1 — and a leaf carries no edge set at all. Only the root
+        // subsumes anything in this scene, so one entry, not five.
+        assert_eq!(
+            frag.subsumes.len(),
+            1,
+            "leaf fragments store no edge set (pre-R1527.1: one each)"
+        );
+    }
+
+    /// R1527.1 — the idle fast path skips the trace on a frame that
+    /// installed nothing and consulted what the last frame consulted.
+    /// This is the frame that breaks the naive version of that rule: it
+    /// installs nothing either, but consults something DIFFERENT, and a
+    /// sweep is owed. Gating on "zero misses" alone would keep the whole
+    /// old tree alive forever.
+    #[test]
+    fn r1527_a_frame_that_misses_nothing_can_still_owe_a_sweep() {
+        let grid = row_grid(4, None);
+        let (mut frag, mut text) = (FragmentCache::new(), LayoutCache::new());
+        paint_frame(&grid, &mut frag, &mut text);
+        let (_, _, entries) = paint_frame(&grid, &mut frag, &mut text);
+        assert_eq!(entries, 5, "root + 4 rows");
+
+        // Paint ONE of the rows as the whole scene. Its content is
+        // unchanged, so its hash hits — a frame with zero misses whose
+        // consulted set is nonetheless `{row_0}` rather than `{root}`.
+        let lone_row = grid_row(0, None);
+        let (hits, misses, entries) = paint_frame(&lone_row, &mut frag, &mut text);
+        assert_eq!(
+            (hits, misses),
+            (1, 0),
+            "the row's content is unchanged, so it hits and nothing encodes"
+        );
+        assert_eq!(
+            entries, 1,
+            "the root and the other three rows are painted by nothing now, \
+             so they go — a zero-miss frame still owes this sweep"
+        );
+    }
+
+    /// The trace is transitive and crosses non-cacheable nodes. A
+    /// `Scroll` between the root and the rows is not a cache boundary,
+    /// so the rows attribute to the nearest cacheable *container*
+    /// above them — and a hit on the outermost one still reaches the
+    /// innermost fragment two levels down.
+    #[test]
+    fn r1527_the_trace_is_transitive_through_a_scroll() {
+        use pinion_core::scene::ScrollNode;
+        let nested = |sel: Option<u32>| {
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Scroll(ScrollNode::new(
+                    Rect::new(0, 0, 400, 100),
+                    row_grid(20, sel),
+                ))])
+                .with_tag("outer"),
+            )
+        };
+        let (mut frag, mut text) = (FragmentCache::new(), LayoutCache::new());
+
+        let (_, misses, entries) = paint_frame(&nested(None), &mut frag, &mut text);
+        assert_eq!(misses, 22, "outer + grid_root + 20 rows");
+        assert_eq!(entries, 22);
+
+        let (hits, _, entries) = paint_frame(&nested(None), &mut frag, &mut text);
+        assert_eq!(hits, 1, "the outermost container answers alone");
+        assert_eq!(
+            entries, 22,
+            "one hit two levels above the rows keeps all 22 alive"
+        );
+
+        // And the reuse is real, not just retention: only the root
+        // chain and the one changed row re-encode.
+        let (hits, misses, _) = paint_frame(&nested(Some(3)), &mut frag, &mut text);
+        assert_eq!(
+            (hits, misses),
+            (19, 3),
+            "outer + grid_root + row 3 encode; the other 19 rows replay"
         );
     }
 

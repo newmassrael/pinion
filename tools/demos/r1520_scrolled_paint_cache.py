@@ -38,9 +38,11 @@ assertions are pinned between the two columns so a revert fails them.
       hits/misses.
   (B) Boot census — the first paint stores a fragment per cacheable
       container. `entries` clears 20 (pre-R1520: 4).
-  (C) Idle steady state — an unchanged re-paint hits the root and
-      mark-and-sweep collapses the live set to that one fragment;
+  (C) Idle steady state — an unchanged re-paint hits the root alone:
       hits advance by exactly one per paint and misses do not move.
+      R1527 corrected what this section asserted about the live set —
+      the sweep used to collapse it to the one consulted root, evicting
+      35 fragments the root had just replayed.
   (D) Scrolling reuse — across eight offsets, each frame reuses more
       fragments than it encodes (pre-R1520: 1 hit vs 2 misses, every
       frame, forever).
@@ -177,10 +179,14 @@ def body() -> None:
                 0,
                 f"idle paint {i}: an unchanged scene encodes nothing",
             )
-            assert_eq(
-                now["entries"],
-                1,
-                f"idle paint {i}: mark-and-sweep keeps only the consulted root",
+            # R1527 — this asserted `1` when the round landed, which was
+            # the sweep evicting every fragment the root had just
+            # replayed. The hit that ends the walk is not evidence that
+            # what it subsumes is dead; see the "trace step" section of
+            # `FragmentCache`. The live set now survives an idle frame.
+            assert now["entries"] >= MIN_BOOT_ENTRIES, (
+                f"idle paint {i}: a root hit keeps the fragments it "
+                f"subsumes, got {now['entries']} (pre-R1527: 1)"
             )
             assert now.get("last_damage_region") is None, (
                 f"idle paint {i}: a 100% hit publishes no damage"
@@ -188,12 +194,19 @@ def body() -> None:
             idle_prev = now
 
         # ── (D) scrolling: reuse beats re-encode, every frame ────────
-        # The first scrolled frame is expected to miss broadly: the idle
-        # sweep above evicted everything but the root, so there is nothing
-        # yet to reuse at the new offset. Reuse is a steady-state claim.
+        # R1527 — this used to note that the first scrolled frame "is
+        # expected to miss broadly", because the idle sweep above had
+        # evicted everything but the root. That was the cost of the
+        # eviction stated as an expectation. The frame still misses (new
+        # rows enter the window at a new offset) but now against a warm
+        # cache rather than an empty one.
         prev = paint_after(tf, lambda: tf.scroll(SCROLL_TAG, to=(0, OFFSETS[0])))
         assert prev["misses"] > idle_prev["misses"], (
-            "the first scrolled frame re-populates the cache"
+            "the first scrolled frame encodes the rows the offset revealed"
+        )
+        assert prev["hits"] > idle_prev["hits"], (
+            "and reuses the ones it did not, which an idle frame no "
+            "longer throws away"
         )
 
         scroll_hits = 0
