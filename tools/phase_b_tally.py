@@ -355,9 +355,39 @@ AXES = [
                 "cross-filter", "live-data", "deviation-grid",
             ]),
         ],
-        "judged_at": 1529,
-        "completion": 72,
-        "evidence_snapshot": {"example-name": 24, "round-axis": 2},
+        # R1534 re-judgment, 72 -> 77, demanded by the tool (the round ledger
+        # took this axis 2 -> 3). The largest single move in this series so far,
+        # and deliberately so: R1529's stated gap named plot-level zoom and pan
+        # as "the bulk of what is left", and R1534 closed half of that item —
+        # direct manipulation of the x-window now exists (`PlotWindow`, a wheel
+        # vocabulary on the plot area, `plot_area` made public so an overlay
+        # covers the axis rather than the chart rect).
+        #
+        # HALF, and the audit that produced this list is what keeps it to +5:
+        #
+        #   * No drag pan and no rubber-band zoom (QtCharts
+        #     `QChartView::setRubberBand`). An `External` has no pointer-down /
+        #     pointer-up hook, so a press-drag needs either the raw-pointer
+        #     seam or a slider-style statechart — a design choice R1534 did not
+        #     have to make and should not make by accident.
+        #   * The window is x-only. QtCharts zooms a RECT; there is no y-window
+        #     and no diagonal drag-select. (`hello-autoscale-y` fits y TO the
+        #     x-window, which is a different thing.)
+        #   * The window is invisible to a screen reader — the status line is a
+        #     text node like the caption, where the brush at least carries a
+        #     range-slider role.
+        #   * One consumer. The four brush consumers were not given plot zoom,
+        #     so the two ways of windowing one axis never appear on one plot,
+        #     which is where the interesting question lives (does a wheel move
+        #     the strip's thumbs?).
+        #
+        # Unchanged from R1529: local time needs a tzdb; **category is not an
+        # axis kind here at all** (the bar chart's x is a `BarGeom` slot metric
+        # on a separate code path); no polar / candlestick / box-plot / spline /
+        # 3D-surface series.
+        "judged_at": 1534,
+        "completion": 77,
+        "evidence_snapshot": {"example-name": 24, "round-axis": 3},
     },
     {
         "key": "text",
