@@ -230,6 +230,21 @@ AXES = [
         # entire R1372-R1442 campaign (22 examples, 72 demos, `pinion-chart` +
         # `pinion-graph`) could not move the Phase B number by a single point.
         # Qt ships QtCharts, so under the qt-parity directive it is in scope.
+        #
+        # R1528 re-judge, 65 -> 68, and the tool demanded it: a round declared
+        # this axis where the snapshot was 0, which `drift` reads as movement
+        # whatever the count. Small on purpose. R1528 landed a logarithmic
+        # value axis (Qt `QLogValueAxis`) on both cartesian axes of the two
+        # numeric-x charts — one of QtCharts' FIVE axis types.
+        #
+        # What the re-judgment mostly bought is a correction to the judgment
+        # itself: R1519 named the remaining gap as series types (polar,
+        # candlestick, 3D surface) and interaction depth, and did not mention
+        # AXIS types at all. Naming that dimension reveals more absent surface
+        # than R1528 filled — there is still no datetime axis, which every
+        # monitoring chart in the world has and whose absence makes x a bare
+        # number today. So the axis moves three points and its stated gap
+        # grows.
         "evidence": [
             ("example-name", [
                 "chart", "scatter", "heatmap", "treemap", "donut", "histogram",
@@ -238,9 +253,9 @@ AXES = [
                 "cross-filter", "live-data", "deviation-grid",
             ]),
         ],
-        "judged_at": 1519,
-        "completion": 65,
-        "evidence_snapshot": {"example-name": 22, "round-axis": 0},
+        "judged_at": 1528,
+        "completion": 68,
+        "evidence_snapshot": {"example-name": 23, "round-axis": 1},
     },
     {
         "key": "text",
