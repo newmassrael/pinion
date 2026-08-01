@@ -45,7 +45,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
     CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    materialize_cells, view_virtual_table,
+    materialize_cells, no_decoration, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -224,6 +224,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| search.cell(c.row, c.col).to_string(),
             header: header_from_slice(&HEADERS),
+            decoration: no_decoration,
         },
     );
 

@@ -56,3 +56,4 @@
 1532	dcc	a column declares how its cells are painted, Qt setItemDelegateForColumn
 1533	catalog	a value widget answers the wheel, Qt QAbstractSlider::wheelEvent
 1534	dataviz	a plot can be zoomed and panned, Qt QChart::zoomIn / d3.zoom
+1535	modelview	a cell is asked for its decoration role, Qt data(index, DecorationRole)

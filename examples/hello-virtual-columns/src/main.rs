@@ -69,7 +69,8 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, view_virtual_table,
+    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, no_decoration,
+    view_virtual_table,
 };
 use std::cell::Cell;
 
@@ -282,6 +283,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridModel {
             cell: cell_text,
             header: header_text,
+            decoration: no_decoration,
         },
     );
     // Read AFTER the grid is built: `cell_text` / `header_text` are their

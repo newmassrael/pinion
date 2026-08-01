@@ -41,14 +41,14 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, CellPainter, CellRender, GridModel, GridScroll, TableStyle, VirtualTableData,
-    header_from_slice, view_virtual_table,
+    CellDecoration, CellIndex, CellPainter, CellRender, GridModel, GridScroll, TableStyle,
+    VirtualTableData, header_from_slice, view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -72,8 +72,12 @@ const COL_W: u32 = 90;
 const ROW_H: u32 = 36;
 /// Rows built beyond the strict window on each side.
 const OVERSCAN: usize = 3;
-/// Column header labels. `Load` is the R1532 **delegated** column.
+/// Column header labels. `Load` is the R1532 **delegated** column, `Status`
+/// the R1535 **decorated** one.
 const HEADERS: [&str; NCOLS] = ["Index", "Name", "Status", "Load"];
+/// R1535 — the absolute index of the column whose cells answer the
+/// `Qt::DecorationRole` with a colour keyed to the row's status.
+const STATUS_COL: usize = 2;
 /// R1532 — the absolute index of the column whose cells are painted by a
 /// delegate rather than as a label.
 const LOAD_COL: usize = 3;
@@ -101,18 +105,46 @@ fn table_style() -> TableStyle {
     }
 }
 
+/// How many distinct values the `Status` column cycles through — the modulus
+/// both [`cell_text`] and [`cell_decoration`] read the row's status with, so
+/// the label and its mark cannot describe different states.
+const STATUS_KINDS: usize = 3;
+
 /// Synthetic cell texts for a data row. The five-digit index keeps every
 /// `scene/snapshot` cell unambiguous; the category cycles so the eye has
 /// something to track while scrolling.
 fn cell_text(c: CellIndex) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
-    const STATUS: [&str; 3] = ["Idle", "Active", "Done"];
+    const STATUS: [&str; STATUS_KINDS] = ["Idle", "Active", "Done"];
     match c.col {
         0 => format!("{:05}", c.row),
         1 => CATEGORIES[c.row % CATEGORIES.len()].to_string(),
         LOAD_COL => format!("{}%", load_percent(c.row)),
-        _ => STATUS[c.row % STATUS.len()].to_string(),
+        _ => STATUS[c.row % STATUS_KINDS].to_string(),
     }
+}
+
+/// R1535 §5.27 — the grid's `Qt::DecorationRole`: a colour swatch on every
+/// `Status` cell, keyed to that **row**'s status.
+///
+/// This is the column R1532's delegate could not paint. A delegate belongs to a
+/// column, and a column's painter is resolved once for every row it draws — so
+/// a mark whose colour is a function of the row could only be had by delegating
+/// the cell wholesale and re-deriving the status from the text the model had
+/// already answered with. Asked per cell, the role simply answers.
+///
+/// The colour comes from the same `row % STATUS_KINDS` the label does, so the
+/// swatch and the word can never disagree.
+fn cell_decoration(c: CellIndex, theme: &Theme) -> Option<CellDecoration> {
+    if c.col != STATUS_COL {
+        return None;
+    }
+    let role = match c.row % STATUS_KINDS {
+        0 => ColorRole::OnSurfaceMuted,
+        1 => ColorRole::Accent,
+        _ => ColorRole::Outline,
+    };
+    Some(CellDecoration::Swatch(theme.resolve(role)))
 }
 
 /// R1532 — the `Load` column's datum, `0..=100`. Synthetic but not uniform,
@@ -225,6 +257,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridModel {
             cell: cell_text,
             header: header_from_slice(&HEADERS),
+            // R1535 — Qt `data(index, Qt::DecorationRole)`: one column answers
+            // with a mark whose colour varies by row, which is the axis a
+            // per-column delegate cannot express.
+            decoration: |c: CellIndex| cell_decoration(c, &theme),
         },
     );
 
@@ -396,6 +432,63 @@ mod tests {
         );
     }
 
+    /// R1535 — the `Status` column's mark is a function of the **row**, which
+    /// is the property that makes it a model role rather than a delegate.
+    ///
+    /// Asserted against the label the same row carries, not against a colour
+    /// literal: the claim is that the two roles describe one status, and a test
+    /// comparing the swatch to a hard-coded palette entry would keep passing if
+    /// the label and the mark drifted apart.
+    #[test]
+    fn r1535_the_status_mark_agrees_with_the_status_label() {
+        let theme = pinion_core::theme::Theme::light();
+        let mark = |row: usize| {
+            cell_decoration(
+                CellIndex {
+                    row,
+                    col: STATUS_COL,
+                },
+                &theme,
+            )
+        };
+        let label = |row: usize| {
+            cell_text(CellIndex {
+                row,
+                col: STATUS_COL,
+            })
+        };
+        let rows: Vec<usize> = (0..STATUS_KINDS * 2).collect();
+        for &r in &rows {
+            assert_eq!(
+                mark(r),
+                mark(r % STATUS_KINDS),
+                "row {r}'s mark is its status's mark",
+            );
+            assert_eq!(label(r), label(r % STATUS_KINDS), "and so is its label");
+        }
+        // Distinct statuses get distinct marks — otherwise "agrees with the
+        // label" is satisfied by one colour for everything.
+        let distinct: std::collections::BTreeSet<_> = (0..STATUS_KINDS)
+            .map(|r| format!("{:?}", mark(r)))
+            .collect();
+        assert_eq!(distinct.len(), STATUS_KINDS, "one mark per status");
+        assert_eq!(
+            mark(0),
+            mark(STATUS_KINDS),
+            "premise: the fixture's statuses really do cycle",
+        );
+        // Every other column answers the role with nothing.
+        for col in 0..NCOLS {
+            if col != STATUS_COL {
+                assert_eq!(
+                    cell_decoration(CellIndex { row: 1, col }, &theme),
+                    None,
+                    "column {col} carries no mark",
+                );
+            }
+        }
+    }
+
     /// R1532 — the delegated cell keeps the composite tag a text cell has, so
     /// it stays addressable by pointer routing and by every tag-addressed RPC.
     ///
@@ -502,9 +595,17 @@ mod tests {
     fn count_bar_tracks(scene: &Scene) -> usize {
         match scene {
             Scene::Container(c) => {
+                // R1535 — a bar is identified by its **absolute positioning**
+                // as well as its height. Height alone was enough while the bar
+                // was the only 10px-tall untagged leaf in the grid; the R1535
+                // decoration swatch is one too (`decoration_px` is also 10), so
+                // this probe counted swatches as bars until it was told what a
+                // bar actually is. The stacked track/fill pair is the only
+                // thing here that overlays, so the property is the real one.
                 let here = usize::from(
                     c.tag.is_none()
                         && c.children.is_empty()
+                        && c.layout.absolute_position.is_some()
                         && c.layout.size.height == pinion_core::style::SizeValue::Px(BAR_H),
                 );
                 here + c.children.iter().map(count_bar_tracks).sum::<usize>()

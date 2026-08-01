@@ -78890,6 +78890,62 @@
         "The 25x ceiling is shared with the brush and configurable through `with_min_span`, which no consumer sets. d3's `scaleExtent` is per-consumer for a reason; the first chart with a different data density will want it."
       ]
     },
+    "Round 1535": {
+      "decision_summary": "A cell is asked for its decoration role. GridModel had no role dimension — cell and header each returned a String, so the only thing a grid could say about a cell was what it spelled; R1530 named that as Model/View's largest remaining gap and R1532 named the same thing from the paint side. Roles are typed accessors rather than Qt's one data(index, role) returning QVariant, because an untyped hole every caller unwraps is a worse contract in Rust and R1530 already chose this shape when it split headerData out as GridModel::header. Decoration is asked per CELL, which is the axis its value varies on and precisely what R1532's per-column delegate cannot express.",
+      "changes_bullets": [
+        "GridModel gains a third typed accessor `decoration` (Qt `data(index, Qt::DecorationRole)`), asked once per painted cell beside the display role; `no_decoration` is the accessor for a grid with no marked column.",
+        "`CellDecoration::Swatch(Color)` — an enum because `Qt::DecorationRole` is a variant type (QColor | QPixmap | QIcon), so the arms pinion cannot paint yet are absent rather than misrepresented.",
+        "`text_cell_painter` (Qt `QStyledItemDelegate`) now paints decoration + display, gated so an undecorated cell emits the pre-R1535 node exactly — no swatch, no gap spacer.",
+        "`pane_texts` + the new decoration fetch merged into `pane_cells`, which asks both roles against ONE column span so a misaligned mark is unrepresentable rather than merely unlikely.",
+        "`CellRender` carries the fetched decoration, so a custom delegate places the model's mark instead of re-asking; `TableStyle` gains `decoration_px` / `decoration_gap_px`.",
+        "`hello-virtual-table` is the consumer: its `Status` column answers with a colour keyed to the ROW, the axis R1532's per-column delegate cannot express, in the same grid that has a delegated column."
+      ],
+      "verification_bullets": [
+        "7 in-crate tests + 1 example test + `tools/demos/r1535_cell_decoration.py` (36 assertion statements, sections A-G); pinion-widget-paint 756 tests, all 12 grid example crates, 9 grid demos green.",
+        "6 counterfactuals run one at a time: per-column resolution, unwired frozen pane, unconditional gap, non-transparent swatch, painter ignoring `None`, relative-instead-of-absolute column span.",
+        "CF-6 (relative column span) passed every test as first written — a scrolled-unsplit-grid test was added for it, and the same counterfactual then failed only that test.",
+        "Three probes in this round identified a node kind by a property another kind now shares: the in-crate swatch locator read the gap spacer as a mark, and `count_bar_tracks` + the R1532 demo read a swatch as a gauge bar (`BAR_H` == `decoration_px` == 10). All three retightened.",
+        "The \"unchanged grid\" claim was a comparison between two grids that share one painter, so making the gap unconditional passed it; restated as an absolute node-shape assertion, which the same counterfactual then failed."
+      ],
+      "impact_refs": [
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "The role dimension is opened, not complete: `EditRole` (belongs with the delegate's absent editing half) and `ToolTipRole` (needs a per-cell hover path) are still unanswerable, and the header axis has no role dimension at all.",
+        "`CellDecoration` has one arm. The `QIcon` arm is reachable — `Scene::Image` exists and the shell caches sources — and was left out because it would ship a variant no consumer paints.",
+        "The decoration is invisible to assistive technology: the accessible name is still the display text, so a decoration-only column would be silent. Qt is silent here too, so this is a stated limit rather than a divergence, but a colour-only status column is a real DCC shape.",
+        "One consumer. The mark has never met `row_style` (a per-ROW Foreground/Background role that lives on `VirtualTableData`, not on `GridModel`) — the two role homes are now visibly inconsistent.",
+        "`decoration_px` and `hello-virtual-table`'s `BAR_H` are both 10 by coincidence, which is what made three probes ambiguous at once; nothing prevents the next such collision.",
+        "The eager `view_table` answers no decoration role (`decorations: &[]`), so the tree still holds two cell-paint surfaces — the shape R1530 left on the header axis and R1532 on the delegate axis."
+      ],
+      "publishable_decision_summary": "A cell is asked for its decoration role. GridModel had no role dimension — cell and header each returned a String, so the only thing a grid could say about a cell was what it spelled; R1530 named that as Model/View's largest remaining gap and R1532 named the same thing from the paint side. Roles are typed accessors rather than Qt's one data(index, role) returning QVariant, because an untyped hole every caller unwraps is a worse contract in Rust and R1530 already chose this shape when it split headerData out as GridModel::header. Decoration is asked per CELL, which is the axis its value varies on and precisely what R1532's per-column delegate cannot express.",
+      "publishable_changes_bullets": [
+        "GridModel gains a third typed accessor `decoration` (Qt `data(index, Qt::DecorationRole)`), asked once per painted cell beside the display role; `no_decoration` is the accessor for a grid with no marked column.",
+        "`CellDecoration::Swatch(Color)` — an enum because `Qt::DecorationRole` is a variant type (QColor | QPixmap | QIcon), so the arms pinion cannot paint yet are absent rather than misrepresented.",
+        "`text_cell_painter` (Qt `QStyledItemDelegate`) now paints decoration + display, gated so an undecorated cell emits the pre-R1535 node exactly — no swatch, no gap spacer.",
+        "`pane_texts` + the new decoration fetch merged into `pane_cells`, which asks both roles against ONE column span so a misaligned mark is unrepresentable rather than merely unlikely.",
+        "`CellRender` carries the fetched decoration, so a custom delegate places the model's mark instead of re-asking; `TableStyle` gains `decoration_px` / `decoration_gap_px`.",
+        "`hello-virtual-table` is the consumer: its `Status` column answers with a colour keyed to the ROW, the axis R1532's per-column delegate cannot express, in the same grid that has a delegated column."
+      ],
+      "publishable_verification_bullets": [
+        "7 in-crate tests + 1 example test + `tools/demos/r1535_cell_decoration.py` (36 assertion statements, sections A-G); pinion-widget-paint 756 tests, all 12 grid example crates, 9 grid demos green.",
+        "6 counterfactuals run one at a time: per-column resolution, unwired frozen pane, unconditional gap, non-transparent swatch, painter ignoring `None`, relative-instead-of-absolute column span.",
+        "CF-6 (relative column span) passed every test as first written — a scrolled-unsplit-grid test was added for it, and the same counterfactual then failed only that test.",
+        "Three probes in this round identified a node kind by a property another kind now shares: the in-crate swatch locator read the gap spacer as a mark, and `count_bar_tracks` + the R1532 demo read a swatch as a gauge bar (`BAR_H` == `decoration_px` == 10). All three retightened.",
+        "The \"unchanged grid\" claim was a comparison between two grids that share one painter, so making the gap unconditional passed it; restated as an absolute node-shape assertion, which the same counterfactual then failed."
+      ],
+      "publishable_impact_refs": [
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The role dimension is opened, not complete: `EditRole` (belongs with the delegate's absent editing half) and `ToolTipRole` (needs a per-cell hover path) are still unanswerable, and the header axis has no role dimension at all.",
+        "`CellDecoration` has one arm. The `QIcon` arm is reachable — `Scene::Image` exists and the shell caches sources — and was left out because it would ship a variant no consumer paints.",
+        "The decoration is invisible to assistive technology: the accessible name is still the display text, so a decoration-only column would be silent. Qt is silent here too, so this is a stated limit rather than a divergence, but a colour-only status column is a real DCC shape.",
+        "One consumer. The mark has never met `row_style` (a per-ROW Foreground/Background role that lives on `VirtualTableData`, not on `GridModel`) — the two role homes are now visibly inconsistent.",
+        "`decoration_px` and `hello-virtual-table`'s `BAR_H` are both 10 by coincidence, which is what made three probes ambiguous at once; nothing prevents the next such collision.",
+        "The eager `view_table` answers no decoration role (`decorations: &[]`), so the tree still holds two cell-paint surfaces — the shape R1530 left on the header axis and R1532 on the delegate axis."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

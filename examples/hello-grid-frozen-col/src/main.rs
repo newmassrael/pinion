@@ -61,7 +61,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
     CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    view_virtual_table,
+    no_decoration, view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -175,6 +175,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridModel {
             cell: cell_text,
             header: header_from_slice(&HEADERS),
+            decoration: no_decoration,
         },
     );
 

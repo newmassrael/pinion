@@ -92,6 +92,17 @@ pub struct TableStyle {
     /// modal-scoped table opts out with `.with_focusable(false)`. Mirrors
     /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable).
     pub focusable: bool,
+    /// R1535 §5.27 — side length, in logical pixels, of the square a
+    /// [`CellDecoration::Swatch`] paints (default 10). Qt's default delegate
+    /// sizes a decoration from the view's `iconSize`; this is the grid-wide
+    /// equivalent, held here with the other cell dimensions so a decorated
+    /// column cannot pick a size the rest of the grid does not know about.
+    pub decoration_px: u32,
+    /// R1535 §5.27 — gap, in logical pixels, between a cell's decoration and
+    /// its display text (default 8). Only spent when the cell **has** a
+    /// decoration, so an undecorated cell's label sits exactly where it did
+    /// before R1535.
+    pub decoration_gap_px: u32,
 }
 
 /// R786 §5.27 — visible divider line width inside the resize grabber, in
@@ -99,6 +110,13 @@ pub struct TableStyle {
 /// transparent hit zone with this thin [`ColorRole::Outline`] line hugging its
 /// right edge — the painted column boundary the user grabs.
 const RESIZE_DIVIDER_W: u32 = 1;
+
+/// R1535 §5.27 — corner radius of a [`CellDecoration::Swatch`], in logical
+/// pixels. A softened **square**, not a disc: Qt paints a `QColor` decoration
+/// as a filled rectangle, and a square reads as a sample of the colour where a
+/// disc reads as a status light — this role carries whichever the model means,
+/// so the shape must not editorialise.
+const SWATCH_RADIUS: u32 = 2;
 
 impl TableStyle {
     /// R707 §5.50 — Material-3 data-table defaults.
@@ -115,6 +133,8 @@ impl TableStyle {
             corner_radius: 12,
             resize_handle_w: 8,
             focusable: true,
+            decoration_px: 10,
+            decoration_gap_px: 8,
         }
     }
 
@@ -204,38 +224,22 @@ pub fn row_fill(theme: &Theme, state: RadioState, selected: bool, row_index: usi
     crate::state_layer::state_layer(base, state, theme)
 }
 
-/// One cell: a left-aligned label inside a fixed-size box. `tag` is the
-/// composite hit-test tag (`"<root>#<row>_<col>"`) for a data cell, or a
-/// presentational header tag (`"<root>_ch<col>"`). The keyboard-focus
-/// ring is the shell's job (R694 `paint_focus_ring` over the
-/// active-descendant cell), so no focus state is threaded here.
-fn cell(
-    tag: &str,
-    text: &str,
-    fg: Color,
-    size_px: u32,
-    style: &TableStyle,
-    width: u32,
-    height: u32,
-) -> Scene {
+/// R1535 §5.27 — the [`CellDecoration::Swatch`] node: a filled square of
+/// [`TableStyle::decoration_px`] a side, laid out before the cell's label.
+///
+/// Pointer-transparent, because the addressable thing here is the **cell** —
+/// its container carries [`CellRender::tag`], and a hit-testable child would
+/// shadow it for a click that landed on the swatch (the rule
+/// [`VirtualTableData::delegate`]'s own bars follow).
+fn swatch_node(color: Color, side: u32) -> Scene {
     Scene::Container(
-        ContainerNode::new(vec![Scene::Text(
-            TextNode::styled(
-                text.to_string(),
-                Rect::default(),
-                TextStyle::new().with_size_px(size_px).with_fg(fg),
-            )
-            .with_role(TextRole::Presentational),
-        )])
-        .with_tag(tag.to_string())
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_justify(JustifyContent::Start)
-                .with_align_items(AlignItems::Center)
-                .with_size(Size::px(width, height))
-                .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
-        ),
+        ContainerNode::new(Vec::new())
+            .with_style(BoxStyle::filled(color).with_corner_radius(SWATCH_RADIUS))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(side, side))
+                    .with_pointer_transparent(true),
+            ),
     )
 }
 
@@ -509,8 +513,8 @@ impl ColumnPad {
     }
 }
 
-/// R1524 — one pane's cell texts for data row `row`: [`CellIndex`]-addressed
-/// `cell` asked once per column in `span`, in column order.
+/// R1524 / R1535 — one pane's row: **both** per-cell roles for data row `row`,
+/// [`CellIndex`]-addressed and asked once per column in `span`, in column order.
 ///
 /// The single place the per-cell contract meets the per-row strip
 /// [`data_row`] paints, shared by all three panes that paint one (the unsplit
@@ -518,20 +522,34 @@ impl ColumnPad {
 /// decide on its own to ask for a column it will not paint — which is the
 /// defect R1524 closes, and it was three call sites wide.
 ///
+/// R1535 added the decoration role, and it is asked **here**, beside the
+/// display role, rather than through a second function of the same shape. The
+/// two roles' answers are indexed into positionally by [`data_row`], so
+/// fetching them separately would let a pane ask for the display role over one
+/// column span and the decoration role over another and paint a cell with its
+/// neighbour's mark. Asking both against one `span` in one pass makes that
+/// misalignment unrepresentable instead of merely unlikely — and it is the
+/// call shape Qt's `data(index, role)` has anyway: one index, every role.
+///
 /// This replaces R1523's `clamped`, which existed to tolerate a row builder
 /// that returned fewer cells than the grid had columns. A per-cell contract
 /// cannot express a short row, so the blank-cell rule is now `cell` returning
 /// an empty `String` and there is no length to reconcile.
-fn pane_texts(
+fn pane_cells(
     cell: &mut impl FnMut(CellIndex) -> String,
+    decoration: &mut impl FnMut(CellIndex) -> Option<CellDecoration>,
     row: usize,
     span: Range<usize>,
-) -> Vec<String> {
-    span.map(|col| cell(CellIndex { row, col })).collect()
+) -> (Vec<String>, Vec<Option<CellDecoration>>) {
+    span.map(|col| {
+        let index = CellIndex { row, col };
+        (cell(index), decoration(index))
+    })
+    .unzip()
 }
 
 /// R1530 — one pane's header labels: [`GridModel::header`] asked once per
-/// column in `span`, in column order. The header-band peer of [`pane_texts`],
+/// column in `span`, in column order. The header-band peer of [`pane_cells`],
 /// and the single place the per-section contract meets the slice
 /// [`header_row`] paints, so neither the unsplit grid nor either frozen pane
 /// can ask for a section it will not paint.
@@ -591,6 +609,15 @@ struct RowPane<'a> {
     /// Resolved once per pane by `GridRender::painters`, because a column's
     /// delegate cannot vary by row.
     painters: &'a [Option<CellPainter<'a>>],
+    /// R1535 — this **row**'s per-column `Qt::DecorationRole` answers, aligned
+    /// with [`Self::widths`] (so index `j` is absolute column `col_base + j`).
+    /// Unlike [`Self::painters`] this varies by row, which is the whole reason
+    /// a decoration is a model role and not a delegate; it rides here because
+    /// [`RowPane`] is already built per row (it carries the row's own
+    /// container tag). An **empty** slice means "no cell in this row is
+    /// decorated" — the eager [`view_table`], which exposes no decoration
+    /// model, passes it.
+    decorations: &'a [Option<CellDecoration>],
     /// R1532 — the palette, for a delegate that resolves its own roles. It
     /// travels with [`Self::painters`] rather than as its own argument
     /// because it exists here *for* them: the built-in painter takes its
@@ -682,6 +709,10 @@ fn data_row(
             let render = CellRender {
                 index: CellIndex { row: data_id, col },
                 text: cells_text.get(j).copied().unwrap_or(""),
+                // R1535 — an out-of-range index is the undecorated answer, the
+                // same fallback the text takes; the eager caller's empty slice
+                // reaches it for every column.
+                decoration: pane.decorations.get(j).copied().flatten(),
                 width: pane.widths.get(j).copied().unwrap_or(style.col_width),
                 height: style.row_height,
                 fg,
@@ -821,6 +852,9 @@ pub fn view_table(
                 // Recorded as carry: this leaves two cell-paint surfaces in
                 // one tree, the shape R1530 left on the header axis.
                 painters: &[],
+                // R1535 — likewise no decoration model on the eager surface:
+                // every cell answers the role with `None`.
+                decorations: &[],
                 theme,
             },
             style,
@@ -993,6 +1027,13 @@ pub struct CellRender<'a> {
     pub index: CellIndex,
     /// The model's text for this cell (Qt `Qt::DisplayRole`).
     pub text: &'a str,
+    /// R1535 — the model's decoration for this cell (Qt
+    /// `Qt::DecorationRole`), or `None` when it has none.
+    ///
+    /// Fetched by the same rule [`Self::text`] is — [`GridModel::decoration`]
+    /// asked once per painted cell — so a delegate that wants to place the mark
+    /// itself gets the model's answer rather than re-asking for it.
+    pub decoration: Option<CellDecoration>,
     /// The cell's box width in logical px — this column's resolved width.
     pub width: u32,
     /// The cell's box height in logical px (the row height).
@@ -1018,25 +1059,81 @@ pub struct CellRender<'a> {
 /// [`VirtualTableData::delegate`].
 pub type CellPainter<'a> = &'a dyn Fn(&CellRender<'_>) -> Scene;
 
-/// R1532 §5.27 — the built-in painter: a left-aligned label in the row's
-/// foreground colour. Qt's `QStyledItemDelegate` for a plain
-/// `Qt::DisplayRole`.
+/// R1535 §5.27 — what a cell's `Qt::DecorationRole` answer can be: the mark the
+/// built-in painter draws **beside** the display text.
 ///
-/// Public because a delegate that only *decorates* the default — a column that
-/// paints a mark beside its text — should compose with it rather than
-/// re-derive a cell's padding, size and tag placement, and because it is the
-/// worked example of the one rule a painter must follow (the container carries
-/// [`CellRender::tag`]).
+/// The grid's second data role, and the reason it is one is that R1532's
+/// delegate could not express it. A delegate belongs to a **column** — Qt's
+/// `setItemDelegateForColumn`, and a column's painter cannot vary by row — so a
+/// column whose mark differs per row (a status colour, a layer colour, a
+/// severity) had to be delegated wholesale and then re-derive the text the
+/// model had already answered with. A role is asked per **cell**, which is the
+/// axis the datum actually varies on.
+///
+/// # Why an enum with one arm
+///
+/// `Qt::DecorationRole` is a *variant*: a `QColor`, a `QPixmap`, or a `QIcon`.
+/// Naming the role's type as a sum keeps the arms pinion cannot paint yet
+/// **absent** rather than misrepresented — a `Color` newtype would assert that
+/// a decoration is a colour, which is not what the role means. The icon arm is
+/// reachable (`Scene::Image` exists and the shell caches image sources), and it
+/// is deliberately not added here: it would ship an arm no consumer paints, and
+/// the round that adds it should be the round that has one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CellDecoration {
+    /// Qt's `QColor` decoration — a filled square in the cell's leading edge,
+    /// [`TableStyle::decoration_px`] a side.
+    Swatch(Color),
+}
+
+/// R1532 §5.27 — the built-in painter: a left-aligned label in the row's
+/// foreground colour, preceded (R1535) by the cell's
+/// [`Qt::DecorationRole`](CellDecoration) mark when it has one. Qt's
+/// `QStyledItemDelegate`, which paints exactly these two roles.
+///
+/// The tag is the composite hit-test tag (`"<root>#<row>_<col>"`); the
+/// keyboard-focus ring is the shell's job (R694 `paint_focus_ring` over the
+/// active-descendant cell), so no focus state is threaded here.
+///
+/// Public because a delegate that only *extends* the default should compose
+/// with it rather than re-derive a cell's padding, size and tag placement, and
+/// because it is the worked example of the one rule a painter must follow (the
+/// container carries [`CellRender::tag`]).
+///
+/// An undecorated cell emits the pre-R1535 node **exactly**: no swatch, no gap
+/// spacer, one text child. The decoration is additive, so a grid that answers
+/// `None` everywhere paints a byte-identical scene.
 #[must_use]
 pub fn text_cell_painter(c: &CellRender<'_>) -> Scene {
-    cell(
-        c.tag,
-        c.text,
-        c.fg,
-        c.style.label_size_px,
-        c.style,
-        c.width,
-        c.height,
+    let mut children = Vec::with_capacity(3);
+    if let Some(CellDecoration::Swatch(color)) = c.decoration {
+        children.push(swatch_node(color, c.style.decoration_px));
+        // The gap is a spacer rather than padding on the swatch so the
+        // undecorated cell keeps its node shape unchanged — see `pad_node`,
+        // the same "emit nothing when it would be a zero-width box" rule.
+        children.extend(pad_node(c.style.decoration_gap_px, c.height));
+    }
+    children.push(Scene::Text(
+        TextNode::styled(
+            c.text.to_string(),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(c.style.label_size_px)
+                .with_fg(c.fg),
+        )
+        .with_role(TextRole::Presentational),
+    ));
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(c.tag.to_string())
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Start)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(c.width, c.height))
+                    .with_padding(Rect::new(c.style.cell_pad_x, 0, c.style.cell_pad_x, 0)),
+            ),
     )
 }
 
@@ -1116,10 +1213,26 @@ pub struct CellIndex {
 ///
 /// The counts stay in [`VirtualTableData`] (`column_count` beside
 /// `item_count`), where the extents of the two axes are stated together; this
-/// holds the two *accessors*. Selection is deliberately not here — Qt keeps it
+/// holds the *accessors*. Selection is deliberately not here — Qt keeps it
 /// in a separate `QItemSelectionModel`, and so does `view_virtual_table`'s
 /// `is_selected`.
-pub struct GridModel<C, H> {
+///
+/// # Roles (R1535)
+///
+/// Qt reaches every one of these through a single `data(index, role)` because a
+/// C++ model needs one virtual entry point, and pays for it with `QVariant` —
+/// an untyped hole every caller must unwrap. Here each role is its **own typed
+/// accessor**, so a role's answer type is exact and a model that cannot answer
+/// one is unrepresentable rather than returning an invalid variant. That is the
+/// shape R1530 already chose when it split Qt's `headerData` out as
+/// [`Self::header`] instead of folding it into `cell`.
+///
+/// Three of Qt's roles are answered so far — `DisplayRole` ([`Self::cell`]),
+/// `DisplayRole` on the header axis ([`Self::header`]) and `DecorationRole`
+/// ([`Self::decoration`]). `EditRole` and `ToolTipRole` are not: the first
+/// belongs with the delegate's editing half (which does not exist yet — R1532
+/// gave the delegate paint only), the second needs a per-cell hover path.
+pub struct GridModel<C, H, D> {
     /// Invoked once per **painted cell** with that cell's [`CellIndex`],
     /// returning its text (Qt `data(QModelIndex)`, Flutter `cellBuilder`).
     pub cell: C,
@@ -1132,6 +1245,30 @@ pub struct GridModel<C, H> {
     /// the property the cell axis gained in R1524. A column with no label
     /// returns an empty `String`.
     pub header: H,
+    /// R1535 — invoked once per **painted cell** with that cell's
+    /// [`CellIndex`], returning the mark drawn beside its text (Qt
+    /// `data(index, Qt::DecorationRole)`), or `None` for an undecorated cell.
+    ///
+    /// Asked per cell rather than per column because that is the axis the
+    /// answer varies on: a status colour differs row by row, which is precisely
+    /// what R1532's per-column [`VirtualTableData::delegate`] cannot express.
+    /// A grid with no decorated column passes [`no_decoration`] and pays
+    /// nothing — the closure monomorphizes to a constant `None` and the painter
+    /// emits the pre-R1535 node.
+    pub decoration: D,
+}
+
+/// R1535 §5.27 — the [`GridModel::decoration`] accessor for a grid where no
+/// cell carries a mark: the `Qt::DecorationRole` every un-decorated model
+/// answers with an invalid `QVariant`.
+///
+/// A named function rather than `|_| None` at nineteen call sites so the "this
+/// grid answers no decoration role" statement is greppable, and so the
+/// undecorated case reads as a decision rather than as a closure that happens
+/// to return nothing.
+#[must_use]
+pub fn no_decoration(_: CellIndex) -> Option<CellDecoration> {
+    None
 }
 
 /// R1530 §5.27 — the [`GridModel::header`] accessor for a grid whose labels
@@ -1236,8 +1373,10 @@ pub fn materialize_cells(
 ///   and a display-only grid passes `|_| false`. One virtualized-grid paint
 ///   path serves all three (no parallel `_multi` body to diverge from the
 ///   windowed-sizer geometry). It is invoked only for the windowed rows.
-/// - `model` — the [`GridModel`]: `cell` (R1524, once per painted cell) and
-///   `header` (R1530, once per painted column header). This is the Model/View
+/// - `model` — the [`GridModel`]: `cell` (R1524, once per painted cell),
+///   `header` (R1530, once per painted column header) and `decoration` (R1535,
+///   once per painted cell — [`no_decoration`] when no column carries a mark).
+///   This is the Model/View
 ///   contract of a two-axis virtualized grid (Qt `data(index)` /
 ///   `headerData(section)`, Flutter `cellBuilder`): the grid asks for exactly
 ///   what it paints, so a 200-column grid showing five columns asks for five
@@ -1257,7 +1396,11 @@ pub fn view_virtual_table(
     theme: &Theme,
     style: &TableStyle,
     is_selected: impl Fn(usize) -> bool,
-    model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
+    model: GridModel<
+        impl FnMut(CellIndex) -> String,
+        impl FnMut(usize) -> String,
+        impl FnMut(CellIndex) -> Option<CellDecoration>,
+    >,
 ) -> Scene {
     let cols = data.column_count;
     // R785 — resolve the per-column widths once (uniform `style.col_width`
@@ -1518,7 +1661,7 @@ impl<'d> GridRender<'_, 'd> {
     ///
     /// Shared by the three panes that paint a header band (the unsplit grid,
     /// and the frozen split's pinned + scrolling panes), so none of them can
-    /// ask for a section it will not paint — the [`pane_texts`] discipline on
+    /// ask for a section it will not paint — the [`pane_cells`] discipline on
     /// the header axis.
     ///
     /// The span is **derived** from `layout` rather than passed beside it:
@@ -1598,11 +1741,16 @@ impl<'d> GridRender<'_, 'd> {
         &self,
         scroll: GridScroll<'_>,
         is_selected: &impl Fn(usize) -> bool,
-        model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
+        model: GridModel<
+            impl FnMut(CellIndex) -> String,
+            impl FnMut(usize) -> String,
+            impl FnMut(CellIndex) -> Option<CellDecoration>,
+        >,
     ) -> Scene {
         let GridModel {
             mut cell,
             mut header,
+            mut decoration,
         } = model;
         let total_w: u32 = self.widths.iter().copied().sum();
         let cols = self.column_window(scroll.horizontal, self.widths);
@@ -1638,7 +1786,8 @@ impl<'d> GridRender<'_, 'd> {
             band,
             |view_pos| {
                 let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
-                let cells_text = pane_texts(&mut cell, source, span.clone());
+                let (cells_text, decos) =
+                    pane_cells(&mut cell, &mut decoration, source, span.clone());
                 let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
                 let row_tag = GridTag::data_row(self.tag, source);
                 data_row(
@@ -1653,6 +1802,7 @@ impl<'d> GridRender<'_, 'd> {
                         widths: &self.widths[span.clone()],
                         pad,
                         painters: &painters,
+                        decorations: &decos,
                         theme: self.theme,
                     },
                     self.style,
@@ -1686,11 +1836,16 @@ impl<'d> GridRender<'_, 'd> {
         scroll: GridScroll<'_>,
         frozen_cols: usize,
         is_selected: &impl Fn(usize) -> bool,
-        model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
+        model: GridModel<
+            impl FnMut(CellIndex) -> String,
+            impl FnMut(usize) -> String,
+            impl FnMut(CellIndex) -> Option<CellDecoration>,
+        >,
     ) -> Scene {
         let GridModel {
             mut cell,
             mut header,
+            mut decoration,
         } = model;
         let frozen_w: u32 = self.widths[..frozen_cols].iter().copied().sum();
         let scrolled = &self.widths[frozen_cols..];
@@ -1710,7 +1865,8 @@ impl<'d> GridRender<'_, 'd> {
         let frozen_slots = uniform_slots(self.window, frozen_w, row_pitch, |view_pos| {
             let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
             // R1524 — the pinned pane asks for the pinned columns only.
-            let cells_text = pane_texts(&mut cell, source, 0..frozen_cols);
+            let (cells_text, decos) =
+                pane_cells(&mut cell, &mut decoration, source, 0..frozen_cols);
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
             // R859 — distinct `_frow{id}` container tag so the split panes
             // never emit a duplicate strip tag (per-cell `_{col}` tags stay
@@ -1729,6 +1885,7 @@ impl<'d> GridRender<'_, 'd> {
                     // Pinned columns are never windowed out.
                     pad: ColumnPad::NONE,
                     painters: &frozen_painters,
+                    decorations: &decos,
                     theme: self.theme,
                 },
                 self.style,
@@ -1739,7 +1896,7 @@ impl<'d> GridRender<'_, 'd> {
             // R1524 — the scrolling pane asks for its column window, in
             // absolute coordinates (`abs`), so the consumer never learns that
             // this pane's own column space starts at `frozen_cols`.
-            let cells_text = pane_texts(&mut cell, source, abs.clone());
+            let (cells_text, decos) = pane_cells(&mut cell, &mut decoration, source, abs.clone());
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
             let row_tag = GridTag::data_row(self.tag, source);
             data_row(
@@ -1754,6 +1911,7 @@ impl<'d> GridRender<'_, 'd> {
                     widths: &scrolled[rel.clone()],
                     pad: scroll_pad,
                     painters: &scroll_painters,
+                    decorations: &decos,
                     theme: self.theme,
                 },
                 self.style,
@@ -2173,6 +2331,7 @@ mod tests {
                 GridModel {
                     cell: vt_cell,
                     header: vt_header,
+                    decoration: no_decoration,
                 },
             )
         })
@@ -2288,6 +2447,362 @@ mod tests {
         );
     }
 
+    // ── R1535 §5.27 — a cell is asked for its decoration role ───────
+
+    /// R1535 — the swatch a cell carries, found by walking to the cell's own
+    /// tag and reading the fill of a **leaf** child container.
+    ///
+    /// Located through the cell's tag rather than by collecting every filled
+    /// box in the grid, because the grid is full of filled boxes (row strips,
+    /// the header band, the block frame) and a test that counted those would
+    /// pass on a swatch painted into the wrong cell.
+    ///
+    /// The swatch is identified by its **square decoration size**, not merely
+    /// by being an untagged leaf: the gap spacer beside it is also an untagged
+    /// leaf container, so a looser predicate reports the spacer's transparent
+    /// fill as a mark whenever the swatch is missing — which is precisely the
+    /// case these tests exist to detect. (Measured: it did, until the size
+    /// check was added.)
+    fn find_tagged<'s>(scene: &'s Scene, tag: &str) -> Option<&'s ContainerNode> {
+        match scene {
+            Scene::Container(c) => {
+                if c.tag.as_deref() == Some(tag) {
+                    return Some(c);
+                }
+                c.children.iter().find_map(|ch| find_tagged(ch, tag))
+            }
+            Scene::Scroll(s) => find_tagged(s.content.as_ref(), tag),
+            _ => None,
+        }
+    }
+
+    /// R1535 — how many children the tagged cell has. The absolute shape a
+    /// comparison between two grids cannot check (both go through the same
+    /// painter, so a defect there moves both sides alike).
+    fn cell_children(scene: &Scene, tag: &str) -> usize {
+        find_tagged(scene, tag).map_or(0, |c| c.children.len())
+    }
+
+    fn cell_swatch(scene: &Scene, tag: &str) -> Option<Color> {
+        let side = pinion_core::style::SizeValue::Px(TableStyle::m3().decoration_px);
+        find_tagged(scene, tag)?
+            .children
+            .iter()
+            .find_map(|ch| match ch {
+                Scene::Container(c)
+                    if c.children.is_empty()
+                        && c.tag.is_none()
+                        && c.layout.size.width == side
+                        && c.layout.size.height == side =>
+                {
+                    Some(c.style.fill)
+                }
+                _ => None,
+            })
+    }
+
+    /// R1535 — total nodes in a painted scene, so an "additive" claim can be
+    /// checked as a count rather than only as text (the gap spacer carries no
+    /// text, so a text comparison alone cannot see it).
+    fn node_count(scene: &Scene) -> usize {
+        1 + match scene {
+            Scene::Container(c) => c.children.iter().map(node_count).sum(),
+            Scene::Scroll(s) => node_count(s.content.as_ref()),
+            _ => 0,
+        }
+    }
+
+    /// R1535 — render the virtual table with `col` answering the decoration
+    /// role, its colour a function of the **row**, counting how many times the
+    /// role was asked.
+    ///
+    /// The colour varies by row on purpose: that is the property a per-column
+    /// delegate cannot have, so a fixture with a per-column colour would let a
+    /// wrong implementation pass every test below.
+    fn run_vtable_decorated(col: usize, asks: &Cell<usize>) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, 200);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
+        let h_state = vt_hscroll(0);
+        let theme = light();
+        let style = TableStyle::m3();
+        let decoration = |c: CellIndex| {
+            asks.set(asks.get() + 1);
+            (c.col == col).then(|| {
+                CellDecoration::Swatch(Color::rgb(u8::try_from(c.row).unwrap_or(255), 0, 0))
+            })
+        };
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
+                VirtualTableData {
+                    column_count: VT_HEADERS.len(),
+                    item_count: VT_N,
+                    overscan: 2,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: None,
+                    resizable: false,
+                    frozen_cols: 0,
+                    row_style: None,
+                    delegate: None,
+                },
+                &theme,
+                &style,
+                |_| false,
+                GridModel {
+                    cell: vt_cell,
+                    header: vt_header,
+                    decoration,
+                },
+            )
+        })
+    }
+
+    /// The seam itself: the decorated column's cells carry the model's mark,
+    /// and no other column's do.
+    ///
+    /// Both halves are load-bearing — without the second, a painter that
+    /// decorated *every* cell with the answer it got for one would pass.
+    #[test]
+    fn r1535_a_decorated_cell_carries_the_models_swatch() {
+        let asks = Cell::new(0);
+        let scene = run_vtable_decorated(1, &asks);
+        assert_eq!(
+            cell_swatch(&scene, "vtbl#0_1"),
+            Some(Color::rgb(0, 0, 0)),
+            "the decorated cell carries the colour the model answered with",
+        );
+        assert_eq!(
+            cell_swatch(&scene, "vtbl#0_2"),
+            None,
+            "and a cell whose role answered `None` carries no mark at all",
+        );
+        assert_eq!(
+            cell_children(&scene, "vtbl#0_1"),
+            3,
+            "the decorated cell is swatch + gap + label",
+        );
+        assert_eq!(
+            cell_children(&scene, "vtbl#0_2"),
+            1,
+            "and the undecorated one is the label alone",
+        );
+    }
+
+    /// **The reason this is a role and not a delegate.** Two rows of the same
+    /// column carry different marks, which a per-column painter cannot express
+    /// — R1532's delegate is resolved once for every row it draws.
+    ///
+    /// Asserted as an inequality between two observed colours plus each one's
+    /// expected value: the inequality alone would pass on a swatch that varied
+    /// for the wrong reason (say, by zebra parity).
+    #[test]
+    fn r1535_the_decoration_varies_by_row() {
+        let asks = Cell::new(0);
+        let scene = run_vtable_decorated(1, &asks);
+        let (r0, r1) = (
+            cell_swatch(&scene, "vtbl#0_1"),
+            cell_swatch(&scene, "vtbl#1_1"),
+        );
+        assert_eq!(r0, Some(Color::rgb(0, 0, 0)), "row 0's own answer");
+        assert_eq!(r1, Some(Color::rgb(1, 0, 0)), "row 1's own answer");
+        assert_ne!(r0, r1, "so one column's mark is a function of the row");
+    }
+
+    /// The role is asked once per painted **cell** — the R1524 discipline the
+    /// display role follows — not once per column the way a delegate is.
+    ///
+    /// Stated against the painted-cell count rather than a constant so it keeps
+    /// its meaning when the fixture's window changes. A per-column resolution
+    /// would make `asks` equal `VT_HEADERS.len()`, which is what R1532's
+    /// delegate test asserts — the two contracts are deliberately opposite.
+    #[test]
+    fn r1535_the_decoration_is_asked_per_cell() {
+        let asks = Cell::new(0);
+        let scene = run_vtable_decorated(1, &asks);
+        let rows = tags_with_prefix(&scene, "vtbl_row").len();
+        assert!(rows > 1, "premise: more than one row painted, got {rows}");
+        assert_eq!(
+            asks.get(),
+            rows * VT_HEADERS.len(),
+            "one ask per painted cell ({rows} rows x {} columns)",
+            VT_HEADERS.len(),
+        );
+    }
+
+    /// The swatch must not shadow the cell it decorates: the cell keeps its
+    /// composite tag, and the mark is pointer-transparent, so a click landing
+    /// on the swatch still routes to the cell. A decoration that quietly made
+    /// part of a cell unclickable is the failure this checks.
+    #[test]
+    fn r1535_the_swatch_does_not_shadow_the_cell() {
+        let asks = Cell::new(0);
+        let scene = run_vtable_decorated(1, &asks);
+        assert!(
+            scene.contains_tag("vtbl#0_1"),
+            "the decorated cell carries the same composite tag a plain one does",
+        );
+        // Read out of the PAINTED tree, not from a freshly-built
+        // `swatch_node`: a guard that constructs its own copy of the subject
+        // tests the copy, and would keep passing if the paint path stopped
+        // using the constructor.
+        let cell = find_tagged(&scene, "vtbl#0_1").expect("the decorated cell is in the tree");
+        let side = pinion_core::style::SizeValue::Px(TableStyle::m3().decoration_px);
+        let Some(Scene::Container(mark)) = cell
+            .children
+            .iter()
+            .find(|ch| matches!(ch, Scene::Container(c) if c.layout.size.width == side))
+        else {
+            panic!("the painted cell carries a swatch")
+        };
+        assert!(
+            mark.layout.pointer_transparent,
+            "and the mark is inert to hit routing",
+        );
+        assert!(
+            mark.tag.is_none(),
+            "and carries no tag of its own to be hit by",
+        );
+    }
+
+    /// A grid whose model answers the role with `None` everywhere paints
+    /// exactly what a grid with [`no_decoration`] paints — text, node shape and
+    /// all. Discriminating because the two reach the painter through different
+    /// values (`Some(fn)` returning `None` vs the constant), and because the
+    /// gap spacer is emitted only when a mark is present: a painter that always
+    /// spent the gap would separate these two trees.
+    #[test]
+    fn r1535_a_model_that_decorates_nothing_changes_nothing() {
+        let asks = Cell::new(0);
+        // A column index past the last one: the role is asked for every cell
+        // and answers `None` every time.
+        let claimed_none = run_vtable_decorated(VT_HEADERS.len(), &asks);
+        let plain = run_vtable(200, 0);
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        collect_text(&claimed_none, &mut a);
+        collect_text(&plain, &mut b);
+        assert_eq!(a, b, "same text");
+        assert_eq!(
+            cell_swatch(&claimed_none, "vtbl#0_1"),
+            None,
+            "and no cell grew a mark",
+        );
+        assert_eq!(
+            node_count(&claimed_none),
+            node_count(&plain),
+            "and the two model shapes paint the same number of nodes",
+        );
+        assert!(asks.get() > 0, "and it really was asked");
+        // The claim above is a COMPARISON, and both grids reach the same
+        // painter — so a defect in the painter itself moves both sides equally
+        // and survives it. (Measured: making the gap spacer unconditional
+        // passes every assertion above.) The claim "an undecorated cell emits
+        // the pre-R1535 node" is about one cell's absolute shape, so it is
+        // asserted as one.
+        assert_eq!(
+            cell_children(&claimed_none, "vtbl#0_1"),
+            1,
+            "an undecorated cell is exactly its label: no swatch, no gap",
+        );
+    }
+
+    /// R1535 — the decoration reaches **both** panes of a frozen-column grid.
+    ///
+    /// Its own test because the frozen split builds its two panes through
+    /// separate row closures, so a role wired into one and not the other is a
+    /// live defect that every unsplit test above would miss (the R1523 shape:
+    /// a change applied to one pane is a question about the other).
+    #[test]
+    fn r1535_both_frozen_panes_decorate() {
+        let asks = Cell::new(0);
+        let deco = |c: CellIndex| {
+            asks.set(asks.get() + 1);
+            Some(CellDecoration::Swatch(Color::rgb(
+                u8::try_from(c.col).unwrap_or(255),
+                0,
+                0,
+            )))
+        };
+        let scene = run_vtable_wide_with(
+            600,
+            0,
+            2,
+            GridModel {
+                cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
+                header: wide_header,
+                decoration: deco,
+            },
+        );
+        assert_eq!(
+            cell_swatch(&scene, "vtbl#0_0"),
+            Some(Color::rgb(0, 0, 0)),
+            "the pinned pane's cell is decorated",
+        );
+        assert_eq!(
+            cell_swatch(&scene, "vtbl#0_2"),
+            Some(Color::rgb(2, 0, 0)),
+            "and so is the scrolling pane's, with its own absolute column's answer",
+        );
+    }
+
+    /// R1535 — a scrolled **unsplit** grid asks the role about the columns it
+    /// is actually painting, in absolute coordinates.
+    ///
+    /// Its own test because every other one here runs at horizontal offset 0,
+    /// where the column window starts at column 0 and a relative-vs-absolute
+    /// confusion is invisible. (Measured: asking `0..count` instead of the
+    /// window's own span passes all six of the other tests.) The frozen grid's
+    /// panes are covered separately — this is the path that has no frozen pane
+    /// to borrow correctness from.
+    #[test]
+    fn r1535_a_scrolled_grid_decorates_its_absolute_columns() {
+        let scene = run_vtable_wide_with(
+            560,
+            4_000,
+            0,
+            GridModel {
+                cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
+                header: wide_header,
+                decoration: |c: CellIndex| {
+                    Some(CellDecoration::Swatch(Color::rgb(
+                        u8::try_from(c.col % 256).unwrap_or(0),
+                        0,
+                        0,
+                    )))
+                },
+            },
+        );
+        // Whichever columns the 560px window landed on, each painted cell's
+        // mark must be its OWN column's answer — derived from the tag rather
+        // than hard-coded, so the assertion survives a widths change.
+        let cells = tags_with_prefix(&scene, "vtbl#0_");
+        assert!(!cells.is_empty(), "premise: row 0 painted some cells");
+        let mut checked = 0;
+        for tag in &cells {
+            let col: usize = tag.rsplit('_').next().unwrap().parse().unwrap();
+            assert_eq!(
+                cell_swatch(&scene, tag),
+                Some(Color::rgb(u8::try_from(col % 256).unwrap_or(0), 0, 0)),
+                "cell {tag} carries column {col}'s own answer",
+            );
+            checked += 1;
+        }
+        let first: usize = cells[0].rsplit('_').next().unwrap().parse().unwrap();
+        assert!(
+            first > 0,
+            "premise: the window is scrolled off column 0, else this test \
+             cannot tell absolute from relative (first painted column {first})",
+        );
+        assert!(checked > 1, "premise: more than one column checked");
+    }
+
     /// R784 — render the virtual table with an explicit horizontal
     /// offset so the frozen-header / h-scroll tests can drive the outer
     /// horizontal scroll.
@@ -2326,6 +2841,7 @@ mod tests {
                 GridModel {
                     cell: vt_cell,
                     header: vt_header,
+                    decoration: no_decoration,
                 },
             )
         })
@@ -2417,6 +2933,7 @@ mod tests {
                 GridModel {
                     cell: vt_cell,
                     header: vt_header,
+                    decoration: no_decoration,
                 },
             )
         })
@@ -2674,6 +3191,7 @@ mod tests {
                 GridModel {
                     cell: vt_marker_cell,
                     header: vt_header,
+                    decoration: no_decoration,
                 },
             )
         });
@@ -2742,6 +3260,7 @@ mod tests {
                 GridModel {
                     cell: vt_marker_cell,
                     header: vt_header,
+                    decoration: no_decoration,
                 },
             )
         })
@@ -2898,6 +3417,7 @@ mod tests {
                 GridModel {
                     cell: vt_cell,
                     header: vt_header,
+                    decoration: no_decoration,
                 },
             )
         })
@@ -2993,6 +3513,7 @@ mod tests {
             GridModel {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
                 header: wide_header,
+                decoration: no_decoration,
             },
         )
     }
@@ -3004,7 +3525,11 @@ mod tests {
         viewport_w: u32,
         offset_x: i32,
         frozen_cols: usize,
-        model: GridModel<impl FnMut(CellIndex) -> String, impl FnMut(usize) -> String>,
+        model: GridModel<
+            impl FnMut(CellIndex) -> String,
+            impl FnMut(usize) -> String,
+            impl FnMut(CellIndex) -> Option<CellDecoration>,
+        >,
     ) -> Scene {
         let widths = wide_widths();
         let body = Rc::new(ScrollState::new());
@@ -3117,6 +3642,7 @@ mod tests {
                     format!("r{}c{}", c.row, c.col)
                 },
                 header: wide_header,
+                decoration: no_decoration,
             },
         );
         (scene, log.into_inner())
@@ -3136,6 +3662,7 @@ mod tests {
                     log.borrow_mut().push(col);
                     wide_header(col)
                 },
+                decoration: no_decoration,
             },
         );
         (scene, log.into_inner())
@@ -3375,6 +3902,7 @@ mod tests {
             GridModel {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
                 header: |_: usize| String::new(),
+                decoration: no_decoration,
             },
         );
         assert_eq!(

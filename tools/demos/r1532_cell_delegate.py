@@ -72,6 +72,10 @@ TABLE_TAG = "vtbl"
 NCOLS = 4
 #: The delegated column's absolute index (`Load`).
 LOAD_COL = 3
+#: `load_bar`'s track height — the gauge wrapper is this tall, which is how
+#: this demo tells a bar from R1535's decoration mark (both are untagged
+#: empty containers, and `TableStyle::decoration_px` is also 10).
+BAR_H = 10
 #: The example's synthetic datum for a row, mirrored here so the demo checks
 #: the painted text against a value it derived independently rather than
 #: against whatever the app happened to say.
@@ -183,19 +187,32 @@ def body() -> None:
         )
 
         # ── (C) the delegated column is different ────────────────────
-        # The gauge is two nested boxes with an explicit height; a text cell
-        # has none. Compare the delegated cell's subtree against a text one's
-        # rather than asserting a constant, so the claim is a difference
-        # between columns and not a fact about one.
+        # The gauge is a track+fill pair inside the BAR_H-tall wrapper
+        # `load_bar` builds; a text cell has none. Compare the delegated
+        # cell's subtree against a text one's rather than asserting a
+        # constant, so the claim is a difference between columns and not a
+        # fact about one.
+        #
+        # R1535 — identified through the WRAPPER, not as "an untagged empty
+        # container". The decoration swatch is one of those too, and
+        # `TableStyle::decoration_px` happens to equal `BAR_H`, so the older
+        # predicate counted a decorated column's marks as bars and this
+        # section's negative control started failing the moment a second
+        # column grew a mark. A probe that names a node kind by a property
+        # another kind also has is a probe that expires.
         def boxes(node) -> int:
-            out: list = []
-            walk(node, out)
+            wrappers = [
+                ch
+                for ch in (node.get("children") or [])
+                if ch.get("type") == "Container"
+                and ch.get("children")
+                and (ch.get("rect") or {}).get("h") == BAR_H
+            ]
             return sum(
                 1
-                for n in out
-                if n.get("type") == "Container"
-                and not n.get("tag")
-                and not n.get("children")
+                for w in wrappers
+                for g in w["children"]
+                if g.get("type") == "Container" and not g.get("children")
             )
 
         text_cell = cell_node(ns, 0, 0)
