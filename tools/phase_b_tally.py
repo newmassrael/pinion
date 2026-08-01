@@ -160,9 +160,39 @@ AXES = [
                 "dock-presets",
             ]),
         ],
-        "judged_at": 1519,
-        "completion": 85,
-        "evidence_snapshot": {"example-name": 26, "round-axis": 0},
+        # R1532 re-judgment, demanded by this axis's round count going 0 -> 1
+        # — the first round to declare `dcc` since the ledger existed.
+        #
+        # It corrects the judgment as well as moving it, which is the third
+        # time a demanded re-judgment has done that (R1528 is the lineage).
+        # R1519 said 85% and named three remaining items: node *evaluation*,
+        # advanced delegates, and per-element modified-reset. **Two of the
+        # three were already closed when it was written** — node evaluation
+        # landed R1255-R1264 and the modified indicator + reset arrow landed
+        # R958 — so the stated gap had been describing work already done for
+        # ~250 rounds.
+        #
+        # R1532 closes the PAINT half of the third: a column can now declare
+        # how its cells are drawn (Qt `setItemDelegateForColumn`), which is
+        # the extension point that decides whether a grid can have a bar
+        # column, a mark column or a swatch column at all. Before it, a
+        # binding wanting one had to stop using the grid's cell path — which
+        # is exactly what `hello-property-grid`'s `ranged_slider_cell` does.
+        #
+        # Only +3, and the remaining item is verified rather than assumed:
+        # the delegate covers paint and not EDITING. Qt's
+        # `QStyledItemDelegate` also owns `createEditor` / `setEditorData` /
+        # `setModelData`, and every editable grid here still hand-rolls its
+        # own edit latch. The seam also has one consumer — six example
+        # bindings still build cell subtrees outside the grid's cell path.
+        #
+        # Deliberately NOT counted as remaining: comment frames and marquee
+        # box-select in the node editor, which an audit this round found
+        # already present (R1227). A gap list is worth only what it is
+        # checked against.
+        "judged_at": 1532,
+        "completion": 88,
+        "evidence_snapshot": {"example-name": 26, "round-axis": 1},
     },
     {
         "key": "modelview",
