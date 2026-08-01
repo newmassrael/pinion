@@ -179,11 +179,14 @@ fn chart_style(theme: &pinion_core::Theme) -> ChartStyle {
 /// the chart's axis `margin` so it sits under the data, not the y-axis labels —
 /// reading as an overview of the full series.
 fn brush_strip(theme: &pinion_core::Theme, style: &ChartStyle, low: f32, high: f32) -> Scene {
-    let m = style.margin;
+    // R1534 — the axis's own pixel span, from the crate that draws it
+    // (`plot_area`), rather than re-deriving the margin insets here. Two
+    // bindings carried that arithmetic and a third was about to.
+    let axis = pinion_chart::plot_area(CHART_RECT, style.margin);
     let track = Rect::new(
-        CHART_RECT.x + m.left,
+        axis.x,
         CHART_RECT.y + CHART_RECT.h + BRUSH_GAP,
-        CHART_RECT.w.saturating_sub(m.left + m.right).max(1),
+        axis.w,
         BRUSH_H,
     );
     let colors = BrushStripColors {

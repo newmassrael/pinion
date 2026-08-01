@@ -50,7 +50,13 @@ pub struct Brush {
 impl Brush {
     /// The default narrowest window, as a fraction of the x-extent — keeps
     /// the mapped domain non-degenerate even when the two thumbs coincide.
-    pub const DEFAULT_MIN_SPAN: f32 = 0.04;
+    ///
+    /// R1534 — defined as [`PlotWindow::DEFAULT_MIN_SPAN`], because a plot and
+    /// its own overview strip window the SAME axis and must bottom out at the
+    /// same place.
+    ///
+    /// [`PlotWindow::DEFAULT_MIN_SPAN`]: crate::PlotWindow::DEFAULT_MIN_SPAN
+    pub const DEFAULT_MIN_SPAN: f32 = crate::PlotWindow::DEFAULT_MIN_SPAN;
 
     /// The alpha the selected span is drawn at (the accent, translucent so
     /// the track reads through it).
@@ -131,12 +137,11 @@ impl Brush {
         };
         let high = high.max(low + self.min_span).min(1.0);
         let low = low.min(high - self.min_span).max(0.0);
-        let (x_min, x_max) = self.x_extent;
-        let span = x_max - x_min;
-        (
-            x_min + f64::from(low) * span,
-            x_min + f64::from(high) * span,
-        )
+        // R1534 — the mapping itself lives in `window::map_window`, the one
+        // statement of what a window fraction means, shared with the plot's
+        // own `PlotWindow::domain`. Only the clamping above is the brush's,
+        // because raw thumb fractions can arrive reversed or collapsed.
+        crate::window::map_window((low, high), self.x_extent)
     }
 
     /// The overview strip: a [`tag`](Self::tag)-carrying track (the

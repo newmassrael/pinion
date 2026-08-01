@@ -214,6 +214,7 @@ mod style;
 mod ticks;
 mod timeline;
 mod treemap;
+mod window;
 
 pub use bar::{Bar, BarChart};
 pub use brush::{Brush, BrushStripColors};
@@ -237,3 +238,4 @@ pub use ticks::{
 };
 pub use timeline::{Lane, Span, Timeline};
 pub use treemap::{Tile, Treemap, color_value_bounds};
+pub use window::{PlotWindow, map_window, plot_area};

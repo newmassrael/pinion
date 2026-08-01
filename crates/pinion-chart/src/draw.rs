@@ -48,10 +48,13 @@ pub(crate) const MUTED_ALPHA: u8 = 0x4D;
 /// categorical (bar), so all three cartesian builders share this one definition
 /// (R1374).
 pub(crate) fn plot_rect(rect: Rect, margin: Margin) -> (f32, f32, f32, f32) {
-    let x0 = rect.x + margin.left;
-    let y0 = rect.y + margin.top;
-    let x1 = (rect.x + rect.w).saturating_sub(margin.right).max(x0 + 1);
-    let y1 = (rect.y + rect.h).saturating_sub(margin.bottom).max(y0 + 1);
+    // R1534 — derived from the public [`crate::plot_area`] rather than
+    // recomputing the insets, so a consumer aligning something to the axis
+    // (a brush strip, a wheel-zoom target) and the axis itself cannot land a
+    // pixel apart.
+    let area = crate::plot_area(rect, margin);
+    let (x0, y0) = (area.x, area.y);
+    let (x1, y1) = (area.x + area.w, area.y + area.h);
     (to_f32(x0), to_f32(x1), to_f32(y0), to_f32(y1))
 }
 
