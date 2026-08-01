@@ -62,13 +62,31 @@ pub use sm::SliderPolicy;
 // `WidgetCore::read_state` + `WidgetCore::event_name` via
 // `state_name_derive` + `event_name_derive` on `#[widget(...)]`.
 
+use crate::event::WheelStepper;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
+use crate::input::Modifiers;
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
+
+/// R1533 §5.45 §5.38 — one wheel notch on a **continuous** slider, in
+/// normalised units.
+///
+/// A discrete slider steps by its own [`Slider::step`]; a continuous one has
+/// no such unit, and Qt offers no guidance because a `QSlider` is always an
+/// integer range. 5% is the small step every slider binding in this repo
+/// already spells in its arrow-key map (`hello-slider`, `hello-scrubber`,
+/// `settings-panel`), which is the property worth preserving: Qt ties the
+/// wheel and the arrow keys to ONE `singleStep`, so a wheel notch and an
+/// `ArrowRight` moving the same distance is the contract, not a coincidence.
+///
+/// A per-slider override (Qt's `setSingleStep`) is the natural extension the
+/// moment a binding wants a different one; none does today, so the constant
+/// is not yet a builder ([[abstraction-needs-second-consumer]]).
+pub const CONTINUOUS_WHEEL_STEP: f32 = 0.05;
 
 /// R51.39 §5.38 — Slider track orientation. `Horizontal` (the
 /// default) places the value progression along the X axis with `0.0`
@@ -277,17 +295,29 @@ impl WidgetTransition for Slider {
 ///   on `Dragging → Hover` activate (drag-end commit channel).
 pub struct SliderExternal {
     em: IntentEmitter<Slider>,
+    /// R1533 §5.45 — sub-notch wheel carry (see [`Self::wheel`]). Per
+    /// instance, exactly as each Qt `QAbstractSlider` owns its own
+    /// `offset_accumulated`: two sliders on one screen must not spend each
+    /// other's banked motion.
+    wheel: WheelStepper,
 }
 
 impl SliderExternal {
+    /// R1533 — the one place the non-statechart fields are initialised, so a
+    /// fifth constructor cannot forget one.
+    fn from_em(em: IntentEmitter<Slider>) -> Self {
+        Self {
+            em,
+            wheel: WheelStepper::new(),
+        }
+    }
+
     /// Construct a horizontal Slider external. Backwards-compat: the
     /// pre-R51.39 default — no vertical-axis change for existing
     /// callers (hello-slider, RPC clients, integration tests).
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            em: IntentEmitter::default(),
-        }
+        Self::from_em(IntentEmitter::default())
     }
 
     /// R51.39 §5.38 — construct a Slider external with an explicit
@@ -297,9 +327,7 @@ impl SliderExternal {
     /// reports the right ARIA-aligned string.
     #[must_use]
     pub fn with_axis(axis: SliderAxis) -> Self {
-        Self {
-            em: IntentEmitter::new(Slider::with_axis(axis)),
-        }
+        Self::from_em(IntentEmitter::new(Slider::with_axis(axis)))
     }
 
     /// R737 §5.38 — construct a *discrete* horizontal Slider external
@@ -310,18 +338,14 @@ impl SliderExternal {
     /// vertical axis via [`Self::with_axis_step`].
     #[must_use]
     pub fn with_step(step: f32) -> Self {
-        Self {
-            em: IntentEmitter::new(Slider::new().with_step(step)),
-        }
+        Self::from_em(IntentEmitter::new(Slider::new().with_step(step)))
     }
 
     /// R737 §5.38 — discrete Slider external on an explicit
     /// [`SliderAxis`] (the `with_axis` + `with_step` combination).
     #[must_use]
     pub fn with_axis_step(axis: SliderAxis, step: f32) -> Self {
-        Self {
-            em: IntentEmitter::new(Slider::with_axis(axis).with_step(step)),
-        }
+        Self::from_em(IntentEmitter::new(Slider::with_axis(axis).with_step(step)))
     }
 
     /// R51.39 §5.38 — track orientation (delegates to
@@ -354,14 +378,19 @@ impl SliderExternal {
     }
 
     /// Set the value and queue a `"value_changing"` intent on
-    /// effective change.
-    pub fn set_value(&mut self, v: f32) {
-        if self.em.inner.set_value(v) {
+    /// effective change. Returns whether the stored value actually moved,
+    /// mirroring [`Slider::set_value`]'s own gate-by-effect return — R1533
+    /// needs it, because a wheel that pushed an already-saturated value has
+    /// to decline the event rather than swallow it (see [`Self::wheel`]).
+    pub fn set_value(&mut self, v: f32) -> bool {
+        let changed = self.em.inner.set_value(v);
+        if changed {
             self.em.push(Intent::new_static(
                 "value_changing",
                 IntrospectValue::Float(f64::from(self.em.inner.value())),
             ));
         }
+        changed
     }
 
     /// Current interaction state.
@@ -443,6 +472,75 @@ impl External for SliderExternal {
             SliderAxis::Vertical => 1.0 - y_rel,
         };
         self.set_value(value_axis.clamp(0.0, 1.0));
+    }
+
+    /// R1533 §5.45 §5.38 — the wheel steps the value: Qt
+    /// `QAbstractSlider::wheelEvent`, and the reason every volume slider,
+    /// zoom slider and DCC parameter track in a desktop tool answers a
+    /// wheel without being clicked first.
+    ///
+    /// One notch ([`LINE_HEIGHT_PX`](crate::event::LINE_HEIGHT_PX) pixels) is
+    /// one [`CONTINUOUS_WHEEL_STEP`] on a continuous slider, or one snap
+    /// [`Slider::step`] on a discrete one — so a discrete slider walks its
+    /// own stops and cannot land between them. Qt reaches the same place
+    /// from the other side: there `singleStep` *is* the wheel step, and its
+    /// slider is an integer range whose unit is that step.
+    ///
+    /// Sub-notch motion banks in a [`WheelStepper`] rather than rounding to
+    /// nothing, so a trackpad moves the slider at all.
+    ///
+    /// Deliberately NOT Qt's `wheelScrollLines` multiplier (Qt travels
+    /// **three** single-steps a notch): that constant exists because a Qt
+    /// slider's step is usually 1 of a 0..99 range, whereas a step here is a
+    /// normalised fraction the binding chose — `hello-slider-discrete` has
+    /// six stops, and three of them a notch is not a slider, it is a jump.
+    ///
+    /// Only the **vertical** wheel axis is read, on both orientations. That
+    /// is the axis every mouse has, and it keeps "wheel forward raises the
+    /// value" true for a vertical and a horizontal track alike (Qt
+    /// normalises orientation for the same reason). A horizontal wheel /
+    /// trackpad axis on a horizontal track is a further refinement, not a
+    /// different rule.
+    ///
+    /// Returns the [`WheelStepper`] verdict — consume while banking or
+    /// stepping, **decline** once saturated so the wheel this slider cannot
+    /// use reaches the scroll container behind it.
+    fn wheel(
+        &mut self,
+        _x_rel: f32,
+        _y_rel: f32,
+        _dx: f32,
+        dy: f32,
+        _modifiers: Modifiers,
+    ) -> bool {
+        let notches = self.wheel.feed(dy);
+        if notches == 0 {
+            return true;
+        }
+        let step = self.em.inner.step().unwrap_or(CONTINUOUS_WHEEL_STEP);
+        // W3C sign: a positive `dy` scrolls DOWN, so a wheel pushed forward
+        // arrives negative and must RAISE the value.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a notch count large enough to lose f32 precision is \
+                      millions of screens of wheel in one event; the value it \
+                      derives is clamped to [0, 1] either way"
+        )]
+        let target = self.em.inner.value() - notches as f32 * step;
+        if !self.set_value(target) {
+            self.wheel.reset();
+            return false;
+        }
+        // A notch is atomic — there is no press to release — so the value it
+        // leaves is settled, and the commit channel has to say so or a
+        // consumer that persists / seeks on commit only (`hello-scrubber`,
+        // `settings-panel`) would see the thumb move and never act. Qt's
+        // wheel likewise emits `valueChanged`, not just `sliderMoved`.
+        self.em.push(Intent::new_static(
+            crate::widgets::commit::VALUE_COMMITTED_EVENT,
+            IntrospectValue::Float(f64::from(self.em.inner.value())),
+        ));
+        true
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -925,5 +1023,205 @@ mod tests {
         let schema = sx.schema();
         let fields: Vec<&str> = schema.fields.iter().map(|f| f.path).collect();
         assert!(fields.contains(&"orientation"), "fields = {fields:?}");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1533 §5.45 §5.38 — the wheel steps the value (Qt
+    // `QAbstractSlider::wheelEvent`).
+    // ─────────────────────────────────────────────────────────────────
+
+    /// One notch of forward wheel, in the pixel units the router hands out.
+    /// Negative per the W3C sign convention (`dy > 0` scrolls DOWN), which is
+    /// the half a sign error gets wrong.
+    const NOTCH_UP: f32 = -crate::event::LINE_HEIGHT_PX;
+    const NOTCH_DOWN: f32 = crate::event::LINE_HEIGHT_PX;
+
+    fn wheel(sx: &mut SliderExternal, dy: f32) -> bool {
+        External::wheel(sx, 0.5, 0.5, 0.0, dy, Modifiers::empty())
+    }
+
+    #[test]
+    fn r1533_forward_wheel_raises_a_continuous_slider_by_one_step() {
+        let mut sx = SliderExternal::new();
+        sx.set_value(0.5);
+        assert!(wheel(&mut sx, NOTCH_UP), "the slider consumed the wheel");
+        assert!(
+            (sx.value() - (0.5 + CONTINUOUS_WHEEL_STEP)).abs() < 1e-6,
+            "forward wheel RAISES the value: 0.5 -> {}",
+            sx.value()
+        );
+        assert!(wheel(&mut sx, NOTCH_DOWN));
+        assert!(
+            (sx.value() - 0.5).abs() < 1e-6,
+            "and back the other way: {}",
+            sx.value()
+        );
+    }
+
+    #[test]
+    fn r1533_a_discrete_slider_walks_its_own_stops() {
+        // The property that makes the step the widget's and not the wheel's:
+        // a 5-stop slider must land ON a stop, never 5% away from one.
+        let mut sx = SliderExternal::with_step(0.2);
+        sx.set_value(0.4);
+        assert!(wheel(&mut sx, NOTCH_UP));
+        assert!(
+            (sx.value() - 0.6).abs() < 1e-6,
+            "one notch = one stop, got {}",
+            sx.value()
+        );
+        assert!(wheel(&mut sx, NOTCH_UP));
+        assert!((sx.value() - 0.8).abs() < 1e-6, "got {}", sx.value());
+    }
+
+    #[test]
+    fn r1533_a_vertical_slider_reads_the_same_wheel_axis() {
+        // Wheel-forward raises on BOTH orientations — there is no vertical
+        // wheel on a horizontal mouse, so keying the value axis to the track
+        // would leave one of the two orientations dead.
+        let mut sx = SliderExternal::with_axis(SliderAxis::Vertical);
+        sx.set_value(0.5);
+        assert!(wheel(&mut sx, NOTCH_UP));
+        assert!(
+            (sx.value() - (0.5 + CONTINUOUS_WHEEL_STEP)).abs() < 1e-6,
+            "got {}",
+            sx.value()
+        );
+    }
+
+    #[test]
+    fn r1533_sub_notch_wheel_is_consumed_without_moving() {
+        // The banked verdict. Declining here would let the scroll container
+        // behind the slider jitter the page between notches of a trackpad.
+        let mut sx = SliderExternal::new();
+        sx.set_value(0.5);
+        assert!(
+            wheel(&mut sx, NOTCH_UP / 4.0),
+            "a quarter notch is still the slider's wheel"
+        );
+        assert!(
+            (sx.value() - 0.5).abs() < f32::EPSILON,
+            "and it did not move the value: {}",
+            sx.value()
+        );
+        for _ in 0..3 {
+            wheel(&mut sx, NOTCH_UP / 4.0);
+        }
+        assert!(
+            (sx.value() - (0.5 + CONTINUOUS_WHEEL_STEP)).abs() < 1e-6,
+            "four quarters make the notch: {}",
+            sx.value()
+        );
+    }
+
+    #[test]
+    fn r1533_saturated_wheel_is_declined_so_the_page_can_scroll() {
+        // The half the router acts on: a slider pinned at its bound must hand
+        // the wheel back, or a settings page cannot be scrolled past it.
+        let mut sx = SliderExternal::new();
+        sx.set_value(1.0);
+        assert!(
+            !wheel(&mut sx, NOTCH_UP),
+            "a slider at max declines a wheel that would raise it"
+        );
+        assert!(
+            wheel(&mut sx, NOTCH_DOWN),
+            "and still answers the direction it CAN move"
+        );
+        assert!((sx.value() - (1.0 - CONTINUOUS_WHEEL_STEP)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn r1533_saturation_drops_the_carry() {
+        // Without the reset, pixels banked while pushing a pinned bound get
+        // spent later on a step the user has stopped asking for.
+        //
+        // The recovery wheel has to go the SAME way as the saturating push:
+        // a reversal is dropped by [`WheelStepper::feed`]'s own sign-flip
+        // reset, so a test that reverses passes with this reset deleted (it
+        // did — the counterfactual is what found it).
+        let mut sx = SliderExternal::new();
+        sx.set_value(1.0);
+        // Bank most of a notch upward against the ceiling, then saturate.
+        assert!(wheel(&mut sx, NOTCH_UP * 0.9));
+        assert!(!wheel(&mut sx, NOTCH_UP * 0.9), "the second fills a notch");
+        // A binding writes the value off the bound (`intervene`, a preference
+        // restore, a linked control) while the pointer has not moved.
+        sx.set_value(0.5);
+        // Three tenths of a notch, still upward. On a dropped carry this
+        // banks; on a kept one the 0.8-notch residue completes a notch at
+        // once. 0.3 and not 0.2: 0.2 lands the sum EXACTLY on the notch
+        // boundary, where binary rounding decides the trunc and the
+        // counterfactual passes by luck — measured, that is what it did.
+        assert!(wheel(&mut sx, NOTCH_UP * 0.3));
+        assert!(
+            (sx.value() - 0.5).abs() < f32::EPSILON,
+            "the residue against the ceiling is gone, so three tenths of a \
+             notch moves nothing; got {}",
+            sx.value()
+        );
+    }
+
+    #[test]
+    fn r1533_a_notch_emits_both_the_changing_and_the_committed_intent() {
+        // A notch is atomic: there is no drag to end, so if the commit
+        // channel stayed silent every consumer that persists or seeks on
+        // commit (`hello-scrubber`, `settings-panel`) would watch the thumb
+        // move and do nothing.
+        let mut sx = SliderExternal::new();
+        sx.set_value(0.5);
+        let mut drained = Vec::new();
+        sx.drain_intents(&mut |i| drained.push(i));
+        drained.clear();
+
+        assert!(wheel(&mut sx, NOTCH_UP));
+        sx.drain_intents(&mut |i| drained.push(i));
+        let tags: Vec<&str> = drained.iter().map(Intent::tag_str).collect();
+        assert_eq!(
+            tags,
+            vec!["value_changing", "value_committed"],
+            "the notch reports the move and then that it is settled"
+        );
+        for i in &drained {
+            match i.payload {
+                IntrospectValue::Float(v) => assert!(
+                    (v - f64::from(sx.value())).abs() < 1e-6,
+                    "both carry the post-notch value, got {v}"
+                ),
+                ref other => panic!("expected Float payload, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn r1533_a_declined_wheel_emits_nothing() {
+        let mut sx = SliderExternal::new();
+        sx.set_value(1.0);
+        let mut drained = Vec::new();
+        sx.drain_intents(&mut |i| drained.push(i));
+        drained.clear();
+        assert!(!wheel(&mut sx, NOTCH_UP));
+        sx.drain_intents(&mut |i| drained.push(i));
+        assert!(
+            drained.is_empty(),
+            "a wheel that moved nothing reports nothing, got {:?}",
+            drained.iter().map(Intent::tag_str).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn r1533_the_wheel_does_not_disturb_the_interaction_statechart() {
+        // A wheel is not a press. If it drove the SCXML the widget would
+        // paint as dragging under the cursor and the drag-end commit would
+        // fire a second time.
+        let mut sx = SliderExternal::new();
+        sx.send(SliderEvent::PointerEnter);
+        assert!(matches!(sx.state(), SliderState::Hover));
+        assert!(wheel(&mut sx, NOTCH_UP));
+        assert!(
+            matches!(sx.state(), SliderState::Hover),
+            "still Hover, got {:?}",
+            sx.state()
+        );
     }
 }

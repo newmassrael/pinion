@@ -54,3 +54,4 @@
 1530	modelview	the header is asked per section, Qt headerData: 200 -> 5 a frame
 1531	perf	the paint replays its glyph draw list, Skia SkTextBlob: 1489 -> 480 us
 1532	dcc	a column declares how its cells are painted, Qt setItemDelegateForColumn
+1533	catalog	a value widget answers the wheel, Qt QAbstractSlider::wheelEvent

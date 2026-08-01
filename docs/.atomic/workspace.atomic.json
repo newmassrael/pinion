@@ -78746,6 +78746,78 @@
         "`VirtualTableData` is now invariant in its lifetime because the delegate names it in a `Fn` return type. `GridRender` took a second lifetime parameter to absorb that; any future caller holding a `VirtualTableData` across differing borrows will meet the same constraint."
       ]
     },
+    "Round 1533": {
+      "decision_summary": "A value widget answers the wheel. External::wheel has been the router's stage-1 offer since R877 — on every wheel event the framework asks the widget under the cursor first, and only then falls through to the enclosing Scene::Scroll — and a census of the whole repo found ONE implementor: hello-node-editor's canvas, which zooms. Every widget in the catalog declined, so a wheel over a slider, a spin box or a number field did what a wheel over blank wallpaper does, it scrolled whatever was behind it. Qt implements wheelEvent on precisely these widgets (QAbstractSlider, QAbstractSpinBox), which is why every volume slider, zoom slider and DCC parameter field on a desktop answers a wheel without being clicked first. The hook was not missing. The widgets were not using it.",
+      "changes_bullets": [
+        "`WheelStepper` (pinion-core `event.rs`, beside `WheelDelta` and `LINE_HEIGHT_PX`) banks sub-notch pixels: Qt's `offset_accumulated` / `wheelDeltaRemainder`, one home. A continuous consumer — the node canvas' zoom exponent — can divide a pixel delta and be done; a stepped one cannot, because a trackpad reporting 0.4px an event rounds to zero forever and the widget never moves.",
+        "The type also states the three-way consume verdict both widgets follow. Banked (under one notch): consume, so the page behind cannot jitter between the notches of a slow trackpad. Stepped: consume. Saturated: DECLINE and drop the carry, so the wheel this widget cannot spend reaches the scroll container behind it.",
+        "`SliderExternal::wheel` is Qt `QAbstractSlider::wheelEvent`: one notch is one snap `step` on a discrete slider (so it walks its own stops) or one `CONTINUOUS_WHEEL_STEP` on a continuous one. 5% is what every slider binding here already spells in its arrow-key map, which preserves Qt's real invariant — one `singleStep` drives the wheel and the arrows alike.",
+        "A notch emits `value_changing` AND `value_committed`. A notch is atomic (there is no press to release), so if the commit channel stayed silent every consumer that persists or seeks on commit only — hello-scrubber, settings-panel — would watch the thumb move and do nothing. Qt's wheel likewise emits `valueChanged`, not just `sliderMoved`.",
+        "`SpinButtonExternal::wheel` is the same rule in domain units (Qt `QAbstractSpinBox::wheelEvent`). Two deliberate divergences from Qt, both toward the slider's rule: no `Ctrl`-times-ten step, and no always-accept — Qt's spin box eats the page scroll of any form containing a field pinned at its bound.",
+        "Qt's `wheelScrollLines` multiplier (three single-steps a notch) is deliberately not carried over: it exists because a QSlider's step is 1 of a 0..99 range, whereas a step here is a normalised fraction the binding chose. hello-slider-discrete has six stops, and three a notch is not a slider.",
+        "`SliderExternal::set_value` returns `bool` now, mirroring the `Slider::set_value` it wraps. The wheel needs the gate-by-effect answer to tell a step from a saturated push; every existing call site is a statement.",
+        "New demo r1533_wheel_steps_value (42 assertions, sections A-H) over four bindings, no pixels: hello-slider, hello-slider-discrete, hello-spinbutton, and hello-range-slider as the negative control."
+      ],
+      "verification_bullets": [
+        "Nine unit counterfactuals and two demo counterfactuals, one at a time, each reverted before the next. Sign flipped: 9 tests fail. Banked verdict declines: 3. Saturation consumes (Qt's spin-box rule): 4. No commit intent: 2. `round` for `trunc`: 8. No direction-flip reset: 2. Spin-button sign / saturation: 6 and 2.",
+        "The saturation-reset counterfactual found a discrimination gap TWICE and both were closed, not recorded. First pass: the test reversed direction to recover, and `feed`'s own sign-flip reset drops the carry on a reversal, so deleting the saturation reset changed nothing. Second pass: recovering in the same direction, the chosen fractions summed EXACTLY onto the notch boundary and binary rounding decided the trunc — the counterfactual passed by luck. With 0.3 of a notch instead of 0.2 it fails, alone.",
+        "Demo counterfactuals rebuilt the release binaries and re-ran: making the slider decline every wheel fails at section B; replacing the accumulator with a per-event truncation fails at section D, which is the assertion that carry exists for.",
+        "Measured end to end through the real router, not the widget in isolation: hello-slider 0.0 to 0.05 on one notch, hello-spinbutton 3.0 to 4.0, and the AccessKit node's `value.float.value` tracks the wheel so a screen reader reads the number a sighted user sees.",
+        "The wheel does not disturb either statechart: the slider reads Hover (the cursor is over it), never Dragging, and both spin-button steppers stay Idle — a phantom pressed arrow is what routing a wheel through the stepper channel would paint.",
+        "Local gates: pinion-core 2870 tests, pinion-widget-paint 749, eight slider/spin/scrubber/settings consumer examples, all pass. `cargo clippy --workspace --all-targets -D pedantic` clean. Demo r1533 passes in 8.2s.",
+        "Doc-to-code ratio on the round's added Rust: 0.55x, inside the R661 1.5x baseline."
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.38",
+        "5.15",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The router keeps its own pixel remainder (`wheel_remainders`, plus the middle-pan copy) and was left alone: same shape, different unit boundary — it rounds toward whole scroll pixels where this truncates toward whole notches. Unifying them needs a unit parameter and a rounding mode, which is a forced abstraction at two consumers, so it is recorded rather than built.",
+        "No modifier arm on either widget. Qt's slider pages on Ctrl/Shift and its spin box multiplies by ten; a slider here has no page-step property to answer with, and one rule on both beats a modifier that means something on one widget and nothing on the other.",
+        "Only the vertical wheel axis is read. A horizontal wheel or trackpad axis over a horizontal track is a refinement the same hook absorbs.",
+        "Qt has `wheelEvent` on `QComboBox` and `QTabBar` too, and neither combobox (`virtual_select`) nor the tab bar answers a wheel here. That is index arithmetic rather than value arithmetic, and it is the third consumer that would decide whether the verdict belongs in `WheelStepper` as a combinator.",
+        "The range slider is deliberately without a wheel and is this round's negative control: Qt has no two-thumb slider, so there is no `wheelEvent` to mirror and no answer to which thumb a notch moves.",
+        "Browsers gate a number field's wheel on FOCUS (Chrome and Firefox both), Qt does not, and this round follows Qt. A focus gate would be the first production consumer of `focus_state::focused()`, which is the open half of [[debt-a11y-focus-flag-unforced]].",
+        "A banked sub-notch consumes, so the shell requests a repaint for a frame that paints identically. The cost was not measured; the fragment cache (R1520/R1527) is what makes it plausibly free."
+      ],
+      "publishable_decision_summary": "A value widget answers the wheel. External::wheel has been the router's stage-1 offer since R877 — on every wheel event the framework asks the widget under the cursor first, and only then falls through to the enclosing Scene::Scroll — and a census of the whole repo found ONE implementor: hello-node-editor's canvas, which zooms. Every widget in the catalog declined, so a wheel over a slider, a spin box or a number field did what a wheel over blank wallpaper does, it scrolled whatever was behind it. Qt implements wheelEvent on precisely these widgets (QAbstractSlider, QAbstractSpinBox), which is why every volume slider, zoom slider and DCC parameter field on a desktop answers a wheel without being clicked first. The hook was not missing. The widgets were not using it.",
+      "publishable_changes_bullets": [
+        "`WheelStepper` (pinion-core `event.rs`, beside `WheelDelta` and `LINE_HEIGHT_PX`) banks sub-notch pixels: Qt's `offset_accumulated` / `wheelDeltaRemainder`, one home. A continuous consumer — the node canvas' zoom exponent — can divide a pixel delta and be done; a stepped one cannot, because a trackpad reporting 0.4px an event rounds to zero forever and the widget never moves.",
+        "The type also states the three-way consume verdict both widgets follow. Banked (under one notch): consume, so the page behind cannot jitter between the notches of a slow trackpad. Stepped: consume. Saturated: DECLINE and drop the carry, so the wheel this widget cannot spend reaches the scroll container behind it.",
+        "`SliderExternal::wheel` is Qt `QAbstractSlider::wheelEvent`: one notch is one snap `step` on a discrete slider (so it walks its own stops) or one `CONTINUOUS_WHEEL_STEP` on a continuous one. 5% is what every slider binding here already spells in its arrow-key map, which preserves Qt's real invariant — one `singleStep` drives the wheel and the arrows alike.",
+        "A notch emits `value_changing` AND `value_committed`. A notch is atomic (there is no press to release), so if the commit channel stayed silent every consumer that persists or seeks on commit only — hello-scrubber, settings-panel — would watch the thumb move and do nothing. Qt's wheel likewise emits `valueChanged`, not just `sliderMoved`.",
+        "`SpinButtonExternal::wheel` is the same rule in domain units (Qt `QAbstractSpinBox::wheelEvent`). Two deliberate divergences from Qt, both toward the slider's rule: no `Ctrl`-times-ten step, and no always-accept — Qt's spin box eats the page scroll of any form containing a field pinned at its bound.",
+        "Qt's `wheelScrollLines` multiplier (three single-steps a notch) is deliberately not carried over: it exists because a QSlider's step is 1 of a 0..99 range, whereas a step here is a normalised fraction the binding chose. hello-slider-discrete has six stops, and three a notch is not a slider.",
+        "`SliderExternal::set_value` returns `bool` now, mirroring the `Slider::set_value` it wraps. The wheel needs the gate-by-effect answer to tell a step from a saturated push; every existing call site is a statement.",
+        "New demo r1533_wheel_steps_value (42 assertions, sections A-H) over four bindings, no pixels: hello-slider, hello-slider-discrete, hello-spinbutton, and hello-range-slider as the negative control."
+      ],
+      "publishable_verification_bullets": [
+        "Nine unit counterfactuals and two demo counterfactuals, one at a time, each reverted before the next. Sign flipped: 9 tests fail. Banked verdict declines: 3. Saturation consumes (Qt's spin-box rule): 4. No commit intent: 2. `round` for `trunc`: 8. No direction-flip reset: 2. Spin-button sign / saturation: 6 and 2.",
+        "The saturation-reset counterfactual found a discrimination gap TWICE and both were closed, not recorded. First pass: the test reversed direction to recover, and `feed`'s own sign-flip reset drops the carry on a reversal, so deleting the saturation reset changed nothing. Second pass: recovering in the same direction, the chosen fractions summed EXACTLY onto the notch boundary and binary rounding decided the trunc — the counterfactual passed by luck. With 0.3 of a notch instead of 0.2 it fails, alone.",
+        "Demo counterfactuals rebuilt the release binaries and re-ran: making the slider decline every wheel fails at section B; replacing the accumulator with a per-event truncation fails at section D, which is the assertion that carry exists for.",
+        "Measured end to end through the real router, not the widget in isolation: hello-slider 0.0 to 0.05 on one notch, hello-spinbutton 3.0 to 4.0, and the AccessKit node's `value.float.value` tracks the wheel so a screen reader reads the number a sighted user sees.",
+        "The wheel does not disturb either statechart: the slider reads Hover (the cursor is over it), never Dragging, and both spin-button steppers stay Idle — a phantom pressed arrow is what routing a wheel through the stepper channel would paint.",
+        "Local gates: pinion-core 2870 tests, pinion-widget-paint 749, eight slider/spin/scrubber/settings consumer examples, all pass. `cargo clippy --workspace --all-targets -D pedantic` clean. Demo r1533 passes in 8.2s.",
+        "Doc-to-code ratio on the round's added Rust: 0.55x, inside the R661 1.5x baseline."
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.38",
+        "5.15",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The router keeps its own pixel remainder (`wheel_remainders`, plus the middle-pan copy) and was left alone: same shape, different unit boundary — it rounds toward whole scroll pixels where this truncates toward whole notches. Unifying them needs a unit parameter and a rounding mode, which is a forced abstraction at two consumers, so it is recorded rather than built.",
+        "No modifier arm on either widget. Qt's slider pages on Ctrl/Shift and its spin box multiplies by ten; a slider here has no page-step property to answer with, and one rule on both beats a modifier that means something on one widget and nothing on the other.",
+        "Only the vertical wheel axis is read. A horizontal wheel or trackpad axis over a horizontal track is a refinement the same hook absorbs.",
+        "Qt has `wheelEvent` on `QComboBox` and `QTabBar` too, and neither combobox (`virtual_select`) nor the tab bar answers a wheel here. That is index arithmetic rather than value arithmetic, and it is the third consumer that would decide whether the verdict belongs in `WheelStepper` as a combinator.",
+        "The range slider is deliberately without a wheel and is this round's negative control: Qt has no two-thumb slider, so there is no `wheelEvent` to mirror and no answer to which thumb a notch moves.",
+        "Browsers gate a number field's wheel on FOCUS (Chrome and Firefox both), Qt does not, and this round follows Qt. A focus gate would be the first production consumer of `focus_state::focused()`, which is the open half of [[debt-a11y-focus-flag-unforced]].",
+        "A banked sub-notch consumes, so the shell requests a repaint for a frame that paints identically. The cost was not measured; the fragment cache (R1520/R1527) is what makes it plausibly free."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

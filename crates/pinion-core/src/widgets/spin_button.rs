@@ -26,10 +26,12 @@
 //! uses, on the *operable* role (Focus + Increment + Decrement AT
 //! actions), the 3rd `Float` consumer after `Slider` + `ProgressBar`.
 
+use crate::event::WheelStepper;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
+use crate::input::Modifiers;
 use crate::widgets::button::{Button, ButtonEvent, ButtonState};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -67,6 +69,9 @@ pub struct SpinButtonExternal {
     dec: Button,
     /// Increment stepper interaction state machine.
     inc: Button,
+    /// R1533 §5.45 — sub-notch wheel carry (see the `External::wheel` impl).
+    /// Per instance, like Qt's per-spinbox `wheelDeltaRemainder`.
+    wheel: WheelStepper,
 }
 
 impl SpinButtonExternal {
@@ -84,6 +89,7 @@ impl SpinButtonExternal {
             page_step: step,
             dec: Button::new(),
             inc: Button::new(),
+            wheel: WheelStepper::new(),
         };
         s.set_value(value);
         s
@@ -208,6 +214,7 @@ impl core::fmt::Debug for SpinButtonExternal {
             .field("page_step", &self.page_step)
             .field("dec", &self.dec.state())
             .field("inc", &self.inc.state())
+            .field("wheel", &self.wheel)
             .finish()
     }
 }
@@ -233,13 +240,68 @@ impl External for SpinButtonExternal {
         Some(self)
     }
 
+    /// R1533 §5.45 §5.38 — the wheel steps the value: Qt
+    /// `QAbstractSpinBox::wheelEvent`, the same input every native number
+    /// field answers, and the [`SliderExternal`](crate::widgets::slider)
+    /// wheel's sibling — one rule for both stepped value widgets, so a notch
+    /// means "one step" wherever the cursor is.
+    ///
+    /// One notch ([`LINE_HEIGHT_PX`](crate::event::LINE_HEIGHT_PX) pixels) is
+    /// one [`Self::step`], sub-notch motion banks in a [`WheelStepper`], and
+    /// the verdict is that type's: consume while banking or stepping, decline
+    /// once saturated.
+    ///
+    /// Two deliberate divergences from Qt's spin box, both toward the
+    /// slider's rule:
+    ///
+    /// * Qt **always** accepts the wheel, which is why scrolling a Qt form
+    ///   past a spin box pinned at its maximum eats the page scroll. A wheel
+    ///   this widget cannot spend belongs to the scroll container behind it.
+    /// * Qt's `Ctrl` multiplies the step by ten. The honest peer of that here
+    ///   is the page step [`Self::page_up`] / [`Self::page_down`] already
+    ///   drive, and the modifier arm is wired on neither widget yet — a
+    ///   slider has no page step to answer with, and one rule on both beats a
+    ///   modifier that means something here and nothing there.
+    ///
+    /// No intent: a spin button broadcasts none by design (see
+    /// [`Self::drain_intents`]), so the AI-visible effect is the `value`
+    /// introspect field, exactly as for `intervene` and the stepper buttons.
+    fn wheel(
+        &mut self,
+        _x_rel: f32,
+        _y_rel: f32,
+        _dx: f32,
+        dy: f32,
+        _modifiers: Modifiers,
+    ) -> bool {
+        let notches = self.wheel.feed(dy);
+        if notches == 0 {
+            return true;
+        }
+        // W3C sign: positive `dy` scrolls DOWN, so a forward wheel arrives
+        // negative and must RAISE the value.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a notch count that loses f32 precision is millions of \
+                      screens of wheel in one event; `set_value` clamps"
+        )]
+        let target = self.value - notches as f32 * self.step;
+        if !self.set_value(target) {
+            self.wheel.reset();
+            return false;
+        }
+        true
+    }
+
     /// A spin button emits no §5.20 intents — its value is observed and
     /// driven through the introspect channel, never broadcast.
     fn drain_intents(&mut self, _sink: &mut dyn FnMut(crate::intent::Intent)) {}
 
-    /// The value never changes on its own; every mutation arrives through
-    /// `intervene` / `invoke`, which the framework already follows with a
-    /// repaint. So the spin button is never self-dirty.
+    /// The value never changes on its own; every mutation arrives through a
+    /// channel the framework already follows with a repaint (`intervene` /
+    /// `invoke`, and since R1533 the [`Self::wheel`] hook — the router
+    /// requests a redraw whenever the hovered widget consumed a wheel). So
+    /// the spin button is never self-dirty.
     fn is_dirty(&self) -> bool {
         false
     }
@@ -579,5 +641,86 @@ mod tests {
             s.query("inc_state"),
             Some(IntrospectValue::Text("Hover".into()))
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1533 §5.45 §5.38 — the wheel steps the value (Qt
+    // `QAbstractSpinBox::wheelEvent`), one rule with the slider.
+    // ─────────────────────────────────────────────────────────────────
+
+    const NOTCH_UP: f32 = -crate::event::LINE_HEIGHT_PX;
+    const NOTCH_DOWN: f32 = crate::event::LINE_HEIGHT_PX;
+
+    fn wheel(s: &mut SpinButtonExternal, dy: f32) -> bool {
+        External::wheel(s, 0.5, 0.5, 0.0, dy, Modifiers::empty())
+    }
+
+    #[test]
+    fn r1533_one_notch_is_one_step_in_domain_units() {
+        // The spin button's step is in DOMAIN units, unlike the slider's
+        // normalised one — the same notch means "one of whatever this field
+        // counts".
+        let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 0.5);
+        assert!(wheel(&mut s, NOTCH_UP), "consumed");
+        assert!((s.value() - 5.5).abs() < 1e-6, "got {}", s.value());
+        assert!(wheel(&mut s, NOTCH_DOWN));
+        assert!((s.value() - 5.0).abs() < 1e-6, "got {}", s.value());
+    }
+
+    #[test]
+    fn r1533_several_notches_in_one_event_all_step() {
+        let mut s = SpinButtonExternal::new(5.0, 0.0, 100.0, 1.0);
+        assert!(wheel(&mut s, NOTCH_UP * 3.0));
+        assert!(
+            (s.value() - 8.0).abs() < 1e-6,
+            "three notches = three steps, got {}",
+            s.value()
+        );
+    }
+
+    #[test]
+    fn r1533_sub_notch_wheel_is_consumed_without_moving() {
+        let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
+        assert!(wheel(&mut s, NOTCH_UP / 2.0), "half a notch is still ours");
+        assert!((s.value() - 5.0).abs() < f32::EPSILON, "got {}", s.value());
+        assert!(wheel(&mut s, NOTCH_UP / 2.0));
+        assert!(
+            (s.value() - 6.0).abs() < 1e-6,
+            "two halves make the step, got {}",
+            s.value()
+        );
+    }
+
+    #[test]
+    fn r1533_saturated_wheel_is_declined_so_the_page_can_scroll() {
+        // The divergence from Qt, which always accepts and so eats the page
+        // scroll of any form containing a pinned spin box.
+        let mut s = SpinButtonExternal::new(10.0, 0.0, 10.0, 1.0);
+        assert!(!wheel(&mut s, NOTCH_UP), "at max, a raise is declined");
+        assert!(wheel(&mut s, NOTCH_DOWN), "the other direction still works");
+        assert!((s.value() - 9.0).abs() < 1e-6, "got {}", s.value());
+
+        let mut s = SpinButtonExternal::new(0.0, 0.0, 10.0, 1.0);
+        assert!(!wheel(&mut s, NOTCH_DOWN), "and the same at min");
+    }
+
+    #[test]
+    fn r1533_the_wheel_does_not_touch_the_stepper_statecharts() {
+        // The steppers are Buttons with their own SCXML; a wheel over the
+        // field is not a press on either arrow, and if it drove one the
+        // widget would paint a phantom pressed arrow.
+        let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
+        assert!(wheel(&mut s, NOTCH_UP));
+        assert_eq!(s.dec_state(), ButtonState::Idle);
+        assert_eq!(s.inc_state(), ButtonState::Idle);
+    }
+
+    #[test]
+    fn r1533_the_wheel_is_visible_through_introspect_like_every_other_step() {
+        // A spin button broadcasts no intent, so `value` IS the AI-facing
+        // report of a wheel — the same field `intervene` and the arrows move.
+        let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
+        assert!(wheel(&mut s, NOTCH_UP));
+        assert_eq!(s.query("value"), Some(IntrospectValue::Float(6.0)));
     }
 }

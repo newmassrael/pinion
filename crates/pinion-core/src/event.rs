@@ -108,6 +108,95 @@ pub enum WheelDelta {
 /// without breaking this API.
 pub const LINE_HEIGHT_PX: f32 = 16.0;
 
+/// R1533 §5.45 §5.38 — whole-notch accumulator for a **stepped** wheel
+/// consumer: Qt's `QAbstractSliderPrivate::offset_accumulated` /
+/// `QAbstractSpinBoxPrivate::wheelDeltaRemainder`, stated once.
+///
+/// [`External::wheel`](crate::external::External::wheel) hands out a
+/// *pixel* delta (`Lines` pre-scaled by [`LINE_HEIGHT_PX`]). A consumer
+/// that transforms **continuously** — a canvas zoom exponent — divides and
+/// is done, which is why the R877 doc above only mentions the constant. A
+/// consumer that moves in **discrete steps** cannot: one notch is
+/// [`LINE_HEIGHT_PX`] pixels, so a trackpad reporting 0.4 px an event would
+/// round to zero forever and the widget would never move. The remainder has
+/// to be banked between events — the same discipline the router keeps for
+/// its integer scroll offsets (`wheel_remainders`), and whose absence on one
+/// of two paths was already a shipped bug once (R881.1: the carry existed
+/// only on the middle-pan copy, so the exact `PixelDelta` stream the docs
+/// cited stalled on the wheel path). One home, so it cannot happen again.
+///
+/// ## The consume verdict (stated here for every stepped consumer)
+///
+/// A wheel handler answers three ways, and Qt's answers are the right ones:
+///
+/// * **banked** — [`Self::feed`] returned `0`, the motion so far is under one
+///   notch. **Consume** (`true`). The wheel belongs to the widget the moment
+///   it starts moving over it; declining here would let the enclosing scroll
+///   container jitter the page between notches of a slow trackpad drag.
+/// * **stepped** — the value moved. Consume.
+/// * **saturated** — whole notches fired but the value was already pinned at
+///   its bound. **Decline** (`false`) and [`Self::reset`] the carry, so the
+///   wheel the widget cannot use reaches the scroll container behind it.
+///
+/// The borrow checker is why this type offers the two halves rather than one
+/// combinator: a `FnOnce(i32) -> bool` applying the step would capture the
+/// widget that owns the accumulator.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WheelStepper {
+    /// Sub-notch pixels carried into the next event. Same sign as the
+    /// motion that banked them.
+    carry: f32,
+}
+
+impl WheelStepper {
+    /// A stepper with nothing banked.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { carry: 0.0 }
+    }
+
+    /// Fold one event's pixel delta into the carry and return the **whole**
+    /// notches that came free (`0` when the motion banked without filling a
+    /// notch). Sign follows the W3C convention the delta arrived in —
+    /// positive `delta_px` scrolls *downward*, so a value-increasing consumer
+    /// negates.
+    ///
+    /// A direction reversal drops the carry first (Qt's
+    /// `offset_accumulated = 0` on a sign flip): a user who reverses the wheel
+    /// expects the next notch to answer, not to first burn a carry banked the
+    /// other way.
+    ///
+    /// A non-finite delta (a malformed wire payload) banks nothing and
+    /// returns `0` rather than poisoning the carry with `NaN` — the
+    /// `clamp_frame_dt` / `round_clamp_i32` guard precedent.
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn feed(&mut self, delta_px: f32) -> i32 {
+        if !delta_px.is_finite() {
+            return 0;
+        }
+        if delta_px * self.carry < 0.0 {
+            self.carry = 0.0;
+        }
+        let total = self.carry + delta_px;
+        // `trunc` (toward zero), not `round`: a 0.9-notch motion has not
+        // reached a notch and must bank whole, or the widget steps early and
+        // the carry goes negative against its own direction.
+        let notches = (total / LINE_HEIGHT_PX).trunc();
+        self.carry = total - notches * LINE_HEIGHT_PX;
+        // `f32 as i32` saturates at the integer bounds since Rust 1.45, which
+        // is the wanted policy for an absurd wire delta: the caller clamps the
+        // value it derives anyway.
+        notches as i32
+    }
+
+    /// Drop the carry. Called on the **saturated** verdict above, so a wheel
+    /// that pushed a pinned value keeps no residue to spend later on a step
+    /// the user has since stopped asking for.
+    pub fn reset(&mut self) {
+        self.carry = 0.0;
+    }
+}
+
 /// Keyboard input. The `key` field is a placeholder until §5.13 settles
 /// the keycode taxonomy (W3C UI Events vs winit virtual key vs raw HID).
 #[non_exhaustive]
@@ -276,5 +365,97 @@ mod tests {
         match d {
             WheelDelta::Pixels { .. } | WheelDelta::Lines { .. } => {}
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1533 §5.45 §5.38 — [`WheelStepper`], the whole-notch accumulator
+    // a stepped wheel consumer needs (Qt `offset_accumulated`).
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1533_one_notch_of_pixels_is_one_step() {
+        let mut s = WheelStepper::new();
+        assert_eq!(s.feed(LINE_HEIGHT_PX), 1, "one notch of pixels = one step");
+        assert_eq!(s.feed(-LINE_HEIGHT_PX), -1, "and it signs with the motion");
+    }
+
+    #[test]
+    fn r1533_sub_notch_motion_banks_until_it_fills_a_notch() {
+        // The reason this type exists: a trackpad reporting a fraction of a
+        // notch per event must still move the widget. Rounding each event
+        // independently returns 0 forever.
+        let mut s = WheelStepper::new();
+        let tenth = LINE_HEIGHT_PX / 10.0;
+        for i in 1..=9 {
+            assert_eq!(s.feed(tenth), 0, "event {i} is under one notch");
+        }
+        assert_eq!(s.feed(tenth), 1, "the tenth tenth completes the notch");
+        assert_eq!(s.feed(tenth), 0, "and the carry restarts from zero");
+    }
+
+    #[test]
+    fn r1533_a_notch_and_a_half_steps_once_and_banks_the_half() {
+        let mut s = WheelStepper::new();
+        assert_eq!(s.feed(LINE_HEIGHT_PX * 1.5), 1, "the whole notch fires");
+        assert_eq!(
+            s.feed(LINE_HEIGHT_PX * 0.5),
+            1,
+            "the banked half plus a half is the second notch — a `round` \
+             here would have spent the half early and owed it back"
+        );
+    }
+
+    #[test]
+    fn r1533_several_notches_at_once_all_step() {
+        // A notched mouse wheel spun hard, or an RPC replay with a large
+        // pixel delta: every whole notch in the event must count.
+        let mut s = WheelStepper::new();
+        assert_eq!(s.feed(LINE_HEIGHT_PX * 4.0), 4);
+    }
+
+    #[test]
+    fn r1533_direction_reversal_drops_the_carry() {
+        // Qt's sign-flip reset. Without it the first notch back the other way
+        // has to burn a carry banked in the direction the user just left.
+        let mut s = WheelStepper::new();
+        assert_eq!(s.feed(LINE_HEIGHT_PX * 0.9), 0, "0.9 notches banked down");
+        assert_eq!(
+            s.feed(-LINE_HEIGHT_PX),
+            -1,
+            "reversing answers with a full notch immediately"
+        );
+        assert_eq!(
+            s.feed(-LINE_HEIGHT_PX * 0.9),
+            0,
+            "and the dropped 0.9 did not survive to leak into the reversal"
+        );
+    }
+
+    #[test]
+    fn r1533_reset_discards_the_carry() {
+        let mut s = WheelStepper::new();
+        assert_eq!(s.feed(LINE_HEIGHT_PX * 0.9), 0);
+        s.reset();
+        assert_eq!(
+            s.feed(LINE_HEIGHT_PX * 0.5),
+            0,
+            "after a saturated step the banked 0.9 is gone — 0.5 alone is \
+             under a notch"
+        );
+    }
+
+    #[test]
+    fn r1533_non_finite_delta_banks_nothing() {
+        // A malformed `scene/wheel` payload must not poison the carry: once
+        // NaN is banked every later comparison is false and the widget is
+        // dead for the rest of the session.
+        let mut s = WheelStepper::new();
+        assert_eq!(s.feed(f32::NAN), 0);
+        assert_eq!(s.feed(f32::INFINITY), 0);
+        assert_eq!(
+            s.feed(LINE_HEIGHT_PX),
+            1,
+            "the stepper still works after being handed garbage"
+        );
     }
 }
