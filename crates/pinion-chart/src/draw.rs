@@ -23,7 +23,7 @@ use pinion_core::style::{
 
 use crate::color_scale::ValueEncoding;
 use crate::style::{ChartStyle, Margin};
-use crate::ticks::{format_at_decimals, format_axis_tick, value_decimals};
+use crate::ticks::{TickFormat, format_at_decimals, value_decimals};
 
 /// Fixed width (px) of the inspect [`callout`] tooltip box. Wide enough for a
 /// line / scatter chart's `"{series}  {value}"` value rows; a bar chart's
@@ -461,6 +461,68 @@ pub(crate) fn gridlines(
     out
 }
 
+/// Multiply two `0..=255` alphas (`a * b / 255`) — dims an already
+/// translucent colour by a second factor, so a muted area reads lighter
+/// than a muted stroke rather than the same weight.
+///
+/// Lived in `line.rs` until R1528 gave [`MUTED_ALPHA`] a second dimming
+/// caller (the minor gridlines). It sits beside the constant it is almost
+/// always applied to; a `crate::line::mul_alpha` import in this module
+/// would read as the shared drawing core borrowing the line chart's helper.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "(a * b) / 255 <= 255, so it fits u8"
+)]
+pub(crate) fn mul_alpha(a: u8, b: u8) -> u8 {
+    ((u16::from(a) * u16::from(b)) / 255) as u8
+}
+
+/// The **minor** gridlines of a logarithmic axis (R1528), tagged
+/// `.grid.minor.y.{k}` / `.grid.minor.x.{k}` — the per-decade subdivisions,
+/// drawn at half the major gridlines' alpha.
+///
+/// Fainter is load-bearing, not decoration. A log axis's decade lines are
+/// evenly spaced, so at equal weight the picture is indistinguishable from a
+/// linear axis whose labels happen to read `1 / 10 / 100`; the crowding
+/// between decades is what shows a reader the spacing is a ratio. Half the
+/// major alpha rather than a new [`ChartStyle`] field, because that keeps the
+/// minors tied to whatever grid colour a theme resolved — a separate knob
+/// could be set to a colour that contradicts it.
+///
+/// Emitted separately from [`gridlines`] rather than appended to it so the
+/// two sets stay independently addressable in the scene: `.grid.y.{k}` keeps
+/// counting only the labelled lines, which is what every existing gridline
+/// assertion means by it.
+pub(crate) fn minor_gridlines(
+    frame: PlotFrame,
+    x_positions: &[f32],
+    y_positions: &[f32],
+    style: &ChartStyle,
+    prefix: &str,
+) -> Vec<Scene> {
+    let (left, right, top, bottom) = frame;
+    let stroke = Stroke::new(
+        style.grid.with_alpha(mul_alpha(style.grid.a, MUTED_ALPHA)),
+        1,
+    );
+    let mut out = Vec::new();
+    for (k, &y) in y_positions.iter().enumerate() {
+        out.push(stroke_path(
+            &[(left, y), (right, y)],
+            stroke,
+            format!("{prefix}.grid.minor.y.{k}"),
+        ));
+    }
+    for (k, &x) in x_positions.iter().enumerate() {
+        out.push(stroke_path(
+            &[(x, top), (x, bottom)],
+            stroke,
+            format!("{prefix}.grid.minor.x.{k}"),
+        ));
+    }
+    out
+}
+
 /// The left (y) and bottom (x) axis lines of a cartesian plot — the L-shaped
 /// frame tagged `.axis.y` / `.axis.x`. Shared by all three cartesian charts
 /// (R1377).
@@ -482,7 +544,7 @@ pub(crate) fn axes(frame: PlotFrame, style: &ChartStyle, prefix: &str) -> Vec<Sc
 }
 
 /// Right-aligned y-axis tick labels in the left gutter — one `.label.y.{k}` per
-/// tick, formatted at the axis's `step` precision, its box top offset so the
+/// tick, formatted the way that axis formats ([`TickFormat`]), its box top offset so the
 /// text centres on the tick's `y_positions` pixel. The parallel `ticks` /
 /// `y_positions` slices are the value (for the text) and the pixel (for the
 /// placement) of the same tick `k`. Shared by all three cartesian charts
@@ -492,7 +554,7 @@ pub(crate) fn y_tick_labels(
     rect_x: u32,
     ticks: &[f64],
     y_positions: &[f32],
-    step: f64,
+    format: TickFormat,
     style: &ChartStyle,
     prefix: &str,
 ) -> Vec<Scene> {
@@ -502,7 +564,7 @@ pub(crate) fn y_tick_labels(
     for (k, (&t, &py)) in ticks.iter().zip(y_positions).enumerate() {
         let ly = to_u32(py).saturating_sub(size / 2 + 1);
         out.push(label_node(
-            format_axis_tick(t, step),
+            format.label(t),
             rect_x + 2,
             ly,
             gutter,

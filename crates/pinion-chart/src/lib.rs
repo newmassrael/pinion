@@ -97,6 +97,21 @@
 //! `examples/hello-scatter`'s brush strip drives it, so a numeric BRUSH in one
 //! widget dims the corresponding points in another.
 //!
+//! And (R1528) the crate's first non-linear **axis** — [`LineChart::y_log`] /
+//! [`ScatterChart::x_log`] and their `_base` twins (Qt's `QLogValueAxis`).
+//! Until then every axis was affine: [`LinearScale`] was the only mapping in
+//! the crate, so a latency series over `0.1 ms .. 1000 ms` put everything
+//! below 100 ms on the baseline. A log axis puts equal *ratios* on equal
+//! pixel spans. Three things follow from that and are worth knowing before
+//! using it: the auto-domain measures only the strictly positive samples and
+//! snaps to whole **decades**; each decade carries fainter unlabelled
+//! subdivisions (`.grid.minor.*`), without which evenly-spaced decade lines
+//! read as a linear axis; and a sample at or below zero has **no pixel**, so
+//! it draws no mark and is reported by [`LineChart::off_scale`] — the
+//! [`Mapped::unreadable`] stance applied to the axis rather than the input.
+//! The bar chart is deliberately excluded: a bar encodes magnitude by length
+//! from a zero baseline, and a log axis has no zero.
+//!
 //! Not yet: cross-filtering between two ARBITRARY chart types, and a y-rescale
 //! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
 //! — follow-up slices on that same core. (A frequency *histogram* is a consumer
@@ -185,13 +200,17 @@ pub use donut::{DonutChart, Slice};
 pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;
-pub use scale::LinearScale;
+pub use plot::OffScale;
+pub use scale::{DEFAULT_LOG_BASE, LinearScale, LogScale, ValueScale, axis_defines};
 pub use scatter::ScatterChart;
 pub use series::{
     Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, value_bounds, visible_data_bounds,
 };
 pub use sparkline::Sparkline;
 pub use style::{ChartStyle, Margin};
-pub use ticks::{format_axis_tick, format_si, format_tick, nice_ticks, tick_decimals};
+pub use ticks::{
+    TickFormat, format_axis_tick, format_log_tick, format_si, format_tick, log_minor_ticks,
+    log_ticks, nice_log_domain, nice_ticks, tick_decimals,
+};
 pub use timeline::{Lane, Span, Timeline};
 pub use treemap::{Tile, Treemap, color_value_bounds};

@@ -100,6 +100,14 @@ pub struct Bounds {
     pub x: (f64, f64),
     /// `(min_y, max_y)` across every point.
     pub y: (f64, f64),
+    /// `(min_x, max_x)` across only the points whose x is strictly
+    /// **positive**, or `None` when there is no such point — the auto-domain
+    /// source for a logarithmic x-axis (R1528).
+    pub positive_x: Option<(f64, f64)>,
+    /// `(min_y, max_y)` across only the points whose y is strictly
+    /// **positive**, or `None` when there is no such point — the auto-domain
+    /// source for a logarithmic y-axis (R1528).
+    pub positive_y: Option<(f64, f64)>,
 }
 
 /// The `(x, y)` extent across every point of `series`, or `None` when not a
@@ -111,6 +119,18 @@ pub struct Bounds {
 /// `x_window` (`Some((lo, hi))`, order-agnostic) restricts the scan to points
 /// whose x falls inside it — the auto-y-fit source for a brush-zoomed chart
 /// ([`bounds_in_x_window`]). `None` measures every finite point.
+///
+/// The **positive-only** extents ([`Bounds::positive_x`] /
+/// [`Bounds::positive_y`], R1528) come out of this same scan rather than a
+/// second one, so a logarithmic axis and a linear one over the same chart
+/// can never disagree about which points they measured — the selection
+/// rules (visible series, x-window, finiteness) are applied once.
+///
+/// Note each axis's positive extent is filtered by that axis's own
+/// coordinate only: a point at `(5, -1)` is off-scale on a log **y**-axis
+/// yet still carries an ordinary x, so it contributes to `positive_x`.
+/// Dropping it from the x-extent would make a time axis jump whenever a
+/// sample dipped to zero.
 fn bounds_of<'a>(
     series: impl IntoIterator<Item = &'a Series>,
     x_window: Option<(f64, f64)>,
@@ -125,7 +145,17 @@ fn bounds_of<'a>(
     let mut max_x = f64::NEG_INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_y = f64::NEG_INFINITY;
+    let mut pos_x: Option<(f64, f64)> = None;
+    let mut pos_y: Option<(f64, f64)> = None;
     let mut seen = false;
+    let widen = |slot: &mut Option<(f64, f64)>, v: f64| {
+        if v > 0.0 {
+            *slot = Some(match *slot {
+                Some((lo, hi)) => (lo.min(v), hi.max(v)),
+                None => (v, v),
+            });
+        }
+    };
     for s in series {
         for p in &s.points {
             if !p.x.is_finite() || !p.y.is_finite() || !in_window(p.x) {
@@ -136,11 +166,15 @@ fn bounds_of<'a>(
             max_x = max_x.max(p.x);
             min_y = min_y.min(p.y);
             max_y = max_y.max(p.y);
+            widen(&mut pos_x, p.x);
+            widen(&mut pos_y, p.y);
         }
     }
     seen.then_some(Bounds {
         x: (min_x, max_x),
         y: (min_y, max_y),
+        positive_x: pos_x,
+        positive_y: pos_y,
     })
 }
 
@@ -215,17 +249,26 @@ pub fn bounds_in_x_window(series: &[Series], window: (f64, f64)) -> Option<Bound
 /// a per-series nearest point — the line chart and the scatter chart (R1377);
 /// it lives here, on the data model, rather than in either chart.
 #[must_use]
+///
+/// `keep` (R1528) narrows the candidates to the points the chart can
+/// actually place — on a log axis a zero sample has no pixel. It is applied
+/// *inside* the nearest-point search rather than to its result, so a series
+/// whose nearest sample is off-scale still contributes the nearest one that
+/// is drawn, instead of dropping out of the scrub entirely. This is the
+/// R1379 rule ("the scrub never rings a point whose geometry was dropped")
+/// applied at the same place: the focus source.
 pub(crate) fn nearest_point_in(
     series: &Series,
     data_x: f64,
     lo: f64,
     hi: f64,
+    keep: impl Fn(&DataPoint) -> bool,
 ) -> Option<DataPoint> {
     let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
     series
         .points
         .iter()
-        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x >= lo && p.x <= hi)
+        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x >= lo && p.x <= hi && keep(p))
         .copied()
         .min_by(|a, b| {
             (a.x - data_x)

@@ -51,10 +51,13 @@ use crate::draw::{
     legend_band_color_bar, marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
-use crate::plot::{CartesianPlot, Rescale, axis_ticks, resolve_focus};
+use crate::plot::{
+    CartesianPlot, LogAxes, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
+    off_scale_points, resolve_focus, tick_pixels,
+};
 use crate::series::{DataPoint, Series, in_domain, value_bounds};
 use crate::style::ChartStyle;
-use crate::ticks::{format_axis_tick, tick_step};
+use crate::ticks::TickFormat;
 
 /// A scatter chart: one or more [`Series`] drawn as filled point marks with
 /// nice axes, gridlines, labels, and a legend, plus an optional scrub inspector.
@@ -68,6 +71,7 @@ pub struct ScatterChart {
     select_x_range: Option<(f64, f64)>,
     legend_tags: Option<Vec<String>>,
     color: ValueEncoding,
+    logs: LogAxes,
     tag_prefix: String,
 }
 
@@ -85,6 +89,7 @@ impl ScatterChart {
             select_x_range: None,
             legend_tags: None,
             color: ValueEncoding::default(),
+            logs: LogAxes::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -243,6 +248,46 @@ impl ScatterChart {
         Scene::Container(body.with_layout(fill_parent()))
     }
 
+    /// Plot the **y**-axis logarithmically in base 10 (R1528) — the scatter
+    /// chart's leg of Qt's `QLogValueAxis`; see
+    /// [`LineChart::y_log`](crate::LineChart::y_log) for the whole contract.
+    #[must_use]
+    pub fn y_log(self) -> Self {
+        self.y_log_base(crate::DEFAULT_LOG_BASE)
+    }
+
+    /// [`y_log`](Self::y_log) in an explicit `base`.
+    #[must_use]
+    pub fn y_log_base(mut self, base: f64) -> Self {
+        self.logs.y = Some(base);
+        self
+    }
+
+    /// Plot the **x**-axis logarithmically in base 10 (R1528).
+    ///
+    /// The scatter chart is where a log *x*-axis earns its keep: a
+    /// correlation between two measures that each span decades (request size
+    /// against latency) is a straight line on log-log axes and an
+    /// uninterpretable corner-hugging cloud on linear ones.
+    #[must_use]
+    pub fn x_log(self) -> Self {
+        self.x_log_base(crate::DEFAULT_LOG_BASE)
+    }
+
+    /// [`x_log`](Self::x_log) in an explicit `base`.
+    #[must_use]
+    pub fn x_log_base(mut self, base: f64) -> Self {
+        self.logs.x = Some(base);
+        self
+    }
+
+    /// Every point this chart's axes cannot place (R1528) — see
+    /// [`LineChart::off_scale`](crate::LineChart::off_scale).
+    #[must_use]
+    pub fn off_scale(&self) -> Vec<OffScale> {
+        off_scale_points(&self.series, self.logs)
+    }
+
     /// The chart body, authored in the frame `rect` describes — the ONE builder
     /// both entry points wrap (the R1360.4 shape the line chart also uses).
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
@@ -253,12 +298,13 @@ impl ScatterChart {
             self.y_domain,
             style,
             Rescale::default(),
+            self.logs,
         );
-        let x_ticks = axis_ticks(plot.x.domain(), style.x_ticks);
-        let y_ticks = axis_ticks(plot.y.domain(), style.y_ticks);
+        let x_ticks = axis_ticks(&plot.x, style.x_ticks);
+        let y_ticks = axis_ticks(&plot.y, style.y_ticks);
         let steps = Steps {
-            x: tick_step(&x_ticks),
-            y: tick_step(&y_ticks),
+            x: axis_format(&plot.x, &x_ticks),
+            y: axis_format(&plot.y, &y_ticks),
         };
 
         // Inspect overlay, split so the crosshair paints behind the points, the
@@ -273,12 +319,19 @@ impl ScatterChart {
             children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
         }
         // Gridlines (both axes numeric) + crosshair behind the points.
-        let x_grid: Vec<f32> = x_ticks.iter().map(|&t| plot.x.map(t)).collect();
-        let y_grid: Vec<f32> = y_ticks.iter().map(|&t| plot.y.map(t)).collect();
+        // A log axis's fainter per-decade subdivisions paint below the
+        // labelled grid (R1528); a linear axis has none, so this is empty.
+        children.extend(crate::draw::minor_gridlines(
+            (plot.left, plot.right, plot.top, plot.bottom),
+            &tick_pixels(&plot.x, &axis_minor_ticks(&plot.x)),
+            &tick_pixels(&plot.y, &axis_minor_ticks(&plot.y)),
+            style,
+            &self.tag_prefix,
+        ));
         children.extend(crate::draw::gridlines(
             (plot.left, plot.right, plot.top, plot.bottom),
-            &x_grid,
-            &y_grid,
+            &tick_pixels(&plot.x, &x_ticks),
+            &tick_pixels(&plot.y, &y_ticks),
             style,
             &self.tag_prefix,
         ));
@@ -384,9 +437,12 @@ impl ScatterChart {
                 } else {
                     color
                 };
+                let Some((px, py)) = plot.map_point(p) else {
+                    continue;
+                };
                 out.push(marker_node(
-                    plot.x.map(p.x),
-                    plot.y.map(p.y),
+                    px,
+                    py,
                     radius,
                     mark_color,
                     format!("{}.point.{i}.{j}", self.tag_prefix),
@@ -411,16 +467,17 @@ impl ScatterChart {
         steps: Steps,
     ) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
-        let y_pos: Vec<f32> = y_ticks.iter().map(|&t| plot.y.map(t)).collect();
+        let y_pos = tick_pixels(&plot.y, y_ticks);
         let mut out =
             crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, steps.y, style, &self.tag_prefix);
         let slot = 60;
         for (k, &t) in x_ticks.iter().enumerate() {
             // (R1396) Clamp the box inside `rect` (see the line chart's twin) so
             // the last x-tick label no longer overhangs a docked neighbour.
-            let x = crate::draw::centered_label_x(plot.x.map(t), slot, rect);
+            let Some(px) = plot.x.map(t) else { continue };
+            let x = crate::draw::centered_label_x(px, slot, rect);
             out.push(label_node(
-                format_axis_tick(t, steps.x),
+                steps.x.label(t),
                 x,
                 to_u32(plot.bottom) + 4,
                 slot,
@@ -495,22 +552,18 @@ impl ScatterChart {
             self.y_domain,
             style,
             Rescale::default(),
+            self.logs,
         );
-        let x_step = tick_step(&axis_ticks(plot.x.domain(), style.x_ticks));
-        let y_step = tick_step(&axis_ticks(plot.y.domain(), style.y_ticks));
+        let x_step = axis_format(&plot.x, &axis_ticks(&plot.x, style.x_ticks));
+        let y_step = axis_format(&plot.y, &axis_ticks(&plot.y, style.y_ticks));
         let (focus_x, hits) = resolve_focus(&self.series, self.inspect?, &plot, rect)?;
         // Same y-domain visibility filter the painted overlay applies, so the
         // readout names the SAME points the tooltip does (R1355 parity).
         let hits = Self::visible_hits(&plot, hits);
-        let mut out = format!("x = {}", format_axis_tick(focus_x, x_step));
+        let mut out = format!("x = {}", x_step.label(focus_x));
         for (i, p) in &hits {
             // `write!` to a String is infallible; the Result is discarded.
-            let _ = write!(
-                out,
-                ", {} {}",
-                self.series[*i].name,
-                format_axis_tick(p.y, y_step)
-            );
+            let _ = write!(out, ", {} {}", self.series[*i].name, y_step.label(p.y));
         }
         Some(out)
     }
@@ -546,7 +599,7 @@ impl ScatterChart {
         // domain too, so a pinned y-domain could otherwise ring a point that has
         // no marker, off the plot (R1377).
         let hits = Self::visible_hits(plot, hits);
-        let focus_pixel = plot.x.map(focus_x);
+        let focus_pixel = plot.x.map(focus_x)?;
 
         let crosshair = stroke_path(
             &[(focus_pixel, plot.top), (focus_pixel, plot.bottom)],
@@ -560,14 +613,15 @@ impl ScatterChart {
         let ring_stroke = Stroke::new(style.crosshair, 2);
         let rings: Vec<Scene> = hits
             .iter()
-            .map(|(i, p)| {
-                ring_node(
-                    plot.x.map(p.x),
-                    plot.y.map(p.y),
+            .filter_map(|(i, p)| {
+                let (px, py) = plot.map_point(p)?;
+                Some(ring_node(
+                    px,
+                    py,
                     point_r + 3,
                     ring_stroke,
                     format!("{}.inspect.ring.{i}", self.tag_prefix),
-                )
+                ))
             })
             .collect();
 
@@ -598,15 +652,11 @@ impl ScatterChart {
         style: &ChartStyle,
         steps: Steps,
     ) -> Vec<Scene> {
-        let header = format!("x = {}", format_axis_tick(focus_x, steps.x));
+        let header = format!("x = {}", steps.x.label(focus_x));
         let rows: Vec<CalloutRow> = hits
             .iter()
             .map(|(i, p)| CalloutRow {
-                text: format!(
-                    "{}  {}",
-                    self.series[*i].name,
-                    format_axis_tick(p.y, steps.y)
-                ),
+                text: format!("{}  {}", self.series[*i].name, steps.y.label(p.y)),
                 color: self.series[*i]
                     .color
                     .unwrap_or_else(|| self.palette.color(*i)),
@@ -652,8 +702,8 @@ fn ring_node(cx: f32, cy: f32, r: u32, stroke: Stroke, tag: String) -> Scene {
 /// per-chart: a shared cross-module `Steps` type would not earn its coupling.
 #[derive(Debug, Clone, Copy)]
 struct Steps {
-    x: f64,
-    y: f64,
+    x: TickFormat,
+    y: TickFormat,
 }
 
 /// The inspect overlay layers, kept separate so `build_body` interleaves them at

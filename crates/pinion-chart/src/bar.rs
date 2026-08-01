@@ -416,7 +416,11 @@ impl BarChart {
             rect.x,
             &g.y_ticks,
             &y_pos,
-            g.y_step,
+            // A bar encodes magnitude by length from a ZERO baseline, and a
+            // log axis has no zero — so this axis is linear by construction
+            // and takes the constant-step format (R1528). Qt permits a log
+            // bar chart; the length encoding is what makes it a lie.
+            crate::ticks::TickFormat::Step(g.y_step),
             style,
             &self.tag_prefix,
         ));

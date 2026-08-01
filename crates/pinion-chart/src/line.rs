@@ -98,10 +98,13 @@ use crate::draw::{
     fill_parent, label_node, legend_band_color_bar, marker_node, stroke_path, to_u32,
 };
 use crate::palette::CategoricalPalette;
-use crate::plot::{CartesianPlot, Rescale, axis_ticks};
+use crate::plot::{
+    CartesianPlot, LogAxes, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
+    off_scale_points, tick_pixels,
+};
 use crate::series::{DataPoint, Series, value_bounds};
 use crate::style::ChartStyle;
-use crate::ticks::{format_axis_tick, tick_step};
+use crate::ticks::TickFormat;
 
 /// A line chart: one or more [`Series`] drawn as polylines with nice
 /// axes, gridlines, labels, and a legend. Set [`filled`](Self::filled) to
@@ -119,6 +122,7 @@ pub struct LineChart {
     rescale_y_to_x_window: bool,
     select_x_range: Option<(f64, f64)>,
     color: ValueEncoding,
+    logs: LogAxes,
     tag_prefix: String,
 }
 
@@ -139,6 +143,7 @@ impl LineChart {
             rescale_y_to_x_window: false,
             select_x_range: None,
             color: ValueEncoding::default(),
+            logs: LogAxes::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -400,6 +405,59 @@ impl LineChart {
         }
     }
 
+    /// Plot the **y**-axis logarithmically in base 10 (R1528) — Qt's
+    /// `QLogValueAxis` on the value axis.
+    ///
+    /// Use it when the interesting structure spans orders of magnitude: a
+    /// latency series over `0.1 ms .. 1000 ms` puts every sub-millisecond
+    /// sample on the baseline of a linear axis, and equal ratios on equal
+    /// pixel spans here. The auto-domain then measures only the strictly
+    /// positive samples and snaps to whole decades.
+    ///
+    /// Samples at or below zero have no pixel on a log axis and so draw no
+    /// mark; [`off_scale`](Self::off_scale) reports them, because silently
+    /// placing them on the baseline would be indistinguishable from real
+    /// samples at the domain floor.
+    #[must_use]
+    pub fn y_log(self) -> Self {
+        self.y_log_base(crate::scale::DEFAULT_LOG_BASE)
+    }
+
+    /// [`y_log`](Self::y_log) in an explicit `base` (Qt's
+    /// `QLogValueAxis::base`) — base 2 for a size or capacity axis, where a
+    /// tick per doubling is what a reader counts in.
+    #[must_use]
+    pub fn y_log_base(mut self, base: f64) -> Self {
+        self.logs.y = Some(base);
+        self
+    }
+
+    /// Plot the **x**-axis logarithmically in base 10 (R1528). The x-axis
+    /// twin of [`y_log`](Self::y_log); see it for the whole contract.
+    #[must_use]
+    pub fn x_log(self) -> Self {
+        self.x_log_base(crate::scale::DEFAULT_LOG_BASE)
+    }
+
+    /// [`x_log`](Self::x_log) in an explicit `base`.
+    #[must_use]
+    pub fn x_log_base(mut self, base: f64) -> Self {
+        self.logs.x = Some(base);
+        self
+    }
+
+    /// Every point this chart's axes cannot place, in series then point
+    /// order (R1528) — empty for an all-linear chart over finite data.
+    ///
+    /// The counterpart of [`Mapped::unreadable`](crate::Mapped) on the other
+    /// input path: the chart stays a pure scene producer, and what it could
+    /// not draw is reported as data (§2 #7) rather than faked or dropped in
+    /// silence. `examples/hello-log-chart` renders it as a caption.
+    #[must_use]
+    pub fn off_scale(&self) -> Vec<OffScale> {
+        off_scale_points(&self.series, self.logs)
+    }
+
     /// The chart body, authored in the frame `rect` describes — the ONE
     /// builder both entry points wrap.
     ///
@@ -420,19 +478,20 @@ impl LineChart {
             self.y_domain,
             style,
             self.rescale(),
+            self.logs,
         );
         let (y_lo, y_hi) = plot.y.domain();
-        let (x_lo, x_hi) = plot.x.domain();
         // One tick-set resolver, shared with `inspect_readout` so the
         // painted axis and the AT readout format at the same precision.
-        let x_ticks = axis_ticks((x_lo, x_hi), style.x_ticks);
-        let y_ticks = axis_ticks((y_lo, y_hi), style.y_ticks);
+        let x_ticks = axis_ticks(&plot.x, style.x_ticks);
+        let y_ticks = axis_ticks(&plot.y, style.y_ticks);
         let baseline = clamp(0.0, y_lo, y_hi);
         // The label precision each axis formats at (R1359: `format_si` alone
-        // collapsed every sub-0.1 step onto one rounded digit).
+        // collapsed every sub-0.1 step onto one rounded digit; R1528: a log
+        // axis has no ONE step to derive that precision from).
         let steps = Steps {
-            x: tick_step(&x_ticks),
-            y: tick_step(&y_ticks),
+            x: axis_format(&plot.x, &x_ticks),
+            y: axis_format(&plot.y, &y_ticks),
         };
 
         // Inspect overlay, split so the crosshair paints behind the
@@ -480,6 +539,10 @@ impl LineChart {
     /// ticks to pixels and hands them to the shared [`crate::draw::gridlines`]
     /// (R1377) — the pure "draw lines at these positions" primitive the bar and
     /// scatter charts also emit.
+    ///
+    /// A logarithmic axis contributes a second, fainter set below them
+    /// ([`crate::draw::minor_gridlines`], R1528); a linear axis has no minor
+    /// ticks, so for a linear chart this emits exactly what it always did.
     fn gridlines(
         &self,
         plot: &CartesianPlot,
@@ -487,15 +550,22 @@ impl LineChart {
         y_ticks: &[f64],
         style: &ChartStyle,
     ) -> Vec<Scene> {
-        let x_pos: Vec<f32> = x_ticks.iter().map(|&t| plot.x.map(t)).collect();
-        let y_pos: Vec<f32> = y_ticks.iter().map(|&t| plot.y.map(t)).collect();
-        crate::draw::gridlines(
-            (plot.left, plot.right, plot.top, plot.bottom),
-            &x_pos,
-            &y_pos,
+        let frame = (plot.left, plot.right, plot.top, plot.bottom);
+        let mut out = crate::draw::minor_gridlines(
+            frame,
+            &tick_pixels(&plot.x, &axis_minor_ticks(&plot.x)),
+            &tick_pixels(&plot.y, &axis_minor_ticks(&plot.y)),
             style,
             &self.tag_prefix,
-        )
+        );
+        out.extend(crate::draw::gridlines(
+            frame,
+            &tick_pixels(&plot.x, x_ticks),
+            &tick_pixels(&plot.y, y_ticks),
+            style,
+            &self.tag_prefix,
+        ));
+        out
     }
 
     /// The left (y) and bottom (x) axis lines — the shared L-frame
@@ -511,7 +581,10 @@ impl LineChart {
     /// The per-series area fills (when [`filled`](Self::filled)) and
     /// polylines. Areas paint before lines so the stroke sits on top.
     fn series_layer(&self, plot: &CartesianPlot, baseline: f64, style: &ChartStyle) -> Vec<Scene> {
-        let baseline_y = plot.y.map(baseline);
+        // A log y-axis has no zero, so `baseline` was already clamped into
+        // the (positive) domain and maps; `plot.bottom` is the fallback an
+        // area drops to if an axis ever cannot place it.
+        let baseline_y = plot.y.map(baseline).unwrap_or(plot.bottom);
         let (x_lo, x_hi) = plot.x.domain();
         // R1394 — a window that already covers the whole visible domain clips
         // nothing, so it filters nothing (a full brush = no cross-filter): drop
@@ -541,11 +614,16 @@ impl LineChart {
             // Kept as `DataPoint`s, not just pixels: R1440's colour encoding
             // reads each clipped sample's third channel, and a boundary crossing
             // carries an interpolated one (see `clip_to_x_domain`).
-            let clipped = clip_to_x_domain(&finite, x_lo, x_hi);
-            let pts: Vec<(f32, f32)> = clipped
-                .iter()
-                .map(|p| (plot.x.map(p.x), plot.y.map(p.y)))
+            // R1528 — the clip, the off-scale drop, and the mapping are ONE
+            // step, so a sample and its encoded colour cannot desynchronise:
+            // two passes over the same points through two predicates is the
+            // shape that silently shifts a ramp by one sample.
+            let placed: Vec<(DataPoint, (f32, f32))> = clip_to_x_domain(&finite, x_lo, x_hi)
+                .into_iter()
+                .filter_map(|p| plot.map_point(&p).map(|px| (p, px)))
                 .collect();
+            let clipped: Vec<DataPoint> = placed.iter().map(|(p, _)| *p).collect();
+            let pts: Vec<(f32, f32)> = placed.iter().map(|(_, px)| *px).collect();
             if pts.is_empty() {
                 continue;
             }
@@ -562,7 +640,7 @@ impl LineChart {
             let any_encoded = encoded.iter().any(Option::is_some);
             if self.fill_area {
                 let alpha = if muted {
-                    mul_alpha(style.area_alpha, MUTED_ALPHA)
+                    crate::draw::mul_alpha(style.area_alpha, MUTED_ALPHA)
                 } else {
                     style.area_alpha
                 };
@@ -602,7 +680,7 @@ impl LineChart {
             if let Some((lo, hi)) = window {
                 let focus: Vec<(f32, f32)> = clip_to_x_domain(&finite, lo.max(x_lo), hi.min(x_hi))
                     .iter()
-                    .map(|p| (plot.x.map(p.x), plot.y.map(p.y)))
+                    .filter_map(|p| plot.map_point(p))
                     .collect();
                 if focus.len() >= 2 {
                     if self.fill_area {
@@ -686,7 +764,7 @@ impl LineChart {
         steps: Steps,
     ) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
-        let y_pos: Vec<f32> = y_ticks.iter().map(|&t| plot.y.map(t)).collect();
+        let y_pos = tick_pixels(&plot.y, y_ticks);
         let mut out =
             crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, steps.y, style, &self.tag_prefix);
         // The numeric x-axis labels stay here: shared only with the scatter chart
@@ -699,9 +777,10 @@ impl LineChart {
             // last tick's box no longer overhangs the chart into a docked
             // neighbour; the box's `TextOverflow::Clip` (in `label_node`)
             // scissors any glyphs the clamp squeezes.
-            let x = crate::draw::centered_label_x(plot.x.map(t), slot, rect);
+            let Some(px) = plot.x.map(t) else { continue };
+            let x = crate::draw::centered_label_x(px, slot, rect);
             out.push(label_node(
-                format_axis_tick(t, steps.x),
+                steps.x.label(t),
                 x,
                 to_u32(plot.bottom) + 4,
                 slot,
@@ -814,24 +893,20 @@ impl LineChart {
             self.y_domain,
             style,
             self.rescale(),
+            self.logs,
         );
-        let x_ticks: Vec<f64> = axis_ticks(plot.x.domain(), style.x_ticks);
-        let y_ticks: Vec<f64> = axis_ticks(plot.y.domain(), style.y_ticks);
+        let x_ticks: Vec<f64> = axis_ticks(&plot.x, style.x_ticks);
+        let y_ticks: Vec<f64> = axis_ticks(&plot.y, style.y_ticks);
         let steps = Steps {
-            x: tick_step(&x_ticks),
-            y: tick_step(&y_ticks),
+            x: axis_format(&plot.x, &x_ticks),
+            y: axis_format(&plot.y, &y_ticks),
         };
         let (focus_x, hits) = self.resolve_focus(&plot, rect)?;
-        let mut out = format!("x = {}", format_axis_tick(focus_x, steps.x));
+        let mut out = format!("x = {}", steps.x.label(focus_x));
         for (i, p) in &hits {
             // `write!` to a String is infallible; the Result is discarded
             // exactly as `push_str` would have.
-            let _ = write!(
-                out,
-                ", {} {}",
-                self.series[*i].name,
-                format_axis_tick(p.y, steps.y)
-            );
+            let _ = write!(out, ", {} {}", self.series[*i].name, steps.y.label(p.y));
         }
         Some(out)
     }
@@ -847,7 +922,7 @@ impl LineChart {
         steps: Steps,
     ) -> Option<Inspect> {
         let (focus_x, hits) = self.resolve_focus(plot, rect)?;
-        let focus_pixel = plot.x.map(focus_x);
+        let focus_pixel = plot.x.map(focus_x)?;
 
         let crosshair = stroke_path(
             &[(focus_pixel, plot.top), (focus_pixel, plot.bottom)],
@@ -858,17 +933,18 @@ impl LineChart {
         let radius = style.marker_radius.max(1);
         let markers: Vec<Scene> = hits
             .iter()
-            .map(|(i, p)| {
+            .filter_map(|(i, p)| {
                 let color = self.series[*i]
                     .color
                     .unwrap_or_else(|| self.palette.color(*i));
-                marker_node(
-                    plot.x.map(p.x),
-                    plot.y.map(p.y),
+                let (px, py) = plot.map_point(p)?;
+                Some(marker_node(
+                    px,
+                    py,
                     radius,
                     color,
                     format!("{}.inspect.marker.{i}", self.tag_prefix),
-                )
+                ))
             })
             .collect();
 
@@ -894,15 +970,11 @@ impl LineChart {
         style: &ChartStyle,
         steps: Steps,
     ) -> Vec<Scene> {
-        let header = format!("x = {}", format_axis_tick(focus_x, steps.x));
+        let header = format!("x = {}", steps.x.label(focus_x));
         let rows: Vec<CalloutRow> = hits
             .iter()
             .map(|(i, p)| CalloutRow {
-                text: format!(
-                    "{}  {}",
-                    self.series[*i].name,
-                    format_axis_tick(p.y, steps.y)
-                ),
+                text: format!("{}  {}", self.series[*i].name, steps.y.label(p.y)),
                 color: self.series[*i]
                     .color
                     .unwrap_or_else(|| self.palette.color(*i)),
@@ -922,11 +994,11 @@ impl LineChart {
     }
 }
 
-/// Per-axis tick step — the precision axis and tooltip labels format at.
+/// Per-axis label format — the precision axis and tooltip labels format at.
 #[derive(Debug, Clone, Copy)]
 struct Steps {
-    x: f64,
-    y: f64,
+    x: TickFormat,
+    y: TickFormat,
 }
 
 /// The three inspect layers, kept separate so `build` can interleave
@@ -947,17 +1019,6 @@ fn push_unique(out: &mut Vec<DataPoint>, p: DataPoint) {
     if !dup {
         out.push(p);
     }
-}
-
-/// Multiply two `0..=255` alphas (`a * b / 255`) — dims an already
-/// translucent fill (the area alpha) by the cross-filter mute factor so a
-/// muted area reads lighter than a muted stroke, not the same weight.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "(a * b) / 255 <= 255, so it fits u8"
-)]
-fn mul_alpha(a: u8, b: u8) -> u8 {
-    ((u16::from(a) * u16::from(b)) / 255) as u8
 }
 
 /// Clip a point sequence to the x range `[lo, hi]`, interpolating y at
@@ -2067,6 +2128,218 @@ mod tests {
         assert_eq!(
             plain[0].value, None,
             "no measure to interpolate, none made up"
+        );
+    }
+
+    // ---- R1528: the logarithmic value axis -----------------------------
+
+    /// A latency series whose structure lives across four decades, with one
+    /// zero sample — the shape a log axis exists for, and the shape a log
+    /// axis cannot fully carry.
+    fn decades() -> Vec<Series> {
+        vec![Series::new(
+            "latency",
+            vec![
+                DataPoint::new(0.0, 0.4),
+                DataPoint::new(1.0, 12.0),
+                DataPoint::new(2.0, 0.0),
+                DataPoint::new(3.0, 730.0),
+            ],
+        )]
+    }
+
+    fn label_text(scene: &Scene, tag: &str) -> String {
+        match find(scene, tag) {
+            Some(Scene::Text(t)) => t.content.clone(),
+            _ => panic!("no text node tagged {tag}"),
+        }
+    }
+
+    fn rect() -> Rect {
+        Rect::new(0, 0, 480, 320)
+    }
+
+    #[test]
+    fn r1528_log_y_axis_snaps_to_decades_and_labels_them() {
+        let scene = LineChart::new(decades())
+            .y_log()
+            .build(rect(), &ChartStyle::default());
+        // 0.1 .. 1000 — the whole-decade bracket of the POSITIVE data
+        // (0.4 .. 730); the zero sample does not drag the floor anywhere,
+        // because a log axis has no floor to drag it to.
+        let labels: Vec<String> = (0..5)
+            .map(|k| label_text(&scene, &format!("chart.label.y.{k}")))
+            .collect();
+        assert_eq!(labels, ["0.1", "1", "10", "100", "1k"]);
+    }
+
+    /// ★ The defining property, read off the painted scene: equal ratios
+    /// occupy equal pixel spans. A linear axis over the same data cannot,
+    /// which is the counterfactual that makes the assertion mean something.
+    #[test]
+    fn r1528_decade_gridlines_are_evenly_spaced_and_linear_ones_are_not() {
+        let gaps = |scene: &Scene| -> Vec<f32> {
+            let ys: Vec<f32> = (0..5)
+                .filter_map(|k| find(scene, &format!("chart.grid.y.{k}")))
+                .map(|g| match g {
+                    Scene::Path(p) => to_f32(p.rect.y),
+                    _ => panic!("gridline is a path"),
+                })
+                .collect();
+            ys.windows(2).map(|w| (w[1] - w[0]).abs()).collect()
+        };
+
+        let log = LineChart::new(decades())
+            .y_log()
+            .build(rect(), &ChartStyle::default());
+        let log_gaps = gaps(&log);
+        assert_eq!(log_gaps.len(), 4, "four gaps between five decades");
+        let first = log_gaps[0];
+        for g in &log_gaps {
+            assert!(
+                (g - first).abs() <= 1.0,
+                "every decade spans the same pixels: {log_gaps:?}"
+            );
+        }
+
+        // The linear chart over the SAME data: 0..800 in nice steps, so the
+        // three sub-millisecond-to-12ms samples all land within a few pixels
+        // of the baseline — the structure the log axis exists to reveal.
+        let lin = LineChart::new(decades()).build(rect(), &ChartStyle::default());
+        let plot = CartesianPlot::resolve(
+            rect(),
+            &decades(),
+            None,
+            None,
+            &ChartStyle::default(),
+            Rescale::default(),
+            LogAxes::default(),
+        );
+        let spread = plot.y.map(0.4).unwrap() - plot.y.map(12.0).unwrap();
+        assert!(
+            spread.abs() < 5.0,
+            "linear: 0.4ms and 12ms are {spread}px apart — indistinguishable"
+        );
+        assert!(!gaps(&lin).is_empty(), "the linear chart still has a grid");
+    }
+
+    /// ★ A sample a log axis cannot carry is REPORTED, not placed. Placing it
+    /// on the baseline would be indistinguishable from a real sample at the
+    /// domain floor, which is the failure `Mapped::unreadable` exists to
+    /// avoid on the other input path.
+    #[test]
+    fn r1528_off_scale_samples_are_reported_and_draw_no_mark() {
+        let chart = LineChart::new(decades()).y_log();
+        let off = chart.off_scale();
+        assert_eq!(off.len(), 1, "exactly the zero sample");
+        assert_eq!(off[0].series, 0);
+        assert!(
+            (off[0].point.x - 2.0).abs() < f64::EPSILON,
+            "the x=2 sample"
+        );
+        assert!(
+            off[0].point.y.abs() < f64::EPSILON,
+            "reported with its own value"
+        );
+
+        // The same chart on a linear axis reports nothing: zero is an
+        // ordinary value there, so this is a property of the AXIS, not of
+        // the data.
+        assert!(LineChart::new(decades()).off_scale().is_empty());
+
+        // And the polyline carries three points, not four — the dropped one
+        // leaves no vertex at the baseline.
+        let scene = chart.build(rect(), &ChartStyle::default());
+        let Some(Scene::Path(path)) = find(&scene, "chart.series.0") else {
+            panic!("series path");
+        };
+        let vertices = path
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PathCommand::MoveTo(_) | PathCommand::LineTo(_)))
+            .count();
+        assert_eq!(vertices, 3, "the zero sample contributes no vertex");
+    }
+
+    #[test]
+    fn r1528_minor_gridlines_appear_only_on_a_log_axis() {
+        let log = LineChart::new(decades())
+            .y_log()
+            .build(rect(), &ChartStyle::default());
+        // Four decades x eight subdivisions, clipped to the domain.
+        assert_eq!(count_prefix(&log, "chart.grid.minor.y."), 32);
+        assert_eq!(
+            count_prefix(&log, "chart.grid.minor.x."),
+            0,
+            "the x-axis is still linear, so it has no minor ticks"
+        );
+        // The labelled grid keeps counting only the labelled lines, so every
+        // pre-R1528 gridline assertion still means what it meant.
+        assert_eq!(count_prefix(&log, "chart.grid.y."), 5);
+
+        let lin = LineChart::new(decades()).build(rect(), &ChartStyle::default());
+        assert_eq!(count_prefix(&lin, "chart.grid.minor."), 0);
+    }
+
+    #[test]
+    fn r1528_a_log_chart_with_no_positive_data_stays_legible() {
+        // Every sample off-scale: the axis draws its unit decade and reports
+        // all of them, rather than collapsing or dividing by zero.
+        let flat = vec![Series::new(
+            "dead",
+            vec![DataPoint::new(0.0, 0.0), DataPoint::new(1.0, -3.0)],
+        )];
+        let chart = LineChart::new(flat).y_log();
+        assert_eq!(chart.off_scale().len(), 2);
+        let scene = chart.build(rect(), &ChartStyle::default());
+        assert_eq!(label_text(&scene, "chart.label.y.0"), "1");
+        assert!(
+            find(&scene, "chart.series.0").is_none(),
+            "no polyline: not one point can be placed"
+        );
+    }
+
+    #[test]
+    fn r1528_log_scrub_inverts_through_the_axis_and_skips_off_scale_points() {
+        let style = ChartStyle::default();
+        // x is log too, so a scrub at the middle of the plot must land near
+        // the GEOMETRIC middle of the x-domain, not the arithmetic one.
+        let series = vec![Series::new(
+            "s",
+            vec![
+                DataPoint::new(1.0, 5.0),
+                DataPoint::new(10.0, 6.0),
+                DataPoint::new(100.0, 7.0),
+            ],
+        )];
+        let readout = LineChart::new(series)
+            .x_log()
+            .inspect(Some(0.5))
+            .inspect_readout(rect(), &style)
+            .expect("a scrub in the middle finds a point");
+        assert!(
+            readout.starts_with("x = 10"),
+            "the geometric middle of 1..100 is 10, not 50.5 — got {readout}"
+        );
+
+        // A series whose nearest sample to the cursor is off-scale still
+        // contributes its nearest DRAWN sample, rather than dropping out.
+        let holed = vec![Series::new(
+            "h",
+            vec![
+                DataPoint::new(0.0, 4.0),
+                DataPoint::new(5.0, 0.0),
+                DataPoint::new(10.0, 9.0),
+            ],
+        )];
+        let readout = LineChart::new(holed)
+            .y_log()
+            .inspect(Some(0.5))
+            .inspect_readout(rect(), &style)
+            .expect("the scrub still finds a drawable point");
+        assert!(
+            !readout.contains("h 0"),
+            "the off-scale sample is never named: {readout}"
         );
     }
 }

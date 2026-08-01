@@ -14,13 +14,15 @@
 use pinion_core::scene::Rect;
 
 use crate::draw::{plot_rect, to_f32};
-use crate::scale::LinearScale;
+use crate::scale::{LinearScale, LogScale, ValueScale};
 use crate::series::{
-    DataPoint, Series, bounds_in_x_window, data_bounds, in_domain, nearest_point_in,
+    Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, in_domain, nearest_point_in,
     visible_data_bounds,
 };
 use crate::style::ChartStyle;
-use crate::ticks::nice_ticks;
+use crate::ticks::{
+    TickFormat, log_minor_ticks, log_ticks, nice_log_domain, nice_ticks, tick_step,
+};
 
 /// How the auto-domains are derived when they are not pinned — the two
 /// orthogonal rescale opt-ins, bundled into one named-field value so the two
@@ -43,6 +45,21 @@ pub(crate) struct Rescale {
     pub y_to_x_window: bool,
 }
 
+/// Which axes of a cartesian plot are **logarithmic**, and in what base
+/// (R1528) — `None` on an axis means linear, `Some(base)` means
+/// logarithmic in that base.
+///
+/// A named-field value for the same reason [`Rescale`] is one: two
+/// positional axis flags at a call site are a silent swap waiting to
+/// happen. `Default` is linear on both axes.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct LogAxes {
+    /// Logarithm base for the x-axis, or `None` for a linear x-axis.
+    pub x: Option<f64>,
+    /// Logarithm base for the y-axis, or `None` for a linear y-axis.
+    pub y: Option<f64>,
+}
+
 /// The resolved plot rectangle (in float pixels) plus the two value scales.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CartesianPlot {
@@ -55,9 +72,9 @@ pub(crate) struct CartesianPlot {
     /// Plot-area bottom edge (px).
     pub bottom: f32,
     /// Value -> pixel on the x-axis (ascending: domain-lo -> left).
-    pub x: LinearScale,
+    pub x: ValueScale,
     /// Value -> pixel on the y-axis (INVERTED: domain-hi -> top / small pixel).
-    pub y: LinearScale,
+    pub y: ValueScale,
 }
 
 impl CartesianPlot {
@@ -80,6 +97,12 @@ impl CartesianPlot {
     /// is settled first, so brushing to a narrow x-domain lets the y-axis zoom in
     /// on just that window's values. A window with no points, or a pinned
     /// `y_domain`, leaves the y-domain untouched.
+    ///
+    /// [`LogAxes`] (R1528) chooses each axis's *kind*. A logarithmic axis
+    /// takes its auto-domain from the strictly positive part of the extent
+    /// ([`Bounds::positive_x`] / [`Bounds::positive_y`]) and snaps it to
+    /// whole decades ([`nice_log_domain`]) instead of to nice ticks; a
+    /// pinned domain still wins over both, exactly as on a linear axis.
     pub(crate) fn resolve(
         rect: Rect,
         series: &[Series],
@@ -87,6 +110,7 @@ impl CartesianPlot {
         y_domain: Option<(f64, f64)>,
         style: &ChartStyle,
         rescale: Rescale,
+        logs: LogAxes,
     ) -> Self {
         let (left, right, top, bottom) = plot_rect(rect, style.margin);
 
@@ -95,11 +119,13 @@ impl CartesianPlot {
         } else {
             data_bounds(series)
         };
-        let raw_x = x_domain.or(bounds.map(|b| b.x)).unwrap_or((0.0, 1.0));
+        let raw_x = x_domain
+            .or_else(|| bounds.and_then(|b| x_extent(b, logs.x)))
+            .unwrap_or_else(|| fallback_extent(logs.x));
         // The x-window must be settled before the y-fit reads it, so resolve the
         // final x-domain first. A pinned domain is honoured verbatim; an auto one
         // snaps to the nice-tick extent so the outer gridlines land on the edges.
-        let dom_x = domain_from_ticks(x_domain, raw_x, style.x_ticks);
+        let dom_x = axis_domain(x_domain, raw_x, style.x_ticks, logs.x);
         // y: a pinned domain wins; else an opt-in fit to the x-window's points
         // (R1397); else the whole measured extent. The window fit falls back to
         // `bounds` when it is empty, so a brush past the data keeps the grid.
@@ -107,22 +133,133 @@ impl CartesianPlot {
             .or_else(|| {
                 rescale
                     .y_to_x_window
-                    .then(|| bounds_in_x_window(series, dom_x).map(|b| b.y))
+                    .then(|| bounds_in_x_window(series, dom_x).and_then(|b| y_extent(b, logs.y)))
                     .flatten()
             })
-            .or(bounds.map(|b| b.y))
-            .unwrap_or((0.0, 1.0));
-        let dom_y = domain_from_ticks(y_domain, raw_y, style.y_ticks);
+            .or_else(|| bounds.and_then(|b| y_extent(b, logs.y)))
+            .unwrap_or_else(|| fallback_extent(logs.y));
+        let dom_y = axis_domain(y_domain, raw_y, style.y_ticks, logs.y);
 
         Self {
             left,
             right,
             top,
             bottom,
-            x: LinearScale::new(dom_x, (left, right)),
+            x: axis_scale(dom_x, (left, right), logs.x),
             // y is inverted: domain-hi maps to the top (small pixel).
-            y: LinearScale::new(dom_y, (bottom, top)),
+            y: axis_scale(dom_y, (bottom, top), logs.y),
         }
+    }
+
+    /// Whether both axes define a pixel for `point` — i.e. whether this plot
+    /// can place it at all.
+    pub(crate) fn defines(&self, point: &DataPoint) -> bool {
+        self.x.defines(point.x) && self.y.defines(point.y)
+    }
+
+    /// `point` mapped to its pixel position, or `None` when an axis does not
+    /// define one there. The single mapping entry point for the marks: a
+    /// caller that filters and then maps through two separate predicates can
+    /// desynchronise a series from its per-sample colours, so the filter and
+    /// the map are one step.
+    pub(crate) fn map_point(&self, point: &DataPoint) -> Option<(f32, f32)> {
+        Some((self.x.map(point.x)?, self.y.map(point.y)?))
+    }
+}
+
+/// One data point a chart could not place, and the series it came from
+/// (R1528).
+///
+/// The counterpart of [`Mapped::unreadable`](crate::Mapped) on the other
+/// input path: a value an axis does not define contributes no mark and is
+/// *reported*, so a consumer can say "3 samples were zero and a log axis
+/// has no zero" rather than have them drawn on the baseline — which would
+/// be indistinguishable from real samples at the domain floor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OffScale {
+    /// Index of the series holding the point, in the chart's own order.
+    pub series: usize,
+    /// The point itself, with its original values.
+    pub point: DataPoint,
+}
+
+/// Every point of `series` that a chart with these axis kinds cannot place,
+/// in series order then point order.
+///
+/// Reports across ALL series, hidden ones included: a hidden series' points
+/// are absent because the consumer hid them, which the consumer already
+/// knows, whereas an off-scale point is absent because the *axis* cannot
+/// carry it. Filter by [`OffScale::series`] if only the visible ones matter.
+pub(crate) fn off_scale_points(series: &[Series], logs: LogAxes) -> Vec<OffScale> {
+    let mut out = Vec::new();
+    for (i, s) in series.iter().enumerate() {
+        for p in &s.points {
+            if !crate::scale::axis_defines(logs.x.is_some(), p.x)
+                || !crate::scale::axis_defines(logs.y.is_some(), p.y)
+            {
+                out.push(OffScale {
+                    series: i,
+                    point: *p,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The x-extent one axis measures: the whole one, or — when the axis is
+/// logarithmic — only its strictly positive part, which is the only part a
+/// logarithm is defined on.
+const fn x_extent(b: Bounds, log_base: Option<f64>) -> Option<(f64, f64)> {
+    if log_base.is_some() {
+        b.positive_x
+    } else {
+        Some(b.x)
+    }
+}
+
+/// [`x_extent`] for the y-axis.
+const fn y_extent(b: Bounds, log_base: Option<f64>) -> Option<(f64, f64)> {
+    if log_base.is_some() {
+        b.positive_y
+    } else {
+        Some(b.y)
+    }
+}
+
+/// The extent an axis falls back to when nothing measurable is present —
+/// `0..1` for a linear axis, and the unit decade for a logarithmic one
+/// (where `0` is not a value the axis can carry). A log chart whose data is
+/// entirely non-positive lands here: it draws a legible empty decade and
+/// reports every point as off-scale, rather than collapsing.
+fn fallback_extent(log_base: Option<f64>) -> (f64, f64) {
+    match log_base {
+        Some(base) => (1.0, base),
+        None => (0.0, 1.0),
+    }
+}
+
+/// Resolve one axis's final domain — a pinned domain verbatim, else the raw
+/// extent snapped the way that axis kind snaps: to nice ticks when linear,
+/// to whole decades when logarithmic.
+fn axis_domain(
+    pinned: Option<(f64, f64)>,
+    raw: (f64, f64),
+    target: usize,
+    log_base: Option<f64>,
+) -> (f64, f64) {
+    match log_base {
+        _ if pinned.is_some() => domain_from_ticks(pinned, raw, target),
+        Some(base) => nice_log_domain(raw.0, raw.1, base),
+        None => domain_from_ticks(None, raw, target),
+    }
+}
+
+/// Build one axis's [`ValueScale`] over `domain` onto the pixel `range`.
+fn axis_scale(domain: (f64, f64), range: (f32, f32), log_base: Option<f64>) -> ValueScale {
+    match log_base {
+        Some(base) => ValueScale::Log(LogScale::new(domain, range, base)),
+        None => ValueScale::Linear(LinearScale::new(domain, range)),
     }
 }
 
@@ -144,15 +281,59 @@ pub(crate) fn domain_from_ticks(
     }
 }
 
-/// Nice ticks for `domain`, clipped to it — the axis's own tick set (the ticks
-/// that fall inside the visible range). Both the line and scatter charts derive
-/// their tick labels and their gridline positions from it (R1377).
-pub(crate) fn axis_ticks(domain: (f64, f64), target: usize) -> Vec<f64> {
-    let (lo, hi) = domain;
-    nice_ticks(lo, hi, target)
-        .into_iter()
-        .filter(|t| in_domain(*t, lo, hi))
-        .collect()
+/// The **labelled** ticks of one axis, clipped to its domain — the ticks
+/// that fall inside the visible range. Both the line and scatter charts
+/// derive their tick labels and their gridline positions from it (R1377).
+///
+/// R1528 made the argument the scale rather than the bare domain: which
+/// generator produces the ticks is a property of the axis kind, and taking
+/// the scale means the tick set and the mapping that places it can never be
+/// resolved from different axes. Both kinds reach the domain clip here, so
+/// there is still one filter.
+pub(crate) fn axis_ticks(scale: &ValueScale, target: usize) -> Vec<f64> {
+    let (lo, hi) = scale.domain();
+    let raw = match scale {
+        ValueScale::Log(s) => log_ticks(lo, hi, s.base(), target),
+        ValueScale::Linear(_) => nice_ticks(lo, hi, target),
+    };
+    raw.into_iter().filter(|t| in_domain(*t, lo, hi)).collect()
+}
+
+/// The pixel positions of `ticks` on one axis.
+///
+/// The `filter_map` is the [`ValueScale::map`] contract showing through
+/// rather than a real filter: a tick comes from its own axis's generator,
+/// so it is defined there by construction. Dropping an undefined one is
+/// still the right total behaviour — a gridline at a pixel the axis did not
+/// produce would be a line at an invented value.
+pub(crate) fn tick_pixels(scale: &ValueScale, ticks: &[f64]) -> Vec<f32> {
+    ticks.iter().filter_map(|&t| scale.map(t)).collect()
+}
+
+/// The label format one axis's ticks take (R1528): the constant step on a
+/// linear axis, per-magnitude on a logarithmic one, which has no constant
+/// step for a scalar to summarise.
+pub(crate) fn axis_format(scale: &ValueScale, ticks: &[f64]) -> TickFormat {
+    if scale.is_log() {
+        TickFormat::Log
+    } else {
+        TickFormat::Step(tick_step(ticks))
+    }
+}
+
+/// The **unlabelled** minor ticks of one axis (R1528) — empty on a linear
+/// axis, which has none, and the per-decade subdivisions on a logarithmic
+/// one. Drawn as fainter gridlines: without them a log axis's evenly-spaced
+/// decade lines read as a linear axis with odd labels.
+pub(crate) fn axis_minor_ticks(scale: &ValueScale) -> Vec<f64> {
+    let (lo, hi) = scale.domain();
+    match scale {
+        ValueScale::Log(s) => log_minor_ticks(lo, hi, s.base())
+            .into_iter()
+            .filter(|t| in_domain(*t, lo, hi))
+            .collect(),
+        ValueScale::Linear(_) => Vec::new(),
+    }
 }
 
 /// Resolve which data point an x-`fraction` scrub is focused on: the focus x
@@ -175,11 +356,14 @@ pub(crate) fn resolve_focus(
     if span <= 0.0 {
         return None;
     }
-    // chart-rect fraction -> plot fraction -> data x.
+    // chart-rect fraction -> plot pixel -> data x. R1528 inverts through the
+    // axis rather than interpolating the domain linearly: the two agree on a
+    // linear axis (clamping the pixel is clamping the fraction), and only the
+    // inversion is right on a log one, where the scrub is not affine in the
+    // data. One scrub source keeps the ring and the readout on the same point.
     let cursor_px = to_f32(rect.x) + fraction.clamp(0.0, 1.0) * to_f32(rect.w);
-    let plot_frac = ((cursor_px - plot.left) / span).clamp(0.0, 1.0);
     let (x_lo, x_hi) = plot.x.domain();
-    let data_x = x_lo + f64::from(plot_frac) * (x_hi - x_lo);
+    let data_x = plot.x.invert(cursor_px.clamp(plot.left, plot.right));
 
     // Nearest point per series + the overall focus x (the series point nearest
     // the cursor across every series).
@@ -192,7 +376,7 @@ pub(crate) fn resolve_focus(
         if !s.visible {
             continue;
         }
-        if let Some(p) = nearest_point_in(s, data_x, x_lo, x_hi) {
+        if let Some(p) = nearest_point_in(s, data_x, x_lo, x_hi, |p| plot.defines(p)) {
             let better = focus_x.is_none_or(|fx| (p.x - data_x).abs() < (fx - data_x).abs());
             if better {
                 focus_x = Some(p.x);
@@ -224,7 +408,15 @@ mod tests {
     fn resolve_focus_skips_hidden_series() {
         let rect = Rect::new(0, 0, 400, 300);
         let style = ChartStyle::default();
-        let plot = CartesianPlot::resolve(rect, &two(), None, None, &style, Rescale::default());
+        let plot = CartesianPlot::resolve(
+            rect,
+            &two(),
+            None,
+            None,
+            &style,
+            Rescale::default(),
+            LogAxes::default(),
+        );
 
         // Both visible -> a hit per series.
         let (_fx, hits) = resolve_focus(&two(), 0.5, &plot, rect).expect("focus with two visible");
@@ -267,7 +459,15 @@ mod tests {
             ),
         ];
 
-        let default = CartesianPlot::resolve(rect, &series, None, None, &style, Rescale::default());
+        let default = CartesianPlot::resolve(
+            rect,
+            &series,
+            None,
+            None,
+            &style,
+            Rescale::default(),
+            LogAxes::default(),
+        );
         let (_, hi_default) = default.y.domain();
         assert!(
             hi_default >= 4000.0,
@@ -278,7 +478,15 @@ mod tests {
             to_visible: true,
             ..Rescale::default()
         };
-        let rescaled = CartesianPlot::resolve(rect, &series, None, None, &style, visible);
+        let rescaled = CartesianPlot::resolve(
+            rect,
+            &series,
+            None,
+            None,
+            &style,
+            visible,
+            LogAxes::default(),
+        );
         let (_, hi_rescaled) = rescaled.y.domain();
         assert!(
             hi_rescaled < 100.0,
@@ -286,8 +494,15 @@ mod tests {
         );
 
         // A pinned domain overrides rescale entirely.
-        let pinned =
-            CartesianPlot::resolve(rect, &series, None, Some((0.0, 9000.0)), &style, visible);
+        let pinned = CartesianPlot::resolve(
+            rect,
+            &series,
+            None,
+            Some((0.0, 9000.0)),
+            &style,
+            visible,
+            LogAxes::default(),
+        );
         assert_eq!(
             pinned.y.domain(),
             (0.0, 9000.0),
@@ -315,7 +530,15 @@ mod tests {
         )];
         let window = Some((5.0, 8.0));
 
-        let off = CartesianPlot::resolve(rect, &series, window, None, &style, Rescale::default());
+        let off = CartesianPlot::resolve(
+            rect,
+            &series,
+            window,
+            None,
+            &style,
+            Rescale::default(),
+            LogAxes::default(),
+        );
         let (_, hi_off) = off.y.domain();
         assert!(
             hi_off >= 1000.0,
@@ -326,7 +549,8 @@ mod tests {
             y_to_x_window: true,
             ..Rescale::default()
         };
-        let on = CartesianPlot::resolve(rect, &series, window, None, &style, fit);
+        let on =
+            CartesianPlot::resolve(rect, &series, window, None, &style, fit, LogAxes::default());
         let (_, hi_on) = on.y.domain();
         assert!(
             hi_on < 200.0,
@@ -335,7 +559,15 @@ mod tests {
 
         // A full-width x-domain includes every point, so the fit is a no-op:
         // the transient is back in-window and the y-axis spans it again.
-        let full = CartesianPlot::resolve(rect, &series, Some((0.0, 8.0)), None, &style, fit);
+        let full = CartesianPlot::resolve(
+            rect,
+            &series,
+            Some((0.0, 8.0)),
+            None,
+            &style,
+            fit,
+            LogAxes::default(),
+        );
         let (_, hi_full) = full.y.domain();
         assert!(
             hi_full >= 1000.0,
@@ -344,7 +576,15 @@ mod tests {
 
         // A window with no points leaves the y-domain on the full data rather
         // than collapsing the axis.
-        let empty = CartesianPlot::resolve(rect, &series, Some((2.0, 4.0)), None, &style, fit);
+        let empty = CartesianPlot::resolve(
+            rect,
+            &series,
+            Some((2.0, 4.0)),
+            None,
+            &style,
+            fit,
+            LogAxes::default(),
+        );
         let (_, hi_empty) = empty.y.domain();
         assert!(
             hi_empty >= 1000.0,
@@ -352,7 +592,15 @@ mod tests {
         );
 
         // A pinned y-domain still wins over the window fit.
-        let pinned = CartesianPlot::resolve(rect, &series, window, Some((0.0, 500.0)), &style, fit);
+        let pinned = CartesianPlot::resolve(
+            rect,
+            &series,
+            window,
+            Some((0.0, 500.0)),
+            &style,
+            fit,
+            LogAxes::default(),
+        );
         assert_eq!(
             pinned.y.domain(),
             (0.0, 500.0),

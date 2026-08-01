@@ -2945,6 +2945,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-log-chart"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-market-map"
 version = "0.0.1"
 dependencies = [

@@ -49,3 +49,4 @@
 1525	modelview	the grid paints the model it orders: one path from data to pixels
 1526	none	this ledger and the round-axis evidence kind; no axis advanced
 1527	perf	paint cache mark phase traces containment: 1 hit/83 misses -> 20/10
+1528	dataviz	the value axis can be logarithmic: LogScale/ValueScale, Qt QLogValueAxis

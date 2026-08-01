@@ -78432,6 +78432,68 @@
         "`hello-grid-nav` publishes a full-surface damage region for a one-row selection change (400x480 for one 36px strip). Correct but maximally over-covering; the field over-covers by design, and nothing consumes it yet."
       ]
     },
+    "Round 1528": {
+      "decision_summary": "The value axis can be logarithmic (Qt QLogValueAxis). pinion-chart had ELEVEN chart types and ONE mapping, LinearScale, so a latency series over 0.1ms..1000ms put everything below 100ms on the baseline. The log scale IS the linear scale, over the log-transformed domain (d3's transformLog), which is why it inherits the degenerate-domain and descending-range handling already proved there rather than restating that arithmetic. Two layers follow: LinearScale is the arithmetic (total, affine) and ValueScale is the AXIS (Qt's QAbstractAxis distinction), whose map returns Option because a log axis has no pixel for zero. That partiality is the design and not an inconvenience - a sample the axis cannot place draws no mark and is REPORTED by LineChart::off_scale, which is the Mapped::unreadable stance applied to the axis instead of to the input.",
+      "changes_bullets": [
+        "scale.rs: LogScale (a LinearScale over the log-transformed domain, configurable base, total construction with a reported fallback) + ValueScale{Linear,Log}, whose map returns Option<f32>; axis_defines is the one definedness rule, reachable instance-free by charts that know their axis kind before a plot resolves.",
+        "ticks.rs: log_ticks (decades, whole-decade stride when they outnumber the labels), log_minor_ticks (2..base subdivisions, capped at 6 decades), nice_log_domain (decade snapping with an exponent-dust guard: ln(1000)/ln(10) is 2.9999999999999996), format_log_tick (SI above 1000, exponent below 1e-3, faithful digits between).",
+        "TickFormat replaces the scalar tick step at the label sites. A linear axis has ONE gap, so a scalar determined every label's decimals; a log axis has none, so the scalar is not a lossy summary of that tick set but a wrong one. It survived because on a linear axis the two agree - the R1439 derivation-by-coincidence, one layer up.",
+        "plot.rs: LogAxes{x,y} mirrors Rescale; CartesianPlot carries a ValueScale on both axes; a log axis auto-domains off Bounds::positive_x/y, which come out of the SAME bounds scan rather than a second one. resolve_focus now inverts through the axis instead of interpolating the domain linearly, and nearest_point_in takes a keep predicate so a series whose nearest sample is off-scale still contributes its nearest drawn one.",
+        "examples/hello-log-chart (new, 6 tests) + tools/demos/r1528_log_axis.py (37 assertion sites): three latency percentiles across four decades, one click between linear and log, and a caption rendered from LineChart::off_scale rather than from a restated rule."
+      ],
+      "verification_bullets": [
+        "Measured on the example, read off the painted scene: p50's polyline spans under 10px on the linear axis and over 4x that on the log axis - the same series, the same plot. Decade gridline gaps are equal within 1px and the y labels are 0.1/1/10/100/1k/10k.",
+        "The demo's discriminator is the LABELS, not the spacing: gridlines are evenly spaced on BOTH axes, so asserting even spacing alone would pass on a linear axis and prove nothing. Both facts are read together.",
+        "The x-axis labels are captured on both scales and required to be identical, so a change that logged both axes would fail rather than look like a success.",
+        "Off-scale is asserted as a property of the AXIS: the zero sample contributes 11 of 12 polyline vertices under log and 12 under linear, and the caption reports it in one case and not the other.",
+        "Measurement corrected the round's own counterfactual. The predicted failure of the scalar step on a log tick set was label collapse to 0; a log axis's gaps GROW, so the scalar is the smallest of them and the real failure is over-specification (1.000, 10.000, 100.000). Both directions are pinned now, including the strided case where the low decades do round to zero.",
+        "Local gates: pinion-chart 251 tests + 2 doc-tests and hello-log-chart 6 tests pass, 18 of them new r1528 units; clippy -D pedantic clean on both; cargo fmt --check clean; cargo doc --workspace clean (six public-doc links to private items lowered to code spans). Every pre-existing pinion-chart test passes unchanged, which is what makes this a generalisation rather than a rewrite.",
+        "Consumer regression: the eight chart example crates' tests pass, and demos hello_chart_r1354, r1377_scatter_scrub and r1391_brush_filter pass unchanged.",
+        "Self-grep (obligation 3b): LogAxes, tick_pixels, axis_format, minor_gridlines and off_scale_points are each one definition with two to four call sites, written shared rather than lifted afterwards. mul_alpha moved from line.rs to draw.rs at its second consumer, beside the MUTED_ALPHA it is applied to."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The bar chart is deliberately excluded: a bar encodes magnitude by length from a zero baseline and a log axis has no zero. Qt permits a log bar chart; the length encoding is what makes it a lie. Recorded at the call site.",
+        "A dropped interior sample makes the polyline join its surviving neighbours, so it reads as interpolation rather than as a gap. This follows the crate's existing stance for unreadable model cells verbatim - a true gap needs a gap-aware Series, which still does not exist. One rule for one class, and this is the second consumer asking for that machinery.",
+        "The Steps struct is duplicated in line.rs and scatter.rs (two consumers, identical shape). Its field TYPE changed identically in both this round, which is the signal, but the crate's own stated rule defers a two-consumer split; a third numeric-x chart settles it.",
+        "text_of now has four demo-local spellings across three shapes (r1448, the identical r1469 and r1478, and this round's). No three are byte-identical - they differ in Optional-versus-assert error behaviour - so no lift is owed, but the mechanical core is shared and the class is worth watching.",
+        "A log axis snapping outward to whole decades can reserve a mostly empty decade: the 1600ms spike opens 1k..10k. This is the same trade nice_ticks already makes for round labels, and it is stated in the demo rather than tuned away by picking friendlier data."
+      ],
+      "publishable_decision_summary": "The value axis can be logarithmic (Qt QLogValueAxis). pinion-chart had ELEVEN chart types and ONE mapping, LinearScale, so a latency series over 0.1ms..1000ms put everything below 100ms on the baseline. The log scale IS the linear scale, over the log-transformed domain (d3's transformLog), which is why it inherits the degenerate-domain and descending-range handling already proved there rather than restating that arithmetic. Two layers follow: LinearScale is the arithmetic (total, affine) and ValueScale is the AXIS (Qt's QAbstractAxis distinction), whose map returns Option because a log axis has no pixel for zero. That partiality is the design and not an inconvenience - a sample the axis cannot place draws no mark and is REPORTED by LineChart::off_scale, which is the Mapped::unreadable stance applied to the axis instead of to the input.",
+      "publishable_changes_bullets": [
+        "scale.rs: LogScale (a LinearScale over the log-transformed domain, configurable base, total construction with a reported fallback) + ValueScale{Linear,Log}, whose map returns Option<f32>; axis_defines is the one definedness rule, reachable instance-free by charts that know their axis kind before a plot resolves.",
+        "ticks.rs: log_ticks (decades, whole-decade stride when they outnumber the labels), log_minor_ticks (2..base subdivisions, capped at 6 decades), nice_log_domain (decade snapping with an exponent-dust guard: ln(1000)/ln(10) is 2.9999999999999996), format_log_tick (SI above 1000, exponent below 1e-3, faithful digits between).",
+        "TickFormat replaces the scalar tick step at the label sites. A linear axis has ONE gap, so a scalar determined every label's decimals; a log axis has none, so the scalar is not a lossy summary of that tick set but a wrong one. It survived because on a linear axis the two agree - the R1439 derivation-by-coincidence, one layer up.",
+        "plot.rs: LogAxes{x,y} mirrors Rescale; CartesianPlot carries a ValueScale on both axes; a log axis auto-domains off Bounds::positive_x/y, which come out of the SAME bounds scan rather than a second one. resolve_focus now inverts through the axis instead of interpolating the domain linearly, and nearest_point_in takes a keep predicate so a series whose nearest sample is off-scale still contributes its nearest drawn one.",
+        "examples/hello-log-chart (new, 6 tests) + tools/demos/r1528_log_axis.py (37 assertion sites): three latency percentiles across four decades, one click between linear and log, and a caption rendered from LineChart::off_scale rather than from a restated rule."
+      ],
+      "publishable_verification_bullets": [
+        "Measured on the example, read off the painted scene: p50's polyline spans under 10px on the linear axis and over 4x that on the log axis - the same series, the same plot. Decade gridline gaps are equal within 1px and the y labels are 0.1/1/10/100/1k/10k.",
+        "The demo's discriminator is the LABELS, not the spacing: gridlines are evenly spaced on BOTH axes, so asserting even spacing alone would pass on a linear axis and prove nothing. Both facts are read together.",
+        "The x-axis labels are captured on both scales and required to be identical, so a change that logged both axes would fail rather than look like a success.",
+        "Off-scale is asserted as a property of the AXIS: the zero sample contributes 11 of 12 polyline vertices under log and 12 under linear, and the caption reports it in one case and not the other.",
+        "Measurement corrected the round's own counterfactual. The predicted failure of the scalar step on a log tick set was label collapse to 0; a log axis's gaps GROW, so the scalar is the smallest of them and the real failure is over-specification (1.000, 10.000, 100.000). Both directions are pinned now, including the strided case where the low decades do round to zero.",
+        "Local gates: pinion-chart 251 tests + 2 doc-tests and hello-log-chart 6 tests pass, 18 of them new r1528 units; clippy -D pedantic clean on both; cargo fmt --check clean; cargo doc --workspace clean (six public-doc links to private items lowered to code spans). Every pre-existing pinion-chart test passes unchanged, which is what makes this a generalisation rather than a rewrite.",
+        "Consumer regression: the eight chart example crates' tests pass, and demos hello_chart_r1354, r1377_scatter_scrub and r1391_brush_filter pass unchanged.",
+        "Self-grep (obligation 3b): LogAxes, tick_pixels, axis_format, minor_gridlines and off_scale_points are each one definition with two to four call sites, written shared rather than lifted afterwards. mul_alpha moved from line.rs to draw.rs at its second consumer, beside the MUTED_ALPHA it is applied to."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The bar chart is deliberately excluded: a bar encodes magnitude by length from a zero baseline and a log axis has no zero. Qt permits a log bar chart; the length encoding is what makes it a lie. Recorded at the call site.",
+        "A dropped interior sample makes the polyline join its surviving neighbours, so it reads as interpolation rather than as a gap. This follows the crate's existing stance for unreadable model cells verbatim - a true gap needs a gap-aware Series, which still does not exist. One rule for one class, and this is the second consumer asking for that machinery.",
+        "The Steps struct is duplicated in line.rs and scatter.rs (two consumers, identical shape). Its field TYPE changed identically in both this round, which is the signal, but the crate's own stated rule defers a two-consumer split; a third numeric-x chart settles it.",
+        "text_of now has four demo-local spellings across three shapes (r1448, the identical r1469 and r1478, and this round's). No three are byte-identical - they differ in Optional-versus-assert error behaviour - so no lift is owed, but the mechanical core is shared and the class is worth watching.",
+        "A log axis snapping outward to whole decades can reserve a mostly empty decade: the 1600ms spike opens 1k..10k. This is the same trade nice_ticks already makes for round labels, and it is stated in the demo rather than tuned away by picking friendlier data."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

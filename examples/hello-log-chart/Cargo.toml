@@ -1,0 +1,28 @@
+[package]
+name = "hello-log-chart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1528 logarithmic-axis chart consumer — the forcing consumer for pinion-chart's LogScale / ValueScale, the crate's first non-affine axis (Qt QLogValueAxis). Three latency-percentile series spanning four decades share one plot: on the linear axis every sub-millisecond sample is pinned to the baseline, and one toggle switches the value axis to log, where equal ratios occupy equal pixel spans. The dataset carries a zero sample on purpose — a log axis has no pixel for it, so it draws no mark and is REPORTED in the caption rather than placed on the baseline where it would be indistinguishable from a real sample at the domain floor."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1528 — the logarithmic value axis under test (LineChart::y_log -> Scene).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for the toggle-button a11y node.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 — `#[pinion_derive::widget(...)]`-free hand-written WidgetCore impl
+# still needs the derive crate for nothing here; the renderer wrapper does.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# §5.16 — the `HelloLogChartRenderer` struct emitted by build.rs names `::vello::*`.
+vello = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the `HelloLogChartRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
