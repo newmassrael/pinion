@@ -59,7 +59,9 @@ use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
+use pinion_widget_paint::table::{
+    CellIndex, GridScroll, TableStyle, VirtualTableData, view_virtual_table,
+};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloGridFrozenColRenderer, HelloGridFrozenColRendererError);
@@ -117,24 +119,25 @@ fn table_style() -> TableStyle {
 /// five-digit PID + the `Name` column are the frozen identity columns; the
 /// scrolling columns cycle so the eye (and the diff) has something to track
 /// while scrolling sideways.
-fn row_cells(id: usize) -> Vec<String> {
+fn cell_text(c: CellIndex) -> String {
     const NAMES: [&str; 5] = ["alpha", "bravo", "charlie", "delta", "echo"];
     const STATUS: [&str; 3] = ["Idle", "Active", "Done"];
     const USERS: [&str; 4] = ["root", "daemon", "coin", "ai"];
-    vec![
-        format!("{id:05}"),
-        format!("{}-{id}", NAMES[id % NAMES.len()]),
-        format!("{}.{}", id % 100, id % 10),
-        format!("{} MB", 16 + (id % 480)),
-        format!("{}", 1 + (id % 32)),
-        STATUS[id % STATUS.len()].to_string(),
-        USERS[id % USERS.len()].to_string(),
-        format!("T-{:04}", id % 1440),
-    ]
+    let id = c.row;
+    match c.col {
+        0 => format!("{id:05}"),
+        1 => format!("{}-{id}", NAMES[id % NAMES.len()]),
+        2 => format!("{}.{}", id % 100, id % 10),
+        3 => format!("{} MB", 16 + (id % 480)),
+        4 => format!("{}", 1 + (id % 32)),
+        5 => STATUS[id % STATUS.len()].to_string(),
+        6 => USERS[id % USERS.len()].to_string(),
+        _ => format!("T-{:04}", id % 1440),
+    }
 }
 
 /// view-fn (§6.3): pure sync `() -> Scene`. The dataset is virtual —
-/// `view_virtual_table` invokes [`row_cells`] only for the indices in the
+/// `view_virtual_table` invokes [`cell_text`] only for the cells in the
 /// current vertical window (per pane); the horizontal axis is a viewport
 /// offset on the scrolling pane (no column virtualization at 8 columns).
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -167,7 +170,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &theme,
         &style,
         |_| false, // display-only grid: no selection
-        row_cells,
+        cell_text,
     );
 
     Scene::Container(
@@ -279,14 +282,28 @@ mod tests {
         );
     }
 
+    /// R1524 — every column answers, and answers distinctly.
+    ///
+    /// The per-cell equivalent of the pre-R1524 `cells.len() == NCOLS` check,
+    /// and a strictly stronger one: a correct length said nothing about whether
+    /// two columns returned the *same* text, which is exactly how a `match`
+    /// arm that falls through to its neighbour fails.
     #[test]
-    fn row_cells_fill_all_columns() {
-        let cells = row_cells(42);
-        assert_eq!(cells.len(), NCOLS, "one cell per column");
-        assert_eq!(
-            cells[0], "00042",
-            "PID is the zero-padded index (frozen col 0)"
+    fn every_column_answers_distinctly() {
+        let texts: Vec<String> = (0..NCOLS)
+            .map(|col| cell_text(CellIndex { row: 42, col }))
+            .collect();
+        assert!(
+            texts.iter().all(|t| !t.is_empty()),
+            "every column of a filled row has text: {texts:?}",
         );
+        let distinct: std::collections::BTreeSet<&String> = texts.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            NCOLS,
+            "each column reports its own value, not a neighbour's: {texts:?}",
+        );
+        assert_eq!(texts[0], "00042", "PID is the zero-padded index");
     }
 
     #[test]

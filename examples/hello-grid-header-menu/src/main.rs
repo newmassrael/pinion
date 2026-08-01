@@ -80,7 +80,9 @@ use pinion_widget_paint::coord::saturating_f32_to_u32;
 use pinion_widget_paint::menu::{
     ContextMenuPlacement, MenuStyle, composite_item_tag, parse_item_sub_tag, view_context_menu,
 };
-use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
+use pinion_widget_paint::table::{
+    CellIndex, GridScroll, TableStyle, VirtualTableData, materialize_cells, view_virtual_table,
+};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -156,12 +158,13 @@ fn score(id: usize) -> usize {
 }
 
 /// Synthetic cell texts for a data row.
-fn row_cells(id: usize) -> Vec<String> {
-    vec![
-        format!("{}{id}", CATEGORIES[id % CATEGORIES.len()]),
-        score(id).to_string(),
-        STATUS[id % STATUS.len()].to_string(),
-    ]
+fn cell_text(c: CellIndex) -> String {
+    let id = c.row;
+    match c.col {
+        0 => format!("{}{id}", CATEGORIES[id % CATEGORIES.len()]),
+        1 => score(id).to_string(),
+        _ => STATUS[id % STATUS.len()].to_string(),
+    }
 }
 
 /// The shared [`GridSortState`] — the single source of truth for the grid's
@@ -169,7 +172,7 @@ fn row_cells(id: usize) -> Vec<String> {
 /// the context-menu reducer all reach the same `Rc` through this hook, so the
 /// order is computed once (the `hello-grid-sort` pattern).
 fn use_grid_data() -> Rc<GridSortState> {
-    use_grid_sort(SORT_TAG, || (NCOLS, (0..N).map(row_cells).collect()))
+    use_grid_sort(SORT_TAG, || (NCOLS, materialize_cells(N, NCOLS, cell_text)))
 }
 
 /// R988 — the grid position the context menu was opened on: the column it
@@ -343,7 +346,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
         &theme,
         &tstyle,
         |_id| false,
-        row_cells,
+        cell_text,
     );
 
     let mut children = vec![status_bar(&theme, sort, target), grid];

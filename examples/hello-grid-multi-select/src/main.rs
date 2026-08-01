@@ -71,7 +71,9 @@ use pinion_core::widgets::virtual_select::{
 };
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
+use pinion_widget_paint::table::{
+    CellIndex, GridScroll, TableStyle, VirtualTableData, view_virtual_table,
+};
 use std::collections::BTreeSet;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -162,14 +164,15 @@ fn table_style() -> TableStyle {
 }
 
 /// Synthetic cell texts for a data row (same dataset as `hello-grid-nav`).
-fn row_cells(id: usize) -> Vec<String> {
+fn cell_text(c: CellIndex) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
     const STATUS: [&str; 3] = ["Idle", "Active", "Done"];
-    vec![
-        format!("{id:05}"),
-        CATEGORIES[id % CATEGORIES.len()].to_string(),
-        STATUS[id % STATUS.len()].to_string(),
-    ]
+    let id = c.row;
+    match c.col {
+        0 => format!("{id:05}"),
+        1 => CATEGORIES[id % CATEGORIES.len()].to_string(),
+        _ => STATUS[id % STATUS.len()].to_string(),
+    }
 }
 
 /// Status bar above the grid: a literal scene-as-data readout of the
@@ -210,7 +213,7 @@ fn status_bar(
 }
 
 /// view-fn (§6.3): pure sync mapping `selection bitmap -> Scene`. The dataset
-/// is virtual — `view_virtual_table` invokes [`row_cells`] only for the
+/// is virtual — `view_virtual_table` invokes [`cell_text`] only for the
 /// indices in the current window, whose *size* is the runtime-measured
 /// viewport height. Every selected row's strip washes accent; several
 /// visible rows can wash at once in multi-select.
@@ -242,7 +245,7 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
         &theme,
         &style,
         |id| selection.is_selected(id),
-        row_cells,
+        cell_text,
     );
 
     Scene::Container(

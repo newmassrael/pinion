@@ -509,18 +509,25 @@ impl ColumnPad {
     }
 }
 
-/// R1523 — `cells[span]`, tolerating a row builder that returned fewer cells
-/// than the grid has columns.
+/// R1524 — one pane's cell texts for data row `row`: [`CellIndex`]-addressed
+/// `cell` asked once per column in `span`, in column order.
 ///
-/// That tolerance is [`view_virtual_table`]'s documented contract ("a cell
-/// beyond the returned length renders blank"), and windowing is where it starts
-/// to matter: an un-windowed row indexed short vecs harmlessly through
-/// `get(j)`, but a *slice* of one panics. Clamping in one place keeps the blank
-/// -cell rule from being re-decided per call site.
-fn clamped<'a, 'b>(cells: &'a [&'b str], span: &Range<usize>) -> &'a [&'b str] {
-    let start = span.start.min(cells.len());
-    let end = span.end.clamp(start, cells.len());
-    &cells[start..end]
+/// The single place the per-cell contract meets the per-row strip
+/// [`data_row`] paints, shared by all three panes that paint one (the unsplit
+/// grid, and the frozen split's pinned + scrolling panes) so none of them can
+/// decide on its own to ask for a column it will not paint — which is the
+/// defect R1524 closes, and it was three call sites wide.
+///
+/// This replaces R1523's `clamped`, which existed to tolerate a row builder
+/// that returned fewer cells than the grid had columns. A per-cell contract
+/// cannot express a short row, so the blank-cell rule is now `cell` returning
+/// an empty `String` and there is no length to reconcile.
+fn pane_texts(
+    cell: &mut impl FnMut(CellIndex) -> String,
+    row: usize,
+    span: Range<usize>,
+) -> Vec<String> {
+    span.map(|col| cell(CellIndex { row, col })).collect()
 }
 
 /// The shared [`spacer`](crate::spacer::spacer), or **nothing** when `width` is
@@ -931,6 +938,59 @@ pub struct GridScroll<'a> {
     pub horizontal: &'a Rc<ScrollState>,
 }
 
+/// R1524 §5.27 — the address of **one cell**: the unit
+/// [`view_virtual_table`] asks its consumer for.
+///
+/// This is the Model/View address every framework with a virtualized grid
+/// carries — Qt's `QModelIndex` (the argument to
+/// `QAbstractItemModel::data`), Flutter's `TableVicinity` (the argument to
+/// `TableView.builder`'s `cellBuilder`) — and it is a *struct* for the same
+/// reason both of those are: the two coordinates are the same type, so a
+/// positional `(row, col)` pair silently accepts them swapped. Naming them
+/// also lets `col` state the property that a windowed grid makes load-bearing
+/// and that R1523's frozen pane had to convert between internally — it is
+/// **absolute**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CellIndex {
+    /// The **data**-row index — already resolved through the sort
+    /// permutation, so a consumer indexes its dataset directly and never
+    /// sees a visual position (the R730 data-indexed convention the
+    /// selection predicate follows).
+    pub row: usize,
+    /// The **absolute** table-column index: `0` is the grid's first column
+    /// whatever the column window or the frozen split. A consumer therefore
+    /// answers for the column it was asked about with no knowledge of either.
+    pub col: usize,
+}
+
+/// R1524 §5.27 — the whole `rows x cols` matrix, materialized from a
+/// [`CellIndex`]-addressed source.
+///
+/// The adapter from the per-cell contract [`view_virtual_table`] asks through
+/// to the **eager** matrix a model wants seeded — a
+/// [`GridSortState`](pinion_core::widgets::grid_sort::GridSortState) or a
+/// `RowSearchState` holds every row so it can sort / filter / search rows the
+/// viewport has never exposed. Both shapes are legitimate: the grid paints a
+/// window, the model reasons over the set.
+///
+/// It exists so those two shapes come from **one** formula. Six bindings seed a
+/// model beside a grid, and each had derived the matrix from its own per-cell
+/// function with an identical nested map (obligation 3b — mechanical wiring, no
+/// per-binding opinion in it). Deriving it here means a binding cannot seed its
+/// model from a formula that has drifted from the one its cells are painted
+/// with; before R1524 the two were separate functions and nothing held them
+/// together.
+#[must_use]
+pub fn materialize_cells(
+    rows: usize,
+    cols: usize,
+    mut cell: impl FnMut(CellIndex) -> String,
+) -> Vec<Vec<String>> {
+    (0..rows)
+        .map(|row| (0..cols).map(|col| cell(CellIndex { row, col })).collect())
+        .collect()
+}
+
 /// R775 §5.27 — flex-viewport (`AutoSizer`) **virtualized data-grid**.
 ///
 /// The R707 [`view_table`] builds one strip per row eagerly — fine at a
@@ -985,8 +1045,16 @@ pub struct GridScroll<'a> {
 ///   and a display-only grid passes `|_| false`. One virtualized-grid paint
 ///   path serves all three (no parallel `_multi` body to diverge from the
 ///   windowed-sizer geometry). It is invoked only for the windowed rows.
-/// - `build_cells` — invoked once per windowed data-row index; returns the
-///   row's cell texts (a cell beyond the returned length renders blank).
+/// - `cell` — R1524: invoked once per **painted cell**, with that cell's
+///   [`CellIndex`], and returns its text. This is the Model/View contract of a
+///   two-axis virtualized grid (Qt `data(index)`, Flutter `cellBuilder`): the
+///   grid asks for exactly the cells it paints, so a 200-column grid showing
+///   five columns asks for five per row rather than building 200 and keeping
+///   five. Until R1524 this was a per-*row* builder returning every column's
+///   text — which meant R1523 could window the scene tree but not the work of
+///   filling it, and left the frozen split asking each pane for the whole row.
+///   A cell with nothing to show returns an empty `String`; because the grid
+///   asks per cell there is no longer a "row came back short" case to define.
 #[must_use]
 pub fn view_virtual_table(
     tag: &str,
@@ -995,7 +1063,7 @@ pub fn view_virtual_table(
     theme: &Theme,
     style: &TableStyle,
     is_selected: impl Fn(usize) -> bool,
-    build_cells: impl FnMut(usize) -> Vec<String>,
+    cell: impl FnMut(CellIndex) -> String,
 ) -> Scene {
     let cols = data.headers.len();
     // R785 — resolve the per-column widths once (uniform `style.col_width`
@@ -1037,12 +1105,12 @@ pub fn view_virtual_table(
     // stay scrollable for the freeze to mean anything. `0` (every pre-R859
     // caller) renders the single-scroll R784 grid byte-identically.
     let frozen_cols = data.frozen_cols.min(cols.saturating_sub(1));
-    // `build_cells` / `is_selected` are consumed by exactly one branch (an
+    // `cell` / `is_selected` are consumed by exactly one branch (an
     // `if`/`else`), so each helper takes them by value without a re-move.
     let content = if frozen_cols == 0 {
-        render.render_unsplit(scroll, &is_selected, build_cells)
+        render.render_unsplit(scroll, &is_selected, cell)
     } else {
-        render.render_frozen(scroll, frozen_cols, &is_selected, build_cells)
+        render.render_frozen(scroll, frozen_cols, &is_selected, cell)
     };
 
     Scene::Container(
@@ -1274,11 +1342,15 @@ impl GridRender<'_> {
     /// so the horizontal scroll still bounds against all of them. A grid whose
     /// columns fit its viewport windows all of them and pads by zero, painting
     /// the pre-R1523 scene exactly.
+    ///
+    /// R1524 — and the *asking* is windowed too: `cell` is invoked for the
+    /// `span` columns only, so the consumer's per-cell work scales with the
+    /// window rather than with the table.
     fn render_unsplit(
         &self,
         scroll: GridScroll<'_>,
         is_selected: &impl Fn(usize) -> bool,
-        mut build_cells: impl FnMut(usize) -> Vec<String>,
+        mut cell: impl FnMut(CellIndex) -> String,
     ) -> Scene {
         let total_w: u32 = self.widths.iter().copied().sum();
         let cols = self.column_window(scroll.horizontal, self.widths);
@@ -1318,13 +1390,13 @@ impl GridRender<'_> {
             header,
             |view_pos| {
                 let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
-                let cells_text = build_cells(source);
+                let cells_text = pane_texts(&mut cell, source, span.clone());
                 let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
                 let row_tag = GridTag::data_row(self.tag, source);
                 data_row(
                     self.tag,
                     source,
-                    clamped(&cell_refs, &span),
+                    &cell_refs,
                     fill,
                     fg,
                     RowPane {
@@ -1346,9 +1418,12 @@ impl GridRender<'_> {
     /// frozen pane's a follower — so they scroll in vertical lockstep
     /// without the shared-state oscillation a second publisher would cause.
     ///
-    /// `build_cells` is invoked once per visible row **per pane** (the
-    /// small overscanned window only): two `uniform_slots` passes keep the
-    /// slot-top geometry on its R775.1 SSOT instead of hand-rolling a loop.
+    /// Two `uniform_slots` passes keep the slot-top geometry on its R775.1 SSOT
+    /// instead of hand-rolling a loop. R1524 — because each pane now asks only
+    /// for **its own** columns (`0..frozen_cols` here, the window within
+    /// `frozen_cols..` there), the two passes no longer each rebuild the whole
+    /// row: the split costs one `cell` call per painted cell, exactly as the
+    /// unsplit grid does.
     ///
     /// R1523 — only the **scrolling** pane windows its columns. A frozen column
     /// is pinned against the horizontal scroll, so it is on screen at every
@@ -1361,7 +1436,7 @@ impl GridRender<'_> {
         scroll: GridScroll<'_>,
         frozen_cols: usize,
         is_selected: &impl Fn(usize) -> bool,
-        mut build_cells: impl FnMut(usize) -> Vec<String>,
+        mut cell: impl FnMut(CellIndex) -> String,
     ) -> Scene {
         let frozen_w: u32 = self.widths[..frozen_cols].iter().copied().sum();
         let scrolled = &self.widths[frozen_cols..];
@@ -1376,9 +1451,9 @@ impl GridRender<'_> {
 
         let frozen_slots = uniform_slots(self.window, frozen_w, row_pitch, |view_pos| {
             let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
-            let cells_text = build_cells(source);
+            // R1524 — the pinned pane asks for the pinned columns only.
+            let cells_text = pane_texts(&mut cell, source, 0..frozen_cols);
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
-            let split = frozen_cols.min(cell_refs.len());
             // R859 — distinct `_frow{id}` container tag so the split panes
             // never emit a duplicate strip tag (per-cell `_{col}` tags stay
             // unique by absolute column).
@@ -1386,7 +1461,7 @@ impl GridRender<'_> {
             data_row(
                 self.tag,
                 source,
-                &cell_refs[..split],
+                &cell_refs,
                 fill,
                 fg,
                 RowPane {
@@ -1401,13 +1476,16 @@ impl GridRender<'_> {
         });
         let scroll_slots = uniform_slots(self.window, scroll_w, row_pitch, |view_pos| {
             let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
-            let cells_text = build_cells(source);
+            // R1524 — the scrolling pane asks for its column window, in
+            // absolute coordinates (`abs`), so the consumer never learns that
+            // this pane's own column space starts at `frozen_cols`.
+            let cells_text = pane_texts(&mut cell, source, abs.clone());
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
             let row_tag = GridTag::data_row(self.tag, source);
             data_row(
                 self.tag,
                 source,
-                clamped(&cell_refs, &abs),
+                &cell_refs,
                 fill,
                 fg,
                 RowPane {
@@ -1480,6 +1558,8 @@ impl GridRender<'_> {
 mod tests {
     use super::*;
     use pinion_core::Owner;
+    use std::cell::RefCell;
+    use std::collections::BTreeSet;
 
     const HEADERS: [&str; 3] = ["Name", "Round", "Status"];
     const ROWS: [[&str; 3]; 3] = [
@@ -1716,6 +1796,28 @@ mod tests {
     const VT_HEADERS: [&str; 3] = ["Index", "Name", "Value"];
     const VT_N: usize = 10_000;
 
+    /// R1524 — the three-column fixture dataset, as the per-cell contract asks
+    /// for it. Named (not inlined per fixture) because the identical closure
+    /// was three call sites wide, and a fixture that disagreed with the others
+    /// about a cell's text would read as a windowing difference.
+    fn vt_cell(c: CellIndex) -> String {
+        match c.col {
+            0 => c.row.to_string(),
+            1 => format!("Row {}", c.row),
+            _ => format!("v{}", c.row),
+        }
+    }
+
+    /// R1524 — the per-column-width fixtures' dataset: the row index followed
+    /// by two fixed markers, so a width assertion never depends on cell text.
+    fn vt_marker_cell(c: CellIndex) -> String {
+        match c.col {
+            0 => c.row.to_string(),
+            1 => "x".to_string(),
+            _ => "y".to_string(),
+        }
+    }
+
     /// R1523 — a **laid-out** horizontal scroll for the virtual-table fixtures.
     ///
     /// The layout pass publishes a measured viewport for every `Scene::Scroll`,
@@ -1778,7 +1880,7 @@ mod tests {
                 &theme,
                 &style,
                 |_| false,
-                |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
+                vt_cell,
             )
         })
     }
@@ -1865,7 +1967,7 @@ mod tests {
                 &theme,
                 &style,
                 |_| false,
-                |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
+                vt_cell,
             )
         })
     }
@@ -2118,7 +2220,7 @@ mod tests {
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
-                |id| vec![format!("{id}"), "x".to_string(), "y".to_string()],
+                vt_marker_cell,
             )
         });
         assert_eq!(
@@ -2182,7 +2284,7 @@ mod tests {
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
-                |id| vec![format!("{id}"), "x".to_string(), "y".to_string()],
+                vt_marker_cell,
             )
         })
     }
@@ -2334,7 +2436,7 @@ mod tests {
                 &theme,
                 &style,
                 |_| false,
-                |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
+                vt_cell,
             )
         })
     }
@@ -2422,6 +2524,19 @@ mod tests {
     /// Render the wide grid with a **narrow** horizontal viewport, so the
     /// column axis genuinely windows. `frozen_cols` exercises the split path.
     fn run_vtable_wide(viewport_w: u32, offset_x: i32, frozen_cols: usize) -> Scene {
+        run_vtable_wide_with(viewport_w, offset_x, frozen_cols, |c: CellIndex| {
+            format!("r{}c{}", c.row, c.col)
+        })
+    }
+
+    /// [`run_vtable_wide`] with the caller's own cell builder, so an R1524 test
+    /// can observe **which** cells the grid asked for.
+    fn run_vtable_wide_with(
+        viewport_w: u32,
+        offset_x: i32,
+        frozen_cols: usize,
+        cell: impl FnMut(CellIndex) -> String,
+    ) -> Scene {
         let widths = wide_widths();
         let labels = wide_headers();
         let header_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -2454,7 +2569,7 @@ mod tests {
                 &light(),
                 &TableStyle::m3(),
                 |_| false,
-                |id| (0..WIDE_NCOLS).map(|c| format!("r{id}c{c}")).collect(),
+                cell,
             )
         })
     }
@@ -2516,6 +2631,120 @@ mod tests {
             before.len() / after.len() >= 40,
             "{}x fewer cells per row",
             before.len() / after.len(),
+        );
+    }
+
+    // ── R1524 per-cell data contract ────────────────────────────────
+
+    /// Every cell the grid asked for while rendering, in request order.
+    fn asked_cells(viewport_w: u32, offset_x: i32, frozen_cols: usize) -> (Scene, Vec<CellIndex>) {
+        let log = RefCell::new(Vec::new());
+        let scene = run_vtable_wide_with(viewport_w, offset_x, frozen_cols, |c: CellIndex| {
+            log.borrow_mut().push(c);
+            format!("r{}c{}", c.row, c.col)
+        });
+        (scene, log.into_inner())
+    }
+
+    /// Every data cell in the painted tree, as `(row, col)`.
+    ///
+    /// Decided by the `<row>_<col>` coordinate shape, not by the `vtbl#` prefix
+    /// alone: the header band's cells live in the same composite space
+    /// (`vtbl#h{col}`) and correspond to no data request.
+    fn painted_cells(scene: &Scene) -> Vec<(usize, usize)> {
+        tags_with_prefix(scene, "vtbl#")
+            .iter()
+            .filter_map(|t| {
+                let (row, col) = t.strip_prefix("vtbl#")?.split_once('_')?;
+                Some((row.parse().ok()?, col.parse().ok()?))
+            })
+            .collect()
+    }
+
+    /// **The defect R1524 closes.** R1523 windowed which cells reach the scene
+    /// tree, but the grid still *asked* its consumer for every column of every
+    /// windowed row and threw all but the window away — so the consumer's
+    /// per-cell work stayed proportional to the table, not the window.
+    ///
+    /// Asserted as set **equality** in both directions rather than as a
+    /// threshold: "asks for the cells it paints" is exactly that, and equality
+    /// also rejects asking for too *few*, which an upper bound would pass.
+    #[test]
+    fn r1524_unsplit_asks_for_exactly_the_cells_it_paints() {
+        let (scene, asked) = asked_cells(560, 0, 0);
+        let painted = painted_cells(&scene);
+        assert!(!painted.is_empty(), "the window holds cells");
+        assert_eq!(
+            asked.len(),
+            painted.len(),
+            "one request per painted cell: asked {}, painted {}",
+            asked.len(),
+            painted.len(),
+        );
+        let asked_set: BTreeSet<(usize, usize)> = asked.iter().map(|c| (c.row, c.col)).collect();
+        assert_eq!(
+            asked_set.len(),
+            asked.len(),
+            "no cell is asked for twice (the frozen split's old double build)",
+        );
+        assert_eq!(
+            asked_set,
+            painted.into_iter().collect::<BTreeSet<_>>(),
+            "the asked-for set and the painted set are the same set",
+        );
+    }
+
+    /// The frozen split is where the pre-R1524 contract cost the most: the
+    /// per-row builder ran **once per pane**, so each pane rebuilt the whole
+    /// row and every column was produced twice — 2 x 200 requests for the ~7
+    /// columns the panes between them paint.
+    ///
+    /// Now each pane asks only for its own columns, so the split costs exactly
+    /// what the unsplit grid does: one request per painted cell, no column
+    /// twice.
+    #[test]
+    fn r1524_frozen_split_asks_each_painted_cell_once() {
+        let (scene, asked) = asked_cells(560, 700, 2);
+        let painted = painted_cells(&scene);
+        assert!(!painted.is_empty(), "the split paints cells");
+        let asked_set: BTreeSet<(usize, usize)> = asked.iter().map(|c| (c.row, c.col)).collect();
+        assert_eq!(
+            asked_set.len(),
+            asked.len(),
+            "a split grid asks for each cell once, not once per pane",
+        );
+        assert_eq!(
+            asked_set,
+            painted.into_iter().collect::<BTreeSet<_>>(),
+            "both panes together ask for exactly the cells they paint",
+        );
+        // The pinned columns are asked for, and in their own right: they are on
+        // screen at every offset, so they can never be windowed out.
+        for col in 0..2 {
+            assert!(
+                asked.iter().any(|c| c.col == col),
+                "frozen column {col} is asked for",
+            );
+        }
+    }
+
+    /// The magnitude, measured on the same fixture at two viewports rather than
+    /// recalled: the wide viewport is what the pre-R1523 assembly produced at
+    /// *any* viewport, and the per-row contract asked for that many whatever
+    /// the window.
+    #[test]
+    fn r1524_requests_drop_by_the_window_ratio() {
+        let (_, wide) = asked_cells(24_000, 0, 0);
+        let (_, narrow) = asked_cells(560, 0, 0);
+        let rows: BTreeSet<usize> = narrow.iter().map(|c| c.row).collect();
+        assert!(!rows.is_empty(), "some rows are windowed");
+        // Per windowed row: 200 columns un-windowed vs the 5 visible ones.
+        assert_eq!(wide.len() / rows.len(), WIDE_NCOLS);
+        assert_eq!(narrow.len() / rows.len(), 5);
+        assert!(
+            wide.len() / narrow.len() >= 40,
+            "{}x fewer cell requests per frame",
+            wide.len() / narrow.len(),
         );
     }
 

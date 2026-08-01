@@ -43,7 +43,9 @@ use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
+use pinion_widget_paint::table::{
+    CellIndex, GridScroll, TableStyle, VirtualTableData, materialize_cells, view_virtual_table,
+};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -95,18 +97,21 @@ fn score(id: usize) -> usize {
 }
 
 /// Synthetic cell texts: Name `<Category><id>`, numeric Score, cyclic Status.
-fn row_cells(id: usize) -> Vec<String> {
-    vec![
-        format!("{}{id:04}", CATEGORIES[id % CATEGORIES.len()]),
-        score(id).to_string(),
-        STATUS[id % STATUS.len()].to_string(),
-    ]
+fn cell_text(c: CellIndex) -> String {
+    let id = c.row;
+    match c.col {
+        0 => format!("{}{id:04}", CATEGORIES[id % CATEGORIES.len()]),
+        1 => score(id).to_string(),
+        _ => STATUS[id % STATUS.len()].to_string(),
+    }
 }
 
 /// The shared search proxy (cells + query + cursor). The view + the
 /// `RowSearchExternal` reach the same `Rc`.
 fn use_search() -> Rc<RowSearchState> {
-    use_row_search(SEARCH_TAG, || (NCOLS, (0..N).map(row_cells).collect()))
+    use_row_search(SEARCH_TAG, || {
+        (NCOLS, materialize_cells(N, NCOLS, cell_text))
+    })
 }
 
 /// The seed query (Name contains "Delta") — a substring search over a large
@@ -205,7 +210,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &theme,
         &style,
         |_| false, // search has its own cursor highlight; selection is a separate axis
-        row_cells,
+        cell_text,
     );
 
     Scene::Container(
@@ -365,15 +370,23 @@ mod tests {
         });
     }
 
+    /// R1524 — the per-cell SSOT answers each column, and the eager
+    /// materialization the search model is seeded with agrees with it column for
+    /// column (the property that made the two shapes safe to keep).
     #[test]
-    fn row_cells_shape() {
+    fn cell_text_and_the_seed_agree() {
+        let expected = [
+            "Delta0003".to_string(),
+            score(3).to_string(),
+            "Idle".to_string(),
+        ];
+        for (col, want) in expected.iter().enumerate() {
+            assert_eq!(&cell_text(CellIndex { row: 3, col }), want, "column {col}");
+        }
         assert_eq!(
-            row_cells(3),
-            vec![
-                "Delta0003".to_string(),
-                score(3).to_string(),
-                "Idle".to_string()
-            ],
+            materialize_cells(4, NCOLS, cell_text)[3],
+            expected,
+            "the seeded matrix's row 3 is the per-cell answers, in order",
         );
     }
 }

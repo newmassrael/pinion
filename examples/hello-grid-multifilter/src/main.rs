@@ -62,7 +62,9 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
+use pinion_widget_paint::table::{
+    CellIndex, GridScroll, TableStyle, VirtualTableData, materialize_cells, view_virtual_table,
+};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -139,12 +141,13 @@ fn score(id: usize) -> usize {
 /// (so a `~` substring facet on the category name keeps that category); column
 /// 1 (Score) is numeric (the `>=` facet column); column 2 (Status) is a cyclic
 /// category (the `=` facet column).
-fn row_cells(id: usize) -> Vec<String> {
-    vec![
-        format!("{}{id:04}", CATEGORIES[id % CATEGORIES.len()]),
-        score(id).to_string(),
-        STATUS[id % STATUS.len()].to_string(),
-    ]
+fn cell_text(c: CellIndex) -> String {
+    let id = c.row;
+    match c.col {
+        0 => format!("{}{id:04}", CATEGORIES[id % CATEGORIES.len()]),
+        1 => score(id).to_string(),
+        _ => STATUS[id % STATUS.len()].to_string(),
+    }
 }
 
 /// The shared [`GridSortState`] — the single source of truth for the grid's
@@ -152,7 +155,7 @@ fn row_cells(id: usize) -> Vec<String> {
 /// [`GridSortExternal`] all reach the same `Rc` through this hook, so the
 /// order is computed once.
 fn use_grid_data() -> Rc<GridSortState> {
-    use_grid_sort(SORT_TAG, || (NCOLS, (0..N).map(row_cells).collect()))
+    use_grid_sort(SORT_TAG, || (NCOLS, materialize_cells(N, NCOLS, cell_text)))
 }
 
 /// Status bar above the grid: a literal scene-as-data readout of the active
@@ -195,7 +198,7 @@ fn status_bar(
 }
 
 /// view-fn (§6.3): pure sync mapping `selected source row -> Scene`. The
-/// dataset is virtual — `view_virtual_table` invokes [`row_cells`] only for
+/// dataset is virtual — `view_virtual_table` invokes [`cell_text`] only for
 /// the windowed visual positions, each resolved to its source row through the
 /// shared `(filter, sort)` `order`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -231,7 +234,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         &theme,
         &style,
         |id| selected == Some(id),
-        row_cells,
+        cell_text,
     );
 
     Scene::Container(
@@ -371,8 +374,8 @@ mod tests {
     /// Whether data row `id` satisfies the demo conjunction, computed
     /// independently of the proxy (the test oracle).
     fn satisfies_demo(id: usize) -> bool {
-        let cells = row_cells(id);
-        cells[NAME_COL].contains("Alpha") && score(id) >= 500 && cells[STATUS_COL] == "Active"
+        let at = |col| cell_text(CellIndex { row: id, col });
+        at(NAME_COL).contains("Alpha") && score(id) >= 500 && at(STATUS_COL) == "Active"
     }
 
     #[test]

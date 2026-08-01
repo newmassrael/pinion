@@ -44,7 +44,9 @@ use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
+use pinion_widget_paint::table::{
+    CellIndex, GridScroll, TableStyle, VirtualTableData, view_virtual_table,
+};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVirtualTableRenderer, HelloVirtualTableRendererError);
@@ -93,18 +95,18 @@ fn table_style() -> TableStyle {
 /// Synthetic cell texts for a data row. The five-digit index keeps every
 /// `scene/snapshot` cell unambiguous; the category cycles so the eye has
 /// something to track while scrolling.
-fn row_cells(id: usize) -> Vec<String> {
+fn cell_text(c: CellIndex) -> String {
     const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
     const STATUS: [&str; 3] = ["Idle", "Active", "Done"];
-    vec![
-        format!("{id:05}"),
-        CATEGORIES[id % CATEGORIES.len()].to_string(),
-        STATUS[id % STATUS.len()].to_string(),
-    ]
+    match c.col {
+        0 => format!("{:05}", c.row),
+        1 => CATEGORIES[c.row % CATEGORIES.len()].to_string(),
+        _ => STATUS[c.row % STATUS.len()].to_string(),
+    }
 }
 
 /// view-fn (§6.3): pure sync `() -> Scene`. The dataset is virtual —
-/// `view_virtual_table` invokes [`row_cells`] only for the indices in the
+/// `view_virtual_table` invokes [`cell_text`] only for the indices in the
 /// current window, whose *size* is the runtime-measured viewport height.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(_state: (), _frame: &Frame) -> Scene {
@@ -134,7 +136,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &theme,
         &style,
         |_| false, // display-only grid: no selection
-        row_cells,
+        cell_text,
     );
 
     Scene::Container(
@@ -275,9 +277,18 @@ mod tests {
     }
 
     #[test]
-    fn row_cells_are_indexed_and_categorized() {
-        assert_eq!(row_cells(0), vec!["00000", "Alpha", "Idle"]);
-        assert_eq!(row_cells(42), vec!["00042", "Charlie", "Idle"]);
+    fn cells_are_indexed_and_categorized() {
+        assert_eq!(row_of(0), vec!["00000", "Alpha", "Idle"]);
+        assert_eq!(row_of(42), vec!["00042", "Charlie", "Idle"]);
+    }
+
+    /// R1524 — data row `id` across every column, assembled from the per-cell
+    /// SSOT. Test-only: production asks for the columns it paints, so nothing
+    /// there ever wants a whole row.
+    fn row_of(id: usize) -> Vec<String> {
+        (0..HEADERS.len())
+            .map(|col| cell_text(CellIndex { row: id, col }))
+            .collect()
     }
 
     #[test]

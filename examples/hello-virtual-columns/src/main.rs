@@ -47,15 +47,20 @@
 
 use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_wide};
 use pinion_core::external::{External, StubExternal};
-use pinion_core::scene::ContainerNode;
-use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
-use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
+};
+use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_widths::use_column_widths;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::table::{GridScroll, TableStyle, VirtualTableData, view_virtual_table};
+use pinion_widget_paint::table::{
+    CellIndex, GridScroll, TableStyle, VirtualTableData, view_virtual_table,
+};
+use std::cell::Cell;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(
@@ -90,6 +95,11 @@ const H_SCROLL_KEY: &str = "vcol_hscroll";
 /// Cache key for the shared [`ColumnWidths`](pinion_core::widgets::column_widths::ColumnWidths)
 /// model, whose prefix-sum resolves which columns the viewport exposes.
 const COLS_KEY: &str = "vcol_cols";
+/// Height of the R1524 request-count status band.
+const STATUS_H: u32 = 40;
+/// Tag of the status readout — the `scene/snapshot` slot the demo reads the
+/// per-frame cell-request count from.
+const STATUS_TAG: &str = "vcol_status";
 
 /// Width of column `col`, in logical pixels.
 ///
@@ -125,19 +135,75 @@ fn table_style() -> TableStyle {
     }
 }
 
-/// Synthetic cell texts for a data row across all [`NCOLS`] columns.
+thread_local! {
+    /// R1524 — how many cells the grid asked for while building the current
+    /// frame.
+    ///
+    /// This round changes *who builds what*, not what is painted, so the
+    /// painted scene alone cannot witness it: the same cells appear on screen
+    /// either way. The count is therefore published into the scene, where
+    /// `scene/snapshot` reads it with no pixels (§2 #7) — the readout pattern
+    /// `hello-grid-multi-select` uses for its selection cardinality.
+    ///
+    /// It does not compromise view-fn purity (§6.3): [`view`] zeroes it on
+    /// entry and reads it after the grid — its only writer — has been built,
+    /// so the Scene stays a deterministic function of state and a repeated
+    /// pass (a `dry_run`, an introspection pass) yields the identical value.
+    static CELL_REQUESTS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The synthetic text of **one cell** — the R1524 per-cell contract
+/// ([`CellIndex`]), and the SSOT for this example's dataset.
 ///
 /// `r<row>c<col>` names both coordinates, so a snapshot cell proves which
-/// (row, column) pair the tree actually holds — the assertion the demo
-/// needs on both axes at once.
-fn row_cells(id: usize) -> Vec<String> {
-    (0..NCOLS).map(|c| format!("r{id}c{c}")).collect()
+/// (row, column) pair the tree actually holds — the assertion the demo needs
+/// on both axes at once. Pre-R1524 this was a `Vec<String>` of all [`NCOLS`]
+/// columns per row, of which the grid kept the ~5 the viewport exposed.
+fn cell_text(c: CellIndex) -> String {
+    CELL_REQUESTS.with(|n| n.set(n.get() + 1));
+    format!("r{}c{}", c.row, c.col)
+}
+
+/// The R1524 readout: how many cells the grid asked for, against the extent it
+/// asked them from.
+///
+/// `asked` is deliberately the only *measured* number here — the window sizes
+/// are not restated, because the grid already derives them and a second
+/// statement could drift from it (the reason this example's `total_width` is
+/// test-only). The demo instead cross-checks `asked` against an independent
+/// observable: how many cells the snapshot actually holds. Equality of those
+/// two is exactly what "the grid asks for the cells it paints" means.
+fn status_bar(asked: usize, theme: &Theme) -> Scene {
+    let text = Scene::Text(
+        TextNode::styled(
+            format!("asked {asked} cells \u{00B7} table {N}\u{00D7}{NCOLS}"),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(13)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
+        )
+        .with_tag(STATUS_TAG),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![text])
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::auto().with_height(SizeValue::Px(STATUS_H)))
+                    .with_flex_grow(0.0)
+                    .with_padding(Rect::new(12, 0, 12, 0)),
+            ),
+    )
 }
 
 /// view-fn (§6.3): pure sync `() -> Scene`. Both axes are virtual —
 /// `view_virtual_table` builds cells only for the windowed rows *and* the
 /// windowed columns, both windows derived from the runtime-measured
-/// viewport.
+/// viewport, and R1524 — it *asks* [`cell_text`] for only those.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(_state: (), _frame: &Frame) -> Scene {
     let scroll = use_scroll_state(SCROLL_KEY);
@@ -149,6 +215,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let labels = headers();
     let header_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
+    CELL_REQUESTS.with(|n| n.set(0));
     let grid = view_virtual_table(
         TABLE_TAG,
         GridScroll {
@@ -170,11 +237,14 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &theme,
         &style,
         |_| false, // display-only grid: no selection
-        row_cells,
+        cell_text,
     );
+    // Read AFTER the grid is built: `cell_text` is its only writer, so this is
+    // this frame's count, not the previous frame's.
+    let asked = CELL_REQUESTS.with(Cell::get);
 
     Scene::Container(
-        ContainerNode::new(vec![grid])
+        ContainerNode::new(vec![status_bar(asked, &theme), grid])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
@@ -315,11 +385,146 @@ mod tests {
     }
 
     #[test]
-    fn row_cells_name_both_coordinates() {
-        let cells = row_cells(42);
-        assert_eq!(cells.len(), NCOLS, "the row builder covers every column");
-        assert_eq!(cells[0], "r42c0");
-        assert_eq!(cells[NCOLS - 1], format!("r42c{}", NCOLS - 1));
+    fn cell_text_names_both_coordinates() {
+        assert_eq!(cell_text(CellIndex { row: 42, col: 0 }), "r42c0");
+        assert_eq!(
+            cell_text(CellIndex {
+                row: 42,
+                col: NCOLS - 1,
+            }),
+            format!("r42c{}", NCOLS - 1),
+        );
+    }
+
+    /// Render the view with both viewports measured, as the shell does after
+    /// the first layout pass, and report `(scene, cells the grid asked for)`.
+    fn run_view(measured_w: u32, measured_h: u32, offset_x: i32) -> (Scene, usize) {
+        Owner::new().run(|| {
+            let scroll = use_scroll_state(SCROLL_KEY);
+            scroll.set_measured_viewport(measured_w, measured_h);
+            let h_scroll = use_scroll_state(H_SCROLL_KEY);
+            h_scroll.set_measured_viewport(measured_w, measured_h);
+            let extent = total_width().saturating_sub(measured_w);
+            h_scroll.set_max(i32::try_from(extent).unwrap_or(i32::MAX), 0);
+            h_scroll.scroll_to(offset_x, 0);
+            let scene = view((), &Frame::default());
+            (scene, CELL_REQUESTS.with(Cell::get))
+        })
+    }
+
+    /// Every **data** cell in the painted tree, as `(row, col)`.
+    ///
+    /// The `{tag}#…` composite space also holds the header band's cells
+    /// (`{tag}#h{col}`), which no data request corresponds to, so membership is
+    /// decided by the `<row>_<col>` coordinate shape rather than by the `#`
+    /// prefix alone — a prefix-only filter counts the header row as a 13th data
+    /// row and reports a 7-cell surplus that is really a units mismatch.
+    fn painted_cells(scene: &Scene) -> Vec<(usize, usize)> {
+        fn coords(tag: &str) -> Option<(usize, usize)> {
+            let (row, col) = tag
+                .strip_prefix(&format!("{TABLE_TAG}#"))?
+                .split_once('_')?;
+            Some((row.parse().ok()?, col.parse().ok()?))
+        }
+        fn walk(scene: &Scene, out: &mut Vec<(usize, usize)>) {
+            match scene {
+                Scene::Container(c) => {
+                    if let Some(rc) = c.tag.as_deref().and_then(coords) {
+                        out.push(rc);
+                    }
+                    for child in &c.children {
+                        walk(child, out);
+                    }
+                }
+                Scene::Scroll(s) => walk(s.content.as_ref(), out),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(scene, &mut out);
+        out
+    }
+
+    /// **The defect R1524 closes.** R1523 windowed which cells reach the scene
+    /// tree; the grid still *asked* for every column of every windowed row and
+    /// discarded all but the window. So the two counts disagreed by the same
+    /// ~40x the tree had just been relieved of.
+    ///
+    /// The assertion is their **equality**, not a threshold: "the grid asks for
+    /// the cells it paints" is exactly that, and equality also cannot be
+    /// satisfied by asking for too *few* (a window bug), which a `<=` bound
+    /// would wave through.
+    #[test]
+    fn r1524_asks_for_exactly_the_cells_it_paints() {
+        let (scene, asked) = run_view(WIN_W, 360, 0);
+        let painted = painted_cells(&scene);
+        assert!(!painted.is_empty(), "the window must hold some cells");
+        assert_eq!(
+            asked,
+            painted.len(),
+            "asked for {asked} cells but painted {} — every requested cell must be a \
+             painted one and vice versa",
+            painted.len(),
+        );
+    }
+
+    /// The same equality at a scrolled offset and a resized viewport: the
+    /// contract is not an artifact of the boot window (where the column window
+    /// starts at 0 and a lead pad is absent).
+    #[test]
+    fn r1524_equality_holds_across_offsets_and_sizes() {
+        for (w, h, offset) in [(WIN_W, 360, 6_000), (WIN_W, 200, 12_345), (1_100, 500, 0)] {
+            let (scene, asked) = run_view(w, h, offset);
+            let painted = painted_cells(&scene).len();
+            assert!(painted > 0, "cells present at {w}x{h} offset {offset}");
+            assert_eq!(
+                asked, painted,
+                "asked {asked} != painted {painted} at {w}x{h} offset {offset}",
+            );
+        }
+    }
+
+    /// The magnitude the equality buys, stated against the pre-R1524 cost: the
+    /// grid asks for a small multiple of the *window*, not of [`NCOLS`]. Guards
+    /// the case where a future change reintroduces full-row production while
+    /// keeping the tree windowed — the counts would still be equal only if the
+    /// discarded cells were also painted, so this pins the absolute scale.
+    #[test]
+    fn r1524_requests_scale_with_the_window_not_the_table() {
+        let (scene, asked) = run_view(WIN_W, 360, 0);
+        let rows: std::collections::BTreeSet<usize> =
+            painted_cells(&scene).iter().map(|&(row, _)| row).collect();
+        let row_count = rows.len();
+        assert!(row_count > 0, "some rows are windowed");
+        let full_row_cost = row_count * NCOLS;
+        assert!(
+            asked * 10 < full_row_cost,
+            "asking {asked} for {row_count} windowed rows must be an order of magnitude \
+             below the {full_row_cost} a per-row builder cost",
+        );
+    }
+
+    /// The AI-first witness (§2 #7): the count reaches `scene/snapshot`, so an
+    /// agent can observe the round's claim with no pixels and no profiler.
+    #[test]
+    fn r1524_status_readout_publishes_the_request_count() {
+        fn status_text(scene: &Scene) -> Option<String> {
+            match scene {
+                Scene::Text(t) if t.tag.as_deref() == Some(STATUS_TAG) => {
+                    Some(t.content.to_string())
+                }
+                Scene::Container(c) => c.children.iter().find_map(status_text),
+                Scene::Scroll(s) => status_text(s.content.as_ref()),
+                _ => None,
+            }
+        }
+        let (scene, asked) = run_view(WIN_W, 360, 0);
+        let text = status_text(&scene).expect("status readout present");
+        assert_eq!(
+            text,
+            format!("asked {asked} cells \u{00B7} table {N}\u{00D7}{NCOLS}"),
+            "the readout states this frame's count and the full extent it came from",
+        );
     }
 
     /// The defect this round closes, on the a11y axis: a windowed grid must
