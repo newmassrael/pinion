@@ -461,6 +461,13 @@ AXES = [
             ]),
             ("demo-body", [
                 "cache_stats", "paint_cache", "frame_budget", "fixed_timestep",
+                # R1537 — the GPU frame clock. Same rule as the four above and
+                # not the excluded pair: `gpu_us` is a cost counter that only
+                # this axis's work produces, where `frame_timings` is a wire a
+                # focus or window-identity round reads in passing. Measured at
+                # R1537: 1 of 490 demos mentions it, and it did not exist
+                # before the round that added it.
+                "gpu_us",
             ]),
         ],
         # R1527 re-judgment, forced by this axis's round count going 2 -> 3.
