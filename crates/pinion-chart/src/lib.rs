@@ -112,6 +112,27 @@
 //! The bar chart is deliberately excluded: a bar encodes magnitude by length
 //! from a zero baseline, and a log axis has no zero.
 //!
+//! And (R1529) the third axis kind — [`LineChart::x_time`] /
+//! [`ScatterChart::x_time`] and their `y_` twins, plus
+//! [`Timeline::time_axis`] (Qt's `QDateTimeAxis`, d3's `scaleUtc`). Values on
+//! it are epoch **milliseconds**, UTC. Unlike the log axis this one is
+//! *affine* — equal durations occupy equal pixel spans, so it reuses
+//! [`LinearScale`] untouched — and everything that makes it a distinct kind
+//! is in its ticks and labels. Both were wrong before: [`nice_ticks`]'s
+//! `1 / 2 / 5 x 10^n` step is a **decimal** quantiser, and above a second
+//! time is mixed-radix, so a one-hour domain got gridlines at `00:06:40`;
+//! and the label compacted by magnitude, which at the giga scale has
+//! 27-hour resolution, so every tick of a sub-day axis rendered as the same
+//! string. [`time_ticks`] lands on clock and calendar boundaries and
+//! [`format_time_tick`] names each one by the finest field that
+//! distinguishes it, so the date appears where the axis crosses into a new
+//! day rather than on every label. Two things are worth knowing before using
+//! it: a lone value — a scrub header, an a11y readout — takes
+//! [`TickFormat::readout`] rather than the tick label, because a relative
+//! label out of its row is ambiguous; and the axis is UTC only, a local one
+//! needing a timezone database that would also make every axis test read the
+//! host's configuration.
+//!
 //! Not yet: cross-filtering between two ARBITRARY chart types, and a y-rescale
 //! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
 //! — follow-up slices on that same core. (A frequency *histogram* is a consumer
@@ -177,6 +198,7 @@
 
 mod bar;
 mod brush;
+mod civil;
 mod color_scale;
 mod donut;
 mod draw;
@@ -201,7 +223,7 @@ pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;
 pub use plot::OffScale;
-pub use scale::{DEFAULT_LOG_BASE, LinearScale, LogScale, ValueScale, axis_defines};
+pub use scale::{AxisKind, DEFAULT_LOG_BASE, LinearScale, LogScale, ValueScale};
 pub use scatter::ScatterChart;
 pub use series::{
     Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, value_bounds, visible_data_bounds,
@@ -209,8 +231,9 @@ pub use series::{
 pub use sparkline::Sparkline;
 pub use style::{ChartStyle, Margin};
 pub use ticks::{
-    TickFormat, format_axis_tick, format_log_tick, format_si, format_tick, log_minor_ticks,
-    log_ticks, nice_log_domain, nice_ticks, tick_decimals,
+    TickFormat, format_axis_tick, format_log_tick, format_si, format_tick, format_time_stamp,
+    format_time_tick, log_minor_ticks, log_ticks, nice_log_domain, nice_ticks, nice_time_domain,
+    tick_decimals, time_ticks,
 };
 pub use timeline::{Lane, Span, Timeline};
 pub use treemap::{Tile, Treemap, color_value_bounds};

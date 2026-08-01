@@ -50,3 +50,4 @@
 1526	none	this ledger and the round-axis evidence kind; no axis advanced
 1527	perf	paint cache mark phase traces containment: 1 hit/83 misses -> 20/10
 1528	dataviz	the value axis can be logarithmic: LogScale/ValueScale, Qt QLogValueAxis
+1529	dataviz	the x-axis can be UTC time: time_ticks/ValueScale::Time, Qt QDateTimeAxis

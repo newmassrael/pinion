@@ -52,9 +52,10 @@ use crate::draw::{
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{
-    CartesianPlot, LogAxes, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
+    AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
     off_scale_points, resolve_focus, tick_pixels,
 };
+use crate::scale::AxisKind;
 use crate::series::{DataPoint, Series, in_domain, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::TickFormat;
@@ -71,7 +72,7 @@ pub struct ScatterChart {
     select_x_range: Option<(f64, f64)>,
     legend_tags: Option<Vec<String>>,
     color: ValueEncoding,
-    logs: LogAxes,
+    kinds: AxisKinds,
     tag_prefix: String,
 }
 
@@ -89,7 +90,7 @@ impl ScatterChart {
             select_x_range: None,
             legend_tags: None,
             color: ValueEncoding::default(),
-            logs: LogAxes::default(),
+            kinds: AxisKinds::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -259,7 +260,7 @@ impl ScatterChart {
     /// [`y_log`](Self::y_log) in an explicit `base`.
     #[must_use]
     pub fn y_log_base(mut self, base: f64) -> Self {
-        self.logs.y = Some(base);
+        self.kinds.y = AxisKind::Log(base);
         self
     }
 
@@ -277,7 +278,24 @@ impl ScatterChart {
     /// [`x_log`](Self::x_log) in an explicit `base`.
     #[must_use]
     pub fn x_log_base(mut self, base: f64) -> Self {
-        self.logs.x = Some(base);
+        self.kinds.x = AxisKind::Log(base);
+        self
+    }
+
+    /// Plot the **x**-axis as UTC time (R1529) — see
+    /// [`LineChart::x_time`](crate::LineChart::x_time) for the whole
+    /// contract. Sample `x` values are read as epoch milliseconds.
+    #[must_use]
+    pub fn x_time(mut self) -> Self {
+        self.kinds.x = AxisKind::Time;
+        self
+    }
+
+    /// Plot the **y**-axis as UTC time (R1529) — see
+    /// [`LineChart::x_time`](crate::LineChart::x_time).
+    #[must_use]
+    pub fn y_time(mut self) -> Self {
+        self.kinds.y = AxisKind::Time;
         self
     }
 
@@ -285,7 +303,7 @@ impl ScatterChart {
     /// [`LineChart::off_scale`](crate::LineChart::off_scale).
     #[must_use]
     pub fn off_scale(&self) -> Vec<OffScale> {
-        off_scale_points(&self.series, self.logs)
+        off_scale_points(&self.series, self.kinds)
     }
 
     /// The chart body, authored in the frame `rect` describes — the ONE builder
@@ -298,7 +316,7 @@ impl ScatterChart {
             self.y_domain,
             style,
             Rescale::default(),
-            self.logs,
+            self.kinds,
         );
         let x_ticks = axis_ticks(&plot.x, style.x_ticks);
         let y_ticks = axis_ticks(&plot.y, style.y_ticks);
@@ -552,7 +570,7 @@ impl ScatterChart {
             self.y_domain,
             style,
             Rescale::default(),
-            self.logs,
+            self.kinds,
         );
         let x_step = axis_format(&plot.x, &axis_ticks(&plot.x, style.x_ticks));
         let y_step = axis_format(&plot.y, &axis_ticks(&plot.y, style.y_ticks));
@@ -652,7 +670,7 @@ impl ScatterChart {
         style: &ChartStyle,
         steps: Steps,
     ) -> Vec<Scene> {
-        let header = format!("x = {}", steps.x.label(focus_x));
+        let header = format!("x = {}", steps.x.readout(focus_x));
         let rows: Vec<CalloutRow> = hits
             .iter()
             .map(|(i, p)| CalloutRow {

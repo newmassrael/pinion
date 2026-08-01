@@ -57,7 +57,7 @@ use crate::draw::{
 use crate::palette::CategoricalPalette;
 use crate::scale::LinearScale;
 use crate::style::ChartStyle;
-use crate::ticks::{format_axis_tick, nice_ticks, tick_step};
+use crate::ticks::{TickFormat, nice_ticks, tick_step, time_ticks};
 
 /// The vertical inset (px) between a lane's band edges and its span boxes, so
 /// adjacent lanes' spans read as distinct rows rather than one solid block.
@@ -148,6 +148,7 @@ pub struct Timeline {
     palette: CategoricalPalette,
     x_domain: Option<(f64, f64)>,
     playhead: Option<f32>,
+    time_axis: bool,
     tag_prefix: String,
 }
 
@@ -163,6 +164,7 @@ impl Timeline {
             palette: CategoricalPalette::default(),
             x_domain: None,
             playhead: None,
+            time_axis: false,
             tag_prefix: "timeline".to_string(),
         }
     }
@@ -181,6 +183,28 @@ impl Timeline {
     #[must_use]
     pub fn with_x_domain(mut self, lo: f64, hi: f64) -> Self {
         self.x_domain = Some((lo, hi));
+        self
+    }
+
+    /// Read the ruler as UTC wall-clock time (R1529) — span `start` / `end`
+    /// values become epoch **milliseconds**, as on
+    /// [`LineChart::x_time`](crate::LineChart::x_time).
+    ///
+    /// A timeline is the crate's most literally time-shaped view, and until
+    /// R1529 its ruler could only be a plain number line: a capture that
+    /// began at a real instant printed `1772.4G` on every tick, because the
+    /// nice-number step is decimal and the SI label compacts by magnitude
+    /// (see the `ticks` module docs). Opt in when the spans are wall-clock
+    /// instants; leave it off — the default — when they are offsets from a
+    /// capture start, where a bare number IS the right reading.
+    ///
+    /// The ruler ticks then land on clock boundaries and carry
+    /// multi-resolution labels, while the playhead readout takes the
+    /// unambiguous full stamp: a scrub has no neighbouring labels to read
+    /// the date from.
+    #[must_use]
+    pub fn time_axis(mut self) -> Self {
+        self.time_axis = true;
         self
     }
 
@@ -284,7 +308,7 @@ impl Timeline {
         let grid_stroke = Stroke::new(style.grid, 1);
         for (k, (&t, &px)) in g.x_ticks.iter().zip(&x_pos).enumerate() {
             children.push(label_node(
-                format_axis_tick(t, g.x_step),
+                g.x_format.label(t),
                 // (R1396) The third x-tick consumer of the shared clamp: the
                 // ruler's last time label no longer overhangs the timeline's
                 // right edge into a docked neighbour.
@@ -422,7 +446,7 @@ impl Timeline {
             px,
             g.right,
             g.top,
-            &format_axis_tick(time, g.x_step),
+            &g.x_format.readout(time),
             format!("{}.playhead.header", self.tag_prefix),
             &rows,
             style,
@@ -443,7 +467,7 @@ impl Timeline {
         let g = self.geom(rect, style);
         let px = self.playhead_px(&g, rect)?;
         let time = g.x.invert(px);
-        let mut out = format!("t = {}", format_axis_tick(time, g.x_step));
+        let mut out = format!("t = {}", g.x_format.readout(time));
         for (i, j) in self.active_at(time) {
             let _ = write!(
                 out,
@@ -466,8 +490,18 @@ impl Timeline {
         let (left, right, top, bottom) = plot_rect(rect, style.margin);
         let (x_lo, x_hi) = self.x_domain_resolved();
         let x = LinearScale::new((x_lo, x_hi), (left, right));
-        let x_ticks = nice_ticks(x_lo, x_hi, style.x_ticks);
-        let x_step = tick_step(&x_ticks);
+        // R1529 — which generator the ruler ticks come from is the axis's
+        // kind, exactly as it is for a chart (`crate::plot::axis_ticks`).
+        let x_ticks = if self.time_axis {
+            time_ticks(x_lo, x_hi, style.x_ticks)
+        } else {
+            nice_ticks(x_lo, x_hi, style.x_ticks)
+        };
+        let x_format = if self.time_axis {
+            TickFormat::Time
+        } else {
+            TickFormat::Step(tick_step(&x_ticks))
+        };
         let n = self.lanes.len();
         let lane_h = if n > 0 {
             (bottom - top).max(1.0) / n as f32
@@ -481,7 +515,7 @@ impl Timeline {
             bottom,
             x,
             x_ticks,
-            x_step,
+            x_format,
             lane_h,
         }
     }
@@ -524,7 +558,7 @@ struct TimelineGeom {
     bottom: f32,
     x: LinearScale,
     x_ticks: Vec<f64>,
-    x_step: f64,
+    x_format: TickFormat,
     lane_h: f32,
 }
 
@@ -881,6 +915,111 @@ mod tests {
             tip.rect.x,
             tip.rect.w
         );
+    }
+
+    // ---- R1529: the ruler can read wall-clock time ---------------------
+
+    /// One UTC instant as epoch milliseconds.
+    fn at(y: i64, mo: u32, d: u32, h: u32, mi: u32) -> f64 {
+        crate::civil::Civil {
+            year: y,
+            month: mo,
+            day: d,
+            hour: h,
+            minute: mi,
+            second: 0,
+            milli: 0,
+        }
+        .to_millis()
+    }
+
+    /// A two-hour capture that began at a real instant.
+    fn wall_clock_lanes() -> Vec<Lane> {
+        let t0 = at(2026, 3, 2, 9, 0);
+        vec![Lane::new(
+            "build",
+            vec![
+                Span::new(t0, t0 + 1_800_000.0, "compile"),
+                Span::new(t0 + 3_600_000.0, t0 + 7_200_000.0, "link"),
+            ],
+        )]
+    }
+
+    /// ★ The timeline is the crate's most literally time-shaped view, and
+    /// its ruler was a plain number line: every tick of a wall-clock capture
+    /// printed the same SI-compacted magnitude. Opting in gives clock
+    /// labels; leaving it off is unchanged, which is what makes this an
+    /// opt-in rather than a reinterpretation of existing spans.
+    #[test]
+    fn r1529_the_ruler_reads_wall_clock_time_when_asked() {
+        let rect = Rect::new(0, 0, 600, 240);
+        let style = ChartStyle::default();
+
+        let numeric = Timeline::new(wall_clock_lanes()).build(rect, &style);
+        let numeric_labels: Vec<String> = (0..4)
+            .filter_map(|k| text_of(&numeric, &format!("timeline.tick.{k}")))
+            .map(str::to_string)
+            .collect();
+        let distinct: std::collections::BTreeSet<&String> = numeric_labels.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            1,
+            "the numeric ruler collapses: {numeric_labels:?}"
+        );
+
+        let timed = Timeline::new(wall_clock_lanes())
+            .time_axis()
+            .build(rect, &style);
+        let timed_labels: Vec<String> = (0..4)
+            .filter_map(|k| text_of(&timed, &format!("timeline.tick.{k}")))
+            .map(str::to_string)
+            .collect();
+        assert_eq!(timed_labels, ["09:00", "09:30", "10:00", "10:30"]);
+    }
+
+    /// ★ A readout is not a tick label. The ruler says `09:30` because its
+    /// neighbours carry the date; the playhead has no neighbours, so it
+    /// takes the full stamp.
+    #[test]
+    fn r1529_the_playhead_reads_the_full_stamp_not_the_tick_label() {
+        let rect = Rect::new(0, 0, 600, 240);
+        let style = ChartStyle::default();
+        let timed = Timeline::new(wall_clock_lanes())
+            .time_axis()
+            .playhead(Some(0.0));
+
+        let scene = timed.build(rect, &style);
+        let header = text_of(&scene, "timeline.playhead.header").expect("header");
+        assert_eq!(header, "2026-03-02 09:00:00");
+        assert!(
+            header.contains("2026-03-02"),
+            "a scrub says which day it is on"
+        );
+
+        let readout = timed.playhead_readout(rect, &style).expect("readout");
+        assert!(
+            readout.starts_with("t = 2026-03-02 09:00:00"),
+            "the a11y readout matches the painted one: {readout}"
+        );
+        assert!(readout.contains("build: compile"), "and names the span");
+    }
+
+    /// An offset-from-capture-start timeline is the case the numeric ruler
+    /// is RIGHT for, so the default must not move.
+    #[test]
+    fn r1529_the_numeric_ruler_is_unchanged_by_default() {
+        let rect = Rect::new(0, 0, 600, 240);
+        let style = ChartStyle::default();
+        let scene = Timeline::new(vec![Lane::new(
+            "frame",
+            vec![Span::new(0.0, 8.0, "sim"), Span::new(8.0, 16.0, "render")],
+        )])
+        .build(rect, &style);
+        let labels: Vec<String> = (0..3)
+            .filter_map(|k| text_of(&scene, &format!("timeline.tick.{k}")))
+            .map(str::to_string)
+            .collect();
+        assert_eq!(labels, ["0", "5", "10"], "plain milliseconds stay plain");
     }
 
     #[test]

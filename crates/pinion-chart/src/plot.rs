@@ -14,14 +14,15 @@
 use pinion_core::scene::Rect;
 
 use crate::draw::{plot_rect, to_f32};
-use crate::scale::{LinearScale, LogScale, ValueScale};
+use crate::scale::{AxisKind, LinearScale, LogScale, ValueScale};
 use crate::series::{
     Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, in_domain, nearest_point_in,
     visible_data_bounds,
 };
 use crate::style::ChartStyle;
 use crate::ticks::{
-    TickFormat, log_minor_ticks, log_ticks, nice_log_domain, nice_ticks, tick_step,
+    TickFormat, log_minor_ticks, log_ticks, nice_log_domain, nice_ticks, nice_time_domain,
+    tick_step, time_ticks,
 };
 
 /// How the auto-domains are derived when they are not pinned — the two
@@ -45,19 +46,17 @@ pub(crate) struct Rescale {
     pub y_to_x_window: bool,
 }
 
-/// Which axes of a cartesian plot are **logarithmic**, and in what base
-/// (R1528) — `None` on an axis means linear, `Some(base)` means
-/// logarithmic in that base.
+/// Which KIND each axis of a cartesian plot is (R1528 log, R1529 time).
 ///
 /// A named-field value for the same reason [`Rescale`] is one: two
-/// positional axis flags at a call site are a silent swap waiting to
+/// positional axis settings at a call site are a silent swap waiting to
 /// happen. `Default` is linear on both axes.
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct LogAxes {
-    /// Logarithm base for the x-axis, or `None` for a linear x-axis.
-    pub x: Option<f64>,
-    /// Logarithm base for the y-axis, or `None` for a linear y-axis.
-    pub y: Option<f64>,
+pub(crate) struct AxisKinds {
+    /// The x-axis's kind.
+    pub x: AxisKind,
+    /// The y-axis's kind.
+    pub y: AxisKind,
 }
 
 /// The resolved plot rectangle (in float pixels) plus the two value scales.
@@ -98,11 +97,13 @@ impl CartesianPlot {
     /// on just that window's values. A window with no points, or a pinned
     /// `y_domain`, leaves the y-domain untouched.
     ///
-    /// [`LogAxes`] (R1528) chooses each axis's *kind*. A logarithmic axis
-    /// takes its auto-domain from the strictly positive part of the extent
-    /// ([`Bounds::positive_x`] / [`Bounds::positive_y`]) and snaps it to
-    /// whole decades ([`nice_log_domain`]) instead of to nice ticks; a
-    /// pinned domain still wins over both, exactly as on a linear axis.
+    /// [`AxisKinds`] chooses each axis's *kind* (R1528 log, R1529 time), which
+    /// decides how an AUTO domain is snapped. A logarithmic axis takes its
+    /// extent from the strictly positive part of the data
+    /// ([`Bounds::positive_x`] / [`Bounds::positive_y`]) and snaps to whole
+    /// decades ([`nice_log_domain`]); a time axis snaps to calendar
+    /// boundaries ([`nice_time_domain`]); a linear axis to nice ticks. A
+    /// pinned domain wins over all three.
     pub(crate) fn resolve(
         rect: Rect,
         series: &[Series],
@@ -110,7 +111,7 @@ impl CartesianPlot {
         y_domain: Option<(f64, f64)>,
         style: &ChartStyle,
         rescale: Rescale,
-        logs: LogAxes,
+        kinds: AxisKinds,
     ) -> Self {
         let (left, right, top, bottom) = plot_rect(rect, style.margin);
 
@@ -120,12 +121,12 @@ impl CartesianPlot {
             data_bounds(series)
         };
         let raw_x = x_domain
-            .or_else(|| bounds.and_then(|b| x_extent(b, logs.x)))
-            .unwrap_or_else(|| fallback_extent(logs.x));
+            .or_else(|| bounds.and_then(|b| x_extent(b, kinds.x)))
+            .unwrap_or_else(|| fallback_extent(kinds.x));
         // The x-window must be settled before the y-fit reads it, so resolve the
         // final x-domain first. A pinned domain is honoured verbatim; an auto one
         // snaps to the nice-tick extent so the outer gridlines land on the edges.
-        let dom_x = axis_domain(x_domain, raw_x, style.x_ticks, logs.x);
+        let dom_x = axis_domain(x_domain, raw_x, style.x_ticks, kinds.x);
         // y: a pinned domain wins; else an opt-in fit to the x-window's points
         // (R1397); else the whole measured extent. The window fit falls back to
         // `bounds` when it is empty, so a brush past the data keeps the grid.
@@ -133,21 +134,21 @@ impl CartesianPlot {
             .or_else(|| {
                 rescale
                     .y_to_x_window
-                    .then(|| bounds_in_x_window(series, dom_x).and_then(|b| y_extent(b, logs.y)))
+                    .then(|| bounds_in_x_window(series, dom_x).and_then(|b| y_extent(b, kinds.y)))
                     .flatten()
             })
-            .or_else(|| bounds.and_then(|b| y_extent(b, logs.y)))
-            .unwrap_or_else(|| fallback_extent(logs.y));
-        let dom_y = axis_domain(y_domain, raw_y, style.y_ticks, logs.y);
+            .or_else(|| bounds.and_then(|b| y_extent(b, kinds.y)))
+            .unwrap_or_else(|| fallback_extent(kinds.y));
+        let dom_y = axis_domain(y_domain, raw_y, style.y_ticks, kinds.y);
 
         Self {
             left,
             right,
             top,
             bottom,
-            x: axis_scale(dom_x, (left, right), logs.x),
+            x: axis_scale(dom_x, (left, right), kinds.x),
             // y is inverted: domain-hi maps to the top (small pixel).
-            y: axis_scale(dom_y, (bottom, top), logs.y),
+            y: axis_scale(dom_y, (bottom, top), kinds.y),
         }
     }
 
@@ -190,13 +191,11 @@ pub struct OffScale {
 /// are absent because the consumer hid them, which the consumer already
 /// knows, whereas an off-scale point is absent because the *axis* cannot
 /// carry it. Filter by [`OffScale::series`] if only the visible ones matter.
-pub(crate) fn off_scale_points(series: &[Series], logs: LogAxes) -> Vec<OffScale> {
+pub(crate) fn off_scale_points(series: &[Series], kinds: AxisKinds) -> Vec<OffScale> {
     let mut out = Vec::new();
     for (i, s) in series.iter().enumerate() {
         for p in &s.points {
-            if !crate::scale::axis_defines(logs.x.is_some(), p.x)
-                || !crate::scale::axis_defines(logs.y.is_some(), p.y)
-            {
+            if !kinds.x.defines(p.x) || !kinds.y.defines(p.y) {
                 out.push(OffScale {
                     series: i,
                     point: *p,
@@ -209,57 +208,62 @@ pub(crate) fn off_scale_points(series: &[Series], logs: LogAxes) -> Vec<OffScale
 
 /// The x-extent one axis measures: the whole one, or — when the axis is
 /// logarithmic — only its strictly positive part, which is the only part a
-/// logarithm is defined on.
-const fn x_extent(b: Bounds, log_base: Option<f64>) -> Option<(f64, f64)> {
-    if log_base.is_some() {
-        b.positive_x
-    } else {
-        Some(b.x)
+/// logarithm is defined on. A time axis measures the whole extent: an
+/// instant before 1970 is an ordinary negative value.
+const fn x_extent(b: Bounds, kind: AxisKind) -> Option<(f64, f64)> {
+    match kind {
+        AxisKind::Log(_) => b.positive_x,
+        AxisKind::Linear | AxisKind::Time => Some(b.x),
     }
 }
 
 /// [`x_extent`] for the y-axis.
-const fn y_extent(b: Bounds, log_base: Option<f64>) -> Option<(f64, f64)> {
-    if log_base.is_some() {
-        b.positive_y
-    } else {
-        Some(b.y)
+const fn y_extent(b: Bounds, kind: AxisKind) -> Option<(f64, f64)> {
+    match kind {
+        AxisKind::Log(_) => b.positive_y,
+        AxisKind::Linear | AxisKind::Time => Some(b.y),
     }
 }
 
 /// The extent an axis falls back to when nothing measurable is present —
-/// `0..1` for a linear axis, and the unit decade for a logarithmic one
-/// (where `0` is not a value the axis can carry). A log chart whose data is
-/// entirely non-positive lands here: it draws a legible empty decade and
-/// reports every point as off-scale, rather than collapsing.
-fn fallback_extent(log_base: Option<f64>) -> (f64, f64) {
-    match log_base {
-        Some(base) => (1.0, base),
-        None => (0.0, 1.0),
+/// `0..1` for a linear axis, the unit decade for a logarithmic one (where
+/// `0` is not a value the axis can carry), and the epoch's first day for a
+/// time one (where `0..1` would be a one-millisecond domain). A log chart
+/// whose data is entirely non-positive lands here: it draws a legible empty
+/// decade and reports every point as off-scale, rather than collapsing.
+fn fallback_extent(kind: AxisKind) -> (f64, f64) {
+    match kind {
+        AxisKind::Log(base) => (1.0, base),
+        AxisKind::Linear => (0.0, 1.0),
+        AxisKind::Time => (0.0, 86_400_000.0),
     }
 }
 
 /// Resolve one axis's final domain — a pinned domain verbatim, else the raw
 /// extent snapped the way that axis kind snaps: to nice ticks when linear,
-/// to whole decades when logarithmic.
+/// to whole decades when logarithmic, to calendar boundaries when time.
 fn axis_domain(
     pinned: Option<(f64, f64)>,
     raw: (f64, f64),
     target: usize,
-    log_base: Option<f64>,
+    kind: AxisKind,
 ) -> (f64, f64) {
-    match log_base {
-        _ if pinned.is_some() => domain_from_ticks(pinned, raw, target),
-        Some(base) => nice_log_domain(raw.0, raw.1, base),
-        None => domain_from_ticks(None, raw, target),
+    if let Some(d) = pinned {
+        return d;
+    }
+    match kind {
+        AxisKind::Log(base) => nice_log_domain(raw.0, raw.1, base),
+        AxisKind::Time => nice_time_domain(raw.0, raw.1, target),
+        AxisKind::Linear => domain_from_ticks(None, raw, target),
     }
 }
 
 /// Build one axis's [`ValueScale`] over `domain` onto the pixel `range`.
-fn axis_scale(domain: (f64, f64), range: (f32, f32), log_base: Option<f64>) -> ValueScale {
-    match log_base {
-        Some(base) => ValueScale::Log(LogScale::new(domain, range, base)),
-        None => ValueScale::Linear(LinearScale::new(domain, range)),
+fn axis_scale(domain: (f64, f64), range: (f32, f32), kind: AxisKind) -> ValueScale {
+    match kind {
+        AxisKind::Log(base) => ValueScale::Log(LogScale::new(domain, range, base)),
+        AxisKind::Linear => ValueScale::Linear(LinearScale::new(domain, range)),
+        AxisKind::Time => ValueScale::Time(LinearScale::new(domain, range)),
     }
 }
 
@@ -294,6 +298,7 @@ pub(crate) fn axis_ticks(scale: &ValueScale, target: usize) -> Vec<f64> {
     let (lo, hi) = scale.domain();
     let raw = match scale {
         ValueScale::Log(s) => log_ticks(lo, hi, s.base(), target),
+        ValueScale::Time(_) => time_ticks(lo, hi, target),
         ValueScale::Linear(_) => nice_ticks(lo, hi, target),
     };
     raw.into_iter().filter(|t| in_domain(*t, lo, hi)).collect()
@@ -310,21 +315,26 @@ pub(crate) fn tick_pixels(scale: &ValueScale, ticks: &[f64]) -> Vec<f32> {
     ticks.iter().filter_map(|&t| scale.map(t)).collect()
 }
 
-/// The label format one axis's ticks take (R1528): the constant step on a
-/// linear axis, per-magnitude on a logarithmic one, which has no constant
-/// step for a scalar to summarise.
+/// The label format one axis's ticks take: the constant step on a linear
+/// axis (R1528), per-magnitude on a logarithmic one, which has no constant
+/// step for a scalar to summarise, and per-calendar-field on a time one
+/// (R1529), whose magnitude says nothing a reader wants.
 pub(crate) fn axis_format(scale: &ValueScale, ticks: &[f64]) -> TickFormat {
-    if scale.is_log() {
-        TickFormat::Log
-    } else {
-        TickFormat::Step(tick_step(ticks))
+    match scale.kind() {
+        AxisKind::Log(_) => TickFormat::Log,
+        AxisKind::Time => TickFormat::Time,
+        AxisKind::Linear => TickFormat::Step(tick_step(ticks)),
     }
 }
 
-/// The **unlabelled** minor ticks of one axis (R1528) — empty on a linear
-/// axis, which has none, and the per-decade subdivisions on a logarithmic
-/// one. Drawn as fainter gridlines: without them a log axis's evenly-spaced
-/// decade lines read as a linear axis with odd labels.
+/// The **unlabelled** minor ticks of one axis (R1528) — the per-decade
+/// subdivisions on a logarithmic axis, and none on a linear or time one.
+///
+/// Drawn as fainter gridlines. A log axis NEEDS them: without the
+/// subdivisions its evenly-spaced decade lines read as a linear axis with
+/// odd labels, so they are a legibility requirement rather than a
+/// decoration. A time axis has no such ambiguity — its labels name the
+/// calendar directly — so it takes the linear arm's silence.
 pub(crate) fn axis_minor_ticks(scale: &ValueScale) -> Vec<f64> {
     let (lo, hi) = scale.domain();
     match scale {
@@ -332,7 +342,7 @@ pub(crate) fn axis_minor_ticks(scale: &ValueScale) -> Vec<f64> {
             .into_iter()
             .filter(|t| in_domain(*t, lo, hi))
             .collect(),
-        ValueScale::Linear(_) => Vec::new(),
+        ValueScale::Linear(_) | ValueScale::Time(_) => Vec::new(),
     }
 }
 
@@ -415,7 +425,7 @@ mod tests {
             None,
             &style,
             Rescale::default(),
-            LogAxes::default(),
+            AxisKinds::default(),
         );
 
         // Both visible -> a hit per series.
@@ -466,7 +476,7 @@ mod tests {
             None,
             &style,
             Rescale::default(),
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         let (_, hi_default) = default.y.domain();
         assert!(
@@ -485,7 +495,7 @@ mod tests {
             None,
             &style,
             visible,
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         let (_, hi_rescaled) = rescaled.y.domain();
         assert!(
@@ -501,7 +511,7 @@ mod tests {
             Some((0.0, 9000.0)),
             &style,
             visible,
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         assert_eq!(
             pinned.y.domain(),
@@ -537,7 +547,7 @@ mod tests {
             None,
             &style,
             Rescale::default(),
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         let (_, hi_off) = off.y.domain();
         assert!(
@@ -549,8 +559,15 @@ mod tests {
             y_to_x_window: true,
             ..Rescale::default()
         };
-        let on =
-            CartesianPlot::resolve(rect, &series, window, None, &style, fit, LogAxes::default());
+        let on = CartesianPlot::resolve(
+            rect,
+            &series,
+            window,
+            None,
+            &style,
+            fit,
+            AxisKinds::default(),
+        );
         let (_, hi_on) = on.y.domain();
         assert!(
             hi_on < 200.0,
@@ -566,7 +583,7 @@ mod tests {
             None,
             &style,
             fit,
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         let (_, hi_full) = full.y.domain();
         assert!(
@@ -583,7 +600,7 @@ mod tests {
             None,
             &style,
             fit,
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         let (_, hi_empty) = empty.y.domain();
         assert!(
@@ -599,7 +616,7 @@ mod tests {
             Some((0.0, 500.0)),
             &style,
             fit,
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         assert_eq!(
             pinned.y.domain(),

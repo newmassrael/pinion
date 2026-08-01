@@ -27,6 +27,18 @@
 //! partial map is the wrong contract for the affine core, and the right
 //! one for an axis.
 //!
+//! # An axis kind is more than its arithmetic (R1529)
+//!
+//! The time axis is what shows this. It is *affine* — equal durations
+//! occupy equal pixel spans — so it reuses [`LinearScale`] with no
+//! transform at all, and if an axis were only its arithmetic there would
+//! be nothing to add. What makes it a distinct [`ValueScale`] arm is that
+//! an axis also decides **which ticks it lands on** and **how they are
+//! labelled**, and on those a time axis differs from a linear one
+//! completely (see [`crate::ticks`]). Carrying the kind in the scale is
+//! what keeps a tick set and the mapping that places it from being
+//! resolved off different axes.
+//!
 //! # The log scale is the linear scale (d3's `transformLog`)
 //!
 //! [`LogScale`] holds a [`LinearScale`] over the *log-transformed*
@@ -207,26 +219,81 @@ impl LogScale {
     }
 }
 
-/// The scale of one chart axis: linear, or logarithmic.
+/// Which KIND one chart axis is — Qt's `QValueAxis` / `QLogValueAxis` /
+/// `QDateTimeAxis` choice, without a domain or a pixel range attached.
 ///
-/// This is the axis-level abstraction (Qt's `QValueAxis` /
-/// `QLogValueAxis` choice), distinct from the [`LinearScale`] arithmetic
-/// it is built on — see the module doc. A closed enum rather than a trait
-/// object because the set of axis scales is closed, and because staying
-/// `Copy` keeps `crate::plot::CartesianPlot` a plain value.
+/// A chart knows its axis kinds before a plot is resolved (it needs them
+/// to report its off-scale points), and everything that depends only on
+/// the kind — definedness, which tick generator runs, which label format
+/// applies — is decided from here so those rules have one spelling.
+///
+/// R1529 made this a type. It was a `bool` (`is_log`) plus an
+/// `Option<f64>` base while there were two kinds, which is what a boolean
+/// discriminator always is: an encoding that fits exactly two arms. The
+/// third arm is where it stops fitting — `is_log == false` would have had
+/// to mean "linear or time", and every site that branched on it would
+/// have silently taken the linear path for a time axis.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum AxisKind {
+    /// An affine axis over a plain number.
+    #[default]
+    Linear,
+    /// A logarithmic axis in the given base.
+    Log(f64),
+    /// A time axis over epoch **milliseconds**, UTC — the unit Qt's
+    /// `QDateTimeAxis` and d3's `scaleUtc` both carry. Affine in the
+    /// instant, so it maps through the same [`LinearScale`] arithmetic a
+    /// [`Linear`](Self::Linear) axis does; what differs is entirely which
+    /// ticks it lands on and how they are labelled.
+    Time,
+}
+
+impl AxisKind {
+    /// Whether an axis of this kind defines a pixel for `value`.
+    #[must_use]
+    pub const fn defines(self, value: f64) -> bool {
+        match self {
+            Self::Log(_) => positive(value),
+            Self::Linear | Self::Time => value.is_finite(),
+        }
+    }
+
+    /// The logarithm base, for the one kind that has one.
+    #[must_use]
+    pub const fn log_base(self) -> Option<f64> {
+        match self {
+            Self::Log(base) => Some(base),
+            _ => None,
+        }
+    }
+}
+
+/// The scale of one chart axis: linear, logarithmic, or time.
+///
+/// This is the axis-level abstraction (Qt's `QAbstractAxis` distinction),
+/// distinct from the [`LinearScale`] arithmetic it is built on — see the
+/// module doc. A closed enum rather than a trait object because the set of
+/// axis scales is closed, and because staying `Copy` keeps
+/// `crate::plot::CartesianPlot` a plain value.
 ///
 /// [`map`](Self::map) is **partial**: a log axis has no pixel for a
-/// non-positive value, and a linear axis none for a non-finite one. There
-/// is deliberately no total variant — a caller that silently substituted
-/// a pixel would be drawing a point the data does not contain, which is
-/// the failure [`crate::Mapped::unreadable`] exists to avoid on the other
-/// input path.
+/// non-positive value, and a linear or time axis none for a non-finite
+/// one. There is deliberately no total variant — a caller that silently
+/// substituted a pixel would be drawing a point the data does not contain,
+/// which is the failure [`crate::Mapped::unreadable`] exists to avoid on
+/// the other input path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ValueScale {
     /// An affine axis — equal value differences occupy equal pixel spans.
     Linear(LinearScale),
     /// A logarithmic axis — equal value *ratios* occupy equal pixel spans.
     Log(LogScale),
+    /// A time axis over epoch milliseconds (R1529). Carries a
+    /// [`LinearScale`] because time IS affine — equal *durations* occupy
+    /// equal pixel spans — so unlike [`Log`](Self::Log) there is no
+    /// transform to compose. That the arithmetic core is reused untouched
+    /// by a third axis kind is the two-layer split of R1528 paying off.
+    Time(LinearScale),
 }
 
 impl ValueScale {
@@ -235,7 +302,7 @@ impl ValueScale {
     #[must_use]
     pub fn map(&self, value: f64) -> Option<f32> {
         match self {
-            Self::Linear(s) => value.is_finite().then(|| s.map(value)),
+            Self::Linear(s) | Self::Time(s) => value.is_finite().then(|| s.map(value)),
             Self::Log(s) => s.map(value),
         }
     }
@@ -244,7 +311,7 @@ impl ValueScale {
     #[must_use]
     pub fn invert(&self, pixel: f32) -> f64 {
         match self {
-            Self::Linear(s) => s.invert(pixel),
+            Self::Linear(s) | Self::Time(s) => s.invert(pixel),
             Self::Log(s) => s.invert(pixel),
         }
     }
@@ -254,14 +321,14 @@ impl ValueScale {
     /// before mapping it.
     #[must_use]
     pub const fn defines(&self, value: f64) -> bool {
-        axis_defines(self.is_log(), value)
+        self.kind().defines(value)
     }
 
     /// The data domain `(lo, hi)` of this axis.
     #[must_use]
     pub const fn domain(&self) -> (f64, f64) {
         match self {
-            Self::Linear(s) => s.domain(),
+            Self::Linear(s) | Self::Time(s) => s.domain(),
             Self::Log(s) => s.domain(),
         }
     }
@@ -270,31 +337,20 @@ impl ValueScale {
     #[must_use]
     pub const fn range(&self) -> (f32, f32) {
         match self {
-            Self::Linear(s) => s.range(),
+            Self::Linear(s) | Self::Time(s) => s.range(),
             Self::Log(s) => s.range(),
         }
     }
 
-    /// Whether this axis is logarithmic — what the tick generator and the
-    /// domain snapper branch on.
+    /// Which [`AxisKind`] this scale is — what the tick generator, the
+    /// domain snapper and the label format branch on.
     #[must_use]
-    pub const fn is_log(&self) -> bool {
-        matches!(self, Self::Log(_))
-    }
-}
-
-/// Whether an axis of this KIND defines a pixel for `value`.
-///
-/// The instance-free form of [`ValueScale::defines`], which delegates here:
-/// a chart knows its axis kinds before a plot is resolved (it needs them to
-/// report its off-scale points), and definedness depends only on the kind,
-/// never on the domain. Two spellings of that rule would be two rules.
-#[must_use]
-pub const fn axis_defines(is_log: bool, value: f64) -> bool {
-    if is_log {
-        positive(value)
-    } else {
-        value.is_finite()
+    pub const fn kind(&self) -> AxisKind {
+        match self {
+            Self::Linear(_) => AxisKind::Linear,
+            Self::Log(s) => AxisKind::Log(s.base()),
+            Self::Time(_) => AxisKind::Time,
+        }
     }
 }
 
@@ -438,7 +494,51 @@ mod tests {
         assert_eq!(s.map(-5.0), Some(-50.0), "negatives are ordinary here");
         assert_eq!(s.map(f64::NAN), None);
         assert_eq!(s.map(f64::INFINITY), None);
-        assert!(!s.is_log());
+        assert_eq!(s.kind(), AxisKind::Linear);
+    }
+
+    // ---- R1529: the time axis ------------------------------------------
+
+    /// ★ A time axis reuses the affine core untouched — that is the claim
+    /// the [`ValueScale::Time`] arm makes, and it is checkable: its mapping
+    /// must agree with a [`LinearScale`] over the same domain everywhere.
+    /// If it did not, the arm would be hiding arithmetic rather than policy.
+    #[test]
+    fn r1529_time_axis_maps_exactly_as_the_affine_core_does() {
+        let domain = (1_772_582_400_000.0, 1_772_586_000_000.0); // one hour
+        let inner = LinearScale::new(domain, (0.0, 300.0));
+        let axis = ValueScale::Time(inner);
+        for frac in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let v = domain.0 + frac * (domain.1 - domain.0);
+            assert_eq!(
+                axis.map(v),
+                Some(inner.map(v)),
+                "time is affine in the instant"
+            );
+        }
+        assert_eq!(axis.domain(), domain);
+        assert_eq!(axis.range(), (0.0, 300.0));
+        assert!(close64(axis.invert(150.0), inner.invert(150.0)));
+        assert_eq!(axis.kind(), AxisKind::Time);
+    }
+
+    /// ★ The reason [`AxisKind`] is a type rather than the `is_log` boolean
+    /// it replaced: with three kinds, `!is_log` no longer names one of them.
+    /// A time axis carries negative values (any instant before 1970) and
+    /// must not be mistaken for a log axis, which cannot.
+    #[test]
+    fn r1529_axis_kind_names_three_arms_where_a_bool_named_two() {
+        assert!(AxisKind::Time.defines(-86_400_000.0), "1969 is an instant");
+        assert!(AxisKind::Linear.defines(-86_400_000.0));
+        assert!(!AxisKind::Log(10.0).defines(-86_400_000.0));
+        for k in [AxisKind::Linear, AxisKind::Log(10.0), AxisKind::Time] {
+            assert!(!k.defines(f64::NAN), "{k:?} defines no pixel for NaN");
+            assert!(!k.defines(f64::INFINITY));
+        }
+        assert_eq!(AxisKind::Log(2.0).log_base(), Some(2.0));
+        assert_eq!(AxisKind::Time.log_base(), None);
+        assert_eq!(AxisKind::Linear.log_base(), None);
+        assert_eq!(AxisKind::default(), AxisKind::Linear);
     }
 
     #[test]
@@ -472,7 +572,7 @@ mod tests {
         let log = ValueScale::Log(LogScale::new((1.0, 100.0), (5.0, 6.0), 10.0));
         assert_eq!(log.domain(), (1.0, 100.0));
         assert_eq!(log.range(), (5.0, 6.0));
-        assert!(log.is_log());
+        assert_eq!(log.kind(), AxisKind::Log(10.0));
         assert!(close64(log.invert(5.0), 1.0));
     }
 }

@@ -3779,6 +3779,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-time-chart"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-timeline"
 version = "0.0.1"
 dependencies = [

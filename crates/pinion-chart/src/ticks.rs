@@ -16,6 +16,31 @@
 //! the large magnitudes a monitoring dashboard favours. Use it rather
 //! than `format_si` alone: SI carries at most one decimal, so a 0.05 step
 //! would render `0.05 / 0.10 / 0.15` as three identical `0.1` labels.
+//!
+//! # The nice-number ladder is a DECIMAL quantiser (R1529)
+//!
+//! [`nice_ticks`]'s `1 / 2 / 5 x 10^n` step assumes the quantity's natural
+//! subdivisions are powers of ten. That held for every axis this crate had
+//! until R1529, so the assumption was never visible. Time breaks it: above
+//! a second time is **mixed-radix** (60 s/min, 60 min/h, 24 h/day,
+//! 7 d/week, 12 mo/year), so on an epoch-millisecond domain the decimal
+//! step is not a coarser choice, it is a *wrong* one — a one-hour domain
+//! gets a 16m40s step and gridlines at `00:06:40`. And the label is worse
+//! than the tick: [`format_si`] compacts an epoch millisecond to `1772.4G`,
+//! which at one decimal has 27-hour resolution, so **every** label on a
+//! sub-day axis renders as the same string.
+//!
+//! [`time_ticks`] is the generator that lands on calendar boundaries, and
+//! [`format_time_tick`] the multi-resolution label that names them. Note
+//! where the decimal quantiser stays right: *below* a second (milliseconds
+//! subdivide decimally) and *above* a year (a stride of 10 or 20 years is a
+//! nice number), so the ladder is bracketed by [`nice_step`] at both ends
+//! and the mixed-radix region is exactly second-to-year.
+
+use crate::civil::{
+    Civil, MAX_TIME_MS, MS_PER_DAY, MS_PER_DAY_F64, MS_PER_HOUR, MS_PER_MINUTE, MS_PER_SECOND,
+    month_abbrev,
+};
 
 /// Nice-number tick values covering `[lo, hi]`, aiming for `target`
 /// ticks (clamped to a minimum of 2). The returned values use a
@@ -363,6 +388,308 @@ fn exponent_span(lo: f64, hi: f64, base: f64) -> (i32, i32) {
     (e_lo, e_hi.max(e_lo))
 }
 
+// ---- R1529: the time axis ----------------------------------------------
+
+/// One rung of the time-tick ladder — a step expressed in the unit whose
+/// boundaries it has to land on.
+///
+/// The whole reason a time axis needs its own generator: below a second and
+/// above a year a step is a *number* and [`nice_step`] quantises it
+/// correctly, but between them a step is a *calendar* quantity. A month is
+/// not a duration at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimeStep {
+    /// A fixed millisecond duration, strided from the epoch. Correct for
+    /// everything from a second to two days: POSIX time has no leap
+    /// seconds, so every one of those units is exactly constant in UTC.
+    Fixed(i64),
+    /// One ISO week, aligned to Monday — which is why it is not
+    /// [`TimeStep::Fixed`]: a plain 7-day stride from the epoch lands on
+    /// Thursdays (1970-01-01 was one).
+    Week,
+    /// A whole number of calendar months, aligned to January.
+    Months(i64),
+    /// A whole number of calendar years, aligned to a multiple of the step
+    /// (so a 10-year stride lands on 2000, 2010, 2020).
+    Years(i64),
+}
+
+/// The tick-step ladder, ascending — d3's `d3-time` `tickIntervals`, whose
+/// rungs are the intervals a clock and a calendar actually mark.
+///
+/// Its rungs are NOT `1 / 2 / 5 x 10^n`, and that is the point: time is
+/// mixed-radix (1000 ms/s, 60 s/min, 60 min/h, 24 h/day, 7 d/week,
+/// 12 mo/year), so the decimal quantiser produces steps like 16m40s, whose
+/// ticks land at times no clock shows.
+const TIME_LADDER: [TimeStep; 17] = [
+    TimeStep::Fixed(MS_PER_SECOND),
+    TimeStep::Fixed(5 * MS_PER_SECOND),
+    TimeStep::Fixed(15 * MS_PER_SECOND),
+    TimeStep::Fixed(30 * MS_PER_SECOND),
+    TimeStep::Fixed(MS_PER_MINUTE),
+    TimeStep::Fixed(5 * MS_PER_MINUTE),
+    TimeStep::Fixed(15 * MS_PER_MINUTE),
+    TimeStep::Fixed(30 * MS_PER_MINUTE),
+    TimeStep::Fixed(MS_PER_HOUR),
+    TimeStep::Fixed(3 * MS_PER_HOUR),
+    TimeStep::Fixed(6 * MS_PER_HOUR),
+    TimeStep::Fixed(12 * MS_PER_HOUR),
+    TimeStep::Fixed(MS_PER_DAY),
+    TimeStep::Fixed(2 * MS_PER_DAY),
+    TimeStep::Week,
+    TimeStep::Months(1),
+    TimeStep::Months(3),
+];
+
+/// Nominal length of a month for the ladder SEARCH only (d3's
+/// `durationMonth`). Never used to place a tick — that goes through
+/// [`crate::civil::add_months`] — only to ask which rung is nearest.
+const NOMINAL_MONTH_MS: f64 = 30.0 * MS_PER_DAY_F64;
+
+/// Nominal length of a year, for the ladder search only (d3's
+/// `durationYear`).
+const NOMINAL_YEAR_MS: f64 = 365.0 * MS_PER_DAY_F64;
+
+impl TimeStep {
+    /// The rung's nominal length in milliseconds — the ordering key the
+    /// ladder search compares against. Approximate for the calendar arms by
+    /// construction; see [`NOMINAL_MONTH_MS`].
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a rung is at most two days of milliseconds, or a small integer count; both exact in f64"
+    )]
+    fn nominal_ms(self) -> f64 {
+        match self {
+            Self::Fixed(ms) => ms as f64,
+            Self::Week => 7.0 * MS_PER_DAY_F64,
+            Self::Months(n) => n as f64 * NOMINAL_MONTH_MS,
+            Self::Years(n) => n as f64 * NOMINAL_YEAR_MS,
+        }
+    }
+
+    /// The largest tick of this step at or before `ms` — the axis's first
+    /// tick, and the anchor every later one is strided from.
+    fn floor(self, ms: f64) -> f64 {
+        match self {
+            Self::Fixed(step) => {
+                let t = clamp_to_i64(ms);
+                to_f64(t.div_euclid(step) * step)
+            }
+            Self::Week => {
+                let days = clamp_to_i64(ms).div_euclid(MS_PER_DAY);
+                // 1970-01-01 was a Thursday, three days after its Monday.
+                let monday = days - (days + 3).rem_euclid(7);
+                to_f64(monday * MS_PER_DAY)
+            }
+            Self::Months(n) => {
+                let c = Civil::from_millis(ms);
+                let index = i64::from(c.month) - 1;
+                crate::civil::add_months(ms, -(index.rem_euclid(n)))
+            }
+            Self::Years(n) => {
+                let year = Civil::from_millis(ms).year;
+                crate::civil::add_years(ms, -year.rem_euclid(n))
+            }
+        }
+    }
+
+    /// The next tick after `ms`, which this step has already floored.
+    fn advance(self, ms: f64) -> f64 {
+        match self {
+            Self::Fixed(step) => ms + to_f64(step),
+            Self::Week => ms + to_f64(7 * MS_PER_DAY),
+            Self::Months(n) => crate::civil::add_months(ms, n),
+            Self::Years(n) => crate::civil::add_years(ms, n),
+        }
+    }
+}
+
+/// The ladder rung nearest `target` milliseconds per tick, or `None` when
+/// the target is below a second — where time subdivides decimally and
+/// [`nice_ticks`] is already right.
+///
+/// Above the top rung the step becomes a whole number of years quantised by
+/// [`nice_step`], so the ladder is bracketed by the decimal quantiser at
+/// *both* ends: the mixed-radix region is exactly second-to-year.
+/// "Nearest" is geometric (`target / lower` against `upper / target`), the
+/// right comparison for a quantity whose rungs grow multiplicatively.
+fn time_step(target: f64) -> Option<TimeStep> {
+    if !target.is_finite() || target < TIME_LADDER[0].nominal_ms() {
+        return None;
+    }
+    if target >= NOMINAL_YEAR_MS {
+        let years = nice_step(target / NOMINAL_YEAR_MS).max(1.0);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "nice_step of a finite ratio; clamped well inside i64 below"
+        )]
+        let n = years.min(1e15) as i64;
+        return Some(TimeStep::Years(n.max(1)));
+    }
+    let mut best = TIME_LADDER[0];
+    for rung in TIME_LADDER {
+        let upper = rung.nominal_ms();
+        if upper >= target {
+            let lower = best.nominal_ms();
+            // Geometric nearness: a target 1.4x the lower rung is closer to
+            // it than to an upper rung 2x away, which arithmetic distance
+            // gets wrong for a multiplicative ladder.
+            return Some(if target / lower < upper / target {
+                best
+            } else {
+                rung
+            });
+        }
+        best = rung;
+    }
+    Some(best)
+}
+
+/// Ticks for a **time** axis over `[lo, hi]` epoch milliseconds (UTC),
+/// aiming for `target` labels — the axis every monitoring chart has.
+///
+/// Ticks land on calendar/clock boundaries (`:15`, `06:00`, `Mar 01`,
+/// `2027`) rather than on multiples of a decimal step, which is what
+/// [`nice_ticks`] would produce and what makes it the wrong generator here:
+/// its `1 / 2 / 5 x 10^n` ladder assumes the quantity's natural
+/// subdivisions are powers of ten, and above a second time's are not. On a
+/// one-hour domain the decimal step is 16m40s, putting gridlines at
+/// `00:06:40` and `00:23:20`.
+///
+/// Like [`nice_ticks`] and [`log_ticks`] this brackets `[lo, hi]` rather
+/// than clipping to it — `crate::plot::axis_ticks` does the clipping, so
+/// every axis kind reaches the chart through one filter.
+///
+/// Returns empty for a non-finite extent and a single `[lo]` for a
+/// collapsed one, exactly as [`nice_ticks`] does.
+#[must_use]
+pub fn time_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
+    if !lo.is_finite() || !hi.is_finite() {
+        return Vec::new();
+    }
+    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+    let target = target.max(2);
+    if (hi - lo).abs() < f64::EPSILON {
+        return vec![lo];
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "target is a small tick count; the f64 conversion is exact for any realistic value"
+    )]
+    let denom = (target - 1) as f64;
+    let Some(step) = time_step((hi - lo) / denom) else {
+        // Below a second time IS decimal, so the nice-number quantiser is
+        // the right one — d3 makes the same fall-through.
+        return nice_ticks(lo, hi, target);
+    };
+    let mut out = Vec::new();
+    let mut t = step.floor(lo);
+    loop {
+        out.push(t);
+        if t >= hi || out.len() >= 1000 {
+            break;
+        }
+        let next = step.advance(t);
+        // A step that fails to advance (a clamped instant at the range end)
+        // would loop forever; stop instead of emitting a repeated tick.
+        if next <= t {
+            break;
+        }
+        t = next;
+    }
+    out
+}
+
+/// Snap a time extent outward to whole tick boundaries — the time axis's
+/// [`nice_log_domain`] equivalent, so the outer gridlines land on the plot
+/// edges. Falls back to the raw extent when no ticks are available.
+#[must_use]
+pub fn nice_time_domain(lo: f64, hi: f64, target: usize) -> (f64, f64) {
+    let ticks = time_ticks(lo, hi, target);
+    match (ticks.first(), ticks.last()) {
+        (Some(&a), Some(&b)) if (b - a).abs() > f64::EPSILON => (a, b),
+        _ => (lo, hi),
+    }
+}
+
+/// Render an epoch-millisecond `value` as a **time axis** label.
+///
+/// Multi-resolution, as d3's `scaleUtc.tickFormat` is: the label carries the
+/// finest calendar field that is not already zero, so a tick that happens to
+/// fall on a day boundary inside an hourly axis names the day while its
+/// neighbours name the hour. A reader gets the date exactly where the axis
+/// crosses into a new one, without every label repeating it.
+///
+/// A single fixed pattern cannot do this. `HH:MM` on a two-year axis is
+/// `00:00` twelve times; `YYYY-MM-DD HH:MM` on an hourly axis is twelve
+/// labels agreeing in their first sixteen characters.
+#[must_use]
+pub fn format_time_tick(value: f64) -> String {
+    if !value.is_finite() {
+        return String::new();
+    }
+    let c = Civil::from_millis(value);
+    if c.milli != 0 {
+        format!(".{:03}", c.milli)
+    } else if c.second != 0 {
+        format!(":{:02}", c.second)
+    } else if c.hour != 0 || c.minute != 0 {
+        format!("{:02}:{:02}", c.hour, c.minute)
+    } else if c.day != 1 {
+        format!("{} {:02}", month_abbrev(c.month), c.day)
+    } else if c.month != 1 {
+        month_abbrev(c.month).to_string()
+    } else {
+        c.year.to_string()
+    }
+}
+
+/// Render an epoch-millisecond `value` as a full UTC timestamp —
+/// `2026-03-02 14:30:00`, with `.mmm` appended when the instant carries
+/// sub-second precision.
+///
+/// The **readout** form, for a tooltip or a playhead header, where
+/// [`format_time_tick`]'s multi-resolution label would be ambiguous: a
+/// scrub landing on `14:30` must say which day it is on, because unlike an
+/// axis label it has no neighbours to read the date from.
+#[must_use]
+pub fn format_time_stamp(value: f64) -> String {
+    if !value.is_finite() {
+        return String::new();
+    }
+    let c = Civil::from_millis(value);
+    let head = format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        c.year, c.month, c.day, c.hour, c.minute, c.second
+    );
+    if c.milli == 0 {
+        head
+    } else {
+        format!("{head}.{:03}", c.milli)
+    }
+}
+
+/// A millisecond count clamped into the civil range and narrowed to `i64`.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "clamped to MAX_TIME_MS, far inside i64, before the cast"
+)]
+fn clamp_to_i64(ms: f64) -> i64 {
+    if ms.is_nan() {
+        return 0;
+    }
+    ms.clamp(-MAX_TIME_MS, MAX_TIME_MS).floor() as i64
+}
+
+/// A millisecond count widened to `f64` — exact inside `MAX_TIME_MS`.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "bounded by MAX_TIME_MS, where every whole millisecond is exactly representable"
+)]
+fn to_f64(v: i64) -> f64 {
+    v as f64
+}
+
 /// How an axis derives its tick labels' precision.
 ///
 /// A linear axis has ONE gap, so a single `step` determines every label's
@@ -373,6 +700,11 @@ fn exponent_span(lo: f64, hi: f64, base: f64) -> (i32, i32) {
 /// derivation-by-coincidence R1439 found between an axis's step and its
 /// values.
 ///
+/// R1529 adds the third arm, where the summary is wrong for a second
+/// reason: a time axis's ticks are not *numbers* to be rounded at all, and
+/// the value's magnitude — an epoch millisecond count — carries none of
+/// what the label should say.
+///
 /// Minor ticks have no arm here because a minor tick is never labelled.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TickFormat {
@@ -382,15 +714,41 @@ pub enum TickFormat {
     /// Logarithmic axis — every label is derived from its own magnitude
     /// ([`format_log_tick`]).
     Log,
+    /// Time axis — every label is the finest calendar field that
+    /// distinguishes its tick ([`format_time_tick`]).
+    Time,
 }
 
 impl TickFormat {
-    /// The label for one tick `value` on this axis.
+    /// The label for one tick `value` on this axis — a label that sits in a
+    /// ROW of them, and may lean on its neighbours to be legible.
     #[must_use]
     pub fn label(self, value: f64) -> String {
         match self {
             Self::Step(step) => format_axis_tick(value, step),
             Self::Log => format_log_tick(value),
+            Self::Time => format_time_tick(value),
+        }
+    }
+
+    /// How a `value` on this axis reads when it stands **alone** — a scrub
+    /// tooltip header, a playhead readout, an a11y announcement.
+    ///
+    /// Identical to [`label`](Self::label) on a numeric axis, where a label
+    /// is already self-contained. A time axis is where the two part: its
+    /// tick label names only the field that distinguishes it from its
+    /// neighbours (`00:30`), which is legible in a row and ambiguous out of
+    /// one — a reader given `00:30` on its own cannot say which day was
+    /// scrubbed. So a lone value takes the full stamp.
+    ///
+    /// One method rather than a rule each caller re-applies: this
+    /// distinction reached R1529 already spelled differently in the timeline
+    /// and the line chart, and a rule with two spellings is two rules.
+    #[must_use]
+    pub fn readout(self, value: f64) -> String {
+        match self {
+            Self::Time => format_time_stamp(value),
+            Self::Step(_) | Self::Log => self.label(value),
         }
     }
 }
@@ -734,6 +1092,315 @@ mod tests {
         // while `1e-6` and `1e6` take their compact forms.
         let wide_via_log: Vec<String> = wide.iter().map(|&t| TickFormat::Log.label(t)).collect();
         assert_eq!(wide_via_log, ["1e-6", "0.001", "1", "1k", "1M"]);
+    }
+
+    // ---- R1529: the time axis ------------------------------------------
+
+    /// Epoch milliseconds for a UTC instant, so the expectations below read
+    /// as clock times. Cross-checked against `date -u`.
+    fn t(y: i64, mo: u32, d: u32, h: u32, mi: u32) -> f64 {
+        crate::civil::Civil {
+            year: y,
+            month: mo,
+            day: d,
+            hour: h,
+            minute: mi,
+            second: 0,
+            milli: 0,
+        }
+        .to_millis()
+    }
+
+    /// ★ The defect, in the form a reader sees it. On a one-hour domain the
+    /// decimal quantiser's ticks land at times no clock shows, and — worse —
+    /// its labels COLLAPSE: `format_si` at the giga scale carries one
+    /// decimal, i.e. 27-hour resolution, so all six gridlines print the same
+    /// string. The time axis has to fix both, and this pins both.
+    #[test]
+    fn r1529_the_decimal_axis_is_wrong_in_ticks_and_in_labels() {
+        let (lo, hi) = (t(2026, 3, 2, 0, 0), t(2026, 3, 2, 1, 0));
+
+        // The counterfactual: what the linear generator does here.
+        let decimal = nice_ticks(lo, hi, 5);
+        let decimal_labels: Vec<String> = decimal
+            .iter()
+            .map(|&v| TickFormat::Step(tick_step(&decimal)).label(v))
+            .collect();
+        let distinct: std::collections::BTreeSet<&String> = decimal_labels.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            1,
+            "every decimal label collapses to one string: {decimal_labels:?}"
+        );
+        assert_eq!(decimal_labels[0], "1772.4G");
+        // Its step is 16m40s, so no tick is on a minute boundary.
+        assert!(
+            decimal
+                .iter()
+                .any(|&v| (v - lo).rem_euclid(60_000.0) != 0.0),
+            "decimal ticks fall off the clock: {decimal:?}"
+        );
+
+        // The time axis: ticks on the quarter hour, labels all distinct.
+        let ticks = time_ticks(lo, hi, 5);
+        assert_eq!(
+            ticks,
+            vec![
+                t(2026, 3, 2, 0, 0),
+                t(2026, 3, 2, 0, 15),
+                t(2026, 3, 2, 0, 30),
+                t(2026, 3, 2, 0, 45),
+                t(2026, 3, 2, 1, 0),
+            ]
+        );
+        let labels: Vec<String> = ticks.iter().map(|&v| TickFormat::Time.label(v)).collect();
+        assert_eq!(labels, ["Mar 02", "00:15", "00:30", "00:45", "01:00"]);
+        let distinct: std::collections::BTreeSet<&String> = labels.iter().collect();
+        assert_eq!(distinct.len(), labels.len(), "one label per gridline");
+    }
+
+    /// ★ The ladder picks the rung a clock and a calendar actually mark.
+    /// Expected boundaries derived independently (Python `datetime`), not
+    /// read off this implementation.
+    #[test]
+    fn r1529_the_ladder_rung_matches_the_span() {
+        // A day -> six-hour ticks.
+        let (lo, hi) = (t(2026, 3, 2, 0, 0), t(2026, 3, 3, 0, 0));
+        assert_eq!(
+            time_ticks(lo, hi, 5),
+            vec![
+                t(2026, 3, 2, 0, 0),
+                t(2026, 3, 2, 6, 0),
+                t(2026, 3, 2, 12, 0),
+                t(2026, 3, 2, 18, 0),
+                t(2026, 3, 3, 0, 0),
+            ]
+        );
+
+        // A week -> two-day ticks (geometrically nearer 2d than 1d).
+        let (lo, hi) = (t(2026, 3, 2, 0, 0), t(2026, 3, 9, 0, 0));
+        assert_eq!(
+            time_ticks(lo, hi, 5),
+            vec![
+                t(2026, 3, 2, 0, 0),
+                t(2026, 3, 4, 0, 0),
+                t(2026, 3, 6, 0, 0),
+                t(2026, 3, 8, 0, 0),
+                t(2026, 3, 10, 0, 0), // brackets, as nice_ticks does
+            ]
+        );
+
+        // A year -> quarters, aligned to January.
+        let (lo, hi) = (t(2026, 1, 1, 0, 0), t(2027, 1, 1, 0, 0));
+        assert_eq!(
+            time_ticks(lo, hi, 5),
+            vec![
+                t(2026, 1, 1, 0, 0),
+                t(2026, 4, 1, 0, 0),
+                t(2026, 7, 1, 0, 0),
+                t(2026, 10, 1, 0, 0),
+                t(2027, 1, 1, 0, 0),
+            ]
+        );
+
+        // Two decades -> a five-year stride landing on multiples of five.
+        let (lo, hi) = (t(2000, 1, 1, 0, 0), t(2020, 1, 1, 0, 0));
+        assert_eq!(
+            time_ticks(lo, hi, 5),
+            vec![
+                t(2000, 1, 1, 0, 0),
+                t(2005, 1, 1, 0, 0),
+                t(2010, 1, 1, 0, 0),
+                t(2015, 1, 1, 0, 0),
+                t(2020, 1, 1, 0, 0),
+            ]
+        );
+    }
+
+    /// ★ "Nearest rung" is GEOMETRIC, and this is the case that says so —
+    /// the other spans land on a rung exactly, where the two comparisons
+    /// agree and neither is under test.
+    ///
+    /// A 7.5-hour domain wants 1.875 hours per tick, which sits between the
+    /// 1h and 3h rungs' geometric mean (1.73h) and their arithmetic one
+    /// (2h). Arithmetic nearness would pick 1h and emit nine gridlines for
+    /// a five-label target; geometric picks 3h and emits four. For a ladder
+    /// whose rungs grow multiplicatively, ratio is the distance that counts.
+    #[test]
+    fn r1529_the_rung_search_measures_distance_as_a_ratio() {
+        let (lo, hi) = (t(2026, 3, 2, 0, 0), t(2026, 3, 2, 7, 30));
+        let ticks = time_ticks(lo, hi, 5);
+        assert_eq!(
+            ticks,
+            vec![
+                t(2026, 3, 2, 0, 0),
+                t(2026, 3, 2, 3, 0),
+                t(2026, 3, 2, 6, 0),
+                t(2026, 3, 2, 9, 0),
+            ],
+            "the 3h rung, not the 1h one"
+        );
+        // The counterfactual, spelled out: the arithmetically-nearer rung
+        // would nearly double the label count the caller asked for. Counted
+        // through the same bracketing rule (floor to the rung, step until
+        // past `hi`), an hourly axis over 00:00..07:30 runs 00:00 through
+        // 08:00 — nine gridlines for a five-label request.
+        assert_eq!(ticks.len(), 4, "close to the requested 5");
+        let hourly = time_ticks(lo, hi, 9).len();
+        assert_eq!(hourly, 9, "the 1h rung emits nine");
+    }
+
+    /// ★ A week tick is a Monday (ISO 8601). The rung cannot be a plain
+    /// 7-day stride: the epoch was a Thursday, so that would put every
+    /// weekly gridline mid-week.
+    #[test]
+    fn r1529_week_ticks_land_on_mondays_not_on_the_epoch_weekday() {
+        // ~5 weeks: target step 8.75d, geometrically nearest the 7d rung.
+        let (lo, hi) = (t(2026, 3, 4, 9, 30), t(2026, 4, 8, 0, 0));
+        let ticks = time_ticks(lo, hi, 5);
+        assert!(ticks.len() >= 4, "several weekly ticks: {ticks:?}");
+        // Days since the epoch, mod 7, with the epoch's own Thursday offset
+        // folded in: a Monday leaves no remainder.
+        let weekday = |ms: f64| {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a tick inside MAX_TIME_MS is far inside i64 once divided by a day"
+            )]
+            let days = (ms / MS_PER_DAY_F64).round() as i64;
+            (days + 3).rem_euclid(7)
+        };
+        for &tick in &ticks {
+            assert_eq!(weekday(tick), 0, "{} is a Monday", format_time_stamp(tick));
+        }
+        // The counterfactual: a plain 7-day stride from the epoch would put
+        // every gridline three days off, because the epoch was a Thursday.
+        assert_eq!(weekday(0.0), 3, "1970-01-01 was a Thursday");
+        // The first tick is the Monday at or before the domain start.
+        assert_eq!(ticks.first().copied(), Some(t(2026, 3, 2, 0, 0)));
+    }
+
+    /// ★ Months are not a duration. A 3-month stride has to be calendar
+    /// arithmetic; a fixed 90-day one drifts out of the quarter within a
+    /// year and never returns to January.
+    #[test]
+    fn r1529_month_rungs_are_calendar_not_fixed_length() {
+        let (lo, hi) = (t(2026, 1, 1, 0, 0), t(2027, 1, 1, 0, 0));
+        let ticks = time_ticks(lo, hi, 5);
+        for &tick in &ticks {
+            let c = crate::civil::Civil::from_millis(tick);
+            assert_eq!((c.day, c.hour, c.minute), (1, 0, 0), "first of a month");
+            assert_eq!((c.month - 1) % 3, 0, "a quarter boundary");
+        }
+        // The counterfactual: four fixed 90-day steps from January 1 land in
+        // December, not on the next January 1.
+        let fixed = t(2026, 1, 1, 0, 0) + 4.0 * 90.0 * 86_400_000.0;
+        let c = crate::civil::Civil::from_millis(fixed);
+        assert_eq!((c.year, c.month, c.day), (2026, 12, 27), "90-day drift");
+    }
+
+    /// ★ The decimal quantiser brackets the ladder rather than being wrong
+    /// everywhere: below a second time subdivides decimally, and above a
+    /// year a stride of 5 or 10 years IS a nice number. The mixed-radix
+    /// region is exactly second-to-year.
+    #[test]
+    fn r1529_the_decimal_quantiser_still_rules_both_ends() {
+        // Half a second -> the linear generator, verbatim.
+        let lo = t(2026, 3, 2, 0, 0);
+        assert_eq!(
+            time_ticks(lo, lo + 500.0, 5),
+            nice_ticks(lo, lo + 500.0, 5),
+            "below a second, time is decimal"
+        );
+        // A century -> a 20-year stride, a nice number of years.
+        let ticks = time_ticks(t(1900, 1, 1, 0, 0), t(2000, 1, 1, 0, 0), 5);
+        assert_eq!(
+            ticks,
+            vec![
+                t(1900, 1, 1, 0, 0),
+                t(1920, 1, 1, 0, 0),
+                t(1940, 1, 1, 0, 0),
+                t(1960, 1, 1, 0, 0),
+                t(1980, 1, 1, 0, 0),
+                t(2000, 1, 1, 0, 0),
+            ]
+        );
+    }
+
+    /// ★ The multi-resolution label: each tick names the finest calendar
+    /// field that is not already zero, so the date appears exactly where the
+    /// axis crosses into a new day instead of on every label.
+    #[test]
+    fn r1529_a_time_label_names_its_finest_distinguishing_field() {
+        assert_eq!(format_time_tick(t(2026, 1, 1, 0, 0)), "2026");
+        assert_eq!(format_time_tick(t(2026, 7, 1, 0, 0)), "Jul");
+        assert_eq!(format_time_tick(t(2026, 7, 4, 0, 0)), "Jul 04");
+        assert_eq!(format_time_tick(t(2026, 7, 4, 14, 0)), "14:00");
+        assert_eq!(format_time_tick(t(2026, 7, 4, 14, 30)), "14:30");
+        assert_eq!(format_time_tick(t(2026, 7, 4, 14, 30) + 5_000.0), ":05");
+        assert_eq!(format_time_tick(t(2026, 7, 4, 14, 30) + 250.0), ".250");
+        assert_eq!(format_time_tick(f64::NAN), "");
+
+        // ★ Why a single fixed pattern cannot do this: an hourly axis under
+        // one would repeat its first sixteen characters on every label, and
+        // a multi-year axis under `HH:MM` would print `00:00` throughout.
+        let day = t(2026, 7, 4, 0, 0);
+        let hourly: Vec<String> = (0..4)
+            .map(|i| format_time_tick(day + f64::from(i) * 6.0 * 3_600_000.0))
+            .collect();
+        assert_eq!(hourly, ["Jul 04", "06:00", "12:00", "18:00"]);
+        assert_eq!(
+            hourly[0], "Jul 04",
+            "the day is named once, where the axis enters it"
+        );
+    }
+
+    /// The readout form, which an axis label cannot be: a scrub landing on
+    /// `14:30` must say which day it is on, having no neighbours to read it
+    /// from.
+    #[test]
+    fn r1529_the_stamp_is_unambiguous_where_the_label_is_relative() {
+        assert_eq!(
+            format_time_stamp(t(2026, 7, 4, 14, 30)),
+            "2026-07-04 14:30:00"
+        );
+        assert_eq!(
+            format_time_stamp(t(2026, 7, 4, 14, 30) + 250.0),
+            "2026-07-04 14:30:00.250"
+        );
+        assert_eq!(
+            format_time_stamp(t(1970, 1, 1, 0, 0)),
+            "1970-01-01 00:00:00"
+        );
+        assert_eq!(format_time_stamp(f64::INFINITY), "");
+        // The label is relative; the stamp is not. Same instant, two jobs.
+        assert_eq!(format_time_tick(t(2026, 7, 4, 14, 30)), "14:30");
+    }
+
+    #[test]
+    fn r1529_time_domain_snaps_outward_to_tick_boundaries() {
+        // A ragged 90-minute window opens out to the quarter hours around it.
+        let (lo, hi) = (t(2026, 3, 2, 9, 7), t(2026, 3, 2, 10, 38));
+        assert_eq!(
+            nice_time_domain(lo, hi, 5),
+            (t(2026, 3, 2, 9, 0), t(2026, 3, 2, 11, 0))
+        );
+        let (a, b) = nice_time_domain(lo, hi, 5);
+        assert!(a <= lo && b >= hi, "the snap brackets the data");
+    }
+
+    #[test]
+    fn r1529_time_ticks_handle_degenerate_extents_like_the_others() {
+        let lo = t(2026, 3, 2, 0, 0);
+        assert!(time_ticks(f64::NAN, lo, 5).is_empty());
+        assert!(time_ticks(lo, f64::INFINITY, 5).is_empty());
+        assert_eq!(time_ticks(lo, lo, 5), vec![lo]);
+        // Reversed is normalised, exactly as nice_ticks does.
+        assert_eq!(
+            time_ticks(lo + 3_600_000.0, lo, 5),
+            time_ticks(lo, lo + 3_600_000.0, 5)
+        );
+        // A collapsed domain still yields a usable snap rather than a panic.
+        assert_eq!(nice_time_domain(lo, lo, 5), (lo, lo));
     }
 
     #[test]

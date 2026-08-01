@@ -99,9 +99,10 @@ use crate::draw::{
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{
-    CartesianPlot, LogAxes, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
+    AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
     off_scale_points, tick_pixels,
 };
+use crate::scale::AxisKind;
 use crate::series::{DataPoint, Series, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::TickFormat;
@@ -122,7 +123,7 @@ pub struct LineChart {
     rescale_y_to_x_window: bool,
     select_x_range: Option<(f64, f64)>,
     color: ValueEncoding,
-    logs: LogAxes,
+    kinds: AxisKinds,
     tag_prefix: String,
 }
 
@@ -143,7 +144,7 @@ impl LineChart {
             rescale_y_to_x_window: false,
             select_x_range: None,
             color: ValueEncoding::default(),
-            logs: LogAxes::default(),
+            kinds: AxisKinds::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -428,7 +429,7 @@ impl LineChart {
     /// tick per doubling is what a reader counts in.
     #[must_use]
     pub fn y_log_base(mut self, base: f64) -> Self {
-        self.logs.y = Some(base);
+        self.kinds.y = AxisKind::Log(base);
         self
     }
 
@@ -442,7 +443,41 @@ impl LineChart {
     /// [`x_log`](Self::x_log) in an explicit `base`.
     #[must_use]
     pub fn x_log_base(mut self, base: f64) -> Self {
-        self.logs.x = Some(base);
+        self.kinds.x = AxisKind::Log(base);
+        self
+    }
+
+    /// Plot the **x**-axis as UTC time (R1529) — Qt's `QDateTimeAxis`, d3's
+    /// `scaleUtc`. Sample `x` values are read as epoch **milliseconds**.
+    ///
+    /// This is the axis a monitoring chart has. Without it a timestamp is a
+    /// plain number, so the gridlines land on multiples of a decimal step
+    /// (`00:06:40`, `00:23:20`) and the labels compact by magnitude — which
+    /// on a sub-day domain renders every one of them as the same string
+    /// (`1772.4G`), because a one-decimal SI suffix at that scale has
+    /// 27-hour resolution.
+    ///
+    /// Ticks instead land on clock and calendar boundaries, and each label
+    /// carries the finest field that distinguishes it
+    /// ([`format_time_tick`](crate::format_time_tick)), so the date appears
+    /// exactly where the axis crosses into a new day rather than on every
+    /// label. The scrub readout takes the unambiguous full stamp
+    /// ([`format_time_stamp`](crate::format_time_stamp)), which an axis
+    /// label cannot be.
+    #[must_use]
+    pub fn x_time(mut self) -> Self {
+        self.kinds.x = AxisKind::Time;
+        self
+    }
+
+    /// Plot the **y**-axis as UTC time (R1529) — the y-axis twin of
+    /// [`x_time`](Self::x_time); see it for the whole contract. Uncommon
+    /// but legal, exactly as Qt allows a `QDateTimeAxis` on either axis: a
+    /// chart of "when did this run finish" against a run index has time on
+    /// y.
+    #[must_use]
+    pub fn y_time(mut self) -> Self {
+        self.kinds.y = AxisKind::Time;
         self
     }
 
@@ -455,7 +490,7 @@ impl LineChart {
     /// silence. `examples/hello-log-chart` renders it as a caption.
     #[must_use]
     pub fn off_scale(&self) -> Vec<OffScale> {
-        off_scale_points(&self.series, self.logs)
+        off_scale_points(&self.series, self.kinds)
     }
 
     /// The chart body, authored in the frame `rect` describes — the ONE
@@ -478,7 +513,7 @@ impl LineChart {
             self.y_domain,
             style,
             self.rescale(),
-            self.logs,
+            self.kinds,
         );
         let (y_lo, y_hi) = plot.y.domain();
         // One tick-set resolver, shared with `inspect_readout` so the
@@ -893,7 +928,7 @@ impl LineChart {
             self.y_domain,
             style,
             self.rescale(),
-            self.logs,
+            self.kinds,
         );
         let x_ticks: Vec<f64> = axis_ticks(&plot.x, style.x_ticks);
         let y_ticks: Vec<f64> = axis_ticks(&plot.y, style.y_ticks);
@@ -902,7 +937,7 @@ impl LineChart {
             y: axis_format(&plot.y, &y_ticks),
         };
         let (focus_x, hits) = self.resolve_focus(&plot, rect)?;
-        let mut out = format!("x = {}", steps.x.label(focus_x));
+        let mut out = format!("x = {}", steps.x.readout(focus_x));
         for (i, p) in &hits {
             // `write!` to a String is infallible; the Result is discarded
             // exactly as `push_str` would have.
@@ -970,7 +1005,7 @@ impl LineChart {
         style: &ChartStyle,
         steps: Steps,
     ) -> Vec<Scene> {
-        let header = format!("x = {}", steps.x.label(focus_x));
+        let header = format!("x = {}", steps.x.readout(focus_x));
         let rows: Vec<CalloutRow> = hits
             .iter()
             .map(|(i, p)| CalloutRow {
@@ -2213,7 +2248,7 @@ mod tests {
             None,
             &ChartStyle::default(),
             Rescale::default(),
-            LogAxes::default(),
+            AxisKinds::default(),
         );
         let spread = plot.y.map(0.4).unwrap() - plot.y.map(12.0).unwrap();
         assert!(
