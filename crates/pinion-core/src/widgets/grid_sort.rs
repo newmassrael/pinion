@@ -788,6 +788,7 @@ impl ExternalIntrospect for GridSortExternal {
         // `count`     — source row count (query only).
         // `cols`      — column count (query only).
         // `source_at` — `source_at.<pos>` visual→source map (query only).
+        // `cell`      — R1525 `cell.<row>.<col>` source cell text (query only).
         // `cycle_sort`/`set_filter`/`send` — invoke channels.
         IntrospectSchema::new(
             const {
@@ -804,6 +805,16 @@ impl ExternalIntrospect for GridSortExternal {
                         "int",
                         const { &[SchemaArg::index("pos", "view_len")] },
                     ),
+                    SchemaField::parametric(
+                        "cell.<row>.<col>",
+                        "string",
+                        const {
+                            &[
+                                SchemaArg::index("row", "count"),
+                                SchemaArg::index("col", "cols"),
+                            ]
+                        },
+                    ),
                     SchemaField::new("cycle_sort", "int"),
                     SchemaField::new("set_filter", "string"),
                     SchemaField::new("send", "string"),
@@ -817,6 +828,25 @@ impl ExternalIntrospect for GridSortExternal {
         // position reports Null (present-but-empty), never absence.
         if let Some(rest) = path.strip_prefix("source_at.") {
             return Some(source_at_value(rest, |p| self.state.source_at(p)));
+        }
+        // R1525 — `cell.<row>.<col>`: the SOURCE cell text this proxy sorts and
+        // filters on. The same wire form `TableExternal` answers for the eager
+        // table, now answered by the virtualized grid's model too.
+        //
+        // The round that made the grid paint from this model needs the model's
+        // own copy on the wire, or its claim — that what is painted is what is
+        // ordered — has no RPC-side witness: `scene/snapshot` shows the painted
+        // text, and without this there is nothing independent to compare it to.
+        // (R1523 added the a11y column pair to `access.rs` for exactly this
+        // reason: RPC is invariant #2's primary path.)
+        if let Some(rest) = path.strip_prefix("cell.") {
+            let (row_str, col_str) = rest.split_once('.')?;
+            let row: usize = row_str.parse().ok()?;
+            let col: usize = col_str.parse().ok()?;
+            if row >= self.state.count() || col >= self.state.col_count() {
+                return None;
+            }
+            return Some(IntrospectValue::Text(self.state.cell(row, col).to_string()));
         }
         match path {
             "sort" => Some(IntrospectValue::Text(grid_sort_str(self.state.sort()))),
@@ -923,6 +953,41 @@ mod tests {
 
     // A 4-row × 2-column grid: column 0 is text, column 1 is numeric (so the
     // numeric-vs-lexicographic distinction is observable: "9" < "12").
+    /// R1525 — the source cells this proxy sorts and filters on are on the wire.
+    ///
+    /// The round that made the view paint from this model needs the model's own
+    /// copy queryable, or "what is painted is what is ordered" has no RPC-side
+    /// witness: `scene/snapshot` gives the painted text and there is nothing
+    /// independent to compare it to. Same `cell.<row>.<col>` wire form the eager
+    /// `TableExternal` answers, so an agent addresses both tables alike.
+    #[test]
+    fn r1525_query_surfaces_the_source_cells() {
+        let e = GridSortExternal::new(Rc::new(state()));
+        assert_eq!(
+            e.query("cell.0.0"),
+            Some(IntrospectValue::Text("Menu".into())),
+        );
+        assert_eq!(
+            e.query("cell.2.1"),
+            Some(IntrospectValue::Text("707".into())),
+        );
+        assert_eq!(e.query("cols"), Some(IntrospectValue::Int(2)));
+        // Out of range is ABSENT (None), matching `TableExternal`'s own
+        // `cell.<row>.<col>` — unlike `source_at.<pos>`, which reports Null
+        // because a position beyond the view is a meaningful "no source there".
+        assert_eq!(
+            e.query("cell.4.0"),
+            None,
+            "row beyond the dataset is absent"
+        );
+        assert_eq!(
+            e.query("cell.0.2"),
+            None,
+            "column beyond the grid is absent"
+        );
+        assert_eq!(e.query("cell.0"), None, "a malformed address is absent");
+    }
+
     fn cells() -> Vec<Vec<String>> {
         vec![
             vec!["Menu".to_string(), "12".to_string()],

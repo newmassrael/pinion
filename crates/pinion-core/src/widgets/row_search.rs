@@ -402,7 +402,9 @@ impl ExternalIntrospect for RowSearchExternal {
         // `current`     — cursor position among matches, or Null (query only).
         // `current_row` — source row at the cursor, or Null (query only).
         // `count`       — source row count (query only).
+        // `cols`        — column count (query only); the bound `cell.<col>` cites.
         // `match`       — `match.<i>` i-th matching source row (query only).
+        // `cell`        — R1525 `cell.<row>.<col>` source cell text (query only).
         // `set_query`/`next`/`prev`/`jump`/`clear` — invoke channels.
         IntrospectSchema::new(
             const {
@@ -412,10 +414,21 @@ impl ExternalIntrospect for RowSearchExternal {
                     SchemaField::new("current", "int"),
                     SchemaField::new("current_row", "int"),
                     SchemaField::new("count", "int"),
+                    SchemaField::new("cols", "int"),
                     SchemaField::parametric(
                         "match.<i>",
                         "int",
                         const { &[SchemaArg::index("i", "match_count")] },
+                    ),
+                    SchemaField::parametric(
+                        "cell.<row>.<col>",
+                        "string",
+                        const {
+                            &[
+                                SchemaArg::index("row", "count"),
+                                SchemaArg::index("col", "cols"),
+                            ]
+                        },
                     ),
                     SchemaField::new("set_query", "string"),
                     SchemaField::new("next", "string"),
@@ -433,6 +446,21 @@ impl ExternalIntrospect for RowSearchExternal {
         if let Some(rest) = path.strip_prefix("match.") {
             return Some(source_at_value(rest, |i| self.state.match_at(i)));
         }
+        // R1525 — `cell.<row>.<col>`: the SOURCE cell text this proxy searches.
+        // The wire form `TableExternal` answers for the eager table and
+        // `GridSortExternal` now answers for the sort/filter proxy; a search
+        // cursor without it can report WHICH row matched but not what that row
+        // says, so an agent cannot check that the row it was sent to actually
+        // contains the query.
+        if let Some(rest) = path.strip_prefix("cell.") {
+            let (row_str, col_str) = rest.split_once('.')?;
+            let row: usize = row_str.parse().ok()?;
+            let col: usize = col_str.parse().ok()?;
+            if row >= self.state.count() || col >= self.state.col_count() {
+                return None;
+            }
+            return Some(IntrospectValue::Text(self.state.cell(row, col).to_string()));
+        }
         match path {
             "query" => Some(IntrospectValue::Text(grid_filter_str(
                 self.state.query().as_ref(),
@@ -447,6 +475,9 @@ impl ExternalIntrospect for RowSearchExternal {
             "current_row" => Some(self.current_row_value()),
             "count" => Some(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
+            )),
+            "cols" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.col_count()).unwrap_or(i64::MAX),
             )),
             _ => None,
         }
@@ -531,6 +562,39 @@ mod tests {
     // interleaved subset (so a cursor walk visibly skips non-matching rows).
     const CATS: [&str; 3] = ["Alpha", "Bravo", "Charlie"];
     const STATUS: [&str; 3] = ["Idle", "Active", "Done"];
+
+    /// R1525 — the source cells this proxy searches are on the wire.
+    ///
+    /// A search cursor could report WHICH row matched but not what that row
+    /// says, so an agent could not check that the row it was sent to actually
+    /// contains the query. Same `cell.<row>.<col>` wire form as the eager
+    /// `TableExternal` and the sort proxy.
+    #[test]
+    fn r1525_query_surfaces_the_source_cells() {
+        let mut e = ext();
+        e.invoke("set_query", IntrospectValue::Text("2=Done".into()))
+            .unwrap();
+        let row = match e.query("current_row") {
+            Some(IntrospectValue::Int(r)) => usize::try_from(r).unwrap(),
+            other => panic!("cursor row expected, got {other:?}"),
+        };
+        assert_eq!(
+            e.query(&format!("cell.{row}.2")),
+            Some(IntrospectValue::Text("Done".into())),
+            "the cell the search matched on is readable at the row it reports",
+        );
+        assert_eq!(e.query("cols"), Some(IntrospectValue::Int(3)));
+        assert_eq!(
+            e.query("cell.12.0"),
+            None,
+            "row beyond the dataset is absent"
+        );
+        assert_eq!(
+            e.query("cell.0.3"),
+            None,
+            "column beyond the grid is absent"
+        );
+    }
 
     fn cells() -> Vec<Vec<String>> {
         (0..12)

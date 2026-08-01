@@ -127,9 +127,15 @@ fn score(id: usize) -> usize {
     (id * 7919) % 997
 }
 
-/// Synthetic cell texts for a data row. Column 0 (Name) groups by category so
-/// a name sort visibly regroups; column 1 (Score) is the numeric column;
-/// column 2 (Status) is a cyclic category.
+/// The synthetic dataset, one cell at a time — the **seed** for the model
+/// below, and nothing else.
+///
+/// R1525 — until this round the grid was ALSO painted from this function, while
+/// its sort / filter / search were computed from the model's materialized cells.
+/// Two paths to the same data, and the one the user reads was not the one the
+/// ordering came from. R1524's `materialize_cells` made them agree by deriving
+/// one from the other; this round removes the second path instead. The model is
+/// the store, this is the generator, and the view asks the store.
 fn cell_text(c: CellIndex) -> String {
     let id = c.row;
     match c.col {
@@ -222,7 +228,8 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         &theme,
         &style,
         |id| selected == Some(id),
-        cell_text,
+        // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
+        |c| grid_sort.cell(c.row, c.col).to_string(),
     );
 
     Scene::Container(
@@ -386,6 +393,86 @@ mod tests {
                 "numeric order differs from the lexicographic order"
             );
         });
+    }
+
+    /// The text painted in the cell at data row `row`, column `col`.
+    fn painted_cell(scene: &Scene, row: usize, col: usize) -> Option<String> {
+        fn text_under(scene: &Scene) -> Option<String> {
+            match scene {
+                Scene::Text(t) => Some(t.content.to_string()),
+                Scene::Container(c) => c.children.iter().find_map(text_under),
+                Scene::Scroll(s) => text_under(s.content.as_ref()),
+                _ => None,
+            }
+        }
+        fn find<'a>(scene: &'a Scene, want: &str) -> Option<&'a Scene> {
+            match scene {
+                Scene::Container(c) => {
+                    if c.tag.as_deref() == Some(want) {
+                        return Some(scene);
+                    }
+                    c.children.iter().find_map(|ch| find(ch, want))
+                }
+                Scene::Scroll(s) => find(s.content.as_ref(), want),
+                _ => None,
+            }
+        }
+        let tag = format!("{GRID_TAG}#{row}_{col}");
+        text_under(find(scene, &tag)?)
+    }
+
+    /// **The defect R1525 closes.** This grid's sort and filter are computed
+    /// from the model's cells (`GridSortState::cell`, read by its own comparator
+    /// and filter), but until this round the painted text came from the
+    /// [`cell_text`] formula instead. Two paths to the same data — and the one
+    /// the user reads was not the one the ordering was derived from.
+    ///
+    /// Nothing failed, because R1524's `materialize_cells` seeds the model FROM
+    /// that formula, so the two agreed. Agreement by derivation is not one path:
+    /// the divergence is unreachable only for as long as every binding remembers
+    /// to seed that way. This test makes it reachable — `use_grid_sort` caches on
+    /// its key, so pre-seeding the binding's own key hands it a model whose text
+    /// the formula cannot produce. A view painting the formula then paints text
+    /// the sort never saw.
+    #[test]
+    fn r1525_paints_the_model_not_the_formula() {
+        let painted = Owner::new().run(|| {
+            let seeded = use_grid_sort(SORT_TAG, || {
+                let cells = (0..N)
+                    .map(|r| (0..NCOLS).map(|c| format!("MODEL-{r}-{c}")).collect())
+                    .collect();
+                (NCOLS, cells)
+            });
+            assert_eq!(
+                seeded.cell(0, 0),
+                "MODEL-0-0",
+                "premise: the pre-seed reached the cache key the binding uses",
+            );
+            assert_ne!(
+                cell_text(CellIndex { row: 0, col: 0 }),
+                "MODEL-0-0",
+                "premise: the formula cannot produce the model's text, so the two \
+                 sources are distinguishable",
+            );
+            let scroll = use_scroll_state(SCROLL_KEY);
+            scroll.set_measured_viewport(WIN_W, 384);
+            // R1523 — the COLUMN window is derived from the horizontal scroll's
+            // measured width, and an unmeasured one windows nothing. A fixture
+            // that omits it renders a grid with no cells at all, which is the
+            // correct pre-layout boot state and useless for reading a cell.
+            let h_scroll = use_scroll_state(H_SCROLL_KEY);
+            h_scroll.set_measured_viewport(WIN_W, 0);
+            view(None, &Frame::default())
+        });
+        assert!(
+            painted_cell(&painted, 0, 0).is_some(),
+            "premise: the fixture renders a laid-out grid, so cell (0,0) exists",
+        );
+        assert_eq!(
+            painted_cell(&painted, 0, 0).as_deref(),
+            Some("MODEL-0-0"),
+            "the grid paints the model it sorts, not a parallel formula",
+        );
     }
 
     #[test]

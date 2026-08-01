@@ -157,7 +157,15 @@ fn score(id: usize) -> usize {
     (id * 37 + 11) % 100
 }
 
-/// Synthetic cell texts for a data row.
+/// The synthetic dataset, one cell at a time — the **seed** for the model
+/// below, and nothing else.
+///
+/// R1525 — until this round the grid was ALSO painted from this function, while
+/// its sort / filter / search were computed from the model's materialized cells.
+/// Two paths to the same data, and the one the user reads was not the one the
+/// ordering came from. R1524's `materialize_cells` made them agree by deriving
+/// one from the other; this round removes the second path instead. The model is
+/// the store, this is the generator, and the view asks the store.
 fn cell_text(c: CellIndex) -> String {
     let id = c.row;
     match c.col {
@@ -346,7 +354,8 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
         &theme,
         &tstyle,
         |_id| false,
-        cell_text,
+        // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
+        |c| grid_sort.cell(c.row, c.col).to_string(),
     );
 
     let mut children = vec![status_bar(&theme, sort, target), grid];

@@ -137,10 +137,15 @@ fn score(id: usize) -> usize {
     (id * 7919) % 1000
 }
 
-/// Synthetic cell texts for a data row. Column 0 (Name) is `<Category><id>`
-/// (so a `~` substring facet on the category name keeps that category); column
-/// 1 (Score) is numeric (the `>=` facet column); column 2 (Status) is a cyclic
-/// category (the `=` facet column).
+/// The synthetic dataset, one cell at a time — the **seed** for the model
+/// below, and nothing else.
+///
+/// R1525 — until this round the grid was ALSO painted from this function, while
+/// its sort / filter / search were computed from the model's materialized cells.
+/// Two paths to the same data, and the one the user reads was not the one the
+/// ordering came from. R1524's `materialize_cells` made them agree by deriving
+/// one from the other; this round removes the second path instead. The model is
+/// the store, this is the generator, and the view asks the store.
 fn cell_text(c: CellIndex) -> String {
     let id = c.row;
     match c.col {
@@ -234,7 +239,8 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         &theme,
         &style,
         |id| selected == Some(id),
-        cell_text,
+        // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
+        |c| grid.cell(c.row, c.col).to_string(),
     );
 
     Scene::Container(

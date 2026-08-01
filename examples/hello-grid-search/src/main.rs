@@ -96,7 +96,15 @@ fn score(id: usize) -> usize {
     (id * 7919) % 1000
 }
 
-/// Synthetic cell texts: Name `<Category><id>`, numeric Score, cyclic Status.
+/// The synthetic dataset, one cell at a time — the **seed** for the model
+/// below, and nothing else.
+///
+/// R1525 — until this round the grid was ALSO painted from this function, while
+/// its sort / filter / search were computed from the model's materialized cells.
+/// Two paths to the same data, and the one the user reads was not the one the
+/// ordering came from. R1524's `materialize_cells` made them agree by deriving
+/// one from the other; this round removes the second path instead. The model is
+/// the store, this is the generator, and the view asks the store.
 fn cell_text(c: CellIndex) -> String {
     let id = c.row;
     match c.col {
@@ -210,7 +218,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &theme,
         &style,
         |_| false, // search has its own cursor highlight; selection is a separate axis
-        cell_text,
+        // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
+        |c| search.cell(c.row, c.col).to_string(),
     );
 
     Scene::Container(
@@ -311,6 +320,106 @@ mod tests {
     /// "Delta") iff its category is Delta (index 3 in the 5-category cycle).
     fn oracle_match(id: usize) -> bool {
         id % CATEGORIES.len() == 3
+    }
+
+    /// The text painted in the cell at data row `row`, column `col`.
+    fn painted_cell(scene: &Scene, row: usize, col: usize) -> Option<String> {
+        fn text_under(scene: &Scene) -> Option<String> {
+            match scene {
+                Scene::Text(t) => Some(t.content.to_string()),
+                Scene::Container(c) => c.children.iter().find_map(text_under),
+                Scene::Scroll(s) => text_under(s.content.as_ref()),
+                _ => None,
+            }
+        }
+        fn find<'a>(scene: &'a Scene, want: &str) -> Option<&'a Scene> {
+            match scene {
+                Scene::Container(c) => {
+                    if c.tag.as_deref() == Some(want) {
+                        return Some(scene);
+                    }
+                    c.children.iter().find_map(|ch| find(ch, want))
+                }
+                Scene::Scroll(s) => find(s.content.as_ref(), want),
+                _ => None,
+            }
+        }
+        text_under(find(scene, &format!("{GRID_TAG}#{row}_{col}"))?)
+    }
+
+    /// **The defect R1525 closes, in its sharpest form.** `RowSearchState`
+    /// decides what matches by reading its own cells; until this round the text
+    /// on screen came from the [`cell_text`] formula instead. So the cursor could
+    /// land on a row the MODEL says contains the query while the PAINTED text
+    /// under it does not — a highlight pointing at nothing, from two paths to one
+    /// dataset.
+    ///
+    /// The stronger claim than "paints the model": what the search matched and
+    /// what the user reads are the same string. Made reachable by pre-seeding the
+    /// binding's own cache key (`use_row_search` caches on it, so the pre-seed
+    /// wins) with a match set **inverted** relative to the formula's.
+    ///
+    /// The inversion is load-bearing and the first draft of this test lacked it:
+    /// seeding matches as `MODEL-Delta-{r}` left the formula's own Delta rows
+    /// containing "Delta" too, so both sources satisfied the assertion and the
+    /// counterfactual passed. A test that cannot fail against the defect is not
+    /// evidence. Inverted, the cursor lands on a row whose MODEL text contains
+    /// the query and whose FORMULA text cannot.
+    #[test]
+    fn r1525_the_match_cursor_lands_on_text_that_contains_the_query() {
+        let (scene, row) = Owner::new().run(|| {
+            let seeded = use_row_search(SEARCH_TAG, || {
+                let cells = (0..N)
+                    .map(|r| {
+                        // Inverted: the formula's NON-Delta rows are the model's
+                        // matches, and its Delta rows are not.
+                        let name = if oracle_match(r) {
+                            format!("MODEL-plain-{r}")
+                        } else {
+                            format!("MODEL-Delta-{r}")
+                        };
+                        vec![name, score(r).to_string(), "Idle".to_string()]
+                    })
+                    .collect();
+                (NCOLS, cells)
+            });
+            assert!(
+                seeded.cell(0, NAME_COL).contains("Delta"),
+                "premise: row 0 matches in the MODEL",
+            );
+            assert!(
+                !cell_text(CellIndex {
+                    row: 0,
+                    col: NAME_COL,
+                })
+                .contains("Delta"),
+                "premise: row 0 does NOT match in the formula — this is what makes the \
+                 two sources distinguishable by this assertion",
+            );
+            seeded.set_query(Some(seed_query()));
+            let row = seeded.current_row().expect("the seed query has a match");
+            let scroll = use_scroll_state(SCROLL_KEY);
+            scroll.set_measured_viewport(WIN_W, 384);
+            scroll.scroll_to(
+                0,
+                i32::try_from(row).unwrap() * i32::try_from(ROW_H).unwrap(),
+            );
+            // R1523 — an unmeasured horizontal viewport windows NO columns, so a
+            // fixture that omits it renders a grid with no cells to read.
+            let h_scroll = use_scroll_state(H_SCROLL_KEY);
+            h_scroll.set_measured_viewport(WIN_W, 0);
+            (view((), &Frame::default()), row)
+        });
+        let painted = painted_cell(&scene, row, NAME_COL);
+        assert!(
+            painted.is_some(),
+            "premise: the cursor's row is in the window, so its cell exists",
+        );
+        assert!(
+            painted.as_deref().is_some_and(|t| t.contains("Delta")),
+            "the highlighted row's PAINTED name must contain the query the search \
+             matched it on, got {painted:?}",
+        );
     }
 
     #[test]
