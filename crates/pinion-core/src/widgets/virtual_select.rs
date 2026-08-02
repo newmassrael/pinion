@@ -42,7 +42,9 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
+use crate::input::Modifiers;
 use crate::intent::Intent;
+use crate::model_index::CellIndex;
 use crate::widgets::IntentEmitter;
 use crate::widgets::scroll::ScrollState;
 use std::collections::BTreeSet;
@@ -293,6 +295,11 @@ impl VirtualSelect {
     }
 }
 
+/// R1544 §5.27 — the [`VirtualSelectExternal::on_cell_gesture`] observer's
+/// signature: `(cell, event name, modifiers)`, named so the boxed field reads
+/// as one concept rather than as a nested type.
+type CellGestureFn = dyn Fn(CellIndex, &str, Modifiers);
+
 /// R746 §5.27 §5.38 — single-select-by-index coordinator for a virtualized
 /// list.
 ///
@@ -322,6 +329,10 @@ impl VirtualSelect {
 /// auto-dispatch — it pushes the intent explicitly on the interaction edge.
 pub struct VirtualSelectExternal {
     em: IntentEmitter<VirtualSelect>,
+    /// R1544 §5.27 — an optional observer of decoded **cell** gestures, for
+    /// the view-level behaviours a click on a cell drives beyond selection.
+    /// `None` for every consumer that only selects.
+    cell_gesture: Option<Box<CellGestureFn>>,
 }
 
 impl core::fmt::Debug for VirtualSelectExternal {
@@ -341,7 +352,38 @@ impl VirtualSelectExternal {
     pub fn new(item_count: usize) -> Self {
         Self {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Single)),
+            cell_gesture: None,
         }
+    }
+
+    /// R1544 §5.27 — observe every decoded **cell** gesture
+    /// (`"<row>_<col>:<Event>"`) with its event name and modifiers, *before*
+    /// this coordinator applies its own selection transition.
+    ///
+    /// # Why the selection coordinator carries it
+    ///
+    /// Qt splits these responsibilities across two objects: `QItemSelectionModel`
+    /// decides what a click selects, and `QAbstractItemView` decides what a
+    /// click *else* does — `edit(index, DoubleClicked, event)`. Here the
+    /// pointer wire has exactly one destination per paint tag, and for a
+    /// windowed grid that destination is this coordinator, so the view-level
+    /// hook is offered from here rather than invented as a second External the
+    /// cells could not address.
+    ///
+    /// # Why before the selection transition
+    ///
+    /// Qt's `SelectedClicked` trigger means *a click on a cell that was
+    /// already selected* — the slow-rename gesture. Running the observer after
+    /// the transition would make every plain click look "already selected",
+    /// which is the difference between a rename gesture and an unusable one.
+    ///
+    /// Header (`h<col>`) and group (`g<n>`) gestures are **not** offered: they
+    /// address a column or a group, not a cell, so there is no [`CellIndex`] to
+    /// hand over. A bare list-item key is not a cell either.
+    #[must_use]
+    pub fn on_cell_gesture(mut self, f: impl Fn(CellIndex, &str, Modifiers) + 'static) -> Self {
+        self.cell_gesture = Some(Box::new(f));
+        self
     }
 
     /// Construct a **multi-select** coordinator (R780): `Shift`-range,
@@ -352,6 +394,7 @@ impl VirtualSelectExternal {
     pub fn new_multi(item_count: usize) -> Self {
         Self {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Multi)),
+            cell_gesture: None,
         }
     }
 
@@ -510,7 +553,16 @@ impl VirtualSelectExternal {
         else {
             return;
         };
-        let row = match crate::composite_tag::GridSendKey::parse(key) {
+        let parsed = crate::composite_tag::GridSendKey::parse(key);
+        // R1544 — the view-level hook, offered before the selection moves so
+        // "was this cell already selected" is still answerable (Qt's
+        // `SelectedClicked`). Only a cell has a `CellIndex` to report.
+        if let (Some(observe), Some(crate::composite_tag::GridSendKey::Cell { row, col })) =
+            (self.cell_gesture.as_ref(), parsed)
+        {
+            observe(CellIndex { row, col }, event_name, modifiers);
+        }
+        let row = match parsed {
             Some(grid_key) => grid_key.row(),
             None => key.parse::<usize>().ok(),
         };

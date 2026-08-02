@@ -48,7 +48,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
     CellDecoration, CellIndex, CellPainter, CellRender, GridModel, GridScroll, TableStyle,
-    VirtualTableData, header_from_slice, view_virtual_table,
+    VirtualTableData, header_from_slice, no_edit, view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -282,6 +282,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // R1532 — Qt `setItemDelegateForColumn`: one column paints as a
             // gauge, every other takes the built-in text painter.
             delegate: Some(&|col| (col == LOAD_COL).then_some(&load_bar as CellPainter<'_>)),
+            editing: None,
         },
         &theme,
         &style,
@@ -293,6 +294,11 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // with a mark whose colour varies by row, which is the axis a
             // per-column delegate cannot express.
             decoration: |c: CellIndex| cell_decoration(c, &theme),
+            // R1544 — Qt `flags()` without `Qt::ItemIsEditable` on every
+            // index: this grid is display-only, and it now SAYS so — every
+            // one of its cells reads as `aria-readonly` rather than staying
+            // silent about whether it can be typed into.
+            edit: no_edit,
         },
     );
 

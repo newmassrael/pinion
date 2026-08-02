@@ -43,6 +43,7 @@ pub mod input;
 pub mod intent;
 pub mod mnemonic;
 pub mod modal_scope_request;
+pub mod model_index;
 pub mod print;
 pub mod reactive;
 pub mod renderer;
@@ -76,7 +77,7 @@ pub use animation::{
     SpringConfig, SpringState, Tickable, Tween,
 };
 pub use cell_metric::CellMetric;
-pub use cell_value::{CellKind, CellValue};
+pub use cell_value::{CellEdit, CellKind, CellValue};
 pub use clipboard::{Clipboard, ClipboardSelection, InMemoryClipboard};
 pub use command::Command;
 pub use directory::{DirEntry, Directory, InMemoryDirectory};
@@ -94,6 +95,7 @@ pub use input::{
 };
 pub use intent::{Intent, IntentTag};
 pub use mnemonic::{Mnemonic, MnemonicBinding, MnemonicLabel, scene_mnemonics};
+pub use model_index::{CellIndex, GridExtent};
 pub use reactive::{
     Computed, DeferredReady, Effect, FetchToken, IntoIntrospectValue, JsonValue, LOCAL_TASK_PUMP,
     LocalSpawner, LocalTaskPump, MONOSPACE_METRICS, MonospaceMetrics, NullMonospaceMetrics,

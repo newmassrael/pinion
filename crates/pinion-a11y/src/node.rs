@@ -622,6 +622,14 @@ impl AccessNode {
         self.has_popup = Some(kind);
         self
     }
+
+    /// R1544 §5.40 — set the WAI-ARIA `aria-readonly` axis: the node's value
+    /// is presented but not editable. See [`AccessState::read_only`].
+    #[must_use]
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.state.read_only = read_only;
+        self
+    }
 }
 
 /// Interaction-state flags exposed to AT.
@@ -655,6 +663,22 @@ pub struct AccessState {
     /// `MenuItemCheckbox` may be mixed — a `Switch` / `RadioButton` is
     /// two-state (the WAI-ARIA `aria-checked` value table). Default `false`.
     pub mixed: bool,
+    /// R1544 §5.40 — WAI-ARIA `aria-readonly`: the value is **presented but
+    /// not editable**, the axis a Model/View grid's `Qt::ItemIsEditable` flag
+    /// controls per cell.
+    ///
+    /// A separate axis from [`disabled`](Self::disabled), exactly as in
+    /// WAI-ARIA: a disabled control is inert (not focusable, not perceivable
+    /// as actionable), a read-only one is fully focusable and copyable and
+    /// simply refuses to change. A grid that marked its fixed columns
+    /// `disabled` would make them unreachable by AT navigation, which is a
+    /// different — and wrong — statement.
+    ///
+    /// Lowers to accesskit `set_read_only`. Default `false`, so nothing that
+    /// does not opt in changes: a node that says nothing about editability is
+    /// how every pre-R1544 node behaved, and "unspecified" is what an AT
+    /// assumes when the property is absent.
+    pub read_only: bool,
 }
 
 impl AccessState {
@@ -680,6 +704,11 @@ impl AccessState {
             // R1229 — the indeterminate axis is a distinct opt-in (`with_mixed`),
             // not derived from the interaction enum; interaction never implies mixed.
             mixed: false,
+            // R1544 — editability is the *model's* answer, never the
+            // interaction enum's: a hovered cell and a read-only cell are
+            // orthogonal facts. Consumers set it through
+            // `AccessNode::with_read_only`.
+            read_only: false,
         }
     }
 }

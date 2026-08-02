@@ -32,6 +32,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use pinion_core::Scene;
+use pinion_core::cell_value::CellEdit;
 use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::scene::{
     ContainerNode, ImageNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole,
@@ -44,6 +45,7 @@ use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::column_widths::{columns_width_before, visible_columns};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, content_height};
 
 use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
@@ -686,6 +688,16 @@ struct RowPane<'a> {
     /// because it exists here *for* them: the built-in painter takes its
     /// colour from the row's already-resolved `fg`.
     theme: &'a Theme,
+    /// R1544 — the open editor, **already narrowed to this row and already
+    /// resolved**: `Some` only when [`GridEditing::open`]'s row is the row
+    /// this pane is painting, and its painter is the one the column's editor
+    /// delegate answered with.
+    ///
+    /// Narrowed and resolved by the caller rather than re-derived per cell for
+    /// the reason `GridRender::painters` resolves the display delegates once
+    /// per pane: neither answer can vary within the row, so asking per cell
+    /// repeats one answer once per column.
+    editing: Option<CellEditorSlot<'a>>,
 }
 
 /// The header band: one clickable `columnheader` cell per column ([
@@ -785,6 +797,22 @@ fn data_row(
                 // R777.1 — the cell sub-key via the GridSendKey SSOT.
                 tag: &format!("{tag}#{}", GridSendKey::Cell { row: data_id, col }.encode()),
             };
+            // R1544 — an open editor **replaces** this cell's display subtree,
+            // which is what an editor is: Qt's view hides the item and puts
+            // the editor widget in its rect. The column's editor delegate is
+            // consulted only here, so a grid that is not editing never asks
+            // for one (Qt calls `createEditor` at open time, not per paint).
+            if let Some(slot) = pane.editing.filter(|e| e.col == col) {
+                let render = CellEditRender {
+                    cell: &render,
+                    edit: slot.edit,
+                    field_tag: slot.field_tag,
+                    field: slot.field,
+                };
+                return slot
+                    .paint
+                    .map_or_else(|| text_cell_editor(&render), |paint| paint(&render));
+            }
             pane.painters
                 .get(j)
                 .copied()
@@ -931,6 +959,11 @@ pub fn view_table(
                 // consulted.
                 decorations: &decorations,
                 theme,
+                // R1544 — the eager `view_table` exposes no editing surface
+                // (`VirtualTableData` is the virtualized grid's carrier), for
+                // the same reason it exposes no delegate: it is the R707
+                // fixed-row table, and editing is a Model/View axis.
+                editing: None,
             },
             style,
         ));
@@ -1080,6 +1113,14 @@ pub struct VirtualTableData<'a> {
     /// delegate is, so the default is not a special case that could drift from
     /// the delegated path.
     pub delegate: Option<&'a dyn Fn(usize) -> Option<CellPainter<'a>>>,
+    /// R1544 §5.27 — the open editor, or `None` when the grid is not editing
+    /// (which is every pre-R1544 caller, and every read-only grid).
+    ///
+    /// The binding wires it from the shared
+    /// [`GridEditState`](pinion_core::widgets::grid_edit::GridEditState) it
+    /// also routes input through, so the cell that paints an editor and the
+    /// cell the keystrokes reach are one fact rather than two that agree.
+    pub editing: Option<GridEditing<'a>>,
 }
 
 /// R1532 §5.27 — what a [`CellPainter`] is given: everything about the one
@@ -1145,6 +1186,181 @@ pub struct CellRender<'a> {
 /// `QStyledItemDelegate::paint`), wired per column through
 /// [`VirtualTableData::delegate`].
 pub type CellPainter<'a> = &'a dyn Fn(&CellRender<'_>) -> Scene;
+
+/// R1544 §5.27 — how one column's **editor** is painted (Qt
+/// `QStyledItemDelegate::createEditor` + `setEditorData`), wired per column
+/// through [`GridEditing::editor`].
+///
+/// Qt needs two calls because it hands back a live `QWidget` that must then be
+/// populated: `createEditor` constructs, `setEditorData` seeds. A view function
+/// rebuilds the editor's subtree from state on every frame, so "construct" and
+/// "seed with the current value" are not two moments — there is one, and it
+/// takes the seed ([`CellEditRender::edit`]) as an argument. That is not a
+/// shortcut around Qt's pair; it is what those two calls collapse to once the
+/// editor is a value rather than an object with a lifetime.
+pub type CellEditorPainter<'a> = &'a dyn Fn(&CellEditRender<'_>) -> Scene;
+
+/// R1544 §5.27 — what a [`CellEditorPainter`] is given: the display context
+/// the cell would have had, plus the editing context.
+///
+/// It **embeds** the [`CellRender`] rather than restating its nine fields, so
+/// an editor keeps the exact geometry, palette and tag rules the display
+/// painter follows and a round that adds a field to one adds it to both.
+pub struct CellEditRender<'a> {
+    /// Everything the cell's display painter would have been given —
+    /// including [`CellRender::text`], which is still the **display** role.
+    /// An editor that wants to show the original beside the in-flight value
+    /// has both.
+    pub cell: &'a CellRender<'a>,
+    /// The model's `Qt::EditRole` answer for this cell: the seed the editor
+    /// opened with, and the [`CellKind`](pinion_core::CellKind) that selects
+    /// the keystroke gate and
+    /// the commit parser.
+    pub edit: &'a CellEdit,
+    /// The inline field's `use_text_edit_state` key
+    /// ([`GridEditState::field_tag`](pinion_core::widgets::grid_edit::GridEditState::field_tag)).
+    /// An editor that hosts text must paint **this** field, because it is the
+    /// buffer [`GridEditState::commit_with`](pinion_core::widgets::grid_edit::GridEditState::commit_with)
+    /// reads back.
+    pub field_tag: &'static str,
+    /// The inline field widget's statechart snapshot and caret byte, as the
+    /// binding's `read_state` derived them.
+    ///
+    /// Threaded through rather than synthesized because the editor is a real
+    /// [`TextField`](pinion_core::widgets::text_field::TextField) the binding
+    /// owns — focus, IME preedit and clipboard all route to that widget, so a
+    /// grid that invented a plausible-looking state here would paint a caret
+    /// the input path does not agree with.
+    pub field: (TextFieldState, u32),
+}
+
+/// R1544 §5.27 — the open editor, and everything needed to paint it.
+///
+/// One bundle on [`VirtualTableData`] rather than four parallel fields,
+/// because they are only meaningful together: `None` **is** "no editor is
+/// open", which also means the per-column editor delegate is consulted only
+/// while editing — matching Qt, where `createEditor` is called when an edit
+/// starts and never during an ordinary paint.
+#[derive(Clone, Copy)]
+pub struct GridEditing<'a> {
+    /// The cell whose editor is open, from
+    /// [`GridEditState::editing`](pinion_core::widgets::grid_edit::GridEditState::editing).
+    pub open: CellIndex,
+    /// The model's [`CellEdit`] for that cell — its `Qt::EditRole` answer.
+    pub edit: &'a CellEdit,
+    /// The inline field's `use_text_edit_state` key.
+    pub field_tag: &'static str,
+    /// The inline field widget's statechart snapshot and caret byte.
+    pub field: (TextFieldState, u32),
+    /// Per-**column** editor delegates (Qt
+    /// `QAbstractItemView::setItemDelegateForColumn`, editing half):
+    /// `editor(col)` returns the [`CellEditorPainter`] for that column, or
+    /// `None` for the built-in [`text_cell_editor`].
+    ///
+    /// Per column and not per cell for the reason [`VirtualTableData::delegate`]
+    /// is: which *kind* of editor a column opens is a property of the column.
+    /// What varies per cell — whether the cell is editable at all, and what
+    /// the editor is seeded with — is the model's role
+    /// (`GridModel::edit`), which is asked per cell.
+    pub editor: Option<&'a dyn Fn(usize) -> Option<CellEditorPainter<'a>>>,
+}
+
+impl core::fmt::Debug for GridEditing<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GridEditing")
+            .field("open", &self.open)
+            .field("edit", self.edit)
+            .field("field_tag", &self.field_tag)
+            .field("field", &self.field)
+            .field("editor", &self.editor.map(|_| "<fn>"))
+            .finish()
+    }
+}
+
+/// R1544 §5.27 — the built-in cell editor: the inline
+/// [`TextField`](pinion_core::widgets::text_field::TextField) Qt's
+/// `QItemEditorFactory` produces for every text / numeric `QVariant::Type`.
+///
+/// Sized to the cell it replaces, so opening an editor does not reflow the
+/// row, and tagged with [`CellRender::tag`] on its container by the same rule
+/// every painter follows — an editing cell stays addressable by pointer and by
+/// RPC exactly as a displayed one is.
+///
+/// Public for the reason [`text_cell_painter`] is: a column whose editor only
+/// *extends* the default should compose with it rather than re-derive the
+/// cell's padding, size and tag placement.
+///
+/// The keystroke gate and the commit parser are **not** here — they belong to
+/// [`edit_field_keymap`](pinion_core::edit_field_keymap) and
+/// [`CellKind::parse`](pinion_core::CellKind::parse), which the binding's
+/// input path calls with [`CellEditRender::edit`]'s kind. A painter that also
+/// filtered keystrokes would be a second gate that could disagree with the
+/// one the events actually pass through.
+#[must_use]
+pub fn text_cell_editor(c: &CellEditRender<'_>) -> Scene {
+    let cell = c.cell;
+    let field_style = crate::text_field::TextFieldStyle {
+        // The editor fills the cell minus its horizontal padding, so the text
+        // it shows starts where the label it replaced did.
+        field_w: cell.width.saturating_sub(cell.style.cell_pad_x * 2),
+        field_h: cell.height.saturating_sub(EDITOR_INSET_PX * 2),
+        ..crate::text_field::TextFieldStyle::m3_filled()
+    };
+    let field = crate::text_field::view_field(
+        c.field_tag,
+        c.field.0,
+        c.field.1,
+        cell.theme,
+        &field_style,
+        "",
+    );
+    Scene::Container(
+        ContainerNode::new(vec![field])
+            .with_tag(cell.tag.to_string())
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Start)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(cell.width, cell.height))
+                    .with_padding(Rect::new(
+                        cell.style.cell_pad_x,
+                        0,
+                        cell.style.cell_pad_x,
+                        0,
+                    )),
+            ),
+    )
+}
+
+/// Vertical inset of the built-in editor inside its cell, in logical px, so
+/// the field's own frame reads as sitting *in* the row rather than as
+/// replacing it.
+const EDITOR_INSET_PX: u32 = 3;
+
+/// R1544 §5.27 — a [`GridEditing`] with its column's editor delegate already
+/// **resolved**, as a pane's rows receive it.
+///
+/// The internal peer of `GridRender::painters`: the public [`GridEditing`]
+/// carries the delegate *picker* (`Fn(col) -> Option<CellEditorPainter>`)
+/// because that is the shape a binding wires, and this carries the picker's
+/// answer because that is the shape a row needs. Resolving between them also
+/// keeps the picker's lifetime out of [`RowPane`] — a `&dyn Fn` whose own
+/// return type mentions the lifetime is invariant in it, which would force
+/// every field of a row pane to outlive the whole grid render.
+#[derive(Clone, Copy)]
+struct CellEditorSlot<'a> {
+    /// The absolute column whose cell is being edited.
+    col: usize,
+    /// The model's `Qt::EditRole` answer for that cell.
+    edit: &'a CellEdit,
+    /// The inline field's `use_text_edit_state` key.
+    field_tag: &'static str,
+    /// The inline field widget's statechart snapshot and caret byte.
+    field: (TextFieldState, u32),
+    /// The column's editor painter, or `None` for [`text_cell_editor`].
+    paint: Option<CellEditorPainter<'a>>,
+}
 
 /// R1535 §5.27 — what a cell's `Qt::DecorationRole` answer can be: the mark the
 /// built-in painter draws **beside** the display text.
@@ -1362,29 +1578,15 @@ pub struct GridScroll<'a> {
 }
 
 /// R1524 §5.27 — the address of **one cell**: the unit
-/// [`view_virtual_table`] asks its consumer for.
+/// [`view_virtual_table`] asks its consumer for. Qt's `QModelIndex`.
 ///
-/// This is the Model/View address every framework with a virtualized grid
-/// carries — Qt's `QModelIndex` (the argument to
-/// `QAbstractItemModel::data`), Flutter's `TableVicinity` (the argument to
-/// `TableView.builder`'s `cellBuilder`) — and it is a *struct* for the same
-/// reason both of those are: the two coordinates are the same type, so a
-/// positional `(row, col)` pair silently accepts them swapped. Naming them
-/// also lets `col` state the property that a windowed grid makes load-bearing
-/// and that R1523's frozen pane had to convert between internally — it is
-/// **absolute**.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CellIndex {
-    /// The **data**-row index — already resolved through the sort
-    /// permutation, so a consumer indexes its dataset directly and never
-    /// sees a visual position (the R730 data-indexed convention the
-    /// selection predicate follows).
-    pub row: usize,
-    /// The **absolute** table-column index: `0` is the grid's first column
-    /// whatever the column window or the frozen split. A consumer therefore
-    /// answers for the column it was asked about with no knowledge of either.
-    pub col: usize,
-}
+/// R1544 moved the definition to
+/// [`pinion_core::model_index`] — the editing latch
+/// is state, state substrates live in `pinion-core`, and a module cannot name
+/// a type defined above it. Re-exported here because this is where every
+/// consumer names it, and because the grid's own contract
+/// ([`GridModel`], [`CellRender`]) is stated in terms of it.
+pub use pinion_core::CellIndex;
 
 /// R1530 §5.27 — the two questions a virtualized grid asks its model, bundled
 /// as one parameter.
@@ -1414,12 +1616,11 @@ pub struct CellIndex {
 /// shape R1530 already chose when it split Qt's `headerData` out as
 /// [`Self::header`] instead of folding it into `cell`.
 ///
-/// Three of Qt's roles are answered so far — `DisplayRole` ([`Self::cell`]),
-/// `DisplayRole` on the header axis ([`Self::header`]) and `DecorationRole`
-/// ([`Self::decoration`]). `EditRole` and `ToolTipRole` are not: the first
-/// belongs with the delegate's editing half (which does not exist yet — R1532
-/// gave the delegate paint only), the second needs a per-cell hover path.
-pub struct GridModel<C, H, D> {
+/// Four of Qt's roles are answered — `DisplayRole` ([`Self::cell`]),
+/// `DisplayRole` on the header axis ([`Self::header`]), `DecorationRole`
+/// ([`Self::decoration`]) and, since R1544, `EditRole` ([`Self::edit`]).
+/// `ToolTipRole` is not: it needs a per-cell hover path.
+pub struct GridModel<C, H, D, E> {
     /// Invoked once per **painted cell** with that cell's [`CellIndex`],
     /// returning its text (Qt `data(QModelIndex)`, Flutter `cellBuilder`).
     pub cell: C,
@@ -1443,6 +1644,21 @@ pub struct GridModel<C, H, D> {
     /// nothing — the closure monomorphizes to a constant `None` and the painter
     /// emits the pre-R1535 node.
     pub decoration: D,
+    /// R1544 — invoked with a [`CellIndex`], returning that cell's
+    /// `Qt::EditRole` answer, or `None` when the cell **cannot be edited**
+    /// (Qt: `flags(index)` without `Qt::ItemIsEditable`).
+    ///
+    /// The one role that is not asked once per painted cell. Qt does ask it
+    /// per paint — `QStyledItemDelegate::initStyleOption` reads `EditRole` as
+    /// a fallback for a missing `DisplayRole` — but here the display role is
+    /// mandatory, so the only things that need this answer are the *four*
+    /// moments editing has: opening an editor on a cell, seeding it,
+    /// advancing to the next editable cell, and telling assistive technology
+    /// whether a cell is read-only. The first three are events; the fourth is
+    /// per cell but on the a11y walk, not the paint walk.
+    ///
+    /// A read-only grid passes [`no_edit`] and pays nothing.
+    pub edit: E,
 }
 
 /// R1535 §5.27 — the [`GridModel::decoration`] accessor for a grid where no
@@ -1455,6 +1671,20 @@ pub struct GridModel<C, H, D> {
 /// to return nothing.
 #[must_use]
 pub fn no_decoration(_: CellIndex) -> Option<CellDecoration> {
+    None
+}
+
+/// R1544 §5.27 — the [`GridModel::edit`] accessor for a **read-only** grid:
+/// Qt's `flags()` without `Qt::ItemIsEditable` on every index.
+///
+/// The peer of [`no_decoration`], and a named function for the same two
+/// reasons: "this grid is read-only" becomes greppable, and the read-only case
+/// reads as a decision rather than as a closure that happens to return
+/// nothing. It is also the answer that makes the a11y walk mark every cell
+/// `read_only` — a display-only grid says so to assistive technology instead
+/// of staying silent about it.
+#[must_use]
+pub fn no_edit(_: CellIndex) -> Option<CellEdit> {
     None
 }
 
@@ -1587,6 +1817,7 @@ pub fn view_virtual_table(
         impl FnMut(CellIndex) -> String,
         impl FnMut(usize) -> String,
         impl FnMut(CellIndex) -> Option<CellDecoration>,
+        impl FnMut(CellIndex) -> Option<CellEdit>,
     >,
 ) -> Scene {
     let cols = data.column_count;
@@ -1924,6 +2155,29 @@ impl<'d> GridRender<'_, 'd> {
             .collect()
     }
 
+    /// R1544 §5.27 — the open editor narrowed to data row `row`: `Some` only
+    /// when the editing cell is in this row.
+    ///
+    /// Asked once per painted **row** rather than once per painted cell, which
+    /// is the axis the row question lives on — the same per-unit discipline
+    /// [`Self::painters`] applies to the column axis. A grid that is not
+    /// editing answers `None` here and every cell takes the display path with
+    /// one comparison against a `None`, not a per-cell index equality.
+    fn editing_in_row(&self, row: usize) -> Option<CellEditorSlot<'d>> {
+        let editing = self.data.editing.filter(|e| e.open.row == row)?;
+        Some(CellEditorSlot {
+            col: editing.open.col,
+            edit: editing.edit,
+            field_tag: editing.field_tag,
+            field: editing.field,
+            // Qt calls `createEditor` when the edit opens, not on every
+            // paint; resolving here means the column's editor delegate is
+            // asked once per painted row of the editing row — which is once,
+            // because a row is painted once.
+            paint: editing.editor.and_then(|pick| pick(editing.open.col)),
+        })
+    }
+
     fn render_unsplit(
         &self,
         scroll: GridScroll<'_>,
@@ -1932,12 +2186,20 @@ impl<'d> GridRender<'_, 'd> {
             impl FnMut(CellIndex) -> String,
             impl FnMut(usize) -> String,
             impl FnMut(CellIndex) -> Option<CellDecoration>,
+            impl FnMut(CellIndex) -> Option<CellEdit>,
         >,
     ) -> Scene {
         let GridModel {
             mut cell,
             mut header,
             mut decoration,
+            // R1544 — the `EditRole` accessor is not a paint-time role: the
+            // open editor's seed reaches the painter already resolved, on
+            // `GridEditing::edit`. It rides the model bundle because it is a
+            // model role (the editing verbs and the a11y walk ask it), and a
+            // paint pass that also asked would invoke it once per painted
+            // cell for an answer only four events need.
+            edit: _,
         } = model;
         let total_w: u32 = self.widths.iter().copied().sum();
         let cols = self.column_window(scroll.horizontal, self.widths);
@@ -1991,6 +2253,7 @@ impl<'d> GridRender<'_, 'd> {
                         painters: &painters,
                         decorations: &decos,
                         theme: self.theme,
+                        editing: self.editing_in_row(source),
                     },
                     self.style,
                 )
@@ -2018,6 +2281,53 @@ impl<'d> GridRender<'_, 'd> {
     /// visible. The window is therefore computed inside the scrolling pane's own
     /// column space (`frozen_cols..`), which is also the space its horizontal
     /// offset is measured in.
+    /// R859 §5.27 — the frozen split's **two** header bands: the pinned one
+    /// over columns `0..frozen_cols`, and the scrolling one over the windowed
+    /// slice already resolved by the caller.
+    ///
+    /// Extracted from `render_frozen` because they are one decision — how the
+    /// split divides the header axis — and because the two differ in exactly
+    /// three things (which columns, whether a resize grabber is reserved, and
+    /// which container tag), which reads as a pair here and as forty lines of
+    /// near-repetition inline.
+    ///
+    /// R1530 — each band asks for **its own** sections, in absolute
+    /// coordinates, so neither pane can be handed labels it will not paint.
+    /// The frozen columns do not horizontally scroll, so a resize grabber
+    /// (which grows the horizontal extent) is moot for them.
+    fn split_header_bands(
+        &self,
+        header: &mut impl FnMut(usize) -> String,
+        frozen_cols: usize,
+        scrolled_window: &[u32],
+        scrolled_base: usize,
+        scroll_pad: ColumnPad,
+    ) -> (Scene, Scene) {
+        let fhrow_tag = GridTag::frozen_header_row(self.tag);
+        let frozen = self.header_band(
+            header,
+            ColumnLayout {
+                widths: &self.widths[..frozen_cols],
+                resizable: false,
+                pad: ColumnPad::NONE,
+                col_base: 0,
+                container_tag: &fhrow_tag,
+            },
+        );
+        let hrow_tag = GridTag::header_row(self.tag);
+        let scrolling = self.header_band(
+            header,
+            ColumnLayout {
+                widths: scrolled_window,
+                resizable: self.data.resizable,
+                pad: scroll_pad,
+                col_base: scrolled_base,
+                container_tag: &hrow_tag,
+            },
+        );
+        (frozen, scrolling)
+    }
+
     fn render_frozen(
         &self,
         scroll: GridScroll<'_>,
@@ -2027,12 +2337,20 @@ impl<'d> GridRender<'_, 'd> {
             impl FnMut(CellIndex) -> String,
             impl FnMut(usize) -> String,
             impl FnMut(CellIndex) -> Option<CellDecoration>,
+            impl FnMut(CellIndex) -> Option<CellEdit>,
         >,
     ) -> Scene {
         let GridModel {
             mut cell,
             mut header,
             mut decoration,
+            // R1544 — the `EditRole` accessor is not a paint-time role: the
+            // open editor's seed reaches the painter already resolved, on
+            // `GridEditing::edit`. It rides the model bundle because it is a
+            // model role (the editing verbs and the a11y walk ask it), and a
+            // paint pass that also asked would invoke it once per painted
+            // cell for an answer only four events need.
+            edit: _,
         } = model;
         let frozen_w: u32 = self.widths[..frozen_cols].iter().copied().sum();
         let scrolled = &self.widths[frozen_cols..];
@@ -2074,6 +2392,7 @@ impl<'d> GridRender<'_, 'd> {
                     painters: &frozen_painters,
                     decorations: &decos,
                     theme: self.theme,
+                    editing: self.editing_in_row(source),
                 },
                 self.style,
             )
@@ -2100,39 +2419,18 @@ impl<'d> GridRender<'_, 'd> {
                     painters: &scroll_painters,
                     decorations: &decos,
                     theme: self.theme,
+                    editing: self.editing_in_row(source),
                 },
                 self.style,
             )
         });
 
-        // Frozen pane header (left, columns `0..frozen_cols`). Frozen
-        // columns do not horizontally scroll, so a resize grabber (which
-        // grows the horizontal extent) is moot — `resizable: false`.
-        let fhrow_tag = GridTag::frozen_header_row(self.tag);
-        // R1530 — each pane asks for its own sections: the pinned
-        // `0..frozen_cols` here, the window within `frozen_cols..` below, in
-        // absolute coordinates (the `pane_texts` split, one axis over).
-        let frozen_header = self.header_band(
+        let (frozen_header, scroll_header) = self.split_header_bands(
             &mut header,
-            ColumnLayout {
-                widths: &self.widths[..frozen_cols],
-                resizable: false,
-                pad: ColumnPad::NONE,
-                col_base: 0,
-                container_tag: &fhrow_tag,
-            },
-        );
-        // Scrolling pane header (right, the windowed slice of `frozen_cols..`).
-        let hrow_tag = GridTag::header_row(self.tag);
-        let scroll_header = self.header_band(
-            &mut header,
-            ColumnLayout {
-                widths: &scrolled[rel.clone()],
-                resizable: self.data.resizable,
-                pad: scroll_pad,
-                col_base: abs.start,
-                container_tag: &hrow_tag,
-            },
+            frozen_cols,
+            &scrolled[rel.clone()],
+            abs.start,
+            scroll_pad,
         );
         // R859 — the shared frozen-split assembler (also the tree-grid's,
         // R860): frozen pane (follower V-body) beside the scrolling pane
@@ -2515,6 +2813,7 @@ mod tests {
                     frozen_cols: 0,
                     row_style: None,
                     delegate: Some(&pick),
+                    editing: None,
                 },
                 &theme,
                 &style,
@@ -2523,6 +2822,7 @@ mod tests {
                     cell: vt_cell,
                     header: vt_header,
                     decoration: no_decoration,
+                    edit: no_edit,
                 },
             )
         })
@@ -2761,6 +3061,7 @@ mod tests {
                     frozen_cols: 0,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &theme,
                 &style,
@@ -2769,6 +3070,7 @@ mod tests {
                     cell: vt_cell,
                     header: vt_header,
                     decoration,
+                    edit: no_edit,
                 },
             )
         })
@@ -2944,6 +3246,7 @@ mod tests {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
                 header: wide_header,
                 decoration: deco,
+                edit: no_edit,
             },
         );
         assert_eq!(
@@ -2979,6 +3282,7 @@ mod tests {
                 decoration: |c: CellIndex| {
                     Some(test_swatch(u8::try_from(c.col % 256).unwrap_or(0)))
                 },
+                edit: no_edit,
             },
         );
         // Whichever columns the 560px window landed on, each painted cell's
@@ -3041,6 +3345,7 @@ mod tests {
                     frozen_cols: 0,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &theme,
                 &style,
@@ -3060,6 +3365,7 @@ mod tests {
                             meaning: owned.clone(),
                         })
                     },
+                    edit: no_edit,
                 },
             )
         })
@@ -3355,6 +3661,7 @@ mod tests {
                     frozen_cols: 0,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &theme,
                 &style,
@@ -3363,6 +3670,7 @@ mod tests {
                     cell: vt_cell,
                     header: vt_header,
                     decoration: no_decoration,
+                    edit: no_edit,
                 },
             )
         })
@@ -3447,6 +3755,7 @@ mod tests {
                     frozen_cols,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &theme,
                 &style,
@@ -3455,6 +3764,7 @@ mod tests {
                     cell: vt_cell,
                     header: vt_header,
                     decoration: no_decoration,
+                    edit: no_edit,
                 },
             )
         })
@@ -3705,6 +4015,7 @@ mod tests {
                     frozen_cols: 0,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -3713,6 +4024,7 @@ mod tests {
                     cell: vt_marker_cell,
                     header: vt_header,
                     decoration: no_decoration,
+                    edit: no_edit,
                 },
             )
         });
@@ -3774,6 +4086,7 @@ mod tests {
                     frozen_cols: 0,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -3782,6 +4095,7 @@ mod tests {
                     cell: vt_marker_cell,
                     header: vt_header,
                     decoration: no_decoration,
+                    edit: no_edit,
                 },
             )
         })
@@ -3931,6 +4245,7 @@ mod tests {
                     frozen_cols: 0,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &theme,
                 &style,
@@ -3939,6 +4254,7 @@ mod tests {
                     cell: vt_cell,
                     header: vt_header,
                     decoration: no_decoration,
+                    edit: no_edit,
                 },
             )
         })
@@ -4035,6 +4351,7 @@ mod tests {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
                 header: wide_header,
                 decoration: no_decoration,
+                edit: no_edit,
             },
         )
     }
@@ -4050,6 +4367,7 @@ mod tests {
             impl FnMut(CellIndex) -> String,
             impl FnMut(usize) -> String,
             impl FnMut(CellIndex) -> Option<CellDecoration>,
+            impl FnMut(CellIndex) -> Option<CellEdit>,
         >,
     ) -> Scene {
         let widths = wide_widths();
@@ -4079,6 +4397,7 @@ mod tests {
                     frozen_cols,
                     row_style: None,
                     delegate: None,
+                    editing: None,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -4164,6 +4483,7 @@ mod tests {
                 },
                 header: wide_header,
                 decoration: no_decoration,
+                edit: no_edit,
             },
         );
         (scene, log.into_inner())
@@ -4184,6 +4504,7 @@ mod tests {
                     wide_header(col)
                 },
                 decoration: no_decoration,
+                edit: no_edit,
             },
         );
         (scene, log.into_inner())
@@ -4424,6 +4745,7 @@ mod tests {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
                 header: |_: usize| String::new(),
                 decoration: no_decoration,
+                edit: no_edit,
             },
         );
         assert_eq!(

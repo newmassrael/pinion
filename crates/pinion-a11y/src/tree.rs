@@ -423,6 +423,13 @@ fn lower_access_node(access: &AccessNode) -> Node {
     if access.state.mixed {
         node.set_toggled(accesskit::Toggled::Mixed);
     }
+    // R1544 §5.40 — WAI-ARIA `aria-readonly`. Emitted only when set, so a node
+    // that says nothing about editability stays silent about it rather than
+    // asserting "editable" — the absent-vs-false distinction the property has
+    // in ARIA. Orthogonal to `set_disabled`: a read-only node stays focusable.
+    if access.state.read_only {
+        node.set_read_only();
+    }
     // R696 §5.40 — WAI-ARIA `aria-expanded` mapping for disclosure
     // controls (accordion header, future submenu title / tree twisty).
     // AccessKit's `Expanded` is a boolean flag: `set_expanded(true)` =

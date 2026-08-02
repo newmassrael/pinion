@@ -201,6 +201,20 @@ fn access_state_to_json(state: AccessState) -> Option<Value> {
     if let Some(checked) = state.checked {
         obj.insert("checked".to_string(), Value::Bool(checked));
     }
+    // R1544 — `aria-checked="mixed"`, absent from this wire form since R1229
+    // added the axis: the indeterminate leg reached AccessKit but not the
+    // introspection surface, so an agent reading `scene/access` saw a
+    // tri-state checkbox as whatever `checked` happened to say. Found while
+    // adding `read_only` below, which is the same omission one round later.
+    if state.mixed {
+        obj.insert("mixed".to_string(), Value::Bool(true));
+    }
+    // R1544 — `aria-readonly`: emitted only when set, so an unmarked node
+    // stays silent about editability rather than asserting "editable" (the
+    // absent-vs-false distinction the property has in WAI-ARIA).
+    if state.read_only {
+        obj.insert("read_only".to_string(), Value::Bool(true));
+    }
     (!obj.is_empty()).then_some(Value::Object(obj))
 }
 

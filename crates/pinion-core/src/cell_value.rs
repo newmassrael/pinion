@@ -57,7 +57,12 @@ pub enum CellValue {
 /// `Copy` (per-column kind arrays live in `[CellKind; N]`); the option list a
 /// [`CellKind::Choice`] needs lives on the *value*, not the kind, so `Copy`
 /// is preserved.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+///
+/// R1544 — derives serde for the reason [`CellValue`] does: the grid's editing
+/// latch ([`OpenEditor`](crate::widgets::grid_edit::OpenEditor)) records the
+/// open editor's kind and lives in a `Signal`, whose R36 §5.31 hot-reload
+/// bound is `Serialize + DeserializeOwned`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CellKind {
     Bool,
     Int,
@@ -412,6 +417,69 @@ fn format_float(value: f64) -> String {
 /// `Choice` SSOT shared by `display`, `edit_text`, and `to_introspect`.
 fn selected_label(selected: usize, options: &[String]) -> String {
     options.get(selected).cloned().unwrap_or_default()
+}
+
+/// R1544 §5.27 — a cell's `Qt::EditRole` answer: what an editor opened on
+/// that cell is seeded with, and which editor to open.
+///
+/// # Why it is one type and not two accessors
+///
+/// Qt splits the question in half. `data(index, Qt::EditRole)` answers *what
+/// value*, `flags(index) & Qt::ItemIsEditable` answers *whether at all*, and
+/// `QItemEditorFactory` maps the value's `QVariant::Type` to *which widget*.
+/// Three places, and a model that sets the flag but forgets the role opens an
+/// empty editor over a populated cell — a defect Qt cannot make
+/// unrepresentable because `QVariant()` is a legal answer.
+///
+/// Here the model answers `Option<CellEdit>` once: `None` **is** "not
+/// editable", and a `Some` carries both the seed and the [`CellKind`] that
+/// selects the editor. Producing one requires having a value, so "opened an
+/// editor on a cell the model cannot edit" is a state the type system rejects
+/// rather than one the view must remember to check.
+///
+/// The seed is deliberately the [`CellValue::edit_text`] form, **not** the
+/// display form: `1234.5` is edited as `1234.5` and displayed as whatever the
+/// model's display role formats it to. That is exactly Qt's Edit/Display
+/// distinction, and it is the reason a currency or unit column can be edited
+/// at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CellEdit {
+    /// Which editor to open, and — through
+    /// [`CellKind::accepts_keystroke`] / [`CellKind::parse`] — the keystroke
+    /// gate and the commit parser. Qt reaches the same decision through
+    /// `QItemEditorFactory::createEditor(QVariant::Type, parent)`.
+    pub kind: CellKind,
+    /// The `Qt::EditRole` value in text form — what the editor opens
+    /// containing.
+    pub text: String,
+}
+
+impl CellEdit {
+    /// The edit-role answer for a value of `kind` seeded with `text`.
+    #[must_use]
+    pub fn new(kind: CellKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+        }
+    }
+}
+
+impl From<&CellValue> for CellEdit {
+    /// The edit-role answer a [`CellValue`]-backed model gives: its own kind,
+    /// seeded from [`CellValue::edit_text`].
+    ///
+    /// Every editable grid in the tree holds `CellValue`s, so this is the
+    /// derivation each of them would otherwise spell — and spelling it here
+    /// means a model cannot seed an editor from a formula that has drifted
+    /// from the one its commit parses back through ([`CellKind::parse`] is
+    /// documented as `edit_text`'s inverse).
+    fn from(value: &CellValue) -> Self {
+        Self {
+            kind: value.kind(),
+            text: value.edit_text(),
+        }
+    }
 }
 
 /// Whether `key` is a single codepoint satisfying `pred`. Multi-codepoint

@@ -25,6 +25,7 @@
 
 use crate::node::AccessNode;
 use crate::role::{AriaRole, SortDirection};
+use pinion_core::CellIndex;
 use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::widgets::virtual_list::VisibleWindow;
 
@@ -517,6 +518,55 @@ pub fn windowed_grid_nodes_sorted(
         }
     }
     nodes
+}
+
+/// R1544 §5.40 §5.27 — mark every **non-editable** windowed `gridcell`
+/// `aria-readonly`, from the same `GridModel::edit` role the grid opens its
+/// editors from.
+///
+/// # Why a pass over the built nodes
+///
+/// Editability is a per-**cell** model answer, and the six builders above are
+/// already at the argument ceiling; threading a predicate through all of them
+/// would grow a family this module is trying not to grow. This composes with
+/// every one of them instead, following the orphan-free rule
+/// [`attach_child_button`](crate::node::attach_child_button) established here:
+/// it addresses cells only through the [`GridSendKey`] encode SSOT (never by
+/// decoding a tag back into coordinates), and a cell absent from `nodes` —
+/// windowed out on either axis — is silently skipped rather than invented.
+///
+/// # Why the *non*-editable cells are the ones marked
+///
+/// WAI-ARIA's `aria-readonly` defaults to `false`, so an unmarked cell already
+/// reads as editable. Marking the read-only ones is therefore the whole
+/// statement, and it means a display-only grid that passes
+/// `|_| false` says so to assistive technology — which no grid in this tree
+/// did before R1544, and which Qt does not say at all: `QAccessibleTableCell`
+/// builds its state from the *view's* selection and expansion, never from the
+/// model's `Qt::ItemIsEditable`, so a Qt screen-reader user cannot tell a
+/// fixed column from an editable one until they try to type into it.
+///
+/// `rows` is the row window the tree was built from and `cols` the column
+/// window — the same two the builder used, so this asks about exactly the
+/// cells that exist.
+pub fn mark_grid_editability(
+    nodes: &mut [AccessNode],
+    grid_tag: &str,
+    rows: &VisibleWindow,
+    cols: core::ops::Range<usize>,
+    editable: impl Fn(CellIndex) -> bool,
+) {
+    for row in rows.indices() {
+        for col in cols.clone() {
+            if editable(CellIndex { row, col }) {
+                continue;
+            }
+            let tag = cell_tag(grid_tag, row, col);
+            if let Some(cell) = nodes.iter_mut().find(|n| n.tag == tag) {
+                cell.state.read_only = true;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1020,6 +1070,63 @@ mod tests {
                 .iter()
                 .filter(|n| n.role == AriaRole::ColumnHeader)
                 .all(|n| n.sort.is_none())
+        );
+    }
+
+    #[test]
+    fn r1544_editability_marks_only_the_non_editable_cells() {
+        let window = VisibleWindow { first: 0, count: 2 };
+        let mut nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10, &window);
+        // Column 0 is the read-only identity column.
+        mark_grid_editability(&mut nodes, "vtbl", &window, 0..HEADERS.len(), |c| {
+            c.col != 0
+        });
+        let read_only = |row: usize, col: usize| {
+            nodes
+                .iter()
+                .find(|n| n.tag == cell_tag("vtbl", row, col))
+                .expect("cell present")
+                .state
+                .read_only
+        };
+        assert!(read_only(0, 0), "the fixed column says so to AT");
+        assert!(read_only(1, 0));
+        for col in 1..HEADERS.len() {
+            assert!(
+                !read_only(0, col),
+                "an editable cell stays silent — aria-readonly defaults to false"
+            );
+        }
+        // Nothing but gridcells is touched: the grid container and the header
+        // cells carry no editability claim.
+        assert!(!nodes[0].state.read_only, "the grid container is untouched");
+        assert!(
+            nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::ColumnHeader)
+                .all(|n| !n.state.read_only),
+            "a column header is not a cell"
+        );
+    }
+
+    #[test]
+    fn r1544_editability_skips_cells_outside_the_built_window() {
+        // The orphan-free rule: asking about rows the tree does not contain
+        // adds nothing rather than inventing nodes for them.
+        let built = VisibleWindow { first: 0, count: 1 };
+        let mut nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10, &built);
+        let before = nodes.len();
+        let wider = VisibleWindow { first: 0, count: 5 };
+        mark_grid_editability(&mut nodes, "vtbl", &wider, 0..HEADERS.len() + 4, |_| false);
+        assert_eq!(nodes.len(), before, "no node is created by the pass");
+        assert!(
+            nodes
+                .iter()
+                .find(|n| n.tag == cell_tag("vtbl", 0, 0))
+                .expect("present cell")
+                .state
+                .read_only,
+            "the cells that DO exist are still marked"
         );
     }
 
