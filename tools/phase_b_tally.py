@@ -465,9 +465,37 @@ AXES = [
         #    is a span of characters; a document is more than a span list.
         #  - a mark is invisible to assistive technology (Qt too, so parity,
         #    but it is what a red squiggle most needs).
-        "judged_at": 1540,
-        "completion": 74,
-        "evidence_snapshot": {"example-name": 9, "round-axis": 1},
+        #
+        # R1542 re-judged 74 -> 75, demanded by the tool (`round-axis` 1 -> 2).
+        # It moves ONE point, and the reason it moves so little is the finding:
+        # this axis is named "Rich-text editing / selection" and its evidence
+        # counts `textgrid`, `app-font` and `completer`, none of which is
+        # rich-text EDITING. R1542 landed squarely in that mismatch — it fixed
+        # a `TextGridNode` contract (a terminal cell grid), so it advanced the
+        # axis's evidence by 100% while touching none of the four gaps above.
+        #
+        # What it closed is real and belongs here, in the terminal-grid half:
+        # `rect` was meaning both the PAINT EXTENT and the WINSIZE, which agree
+        # only while the layout is what sizes the producer. A multiplexer whose
+        # daemon tiles in cells while a client lays out in pixels can satisfy
+        # neither reading, so every snapshot reported a permanent divergence
+        # from `buffer_cols` — the signal pinion's own docs define as a resize
+        # in flight or a producer bug. `with_winsize` splits the two facts and
+        # `winsize_source` names which authority sized the grid, because the
+        # authority is not recoverable from the values.
+        #
+        # The mismatch itself is the thing to carry forward. An axis whose name
+        # and whose evidence disagree cannot be re-judged coherently: a round
+        # that doubles its round count while leaving its stated gaps untouched
+        # is not a 100% move, and a scorer who only reads the number would take
+        # it for one. Either the terminal grid earns its own axis (it has 8
+        # demos and a cross-backend paint contract) or this one is renamed for
+        # what it counts. Deliberately NOT decided here — an axis-set change is
+        # the R1522/R1526 class of round, and doing it as a side effect of a
+        # feature round is how the last two got made by accident.
+        "judged_at": 1542,
+        "completion": 75,
+        "evidence_snapshot": {"example-name": 9, "round-axis": 2},
     },
     {
         "key": "perf",
