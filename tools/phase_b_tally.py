@@ -190,9 +190,47 @@ AXES = [
         # box-select in the node editor, which an audit this round found
         # already present (R1227). A gap list is worth only what it is
         # checked against.
-        "judged_at": 1532,
-        "completion": 88,
-        "evidence_snapshot": {"example-name": 26, "round-axis": 1},
+        #
+        # ---- R1544 re-judgment, 88 -> 92, demanded by the round count going
+        # 1 -> 2. It closes the item R1532 itself named as the largest one
+        # left, and closes it WHOLE rather than by half:
+        #
+        #   * the MODEL's `Qt::EditRole`, fused with `flags() &
+        #     Qt::ItemIsEditable` into one `Option<CellEdit>` — so "an editor
+        #     open on a cell the model will not edit" stopped being a check
+        #     the view must remember and became a state the types reject;
+        #   * the DELEGATE's editing half (`createEditor` + `setEditorData`
+        #     collapse into one call in a view-fn world, `setModelData` stays
+        #     separate because it is a distinct moment);
+        #   * the VIEW's half — the latch, Qt's `EditTriggers` gate, and the
+        #     `EndEditHint` cursor walk over the MODEL extent.
+        #
+        # Two things past Qt 6.11, both verified over the wire: a **refused**
+        # write keeps the editor open holding the typed text (Qt's
+        # `setModelData` returns `void`, so a rejected value closes the editor
+        # and the typing is gone), and a cell's editability reaches assistive
+        # technology as `aria-readonly` (Qt's `QAccessibleTableCell` builds its
+        # state from the view's selection and never reads the model's
+        # `ItemIsEditable`, so a Qt screen-reader user cannot tell a fixed
+        # column from an editable one until they type into it).
+        #
+        # +4 and not more, because what remains is real and audited at R1544:
+        #   * ADOPTION is one binding. Six still hand-roll a cell edit latch
+        #     (`hello-data-grid`, `hello-property-grid`, `hello-inspector`,
+        #     `hello-node-editor`, plus two rename editors) and NONE of them
+        #     uses the grid's cell path at all — two do not use the grid
+        #     painter. Migrating them is per-binding domain work, not seam
+        #     work, which is why it is remainder rather than a carry.
+        #   * `openPersistentEditor` (N simultaneously open editors) is
+        #     absent: it needs N independent text-edit states, and
+        #     `use_text_edit_state` is keyed by `&'static str`.
+        #   * the built-in editor is a text field, so `CellKind::Choice` and
+        #     `CellKind::Color` reach an editor only through a delegate. Qt
+        #     has the same split (`QItemEditorFactory`); what is missing here
+        #     is a *shipped* combo / palette editor.
+        "judged_at": 1544,
+        "completion": 92,
+        "evidence_snapshot": {"example-name": 26, "round-axis": 2},
     },
     {
         "key": "modelview",
