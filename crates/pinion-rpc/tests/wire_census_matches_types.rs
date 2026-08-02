@@ -700,7 +700,10 @@ fn census_is_sorted_and_unique() {
 
 #[test]
 fn every_reference_resolves() {
-    let names: BTreeSet<&str> = WIRE_TYPES.iter().map(|t| t.name).collect();
+    // Through `wire_type`, not a name set built here: that function is what a
+    // Rust consumer resolves an `of` with, so the gate exercises the shipped
+    // resolver rather than a second copy of its logic that could agree with
+    // the census while the real one did not.
     let mut refs: Vec<(&str, &str, &str)> = Vec::new();
     for t in WIRE_TYPES {
         let fields: Vec<(&str, &[pinion_rpc::wire_census::WireField])> = match t.shape {
@@ -715,7 +718,7 @@ fn every_reference_resolves() {
                 if let Some(of) = f.of {
                     refs.push((t.name, owner, of));
                     assert!(
-                        names.contains(of),
+                        pinion_rpc::wire_census::wire_type(of).is_some(),
                         "{}.{} references type `{of}`, which WIRE_TYPES does not \
                          define — a `$ref` an agent cannot resolve",
                         t.name,
