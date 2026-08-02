@@ -313,26 +313,52 @@ AXES = [
         # MORE absent surface than the round filled — the R1528 pattern, where
         # naming a dimension for the first time grows the stated gap:
         #
-        #   * Mnemonics / accelerators. `menu.rs` defers "accelerator /
-        #     mnemonic keys" as "additive axes once a real consumer needs
-        #     them" — a no-consumer defer that [[qt-parity-over-yagni]]
-        #     invalidates outright, since Qt puts `&File` on every menu and
-        #     `QLabel::setBuddy` on every form label.
+        #   * ~~Mnemonics / accelerators~~ — CLOSED R1543. It was the first
+        #     item R1533 listed and the largest, because it is not one
+        #     widget: it is an axis every labelled widget sits on. R1543
+        #     landed Qt's `&`/`&&` vocabulary as ONE declaration on the
+        #     painted label, from which the underline ink (a `StyleRun`, so
+        #     both painters draw it with no per-backend code), the Alt+char
+        #     binding (derived from the PAINT scene, so it cannot disagree
+        #     with what the user sees underlined) and the AT `accesskey` are
+        #     all derived. Past Qt in four places: the map is published
+        #     (`scene/mnemonics`; Qt's lives in the private
+        #     `qshortcutmap_p.h`), a conflict is a STATIC property of the
+        #     scene rather than a bool on the event the user triggered, the
+        #     ink and the binding come from one parse instead of Qt's two,
+        #     and `accesskey` stays distinct from `keyboard_shortcut` where
+        #     `QAccessible::Accelerator` collapses them.
         #   * Press-and-hold auto-repeat (`QAbstractButton::setAutoRepeat`):
         #     holding a spin arrow or a scrollbar arrow steps ONCE here. No
         #     repeat timer exists anywhere in the tree (the `auto_repeat`
-        #     hits are all about OS *key* repeat, a different thing).
-        #   * Qt also has `wheelEvent` on `QComboBox` and `QTabBar`; this
-        #     round covered value arithmetic, not index arithmetic.
+        #     hits are all about OS *key* repeat, a different thing). With
+        #     mnemonics closed this is now the largest CROSS-CUTTING item —
+        #     the other remaining ones are individual widget kinds.
+        #   * Qt also has `wheelEvent` on `QComboBox` and `QTabBar`; R1533
+        #     covered value arithmetic, not index arithmetic.
+        #   * NEW at R1543 — the capability is universal but ADOPTION is
+        #     three sites (menu titles, menu items, one buddy label). Every
+        #     other catalog paint helper takes a plain `&str` label and calls
+        #     `TextNode::styled`, so `&Save` on a button is inert until each
+        #     helper routes through `TextNode::mnemonic_styled`. Deliberately
+        #     not done blind: a helper whose label ALSO feeds a hand-passed
+        #     a11y name has to resolve the markup there too, which R1543 hit
+        #     once (`menu_item_nodes`) and did not audit for across the tree.
         #   * Absent widget kinds, in rough order of how much a pro tool
         #     misses them: `QGroupBox` (especially checkable — no titled
         #     group frame exists), `QDial`, a paged container
         #     (`QStackedWidget` / `QWizard`), `QKeySequenceEdit`,
         #     `QFontComboBox`, and the standard `QMessageBox` /
         #     `QInputDialog` canned dialogs.
-        "judged_at": 1533,
-        "completion": 84,
-        "evidence_snapshot": {"example-name": 73, "round-axis": 1},
+        #
+        # R1543 re-judgment, 84 -> 87, demanded by the tool (round ledger
+        # 1 -> 2). +3 and not more: what closed is cross-cutting and closed
+        # past Qt, but what remains is six absent widget kinds plus the
+        # second cross-cutting interaction gap — more surface than the round
+        # filled — and the round added a stated gap of its own (adoption).
+        "judged_at": 1543,
+        "completion": 87,
+        "evidence_snapshot": {"example-name": 73, "round-axis": 2},
     },
     {
         "key": "dataviz",
