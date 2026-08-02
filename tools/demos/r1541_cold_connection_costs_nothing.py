@@ -41,12 +41,23 @@ nothing to do with the transport.
 
 The second request on the same connection is the baseline that does cancel it:
 both requests pay the app's dispatch cadence, only the first can pay an accept
-wait. Measured across three runs that difference is -0.09, -0.10 and +0.02 ms
-with a worst single sample of 0.71 ms, against ~50 ms under the defect — so
-the bound below has ~35x margin on the worst sample and 2x on the defect's
-best. The absolute cold number is reported too, and named for what it is,
-because a consumer reading this needs to know the transport is no longer the
-term that dominates.
+wait. Measured over seven runs the MEDIAN of that difference is -0.20 to +0.02
+ms against ~49 ms under the defect, which is the assertion below.
+
+Its per-sample spread is a different matter, and finding that out corrected a
+second wrong claim in this file. An earlier revision said "worst single sample
+0.71 ms" and allowed two outliers on that basis — measured while the machine
+was quiet. Under load the worst single difference is 32.5-33.0 ms, almost
+exactly two 60 Hz frames, because each of the two requests independently lands
+on whichever side of a vsync boundary it lands on. The per-sample bound was
+therefore SMALLER than the noise quantum it was discriminating against. The
+distribution test is now a majority (see MAX_OUTLIER_FRACTION), which needs no
+tuned constant and still separates absolutely: under the defect every
+connection pays, 20-21 of 21.
+
+The absolute cold number is reported too, and named for what it is, because a
+consumer reading this needs to know the transport is no longer the term that
+dominates.
 
 ZERO-FLAKE: bounded `wait_snap` polling (never a fixed sleep), a private
 per-pid socket path, and every timing claim expressed as a difference against
@@ -102,11 +113,23 @@ SAMPLES = 21
 # plausible implementation.
 ACCEPT_BUDGET_MS = 25.0
 
-# How many individual connections may exceed the budget before the
-# distribution stops looking like scheduling noise and starts looking like a
-# constant. Measured: 0 of 63 across three runs. Under the defect all of them
-# exceed it, so this tolerance cannot hide the failure it is sized for.
-MAX_OUTLIERS = 2
+# The distribution test, as a MAJORITY rather than as a tuned count.
+#
+# A per-sample difference is not a clean measurement: both requests are
+# dispatched by a UI thread that repaints on `on_connect`, so each lands on
+# whichever side of a vsync boundary it lands on and one sample can carry a
+# whole frame of jitter in either direction. Measured over four runs, the
+# worst single difference was 32.5 and 33.0 ms — almost exactly two 60 Hz
+# frames — with 0, 0, 1 and 2 of 21 samples above the budget.
+#
+# The first draft of this file allowed 2, on a "0 of 63 across three runs"
+# measurement taken while the machine was quiet. That constant was smaller
+# than the noise quantum it was discriminating against, which is the way to
+# write an assertion that passes until it doesn't. A majority needs no
+# constant and discriminates absolutely: the defect's signature is that
+# EVERY connection pays the interval (20-21 of 21), where cadence jitter
+# touches a handful.
+MAX_OUTLIER_FRACTION = 0.5
 
 
 # ── scene-as-data extraction (matches the binding's SSOT text fns) ──────────
@@ -262,7 +285,9 @@ def body() -> None:
             print(f"    2nd req, same conn   {second_median:8.3f} ms  (min {min(second):.3f})")
             print(f"    accept path          {accept_cost:8.3f} ms  (1st - 2nd)")
             print(f"    worst single conn    {max(diffs):8.3f} ms")
-            print(f"    over {ACCEPT_BUDGET_MS:.0f} ms             {len(outliers):3d} / {SAMPLES} connections")
+            print(
+        f"    over {ACCEPT_BUDGET_MS:.0f} ms             {len(outliers):3d} / {SAMPLES} connections"
+    )
 
             assert first_median > 0.0, "the measured arm measured something"
             assert second_median > 0.0, "the baseline arm measured something"
@@ -279,12 +304,15 @@ def body() -> None:
             )
 
             # And the shape of the distribution, not only its middle: a timer
-            # puts every connection over the bound.
-            assert len(outliers) <= MAX_OUTLIERS, (
+            # puts EVERY connection over the bound, so a majority is the
+            # dividing line between "a constant" and "the app's frame
+            # cadence". See MAX_OUTLIER_FRACTION for why this is not a small
+            # tuned count.
+            assert len(outliers) <= SAMPLES * MAX_OUTLIER_FRACTION, (
                 f"{len(outliers)} of {SAMPLES} connections paid more than "
                 f"{ACCEPT_BUDGET_MS:.0f} ms to be admitted "
-                f"({[round(o, 1) for o in outliers][:5]}); that many is a constant, "
-                "not scheduling noise"
+                f"({[round(o, 1) for o in outliers][:5]}); a majority is a "
+                "constant every connection pays, not scheduling noise"
             )
 
             # The residual is named rather than left to look like transport
