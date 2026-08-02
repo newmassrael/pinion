@@ -432,9 +432,42 @@ AXES = [
                 "syntax-highlight", "textgrid", "completer", "app-font",
             ]),
         ],
-        "judged_at": 1519,
-        "completion": 70,
-        "evidence_snapshot": {"example-name": 9, "round-axis": 0},
+        # R1540 re-judged 70 -> 74, demanded by the tool: this axis had never
+        # declared a round, so its first one moved `round-axis` past the band.
+        #
+        # It CORRECTS the judgment as well as moving it. R1519's stated gap was
+        # "full styled-run text-editing depth / code-folding still partial",
+        # and the folding half had been finished for ~600 rounds: R933 derives
+        # fold regions from the live buffer, R933.1 shifts them on edit, R955
+        # adds the keyboard, and two demos cover it. A gap list is worth only
+        # what it has been checked against (R1532).
+        #
+        # What R1540 added: the GUI text run adopted the SGR 4:x underline
+        # vocabulary the TERMINAL cell has spoken since R1399 — single /
+        # double / curly / dotted / dashed, plus the underline's own colour
+        # (Qt `setUnderlineColor`). The tree could draw an undercurl in a
+        # terminal and not on screen, with the painter that knew how sitting
+        # in the same file as the one that flattened every form to one rule.
+        # An LSP diagnostic mark is now drawable at all.
+        #
+        # +4 and not more, because the CHARACTER-format axis is nearly done
+        # while the DOCUMENT axis is barely started. Audited at R1540:
+        #
+        #  - `QTextCharFormat::setBackground` — no per-run background exists.
+        #    The paint layer hand-rolls FOUR band kinds instead (selection,
+        #    find-match, current-line, preedit), each with its own fill fn and
+        #    alpha knob. Qt has both this and `QTextEdit::ExtraSelection`; the
+        #    tree has neither as a contract.
+        #  - no vertical alignment (super/subscript), and no overline.
+        #  - the DOCUMENT model is absent: `QTextList` (ordered / unordered),
+        #    `QTextTable`, `QTextBlockFormat`'s per-paragraph indent and
+        #    margins, and `setMarkdown` / `toHtml` import-export. A styled run
+        #    is a span of characters; a document is more than a span list.
+        #  - a mark is invisible to assistive technology (Qt too, so parity,
+        #    but it is what a red squiggle most needs).
+        "judged_at": 1540,
+        "completion": 74,
+        "evidence_snapshot": {"example-name": 9, "round-axis": 1},
     },
     {
         "key": "perf",
