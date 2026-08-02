@@ -317,6 +317,29 @@ pub struct AccessNode {
     /// R730 / R731 / R739 additive-axis convention) so it defaults absent
     /// without forcing every hand-written node literal to enumerate it.
     pub has_popup: Option<HasPopup>,
+    /// R1543 §5.40 §5.39 — the platform accelerator that performs this node's
+    /// default action (`"Alt+F"`), lowered via
+    /// `accesskit::Node::set_access_key`.
+    ///
+    /// This is HTML's `accesskey` / UIA's `AccessKey` / AT-SPI's key binding —
+    /// a mnemonic — and it is deliberately **not**
+    /// `accesskit::Node::keyboard_shortcut` (UIA `AcceleratorKey`), which names
+    /// an application-wide chord such as <kbd>Ctrl</kbd>+S. The two are
+    /// different properties and a node may carry both; Qt collapses them into
+    /// one `QAccessible::Accelerator` string and loses the distinction, so an
+    /// AT cannot tell a menu-local mnemonic from a global accelerator.
+    ///
+    /// Never authored by hand: the §5.40
+    /// [`enrich_access_keys_from_scene`](crate::enrich_access_keys_from_scene)
+    /// pass derives it from the painted labels, so what an AT announces and
+    /// what the shell's <kbd>Alt</kbd> arc dispatches are the same
+    /// declaration read twice — the same reason `name` is derived rather than
+    /// duplicated into every widget impl.
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696 / R714 / R717 /
+    /// R730 / R731 / R739 additive-axis convention) so it defaults absent
+    /// without forcing every hand-written node literal to enumerate it.
+    pub access_key: Option<String>,
 }
 
 impl AccessNode {
@@ -351,6 +374,7 @@ impl AccessNode {
             current: None,
             value_text: None,
             has_popup: None,
+            access_key: None,
         }
     }
 

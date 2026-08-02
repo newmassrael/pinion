@@ -2609,11 +2609,52 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`WidgetCore::apply_key_repeat`](pinion_core::WidgetCore::apply_key_repeat) sees it. The public method is the
     /// `repeat == false` wrapper.
     pub(crate) fn handle_character_key_inner(&mut self, c: &str, repeat: bool) {
+        // R1543 §5.39 — a character held with Alt is an ACCELERATOR, not text,
+        // so the mnemonic arc runs ahead of both the typed-event channel and
+        // the focused widget. This is Qt's own precedence (`QShortcutMap` runs
+        // before key delivery); what Qt spells as an opt-out event
+        // (`QEvent::ShortcutOverride` offered to the focus widget) is here the
+        // absence of a declaration — a widget that wants Alt+F for itself
+        // simply does not publish a mnemonic on it, and the key reaches
+        // `apply_key` with `modifiers.alt` set exactly as before.
+        if self.try_mnemonic(c) {
+            return;
+        }
         if let Some(ev) = V::keybinding(c) {
             self.forward(ev);
         } else {
             self.apply_key_inner(c, repeat);
         }
+    }
+
+    /// R1543 §5.39 — offer `c` to the §5.20 mnemonic arc, returning whether a
+    /// declared accelerator claimed it.
+    ///
+    /// Gated on the Alt modifier read from the out-of-band
+    /// [`Self::modifiers`] cache (winit's `KeyEvent` carries no modifier
+    /// state), so an RPC driver sets it with
+    /// [`Self::set_modifiers`] before injecting the character — the same
+    /// discipline every other modifier-bearing shortcut here follows.
+    ///
+    /// Non-single-codepoint input cannot be a mnemonic: `c` is the
+    /// `Key::Character` arc's payload, and the R666 auto-discriminator already
+    /// routes multi-char strings to the named-key arc, so this rejects only
+    /// malformed injections.
+    fn try_mnemonic(&mut self, c: &str) -> bool {
+        if !self.modifiers.alt {
+            return false;
+        }
+        let mut chars = c.chars();
+        let (Some(typed), None) = (chars.next(), chars.next()) else {
+            return false;
+        };
+        let Some(tail) = self.core.dispatch_mnemonic(typed, &mut self.focus) else {
+            return false;
+        };
+        self.revision.bump();
+        self.request_redraw();
+        self.handle_tail(&tail);
+        true
     }
 
     /// R51.78 §5.37 — `Key::Named` dispatch decoupled from winit.

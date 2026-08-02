@@ -1152,6 +1152,42 @@ mod tests {
         assert_eq!(buf[(2, 0)].fg, TuiColor::Reset, "uncovered → base");
     }
 
+    /// R1543 §5.39 §2 #6 — a mnemonic's underline reaches the TERMINAL cell.
+    ///
+    /// The GUI half of this claim is
+    /// `pinion_text::cache::tests::r1543_a_mnemonic_underlines_only_its_own_character`,
+    /// which drives the real shaper. Both painters read the same derived
+    /// [`StyleRun`], which is exactly why the mnemonic needed no per-backend
+    /// paint code — but "needed none" is a claim, and R1542's lesson is that a
+    /// capability added to a node has to be OBSERVED at every painter, not
+    /// inferred from sharing a field.
+    #[test]
+    fn r1543_a_mnemonic_underlines_only_its_own_character() {
+        use ratatui::style::Modifier;
+
+        let mut node = TextNode::mnemonic_styled(
+            "&File",
+            pinion_core::scene::Rect::default(),
+            pinion_core::style::TextStyle::new(),
+        );
+        node.rect = pinion_core::scene::Rect::new(0, 0, 200, 20);
+        assert_eq!(node.content, "File", "the marker is not painted");
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+        to_buffer(&Scene::Text(node), &mut buf);
+
+        assert!(
+            buf[(0, 0)].modifier.contains(Modifier::UNDERLINED),
+            "the marked F is underlined"
+        );
+        for x in 1..4 {
+            assert!(
+                !buf[(x, 0)].modifier.contains(Modifier::UNDERLINED),
+                "cell {x} is not: the run covers ONE character, not the label"
+            );
+        }
+    }
+
     /// R1339 — overlapping `runs` resolve **last-push-wins** per the
     /// `StyleRun` contract (matching parley / the Vello backend), NOT
     /// first-match. Two runs both cover byte 0; the one later in list

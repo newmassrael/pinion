@@ -28,6 +28,7 @@ pub mod invoke;
 pub mod layout_query;
 pub mod locate;
 pub mod methods;
+pub mod mnemonics;
 pub mod origin;
 pub mod path;
 pub mod preview;

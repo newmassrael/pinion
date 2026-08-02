@@ -1290,6 +1290,54 @@ mod tests {
         }
     }
 
+    /// R1543 §5.39 §2 #6 — a mnemonic underlines exactly its own character and
+    /// nothing else, through the real shaper.
+    ///
+    /// The GUI half of the backend-parity claim; the terminal half is
+    /// `pinion_tui::paint::tests::r1543_a_mnemonic_underlines_only_its_own_character`.
+    /// Both painters resolve the same derived [`StyleRun`] — which is why the
+    /// mnemonic needed no per-backend paint code at all — but R1542 recorded
+    /// that a capability added to a node has to be OBSERVED at every painter
+    /// rather than inferred from sharing a field, and one of the two here is
+    /// the one that runs parley.
+    ///
+    /// The negative half is the load-bearing one: a run spanning the whole
+    /// label would satisfy "the mnemonic is underlined" and be wrong.
+    #[test]
+    fn r1543_a_mnemonic_underlines_only_its_own_character() {
+        use pinion_core::scene::{Rect, TextNode};
+        use pinion_core::style::UnderlineStyle;
+
+        let base = style(16);
+        // `Save &As` marks the `A` at byte 5 — an INTERIOR character, so a run
+        // that started at 0 or covered to the end would be visible as a
+        // failure rather than passing by coincidence.
+        let node = TextNode::mnemonic_styled("Save &As", Rect::default(), base.clone());
+        assert_eq!(node.content, "Save As");
+
+        let mut cache = LayoutCache::new();
+        let derived = cache.positioned_runs(&node.content, &node.style, &node.runs, None);
+        let underlined: Vec<_> = derived.iter().filter(|r| r.underline.is_some()).collect();
+        assert_eq!(underlined.len(), 1, "exactly one run is decorated");
+        let run = underlined[0];
+        assert_eq!(
+            run.glyphs.len(),
+            1,
+            "and it is ONE glyph wide — a run covering the label would still \
+             satisfy `the mnemonic is underlined` and be wrong",
+        );
+        assert!(
+            run.start_x > 0.0,
+            "the rule starts inside the label (`A` of `Save As`), not at its \
+             left edge, so an all-covering run cannot pass by coincidence",
+        );
+        assert_eq!(
+            run.underline.expect("checked above").style,
+            UnderlineStyle::Single,
+            "a mnemonic is a plain rule, not a diagnostic squiggle",
+        );
+    }
+
     /// The laziness is load-bearing, not a reflex: this cache has callers that
     /// shape in order to *measure* and never paint what they shaped
     /// ([`crate::LayoutCacheTextMetrics`], the caret geometry, `pinion_tui`'s

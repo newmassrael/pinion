@@ -745,6 +745,29 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "MnemonicEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("key", WireTy::String, None),
+                WireField::new("accel", WireTy::String, None),
+                WireField::new("target", WireTy::String, None),
+                WireField::new("label", WireTy::String, None),
+                WireField::new("index", WireTy::Integer, None),
+                WireField::new("ambiguous", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
+        name: "MnemonicsOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "mnemonics",
+                WireTy::Array,
+                Some("MnemonicEntry"),
+            )],
+        },
+    },
+    WireType {
         name: "NormalizeForm",
         shape: WireShape::Enum {
             values: &["NFC", "NFD", "NFKC", "NFKD"],

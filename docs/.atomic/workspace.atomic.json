@@ -79480,6 +79480,66 @@
         "The winsize is per-node with no reactive seam: a producer re-declares by rebuilding the node in its view-fn, which is how `with_cells` already works. Nothing here is a regression, but a consumer whose daemon changes a pane's size at high frequency will rebuild the node each time."
       ]
     },
+    "Round 1543": {
+      "decision_summary": "A label declares its mnemonic (Qt `&File`): one declaration on the painted TextNode from which the underline ink, the Alt+char binding, and the AT accesskey are all derived, plus `scene/mnemonics` — an accelerator map with static conflict reporting that Qt keeps private in QShortcutMap.",
+      "changes_bullets": [
+        "`pinion-core::mnemonic` — `Mnemonic` / `MnemonicLabel::parse` (Qt's `&` / `&&` vocabulary, character for character) / `MnemonicBinding` / `scene_mnemonics`, the paint-scene-derived accelerator map with case-insensitive folding by full Unicode lowercase mapping and static ambiguity.",
+        "`TextNode.mnemonic` is the sole authority; `TextNode::mnemonic_styled` / `with_mnemonic` / `with_mnemonic_buddy` lower the discoverable underline into a `StyleRun` over exactly the marked character, so both the Vello and the TUI painters draw it through the styled-run path they already had (R713 + R1540) with no per-backend paint code.",
+        "`CoreShell::dispatch_mnemonic{,_for_window}` resolves Alt+char against the painted scene, focuses the target (falling back to a composite's owner), and fires `KeyboardActivate`; ambiguous keys cycle in paint order through a per-(window, key) cursor keyed by target tag. Both shells call it — the GUI ahead of `keybinding`/`apply_key`, the TUI ahead of the same pair — so the two backends cannot diverge on what Alt+F does.",
+        "`pinion_core::widgets::aria::send_keyboard_activate` lifted out of `apply_aria_activate` (2nd consumer): composite-aware via the R742.4 `#` SSOT + the R51.42 `:` SSOT, so `menu#t0` sends `t0:KeyboardActivate` exactly as the router addresses a click. `MenuBar::activate_title` adds the WAI-ARIA §3.5 keyboard open (first item highlighted, unlike the pointer open), and the menu's send wire accepts `KeyboardActivate` on titles and items.",
+        "`AccessNode.access_key` -> `accesskit::Node::set_access_key` (UIA `AccessKey`, deliberately NOT `keyboard_shortcut`), stamped by `enrich_access_keys_from_scene` at the `build_access_tree` chokepoint, and mirrored on the `scene/access` wire as `accesskey`.",
+        "`scene/mnemonics` publishes the whole map (key / accel / target / label / index / ambiguous) with both new types registered in the R1539 `WIRE_TYPES` census. Consumers: `hello-menu-app` titles + items, `settings-panel`'s `QLabel::setBuddy` form row."
+      ],
+      "verification_bullets": [
+        "`tools/demos/r1543_label_declares_its_mnemonic.py` — 60+ executed assertions over `hello-menu-app`: the published map's exact key set and every field, the `&` absent from pixels and from the AT, `accesskey` agreeing with the map on the same tag, Alt+F opening a COMPOSITE tag, the map growing with the open dropdown and shrinking when it closes with no registration anywhere, Alt+S emitting the same `menu.command` intent a click emits, and two negative controls (an undeclared Alt+key, and the same character without Alt).",
+        "Unit: 22 in `pinion-core::mnemonic` (parse rules incl. `&&` not consuming a later marker, multibyte marks, full-lowercase folding keeping `İ` off `i`, scroll-transparent walk, ambiguity), 9 in `CoreShell` (activation via the SAME dotted intent, buddy focus-without-activation, cycling, per-key cursor scoping), 6 in `widgets::menu`, 4 in `pinion-rpc::mnemonics`.",
+        "Backend parity observed, not inferred (§2 #6): `pinion-text` drives the real shaper and asserts ONE glyph underlined at a non-zero x; `pinion-tui` asserts the marked cell carries `UNDERLINED` and the other three do not.",
+        "7 counterfactuals, one at a time, every restore md5-verified: drop the Alt gate (demo J fails), keep the `&` in the display string (demo B), drop the accesskey stamp (demo C), underline the whole label (pinion-text AND pinion-tui), disable cycling (CoreShell), stop descending into `Scene::Scroll` (core), reject item activation (demo F).",
+        "Gates: `cargo test` + `cargo clippy --all-targets -D pedantic` green on all 8 changed crates + both changed examples; `cargo fmt --all --check` clean; the R1539 census gate green with the two new wire types. Regression demos re-run green: r832_menu_app, settings_panel_r667/668/669, r1518_at_focus_one_answer, r804_modifier_forward, r1539_wire_states_its_shape."
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.40",
+        "5.12",
+        "5.20",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "Reveal policy (`QStyle::SH_UnderlineShortcut`, Windows' hide-until-Alt) is not implemented: on every platform this project builds and verifies against, Qt's own answer is always-underline, and a hint no supported runner selects could not be verified anywhere. The declaration is kept separate from the derived ink precisely so a future policy can re-derive it.",
+        "`scene/mnemonics` reads the primary window, mirroring `scroll_key`'s `DEFAULT_WINDOW` shape. A per-window param needs the character-key arc to carry a window id, which it does not today (`handle_character_key_inner` takes none) — a plumbing axis, not a mnemonic one.",
+        "Alt-less item selection while a menu is open (Qt's behaviour) is deliberately NOT a mnemonic feature here: it is menubar type-ahead, which the WAI-ARIA §3.5 model assigns to the widget's own keyboard handler.",
+        "A mnemonic on a whitespace character is representable, exactly as Qt's parse allows; the map reports it like any other key rather than a rule inventing a rejection Qt does not have."
+      ],
+      "publishable_decision_summary": "A label declares its mnemonic (Qt `&File`): one declaration on the painted TextNode from which the underline ink, the Alt+char binding, and the AT accesskey are all derived, plus `scene/mnemonics` — an accelerator map with static conflict reporting that Qt keeps private in QShortcutMap.",
+      "publishable_changes_bullets": [
+        "`pinion-core::mnemonic` — `Mnemonic` / `MnemonicLabel::parse` (Qt's `&` / `&&` vocabulary, character for character) / `MnemonicBinding` / `scene_mnemonics`, the paint-scene-derived accelerator map with case-insensitive folding by full Unicode lowercase mapping and static ambiguity.",
+        "`TextNode.mnemonic` is the sole authority; `TextNode::mnemonic_styled` / `with_mnemonic` / `with_mnemonic_buddy` lower the discoverable underline into a `StyleRun` over exactly the marked character, so both the Vello and the TUI painters draw it through the styled-run path they already had (R713 + R1540) with no per-backend paint code.",
+        "`CoreShell::dispatch_mnemonic{,_for_window}` resolves Alt+char against the painted scene, focuses the target (falling back to a composite's owner), and fires `KeyboardActivate`; ambiguous keys cycle in paint order through a per-(window, key) cursor keyed by target tag. Both shells call it — the GUI ahead of `keybinding`/`apply_key`, the TUI ahead of the same pair — so the two backends cannot diverge on what Alt+F does.",
+        "`pinion_core::widgets::aria::send_keyboard_activate` lifted out of `apply_aria_activate` (2nd consumer): composite-aware via the R742.4 `#` SSOT + the R51.42 `:` SSOT, so `menu#t0` sends `t0:KeyboardActivate` exactly as the router addresses a click. `MenuBar::activate_title` adds the WAI-ARIA §3.5 keyboard open (first item highlighted, unlike the pointer open), and the menu's send wire accepts `KeyboardActivate` on titles and items.",
+        "`AccessNode.access_key` -> `accesskit::Node::set_access_key` (UIA `AccessKey`, deliberately NOT `keyboard_shortcut`), stamped by `enrich_access_keys_from_scene` at the `build_access_tree` chokepoint, and mirrored on the `scene/access` wire as `accesskey`.",
+        "`scene/mnemonics` publishes the whole map (key / accel / target / label / index / ambiguous) with both new types registered in the R1539 `WIRE_TYPES` census. Consumers: `hello-menu-app` titles + items, `settings-panel`'s `QLabel::setBuddy` form row."
+      ],
+      "publishable_verification_bullets": [
+        "`tools/demos/r1543_label_declares_its_mnemonic.py` — 60+ executed assertions over `hello-menu-app`: the published map's exact key set and every field, the `&` absent from pixels and from the AT, `accesskey` agreeing with the map on the same tag, Alt+F opening a COMPOSITE tag, the map growing with the open dropdown and shrinking when it closes with no registration anywhere, Alt+S emitting the same `menu.command` intent a click emits, and two negative controls (an undeclared Alt+key, and the same character without Alt).",
+        "Unit: 22 in `pinion-core::mnemonic` (parse rules incl. `&&` not consuming a later marker, multibyte marks, full-lowercase folding keeping `İ` off `i`, scroll-transparent walk, ambiguity), 9 in `CoreShell` (activation via the SAME dotted intent, buddy focus-without-activation, cycling, per-key cursor scoping), 6 in `widgets::menu`, 4 in `pinion-rpc::mnemonics`.",
+        "Backend parity observed, not inferred (§2 #6): `pinion-text` drives the real shaper and asserts ONE glyph underlined at a non-zero x; `pinion-tui` asserts the marked cell carries `UNDERLINED` and the other three do not.",
+        "7 counterfactuals, one at a time, every restore md5-verified: drop the Alt gate (demo J fails), keep the `&` in the display string (demo B), drop the accesskey stamp (demo C), underline the whole label (pinion-text AND pinion-tui), disable cycling (CoreShell), stop descending into `Scene::Scroll` (core), reject item activation (demo F).",
+        "Gates: `cargo test` + `cargo clippy --all-targets -D pedantic` green on all 8 changed crates + both changed examples; `cargo fmt --all --check` clean; the R1539 census gate green with the two new wire types. Regression demos re-run green: r832_menu_app, settings_panel_r667/668/669, r1518_at_focus_one_answer, r804_modifier_forward, r1539_wire_states_its_shape."
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.40",
+        "5.12",
+        "5.20",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Reveal policy (`QStyle::SH_UnderlineShortcut`, Windows' hide-until-Alt) is not implemented: on every platform this project builds and verifies against, Qt's own answer is always-underline, and a hint no supported runner selects could not be verified anywhere. The declaration is kept separate from the derived ink precisely so a future policy can re-derive it.",
+        "`scene/mnemonics` reads the primary window, mirroring `scroll_key`'s `DEFAULT_WINDOW` shape. A per-window param needs the character-key arc to carry a window id, which it does not today (`handle_character_key_inner` takes none) — a plumbing axis, not a mnemonic one.",
+        "Alt-less item selection while a menu is open (Qt's behaviour) is deliberately NOT a mnemonic feature here: it is menubar type-ahead, which the WAI-ARIA §3.5 model assigns to the widget's own keyboard handler.",
+        "A mnemonic on a whitespace character is representable, exactly as Qt's parse allows; the map reports it like any other key rather than a rule inventing a rejection Qt does not have."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

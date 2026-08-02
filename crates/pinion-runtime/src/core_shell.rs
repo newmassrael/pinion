@@ -70,14 +70,18 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use pinion_core::composite_tag::split_subindex;
 use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
+use pinion_core::mnemonic::{Mnemonic, scene_mnemonics};
 use pinion_core::reactive::{Effect, Signal};
 use pinion_core::scene::{ContainerNode, ExternalNode};
+use pinion_core::widgets::aria::send_keyboard_activate;
 use pinion_core::{Command, HeldKeys, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
+use crate::focus::FocusManager;
 use crate::input::{InputRouter, PanRelease, PointerId, Touch, TouchPhase};
 use crate::intent_queue::{IntentQueue, walk_scene_and_drain};
 
@@ -156,6 +160,18 @@ pub struct CoreShell<V: WidgetCore> {
     /// `scene/key state` drain) and blur consumers
     /// ([`Self::clear_held_keys`]).
     held_keys: HeldKeys,
+    /// R1543 §5.39 — per-`(window, folded key)` cycling cursor for **ambiguous**
+    /// mnemonics: the tag [`Self::dispatch_mnemonic_for_window`] activated last
+    /// time this accelerator was pressed in this window.
+    ///
+    /// Lives here — not per backend shell — for the same §2 #6 reason
+    /// [`Self::held_keys`] does: cycling is substrate policy, and two shells
+    /// owning one policy is the divergence class the audit flags.
+    ///
+    /// A *unique* mnemonic never reads it meaningfully (a one-element cycle
+    /// resolves to the same entry regardless), so this is state only a
+    /// conflicted window pays for.
+    mnemonic_cursor: HashMap<(String, String), String>,
     intent_queue: IntentQueue,
     /// R51.142 §5.28 — root reactive scope for this widget binding.
     ///
@@ -741,6 +757,7 @@ impl<V: WidgetCore> CoreShell<V> {
             cached_state,
             routers,
             held_keys: HeldKeys::default(),
+            mnemonic_cursor: HashMap::new(),
             intent_queue: IntentQueue::new(),
             root_owner,
             frame_signal,
@@ -2175,6 +2192,107 @@ impl<V: WidgetCore> CoreShell<V> {
         let scene = &mut self.scene;
         let handled = owner.run(|| V::apply_key_repeat(scene, focused, key, modifiers, repeat));
         if handled { Some(self.tail()) } else { None }
+    }
+
+    /// R1543 §5.39 §5.20 — dispatch a **mnemonic** (<kbd>Alt</kbd>+`typed`)
+    /// against the primary window. See
+    /// [`Self::dispatch_mnemonic_for_window`].
+    pub fn dispatch_mnemonic(
+        &mut self,
+        typed: char,
+        focus: &mut FocusManager,
+    ) -> Option<DispatchTail<V::State>> {
+        self.dispatch_mnemonic_for_window(DEFAULT_WINDOW, typed, focus)
+    }
+
+    /// R1543 §5.39 §5.20 — dispatch <kbd>Alt</kbd>+`typed` against the
+    /// mnemonics declared in `window_id`'s last painted scene.
+    ///
+    /// Returns `Some(tail)` when a mnemonic **claimed** the key (the caller
+    /// bumps its revision and runs the tail, exactly as for
+    /// [`Self::apply_key_repeat`]) and `None` when nothing in the window
+    /// declares it, so the character falls through to the binding's
+    /// `keybinding` / `apply_key` arcs unchanged.
+    ///
+    /// # What one dispatch does
+    ///
+    /// 1. **Resolve** — [`scene_mnemonics`] over the painted scene, matched
+    ///    case-insensitively ([`Mnemonic::fold`]). This is why the accelerator
+    ///    can never disagree with the underline the user is looking at: both
+    ///    come from the same declaration in the same tree ([[introspection-from-paint-not-screen]]).
+    /// 2. **Focus** — Qt's `Qt::ShortcutFocusReason`. A composite paint tag
+    ///    (`"menu#t0"`, a menubar title) is not itself a focus stop; its owner
+    ///    is, so the fallback focuses the primary tag. That is what leaves the
+    ///    menubar arrow-navigable after <kbd>Alt</kbd>+F opens a menu.
+    /// 3. **Activate** — [`send_keyboard_activate`], the same statechart
+    ///    transition <kbd>Space</kbd> / <kbd>Enter</kbd> on the focused widget
+    ///    reaches. A target whose chart has no such transition (a text field, a
+    ///    disabled button) is simply not activated, which is precisely how a
+    ///    `QLabel::setBuddy` mnemonic ends up meaning *focus the field*
+    ///    without a special case for it anywhere.
+    ///
+    /// # Ambiguity
+    ///
+    /// Qt cycles through the claimants of a contested accelerator, reporting
+    /// the collision only on the event the user triggered. This cycles too —
+    /// so behaviour is never worse — but the collision is *also* a static
+    /// property of the scene ([`MnemonicBinding::ambiguous`](pinion_core::mnemonic::MnemonicBinding::ambiguous),
+    /// published by `scene/mnemonics`), so a window's conflicts can be asserted
+    /// before anyone types. The cursor remembers the *target tag* rather than an
+    /// index, so a scene that changes between presses resumes at the right
+    /// place instead of at a stale ordinal.
+    ///
+    /// # Claiming without acting
+    ///
+    /// A resolved mnemonic consumes the key even when the target declines to
+    /// act, for the same reason a click on a disabled button consumes the
+    /// click: the accelerator IS declared in the scene, and letting it fall
+    /// through to text input would make <kbd>Alt</kbd>+F type an `f` into
+    /// whatever had focus.
+    pub fn dispatch_mnemonic_for_window(
+        &mut self,
+        window_id: &str,
+        typed: char,
+        focus: &mut FocusManager,
+    ) -> Option<DispatchTail<V::State>> {
+        let target = self.resolve_mnemonic(window_id, typed)?;
+        if !focus.focus_set(&target) {
+            let (primary, sub) = split_subindex(&target);
+            if sub.is_some() {
+                let _ = focus.focus_set(primary);
+            }
+        }
+        let scene = &mut self.scene;
+        self.root_owner
+            .clone()
+            .run(|| send_keyboard_activate(scene, &target));
+        Some(self.tail())
+    }
+
+    /// The resolution half of [`Self::dispatch_mnemonic_for_window`]: the tag
+    /// <kbd>Alt</kbd>+`typed` addresses in `window_id` right now, advancing the
+    /// ambiguity cursor as a side effect.
+    fn resolve_mnemonic(&mut self, window_id: &str, typed: char) -> Option<String> {
+        // The registry is rebuilt per press rather than cached: it is a pure
+        // function of the painted scene, presses arrive at human speed, and a
+        // cache would be one more thing that can disagree with the pixels.
+        let bindings = scene_mnemonics(self.last_paint_scene_for_window(window_id)?);
+        let fold = Mnemonic::fold(typed);
+        let claimants: Vec<&str> = bindings
+            .iter()
+            .filter(|b| Mnemonic::fold(b.key) == fold)
+            .map(|b| b.target.as_str())
+            .collect();
+        let first = *claimants.first()?;
+        let cursor_key = (window_id.to_owned(), fold);
+        let target = self
+            .mnemonic_cursor
+            .get(&cursor_key)
+            .and_then(|last| claimants.iter().position(|t| *t == last.as_str()))
+            .map_or(first, |i| claimants[(i + 1) % claimants.len()])
+            .to_owned();
+        self.mnemonic_cursor.insert(cursor_key, target.clone());
+        Some(target)
     }
 
     /// R56.2.a §5.13 §5.38 — route an IME [`CompositionEvent`](pinion_core::CompositionEvent) through
@@ -6664,5 +6782,163 @@ mod tests {
             .and_then(|n| n.handle.introspect())
             .and_then(|i| i.query("last_send"));
         assert_eq!(after, Some(IntrospectValue::Text("direct".to_string())));
+    }
+}
+
+#[cfg(test)]
+mod mnemonic_tests {
+    use super::{CoreShell, DEFAULT_WINDOW};
+    use crate::focus::FocusManager;
+    use pinion_core::mnemonic::MnemonicLabel;
+    use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+    use pinion_core::test_fixtures::ButtonFixture as TestButton;
+
+    const BTN: &str = "test_btn";
+
+    /// A painted widget whose label declares `source`'s mnemonic, tagged `tag`.
+    fn labelled(tag: &'static str, source: &str) -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::mnemonic_styled(
+                source,
+                Rect::default(),
+                pinion_core::style::TextStyle::new(),
+            ))])
+            .with_tag(tag),
+        )
+    }
+
+    fn shell_painting(scene: Scene) -> (CoreShell<TestButton>, FocusManager) {
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        core.set_paint_scene_for_window(DEFAULT_WINDOW, scene);
+        let mut focus = FocusManager::new();
+        focus.update_focusable_tags(vec![BTN.to_owned(), "other".to_owned()]);
+        (core, focus)
+    }
+
+    #[test]
+    fn r1543_alt_char_activates_the_labelled_widget() {
+        // The whole arc: a painted `&Test` label on the button's tag, Alt+T,
+        // and the button's statechart takes the same `KeyboardActivate`
+        // transition Space on the focused button would have driven.
+        let (mut core, mut focus) = shell_painting(labelled(BTN, "&Test"));
+        let tail = core.dispatch_mnemonic('t', &mut focus).expect("claimed");
+        assert_eq!(focus.focused(), Some(BTN), "Qt's ShortcutFocusReason");
+        // The button's `KeyboardActivate` is an INTERNAL transition — it emits
+        // a click intent without flipping the visible state, exactly as Space
+        // on the focused button does. Asserting the intent is asserting that
+        // the mnemonic took the same path, not a parallel one.
+        assert_eq!(
+            tail.intents
+                .iter()
+                .map(pinion_core::intent::Intent::tag_str)
+                .collect::<Vec<_>>(),
+            vec!["test_btn.click"],
+            "the activation reached the statechart, and emitted the SAME \
+             dotted intent a click or a focused Space emits"
+        );
+    }
+
+    #[test]
+    fn r1543_the_match_is_case_insensitive() {
+        let (mut core, mut focus) = shell_painting(labelled(BTN, "&Test"));
+        let tail = core.dispatch_mnemonic('T', &mut focus).expect("claimed");
+        assert_eq!(tail.intents.len(), 1, "uppercase T hits the same `&Test`");
+    }
+
+    #[test]
+    fn r1543_an_undeclared_key_falls_through() {
+        // `None` is what lets Alt+X still reach `keybinding` / `apply_key`; a
+        // blanket claim on every Alt-held character would silently break every
+        // binding's own modifier chords.
+        let (mut core, mut focus) = shell_painting(labelled(BTN, "&Test"));
+        assert!(core.dispatch_mnemonic('x', &mut focus).is_none());
+        assert_eq!(focus.focused(), None, "nothing moved");
+    }
+
+    #[test]
+    fn r1543_a_scene_with_no_mnemonics_claims_nothing() {
+        let (mut core, mut focus) = shell_painting(labelled(BTN, "Test"));
+        assert!(core.dispatch_mnemonic('t', &mut focus).is_none());
+    }
+
+    #[test]
+    fn r1543_an_unpainted_window_claims_nothing() {
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let mut focus = FocusManager::new();
+        assert!(core.dispatch_mnemonic('t', &mut focus).is_none());
+    }
+
+    #[test]
+    fn r1543_a_buddy_moves_focus_without_activating() {
+        // `QLabel::setBuddy`. The label is not the button, so nothing is
+        // activated — but focus lands on the buddy, which is the entire
+        // semantic Qt's buddy pointer has.
+        let parsed = MnemonicLabel::parse("&Name:");
+        let label = Scene::Container(
+            ContainerNode::new(vec![Scene::Text(
+                TextNode::new(parsed.display, Rect::default())
+                    .with_mnemonic(parsed.mnemonic.expect("marked").with_buddy("other")),
+            )])
+            .with_tag("name_label"),
+        );
+        let (mut core, mut focus) = shell_painting(label);
+        let tail = core.dispatch_mnemonic('n', &mut focus).expect("claimed");
+        assert_eq!(focus.focused(), Some("other"), "the buddy, not the label");
+        assert!(
+            tail.intents.is_empty(),
+            "a label's buddy is focused, never activated: `other` names no \
+             external, so there is no statechart to poke"
+        );
+    }
+
+    #[test]
+    fn r1543_an_ambiguous_key_cycles_in_paint_order() {
+        // Qt's behaviour, matched: repeated presses walk the claimants. The
+        // difference is that here the collision is ALSO reportable statically
+        // — see `scene_mnemonics`'s `ambiguous`.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            labelled(BTN, "&Save"),
+            labelled("other", "&Send"),
+        ]));
+        let (mut core, mut focus) = shell_painting(scene);
+        assert!(core.dispatch_mnemonic('s', &mut focus).is_some());
+        assert_eq!(focus.focused(), Some(BTN), "first claimant in paint order");
+        assert!(core.dispatch_mnemonic('s', &mut focus).is_some());
+        assert_eq!(focus.focused(), Some("other"), "second press advances");
+        assert!(core.dispatch_mnemonic('s', &mut focus).is_some());
+        assert_eq!(focus.focused(), Some(BTN), "and wraps");
+    }
+
+    #[test]
+    fn r1543_a_unique_key_does_not_cycle_away_from_itself() {
+        // The cycling cursor must be inert for the common case: a one-element
+        // cycle resolves to the same target every press, not to nothing.
+        let (mut core, mut focus) = shell_painting(labelled(BTN, "&Test"));
+        for press in 0..3 {
+            assert!(
+                core.dispatch_mnemonic('t', &mut focus).is_some(),
+                "press {press}"
+            );
+            assert_eq!(focus.focused(), Some(BTN), "press {press}");
+        }
+    }
+
+    #[test]
+    fn r1543_the_cycle_is_scoped_to_the_key() {
+        // Two distinct accelerators must not share a cursor, or pressing one
+        // would advance the other's position.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            labelled(BTN, "&Save"),
+            labelled("other", "&Send"),
+        ]));
+        let (mut core, mut focus) = shell_painting(scene);
+        core.dispatch_mnemonic('s', &mut focus).expect("claimed");
+        assert!(core.dispatch_mnemonic('q', &mut focus).is_none(), "unbound");
+        core.dispatch_mnemonic('s', &mut focus).expect("claimed");
+        assert_eq!(
+            focus.focused(),
+            Some("other"),
+            "the unbound press did not disturb S's cursor"
+        );
     }
 }

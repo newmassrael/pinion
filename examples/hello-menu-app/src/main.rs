@@ -54,6 +54,7 @@ use pinion_core::external::{
     QuerySource, SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
+use pinion_core::mnemonic::MnemonicLabel;
 use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -93,7 +94,11 @@ const STATUS_FONT_PX: u32 = 12;
 const COMMAND_INTENT_TAG: &str = intent_tag!("menu", "command");
 
 /// Top-level menu titles. Index `m` becomes the title tagged `menu#t<m>`.
-const MENU_TITLES: [&str; 3] = ["File", "Edit", "View"];
+/// R1543 §5.39 — the `&` marks each title's mnemonic (Qt's vocabulary): Alt+F
+/// opens File, Alt+E Edit, Alt+V View. The markers are resolved by
+/// `view_menu_bar`, so these constants are the ONE place the accelerator and
+/// the painted label are written; nothing else in this binding names a key.
+const MENU_TITLES: [&str; 3] = ["&File", "&Edit", "&View"];
 
 /// Document loaded by File -> Open Sample (3 lines).
 const SAMPLE_DOC: &str =
@@ -140,15 +145,15 @@ impl Item {
 /// editing commands; View holds two checkbox toggles the view reads back.
 const MENUS: [&[Item]; 3] = [
     &[
-        Item::Command("New"),
-        Item::Command("Open Sample"),
+        Item::Command("&New"),
+        Item::Command("&Open Sample"),
         Item::Separator,
-        Item::Command("Save"),
+        Item::Command("&Save"),
     ],
-    &[Item::Command("Append Line"), Item::Command("Clear")],
+    &[Item::Command("&Append Line"), Item::Command("&Clear")],
     &[
-        Item::Checkbox("Show Status Bar", true),
-        Item::Checkbox("Uppercase", false),
+        Item::Checkbox("Show &Status Bar", true),
+        Item::Checkbox("&Uppercase", false),
     ],
 ];
 
@@ -611,7 +616,14 @@ impl WidgetA11y for AppMenuView {
                     ..MenuItemCell::default()
                 })
                 .collect();
-            nodes.extend(menu_item_nodes(DROPDOWN_TAG, MENU_TITLES[m], &cells));
+            // R1543 — an authored label carries `&` markers; a name handed to
+            // the AT must be the DISPLAY string. Text that is painted resolves
+            // its own markers (the §5.40 enrichment reads the painted node),
+            // so this is the only site that has to say so — and it has to,
+            // because it names the dropdown from a constant rather than from
+            // a leaf in the tree.
+            let open_title = MnemonicLabel::parse(MENU_TITLES[m]).display;
+            nodes.extend(menu_item_nodes(DROPDOWN_TAG, &open_title, &cells));
         }
         nodes
     }

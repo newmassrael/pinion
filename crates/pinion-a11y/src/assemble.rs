@@ -50,6 +50,13 @@ pub fn build_access_tree(
     let mut nodes = owner.run(node_fn);
     if let Some(paint) = paint_scene {
         enrich_names_from_scene(&mut nodes, paint);
+        // R1543 §5.40 §5.39 — the mnemonic announcement, derived from the same
+        // painted tree by the same kind of pass. It rides the assembler for the
+        // R1518 reason `stamp_focus_flag` does: a fact every binding would
+        // otherwise spell for itself is spelled once, at the chokepoint both
+        // the live AT emit and the `scene/access` dump pass through, so the
+        // two cannot describe different trees.
+        crate::enrich_access_keys_from_scene(&mut nodes, paint);
     }
     let focus = owner.run(focus_fn);
     stamp_focus_flag(&mut nodes, focus.as_ref());

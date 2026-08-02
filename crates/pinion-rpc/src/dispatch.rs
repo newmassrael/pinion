@@ -2239,6 +2239,12 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     let producer = access_producer.as_mut().map(|p| &mut **p);
                     (handle_scene_access(producer), HandlerKind::Read)
                 }
+                // R1543 §5.39 — the window's accelerator map, read from the
+                // same painted scene the shell's Alt arc resolves against.
+                "scene/mnemonics" => (
+                    crate::mnemonics::handle_scene_mnemonics(last_paint_scene),
+                    HandlerKind::Read,
+                ),
                 "scene/dry_run" => (
                     handle_scene_dry_run(scene, request.params.as_ref()),
                     HandlerKind::Read,

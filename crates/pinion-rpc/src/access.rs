@@ -150,6 +150,14 @@ fn access_node_to_json(node: &AccessNode) -> Value {
             Value::String(has_popup.aria_name().to_string()),
         );
     }
+    // R1543 §5.40 §5.39 — the mnemonic, spelled as HTML's `accesskey` (the
+    // attribute name AccessKit lowers to UIA `AccessKey`). The AI client's
+    // spelling of the fact `scene/mnemonics` publishes as a map and the AT
+    // receives as a node property: three readings of one declaration, none of
+    // them a second source.
+    if let Some(access_key) = &node.access_key {
+        obj.insert("accesskey".to_string(), Value::String(access_key.clone()));
+    }
     Value::Object(obj)
 }
 

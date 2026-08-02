@@ -199,6 +199,57 @@ fn walk_for_text(container: &pinion_core::scene::ContainerNode) -> Option<String
     None
 }
 
+/// R1543 §5.40 §5.39 — populate `nodes[*].access_key` from the mnemonics
+/// declared in the paint scene.
+///
+/// The `accesskey` peer of [`enrich_names_from_scene`], and derived the same
+/// way and for the same reason: the mnemonic literal lives once, in the view
+/// function, and the AT announcement is read back out of the painted tree. A
+/// widget impl that had to *state* its own accelerator would be a second place
+/// for it to be written, and the two would drift the first time a label
+/// changed — which is exactly the state Qt is in, where the underline is
+/// re-parsed by the style on every paint and the shortcut is registered
+/// separately in `QShortcutMap`.
+///
+/// Only the resolved target of each binding is stamped, so what an AT
+/// announces is what <kbd>Alt</kbd>+char actually activates — including the
+/// `QLabel::setBuddy` case, where the key is announced on the **field**, not on
+/// the label carrying the ampersand. HTML `accesskey` behaves the same way
+/// (the attribute is on the labelled control), and Qt does not: its
+/// `QAccessible::Accelerator` is answered by the label, so a screen-reader user
+/// is told the key by a node that is not the one the key operates.
+///
+/// An **ambiguous** mnemonic is still announced. Two nodes claiming
+/// <kbd>Alt</kbd>+S is a bug in the window, but silently announcing neither
+/// would hide the accelerator from precisely the users who cannot see the
+/// underline; the conflict is reported where conflicts belong, in
+/// `scene/mnemonics`.
+///
+/// Existing `access_key` values are left alone, matching the name pass's
+/// explicit-override precedence.
+///
+/// Returns the number of nodes stamped.
+pub fn enrich_access_keys_from_scene(nodes: &mut [AccessNode], scene: &Scene) -> usize {
+    let bindings = pinion_core::mnemonic::scene_mnemonics(scene);
+    if bindings.is_empty() {
+        return 0;
+    }
+    let mut stamped = 0usize;
+    for node in nodes.iter_mut() {
+        if node.access_key.is_some() {
+            continue;
+        }
+        // First declaration wins, matching the tag-index rule the name pass
+        // uses: a duplicate is a binding bug either way, and picking the same
+        // one keeps the two passes describing one tree.
+        if let Some(binding) = bindings.iter().find(|b| b.target == node.tag) {
+            node.access_key = Some(pinion_core::mnemonic::Mnemonic::accel_label(binding.key));
+            stamped += 1;
+        }
+    }
+    stamped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,8 +37,48 @@
 //! WAI-ARIA refactor pattern (`role-specific helper`, see WAI-ARIA
 //! APG keyboard implementation guides).
 
+use crate::composite_tag::{compose_send_payload, split_subindex};
 use crate::external::IntrospectValue;
+use crate::input::Modifiers;
 use crate::scene::Scene;
+
+/// R1543 §5.38 §5.39 — fire the SCXML `KeyboardActivate` event at the widget
+/// tagged `target`, whatever *asked* for the activation.
+///
+/// The activation half of [`apply_aria_activate`], lifted because R1543 gave it
+/// a second caller with a different precondition: a **mnemonic**
+/// (<kbd>Alt</kbd>+char, see [`crate::mnemonic`]) activates a widget that does
+/// **not** hold focus and was not addressed by a key the widget knows, so it
+/// cannot come in through the focused-widget gate — yet it must reach exactly
+/// the same statechart transition, or a mnemonic-activated button would take a
+/// different path through its own state machine than a keyboard-activated one.
+///
+/// `target` may be a **composite** paint tag (`"menu#t0"`). It is split on the
+/// R742.4 `#` SSOT and re-composed through the R51.42 `:` SSOT, so a composite
+/// child is addressed exactly as the router addresses it for a pointer:
+/// `"menu#t0"` sends `"t0:KeyboardActivate"` to the external tagged `menu`,
+/// while a plain `"ok_btn"` sends the bare `"KeyboardActivate"` — byte-identical
+/// to every pre-R1543 activation, which is why lifting this changed no
+/// behaviour for the 48 existing call sites.
+///
+/// Returns `false` when the target has no external, no introspection surface
+/// (the §5.15 "no introspect = no activation" rule), or a statechart with no
+/// `KeyboardActivate` transition out of its current state — a disabled button,
+/// or a widget for which activation is simply not a concept. That last case is
+/// load-bearing for the mnemonic path: it is what makes a buddy label pointing
+/// at a text field *focus* the field without also poking it.
+#[must_use]
+pub fn send_keyboard_activate(scene: &mut Scene, target: &str) -> bool {
+    let (primary, sub) = split_subindex(target);
+    let payload = compose_send_payload(sub, "KeyboardActivate", Modifiers::empty());
+    let Some(node) = scene.find_external_with_tag_mut(primary) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    intro.invoke("send", IntrospectValue::Text(payload)).is_ok()
+}
 
 /// R51.114 §5.38 / §5.41 — apply an ARIA-compliant
 /// activate-on-`Space`-or-`Enter` keystroke against a focused
@@ -100,18 +140,10 @@ pub fn apply_aria_activate(
     if !matches!(key, "Space" | "Enter") {
         return false;
     }
-    let Some(node) = scene.find_external_with_tag_mut(my_tag) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    intro
-        .invoke(
-            "send",
-            IntrospectValue::Text("KeyboardActivate".to_string()),
-        )
-        .is_ok()
+    // R1543 — the focused-widget GATE is this function's own; the activation
+    // itself is shared with the mnemonic path so both reach the same
+    // transition. See [`send_keyboard_activate`].
+    send_keyboard_activate(scene, my_tag)
 }
 
 #[cfg(test)]

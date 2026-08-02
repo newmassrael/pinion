@@ -41,6 +41,7 @@ pub mod focus_state;
 pub mod frame;
 pub mod input;
 pub mod intent;
+pub mod mnemonic;
 pub mod modal_scope_request;
 pub mod print;
 pub mod reactive;
@@ -92,6 +93,7 @@ pub use input::{
     PointerKind, RawPointerButton, SelectionChord, edit_field_keymap, forward_key_to_field,
 };
 pub use intent::{Intent, IntentTag};
+pub use mnemonic::{Mnemonic, MnemonicBinding, MnemonicLabel, scene_mnemonics};
 pub use reactive::{
     Computed, DeferredReady, Effect, FetchToken, IntoIntrospectValue, JsonValue, LOCAL_TASK_PUMP,
     LocalSpawner, LocalTaskPump, MONOSPACE_METRICS, MonospaceMetrics, NullMonospaceMetrics,

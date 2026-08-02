@@ -29,8 +29,10 @@ use std::time::Duration;
 
 use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
+use crate::mnemonic::Mnemonic;
 use crate::style::{
     Align, BoxStyle, Color, CursorHint, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle,
+    UnderlineStyle,
 };
 use crate::term_grid::{GridBuffer, Palette};
 use crate::widgets::measured_rows::MeasuredRowState;
@@ -2055,6 +2057,23 @@ pub struct TextNode {
     /// the engine too) is a later campaign step; until then this marker is the
     /// R1070.1 "exclude caret-bearing text" contract.
     pub caret_bearing: bool,
+    /// R1543 §5.39 §5.40 — this label declares a mnemonic (Qt `&File`): one of
+    /// its characters activates the enclosing widget via <kbd>Alt</kbd>+char.
+    ///
+    /// **This field is the authority.** The underline that makes the mnemonic
+    /// discoverable is *derived ink*, lowered into [`Self::runs`] by
+    /// [`Self::with_mnemonic`] so both the Vello and the TUI painters draw it
+    /// through the styled-run path they already have; the §5.39 dispatch and
+    /// the §5.40 `accesskey` announcement both read **this** field and never
+    /// the ink. Recovering the declaration from the underline would be
+    /// ambiguous anyway — rich text underlines characters for reasons of its
+    /// own — and R1542 recorded the general form: an authority cannot be
+    /// restored from the value it produced.
+    ///
+    /// Set it through [`crate::mnemonic::MnemonicLabel::parse`], which derives
+    /// the display string and the mark from one authored literal, so the
+    /// painted label and the key it binds cannot drift apart.
+    pub mnemonic: Option<Mnemonic>,
 }
 
 /// R51.81 §5.40 — accessibility role hint attached to a [`TextNode`].
@@ -2098,6 +2117,7 @@ impl TextNode {
             runs: Vec::new(),
             role: None,
             caret_bearing: false,
+            mnemonic: None,
         }
     }
 
@@ -2155,7 +2175,148 @@ impl TextNode {
     #[must_use]
     pub fn with_runs(mut self, runs: Vec<StyleRun>) -> Self {
         self.runs = runs;
+        // R1543 — re-derive the mnemonic underline on top of the new authored
+        // list. Without this the builders would be order-dependent
+        // (`with_mnemonic().with_runs()` would silently drop the underline
+        // while leaving the key bound), which is exactly the desync the
+        // single-declaration design exists to rule out.
+        self.apply_mnemonic_run();
         self
+    }
+
+    /// R1543 §5.39 §5.40 — construct a styled label from an authored source
+    /// carrying Qt's `&` mnemonic markup.
+    ///
+    /// The one-call pairing of [`MnemonicLabel::parse`](crate::mnemonic::MnemonicLabel::parse)
+    /// with [`Self::with_mnemonic`], and the form widget code should use: the
+    /// display string and the mark are derived from the same literal in the
+    /// same expression, so a label can never be painted with one spelling and
+    /// bound to another. `"Save && Exit"` is a plain label with a literal
+    /// ampersand and no mnemonic; `"&File"` paints `File` with an underlined
+    /// `F` bound to <kbd>Alt</kbd>+F.
+    ///
+    /// ```
+    /// use pinion_core::scene::{Rect, TextNode};
+    /// use pinion_core::style::TextStyle;
+    ///
+    /// let node = TextNode::mnemonic_styled("&Edit", Rect::default(), TextStyle::new());
+    /// assert_eq!(node.content, "Edit");
+    /// assert_eq!(node.mnemonic.expect("marked").key, 'E');
+    /// ```
+    #[must_use]
+    pub fn mnemonic_styled(source: &str, rect: Rect, style: TextStyle) -> Self {
+        let parsed = crate::mnemonic::MnemonicLabel::parse(source);
+        let node = Self::styled(parsed.display, rect, style);
+        match parsed.mnemonic {
+            Some(mark) => node.with_mnemonic(mark),
+            None => node,
+        }
+    }
+
+    /// R1543 §5.39 §5.40 — declare this label's mnemonic (builder form).
+    ///
+    /// Sets [`Self::mnemonic`] — the authority the §5.39 <kbd>Alt</kbd>+char
+    /// dispatch and the §5.40 `accesskey` announcement read — **and** lowers
+    /// the discoverable underline into [`Self::runs`]. Pair it with
+    /// [`MnemonicLabel::parse`](crate::mnemonic::MnemonicLabel::parse), whose
+    /// display string is the `content` this node must carry:
+    ///
+    /// ```
+    /// use pinion_core::mnemonic::MnemonicLabel;
+    /// use pinion_core::scene::{Rect, TextNode};
+    ///
+    /// let parsed = MnemonicLabel::parse("&File");
+    /// let mut node = TextNode::new(parsed.display, Rect::default());
+    /// if let Some(mark) = parsed.mnemonic {
+    ///     node = node.with_mnemonic(mark);
+    /// }
+    /// assert_eq!(node.content, "File");
+    /// assert_eq!(node.runs.len(), 1, "the F is underlined");
+    /// ```
+    ///
+    /// Lowering to a [`StyleRun`] rather than teaching each backend a new
+    /// concept is what makes the capability reach **every** painter: the Vello
+    /// adapter and the TUI cell painter both already resolve underline style
+    /// per byte offset from `runs` (R713 styled runs, R1540 underline forms),
+    /// so neither changes. R1542's lesson — a capability added to a node has
+    /// to reach all of its painters — is satisfied structurally here rather
+    /// than by two edits that could diverge.
+    ///
+    /// The derived run restyles exactly the marked character's bytes,
+    /// inheriting whatever style is already effective there (the last authored
+    /// run covering the offset, else the node's base style) and adding only
+    /// [`UnderlineStyle::Single`]. Applying it is idempotent, so the builders
+    /// compose in any order.
+    #[must_use]
+    pub fn with_mnemonic(mut self, mnemonic: Mnemonic) -> Self {
+        self.mnemonic = Some(mnemonic);
+        self.apply_mnemonic_run();
+        self
+    }
+
+    /// R1543 §5.39 — retarget this label's mnemonic at another tag (Qt
+    /// `QLabel::setBuddy`).
+    ///
+    /// The form-row case: a standalone label above a field carries the mark,
+    /// but the key must move focus to the **field**, not to the text. Compose
+    /// it with [`Self::mnemonic_styled`]:
+    ///
+    /// ```
+    /// use pinion_core::scene::{Rect, TextNode};
+    /// use pinion_core::style::TextStyle;
+    ///
+    /// let label = TextNode::mnemonic_styled("&Name:", Rect::default(), TextStyle::new())
+    ///     .with_mnemonic_buddy("name_field");
+    /// assert_eq!(label.mnemonic.expect("marked").buddy.as_deref(), Some("name_field"));
+    /// ```
+    ///
+    /// A no-op when the source declared no mnemonic: the `&` is what creates
+    /// the binding, so there is nothing to retarget, and a buddy alone binds
+    /// no key.
+    #[must_use]
+    pub fn with_mnemonic_buddy(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        if let Some(mark) = self.mnemonic.take() {
+            self.mnemonic = Some(mark.with_buddy(tag));
+        }
+        self
+    }
+
+    /// Lower [`Self::mnemonic`] into a trailing [`StyleRun`] that underlines
+    /// the marked character. Idempotent: re-applying when the derived run is
+    /// already the last one is a no-op, which is what lets
+    /// [`Self::with_mnemonic`] and [`Self::with_runs`] be called in either
+    /// order without appending duplicates.
+    ///
+    /// A mark whose byte range does not lie on a character boundary of
+    /// `content` — only reachable by constructing the [`Mnemonic`] by hand
+    /// against a different string than the one it was parsed from — is left
+    /// undrawn rather than producing a run that would slice a codepoint. The
+    /// key still binds: an un-underlined mnemonic is a discoverability
+    /// failure, a mis-sliced run is a rendering one.
+    fn apply_mnemonic_run(&mut self) {
+        let Some(mark) = &self.mnemonic else {
+            return;
+        };
+        let (Ok(start), Ok(len)) = (usize::try_from(mark.index), usize::try_from(mark.len)) else {
+            return;
+        };
+        let end = start + len;
+        if !self.content.is_char_boundary(start) || !self.content.is_char_boundary(end) {
+            return;
+        }
+        // The style already effective at `start`: the LAST authored run
+        // covering it (later runs win — the R713 overlap rule), else the base.
+        let mut style = self
+            .runs
+            .iter()
+            .filter(|r| r.start <= mark.index && mark.index < r.end)
+            .next_back()
+            .map_or_else(|| self.style.clone(), |r| r.style.clone());
+        style.decoration.underline = UnderlineStyle::Single;
+        let derived = StyleRun::new(mark.index, mark.index + mark.len, style);
+        if self.runs.last() != Some(&derived) {
+            self.runs.push(derived);
+        }
     }
 }
 

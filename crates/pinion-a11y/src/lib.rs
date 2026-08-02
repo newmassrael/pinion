@@ -89,7 +89,7 @@ pub use navigation::{NavLink, navigation_link_nodes};
 pub use node::{AccessNode, AccessState, AccessValue, attach_child_button};
 pub use radiogroup::{RadioCell, radiogroup_radio_nodes};
 pub use role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};
-pub use scene_label::enrich_names_from_scene;
+pub use scene_label::{enrich_access_keys_from_scene, enrich_names_from_scene};
 pub use tabs::{TabCell, tablist_tab_nodes};
 pub use toggle_group::{ToggleSegment, toggle_button_group_nodes};
 pub use toolbar::{ToolbarControl, toolbar_button_nodes};

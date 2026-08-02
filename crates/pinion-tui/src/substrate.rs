@@ -663,6 +663,16 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// gate; this keeps a no-primary binding TUI-renderable per §2 #6
     /// (GUI/TUI dual) instead of panicking on the first key.
     pub fn dispatch_key(&mut self, key_str: &str, modifiers: pinion_core::Modifiers) -> bool {
+        // R1543 §5.39 §2 #6 — the mnemonic arc, ahead of the typed-event
+        // channel and the widget, exactly as the Vello sibling orders them
+        // (`ShellCore::handle_character_key_inner`). The *resolution and
+        // activation* live in `CoreShell`, shared by both shells, so the two
+        // backends cannot drift on what Alt+F does — only on where the Alt
+        // came from (crossterm's `KeyEvent::modifiers` here, winit's
+        // out-of-band `ModifiersChanged` cache there).
+        if self.try_mnemonic(key_str, modifiers) {
+            return true;
+        }
         if let Some(event) = V::keybinding(key_str) {
             let tail = self.core.forward(event);
             return self.handle_tail(&tail);
@@ -677,6 +687,30 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // still scrolls. Mirrors the Vello sibling's
         // `handle_named_key` apply_key → scroll_key cascade.
         self.scroll_key(key_str)
+    }
+
+    /// R1543 §5.39 §2 #6 — offer `key_str` to the §5.20 mnemonic arc,
+    /// returning whether a declared accelerator claimed it.
+    ///
+    /// The terminal peer of `ShellCore::try_mnemonic`. A mnemonic underline is
+    /// already drawable here — the SGR 4:x vocabulary the cell has carried
+    /// since R1399, which R1540 gave the GUI text run — so the *ink* of a
+    /// mnemonic reaches both backends through the styled-run path with no
+    /// per-backend code, and this is the only per-backend piece: where the
+    /// Alt modifier comes from.
+    fn try_mnemonic(&mut self, key_str: &str, modifiers: pinion_core::Modifiers) -> bool {
+        if !modifiers.alt {
+            return false;
+        }
+        let mut chars = key_str.chars();
+        let (Some(typed), None) = (chars.next(), chars.next()) else {
+            return false;
+        };
+        let Some(tail) = self.core.dispatch_mnemonic(typed, &mut self.focus) else {
+            return false;
+        };
+        self.handle_tail(&tail);
+        true
     }
 
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch — the

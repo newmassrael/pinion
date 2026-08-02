@@ -374,6 +374,11 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_label(name.clone());
     }
 
+    // R1543 §5.40 — the mnemonic, as UIA `AccessKey` / HTML `accesskey`.
+    if let Some(access_key) = &access.access_key {
+        node.set_access_key(access_key.clone());
+    }
+
     match &access.value {
         Some(AccessValue::Bool(b)) => {
             node.set_toggled(if *b {

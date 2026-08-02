@@ -461,6 +461,29 @@ impl MenuBar {
         }
     }
 
+    /// R1543 §5.39 — **keyboard** activation of top-level title `m`: the
+    /// WAI-ARIA §3.5 menubar rule that <kbd>Enter</kbd> / <kbd>Space</kbd> on a
+    /// menubar item opens its menu *and moves focus to the first item*, reached
+    /// here from a mnemonic (<kbd>Alt</kbd>+F) rather than from the already-focused
+    /// title.
+    ///
+    /// Distinct from [`Self::toggle_title`] — the pointer path — in exactly the
+    /// way the APG distinguishes them: a mouse open pre-highlights nothing
+    /// (the pointer is the cursor), a keyboard open highlights the first
+    /// navigable item (the keyboard needs one). Re-activating the open menu
+    /// closes it, which is both the pointer path's behaviour and Qt's.
+    fn activate_title(&mut self, m: usize) {
+        if m >= self.menu_count() {
+            return;
+        }
+        if self.open == Some(m) {
+            self.close();
+            return;
+        }
+        self.bar_focus = m;
+        self.open_focused();
+    }
+
     /// R985 — mouse: point at the item reached by `rel_path` (a descent
     /// relative to the open dropdown). Collapses any deeper-open submenus
     /// to this level (moving back to a shallower item closes the ones
@@ -919,6 +942,38 @@ impl MenuBarExternal {
         // Ctrl+click outside the dropdown failed to dismiss it).
         let (sub, event_name, _mods) =
             crate::composite_tag::split_send_payload(payload).ok_or(InvokeError::Rejected)?;
+        // R1543 §5.39 — `KeyboardActivate` is not a pointer event and must be
+        // decoded before the pointer vocabulary, which would reject it. It is
+        // the wire a MNEMONIC arrives on: the shell resolves `Alt+F` to the
+        // paint tag `<bar>#t0` and re-composes it through the same R51.42
+        // grammar the router uses for a click, so the accelerator reaches this
+        // widget by the door every other activation uses. Titles only — a
+        // dropdown item is reachable only while the menu is open, and the
+        // WAI-ARIA §3.5 keyboard model already owns that traversal.
+        //
+        // Both a title (`t<m>`) and a dropdown item (`i<path>`) answer it: an
+        // item's mnemonic is declared on a label that is only painted while its
+        // dropdown is open, so the accelerator exists exactly when the item
+        // does. Nothing has to register or unregister as menus open and close,
+        // which is the whole reason the registry is derived from the paint
+        // scene.
+        if event_name == "KeyboardActivate" {
+            let mut chars = sub.chars();
+            match (chars.next(), chars.as_str()) {
+                (Some('t'), rest) => {
+                    let index: usize = rest.parse().map_err(|_| InvokeError::Rejected)?;
+                    self.em.inner.activate_title(index);
+                }
+                (Some('i'), rest) => {
+                    let path = parse_path(rest).ok_or(InvokeError::Rejected)?;
+                    if let Some(full) = self.em.inner.activate_rel(&path) {
+                        self.emit_command(&full);
+                    }
+                }
+                _ => return Err(InvokeError::Rejected),
+            }
+            return Ok(open_value(self.open_menu()));
+        }
         let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
         // R715 §5.16 — the transparent dismiss barrier (`<bar>#barrier`,
         // painted behind an open dropdown over the area below the title
@@ -1330,6 +1385,104 @@ mod tests {
         assert_eq!(m.bar_focus(), 1);
         m.toggle_title(1);
         assert_eq!(m.open_menu(), None, "re-toggle closes");
+    }
+
+    #[test]
+    fn r1543_keyboard_activate_opens_with_the_first_item_highlighted() {
+        // The WAI-ARIA §3.5 difference between the pointer open and the
+        // keyboard one: a mnemonic user has no cursor, so the dropdown must
+        // arrive with a highlight to arrow from. `toggle_title` (the pointer
+        // path, asserted above) leaves `active_item()` None.
+        let mut m = bar();
+        m.activate_title(1);
+        assert_eq!(m.open_menu(), Some(1));
+        assert_eq!(m.bar_focus(), 1);
+        assert!(
+            m.active_item().is_some(),
+            "keyboard open highlights the first navigable item"
+        );
+    }
+
+    #[test]
+    fn r1543_keyboard_activate_on_the_open_menu_closes_it() {
+        let mut m = bar();
+        m.activate_title(0);
+        assert_eq!(m.open_menu(), Some(0));
+        m.activate_title(0);
+        assert_eq!(m.open_menu(), None, "Alt+F twice closes, as Qt does");
+    }
+
+    #[test]
+    fn r1543_keyboard_activate_out_of_range_is_inert() {
+        let mut m = bar();
+        m.activate_title(99);
+        assert_eq!(m.open_menu(), None);
+    }
+
+    #[test]
+    fn r1543_a_mnemonic_reaches_the_title_over_the_send_wire() {
+        // The whole mnemonic path in one assertion: the composite paint tag
+        // `<bar>#t1` re-composed through the R51.42 grammar reaches this
+        // widget and opens menu 1. Pre-R1543 the pointer-event decode rejected
+        // it, so an accelerator could not address a menubar at all.
+        let mut e = ext();
+        assert!(
+            e.invoke(
+                "send",
+                IntrospectValue::Text("t1:KeyboardActivate".to_string())
+            )
+            .is_ok()
+        );
+        assert_eq!(e.open_menu(), Some(1));
+    }
+
+    #[test]
+    fn r1543_a_mnemonic_reaches_a_dropdown_item_too() {
+        // An item's mnemonic exists only while its dropdown is painted, so the
+        // activation wire has to accept the item form as well — otherwise
+        // `&New` inside an open File menu would be undeliverable.
+        let mut e = ext();
+        e.invoke(
+            "send",
+            IntrospectValue::Text("t0:KeyboardActivate".to_string()),
+        )
+        .expect("title opens");
+        e.invoke(
+            "send",
+            IntrospectValue::Text("i1:KeyboardActivate".to_string()),
+        )
+        .expect("item activates");
+        let mut got = Vec::new();
+        e.drain_intents(&mut |i| got.push(i));
+        assert_eq!(got.len(), 1, "one command, exactly as a click emits");
+        assert_eq!(got[0].tag_str(), "command");
+        assert_eq!(
+            got[0].payload,
+            IntrospectValue::Text("0.1".to_string()),
+            "the emitted path is absolute (menu 0, item 1), not the relative one"
+        );
+    }
+
+    #[test]
+    fn r1543_a_malformed_activation_target_is_rejected() {
+        let mut e = ext();
+        assert_eq!(
+            e.invoke(
+                "send",
+                IntrospectValue::Text("tx:KeyboardActivate".to_string())
+            ),
+            Err(InvokeError::Rejected),
+            "a non-numeric title index is rejected, not silently index 0"
+        );
+        assert_eq!(
+            e.invoke(
+                "send",
+                IntrospectValue::Text("barrier:KeyboardActivate".to_string())
+            ),
+            Err(InvokeError::Rejected),
+            "the dismiss barrier has no activation"
+        );
+        assert_eq!(e.open_menu(), None);
     }
 
     #[test]
