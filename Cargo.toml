@@ -127,6 +127,7 @@ members = [
     "examples/hello-raw-pointer",
     "examples/hello-snackbar",
     "examples/hello-richtext",
+    "examples/hello-richtext-background",
     "examples/hello-color-picker",
     "examples/hello-elevation",
     "examples/hello-commands",

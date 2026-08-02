@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1546 §5.36 run-background consumer: pinion-forge renderer manifest for
+  hello-richtext-background. Emits `HelloRichTextBackgroundRenderer` (Vello-
+  backed RenderContext + RenderSurface + Renderer wrapper). Same emit template
+  as hello-richtext; only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloRichTextBackgroundRenderer"
+        backend="vello"/>

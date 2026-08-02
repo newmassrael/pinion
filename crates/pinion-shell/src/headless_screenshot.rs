@@ -917,6 +917,157 @@ mod tests {
         );
     }
 
+    /// R1546 §5.36 §2 #6 — the pixel witness that a run's declared background
+    /// reaches the framebuffer, AT THE COORDINATES the wire published.
+    ///
+    /// Everything else about this feature is checked one derivation short of
+    /// the glass: the unit tests check the band list, and
+    /// `scene/text_backgrounds` reports that same list, so a painter that
+    /// dropped the fill entirely would leave every one of them green while the
+    /// screen showed nothing. (Measured: deleting the fill loop from
+    /// `paint_text` passed 614 runtime tests, the rpc suite and the shell
+    /// suite.) This closes that by probing the framebuffer inside the rect the
+    /// RPC surface would name.
+    ///
+    /// Falsifiable in both directions: with the fill dropped the in-band probe
+    /// reads the page (assertion 1 fails); with the band painted over the
+    /// glyphs instead of behind them the ink probe reads the highlight
+    /// (assertion 2 fails).
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`. The `gpu-tests` CI job does exactly that.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1546_a_declared_run_background_reaches_pixels() {
+        let (declared, band) = r1546_render(true);
+        // The node sits at (10, 10) and the band is layout-relative.
+        let (bx, by) = (10 + r1546_px(band.x), 10 + r1546_px(band.y));
+        let (bw, bh) = (r1546_px(band.width), r1546_px(band.height));
+        assert!(bw > 10 && bh > 10, "a band with room to probe: {band:?}");
+        let at = |rgba: &[u8], x: u32, y: u32| -> (u8, u8, u8) {
+            let i = ((y * R1546_W + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2])
+        };
+        // The highlight is a saturated yellow: high red and green, low blue.
+        // The page is white (all high) and the glyph ink is black (all low).
+        let is_highlight = |p: (u8, u8, u8)| p.0 > 200 && p.1 > 180 && p.2 < 170;
+        let is_page = |p: (u8, u8, u8)| p.0 > 230 && p.1 > 230 && p.2 > 230;
+
+        // (1) A pixel inside the band, below the glyphs' dense zone, is the
+        // highlight.
+        let (px, py) = (bx + 2, by + bh - 3);
+        let inside = at(&declared, px, py);
+        assert!(
+            is_highlight(inside),
+            "a declared run background must reach the framebuffer inside the \
+             band the wire publishes; ({px}, {py}) read {inside:?}",
+        );
+
+        // (2) It is BEHIND the glyphs, not over them: somewhere in the band's
+        // extent there is dark ink.
+        let has_ink = (bx..bx + bw).any(|x| {
+            (by..by + bh).any(|y| {
+                let p = at(&declared, x, y);
+                p.0 < 90 && p.1 < 90
+            })
+        });
+        assert!(
+            has_ink,
+            "the glyphs must still be legible on the band — the fill goes \
+             behind them, which is why it is emitted before the glyph runs",
+        );
+
+        // (3) Outside the band the page is untouched: a band, not a wash over
+        // the node's whole rect.
+        let outside = at(&declared, bx + bw + 6, py);
+        assert!(
+            is_page(outside),
+            "past the declared range the page is bare; read {outside:?}",
+        );
+
+        // (4) Non-vacuous: the SAME text WITHOUT the declaration reads page at
+        // the very pixel (1) called a highlight, so the probe tracks the
+        // declaration and not the geometry.
+        let bare = at(&r1546_render(false).0, px, py);
+        assert!(
+            is_page(bare),
+            "without the declaration that pixel is bare page, got {bare:?}",
+        );
+    }
+
+    /// Framebuffer width for [`r1546_render`].
+    const R1546_W: u32 = 260;
+
+    /// A layout-space offset as a probe coordinate.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a band of a 24px line in a 260x60 frame is a small positive"
+    )]
+    fn r1546_px(v: f32) -> u32 {
+        v.round() as u32
+    }
+
+    /// Render the R1546 fixture and report where the band was DERIVED to be,
+    /// so the probe reads the coordinates the wire would publish rather than a
+    /// guess. `declared` selects whether the run actually carries the
+    /// background; the reported band is the declared one either way, so the
+    /// negative control probes the same pixels.
+    fn r1546_render(declared: bool) -> (Vec<u8>, pinion_text::TextBackground) {
+        use pinion_core::scene::{Rect, Scene, StyleRun, TextNode};
+        use pinion_core::style::{Color, TextStyle};
+        use pinion_runtime::image_cache::ImageCache;
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const H: u32 = 60;
+        const TEXT: &str = "The quick brown fox";
+        // "brown" — a word with ink in the middle of the line, so the band
+        // cannot be confused with the layout's leading or trailing edge.
+        const RANGE: (u32, u32) = (10, 15);
+        let highlight = Color::rgb(0xFF, 0xF1, 0x76);
+        let base = TextStyle::new()
+            .with_size_px(24)
+            .with_fg(Color::rgb(0, 0, 0));
+        let highlighted = base.clone().with_bg_color(highlight);
+
+        let runs = vec![StyleRun::new(
+            RANGE.0,
+            RANGE.1,
+            if declared {
+                highlighted.clone()
+            } else {
+                base.clone()
+            },
+        )];
+        let node = TextNode::styled(TEXT, Rect::new(10, 10, 240, 40), base.clone()).with_runs(runs);
+
+        let mut text_cache = LayoutCache::new();
+        let probe_runs = vec![StyleRun::new(RANGE.0, RANGE.1, highlighted)];
+        let band = text_cache
+            .backgrounds(TEXT, &base, &probe_runs, Some(240))
+            .first()
+            .copied()
+            .expect("the declared run derives one band");
+
+        let mut image_cache = ImageCache::new();
+        let mut cache = FragmentCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &Scene::Text(node),
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba = shot
+            .render_to_rgba8(&vello, R1546_W, H, PenikoColor::WHITE)
+            .expect("render");
+        (rgba, band)
+    }
+
     /// R1027 §5.16 — the shell lays the scene out in LOGICAL pixels and, on
     /// a `HiDPI` window, rasterizes it by appending into a scratch scene under
     /// `Affine::scale(scale)` before submit (the `render_window` `HiDPI` path).

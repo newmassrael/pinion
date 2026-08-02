@@ -43,6 +43,7 @@ pub mod simulate;
 pub mod snapshot;
 pub mod substrate_introspect;
 pub mod text;
+pub mod text_backgrounds;
 pub mod text_cache_stats;
 pub mod text_state;
 pub mod theme;

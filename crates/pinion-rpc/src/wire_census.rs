@@ -299,6 +299,17 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "ColorWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("r", WireTy::Integer, None),
+                WireField::new("g", WireTy::Integer, None),
+                WireField::new("b", WireTy::Integer, None),
+                WireField::new("a", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "ComponentArgsInfo",
         shape: WireShape::Union {
             tag: "tag",
@@ -979,11 +990,41 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "TextBackgroundBand",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("start", WireTy::Integer, None),
+                WireField::new("end", WireTy::Integer, None),
+                WireField::new("x", WireTy::Integer, None),
+                WireField::new("y", WireTy::Integer, None),
+                WireField::new("width", WireTy::Integer, None),
+                WireField::new("height", WireTy::Integer, None),
+                WireField::new("color", WireTy::Object, Some("ColorWire")),
+                WireField::new("fg_color", WireTy::Object, Some("ColorWire")),
+                // Absent for a translucent background — see `contrast_note`.
+                WireField::new("contrast", WireTy::Number, None).nullable(),
+                WireField::new("contrast_note", WireTy::String, None).optional(),
+            ],
+        },
+    },
+    WireType {
+        name: "TextBackgroundsOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "bands",
+                WireTy::Array,
+                Some("TextBackgroundBand"),
+            )],
+        },
+    },
+    WireType {
         name: "TextCacheStatsOutcome",
         shape: WireShape::Object {
             fields: &[
                 WireField::new("shapes", WireTy::Integer, None),
                 WireField::new("run_builds", WireTy::Integer, None),
+                WireField::new("background_builds", WireTy::Integer, None),
                 WireField::new("entries", WireTy::Integer, None),
                 WireField::new("capacity", WireTy::Integer, None),
                 WireField::new("max_capacity", WireTy::Integer, None),

@@ -1958,6 +1958,41 @@ impl StyleRun {
     pub fn new(start: u32, end: u32, style: TextStyle) -> Self {
         Self { start, end, style }
     }
+
+    /// Whether this run covers `byte_offset`.
+    #[must_use]
+    pub fn covers(&self, byte_offset: usize) -> bool {
+        (self.start as usize..self.end as usize).contains(&byte_offset)
+    }
+}
+
+/// R1546 §5.36 — the [`TextStyle`] in effect at `byte_offset`: the LAST
+/// [`StyleRun`] covering it, else `base`.
+///
+/// One walk, three callers. It was written three times before this lift — the
+/// TUI cell painter resolving a cluster's style, `pinion-text`'s draw list
+/// resolving a run's underline form, and (the third, which is what forced it)
+/// the same draw list resolving a run's background. Three copies of a
+/// resolution rule is three places for the rule to drift, and this particular
+/// rule is one a reader would not think to check: it is **last**-match, not
+/// first.
+///
+/// Last-match is not a preference. parley pushes the base style then each run's
+/// style in list order and resolves overlaps last-push-wins, so the last run
+/// covering a byte is the one whose glyphs actually get drawn. Any consumer
+/// resolving a byte's style for its own purpose — a colour, a decoration form,
+/// a background — must agree with the shaper, or a run's ink and its decoration
+/// come from different runs. See [`StyleRun`] for the range semantics.
+#[must_use]
+pub fn effective_style_at<'a>(
+    base: &'a TextStyle,
+    runs: &'a [StyleRun],
+    byte_offset: usize,
+) -> &'a TextStyle {
+    runs.iter()
+        .filter(|r| r.covers(byte_offset))
+        .next_back()
+        .map_or(base, |r| &r.style)
 }
 
 /// Styled text primitive.

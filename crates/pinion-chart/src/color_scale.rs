@@ -31,12 +31,15 @@
 //! theme-derived endpoints build a scale FROM theme colours themselves (the
 //! crate stays free of a theme dependency — the R935 decoupling).
 //!
-//! The module also carries the contrast trio a value-labelled heatmap needs:
+//! The module also re-exports the contrast trio a value-labelled heatmap needs:
 //! [`relative_luminance`], [`contrast_ratio`] and [`readable_ink`]. Painting a
 //! number on top of a ramp is not optional decoration — an unreadable cell is
 //! an unreadable chart — and the legible ink must be COMPUTED per cell, because
 //! no fixed "dark ink below the halfway step" rule survives a ramp whose
-//! endpoints are themselves theme-derived.
+//! endpoints are themselves theme-derived. R1546 moved the three to
+//! [`pinion_core::contrast`] once a text run's own background gave them a
+//! consumer outside this crate; the ramp-integration test for them stays here,
+//! because viridis is what proves the choice cannot be a fixed threshold.
 
 use pinion_core::style::Color;
 
@@ -463,50 +466,15 @@ pub(crate) struct BarRamp {
     pub(crate) ticks: Vec<(f32, f64)>,
 }
 
-/// A colour's WCAG relative luminance, `0.0..=1.0`.
+/// R1546 §5.3 — the contrast trio moved to [`pinion_core::contrast`] when the
+/// §7 text-run background gave it a second consumer on the other side of the
+/// dependency edge. Re-exported here because a heatmap reaching for
+/// [`readable_ink`] next to [`ColorScale`] is the call site that motivated
+/// them, and the import path it has always used still reads correctly.
 ///
-/// The ITU-R BT.709 coefficients over LINEAR-light channels (the sRGB EOTF is
-/// already what [`Color::to_linear`] applies) — the same quantity WCAG 2.x
-/// contrast is defined on, so a value computed here is directly comparable
-/// against the published thresholds. Alpha is ignored: a translucent colour's
-/// effective luminance depends on what is behind it, which the caller knows and
-/// this function does not.
-#[must_use]
-pub fn relative_luminance(color: Color) -> f32 {
-    let linear = color.to_linear();
-    0.2126 * linear.x + 0.7152 * linear.y + 0.0722 * linear.z
-}
-
-/// The WCAG contrast ratio between two colours, `1.0..=21.0` (identical
-/// colours give `1.0`; black against white gives `21.0`).
-///
-/// Symmetric in its arguments — the ratio is defined lighter-over-darker, so
-/// the caller does not have to know which is which. WCAG 2.x asks for `4.5` for
-/// body text and `3.0` for large text; a heatmap label is small text on a
-/// saturated field, so `4.5` is the bar worth clearing.
-#[must_use]
-pub fn contrast_ratio(a: Color, b: Color) -> f32 {
-    let (la, lb) = (relative_luminance(a), relative_luminance(b));
-    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-}
-
-/// Whichever of two inks reads better on `background` — the one with the higher
-/// [`contrast_ratio`].
-///
-/// COMPUTED per background, never assumed from a lightness threshold. A ramp's
-/// endpoints are often theme-derived, so "dark ink on the lower half" is only
-/// correct for ramps that happen to span the full lightness range; a ramp whose
-/// dark end is merely mid-luminance wants the dark ink almost everywhere, and a
-/// fixed rule would put unreadable light ink on half its cells. Ties go to
-/// `first`, so a caller can express a preference for equal-contrast inks.
-#[must_use]
-pub fn readable_ink(background: Color, first: Color, second: Color) -> Color {
-    if contrast_ratio(background, first) >= contrast_ratio(background, second) {
-        first
-    } else {
-        second
-    }
-}
+/// WCAG 2.x asks `4.5` for body text and `3.0` for large text; a heatmap label
+/// is small text on a saturated field, so `4.5` is the bar worth clearing.
+pub use pinion_core::contrast::{contrast_ratio, readable_ink, relative_luminance};
 
 #[cfg(test)]
 mod tests {
@@ -517,10 +485,6 @@ mod tests {
     /// A mid stop distinct from both ends, so a three-stop ramp's centre is
     /// identifiable by colour alone (R1438's offset tests compare stops).
     const GREY: Color = Color::rgb(0x80, 0x80, 0x80);
-
-    fn close(a: f32, b: f32, eps: f32) -> bool {
-        (a - b).abs() <= eps
-    }
 
     #[test]
     fn sample_hits_every_stop_exactly() {
@@ -640,19 +604,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn wcag_luminance_and_contrast_match_the_published_anchors() {
-        assert!(close(relative_luminance(BLACK), 0.0, 1e-6));
-        assert!(close(relative_luminance(WHITE), 1.0, 1e-6));
-        // (1.0 + 0.05) / (0.0 + 0.05) = 21, the WCAG maximum.
-        assert!(close(contrast_ratio(BLACK, WHITE), 21.0, 1e-3));
-        assert!(close(contrast_ratio(WHITE, BLACK), 21.0, 1e-3), "symmetric");
-        assert!(
-            close(contrast_ratio(WHITE, WHITE), 1.0, 1e-6),
-            "identical = 1"
-        );
-    }
-
+    /// The WCAG anchors themselves (black/white luminance, the 21.0 maximum,
+    /// symmetry, self-contrast 1.0) moved to `pinion_core::contrast` with the
+    /// functions in R1546. What stays here is the part that is about a RAMP.
     #[test]
     fn readable_ink_picks_the_higher_contrast_and_survives_the_whole_ramp() {
         assert_eq!(readable_ink(WHITE, BLACK, WHITE), BLACK);

@@ -633,7 +633,22 @@ fn paint_text_line(
 /// per-frame flatten here (which would allocate every frame and slow
 /// the common few-run path). A naive advancing cursor is unsound
 /// regardless: the contract fixes *list* order, not `start` order.
+///
+/// R1546 — the resolution rule itself is now
+/// [`pinion_core::scene::effective_style_at`], lifted when this became one of
+/// three copies of the same last-match walk. Everything above is why the
+/// terminal backend does it
+/// per grapheme rather than caching it, which is a property of this caller and
+/// stays here.
 fn effective_text_style(t: &TextNode, byte_off: usize) -> &TextStyle {
+    pinion_core::scene::effective_style_at(&t.style, &t.runs, byte_off)
+}
+
+/// The pre-R1546 body, kept as the oracle the lift is checked against rather
+/// than as a second implementation: `effective_style_at` must answer what this
+/// answered for every offset a text node can be asked about.
+#[cfg(test)]
+fn effective_text_style_pre_lift(t: &TextNode, byte_off: usize) -> &TextStyle {
     let b = u32::try_from(byte_off).unwrap_or(u32::MAX);
     t.runs
         .iter()
@@ -681,6 +696,20 @@ fn apply_text_style(cell: &mut ratatui::buffer::Cell, style: &TextStyle) {
     // semi-transparent black consistent.
     if fg.a > 0 && (fg.r, fg.g, fg.b) != (0, 0, 0) {
         cell.set_fg(color_to_tui(fg));
+    }
+    // R1546 §2#6 — the declared run background. No default-inherits rule
+    // mirrors the foreground's, and the asymmetry is the point: an ABSENT
+    // background is `None` and sets nothing, so the cell keeps the terminal's
+    // theme. A background reaching here was asked for by name, and the black
+    // that `fg_color` has to treat as "unset" is, for a background, an ordinary
+    // colour somebody may well want.
+    //
+    // This is the capability the terminal cell has had all along — `TermCell`
+    // carries `fg` AND `bg`, and the §5.41 grid arm has written both since
+    // R994 — while a `Scene::Text` run could only speak the foreground. One
+    // declaration now reaches both backends.
+    if let Some(bg) = style.bg_color {
+        cell.set_bg(color_to_tui(bg));
     }
     let mut modifier = Modifier::empty();
     // CSS weight → the terminal's two intensity steps: SGR 1 bold at
@@ -935,6 +964,71 @@ mod tests {
         node.content = content.to_owned();
         node.rect = Rect::new(x, y, cols * CELL.cell_w(), CELL.cell_h());
         node
+    }
+
+    /// R1546 §5.36 — the lifted resolution answers what the pre-lift body
+    /// answered, at every offset a text node can be asked about.
+    ///
+    /// The oracle is the removed code itself, kept in the file, so this is a
+    /// comparison rather than a restatement: a lift that changed first-match to
+    /// last-match, or moved a boundary by one byte, disagrees here. The
+    /// overlapping and adjacent runs below are the cases where the two rules
+    /// differ; a non-overlapping list would let a first-match lift pass.
+    #[test]
+    fn r1546_the_lifted_style_resolution_answers_what_the_pre_lift_body_did() {
+        let mut node = text_at(0, 0, "Row label");
+        let base = TextStyle::new();
+        let mut a = base.clone();
+        a.fg_color = pinion_core::style::Color::rgb(0xAA, 0, 0);
+        let mut b = base.clone();
+        b.fg_color = pinion_core::style::Color::rgb(0, 0, 0xBB);
+        let mut c = base.clone();
+        c.fg_color = pinion_core::style::Color::rgb(0, 0xCC, 0);
+        node.runs = vec![
+            pinion_core::scene::StyleRun::new(0, 6, a),
+            // Overlaps the first — the case that separates last-match from
+            // first-match.
+            pinion_core::scene::StyleRun::new(4, 7, b),
+            // Abuts the second — the case that separates an inclusive `end`
+            // from an exclusive one.
+            pinion_core::scene::StyleRun::new(7, 9, c),
+        ];
+        for off in 0..=node.content.len() + 2 {
+            assert_eq!(
+                effective_text_style(&node, off),
+                effective_text_style_pre_lift(&node, off),
+                "offset {off}",
+            );
+        }
+    }
+
+    /// R1546 §2#6 — a run's declared background reaches the terminal cell.
+    ///
+    /// The capability gap this closes: `TermCell` has carried `fg` AND `bg`
+    /// since the §5.41 grid arm existed, while a `Scene::Text` run could speak
+    /// only the foreground — so one document was paintable with a highlight in
+    /// a terminal grid and not as text.
+    #[test]
+    fn r1546_a_run_background_reaches_the_terminal_cell() {
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 10));
+        let mut node = text_at(0, 0, "Row label");
+        let mut hl = TextStyle::new();
+        hl.bg_color = Some(pinion_core::style::Color::rgb(0xFF, 0xF1, 0x76));
+        node.runs = vec![pinion_core::scene::StyleRun::new(0, 3, hl)];
+        to_buffer(&Scene::Text(node), &mut buf);
+
+        let painted = ratatui::style::Color::Rgb(0xFF, 0xF1, 0x76);
+        assert_eq!(buf[(0, 0)].symbol(), "R");
+        assert_eq!(buf[(0, 0)].bg, painted, "the declared byte is highlighted");
+        assert_eq!(buf[(2, 0)].bg, painted);
+        // Outside the run the cell keeps the terminal's own background —
+        // `None` sets nothing rather than painting a default.
+        assert_eq!(buf[(3, 0)].symbol(), " ");
+        assert_eq!(
+            buf[(4, 0)].bg,
+            ratatui::style::Color::Reset,
+            "an undeclared byte inherits the terminal theme",
+        );
     }
 
     #[test]

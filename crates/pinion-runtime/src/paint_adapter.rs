@@ -3614,8 +3614,9 @@ fn paint_text(
     // glyph-run loop below reads `run.style().brush` per parley run.
     // R1531 §5.36 — the draw list, not the layout: the walk over parley's runs
     // is a pure function of the shaped layout, and this leaf's is derived once
-    // and replayed on every frame that re-encodes it.
-    let runs = cache.positioned_runs(&t.content, &t.style, &t.runs, max_width);
+    // and replayed on every frame that re-encodes it. R1546 moved the binding
+    // below the clip so the background bands (a second derivation from the same
+    // entry) can take their own borrow of the cache first.
     // R51.188 §5.45 R55.E.1 — compose the inherited transform (e.g.
     // a parent `Scene::Scroll`'s shifted child transform) with the
     // text's own `(t.rect.x, t.rect.y)` translation. Pre-R51.188
@@ -3644,6 +3645,30 @@ fn paint_text(
             f64::from(t.rect.y.saturating_add(t.rect.h)),
         );
         out.push_clip_layer(Fill::NonZero, parent_transform, &clip_rect);
+    }
+    // R1546 §5.36 — the declared backgrounds, filled BEFORE the glyphs so the
+    // text reads on top of them (Qt `QTextCharFormat::setBackground`, whose
+    // rect its own `QTextLayout::draw` fills first for the same reason). One
+    // borrow of the cache at a time: the bands are copied out because
+    // `positioned_runs` below needs `&mut cache` again, and a band is 28 bytes
+    // against a re-derivation the entry has already paid for.
+    let bands: Vec<pinion_text::TextBackground> = cache
+        .backgrounds(&t.content, &t.style, &t.runs, max_width)
+        .to_vec();
+    let runs = cache.positioned_runs(&t.content, &t.style, &t.runs, max_width);
+    for band in &bands {
+        out.fill(
+            Fill::NonZero,
+            transform,
+            to_peniko(band.color),
+            None,
+            &KurboRect::new(
+                f64::from(band.x),
+                f64::from(band.y),
+                f64::from(band.x) + f64::from(band.width),
+                f64::from(band.y) + f64::from(band.height),
+            ),
+        );
     }
     for run in runs {
         draw_positioned_run(out, run, transform, to_peniko(run.brush));

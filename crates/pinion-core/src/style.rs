@@ -2298,6 +2298,40 @@ pub struct TextStyle {
     pub font_family: Option<FontFamily>,
     pub font_size_px: u32,
     pub fg_color: Color,
+    /// R1546 §5.36 — the colour painted BEHIND this run's glyphs, or `None`
+    /// for no background at all (Qt `QTextCharFormat::setBackground`, CSS
+    /// `background-color` on an inline span, Flutter `TextStyle.background`).
+    ///
+    /// `None` is the unset brush, not a transparent one: an absent background
+    /// emits no band, so a consumer reading the paint scene sees nothing where
+    /// `Some(transparent)` would have put a zero-alpha band it must then
+    /// interpret. Keeping the two distinct is what lets "does this run declare
+    /// a background" be a type question rather than an alpha comparison.
+    ///
+    /// **Run-level.** Like `fg_color`, this takes effect per
+    /// [`StyleRun`](crate::scene::StyleRun) range, so a syntax highlighter, a
+    /// diff view or a search-hit mark declares it the same way it declares a
+    /// colour. Where runs overlap, the later run wins — parley's own
+    /// last-push-wins rule, which the background derivation mirrors so a run's
+    /// ink and its band cannot disagree about which run owns a byte.
+    ///
+    /// **The band's geometry is not this field's business.** The rect painted
+    /// for a range comes from the shaped layout (`pinion-text`'s
+    /// `TextBackground`, derived through the same `selection_rects` the
+    /// selection band uses), so a highlight and a selection over the same bytes
+    /// register by construction rather than by two derivations agreeing.
+    ///
+    /// **Not the view-level bands.** A `TextField`'s selection / find-match /
+    /// current-line / IME-preedit tints stay separate absolute-positioned
+    /// boxes, and that is a property of this type rather than an oversight: a
+    /// `StyleRun` carries a FULLY RESOLVED `TextStyle`, so layering a selection
+    /// run over a syntax run would clobber the syntax run's `fg_color`. Qt
+    /// splits the same way and for the same reason — `QTextCharFormat` for the
+    /// document, `QTextEdit::ExtraSelection` for the view — and merges its
+    /// format ranges onto the base format, which this type deliberately does
+    /// not do (the resolved-value shape is what keeps the layout cache key a
+    /// value comparison).
+    pub bg_color: Option<Color>,
     /// CSS `font-weight` (R47.5). Default = [`FontWeight::NORMAL`] (400).
     pub font_weight: FontWeight,
     /// CSS `font-style` (R47.5). Default = [`FontStyle::Normal`].
@@ -2325,6 +2359,7 @@ impl TextStyle {
             font_family: None,
             font_size_px: 16,
             fg_color: Color::rgb(0, 0, 0),
+            bg_color: None,
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: LineHeight::Normal,
@@ -2428,6 +2463,23 @@ impl TextStyle {
     #[must_use]
     pub const fn with_align(mut self, align: TextAlign) -> Self {
         self.text_align = align;
+        self
+    }
+
+    /// Builder: paint `color` behind this run's glyphs (R1546, Qt
+    /// `QTextCharFormat::setBackground`). See [`TextStyle::bg_color`].
+    #[must_use]
+    pub const fn with_bg_color(mut self, color: Color) -> Self {
+        self.bg_color = Some(color);
+        self
+    }
+
+    /// Builder: this run declares no background (R1546) — the constructed
+    /// default, and the way to clear one inherited from a base style a run was
+    /// built from.
+    #[must_use]
+    pub const fn without_bg_color(mut self) -> Self {
+        self.bg_color = None;
         self
     }
 

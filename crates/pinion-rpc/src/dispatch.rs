@@ -502,6 +502,20 @@ pub struct DispatchContext<'a> {
     /// can tell "nothing shapes here" from "nothing has shaped yet".
     pub text_cache_stats: Option<pinion_core::text_cache_stats::TextCacheStats>,
 
+    /// R1546 §5.36 §5.12 — the painted background bands of the addressed
+    /// window, collected by the embedder before dispatch. Consumed by
+    /// `scene/text_backgrounds`.
+    ///
+    /// Resolved by the embedder for the same reason
+    /// [`Self::text_cache_stats`] is: the answer needs the shape cache AND the
+    /// painted scene, and only the shell holds both. Gated on the method there,
+    /// so every other dispatch pays nothing.
+    ///
+    /// `None` surfaces `TextBackgroundsUnavailable` rather than an empty list —
+    /// a host that never shapes is a different fact from a frame that
+    /// highlights nothing.
+    pub text_backgrounds: Option<Vec<crate::text_backgrounds::TextBackgroundBand>>,
+
     /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
     /// Resolved by the embedder before dispatch (the
     /// [`Self::fragment_cache_stats`] pattern:
@@ -1382,6 +1396,7 @@ impl<'a> DispatchContext<'a> {
             window_id: None,
             fragment_cache_stats: None,
             text_cache_stats: None,
+            text_backgrounds: None,
             frame_timings: None,
             render_fidelity: None,
             screenshot: None,
@@ -1581,6 +1596,19 @@ impl<'a> DispatchContext<'a> {
         stats: pinion_core::text_cache_stats::TextCacheStats,
     ) -> Self {
         self.text_cache_stats = Some(stats);
+        self
+    }
+
+    /// R1546 §5.36 §5.12 — builder: attach the painted background bands the
+    /// embedder collected with `text_backgrounds::collect_bands`.
+    /// `scene/text_backgrounds` reads the slot; every other arm ignores it.
+    /// `None` (the default) surfaces `TextBackgroundsUnavailable`.
+    #[must_use]
+    pub fn with_text_backgrounds(
+        mut self,
+        bands: Vec<crate::text_backgrounds::TextBackgroundBand>,
+    ) -> Self {
+        self.text_backgrounds = Some(bands);
         self
     }
 
@@ -1824,6 +1852,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // `scene/text_cache_stats`. Per-shell rather than per-window; `Copy`, so
     // consulting it borrows nothing.
     let text_cache_stats = ctx.text_cache_stats;
+    // R1546 §5.36 — the painted background bands the embedder collected. Taken
+    // out for the dispatch lifetime (owned, non-`Copy`); only
+    // `scene/text_backgrounds` reads it.
+    let text_backgrounds = ctx.text_backgrounds.take();
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
@@ -2293,6 +2325,14 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 ),
                 "scene/text_cache_stats" => (
                     handle_scene_text_cache_stats(text_cache_stats),
+                    HandlerKind::Read,
+                ),
+                // R1546 §5.36 — where each declared text background was
+                // actually painted, and whether the text on it reads.
+                "scene/text_backgrounds" => (
+                    crate::text_backgrounds::handle_scene_text_backgrounds(
+                        text_backgrounds.as_deref(),
+                    ),
                     HandlerKind::Read,
                 ),
                 "scene/frame_timings" => (
@@ -5346,6 +5386,14 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
         Value::Number(style.font_size_px.into()),
     );
     obj.insert("fg_color".to_string(), color_to_json(style.fg_color));
+    // R1546 §5.36 — the DECLARED background (Qt `QTextCharFormat::background`).
+    // `null` is the unset brush, which is a different fact from a transparent
+    // one; where the band was PAINTED is `scene/text_backgrounds`, because that
+    // needs the shaped layout and this is scene data.
+    obj.insert(
+        "bg_color".to_string(),
+        style.bg_color.map_or(Value::Null, color_to_json),
+    );
     obj.insert(
         "font_weight".to_string(),
         Value::Number(style.font_weight.0.into()),

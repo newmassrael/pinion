@@ -16,6 +16,11 @@ pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
 pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
 # R908 §5.53 — Scene -> PDF renderer for the `scene/export_pdf` method.
 pinion-pdf = { path = "../pinion-pdf", version = "0.0.1" }
+# R1546 §5.36 §5.12 — `scene/text_backgrounds` answers where a run's declared
+# background was PAINTED, which only the shaped layout knows. Direct rather
+# than through `pinion-runtime`'s `LayoutCache` re-export: the module names
+# `TextBackground` too, and a dep that is used should be declared.
+pinion-text = { path = "../pinion-text", version = "0.0.1" }
 pinion-text-font = { path = "../pinion-text-font", version = "0.0.1" }
 pinion-text-unicode = { path = "../pinion-text-unicode", version = "0.0.1" }
 serde = { workspace = true }

@@ -55,6 +55,7 @@
 //!   "result": {
 //!     "shapes": 1200,
 //!     "run_builds": 1200,
+//!     "background_builds": 40,
 //!     "entries": 1200,
 //!     "capacity": 2048,
 //!     "max_capacity": 8192,
@@ -112,6 +113,10 @@ pub struct TextCacheStatsOutcome {
     /// keystroke, a scroll — the §5.16 fragment cache missing while the shape
     /// cache hits) leaves `shapes` still by construction.
     pub run_builds: u64,
+    /// R1546 — cumulative derivations of a shaped layout's background bands.
+    /// The `run_builds` sibling; the two are separately lazy, so one number
+    /// could not say which derivation a caller is watching.
+    pub background_builds: u64,
     /// Cached layouts held right now.
     pub entries: u64,
     /// Current capacity in entries.
@@ -143,6 +148,7 @@ pub fn text_cache_stats(
     Ok(TextCacheStatsOutcome {
         shapes: stats.shapes,
         run_builds: stats.run_builds,
+        background_builds: stats.background_builds,
         entries: stats.entries,
         capacity: stats.capacity,
         max_capacity: stats.max_capacity,
@@ -167,6 +173,7 @@ mod tests {
         let stats = TextCacheStats {
             shapes: 1200,
             run_builds: 900,
+            background_builds: 40,
             entries: 1200,
             capacity: 2048,
             max_capacity: 8192,
@@ -179,6 +186,11 @@ mod tests {
             out.run_builds, 900,
             "the two counters are independent — 300 of those layouts were \
              shaped to be measured and never painted",
+        );
+        assert_eq!(
+            out.background_builds, 40,
+            "R1546 — a third independent counter: only the 40 layouts that \
+             declared a background derived bands",
         );
         assert_eq!(out.entries, 1200);
         assert_eq!(out.capacity, 2048);
@@ -201,6 +213,7 @@ mod tests {
         let stats = TextCacheStats {
             shapes: 9000,
             run_builds: 9000,
+            background_builds: 0,
             entries: 8192,
             capacity: 8192,
             max_capacity: 8192,

@@ -45,7 +45,7 @@
 //! measurement above already includes.
 
 use parley::FontData;
-use pinion_core::scene::StyleRun;
+use pinion_core::scene::{StyleRun, effective_style_at};
 use pinion_core::style::{Color, TextStyle, UnderlineStyle};
 
 /// One glyph, positioned in its layout's own coordinate frame.
@@ -208,13 +208,133 @@ pub fn positioned_runs(
 
 /// The underline form in effect at `offset` (R1540).
 ///
-/// Mirrors parley's overlap rule for the same spans: the styles were pushed in
-/// list order and parley resolves overlaps last-push-wins, so the LAST run
-/// covering the offset is the one that applies. A byte no run covers takes the
-/// base style.
+/// R1546 — the "last run covering the offset, else the base" walk is
+/// [`effective_style_at`], lifted to `pinion-core` when this became its third
+/// copy. See there for why the rule is last-match.
 fn underline_style_at(base: &TextStyle, runs: &[StyleRun], offset: usize) -> UnderlineStyle {
-    runs.iter()
-        .filter(|r| (r.start as usize..r.end as usize).contains(&offset))
-        .next_back()
-        .map_or(base.decoration.underline, |r| r.style.decoration.underline)
+    effective_style_at(base, runs, offset).decoration.underline
+}
+
+/// R1546 §5.36 — one painted background band: a rectangle behind a stretch of
+/// glyphs, in the layout's own coordinate frame.
+///
+/// A band is per **visual line**, so a range that soft-wraps produces one band
+/// per row — the shape a highlighter pen leaves, with a ragged right edge that
+/// stops at the text rather than at the box.
+///
+/// `start` / `end` are the UTF-8 byte range the band was derived for, carried
+/// so a consumer can ask which bytes a painted band belongs to. Every band cut
+/// from the same range repeats that range; the geometry is what differs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextBackground {
+    /// UTF-8 byte offset of the first byte in the band's range (inclusive).
+    pub start: u32,
+    /// UTF-8 byte offset one past the last byte in the band's range.
+    pub end: u32,
+    /// Layout-relative x of the band's left edge.
+    pub x: f32,
+    /// Layout-relative y of the band's top edge.
+    pub y: f32,
+    /// Band width.
+    pub width: f32,
+    /// Band height — the visual line's box, so consecutive lines tile with no
+    /// seam and a band registers with a selection band over the same bytes.
+    pub height: f32,
+    /// The declared background colour ([`TextStyle::bg_color`]).
+    pub color: Color,
+}
+
+/// R1546 §5.36 — derive the background bands for a shaped layout.
+///
+/// # Why the bands are cut by byte, not by parley run
+///
+/// parley has no notion of a background (its `StyleProperty` carries a
+/// foreground `Brush` and decorations, and nothing else), so — exactly as with
+/// R1540's underline FORM — the value is resolved here from the same `base` +
+/// `style_runs` the layout was shaped from.
+///
+/// But unlike the underline form, a background must NOT be resolved per parley
+/// run. A parley run is a maximal span of uniform *shaping* — it splits on font
+/// fallback and on bidi level, neither of which a background cares about — so
+/// one declared highlight can arrive as three runs, and three abutting rects at
+/// f32 boundaries is three chances of a hairline seam through a solid band.
+/// The bands are therefore cut where the *declaration* changes: the byte space
+/// is segmented at every run boundary, each segment takes its effective
+/// [`TextStyle::bg_color`] ([`effective_style_at`], the shaper's own
+/// last-push-wins rule), adjacent segments agreeing on colour are merged, and
+/// each surviving segment is measured.
+///
+/// # The geometry is the selection band's
+///
+/// Measuring is [`crate::selection_rects_for_range`] — parley's own per-line
+/// range geometry, and the function the `TextField`'s selection, find-match and
+/// preedit bands already call. So a highlight and a selection over the same
+/// bytes cannot disagree: they are not two derivations that happen to match,
+/// they are one function called twice.
+///
+/// # A run with no background punches a hole
+///
+/// [`StyleRun`] carries a FULLY RESOLVED style, so a run whose `bg_color` is
+/// `None` states that its bytes have no background — even where the base style
+/// declares one. That falls out of segmenting by effective value rather than
+/// being a rule applied on top, which is the point: there is no ordering
+/// question to get wrong, because a byte has exactly one background.
+#[must_use]
+pub fn backgrounds(
+    layout: &crate::Layout,
+    base: &TextStyle,
+    style_runs: &[StyleRun],
+    content_len: usize,
+) -> Vec<TextBackground> {
+    if content_len == 0 {
+        return Vec::new();
+    }
+    // Segment the byte space at every declaration boundary. A run reaching past
+    // the content (the shaper ignores out-of-range pushes) contributes no
+    // boundary the content can see.
+    let mut cuts: Vec<usize> = Vec::with_capacity(style_runs.len() * 2 + 2);
+    cuts.push(0);
+    cuts.push(content_len);
+    for run in style_runs {
+        cuts.push((run.start as usize).min(content_len));
+        cuts.push((run.end as usize).min(content_len));
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    // Merge adjacent segments that resolve to the same background, so one
+    // declared highlight split by an unrelated run boundary (a bold word inside
+    // it, say) is still one band.
+    let mut spans: Vec<(usize, usize, Option<Color>)> = Vec::new();
+    for pair in cuts.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let bg = effective_style_at(base, style_runs, a).bg_color;
+        match spans.last_mut() {
+            Some(last) if last.2 == bg => last.1 = b,
+            _ => spans.push((a, b, bg)),
+        }
+    }
+
+    let mut out = Vec::new();
+    for (a, b, bg) in spans {
+        let Some(color) = bg else { continue };
+        for rect in crate::selection_rects_for_range(layout, a, b) {
+            // A zero-width band is a range that measured to nothing (an empty
+            // line's own range, say); it would paint no pixels and publishing
+            // it would put a rect a consumer cannot locate into the answer.
+            if rect.width <= 0.0 {
+                continue;
+            }
+            out.push(TextBackground {
+                start: u32::try_from(a).unwrap_or(u32::MAX),
+                end: u32::try_from(b).unwrap_or(u32::MAX),
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+                color,
+            });
+        }
+    }
+    out
 }

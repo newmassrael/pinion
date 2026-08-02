@@ -224,6 +224,15 @@ pub fn self_hosted_text_eligible(
         && matches!(style.font_style, FontStyle::Normal)
         && !style.decoration.underline.is_on()
         && !style.decoration.strikethrough
+        // R1546 §5.36 — a declared background DECLINES to this arm rather than
+        // being dropped by it. The arm paints glyphs from its own atlas and
+        // knows nothing of the band derivation, so serving such a leaf would
+        // render it without the background the scene declares — a silent
+        // divergence between what the scene says and what is on screen, which
+        // is the one failure this eligibility SSOT exists to make impossible.
+        // Declining is always safe: the leaf renders through parley, where
+        // every leaf rendered before this arm existed.
+        && style.bg_color.is_none()
 }
 
 /// R1070.1 §5.37 — the vertical metrics of one `Normal` line box for `font` at
@@ -856,6 +865,58 @@ mod tests {
             engine
                 .measure_text("ab", &underlined, &[], None, false)
                 .is_none()
+        );
+    }
+
+    /// R1546 §5.36 §5.37 — a leaf that declares a BACKGROUND is not this arm's
+    /// to paint.
+    ///
+    /// The arm rasterises glyphs from its own atlas and knows nothing of the
+    /// band derivation, so serving such a leaf would render it without the
+    /// background the scene declares — the scene saying one thing and the
+    /// screen showing another, which is the single failure this eligibility
+    /// SSOT exists to make impossible. Declining is always safe: the leaf
+    /// renders through parley, where every leaf rendered before the arm
+    /// existed.
+    ///
+    /// Asserted on both arms, because eligibility is their shared SSOT.
+    #[test]
+    fn r1546_a_leaf_declaring_a_background_is_not_this_arms_to_paint() {
+        use crate::layout::TextMeasure;
+        let engine = noto_engine();
+        let base = TextStyle::new().with_size_px(20);
+
+        // The baseline, so the assertions below single out the background
+        // rather than some unrelated ineligibility.
+        assert!(
+            self_hosted_text_eligible("Modified", &base, &[], false),
+            "a plain leaf must be eligible, or this test proves nothing",
+        );
+
+        let highlighted = base
+            .clone()
+            .with_bg_color(pinion_core::style::Color::rgb(0xFF, 0xF1, 0x76));
+        assert!(
+            !self_hosted_text_eligible("Modified", &highlighted, &[], false),
+            "a declared background must not be eligible: this arm would paint \
+             the glyphs and drop the band",
+        );
+        assert!(
+            !engine.serves("Modified", &highlighted, &[], false),
+            "nor served by the paint arm",
+        );
+        assert!(
+            engine
+                .measure_text("Modified", &highlighted, &[], None, false)
+                .is_none(),
+            "and the measure arm defers too — paint and measure must not split",
+        );
+
+        // A background cleared back to `None` is eligible again, so the
+        // predicate keys on the declaration and not on having been touched.
+        assert!(
+            self_hosted_text_eligible("Modified", &highlighted.without_bg_color(), &[], false),
+            "clearing it restores eligibility",
         );
     }
 

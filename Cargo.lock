@@ -3538,6 +3538,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-richtext-background"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "pinion-text",
+ "pinion-tui",
+ "ratatui",
+ "vello",
+]
+
+[[package]]
 name = "hello-rotate-gesture"
 version = "0.0.1"
 dependencies = [
@@ -5908,6 +5924,7 @@ dependencies = [
  "pinion-core",
  "pinion-pdf",
  "pinion-runtime",
+ "pinion-text",
  "pinion-text-font",
  "pinion-text-unicode",
  "serde",

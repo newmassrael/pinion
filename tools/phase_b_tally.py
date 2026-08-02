@@ -843,6 +843,14 @@ NOT_EVIDENCE = {
         "answers against the published census (§7 API round); it asserts on "
         "no counter's value, so it is not a cost measurement"
     ),
+    "r1546_run_background.py": (
+        "asserts text_cache_stats.background_builds holds still across repeated "
+        "reads — a CORRECTNESS invariant (a derivation that is a pure function "
+        "of the layout runs once), not a cost that was reduced. The probe reads "
+        "a counter assertion as an optimisation's residue, which is right for "
+        "the rounds it was built for and wrong here: R1546 advanced rich-text "
+        "and made nothing faster"
+    ),
 }
 
 

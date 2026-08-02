@@ -5753,6 +5753,26 @@ impl<V: WidgetView> ShellCore<V> {
             let revision = self.revision.as_ref();
             let focus_ptr = &mut self.focus;
             let text_cache_ptr = &mut self.text_cache;
+            // R1546 §5.36 §5.12 — the painted background bands, collected HERE
+            // because this is the one place holding both halves of the answer:
+            // `last_paint_scene_ref` (what was painted) and `text_cache_ptr`
+            // (what it was shaped through), as disjoint borrows. Every band is
+            // a cache hit on an entry this frame's paint already derived, so
+            // the wire cannot disagree with the pixels.
+            //
+            // Gated on the method — the `declared_windows` pattern — so every
+            // other dispatch pays one string comparison and no walk. Taken
+            // before `produce` captures `text_cache_ptr`.
+            //
+            // A shell that has not painted installs an EMPTY list, not
+            // `None`: "nothing is highlighted yet" is a true answer, while
+            // `None` means "this host cannot shape at all" and is for an
+            // embedder that holds no cache.
+            let text_backgrounds = (request.method == "scene/text_backgrounds").then(|| {
+                last_paint_scene_ref.map_or_else(Vec::new, |paint| {
+                    pinion_rpc::text_backgrounds::collect_bands(paint, text_cache_ptr)
+                })
+            });
             let produce_work_ptr = &mut self.produce_work;
             // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,
             // so a `scene/snapshot from: paint` (and the post-dispatch
@@ -5877,6 +5897,11 @@ impl<V: WidgetView> ShellCore<V> {
             // never-painted `None` surfaces `NoLastPaintLayout`).
             if let Some(paint) = last_paint_scene_ref {
                 ctx = ctx.with_last_paint_scene(paint);
+            }
+            // R1546 §5.36 §5.12 — the bands collected above, for
+            // `scene/text_backgrounds` only.
+            if let Some(bands) = text_backgrounds {
+                ctx = ctx.with_text_backgrounds(bands);
             }
             // R670.B §5.16 — surface the resolved window id so future
             // RPC consumers can read it through `DispatchContext`.

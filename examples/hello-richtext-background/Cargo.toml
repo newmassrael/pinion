@@ -1,0 +1,46 @@
+[package]
+name = "hello-richtext-background"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1546 §5.36 run-background consumer — a search-hit highlight declared as TextStyle::bg_color (Qt QTextCharFormat::setBackground), painted from the shaped layout in both the Vello and the terminal backend, with the painted extent and its WCAG contrast published by scene/text_backgrounds"
+publish = false
+
+[[bin]]
+name = "hello-richtext-background"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle reused as the highlight-palette bit (readable ↔ unreadable), so
+# the published contrast has something to move.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R1546 §2#6 — the SAME view scene is painted through the terminal backend in
+# this crate's own tests, so "one declaration, two backends" is asserted by the
+# consumer rather than only by each backend's unit tests.
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
+# R1546 §5.36 — the shaped-layout band derivation the wire publishes, so the
+# example checks the geometry it draws.
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+ratatui = { workspace = true }
+
+[build-dependencies]
+# R1546 §5.16: build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -82,6 +82,15 @@ pub struct TextCacheStats {
     /// this one climbing alone means a caller is asking for draw lists it
     /// discards.
     pub run_builds: u64,
+    /// R1546 — cumulative derivations of a shaped layout's **background
+    /// bands**: the rectangles filled behind declared run backgrounds.
+    ///
+    /// The [`Self::run_builds`] sibling and read the same way. Separate rather
+    /// than folded in, because the two are separately lazy: a frame that paints
+    /// highlighted text derives both, one that paints plain text derives only
+    /// the draw list, and `scene/text_backgrounds` derives only these. A single
+    /// counter could not tell a caller which of those they are looking at.
+    pub background_builds: u64,
     /// Cached layouts held right now.
     pub entries: u64,
     /// Current capacity in entries. Rises toward [`Self::max_capacity`] as the

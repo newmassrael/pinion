@@ -22,7 +22,7 @@
 //! earned" section: a fixed LRU bound smaller than a cyclic working set
 //! has a 0% hit rate, which is the one failure mode this cache can have.
 
-use crate::glyph_run::{self, PositionedRun};
+use crate::glyph_run::{self, PositionedRun, TextBackground};
 use crate::layout::Layout;
 use lru::LruCache;
 use parley::fontique::Blob;
@@ -120,9 +120,15 @@ struct LayoutKey {
 /// [`crate::caret_rect_for_byte_offset`], `pinion_tui`'s cell-grid measure arm)
 /// and never paint what they shaped. Deriving eagerly on every miss would bill
 /// them for a list nobody replays.
+/// R1546 — `backgrounds` is lazy for the same reason and separately from
+/// `runs`: a text that declares no background derives an empty list once and a
+/// painter that never asks derives nothing. Two `Option`s rather than one
+/// bundled draw list because the two have different callers — the §7 wire asks
+/// for bands without painting, and every measure-only caller asks for neither.
 struct CachedLayout {
     layout: Layout,
     runs: Option<Vec<PositionedRun>>,
+    backgrounds: Option<Vec<TextBackground>>,
 }
 
 /// LRU-bounded cache over [`Layout`] values keyed by
@@ -288,6 +294,11 @@ pub struct LayoutCache {
     /// rebuilt and looked the same" — both paint identical pixels, and one of
     /// them costs 2.9x (see [`crate::glyph_run`]).
     run_builds: u64,
+    /// R1546 §5.36 — how many times a shaped layout's background bands have
+    /// been derived. Reported by [`Self::background_builds`]. The `run_builds`
+    /// sibling, for the same reason: replay is indistinguishable from rebuild
+    /// by looking at the pixels.
+    background_builds: u64,
     /// R1448 — set when `font_cx` is built; `NotProbed` until then.
     font_status: SystemFontStatus,
     /// R1448 — families made selectable by [`Self::register_font_data`], in
@@ -328,6 +339,34 @@ fn ensure_runs<'a>(
         ));
     }
     entry.runs.as_deref().expect("derived above if absent")
+}
+
+/// R1546 §5.36 — derive `key`'s background bands if it has none, counting the
+/// derivation, and return them.
+///
+/// Same shape as [`ensure_runs`] and for the same borrow reason. `key` must
+/// already be present ([`LayoutCache::ensure_entry`] is the precondition).
+fn ensure_backgrounds<'a>(
+    inner: &'a mut LruCache<LayoutKey, CachedLayout>,
+    background_builds: &mut u64,
+    key: &LayoutKey,
+) -> &'a [TextBackground] {
+    let entry = inner
+        .get_mut(key)
+        .expect("entry just inserted on cache miss");
+    if entry.backgrounds.is_none() {
+        *background_builds += 1;
+        entry.backgrounds = Some(glyph_run::backgrounds(
+            &entry.layout,
+            &key.style,
+            &key.runs,
+            key.text.len(),
+        ));
+    }
+    entry
+        .backgrounds
+        .as_deref()
+        .expect("derived above if absent")
 }
 
 /// R1448 §5.36 — build `slot`'s [`FontContext`] if absent, recording the probe
@@ -407,6 +446,7 @@ impl LayoutCache {
             font_scans: 0,
             shapes: 0,
             run_builds: 0,
+            background_builds: 0,
             font_status: SystemFontStatus::NotProbed,
             app_families: Vec::new(),
             default_family: None,
@@ -504,6 +544,37 @@ impl LayoutCache {
         ensure_runs(&mut self.inner, &mut self.run_builds, &key)
     }
 
+    /// R1546 §5.36 — the **background bands** for `text`: the rectangles a
+    /// painter fills behind the glyphs, one per visual line per declared
+    /// background. Empty when nothing declares one, which is every text node
+    /// that predates R1546.
+    ///
+    /// Same key, same entry and same eviction as [`Self::positioned_runs`] —
+    /// a third derivation from the one shaped layout, cached beside the other
+    /// two. Derived on the first call for an entry and reused after, which is
+    /// what [`Self::background_builds`] reports.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice — same `LruCache` invariant as
+    /// [`Self::layout`].
+    pub fn backgrounds(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> &[TextBackground] {
+        let key = LayoutKey {
+            text: text.to_owned(),
+            style: style.clone(),
+            runs: runs.to_vec(),
+            max_width,
+        };
+        self.ensure_entry(&key, text, style, runs, max_width);
+        ensure_backgrounds(&mut self.inner, &mut self.background_builds, &key)
+    }
+
     /// R1531 §5.36 — put `key`'s entry in the cache, shaping on a miss.
     ///
     /// The miss path shared by [`Self::layout_with_runs`] and
@@ -536,7 +607,11 @@ impl LayoutCache {
             let layout = self.shape(text, style, runs, max_width);
             // `push` reports what left. Reached only on a miss, so a returned
             // pair is always an eviction rather than a same-key replacement.
-            let entry = CachedLayout { layout, runs: None };
+            let entry = CachedLayout {
+                layout,
+                runs: None,
+                backgrounds: None,
+            };
             if let Some((evicted, _)) = self.inner.push(key.clone(), entry) {
                 self.ghosts.put(ghost_hash(&evicted), ());
             }
@@ -673,6 +748,18 @@ impl LayoutCache {
         self.run_builds
     }
 
+    /// R1546 §5.36 — how many times background bands have been derived by
+    /// [`Self::backgrounds`].
+    ///
+    /// The [`Self::run_builds`] sibling, and it states the same property: the
+    /// bands are a pure function of a layout that did not change, so a scene
+    /// painting the same highlighted text on 60 frames must move this by the
+    /// number of distinct layouts, not by 60 times that.
+    #[must_use]
+    pub fn background_builds(&self) -> u64 {
+        self.background_builds
+    }
+
     /// R1521 §5.36 — the cache's current capacity in entries.
     ///
     /// Starts at what the constructor was given and rises toward
@@ -707,6 +794,7 @@ impl LayoutCache {
         TextCacheStats {
             shapes: self.shapes,
             run_builds: self.run_builds,
+            background_builds: self.background_builds,
             entries: self.inner.len() as u64,
             capacity: self.inner.cap().get() as u64,
             max_capacity: self.max_capacity.get() as u64,
@@ -1226,6 +1314,205 @@ mod tests {
             "ten paints of unchanged text derive one draw list",
         );
         assert_eq!(cache.shapes(), 1, "and shape it once, as they always did");
+    }
+
+    // ---------------------------------------------------------------
+    // R1546 §5.36 — a run's declared background becomes a painted band.
+    // ---------------------------------------------------------------
+
+    const HL: pinion_core::style::Color = pinion_core::style::Color::rgb(0xFF, 0xF1, 0x76);
+    const OTHER: pinion_core::style::Color = pinion_core::style::Color::rgb(0x40, 0xC0, 0x80);
+
+    /// A run over `[start, end)` carrying `bg`, built from the base so it
+    /// inherits every paragraph-level field (the authoring convention
+    /// `StyleRun` documents).
+    fn bg_run(base: &TextStyle, start: u32, end: u32, bg: pinion_core::style::Color) -> StyleRun {
+        StyleRun::new(start, end, base.clone().with_bg_color(bg))
+    }
+
+    /// Nothing declares a background, so nothing derives one — the state every
+    /// text node in the tree was in before R1546, asserted so the feature
+    /// cannot start emitting bands for text that did not ask.
+    #[test]
+    fn r1546_undeclared_text_has_no_bands() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        assert!(cache.backgrounds("Row label", &st, &[], None).is_empty());
+    }
+
+    /// The band is cut where the DECLARATION changes, not where parley's
+    /// shaping runs change.
+    ///
+    /// The discriminating case is a highlighted span with an unrelated style
+    /// boundary inside it: `[0,9)` is highlighted and `[3,6)` is also bold, so
+    /// parley shapes at least two runs across bytes it has one background for.
+    /// A per-parley-run derivation yields two abutting rects (and, at f32
+    /// boundaries, a hairline seam through a solid highlight); the merge yields
+    /// one band whose range is the whole declaration.
+    #[test]
+    fn r1546_one_declaration_is_one_band_across_a_shaping_boundary() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        let mut bold = st.clone().with_bg_color(HL);
+        bold.font_weight = pinion_core::style::FontWeight::BOLD;
+        let runs = vec![bg_run(&st, 0, 9, HL), StyleRun::new(3, 6, bold)];
+
+        let bands = cache.backgrounds("Row label", &st, &runs, None).to_vec();
+        assert_eq!(bands.len(), 1, "one declaration, one band: {bands:?}");
+        assert_eq!((bands[0].start, bands[0].end), (0, 9));
+        assert_eq!(bands[0].color, HL);
+
+        // The shaping boundary is real — the same input really does produce
+        // more than one positioned run — so the merge above is doing work
+        // rather than describing a layout that never split.
+        let drawn = cache.positioned_runs("Row label", &st, &runs, None);
+        assert!(
+            drawn.len() >= 2,
+            "the bold span splits the shaping; got {} run(s)",
+            drawn.len()
+        );
+    }
+
+    /// A `StyleRun` carries a FULLY RESOLVED style, so a run declaring no
+    /// background states that its bytes have none — even inside a base style
+    /// that declares one. The band list is therefore two bands with a gap,
+    /// not one band with something painted over it.
+    #[test]
+    fn r1546_a_run_without_a_background_punches_a_hole_in_the_base() {
+        let mut cache = LayoutCache::new();
+        let base = style(16).with_bg_color(HL);
+        // Built from `base` then cleared — the run inherits everything else.
+        let hole = StyleRun::new(3, 6, base.clone().without_bg_color());
+
+        let bands = cache
+            .backgrounds("Row label", &base, std::slice::from_ref(&hole), None)
+            .to_vec();
+        assert_eq!(bands.len(), 2, "the hole splits the base band: {bands:?}");
+        assert_eq!((bands[0].start, bands[0].end), (0, 3));
+        assert_eq!((bands[1].start, bands[1].end), (6, 9));
+        assert!(
+            bands[0].x + bands[0].width <= bands[1].x,
+            "the two bands do not overlap: {bands:?}"
+        );
+    }
+
+    /// Overlapping declarations resolve the way the shaper resolves everything
+    /// else about the same bytes: last-push-wins.
+    ///
+    /// Asserted as an agreement between two independent observations, not as a
+    /// restatement of the rule — parley picks the winning span's FOREGROUND by
+    /// its own rule, and the band picks the winning span's BACKGROUND by the
+    /// mirror. A first-wins mirror would make the two disagree about bytes
+    /// `[4,6)`.
+    #[test]
+    fn r1546_overlapping_declarations_agree_with_the_shaper_on_the_winner() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        let mut first = st.clone().with_bg_color(HL);
+        first.fg_color = pinion_core::style::Color::rgb(0xAA, 0x00, 0x00);
+        let mut second = st.clone().with_bg_color(OTHER);
+        second.fg_color = pinion_core::style::Color::rgb(0x00, 0x00, 0xBB);
+        let runs = vec![StyleRun::new(0, 6, first), StyleRun::new(4, 9, second)];
+
+        let bands = cache.backgrounds("Row label", &st, &runs, None).to_vec();
+        let over_the_overlap = bands
+            .iter()
+            .find(|b| b.start <= 4 && b.end > 4)
+            .expect("bytes 4..6 carry a background");
+        assert_eq!(
+            over_the_overlap.color, OTHER,
+            "the LAST declaration owns the overlap: {bands:?}"
+        );
+
+        let drawn = cache.positioned_runs("Row label", &st, &runs, None);
+        let ink_at_overlap = drawn
+            .iter()
+            .find(|r| r.glyphs.iter().any(|g| g.x >= over_the_overlap.x))
+            .map(|r| r.brush);
+        assert_eq!(
+            ink_at_overlap,
+            Some(pinion_core::style::Color::rgb(0x00, 0x00, 0xBB)),
+            "parley agrees the second run won those bytes",
+        );
+    }
+
+    /// A declaration that soft-wraps produces one band per visual row — the
+    /// shape a highlighter pen leaves, rather than one rect bounding both rows
+    /// (which would ink the empty gutter past the first row's last glyph).
+    #[test]
+    fn r1546_a_wrapped_declaration_is_one_band_per_visual_row() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        let text = "wrap me across two rows";
+        let runs = vec![bg_run(&st, 0, u32::try_from(text.len()).unwrap(), HL)];
+        let narrow = Some(90);
+
+        let lines = cache.layout_with_runs(text, &st, &runs, narrow).len();
+        assert!(lines > 1, "the width really wraps this text");
+
+        let bands = cache.backgrounds(text, &st, &runs, narrow).to_vec();
+        assert_eq!(
+            bands.len(),
+            lines,
+            "one band per visual row: {lines} row(s), {bands:?}"
+        );
+        // Every band names the whole declared range — the range is what was
+        // declared, the geometry is what differs per row.
+        assert!(
+            bands
+                .iter()
+                .all(|b| (b.start, b.end) == (0, u32::try_from(text.len()).unwrap()))
+        );
+        // Rows are stacked, not co-located.
+        assert!(
+            bands[1].y >= bands[0].y + bands[0].height - 1.0,
+            "{bands:?}"
+        );
+    }
+
+    /// The band registers with the caret's line box over the same bytes.
+    ///
+    /// Two INDEPENDENT observations of one question, which is what makes this
+    /// worth asserting: the band comes from parley's range geometry
+    /// (`selection_rects`) and the caret rect from its cursor geometry. A band
+    /// derived from font metrics instead — the other defensible choice, and the
+    /// one Qt makes — would sit a different number of pixels tall and a
+    /// highlight would no longer line up with the selection drawn over it.
+    #[test]
+    fn r1546_the_band_registers_with_the_caret_line_box() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        let runs = vec![bg_run(&st, 0, 9, HL)];
+        let bands = cache.backgrounds("Row label", &st, &runs, None).to_vec();
+        assert_eq!(bands.len(), 1);
+
+        let layout = cache.layout_with_runs("Row label", &st, &runs, None);
+        let caret = crate::caret_rect_for_byte_offset(layout, 4, 1.0);
+        assert!(
+            (bands[0].y - caret.y).abs() < 0.5 && (bands[0].height - caret.height).abs() < 0.5,
+            "band {:?} vs caret {caret:?}",
+            bands[0],
+        );
+    }
+
+    /// The bands are a pure function of the shaped layout, so painting the same
+    /// highlighted text ten times derives them once. The `run_builds` sibling
+    /// assertion, and it is a count for the same reason: replay and rebuild
+    /// paint identical pixels.
+    #[test]
+    fn r1546_the_bands_are_derived_once_and_replayed() {
+        let mut cache = LayoutCache::new();
+        let st = style(16);
+        let runs = vec![bg_run(&st, 0, 3, HL)];
+        for _ in 0..10 {
+            assert_eq!(cache.backgrounds("Row label", &st, &runs, None).len(), 1);
+        }
+        assert_eq!(cache.background_builds(), 1);
+        assert_eq!(cache.shapes(), 1);
+        // Asking for bands does not derive the glyph draw list, and vice
+        // versa: the two are separately lazy because they have separate
+        // callers (the §7 wire reads bands without painting).
+        assert_eq!(cache.run_builds(), 0);
     }
 
     /// R1540 §5.36 — the underline FORM is resolved the way parley resolves
