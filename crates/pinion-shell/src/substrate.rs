@@ -51,8 +51,8 @@ use pinion_rpc::{
 use pinion_runtime::text_engine::SelfHostedTextEngine;
 use pinion_runtime::{
     CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
-    FrameTimingsSnapshot, IntentQueue, MirrorWork, Modifiers, PanRelease, PointerId, ProduceWork,
-    SETTLE_PASS_BUDGET, TextMeasure, Touch, TouchPhase, clamp_frame_dt,
+    FrameTimingsSnapshot, IntentQueue, MirrorWork, Modifiers, PaintWork, PanRelease, PointerId,
+    ProduceWork, SETTLE_PASS_BUDGET, TextMeasure, Touch, TouchPhase, clamp_frame_dt,
     compute_layout_with_text_measure, rect_for_tag, settle_to_fixed_point,
     walk_scene_and_drain_immediate,
 };
@@ -218,18 +218,17 @@ struct WindowState {
     /// Tab order); `None` ≡ never painted focusables (presence gates the
     /// [`ShellCore::union_focusable_tags`] window set).
     focusable_tags: Option<Vec<String>>,
-    /// R1459 — the work the last paint of THIS window did, as counts:
-    /// `(settle passes, settled, shape misses)`. Written by
-    /// [`ShellCore::compute_paint_scene_internal`] and read back one step
-    /// later by the surface, which owns the `Instant` spans and assembles the
-    /// [`FrameTiming`] sample. `(0, false, 0)` before the first paint, which is
+    /// R1459 / R1538 — the work the last paint of THIS window did, as counts.
+    /// Written by [`ShellCore::compute_paint_scene_internal`] and read back one
+    /// step later by the surface, which owns the `Instant` spans and assembles
+    /// the [`FrameTiming`] sample. All-zero before the first paint, which is
     /// the same "no sample yet" the timing ring reports.
     ///
     /// Stored rather than returned because the paint-scene producer's return
     /// type is the `Scene` itself — the one thing every caller wants — and
-    /// widening it to a tuple would make every call site carry a measurement
-    /// it does not use.
-    last_frame_work: (u32, bool, u64),
+    /// widening it would make every call site carry a measurement it does not
+    /// use. See [`PaintWork`] for why it is a struct and not a tuple.
+    last_frame_work: PaintWork,
 }
 
 impl WindowState {
@@ -258,7 +257,7 @@ impl WindowState {
             && self.render_fidelity.is_none()
             && !self.maximized
             && self.focusable_tags.is_none()
-            && self.last_frame_work == (0, false, 0)
+            && self.last_frame_work == PaintWork::default()
     }
 }
 
@@ -4515,7 +4514,7 @@ impl<V: WidgetView> ShellCore<V> {
         // R1467 — the inset and the strip that fills it come from ONE sample.
         let overlays = self.sample_window_overlay_inputs(window_id);
         let chrome_h = overlays.chrome_inset();
-        let (mut paint_scene, frame_settled, settle_passes, shape_misses) = {
+        let (mut paint_scene, paint_work) = {
             let core = &self.core;
             let run_view =
                 || window_view::<V>(core.root_owner(), window_id, cached_state, frame, chrome_h);
@@ -4531,6 +4530,13 @@ impl<V: WidgetView> ShellCore<V> {
             // lifetime total; the cache is shared across windows, so only a
             // per-paint delta is attributable to a window's frame.
             let shapes_before = self.text_cache.shapes();
+            // R1538 §5.16 — the node census accumulators. `scene_nodes` is
+            // overwritten by each pass (so it ends holding the LAST pass's —
+            // the tree that is painted); `layout_nodes` sums them (so it ends
+            // holding what the settle loop paid for). A frame that converges on
+            // its first pass reports the same number twice, which is the
+            // correct statement that nothing was re-measured.
+            let (mut scene_nodes, mut layout_nodes) = (0_u32, 0_u32);
             let text_cache = &mut self.text_cache;
             let settle = settle_to_fixed_point(run_view, |scene| {
                 // R57.X.scrollbar §5.45 — first-paint chicken-and-egg. The
@@ -4571,14 +4577,27 @@ impl<V: WidgetView> ShellCore<V> {
                 // forcing consumer). The side-effect-free mirror
                 // (`compute_paint_scene_pure_internal`) never reaches this fn, so
                 // an introspection paint never publishes (the R1006 contract).
-                compute_layout_with_text_measure(scene, text_cache, w, h, text_measure)
-                    | core.publish_pane_viewports(scene)
+                // R1538 §5.16 — the node census. `nodes` is what THIS pass
+                // measured, so the running sum is the layout work the whole
+                // settle loop paid for and the last value written is the tree
+                // that will be painted. Recorded here rather than derived after
+                // the loop because only the pass knows its own size, and a
+                // post-hoc walk to recover it would be the O(scene) cost the
+                // census exists to bound.
+                let pass = compute_layout_with_text_measure(scene, text_cache, w, h, text_measure);
+                scene_nodes = pass.nodes;
+                layout_nodes = layout_nodes.saturating_add(pass.nodes);
+                pass.scroll_dirty | core.publish_pane_viewports(scene)
             });
             (
                 settle.scene,
-                settle.settled,
-                settle.passes,
-                self.text_cache.shapes() - shapes_before,
+                PaintWork {
+                    passes: settle.passes,
+                    settled: settle.settled,
+                    shape_misses: self.text_cache.shapes() - shapes_before,
+                    scene_nodes,
+                    layout_nodes,
+                },
             )
         };
         // (R1020 §5.39) Re-derive the keyboard focus enumeration from the
@@ -4770,7 +4789,7 @@ impl<V: WidgetView> ShellCore<V> {
         // fold into its `FrameTiming` sample. Written before the unsettled
         // report so a budget-exhausted frame is readable as data
         // (`settle_passes == SETTLE_PASS_BUDGET`) and not only as a log line.
-        self.record_paint_work(window_key, (settle_passes, frame_settled, shape_misses));
+        self.record_paint_work(window_key, paint_work);
         // R705.1 §2 #7 — this paint just consumed the current reactive
         // state (the `V::view` run above re-subscribed `root_owner` to
         // every `Signal` it read). Reset the dirty flag so the NEXT
@@ -4853,19 +4872,18 @@ impl<V: WidgetView> ShellCore<V> {
         self.window_state_mut(window_id).maximized = maximized;
     }
 
-    /// (R1459 §5.16) The work this window's last paint did, as counts:
-    /// `(settle passes, settled, shape misses)`.
+    /// (R1459 §5.16) The work this window's last paint did, as counts.
     ///
     /// The surface reads this immediately after
     /// [`Self::compute_paint_scene_for_window`] and folds it into the
     /// [`FrameTiming`] sample it is already assembling, so the two live on one
     /// wire (`scene/frame_timings`) rather than in two surfaces an agent has
-    /// to correlate. `(0, false, 0)` for a window that has not painted — the
-    /// same "no sample yet" the timing ring itself reports.
+    /// to correlate. [`PaintWork::default`] for a window that has not painted —
+    /// the same "no sample yet" the timing ring itself reports.
     #[must_use]
-    pub fn last_frame_work_for_window(&self, window_id: &str) -> (u32, bool, u64) {
+    pub fn last_frame_work_for_window(&self, window_id: &str) -> PaintWork {
         self.window_state(window_id)
-            .map_or((0, false, 0), |s| s.last_frame_work)
+            .map_or_else(PaintWork::default, |s| s.last_frame_work)
     }
 
     /// (R1459 §5.16) Close out a paint's settle accounting: publish the work
@@ -4876,9 +4894,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// frame that spent its budget is both the count an agent reads and the
     /// redraw the user needs. Splitting them is how one of the two gets
     /// forgotten at a future call site.
-    fn record_paint_work(&mut self, window_key: &str, work: (u32, bool, u64)) {
+    fn record_paint_work(&mut self, window_key: &str, work: PaintWork) {
         self.window_state_mut(window_key).last_frame_work = work;
-        if !work.1 {
+        if !work.settled {
             self.report_unsettled_frame(window_key);
         }
     }
@@ -5080,11 +5098,18 @@ impl<V: WidgetView> ShellCore<V> {
         let shapes_before = self.text_cache.shapes();
         let core = &self.core;
         let text_cache = &mut self.text_cache;
+        // R1538 §5.16 — the mirror's node census, summed across its settle
+        // passes exactly as the live paint's is.
+        let mut mirror_nodes = 0_u32;
         let settle = settle_to_fixed_point(
             // R1121 §5.16 §5.21 — mirror the live path's borderless content inset
             // so the introspection snapshot matches the painted geometry (§2 #7).
             || window_view::<V>(core.root_owner(), window_id, cached_state, frame, chrome_h),
-            |scene| compute_layout_with_text_measure(scene, text_cache, w, h, text_measure),
+            |scene| {
+                let pass = compute_layout_with_text_measure(scene, text_cache, w, h, text_measure);
+                mirror_nodes = mirror_nodes.saturating_add(pass.nodes);
+                pass.scroll_dirty
+            },
         );
         let paint_scene = settle.scene;
         // R1465 §5.16 §2 #2 — a stored mirror is not a frame, so it rides the
@@ -5095,6 +5120,7 @@ impl<V: WidgetView> ShellCore<V> {
             settle.passes,
             settle.settled,
             self.text_cache.shapes() - shapes_before,
+            mirror_nodes,
         );
         // R705.1 §2 #7 — see `compute_paint_scene_internal`: this auxiliary
         // (re-store / headless) render also consumed the current reactive
@@ -5735,6 +5761,9 @@ impl<V: WidgetView> ShellCore<V> {
                 // see what its own call cost. Counted cumulatively here and
                 // published on `scene/frame_timings`.
                 let shapes_before = text_cache_ptr.shapes();
+                // R1538 §5.16 — and its node census, the size of the scene the
+                // agent's own call settled.
+                let mut produce_nodes = 0_u32;
                 // R1121 §5.16 §5.21 / R1467 — inset the content below the chrome
                 // strip INSIDE the settle loop, exactly where the two `&self`
                 // producers do it: the inset changes the height the view lays out
@@ -5752,11 +5781,23 @@ impl<V: WidgetView> ShellCore<V> {
                         )
                     },
                     |scene| {
-                        compute_layout_with_text_measure(scene, text_cache_ptr, w, h, text_measure)
+                        let pass = compute_layout_with_text_measure(
+                            scene,
+                            text_cache_ptr,
+                            w,
+                            h,
+                            text_measure,
+                        );
+                        produce_nodes = produce_nodes.saturating_add(pass.nodes);
+                        pass.scroll_dirty
                     },
                 );
                 let paint = settle.scene;
-                produce_work_ptr.record(settle.passes, text_cache_ptr.shapes() - shapes_before);
+                produce_work_ptr.record(
+                    settle.passes,
+                    text_cache_ptr.shapes() - shapes_before,
+                    produce_nodes,
+                );
                 // R1467 §5.16 §5.39 §2 #7 — the ONE overlay chain, the same call
                 // the winit paint and the introspection mirror make. Pre-R1467
                 // this tail hand-rolled two of its six steps and omitted four

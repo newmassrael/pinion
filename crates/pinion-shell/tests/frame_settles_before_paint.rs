@@ -34,7 +34,7 @@ use pinion_core::style::{LayoutStyle, Size, TextStyle};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::{Effect, Owner, use_pane_viewport_size};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_runtime::{DEFAULT_WINDOW, FrameTiming, SETTLE_PASS_BUDGET};
+use pinion_runtime::{DEFAULT_WINDOW, FrameTiming, PaintWork, SETTLE_PASS_BUDGET};
 use pinion_shell::test_fixtures::TestRenderer;
 use pinion_shell::{ShellCore, SizeStrategy, WidgetView};
 use std::cell::RefCell;
@@ -303,7 +303,9 @@ fn a_frames_settle_work_is_reported_as_a_count() {
     // of surveyed.
     let mut core = ShellCore::<ConvergingView>::new();
     let _ = core.compute_paint_scene(W, H);
-    let (passes, settled, _) = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    let PaintWork {
+        passes, settled, ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
     assert_eq!(
         passes, SETTLE_PASS_BUDGET,
         "three passes grew the chain to TARGET and a fourth found it unchanged",
@@ -318,9 +320,74 @@ fn a_frames_settle_work_is_reported_as_a_count() {
     // above and mean nothing.
     let _ = core.take_redraw_request();
     let _ = core.compute_paint_scene(W, H);
-    let (steady_passes, steady_settled, _) = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    let PaintWork {
+        passes: steady_passes,
+        settled: steady_settled,
+        ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
     assert_eq!(steady_passes, 1, "a settled binding re-paints in one pass");
     assert!(steady_settled);
+}
+
+#[test]
+fn r1538_the_painted_tree_and_the_layout_work_are_different_numbers() {
+    // R1538 — `scene_nodes` is the LAST pass's count (the tree that reaches
+    // the screen); `layout_nodes` is the sum over passes (what was paid for).
+    // On a frame that converges immediately they are equal, so a wiring that
+    // published the sum for both, or the last for both, is invisible on every
+    // ordinary frame — and every assertion of the form `layout >= scene` holds
+    // in both wrong versions too.
+    //
+    // `ConvergingView` is the fixture that separates them: it settles in
+    // SETTLE_PASS_BUDGET passes, so the sum must be a multiple of the tree it
+    // ended with.
+    let mut core = ShellCore::<ConvergingView>::new();
+    let _ = core.compute_paint_scene(W, H);
+    let PaintWork {
+        passes,
+        scene_nodes,
+        layout_nodes,
+        ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    assert_eq!(passes, SETTLE_PASS_BUDGET, "the fixture's premise");
+    assert!(scene_nodes > 0, "a painted frame has a tree");
+    assert!(
+        layout_nodes > scene_nodes,
+        "four passes over a {scene_nodes}-node tree measured {layout_nodes} \
+         nodes — if these are equal, one of the two is being published twice",
+    );
+    assert_eq!(
+        layout_nodes,
+        scene_nodes * passes,
+        "and the sum is exactly the tree once per pass: this fixture's view \
+         produces the same shape every pass, so any other total means the \
+         accumulator is not summing the passes it claims to",
+    );
+
+    // The discriminating control: the same binding, settled, one pass. Here
+    // the two numbers MUST coincide — a `layout_nodes` that stayed at four
+    // times the tree would pass the assertions above and be wrong.
+    let _ = core.take_redraw_request();
+    let _ = core.compute_paint_scene(W, H);
+    let PaintWork {
+        passes: steady_passes,
+        scene_nodes: steady_scene,
+        layout_nodes: steady_layout,
+        ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    assert_eq!(steady_passes, 1, "the fixture's steady state");
+    assert_eq!(
+        steady_layout, steady_scene,
+        "one pass measured the tree once, so the two counts coincide — and \
+         that equality is a STATEMENT (nothing was re-measured), not a \
+         redundancy",
+    );
+    assert_eq!(
+        steady_scene, scene_nodes,
+        "the tree itself did not change between the settling frame and the \
+         steady one, which is what makes the 4x above attributable to the \
+         passes and to nothing else",
+    );
 }
 
 #[test]
@@ -333,7 +400,9 @@ fn giving_up_and_converging_on_the_budget_are_distinguishable() {
     // `tracing::warn!` no RPC client can read.
     let mut core = ShellCore::<RunawayView>::new();
     let _ = core.compute_paint_scene(W, H);
-    let (passes, settled, _) = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    let PaintWork {
+        passes, settled, ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
 
     assert_eq!(passes, SETTLE_PASS_BUDGET, "it spent the whole budget");
     assert!(
@@ -351,7 +420,10 @@ fn shape_work_is_reported_per_paint_not_per_lifetime() {
     // the process, so only a per-paint DELTA is attributable to a frame.
     let mut core = ShellCore::<LabelledView>::new();
     let _ = core.compute_paint_scene(W, H);
-    let (_, _, first) = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    let PaintWork {
+        shape_misses: first,
+        ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
     assert_eq!(
         first, LABELS as u64,
         "the first paint shaped each distinct label exactly once",
@@ -361,7 +433,10 @@ fn shape_work_is_reported_per_paint_not_per_lifetime() {
     // of unchanged text is a cache hit throughout, so the count must go to
     // ZERO rather than repeating or accumulating.
     let _ = core.compute_paint_scene(W, H);
-    let (_, _, repeat) = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    let PaintWork {
+        shape_misses: repeat,
+        ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
     assert_eq!(repeat, 0, "a warm repaint hands the shaper nothing");
 }
 
@@ -388,7 +463,9 @@ fn the_pane_publish_lands_on_the_settled_rect_and_says_what_it_did_on_the_way() 
     );
 
     let _ = core.compute_paint_scene(W, H);
-    let (passes, settled, _) = core.last_frame_work_for_window(DEFAULT_WINDOW);
+    let PaintWork {
+        passes, settled, ..
+    } = core.last_frame_work_for_window(DEFAULT_WINDOW);
     assert!(passes > 1, "precondition: this frame really did re-pass");
     assert!(settled);
 

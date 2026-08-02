@@ -458,6 +458,13 @@ AXES = [
             ("example-name", [
                 "frame-profiler", "immediate-mode-canvas", "immediate-intent",
                 "replay",
+                # R1538 — the large-scene end-to-end harness. The first example
+                # this axis has gained whose subject is a MEASUREMENT rather
+                # than a facility: a binding whose model grows four orders of
+                # magnitude at runtime, so the node census can be asserted
+                # scale-invariant. The census flagged it UNCLASSIFIED on the
+                # round that added it, which is the whole point of a census.
+                "scene-scale",
             ]),
             ("demo-body", [
                 "cache_stats", "paint_cache", "frame_budget", "fixed_timestep",

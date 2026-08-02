@@ -59,7 +59,7 @@ use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{DeferredInput, DispatchContext, PreviewLedger, dispatch_parsed};
 use pinion_runtime::{
     CommandExecutor, CoreShell, DispatchTail, FocusManager, FrameTiming, FrameTimingStats,
-    LayoutCache, PointerId, clamp_frame_dt, instant_delta_us, settle_to_fixed_point,
+    LayoutCache, LayoutPass, PointerId, clamp_frame_dt, instant_delta_us, settle_to_fixed_point,
 };
 
 use crate::WidgetViewTui;
@@ -101,6 +101,10 @@ struct PendingFrame {
     settled: bool,
     /// Text runs this paint handed to the shaper (R1459), as a per-paint delta.
     shapes: u64,
+    /// Nodes in the tree this paint committed (R1538).
+    scene_nodes: u32,
+    /// Nodes measured across every pass of this paint (R1538).
+    layout_nodes: u32,
 }
 
 pub struct ShellCoreTui<V: WidgetViewTui> {
@@ -524,7 +528,19 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // fifth hand-written copy of it: this loop's invariants are what R1458
         // established, and every round that re-typed them found one producer
         // running a single pass.
-        let settle = settle_to_fixed_point(run_view, |scene| self.run_layout(scene, cols, rows));
+        // R1538 §5.16 §2 #6 — the node census, accumulated exactly as the Vello
+        // sibling does: the last pass's count is the tree that gets committed,
+        // the sum is what the settle loop measured. Both come out of the shared
+        // `compute_layout_*`, so this half of the census is backend-agnostic —
+        // unlike `encode_nodes`, which counts a phase a terminal frame has not
+        // got.
+        let (mut scene_nodes, mut layout_nodes) = (0_u32, 0_u32);
+        let settle = settle_to_fixed_point(run_view, |scene| {
+            let pass = self.run_layout(scene, cols, rows);
+            scene_nodes = pass.nodes;
+            layout_nodes = layout_nodes.saturating_add(pass.nodes);
+            pass.scroll_dirty
+        });
         let (scene, passes, settled) = (settle.scene, settle.passes, settle.settled);
         // R1460 §5.16 §5.41 §2 #6 — hand the frame's build span + work counts to
         // the commit hook, which owns `&mut self` and closes the total span.
@@ -536,6 +552,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             passes,
             settled,
             shapes: self.layout_cache.borrow().shapes() - shapes_before,
+            scene_nodes,
+            layout_nodes,
         }));
         // R1426 §5.41 §5.28 — arm the terminal-cursor blink clock from the
         // freshly-produced scene, mirroring the Vello sibling's arm in
@@ -556,11 +574,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     }
 
     /// R1344 §5.41 — one layout pass over `scene`. Returns taffy's
-    /// scroll-dirty flag (see [`Self::compute_paint_scene`]'s re-pass).
+    /// scroll-dirty flag plus the pass's R1538 node census (see
+    /// [`Self::compute_paint_scene`]'s re-pass).
     ///
     /// The [`RefCell`] borrow is scoped to this call and never spans a
     /// `V::view` re-entry, so it cannot collide with a re-entrant paint.
-    fn run_layout(&self, scene: &mut Scene, cols: u16, rows: u16) -> bool {
+    fn run_layout(&self, scene: &mut Scene, cols: u16, rows: u16) -> LayoutPass {
         let mut cache = self.layout_cache.borrow_mut();
         layout_for_terminal(scene, cols, rows, &mut cache)
     }
@@ -583,7 +602,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 .get_or_insert_with(FrameTimingStats::new)
                 .record(
                     FrameTiming::new(f.build_us, 0, 0, 0, total_us)
-                        .with_work(f.passes, f.settled, f.shapes),
+                        .with_work(f.passes, f.settled, f.shapes)
+                        // R1538 — `encode_nodes` is `0` for the same reason
+                        // `encode_us` is: a terminal frame has no encode phase
+                        // to walk. The build-side census is real and shared.
+                        .with_census(f.scene_nodes, f.layout_nodes, 0),
                 );
         }
         // (R1020 §5.39) Re-derive the keyboard focus enumeration from the
@@ -1731,16 +1754,22 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 // the sibling: mark before the first pass, so the count is this
                 // produce's work and not the shared cache's lifetime total.
                 let shapes_before = layout_cache.borrow().shapes();
+                // R1538 §5.16 — and its node census, the size of the scene the
+                // agent's own call settled.
+                let mut produce_nodes = 0_u32;
                 let settle = settle_to_fixed_point(
                     || root_owner.run(|| V::view(cached_state, &frame)),
                     |scene| {
                         let mut cache = layout_cache.borrow_mut();
-                        layout_for_viewport_px(scene, w, h, &mut cache)
+                        let pass = layout_for_viewport_px(scene, w, h, &mut cache);
+                        produce_nodes = produce_nodes.saturating_add(pass.nodes);
+                        pass.scroll_dirty
                     },
                 );
                 produce_work_ptr.record(
                     settle.passes,
                     layout_cache.borrow().shapes() - shapes_before,
+                    produce_nodes,
                 );
                 settle.scene
             };
@@ -2282,6 +2311,50 @@ mod tests {
                 .and_then(|s| s.snapshot(None))
                 .expect("ring still projects");
             assert_eq!(after.frame_count, 1, "no produce, no frame");
+        }
+
+        #[test]
+        fn r1538_the_terminal_reports_the_half_of_the_census_it_has() {
+            // R1538 §2 #6 — the build-side census comes out of the shared
+            // `compute_layout_*`, so it is backend-agnostic and the terminal
+            // must report it. `encode_nodes` is the half a terminal frame has
+            // not got, and reports `0` for exactly the reason `encode_us`
+            // does: there is no encode phase, not an unmeasured one.
+            //
+            // Without this, the GUI would state its scene size and the TUI
+            // would report zeros — the half-built-mirror class R1460 was
+            // written to close, relocated onto a new field.
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let scene = core.compute_paint_scene(80, 24);
+            core.update_paint_scene(scene);
+
+            let snap = core
+                .frame_timings
+                .as_ref()
+                .expect("a frame was recorded")
+                .snapshot(None)
+                .expect("a non-empty ring projects");
+            assert!(
+                snap.last.scene_nodes > 0,
+                "a committed terminal frame has a tree, so its census cannot \
+                 be the never-measured zero",
+            );
+            assert!(
+                snap.last.layout_nodes >= snap.last.scene_nodes,
+                "the sum over passes cannot be below its own last term \
+                 ({} < {})",
+                snap.last.layout_nodes,
+                snap.last.scene_nodes,
+            );
+            assert_eq!(
+                snap.last.encode_nodes, 0,
+                "and the phase this backend does not have reports zero, the \
+                 same statement its encode_us already makes",
+            );
+            assert_eq!(
+                snap.max_scene_nodes, snap.last.scene_nodes,
+                "the window fold covers the one sample there is",
+            );
         }
 
         #[test]

@@ -3565,6 +3565,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-scene-scale"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-scrubber"
 version = "0.0.1"
 dependencies = [

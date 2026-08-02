@@ -502,6 +502,20 @@ pub struct FragmentCache {
     /// Number of [`Self::end_paint`] calls — the per-window paint
     /// pass counter for `hit_rate` denominator interpretation.
     paint_count: u64,
+    /// R1538 §5.16 — scene nodes the encode walk has entered during the
+    /// current paint pass. Reset by [`Self::begin_paint`], published into
+    /// [`Self::nodes_last_paint`] by [`Self::end_paint`].
+    nodes_this_paint: u32,
+    /// R1538 §5.16 — the completed paint's node census: how many `Scene`
+    /// nodes the encoder actually walked.
+    ///
+    /// Distinct from [`Self::hits`] / [`Self::misses`], which count cacheable
+    /// *containers* consulted. This counts every node entered, and a hit
+    /// returns before descending — so the ratio against the painted tree's
+    /// size is what says the cache did its job on THIS frame. A hit rate
+    /// cannot: replaying two enormous fragments and replaying two tiny ones
+    /// are both 100%.
+    nodes_last_paint: u32,
 }
 
 /// (R682 §5.16) Manual `Debug` because [`vello::Scene`] does not
@@ -545,6 +559,11 @@ impl FragmentCache {
         self.seen_this_paint.clear();
         self.misses_at_begin = self.misses;
         self.damage_acc_this_paint = None;
+        // R1538 — the census is per paint, not cumulative: the question it
+        // answers ("how much of the tree did THIS frame walk?") has no
+        // lifetime form. A cumulative counter differenced by the caller would
+        // give the same number and put the pairing in the caller's hands.
+        self.nodes_this_paint = 0;
         // Defensive: the walk pops every frame it pushes, so this is
         // already empty. Clearing anyway keeps a panic unwinding out of
         // a paint from leaking a frame into the next one, where it would
@@ -568,6 +587,14 @@ impl FragmentCache {
     /// re-entry, which also makes the shared entry two equal-hash
     /// containers may produce harmless.
     pub fn end_paint(&mut self) {
+        // R1538 — the per-paint publishes, hoisted ahead of the early return
+        // below. None of them depends on the sweep, and before R1538 each of
+        // the two exits carried its own copy of the pair — which is exactly
+        // how a third one comes to be written on one path only. Now there is
+        // one copy and the early return is purely about eviction.
+        self.paint_count = self.paint_count.saturating_add(1);
+        self.last_damage_region = self.damage_acc_this_paint;
+        self.nodes_last_paint = self.nodes_this_paint;
         // R1527.1 — a frame that installed nothing and consulted exactly
         // what the last frame consulted cannot have orphaned anything:
         // `subsumes` only changes on a miss, so the closure is the same
@@ -581,8 +608,6 @@ impl FragmentCache {
         // that painted one cached fragment. The comparison that replaces
         // it is one integer and a one-element set.
         if self.misses == self.misses_at_begin && self.seen_this_paint == self.seen_last_paint {
-            self.paint_count = self.paint_count.saturating_add(1);
-            self.last_damage_region = self.damage_acc_this_paint;
             return;
         }
         let mut live: HashSet<u64> = self.seen_this_paint.iter().copied().collect();
@@ -602,8 +627,32 @@ impl FragmentCache {
         // longer exists. Retaining them would keep a dead container's
         // children reachable from nothing, and grow without bound.
         self.subsumes.retain(|hash, _| live.contains(hash));
-        self.paint_count = self.paint_count.saturating_add(1);
-        self.last_damage_region = self.damage_acc_this_paint;
+    }
+
+    /// R1538 §5.16 — how many `Scene` nodes the encode walk entered during the
+    /// last completed paint.
+    ///
+    /// The paint-side half of the frame's node census; the build-side half is
+    /// [`LayoutPass::nodes`](crate::LayoutPass::nodes). Read together they say
+    /// what neither says alone: how big the painted tree is, and how much of
+    /// it this frame had to re-encode.
+    ///
+    /// Not folded into [`FragmentCacheStats`] — that snapshot is
+    /// `scene/cache_stats`'s axis (hit rate), and this belongs to the frame's
+    /// cost, which is `scene/frame_timings`. One observability axis per
+    /// method.
+    #[must_use]
+    pub fn nodes_walked_last_paint(&self) -> u32 {
+        self.nodes_last_paint
+    }
+
+    /// R1538 §5.16 — count one node entered by the encode walk.
+    ///
+    /// Called at the top of the walker, before the cacheable fast path, so a
+    /// hit's own container counts (the walk did visit it) while the subtree it
+    /// short-circuits does not (the walk did not).
+    fn note_node(&mut self) {
+        self.nodes_this_paint = self.nodes_this_paint.saturating_add(1);
     }
 
     /// R682 §5.16 atomic 2 — damage region from the most recent
@@ -1133,6 +1182,10 @@ fn to_vello_cached_inner<F>(
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
+    // R1538 §5.16 — census one entered node. Ahead of every arm, including
+    // the cache probe below: this counts what the WALK touched, and a hit is
+    // a node the walk touched and then declined to descend through.
+    fragment_cache.note_node();
     // Cacheable-container fast path — taken whenever the subtree
     // contains no immediate-mode / external descendants, at ANY
     // inherited transform (R1520; R682 required IDENTITY here). A hit
@@ -4745,6 +4798,92 @@ mod tests {
             )),
             Scene::Text(TextNode::new("hi", Rect::new(10, 70, 100, 20))),
         ]))
+    }
+
+    // ── R1538 §5.16 — the encode walk's node census ──
+
+    /// Count `Scene` nodes independently of the encoder, so the census is
+    /// checked against a second observation rather than against itself.
+    fn scene_nodes_of(scene: &Scene) -> u32 {
+        match scene {
+            Scene::Container(c) => c.children.iter().map(scene_nodes_of).sum::<u32>() + 1,
+            Scene::Scroll(s) => scene_nodes_of(s.content.as_ref()) + 1,
+            _ => 1,
+        }
+    }
+
+    fn paint_once(scene: &Scene, cache: &mut FragmentCache, text: &mut LayoutCache) {
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            scene,
+            &null_hook(),
+            text,
+            &mut ImageCache::new(),
+            cache,
+            &mut vello,
+        );
+    }
+
+    #[test]
+    fn r1538_a_cold_paint_walks_the_whole_tree() {
+        // Nothing cached: the walk must reach every node, and the census must
+        // equal an independent count of the same scene. Asserting it against a
+        // number this walk produced would pass however the walk is wrong.
+        let scene = simple_container();
+        let mut cache = FragmentCache::new();
+        paint_once(&scene, &mut cache, &mut LayoutCache::new());
+        assert_eq!(scene_nodes_of(&scene), 3, "fixture shape pinned");
+        assert_eq!(cache.nodes_walked_last_paint(), 3);
+    }
+
+    #[test]
+    fn r1538_a_served_paint_walks_only_what_the_cache_did_not_serve() {
+        // The whole point. A hit at the root short-circuits its subtree, so
+        // the second paint of an identical scene walks ONE node against three
+        // — and that ratio is what says the fragment cache worked on THIS
+        // frame. The hit rate cannot say it: 100% is 100% whether the fragment
+        // replayed was a label or the entire window.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        paint_once(&simple_container(), &mut cache, &mut text);
+        let cold = cache.nodes_walked_last_paint();
+        paint_once(&simple_container(), &mut cache, &mut text);
+        let warm = cache.nodes_walked_last_paint();
+
+        assert_eq!(cold, 3);
+        assert_eq!(warm, 1, "the hit counts, the subtree it declines does not");
+        assert!(warm < cold);
+        assert_eq!(cache.hits(), 1);
+        assert!(
+            (cache.hit_rate() - 0.5).abs() < f32::EPSILON,
+            "and the hit rate is unchanged by any of this — a different axis",
+        );
+    }
+
+    #[test]
+    fn r1538_census_is_per_paint_and_does_not_accumulate() {
+        // A cumulative counter and a per-paint one read the same on frame one
+        // and diverge forever after. Three identical paints must each report
+        // their own walk, not the sum.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        paint_once(&simple_container(), &mut cache, &mut text);
+        paint_once(&simple_container(), &mut cache, &mut text);
+        paint_once(&simple_container(), &mut cache, &mut text);
+        assert_eq!(cache.nodes_walked_last_paint(), 1);
+        assert_eq!(cache.paint_count(), 3, "three paints did happen");
+    }
+
+    #[test]
+    fn r1538_a_changed_scene_re_walks_what_it_invalidated() {
+        // A cache MISS on the second paint must restore the full walk — the
+        // census tracks the walk, not the frame number.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        paint_once(&simple_container(), &mut cache, &mut text);
+        paint_once(&mutated_container(), &mut cache, &mut text);
+        assert_eq!(cache.nodes_walked_last_paint(), 3);
+        assert_eq!(cache.misses(), 2);
     }
 
     #[test]

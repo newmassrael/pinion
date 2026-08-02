@@ -53,7 +53,7 @@ pub use focus::FocusManager;
 pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};
 pub use frame_timing::{
     FRAME_TIMING_WINDOW, FRAME_TIMINGS, FocusWork, FocusWorkCell, FrameTiming, FrameTimingStats,
-    FrameTimingsHolder, FrameTimingsSnapshot, FrameTimingsView, MirrorWork, ProduceWork,
+    FrameTimingsHolder, FrameTimingsSnapshot, FrameTimingsView, MirrorWork, PaintWork, ProduceWork,
     instant_delta_us, use_frame_timings,
 };
 /// R1404 §5.16 — the producer in-memory image surface, re-exported at the
@@ -70,7 +70,7 @@ pub use input::{
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use introspection_paint::IntrospectionPaint;
 pub use layout::{
-    SETTLE_PASS_BUDGET, Settled, TextBox, TextMeasure, compute_layout,
+    LayoutPass, SETTLE_PASS_BUDGET, Settled, TextBox, TextMeasure, compute_layout,
     compute_layout_with_scroll_dirty, compute_layout_with_text_measure, settle_to_fixed_point,
 };
 pub use paint_cache_stats::FragmentCacheStats;

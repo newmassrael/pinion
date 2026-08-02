@@ -59,3 +59,4 @@
 1535	modelview	a cell is asked for its decoration role, Qt data(index, DecorationRole)
 1536	modelview	a decoration states its meaning, and the name walk enters a scroll
 1537	perf	the frame states what the GPU took, own the wgpu device + TIMESTAMP_QUERY
+1538	perf	the frame states how much of the scene it walked, node census + scale guard

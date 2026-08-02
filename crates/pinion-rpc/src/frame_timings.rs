@@ -43,13 +43,16 @@
 //!       "render_us": 80, "total_us": 8740, "other_us": 30,
 //!       "work_us": 510,
 //!       "settle_passes": 1, "settled": true, "shape_misses": 0,
-//!       "gpu_us": 640
+//!       "gpu_us": 640,
+//!       "scene_nodes": 412, "layout_nodes": 412, "encode_nodes": 9
 //!     },
-//!     "produce": { "passes_total": 9, "shape_misses_total": 130 },
+//!     "produce": {
+//!       "passes_total": 9, "shape_misses_total": 130, "nodes_total": 3708
+//!     },
 //!     "focus": { "derivations_total": 6, "retries_total": 3 },
 //!     "mirror": {
 //!       "scenes_total": 4, "passes_total": 7,
-//!       "shape_misses_total": 12, "unsettled_total": 0
+//!       "shape_misses_total": 12, "unsettled_total": 0, "nodes_total": 2884
 //!     },
 //!     "window": {
 //!       "min_total_us": 8100, "mean_total_us": 8600, "max_total_us": 9800,
@@ -57,7 +60,9 @@
 //!       "mean_acquire_us": 8100, "mean_render_us": 78,
 //!       "mean_gpu_us": 655, "max_gpu_us": 1180,
 //!       "gpu_sample_count": 118, "gpu_timing_supported": true,
-//!       "gpu_dropped_total": 0
+//!       "gpu_dropped_total": 0,
+//!       "max_scene_nodes": 412, "max_layout_nodes": 824,
+//!       "max_encode_nodes": 412
 //!     },
 //!     "mean_fps": 116.3,
 //!     "budget_us": 8333,
@@ -112,6 +117,37 @@
 //!   means the timer is running and discarding every result. `gpu_sample_count` is also the denominator
 //!   of `mean_gpu_us`, which is averaged over timed samples rather than
 //!   over `window_len` — GPU samples are sparser than frames.
+//! - **The node census** (R1538) — `last.scene_nodes` / `last.layout_nodes` /
+//!   `last.encode_nodes`, with `window.max_*` peers — answers the question no
+//!   duration on this wire can: **how big was the thing each phase walked?**
+//!   `build_us` is a wall-clock measurement on one host, so a frame that is
+//!   fast because the tree is small and a frame that is fast because the host
+//!   is quick report the same number. The counts do not move with the host.
+//!
+//!   That is what makes "60fps with large scenes" checkable. The claim is not
+//!   about any machine's clock, it is that per-frame work is bounded by what
+//!   is **visible** rather than by how big the model is — so a binding that
+//!   windows its data reports the same `scene_nodes` at a thousand rows and at
+//!   a million, and one that builds every row reports the model. A CI guard
+//!   can assert that invariance without a wall-clock threshold, which is the
+//!   only way to assert it without flaking.
+//!
+//!   Read them as three questions: `scene_nodes` is the painted tree's size,
+//!   `layout_nodes` is what the settle loop measured to get there (they differ
+//!   exactly when `settle_passes > 1`), and `encode_nodes` is how much of the
+//!   tree the paint had to re-walk — far below `scene_nodes` on a frame the
+//!   §5.16 fragment cache served, and the thing `scene/cache_stats`' hit rate
+//!   cannot state (replaying two enormous fragments and two tiny ones are both
+//!   100%).
+//!
+//!   The `window.max_*` peers are maxima and not means on purpose: the
+//!   property is an upper bound, and one frame that built the whole model is
+//!   the entire defect — a mean hides it.
+//!
+//!   **These are counts, and pinion ships no cost to multiply them by** — the
+//!   `shape_misses` policy, for the same reason: the per-node cost moves with
+//!   the host, the scene and the CPU, so a consumer measures it on its own
+//!   machine and multiplies. `build_us / layout_nodes` is that measurement.
 //! - `budget_us` is the per-frame budget the window is judged against
 //!   (`1e6 / target_fps`, set via `scene/set_fps`). **Omitted entirely**
 //!   (`null`) for an unpaced window — an idle retained window has no
@@ -253,6 +289,30 @@ pub struct FrameTimingsLast {
     /// binding that ignores a consumer-honoured sampling bound like
     /// `resize_contents_precision`.
     pub shape_misses: u64,
+    /// R1538 — nodes in the tree this frame painted: the picture's **size**,
+    /// as against its cost.
+    ///
+    /// The number a scale claim is made of. A binding that windows a million
+    /// rows into a viewport reports the same value here as it does at a
+    /// thousand; one that builds every row reports the model. No duration on
+    /// this wire distinguishes those on a fast host.
+    pub scene_nodes: u32,
+    /// R1538 — nodes measured across every settle pass of this frame: what the
+    /// build actually paid for.
+    ///
+    /// Equals [`Self::scene_nodes`] on a frame that converged immediately, and
+    /// exceeds it by roughly `settle_passes` when the view and layout had to
+    /// negotiate. `build_us / layout_nodes` is the per-node build cost on the
+    /// reading host.
+    pub layout_nodes: u32,
+    /// R1538 — nodes the encode walk entered: the paint-side half.
+    ///
+    /// A cacheable container that hits short-circuits its subtree, so this
+    /// sits far below [`Self::scene_nodes`] on a steady frame, and the ratio
+    /// is what says the fragment cache did its job **on this frame**. `0` on a
+    /// backend with no encode phase, which is the statement its
+    /// [`Self::encode_us`] already makes there.
+    pub encode_nodes: u32,
 }
 
 /// R1460 §5.16 §2 #2 — cumulative work the RPC **scene producer** has done
@@ -269,6 +329,11 @@ pub struct FrameTimingsProduce {
     pub passes_total: u64,
     /// Cumulative shaper misses run for introspection.
     pub shape_misses_total: u64,
+    /// R1538 — cumulative layout nodes measured for introspection. The SIZE of
+    /// what an agent's own calls settled; `passes_total` counts loop
+    /// iterations, which is the same number for a forty-node scene and a
+    /// forty-thousand-node one.
+    pub nodes_total: u64,
 }
 
 /// R1464 §5.16 §5.39 §2 #2 — cumulative view work the **focus enumeration** has
@@ -317,6 +382,10 @@ pub struct FrameTimingsMirror {
     pub shape_misses_total: u64,
     /// Cumulative mirrors that hit the settle budget without converging.
     pub unsettled_total: u64,
+    /// R1538 — cumulative layout nodes measured across those mirrors. The one
+    /// number that grows with BOTH the window fan-out and each window's scene
+    /// size, which is the product a mutating call actually pays.
+    pub nodes_total: u64,
 }
 
 /// Rolling-window aggregates, in microseconds.
@@ -373,6 +442,23 @@ pub struct FrameTimingsWindow {
     /// value here says the timer is running and throwing results away,
     /// which is a different problem with a different fix.
     pub gpu_dropped_total: u64,
+    /// R1538 — largest `scene_nodes` in the window: the biggest tree this
+    /// window has painted recently.
+    ///
+    /// A max and not a mean, because the property it guards is an upper bound
+    /// and a mean cannot state one. One frame that built the whole model is
+    /// the entire defect, and it averages away.
+    pub max_scene_nodes: u32,
+    /// R1538 — largest `layout_nodes` in the window: the most build work any
+    /// recent frame paid for, settle passes included.
+    pub max_layout_nodes: u32,
+    /// R1538 — largest `encode_nodes` in the window: the deepest any recent
+    /// frame's encode walk had to go.
+    ///
+    /// Peaks at the painted tree's size on a frame the fragment cache could
+    /// not serve (a resize, a theme change, the first paint) — the honest
+    /// worst case rather than a defect.
+    pub max_encode_nodes: u32,
 }
 
 /// Snapshot returned by [`frame_timings`]. Projects
@@ -448,10 +534,14 @@ pub fn frame_timings(
             settled: s.last.settled,
             shape_misses: s.last.shape_misses,
             gpu_us: s.last.gpu_us,
+            scene_nodes: s.last.scene_nodes,
+            layout_nodes: s.last.layout_nodes,
+            encode_nodes: s.last.encode_nodes,
         },
         produce: FrameTimingsProduce {
             passes_total: s.produce.passes,
             shape_misses_total: s.produce.shape_misses,
+            nodes_total: s.produce.nodes,
         },
         focus: FrameTimingsFocus {
             derivations_total: s.focus.derivations,
@@ -462,6 +552,7 @@ pub fn frame_timings(
             passes_total: s.mirror.passes,
             shape_misses_total: s.mirror.shape_misses,
             unsettled_total: s.mirror.unsettled,
+            nodes_total: s.mirror.nodes,
         },
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
@@ -476,6 +567,9 @@ pub fn frame_timings(
             gpu_sample_count: s.gpu_sample_count,
             gpu_timing_supported: s.gpu_timing_supported,
             gpu_dropped_total: s.gpu_dropped_total,
+            max_scene_nodes: s.max_scene_nodes,
+            max_layout_nodes: s.max_layout_nodes,
+            max_encode_nodes: s.max_encode_nodes,
         },
         mean_fps: s.mean_fps,
         budget_us: s.budget_us,
@@ -549,6 +643,7 @@ mod tests {
         snap.produce = pinion_runtime::ProduceWork {
             passes: 9,
             shape_misses: 130,
+            nodes: 3_708,
         };
 
         let out = frame_timings(Some(snap)).unwrap();
@@ -571,6 +666,7 @@ mod tests {
         snap.produce = pinion_runtime::ProduceWork {
             passes: 9,
             shape_misses: 0,
+            nodes: 3_708,
         };
         snap.focus = pinion_runtime::FocusWork {
             derivations: 6,
@@ -613,12 +709,14 @@ mod tests {
         snap.produce = pinion_runtime::ProduceWork {
             passes: 9,
             shape_misses: 130,
+            nodes: 3_708,
         };
         snap.mirror = pinion_runtime::MirrorWork {
             scenes: 3,
             passes: 6,
             shape_misses: 12,
             unsettled: 1,
+            nodes: 2_884,
         };
 
         let out = frame_timings(Some(snap)).unwrap();
@@ -665,6 +763,145 @@ mod tests {
         assert_eq!(out.last.settle_passes, 0, "the never-measured sentinel");
         assert!(!out.last.settled);
         assert_eq!(out.last.shape_misses, 0);
+    }
+
+    // ── R1538 §5.16 — the node census on the wire ──
+
+    #[test]
+    fn r1538_census_reaches_the_wire_and_is_not_derived_from_durations() {
+        // Two samples with IDENTICAL durations and different censuses. If any
+        // of the three counts were computed from a time, this could not hold —
+        // and the whole reason the census exists is that a duration cannot
+        // distinguish a small expensive tree from a large cheap one.
+        let small = FrameTiming::new(100, 10, 0, 20, 200).with_census(40, 40, 3);
+        let huge = FrameTiming::new(100, 10, 0, 20, 200).with_census(40_000, 82_000, 39_000);
+
+        let a = frame_timings(Some(snapshot_of(&[small]))).unwrap();
+        let b = frame_timings(Some(snapshot_of(&[huge]))).unwrap();
+
+        assert_eq!(a.last.scene_nodes, 40);
+        assert_eq!(a.last.layout_nodes, 40);
+        assert_eq!(a.last.encode_nodes, 3);
+        assert_eq!(b.last.scene_nodes, 40_000);
+        assert_eq!(b.last.layout_nodes, 82_000);
+        assert_eq!(b.last.encode_nodes, 39_000);
+        assert_eq!(a.last.build_us, b.last.build_us);
+        assert_eq!(a.last.total_us, b.last.total_us);
+    }
+
+    #[test]
+    fn r1538_window_reports_the_peak_and_not_the_average() {
+        // The guarded property is an upper bound, so one frame that built the
+        // whole model must survive the fold. A mean over these three samples
+        // is ~13_400 — a number that looks fine and hides the 40_000.
+        let snap = snapshot_of(&[
+            FrameTiming::new(100, 10, 0, 20, 200).with_census(120, 120, 4),
+            FrameTiming::new(100, 10, 0, 20, 200).with_census(40_000, 40_000, 40_000),
+            FrameTiming::new(100, 10, 0, 20, 200).with_census(120, 240, 4),
+        ]);
+        let out = frame_timings(Some(snap)).unwrap();
+        assert_eq!(out.window.max_scene_nodes, 40_000);
+        assert_eq!(out.window.max_encode_nodes, 40_000);
+        assert_eq!(
+            out.window.max_layout_nodes, 40_000,
+            "the peak is per axis, so a settle-heavy frame and a big frame do \
+             not have to be the same frame",
+        );
+        assert_eq!(
+            out.last.scene_nodes, 120,
+            "and `last` is still the last frame, not the worst one",
+        );
+    }
+
+    #[test]
+    fn r1538_a_settled_frame_reports_the_same_count_twice() {
+        // `scene_nodes` is the last pass's, `layout_nodes` the sum. On a frame
+        // that converged immediately they are equal, and that equality is the
+        // statement that nothing was re-measured — not a redundancy.
+        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200)
+            .with_work(1, true, 0)
+            .with_census(412, 412, 9)])))
+        .unwrap();
+        assert_eq!(out.last.settle_passes, 1);
+        assert_eq!(out.last.scene_nodes, out.last.layout_nodes);
+
+        // Three passes over the same tree: the tree is unchanged, the work is
+        // three times as much, and only `layout_nodes` says so.
+        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200)
+            .with_work(3, true, 0)
+            .with_census(412, 1_236, 9)])))
+        .unwrap();
+        assert_eq!(out.last.scene_nodes, 412);
+        assert_eq!(out.last.layout_nodes, 1_236);
+    }
+
+    #[test]
+    fn r1538_producer_and_mirror_report_their_own_node_totals() {
+        // All four view producers now state their size, and the three that are
+        // not frames stay out of the ring. An agent differences these across
+        // its own call to price it — `passes_total` alone counts loop
+        // iterations, which is the same number for a 40-node scene and a
+        // 40,000-node one.
+        let mut snap = snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200).with_census(40, 40, 3)]);
+        snap.produce = pinion_runtime::ProduceWork {
+            passes: 2,
+            shape_misses: 0,
+            nodes: 84_000,
+        };
+        snap.mirror = pinion_runtime::MirrorWork {
+            scenes: 3,
+            passes: 3,
+            shape_misses: 0,
+            unsettled: 0,
+            nodes: 126_000,
+        };
+        let out = frame_timings(Some(snap)).unwrap();
+        assert_eq!(out.produce.nodes_total, 84_000);
+        assert_eq!(out.mirror.nodes_total, 126_000);
+        assert_eq!(
+            out.mirror.nodes_total / out.mirror.scenes_total,
+            42_000,
+            "per-window scene size, which neither `scenes` nor `passes` states",
+        );
+        assert_eq!(out.frame_count, 1, "and none of it is a frame");
+        assert_eq!(out.last.scene_nodes, 40);
+    }
+
+    #[test]
+    fn r1538_census_serializes_under_last_and_window() {
+        let out = frame_timings(Some(snapshot_of(&[
+            FrameTiming::new(300, 100, 0, 80, 540).with_census(412, 824, 9)
+        ])))
+        .unwrap();
+        let json = serde_json::to_value(out).unwrap();
+        for (group, key, want) in [
+            ("last", "scene_nodes", 412),
+            ("last", "layout_nodes", 824),
+            ("last", "encode_nodes", 9),
+            ("window", "max_scene_nodes", 412),
+            ("window", "max_layout_nodes", 824),
+            ("window", "max_encode_nodes", 9),
+        ] {
+            assert_eq!(
+                json.get(group)
+                    .and_then(|g| g.get(key))
+                    .and_then(serde_json::Value::as_u64),
+                Some(want),
+                "{group}.{key} missing from {json}",
+            );
+        }
+    }
+
+    #[test]
+    fn r1538_a_never_painted_sample_reads_zero_and_is_distinguishable() {
+        // Unlike a duration, a zero census is not ambiguous: a painted scene
+        // has a root, so every real frame reports `scene_nodes >= 1`. That is
+        // what lets a client tell "no paint yet" from "a tiny paint" without a
+        // sentinel.
+        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
+        assert_eq!(out.last.scene_nodes, 0);
+        assert_eq!(out.last.layout_nodes, 0);
+        assert_eq!(out.last.encode_nodes, 0);
     }
 
     #[test]

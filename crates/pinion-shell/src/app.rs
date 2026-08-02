@@ -1351,16 +1351,27 @@ impl<V: WidgetView> AppShell<V> {
     /// the drop count are properties of the backend that ride the read.
     /// Splitting the call site would let a future paint record one without
     /// the other.
+    ///
+    /// R1538 — the node census arrives split the same way and is reassembled
+    /// here for the same reason. Its build half is the producer's
+    /// ([`pinion_runtime::PaintWork`], read back from the window like the
+    /// settle counts); its paint half is `encode_nodes`, which only the
+    /// surface's own encode scope can know. This is the one place both are in
+    /// scope, so it is the one place the sample can describe a whole frame.
     fn record_frame_sample(
         &mut self,
         window: &str,
         timing: pinion_runtime::FrameTiming,
         gpu: GpuFrameReport,
+        encode_nodes: u32,
     ) {
-        let (passes, settled, shapes) = self.core.last_frame_work_for_window(window);
+        let work = self.core.last_frame_work_for_window(window);
         self.core.record_frame_timing(
             window,
-            timing.with_work(passes, settled, shapes).with_gpu(gpu.us),
+            timing
+                .with_work(work.passes, work.settled, work.shape_misses)
+                .with_census(work.scene_nodes, work.layout_nodes, encode_nodes)
+                .with_gpu(gpu.us),
         );
         self.core
             .set_gpu_timing_state(window, gpu.supported, gpu.dropped);
@@ -1611,7 +1622,13 @@ impl<V: WidgetView> AppShell<V> {
         // clock) joins them, and is declared WITH them because it obeys the
         // same rule: one assignment, inside that scope, on every path that
         // reaches the sample below.
-        let (encode_us, acquire_us, render_us, gpu);
+        //
+        // R1538 §5.16 — `encode_nodes` (how many scene nodes the encode walk
+        // entered) joins them under the same rule. It is the paint-side half
+        // of the frame's node census, and it can only be read here: the
+        // fragment cache that counts it is the window slot's, borrowed inside
+        // the scope below.
+        let (encode_us, encode_nodes, acquire_us, render_us, gpu);
         // R1036 PR-17 — the `renderer.render` outcome for this frame, fed into
         // the per-window render-fidelity record so `scene/render_fidelity`
         // surfaces a failed present (the present-staleness signature).
@@ -1668,6 +1685,9 @@ impl<V: WidgetView> AppShell<V> {
                 cursor_focused,
             );
             encode_us = instant_delta_us(encode_start, Instant::now());
+            // R1538 §5.16 — published by `end_paint`, which the call above
+            // just made, so this reads THIS frame's walk.
+            encode_nodes = slot.fragment_cache.nodes_walked_last_paint();
             // R51.109.1 §5.41 — call through the backend-agnostic
             // `WidgetRenderer` trait. `VelloContext::base_color` carries
             // the window background sampled from
@@ -1824,6 +1844,7 @@ impl<V: WidgetView> AppShell<V> {
             target_window,
             pinion_runtime::FrameTiming::new(build_us, encode_us, acquire_us, render_us, total_us),
             gpu,
+            encode_nodes,
         );
         // R1361 §5.16 §5.22 — hand the freshly-recorded history to any
         // in-app profiler HUD (`use_frame_timings`). Immediately after

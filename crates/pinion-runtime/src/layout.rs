@@ -289,6 +289,46 @@ pub fn settle_to_fixed_point<S>(
     }
 }
 
+/// (R1538 §5.16 §5.45) What one layout pass did: the dirty bit its caller
+/// re-passes on, and **how many nodes it measured**.
+///
+/// # Why the node count rides the same value as the dirty bit
+///
+/// "60fps with large scenes" is not a wall-clock claim, it is a **complexity**
+/// claim: per-frame work is bounded by what is *visible*, not by how big the
+/// model is. `build_us` cannot state it — a machine-dependent duration says
+/// nothing about how the work would grow — and a wall-clock assertion cannot
+/// guard it without flaking. A node count can do both: it is deterministic, it
+/// is the size of the thing the pass actually walked, and it is what stays flat
+/// when a virtualized binding's row count grows by three orders of magnitude.
+///
+/// So it is returned rather than logged, and it is returned *here* because this
+/// is the only value the pass already hands back. A separate accessor would let
+/// a caller take the dirty bit and forget the count, which is how the count
+/// would end up describing a different pass than the bit.
+///
+/// # It costs one integer read
+///
+/// A profiler that walks the tree to measure the tree is the cost it exists to
+/// find. [`Self::nodes`] is `taffy`'s own `total_node_count()` plus each nested
+/// scroll pass's — read once per pass, never walked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutPass {
+    /// Whether this pass mutated state the next `V::view` would read back — a
+    /// scroll bound, a measured row height, a tail pin. `true` means the frame
+    /// has **not** settled; see [`settle_to_fixed_point`].
+    pub scroll_dirty: bool,
+    /// How many layout nodes this pass measured: one per `Scene` node in the
+    /// tree it was given, summed across the independent taffy pass every
+    /// `Scene::Scroll`'s content gets.
+    ///
+    /// The census a scale claim is made of. A binding that windows its data
+    /// reports the same number at a thousand rows and at a million; one that
+    /// builds every row reports the model size, and that is the defect this
+    /// exists to make visible before a user finds it.
+    pub nodes: u32,
+}
+
 /// R57.X.scrollbar §5.45 — variant of [`compute_layout`] that returns
 /// whether this pass *actually* mutated state the next `V::view` would read
 /// back — a [`ScrollState::set_max`](pinion_core::widgets::scroll::ScrollState::set_max)
@@ -315,6 +355,9 @@ pub fn settle_to_fixed_point<S>(
 /// `false`, so the loop short-circuits to a single pass — zero overhead on
 /// every frame after the content size has settled.
 ///
+/// R1538 — returns a [`LayoutPass`], whose `scroll_dirty` is the bit this
+/// paragraph describes; `nodes` is the pass's node census.
+///
 /// # Panics
 ///
 /// Same conditions as [`compute_layout`] (taffy internal logic
@@ -326,7 +369,7 @@ pub fn compute_layout_with_scroll_dirty(
     cache: &mut LayoutCache,
     viewport_w: u32,
     viewport_h: u32,
-) -> bool {
+) -> LayoutPass {
     compute_layout_inner(scene, cache, viewport_w, viewport_h, None, None)
 }
 
@@ -351,6 +394,9 @@ pub fn compute_layout_with_scroll_dirty(
 /// eligibility SSOT ([`crate::text_engine::self_hosted_text_eligible`]) guarantees
 /// the two arms agree on WHICH leaves are eligible, not that both are enabled.
 ///
+/// R1538 — returns the same [`LayoutPass`] as
+/// [`compute_layout_with_scroll_dirty`].
+///
 /// # Panics
 ///
 /// Same conditions as [`compute_layout`] (taffy internal logic errors only,
@@ -363,7 +409,7 @@ pub fn compute_layout_with_text_measure(
     viewport_w: u32,
     viewport_h: u32,
     text_measure: Option<&dyn TextMeasure>,
-) -> bool {
+) -> LayoutPass {
     compute_layout_inner(scene, cache, viewport_w, viewport_h, None, text_measure)
 }
 
@@ -398,7 +444,7 @@ fn compute_layout_inner(
     viewport_h: u32,
     unbounded: Option<ScrollAxis>,
     text_measure: Option<&dyn TextMeasure>,
-) -> bool {
+) -> LayoutPass {
     let width_unbounded = matches!(unbounded, Some(ScrollAxis::Horizontal | ScrollAxis::Both));
     let height_unbounded = matches!(unbounded, Some(ScrollAxis::Vertical | ScrollAxis::Both));
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
@@ -559,7 +605,28 @@ fn compute_layout_inner(
     // R1070 §5.37 — the same `text_measure` override flows into scrolled
     // content so a text leaf eligible for the §5.37 engine inside a Scroll is sized
     // by the engine too.
-    lay_out_scroll_contents(scene, cache, text_measure);
+    // R1538 §5.16 — the pass's node census: taffy's own count for this tree,
+    // plus every nested scroll pass's. Read from the tree, never walked — a
+    // profiler that traverses the scene to size the scene is the cost it
+    // exists to find.
+    let nodes = u32::try_from(tree.total_node_count())
+        .unwrap_or(u32::MAX)
+        .saturating_add(lay_out_scroll_contents(scene, cache, text_measure));
+    LayoutPass {
+        scroll_dirty: post_layout_write_backs(scene),
+        nodes,
+    }
+}
+
+/// R1538 §5.45 — the three post-layout write-backs, in the order their
+/// contracts require, folded into the one dirty bit the settle loop re-passes
+/// on.
+///
+/// Lifted out of [`compute_layout_inner`] because their **order** is the whole
+/// content of this function and it was previously stated only by their
+/// adjacency inside a hundred-line body. Named, the ordering constraint has
+/// somewhere to live.
+fn post_layout_write_backs(scene: &mut Scene) -> bool {
     // R55.G.5 §5.45 — automatic max-bound write. The content's
     // post-layout rect carries the true intrinsic size; pushing it
     // into the attached `ScrollState` here retires the pre-R55.G.5
@@ -596,17 +663,21 @@ fn compute_layout_inner(
 /// scroll's `viewport`. Recursion is handled by the inner
 /// [`compute_layout_inner`] call's own tail invocation, so nested
 /// Scrolls naturally cascade.
+///
+/// R1538 — returns how many layout nodes those inner passes measured, so the
+/// caller's [`LayoutPass::nodes`] covers the whole tree and not just the part
+/// taffy laid out in one go. Scrolled content is exactly where a large scene
+/// lives, so a census that stopped at the clip window would report a flat
+/// number for a binding that builds a million rows inside one.
 fn lay_out_scroll_contents(
     scene: &mut Scene,
     cache: &mut LayoutCache,
     text_measure: Option<&dyn TextMeasure>,
-) {
+) -> u32 {
     match scene {
-        Scene::Container(c) => {
-            for child in &mut c.children {
-                lay_out_scroll_contents(child, cache, text_measure);
-            }
-        }
+        Scene::Container(c) => c.children.iter_mut().fold(0, |acc, child| {
+            acc.saturating_add(lay_out_scroll_contents(child, cache, text_measure))
+        }),
         Scene::Scroll(s) => {
             let vw = s.viewport.w;
             let vh = s.viewport.h;
@@ -617,11 +688,12 @@ fn lay_out_scroll_contents(
             // Discard the inner pass's scroll-dirty bit: the outer
             // pass's `update_scroll_state_bounds` walks the same
             // ScrollState (parent-Scroll) after this returns, so the
-            // outer accumulator is the canonical source of truth.
-            let _ =
-                compute_layout_inner(s.content.as_mut(), cache, vw, vh, Some(axis), text_measure);
+            // outer accumulator is the canonical source of truth. Its node
+            // count is NOT discarded — that one has no outer equivalent,
+            // because `build` stops at a Scroll.
+            compute_layout_inner(s.content.as_mut(), cache, vw, vh, Some(axis), text_measure).nodes
         }
-        _ => {}
+        _ => 0,
     }
 }
 
@@ -1122,6 +1194,118 @@ mod tests {
 
     fn cache() -> LayoutCache {
         LayoutCache::new()
+    }
+
+    // ── R1538 §5.16 §5.45 — the layout pass's node census ──
+
+    /// Count `Scene` nodes independently of the layout, so the census is
+    /// checked against a second observation rather than against itself.
+    fn scene_node_count(scene: &Scene) -> u32 {
+        match scene {
+            Scene::Container(c) => c.children.iter().map(scene_node_count).sum::<u32>() + 1,
+            Scene::Scroll(s) => scene_node_count(s.content.as_ref()) + 1,
+            _ => 1,
+        }
+    }
+
+    fn text_leaf(s: &str) -> Scene {
+        Scene::Text(TextNode::new(
+            s,
+            pinion_core::scene::Rect::new(0, 0, 40, 16),
+        ))
+    }
+
+    #[test]
+    fn r1538_census_counts_every_node_the_pass_measured() {
+        // The claim is "one layout node per scene node", and the only way to
+        // check it is to count the scene a second way. An assertion against a
+        // number the same walk produced would pass however the walk is wrong.
+        let mut scene = Scene::Container(ContainerNode::new(vec![
+            text_leaf("a"),
+            Scene::Container(ContainerNode::new(vec![text_leaf("b"), text_leaf("c")])),
+            text_leaf("d"),
+        ]));
+        let expected = scene_node_count(&scene);
+        let pass = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 320, 200);
+        assert_eq!(expected, 6, "fixture shape pinned, so a drift is visible");
+        assert_eq!(pass.nodes, expected);
+    }
+
+    #[test]
+    fn r1538_census_descends_into_scrolled_content() {
+        // `build` stops at a `Scene::Scroll`, so its content gets an
+        // independent taffy pass whose count has no outer equivalent. A census
+        // that took only the outer tree's would report a flat number for
+        // exactly the case a large scene lives in — a million rows inside one
+        // scroll — which is the reading it exists to prevent.
+        let rows: Vec<Scene> = (0..12).map(|i| text_leaf(&format!("row {i}"))).collect();
+        let content = Scene::Container(ContainerNode::new(rows));
+        let mut scrolled = Scene::Container(ContainerNode::new(vec![Scene::Scroll(
+            pinion_core::scene::ScrollNode::new(
+                pinion_core::scene::Rect::new(0, 0, 320, 200),
+                content,
+            ),
+        )]));
+        let mut flat = Scene::Container(ContainerNode::new(vec![text_leaf("only")]));
+
+        let with_scroll = compute_layout_with_scroll_dirty(&mut scrolled, &mut cache(), 320, 200);
+        let without = compute_layout_with_scroll_dirty(&mut flat, &mut cache(), 320, 200);
+
+        assert_eq!(with_scroll.nodes, scene_node_count(&scrolled));
+        assert!(
+            with_scroll.nodes > without.nodes + 12,
+            "scrolled rows must be counted: {} vs {}",
+            with_scroll.nodes,
+            without.nodes,
+        );
+    }
+
+    #[test]
+    fn r1538_census_grows_with_the_tree_and_not_with_the_viewport() {
+        // The census must track the thing it claims to track. Doubling the
+        // node count doubles it; doubling the viewport does not — which is the
+        // asymmetry a scale guard reads, and it would be invisible if the
+        // number were a function of the window.
+        let small = || {
+            Scene::Container(ContainerNode::new(
+                (0..8).map(|i| text_leaf(&format!("{i}"))).collect(),
+            ))
+        };
+        let large = || {
+            Scene::Container(ContainerNode::new(
+                (0..16).map(|i| text_leaf(&format!("{i}"))).collect(),
+            ))
+        };
+
+        let (mut a, mut b, mut wide) = (small(), large(), small());
+        let a = compute_layout_with_scroll_dirty(&mut a, &mut cache(), 320, 200).nodes;
+        let b = compute_layout_with_scroll_dirty(&mut b, &mut cache(), 320, 200).nodes;
+        let wide = compute_layout_with_scroll_dirty(&mut wide, &mut cache(), 1280, 800).nodes;
+
+        assert_eq!(a, 9);
+        assert_eq!(b, 17);
+        assert_eq!(
+            a, wide,
+            "the census counts nodes, so a four-times-larger viewport must not move it",
+        );
+    }
+
+    #[test]
+    fn r1538_census_is_independent_of_the_dirty_bit() {
+        // Two facts on one value must not be derivable from each other. A
+        // scene that settles clean and one that does not are laid out here at
+        // the same size, so a census wired to the dirty bit would show it.
+        let mut clean = Scene::Container(ContainerNode::new(vec![text_leaf("x")]));
+        let first = compute_layout_with_scroll_dirty(&mut clean, &mut cache(), 320, 200);
+        let second = compute_layout_with_scroll_dirty(&mut clean, &mut cache(), 320, 200);
+        assert_eq!(
+            first.nodes, second.nodes,
+            "same tree, same count, whatever the bit did",
+        );
+        assert!(
+            !second.scroll_dirty,
+            "a re-pass over a settled plain tree is clean"
+        );
     }
 
     #[test]
@@ -1658,7 +1842,8 @@ mod tests {
                 ScrollNode::new(Rect::new(0, 0, 220, 164), content).with_state(Rc::clone(&state));
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
-            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(
                 dirty,
                 "first-paint pass must report dirty (max moved 0 -> 238)",
@@ -1797,9 +1982,11 @@ mod tests {
                 Scene::Scroll(primary),
             ]));
 
-            let dirty_first = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_first =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(dirty_first, "prime pass writes the primary's bounds");
-            let dirty_second = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_second =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(
                 !dirty_second,
                 "follower suppresses its publish, so the pair settles (no perpetual re-pass)",
@@ -1842,7 +2029,8 @@ mod tests {
                 Scene::Container(ContainerNode::new(vec![Scene::Scroll(a), Scene::Scroll(b)]));
 
             let _ = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
-            let dirty_second = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_second =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(
                 dirty_second,
                 "two primaries with mismatched widths oscillate measured_w → never settles",
@@ -1873,12 +2061,14 @@ mod tests {
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
             // Prime: first pass writes max, returns dirty=true.
-            let dirty_first = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_first =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(dirty_first, "prime pass must report dirty");
             // Steady state: second pass on the same scene at the
             // same viewport sees an unchanged max bound, no Signal
             // revision advance, dirty=false.
-            let dirty_second = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_second =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(
                 !dirty_second,
                 "second pass on a settled ScrollState must report dirty=false (Signal equality-skip)",
@@ -1901,7 +2091,8 @@ mod tests {
             let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content);
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
-            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(
                 !dirty,
                 "Scroll without state attached has no Signals to touch — dirty must be false",
@@ -2121,7 +2312,8 @@ mod tests {
                 ScrollNode::new(Rect::new(0, 0, 220, 164), content).with_state(Rc::clone(&state));
             let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
 
-            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
 
             assert_eq!(state.max(), (0, 238), "the pass measured the extent");
             assert_eq!(state.offset(), (0, 238), "and the pin rode that bound");
@@ -2135,7 +2327,8 @@ mod tests {
             // above already schedules; here the second pass finds the same
             // bound, moves nothing, and clears it.
             assert!(state.is_following_measured_tail(), "still converging");
-            let settled = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let settled =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320).scroll_dirty;
             assert!(
                 !settled,
                 "the second pass moves nothing: this frame settled"
@@ -2171,7 +2364,8 @@ mod tests {
             // made against the second.
             let _ = compute_layout_with_scroll_dirty(&mut scene, &mut cache, 360, 320);
             assert_eq!(state.offset(), (0, 60), "unmoved by the first pass");
-            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache, 360, 320);
+            let dirty =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache, 360, 320).scroll_dirty;
 
             assert_eq!(state.offset(), (0, 60), "still unmoved");
             assert!(!dirty, "steady-state frame stays clean: nothing armed it");
@@ -2404,7 +2598,7 @@ mod tests {
         ) -> (usize, bool) {
             for pass in 1..=8 {
                 let mut scene = build();
-                if !compute_layout_with_scroll_dirty(&mut scene, cache, w, h) {
+                if !compute_layout_with_scroll_dirty(&mut scene, cache, w, h).scroll_dirty {
                     return (pass, true);
                 }
             }

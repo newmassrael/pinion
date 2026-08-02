@@ -69,7 +69,7 @@ use pinion_core::cell_metric::CellMetric;
 use pinion_core::scene::StyleRun;
 use pinion_core::style::TextStyle;
 use pinion_runtime::layout::{TextBox, TextMeasure};
-use pinion_runtime::{LayoutCache, compute_layout_with_text_measure};
+use pinion_runtime::{LayoutCache, LayoutPass, compute_layout_with_text_measure};
 use pinion_text_unicode::{LineRange, trim_trailing_break, wrap_paragraph_with_measure};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -232,7 +232,7 @@ pub fn layout_for_terminal(
     cols: u16,
     rows: u16,
     cache: &mut LayoutCache,
-) -> bool {
+) -> LayoutPass {
     layout_for_viewport_px(
         scene,
         u32::from(cols) * CELL.cell_w(),
@@ -252,7 +252,7 @@ pub fn layout_for_viewport_px(
     w_px: u32,
     h_px: u32,
     cache: &mut LayoutCache,
-) -> bool {
+) -> LayoutPass {
     compute_layout_with_text_measure(scene, cache, w_px, h_px, Some(&CellTextLayout::new(CELL)))
 }
 

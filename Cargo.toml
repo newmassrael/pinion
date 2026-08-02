@@ -229,6 +229,7 @@ members = [
     "examples/hello-pinch-zoom",
     "examples/hello-smart-zoom",
     "examples/hello-rotate-gesture",
+    "examples/hello-scene-scale",
 ]
 exclude = ["vendor/sce"]
 

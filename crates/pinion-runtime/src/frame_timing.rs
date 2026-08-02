@@ -248,6 +248,48 @@ pub struct FrameTiming {
     /// the former, and collapsing it to `0` would publish "the GPU did
     /// nothing" — an absent measurement that reads as an excellent result.
     pub gpu_us: Option<u64>,
+    /// (R1538 §5.16 §5.45) How many nodes were in the tree this frame
+    /// painted — the size of the picture, as opposed to its cost.
+    ///
+    /// The number a **scale** claim is made of. "60fps with large scenes" is
+    /// not a statement about one machine's wall clock, it is the statement
+    /// that per-frame work is bounded by what is visible rather than by how
+    /// big the model is. A binding that windows a million rows into a
+    /// viewport reports the same value here as it does at a thousand; one
+    /// that builds every row reports the model. Nothing on this struct could
+    /// tell those apart before — [`Self::build_us`] is a duration, and a
+    /// duration on a fast host says the same thing in both cases.
+    ///
+    /// Measured on the pass that produced the painted scene, so it describes
+    /// the tree that reached the screen and not an intermediate one the
+    /// settle loop discarded.
+    pub scene_nodes: u32,
+    /// (R1538 §5.16 §5.45) How many nodes the frame's layout work measured in
+    /// total, summed across every settle pass.
+    ///
+    /// [`Self::scene_nodes`] is the tree that survived; this is what was paid
+    /// for. They differ exactly when [`Self::settle_passes`] exceeds one, and
+    /// their ratio is the per-pass cost that `build_us` alone charges to a
+    /// single number — the same argument that put `settle_passes` here.
+    ///
+    /// `build_us / layout_nodes` is the per-node build cost on THIS host,
+    /// which is the multiplication a capacity question wants and the one
+    /// pinion refuses to do on a consumer's behalf (see [`Self::shape_misses`]
+    /// for the policy).
+    pub layout_nodes: u32,
+    /// (R1538 §5.16) How many nodes the encode walk entered — the paint-side
+    /// half of the census.
+    ///
+    /// A cacheable container that hits short-circuits its whole subtree, so on
+    /// a steady-state frame this is far below [`Self::scene_nodes`], and the
+    /// ratio is what says the §5.16 fragment cache did its job *on this
+    /// frame*. `scene/cache_stats`' hit rate cannot say it: replaying two
+    /// enormous fragments and replaying two tiny ones are both 100%.
+    ///
+    /// `0` on a backend with no encode phase, which is the same statement its
+    /// [`Self::encode_us`] already makes there — a terminal frame really is
+    /// build + commit.
+    pub encode_nodes: u32,
 }
 
 impl FrameTiming {
@@ -271,7 +313,30 @@ impl FrameTiming {
             settled: false,
             shape_misses: 0,
             gpu_us: None,
+            scene_nodes: 0,
+            layout_nodes: 0,
+            encode_nodes: 0,
         }
+    }
+
+    /// (R1538 §5.16) Attach the frame's **node census** to a sample built by
+    /// [`Self::new`].
+    ///
+    /// Its own builder for [`Self::with_work`]'s reason, and the argument is
+    /// stronger here rather than weaker: these three are all `u32` counts of
+    /// nodes, so a transposed call site would compile, run, and report a
+    /// plausible number. The mistake is caught instead by there being exactly
+    /// one call site, next to the walks that produced the three values.
+    ///
+    /// `0` on a sample no paint produced (a hand-built fixture, the
+    /// `Default`). Unlike a duration, that zero is distinguishable from every
+    /// real frame: a painted scene has a root, so `scene_nodes >= 1`.
+    #[must_use]
+    pub fn with_census(mut self, scene_nodes: u32, layout_nodes: u32, encode_nodes: u32) -> Self {
+        self.scene_nodes = scene_nodes;
+        self.layout_nodes = layout_nodes;
+        self.encode_nodes = encode_nodes;
+        self
     }
 
     /// (R1537 §5.16) Attach the backend's GPU frame clock to a sample
@@ -456,7 +521,13 @@ impl FrameTimingStats {
         // R1537 — folded over the samples that HAVE a GPU timing, with its
         // own count. See `mean_gpu_us`: the GPU denominator is not `len`.
         let (mut sum_gpu, mut max_gpu, mut gpu_sample_count) = (0u64, 0u64, 0u32);
+        // R1538 — the census peaks. Max only: the property they guard is an
+        // upper bound, and a mean cannot state one.
+        let (mut max_scene_nodes, mut max_layout_nodes, mut max_encode_nodes) = (0u32, 0u32, 0u32);
         for s in &self.samples {
+            max_scene_nodes = max_scene_nodes.max(s.scene_nodes);
+            max_layout_nodes = max_layout_nodes.max(s.layout_nodes);
+            max_encode_nodes = max_encode_nodes.max(s.encode_nodes);
             min_total = min_total.min(s.total_us);
             max_total = max_total.max(s.total_us);
             sum_total = sum_total.saturating_add(s.total_us);
@@ -501,6 +572,9 @@ impl FrameTimingStats {
             mean_render_us: sum_render / len,
             mean_gpu_us: (gpu_sample_count > 0).then(|| sum_gpu / u64::from(gpu_sample_count)),
             max_gpu_us: (gpu_sample_count > 0).then_some(max_gpu),
+            max_scene_nodes,
+            max_layout_nodes,
+            max_encode_nodes,
             gpu_sample_count,
             // Filled by the backend after projection — see the field doc.
             gpu_timing_supported: false,
@@ -538,15 +612,58 @@ pub struct ProduceWork {
     pub passes: u64,
     /// Shaper misses (layout-cache misses, not lookups) charged to those passes.
     pub shape_misses: u64,
+    /// (R1538) Layout nodes measured across those passes.
+    ///
+    /// The size of the introspection an agent asked for. `passes` prices the
+    /// call in loop iterations, which is the same number whether the scene the
+    /// producer settled had forty nodes or forty thousand — and on a
+    /// million-row binding that difference is the whole cost.
+    pub nodes: u64,
 }
 
 impl ProduceWork {
     /// Add one producer run's work. `passes` is `u32` and `shape_misses` `u64`
-    /// so the two cannot be swapped silently at a call site.
-    pub fn record(&mut self, passes: u32, shape_misses: u64) {
+    /// so the two cannot be swapped silently at a call site; `nodes` is `u32`
+    /// and would collide with `passes`, which is why it is last and why the
+    /// producer's one call site sits directly under the loop that sums it.
+    pub fn record(&mut self, passes: u32, shape_misses: u64, nodes: u32) {
         self.passes = self.passes.saturating_add(u64::from(passes));
         self.shape_misses = self.shape_misses.saturating_add(shape_misses);
+        self.nodes = self.nodes.saturating_add(u64::from(nodes));
     }
+}
+
+/// (R1538 §5.16 §5.45) What one **paint's** scene producer did, handed from the
+/// producer to the surface that assembles the [`FrameTiming`] sample.
+///
+/// The producer's return type is the `Scene` itself — the one thing every
+/// caller wants — so this rides a slot the surface reads back one step later
+/// rather than widening that return and making every call site carry a
+/// measurement it does not use.
+///
+/// A struct rather than the `(u32, bool, u64)` tuple it began as, for
+/// [`ProduceWork`]'s reason and more sharply: R1538 added two `u32` counts to
+/// it, so the tuple would have carried three same-typed numbers written
+/// positionally at a distance — the transposition R1459 refused. All-zero
+/// before a window's first paint, which is the same "no sample yet" the timing
+/// ring reports; a real paint has a root, so `scene_nodes >= 1` distinguishes
+/// them.
+///
+/// [`FrameTiming::encode_nodes`] is deliberately NOT here: the encode is the
+/// surface's own phase, run after the producer returned, and folding it in
+/// would ask the producer to report work it did not do.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PaintWork {
+    /// View + layout passes this paint spent reaching its fixed point.
+    pub passes: u32,
+    /// Whether it reached that fixed point, or spent the budget.
+    pub settled: bool,
+    /// Text runs handed to the shaper during those passes.
+    pub shape_misses: u64,
+    /// Nodes in the tree the last pass produced — the painted scene's size.
+    pub scene_nodes: u32,
+    /// Nodes measured across every pass — the layout work actually paid for.
+    pub layout_nodes: u32,
 }
 
 /// (R1465 §5.16 §5.12 §2 #7) Cumulative work the **stored paint-scene mirror**
@@ -583,15 +700,25 @@ pub struct MirrorWork {
     pub shape_misses: u64,
     /// Mirrors that hit the settle budget without reaching a fixed point.
     pub unsettled: u64,
+    /// (R1538) Layout nodes measured across those mirrors.
+    ///
+    /// The mirror fans out per painted window, so this is the one number that
+    /// grows with BOTH the window count and each window's scene size — the
+    /// product a mutating call actually pays, which neither `scenes` nor
+    /// `passes` states alone.
+    pub nodes: u64,
 }
 
 impl MirrorWork {
-    /// Add one stored mirror's work. The three argument types are distinct, so
-    /// a transposed call does not compile (R1459's rule for the same reason).
-    pub fn record(&mut self, passes: u32, settled: bool, shape_misses: u64) {
+    /// Add one stored mirror's work. `passes` / `settled` / `shape_misses` have
+    /// distinct types, so a transposed call among those three does not compile
+    /// (R1459's rule for the same reason). R1538's `nodes` shares `passes`'
+    /// type and is placed last, next to the single call site's own accumulator.
+    pub fn record(&mut self, passes: u32, settled: bool, shape_misses: u64, nodes: u32) {
         self.scenes = self.scenes.saturating_add(1);
         self.passes = self.passes.saturating_add(u64::from(passes));
         self.shape_misses = self.shape_misses.saturating_add(shape_misses);
+        self.nodes = self.nodes.saturating_add(u64::from(nodes));
         if !settled {
             self.unsettled = self.unsettled.saturating_add(1);
         }
@@ -765,6 +892,25 @@ pub struct FrameTimingsSnapshot {
     /// a mean hides a single frame that cost 40ms, and a single frame that
     /// costs 40ms is the whole complaint.
     pub max_gpu_us: Option<u64>,
+    /// (R1538 §5.16) Largest [`FrameTiming::scene_nodes`] in this window —
+    /// the biggest tree the window has painted recently.
+    ///
+    /// A max rather than a mean, for [`Self::max_gpu_us`]'s reason and one
+    /// more: the claim this field exists to guard is an upper bound ("work
+    /// stays bounded by the viewport"), and a mean cannot state an upper
+    /// bound. One frame that built the whole model is the entire defect, and
+    /// it averages away.
+    pub max_scene_nodes: u32,
+    /// (R1538 §5.16) Largest [`FrameTiming::layout_nodes`] in this window —
+    /// the most layout work any recent frame paid for, settle passes included.
+    pub max_layout_nodes: u32,
+    /// (R1538 §5.16) Largest [`FrameTiming::encode_nodes`] in this window —
+    /// the deepest any recent frame's encode walk had to go.
+    ///
+    /// Peaks at the size of the painted tree on a frame the fragment cache
+    /// could not serve (a resize, a theme change, the first paint), which is
+    /// the honest worst case rather than a defect.
+    pub max_encode_nodes: u32,
     /// (R1537 §5.16) How many samples in this window carry a GPU timing.
     ///
     /// Published rather than implied because it is the *denominator* of
