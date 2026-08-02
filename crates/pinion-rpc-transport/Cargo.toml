@@ -14,5 +14,9 @@ description = "Reusable RPC transport adapters over the pinion-rpc injection sea
 # adapter through its own `RpcIngress`.
 pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
 
+# R1541 — the accept loop's readiness wait. See the workspace table for why
+# this OS primitive is the dependency and not a readiness framework.
+rustix = { workspace = true }
+
 [lints]
 workspace = true

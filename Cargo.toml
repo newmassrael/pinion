@@ -280,6 +280,17 @@ serde_json = { version = "1", features = ["raw_value"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# R1541 §5.7 — the readiness wait under `pinion-rpc-transport`'s accept loop
+# (`poll(2)` over the listener plus an out-of-band wake channel). rustix is a
+# *safe* wrapper over the syscall, which is what makes this reachable at all:
+# `libc::poll` needs `unsafe`, which `workspace.lints.rust.unsafe_code` forbids
+# outright, and the readiness frameworks that would otherwise do the job carry
+# their own `unsafe` in the API a consumer must call (`polling::Poller::add` is
+# an `unsafe fn`). Two fds and one socketpair do not need epoll registration or
+# cross-platform readiness abstraction — see `accept_loop` for why the smaller
+# primitive is the right one here. Already transitive (async-io, calloop).
+rustix = { version = "1.1", features = ["event"] }
+
 # R634 §5.7 — pinion-cli developer command framework. clap is the
 # de-facto Rust CLI standard; the `derive` feature avoids the
 # stringly-typed builder API in favour of #[derive(Parser)] +

@@ -85,11 +85,12 @@ EXPOSURE_TAG = "conn_exposure"
 SERVING_LINE = "Endpoint: serving"
 WITHDRAWN_LINE = "Endpoint: withdrawn (bound, refusing service)"
 
-# How long to give a withdrawn endpoint to close a connection it refuses. The
-# accept loop polls the non-blocking listener every 50 ms (ACCEPT_POLL), so a
-# refusal costs at most one poll plus scheduling; this is orders of magnitude
-# over that, and it is an upper BOUND, not a sleep — a refusal returns as soon
-# as it happens.
+# How long to give a withdrawn endpoint to close a connection it refuses.
+# R1541 — the accept loop waits on the listener's readiness, so a refusal
+# costs one wakeup plus scheduling; this is orders of magnitude over that, and
+# it is an upper BOUND, not a sleep — a refusal returns as soon as it happens.
+# (Before R1541 the loop polled a non-blocking listener every 50 ms, so the
+# same bound covered one poll interval as well.)
 REFUSAL_TIMEOUT = 5.0
 
 

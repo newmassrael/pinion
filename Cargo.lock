@@ -5905,6 +5905,7 @@ name = "pinion-rpc-transport"
 version = "0.0.1"
 dependencies = [
  "pinion-rpc",
+ "rustix 1.1.4",
 ]
 
 [[package]]

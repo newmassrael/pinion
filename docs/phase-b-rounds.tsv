@@ -62,3 +62,4 @@
 1538	perf	the frame states how much of the scene it walked, node census + scale guard
 1539	api	the wire states the shape of what it answers, rpc/schema + census gate
 1540	text	a text run states its underline form and colour, Qt setUnderlineColor + SGR 4:x
+1541	perf	a cold connection is admitted on readiness, not on a 50ms timer

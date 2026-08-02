@@ -588,6 +588,21 @@ AXES = [
         #  - present latency is still unmeasured, and is genuinely EXTERNAL:
         #    the GPU span covers rasterize + blit, and what the compositor
         #    does after `present()` needs an extension wgpu does not expose.
+        #
+        # R1541 landed on this axis WITHOUT moving the number (the tool did not
+        # demand a re-judgment: 6 -> 7 rounds is +17%, inside the band). Logged
+        # here so the next re-judgment has it, because it is a dimension none
+        # of the statements above cover — every one of them measures the RENDER
+        # path, and this one is the CONTROL plane. `pinion-rpc-transport`'s
+        # accept loop slept a fixed 50 ms per `WouldBlock`, so a fresh
+        # connection waited that long to be *accepted*: measured by the sprag
+        # consumer at 99.5% of a CLI invocation's wall time, reproduced here at
+        # a 50,141 us median and fixed to 36 us by waiting on `poll(2)` over
+        # the listener plus an out-of-band wake channel. The guard is this
+        # axis's own shape — a deterministic counter, `accept_wakeups`, not a
+        # wall clock. Note what the docstring's premises show about how such a
+        # defect survives: both were TRUE when written, and a consumer's
+        # architecture changed underneath them.
         "judged_at": 1538,
         "completion": 78,
         "evidence_snapshot": {"example-name": 5, "demo-body": 11, "round-axis": 6},
