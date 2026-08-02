@@ -61,3 +61,4 @@
 1537	perf	the frame states what the GPU took, own the wgpu device + TIMESTAMP_QUERY
 1538	perf	the frame states how much of the scene it walked, node census + scale guard
 1539	api	the wire states the shape of what it answers, rpc/schema + census gate
+1540	text	a text run states its underline form and colour, Qt setUnderlineColor + SGR 4:x

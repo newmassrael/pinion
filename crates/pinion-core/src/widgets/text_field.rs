@@ -105,6 +105,7 @@ use crate::intent::Intent;
 use crate::scene::Rect;
 use crate::style::{
     Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
+    UnderlineStyle,
 };
 use crate::widget_core::ExtraExternal;
 use crate::widgets::caret_blink::{CaretBlink, use_caret_blink};
@@ -2582,15 +2583,21 @@ pub fn json_to_text_style(obj: &serde_json::Map<String, serde_json::Value>) -> T
         s.text_align = TextAlign::from_wire(ta).unwrap_or_default();
     }
     if let Some(d) = obj.get("decoration").and_then(serde_json::Value::as_object) {
+        // R1540 — `underline` is the lowercase `UnderlineStyle` token the
+        // terminal cell already speaks, NOT a bool. One enum must not have two
+        // wire spellings, so this reader and `text_decoration_to_json` share
+        // the vocabulary `UnderlineStyle::from_wire` owns.
         s.decoration = TextDecoration {
             underline: d
                 .get("underline")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
+                .and_then(serde_json::Value::as_str)
+                .and_then(UnderlineStyle::from_wire)
+                .unwrap_or_default(),
             strikethrough: d
                 .get("strikethrough")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
+            underline_color: d.get("underline_color").and_then(json_to_color),
         };
     }
     if let Some(o) = obj.get("overflow").and_then(serde_json::Value::as_str) {

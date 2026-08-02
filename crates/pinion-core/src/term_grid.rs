@@ -215,49 +215,11 @@ impl Default for Palette {
     }
 }
 
-/// The style of a cell's underline (R1399 §5.41) — the ECMA-48 SGR 4:x
-/// axis every modern terminal (`kitty` / `vte` / `alacritty`) and VT
-/// parser (`termwiz`'s `Underline`) speaks. A cell's underline is no
-/// longer a single on/off bool: SGR distinguishes a plain rule from a
-/// double rule, an *undercurl* (the squiggle editors draw under a
-/// diagnostic), and dotted / dashed rules — and an editor's LSP
-/// diagnostics rely on the distinction (a red curly error vs a blue
-/// dotted spellcheck) being renderable, not flattened to one rule.
-///
-/// Like [`TermColor`] / [`CursorShape`] / [`CellWidth`] this is the
-/// *complete, closed* SGR underline vocabulary (SGR `4` / `4:0`–`4:5` and
-/// `21`), so `#[non_exhaustive]` is deliberately **not** applied and
-/// callers may match exhaustively. The underline *colour* is a separate,
-/// orthogonal axis carried on [`TermCell::underline_color`] (SGR 58 / 59),
-/// exactly as the glyph colour ([`TermCell::fg`]) is separate from the
-/// bold / italic attributes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum UnderlineStyle {
-    /// SGR 24 / 4:0 — no underline. The default a cell carries.
-    #[default]
-    None,
-    /// SGR 4 / 4:1 — a single straight rule (the classic underline).
-    Single,
-    /// SGR 21 / 4:2 — a double straight rule.
-    Double,
-    /// SGR 4:3 — an *undercurl*: a wavy squiggle, the form an editor draws
-    /// under an error / warning / spelling diagnostic.
-    Curly,
-    /// SGR 4:4 — a dotted rule.
-    Dotted,
-    /// SGR 4:5 — a dashed rule.
-    Dashed,
-}
-
-impl UnderlineStyle {
-    /// `true` for any drawn underline — i.e. every variant but
-    /// [`Self::None`]. The one query a backend that cannot distinguish
-    /// styles (the ratatui TUI has a single `UNDERLINED` modifier) needs.
-    #[must_use]
-    pub const fn is_on(self) -> bool {
-        !matches!(self, Self::None)
-    }
-}
+/// The underline vocabulary — re-exported from [`crate::style`], which owns
+/// it because a GUI text run and a terminal cell are the same question asked
+/// of two backends (R1540). SGR 4:x is one ENCODING of this vocabulary; the
+/// mapping lives with the terminal writer that speaks it.
+pub use crate::style::UnderlineStyle;
 
 /// The SGR display attributes a terminal cell carries (R974) — the
 /// standard set every terminal (`xterm` / `vte` / `alacritty`) and Rust

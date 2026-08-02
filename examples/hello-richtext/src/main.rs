@@ -50,7 +50,7 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent, LayoutStyle,
-    Size, TextStyle,
+    Size, TextDecoration, TextStyle, UnderlineStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
@@ -104,6 +104,13 @@ const SADDLE_BROWN: Color = Color::rgb(0x8b, 0x45, 0x13);
 const FOX_TEAL: Color = Color::rgb(0x0d, 0x94, 0x88);
 const FOX_RED: Color = Color::rgb(0xd1, 0x1d, 0x2a);
 
+// R1540 — the two diagnostic mark colours. Deliberately UNLIKE the colour of
+// the text they sit under: that is the whole point of an underline having its
+// own colour (Qt `setUnderlineColor`, SGR 58). A red curly error under
+// saddle-brown italic prose is one run, not a recolouring of the prose.
+const DIAG_ERROR_RED: Color = Color::rgb(0xe1, 0x1d, 0x1d);
+const DIAG_HINT_BLUE: Color = Color::rgb(0x1d, 0x5f, 0xe1);
+
 /// Material 3 state-layer overlay weights (linear-sRGB lerp toward
 /// [`ColorRole::OnSurface`]) for the switch chrome — 8 % hover / 12 %
 /// pressed, matching the rest of the widget gallery.
@@ -117,14 +124,29 @@ const DISABLED_OVERLAY_T: f32 = 0.50;
 /// span's colour / weight / italic / size. `on` flips the `"fox"` run
 /// between a teal regular weight and a bold red.
 fn rich_runs(base: &TextStyle, on: bool) -> Vec<StyleRun> {
+    // R1540 — "quick" additionally carries a BLUE DOTTED rule: the form an
+    // editor draws under a spelling hint. Its text stays purple.
     let quick = base
         .clone()
         .with_fg(EMPH_PURPLE)
-        .with_weight(FontWeight::BOLD);
+        .with_weight(FontWeight::BOLD)
+        .with_decoration(
+            TextDecoration::none()
+                .with_underline_style(UnderlineStyle::Dotted)
+                .with_underline_color(Some(DIAG_HINT_BLUE)),
+        );
+    // R1540 — "brown" carries a RED UNDERCURL: the LSP error mark. Its text
+    // stays saddle-brown italic, so the paragraph shows the underline colour
+    // is an axis of its own and not a restyle of the glyphs.
     let brown = base
         .clone()
         .with_fg(SADDLE_BROWN)
-        .with_style(FontStyle::Italic);
+        .with_style(FontStyle::Italic)
+        .with_decoration(
+            TextDecoration::none()
+                .with_underline_style(UnderlineStyle::Curly)
+                .with_underline_color(Some(DIAG_ERROR_RED)),
+        );
     let fox = base
         .clone()
         .with_size_px(FOX_FONT_PX)

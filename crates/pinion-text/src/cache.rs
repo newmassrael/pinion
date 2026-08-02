@@ -321,7 +321,11 @@ fn ensure_runs<'a>(
         .expect("entry just inserted on cache miss");
     if entry.runs.is_none() {
         *run_builds += 1;
-        entry.runs = Some(glyph_run::positioned_runs(&entry.layout));
+        entry.runs = Some(glyph_run::positioned_runs(
+            &entry.layout,
+            &key.style,
+            &key.runs,
+        ));
     }
     entry.runs.as_deref().expect("derived above if absent")
 }
@@ -1077,7 +1081,12 @@ fn style_properties(
         StyleProperty::FontStyle(map_font_style(style.font_style)),
         StyleProperty::LineHeight(map_line_height(style.line_height)),
         StyleProperty::LetterSpacing(letter_spacing_px),
-        StyleProperty::Underline(style.decoration.underline),
+        // R1540 — parley is asked for the underline's METRICS and BRUSH; the
+        // FORM (single / double / curly / dotted / dashed) is pinion's and is
+        // resolved by `glyph_run::positioned_runs`, because parley has no
+        // notion of an undercurl.
+        StyleProperty::Underline(style.decoration.underline.is_on()),
+        StyleProperty::UnderlineBrush(style.decoration.underline_color),
         StyleProperty::Strikethrough(style.decoration.strikethrough),
     ];
     // R47.6 — pinned font family override. R1472 §5.36 — an unset family is
@@ -1217,6 +1226,68 @@ mod tests {
             "ten paints of unchanged text derive one draw list",
         );
         assert_eq!(cache.shapes(), 1, "and shape it once, as they always did");
+    }
+
+    /// R1540 §5.36 — the underline FORM is resolved the way parley resolves
+    /// everything else about the same span.
+    ///
+    /// parley carries the underline's brush and metrics but has no notion of
+    /// an undercurl, so `positioned_runs` resolves the form itself from the
+    /// same `(base, runs)` the layout was shaped from — and it has to mirror
+    /// parley's overlap rule exactly, which the cache documents as
+    /// last-push-wins.
+    ///
+    /// A restatement of that rule would prove nothing, so this asserts the
+    /// agreement of TWO INDEPENDENT observations of the same question: parley
+    /// picks the winning span's BRUSH by its own rule, pinion picks the
+    /// winning span's FORM by the mirror. If the mirror were first-wins, the
+    /// run would come back with the first span's form under the second span's
+    /// colour, and the two would name different winners.
+    #[test]
+    fn r1540_the_underline_form_and_brush_name_the_same_winning_span() {
+        use pinion_core::scene::StyleRun;
+        use pinion_core::style::{Color, TextDecoration, UnderlineStyle};
+
+        const FIRST: Color = Color::rgb(0x11, 0x22, 0x33);
+        const SECOND: Color = Color::rgb(0xcc, 0xbb, 0xaa);
+
+        let base = style(16);
+        let marked = |form: UnderlineStyle, colour: Color| {
+            let mut st = base.clone();
+            st.decoration = TextDecoration::none()
+                .with_underline_style(form)
+                .with_underline_color(Some(colour));
+            st
+        };
+
+        // Two spans over the SAME bytes, pushed in this order. Different form
+        // AND different colour, so each resolver has something to say.
+        let runs = vec![
+            StyleRun::new(0, 4, marked(UnderlineStyle::Dotted, FIRST)),
+            StyleRun::new(0, 4, marked(UnderlineStyle::Curly, SECOND)),
+        ];
+
+        let mut cache = LayoutCache::new();
+        let derived = cache.positioned_runs("word", &base, &runs, None);
+        let underlined: Vec<_> = derived.iter().filter_map(|r| r.underline).collect();
+        assert!(
+            !underlined.is_empty(),
+            "premise: the overlapped bytes carry an underline at all",
+        );
+        for ul in underlined {
+            assert_eq!(
+                ul.style,
+                UnderlineStyle::Curly,
+                "the LAST span pushed wins the form, mirroring parley's own \
+                 overlap rule",
+            );
+            assert_eq!(
+                ul.rule.brush, SECOND,
+                "and parley, resolving independently, names the same winner — \
+                 a form from one span under a colour from the other is the \
+                 mirror having drifted",
+            );
+        }
     }
 
     /// The laziness is load-bearing, not a reflex: this cache has callers that
@@ -1373,7 +1444,7 @@ mod tests {
     fn r1531_a_decoration_is_resolved_against_its_font_metrics() {
         let mut cache = LayoutCache::new();
         let mut st = style(16);
-        st.decoration.underline = true;
+        st.decoration.underline = pinion_core::style::UnderlineStyle::Single;
         let baselines: Vec<f32> = {
             let layout = cache.layout("Row", &st, None);
             layout.lines().map(|l| l.metrics().baseline).collect()
@@ -1385,15 +1456,15 @@ mod tests {
             .expect("the style enabled an underline, so parley reports one");
         let baseline = *baselines.first().expect("one line");
         assert!(
-            deco.y > baseline,
+            deco.rule.y > baseline,
             "an underline sits below its baseline ({} vs {baseline}) — screen \
              y grows downward while parley measures the offset upward",
-            deco.y,
+            deco.rule.y,
         );
         assert!(
-            deco.size > 0.0,
+            deco.rule.size > 0.0,
             "the font metric supplied a pen width, got {}",
-            deco.size,
+            deco.rule.size,
         );
     }
 

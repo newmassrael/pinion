@@ -1962,6 +1962,174 @@ mod tests {
         );
     }
 
+    /// R1540 §5.36 §5.16 — the GUI glyph-run underline draws its FORM.
+    ///
+    /// The sibling of `r1399_text_grid_paints_underline_styles_and_color`, on
+    /// the other painter. Until R1540 that one drew five forms while this path
+    /// stroked one flat rule for all of them, so the same tree could show an
+    /// undercurl in a terminal and not on screen — with the painter that knew
+    /// how sitting in the same file.
+    ///
+    /// **Font-independent by construction.** The text, size, position and
+    /// font are identical across every render; only the underline style
+    /// changes. Each render is DIFFERENCED against an unstyled baseline, so
+    /// what is measured is exactly the underline's own ink and no glyph ever
+    /// enters an assertion. That is what lets this run on any host without
+    /// pinning a face ([[r1471-layout-test-measured-fonts]]).
+    ///
+    /// Asserted:
+    ///
+    /// - every drawn form inks, and `None` inks nothing — the negative
+    ///   control, without which a guard that only measures drawing cases
+    ///   cannot fail (R1527);
+    /// - `Double` inks clearly more than `Single` (a second rule);
+    /// - `Dotted` / `Dashed` ink strictly less (their gaps), with the dashed
+    ///   duty cycle above the dotted one;
+    /// - `Curly` reaches ABOVE `Single`'s topmost inked row (the wave crest),
+    ///   so the forms are not collapsed;
+    /// - an explicit underline colour inks its own channel and not the
+    ///   foreground's — the LSP-diagnostic forcing case: a red squiggle under
+    ///   code that stays its own colour.
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling tests;
+    /// run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    #[allow(clippy::too_many_lines)]
+    fn r1540_glyph_run_underline_draws_its_form() {
+        use pinion_core::scene::{Rect, Scene, StyleRun, TextNode};
+        use pinion_core::style::{Color, TextDecoration, TextStyle, UnderlineStyle};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const W: u32 = 220;
+        const H: u32 = 64;
+        // One long word, so the run is wide enough for a dashed rule to show
+        // several periods. No descenders, but nothing depends on that: the
+        // baseline difference removes every glyph either way.
+        const TEXT: &str = "mmmmmmmmmm";
+
+        // One render of TEXT with the given decoration on the WHOLE string.
+        let render = |deco: TextDecoration| -> Vec<u8> {
+            let style = TextStyle::new()
+                .with_size_px(28)
+                .with_fg(Color::rgb(0xff, 0xff, 0xff));
+            let mut node = TextNode::new(TEXT, Rect::new(0, 0, W, H));
+            node.style = style.clone();
+            let mut run_style = style.clone();
+            run_style.decoration = deco;
+            node.runs = vec![StyleRun::new(
+                0,
+                u32::try_from(TEXT.len()).expect("short"),
+                run_style,
+            )];
+            let scene = Scene::Text(node);
+
+            let mut text_cache = LayoutCache::new();
+            let mut cache = FragmentCache::new();
+            let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+            let mut vello = VelloScene::new();
+            to_vello_cached(
+                &scene,
+                &|_| None,
+                &mut text_cache,
+                &mut image_cache,
+                &mut cache,
+                &mut vello,
+            );
+            let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+            shot.render_to_rgba8(&vello, W, H, vello::peniko::Color::BLACK)
+                .expect("render")
+        };
+
+        let plain = render(TextDecoration::none());
+        let of = |style: UnderlineStyle| render(TextDecoration::none().with_underline_style(style));
+
+        // Ink the decoration added, per channel, and the topmost row it reached.
+        // Differencing against `plain` leaves exactly the underline: every
+        // other pixel in the two renders came from the same glyphs at the same
+        // positions.
+        let added = |img: &[u8], chan: usize| -> (i64, Option<u32>) {
+            let mut sum = 0i64;
+            let mut top = None;
+            for y in 0..H {
+                for x in 0..W {
+                    let i = ((y * W + x) * 4) as usize + chan;
+                    let d = i64::from(img[i]) - i64::from(plain[i]);
+                    if d > 24 {
+                        sum += d;
+                        if top.is_none() {
+                            top = Some(y);
+                        }
+                    }
+                }
+            }
+            (sum, top)
+        };
+
+        let (none_ink, _) = added(&of(UnderlineStyle::None), 0);
+        let (single, single_top) = added(&of(UnderlineStyle::Single), 0);
+        let (double, _) = added(&of(UnderlineStyle::Double), 0);
+        let (curly, curly_top) = added(&of(UnderlineStyle::Curly), 0);
+        let (dotted, _) = added(&of(UnderlineStyle::Dotted), 0);
+        let (dashed, _) = added(&of(UnderlineStyle::Dashed), 0);
+
+        // The negative control. Without it every assertion below could be
+        // satisfied by a painter that inks something unconditionally.
+        assert_eq!(none_ink, 0, "`None` must add no ink at all, got {none_ink}");
+        for (name, ink) in [
+            ("single", single),
+            ("double", double),
+            ("curly", curly),
+            ("dotted", dotted),
+            ("dashed", dashed),
+        ] {
+            assert!(ink > 2000, "{name} underline must ink, sum={ink}");
+        }
+
+        // A second rule is clearly more ink than one.
+        assert!(
+            double > single * 13 / 10,
+            "double must ink well beyond single: double={double}, single={single}"
+        );
+        // Broken rules ink less than a solid one, and a dash covers more of
+        // its period than a dot.
+        assert!(
+            dotted < single && dashed < single,
+            "broken rules ink less than solid: dotted={dotted}, dashed={dashed}, single={single}"
+        );
+        assert!(
+            dashed > dotted,
+            "a dashed duty cycle exceeds a dotted one: dashed={dashed}, dotted={dotted}"
+        );
+        // The crest. This is the assertion that a flattened painter fails:
+        // stroke one rule for every form and Curly's top row equals Single's.
+        let (st, ct) = (
+            single_top.expect("single inked"),
+            curly_top.expect("curly inked"),
+        );
+        assert!(
+            ct < st,
+            "the undercurl's crest must rise above a straight rule: \
+             curly_top={ct}, single_top={st}"
+        );
+
+        // The colour axis, on its own. A red underline under white text: the
+        // red channel gains, the green does not.
+        let red = render(
+            TextDecoration::none()
+                .with_underline_style(UnderlineStyle::Curly)
+                .with_underline_color(Some(Color::rgb(0xff, 0x00, 0x00))),
+        );
+        let (red_r, _) = added(&red, 0);
+        let (red_g, _) = added(&red, 1);
+        assert!(red_r > 2000, "a red squiggle must ink red, {red_r}");
+        assert!(
+            red_g < red_r / 5,
+            "a red squiggle must not ink green: green={red_g}, red={red_r}"
+        );
+    }
+
     /// R993 §5.41 — deterministic guard for the cell-grid [`GridCursor`]
     /// overlay. Every shape is a *fill* (block / bar / underline), so the
     /// assertions are pixel-aligned and font-independent: the block fills the

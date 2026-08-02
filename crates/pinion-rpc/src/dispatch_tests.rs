@@ -1593,12 +1593,71 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
         pinion_core::style::GenericFontFamily::Monospace,
     ));
 
-    for sample in [TextStyle::new(), a, b, c] {
+    // R1540 — a form a bool could not express, with a colour of its own. The
+    // pre-R1540 samples only ever exercised "a plain rule or nothing", so the
+    // pair could have been symmetric about a bool and asymmetric about
+    // everything the axis added.
+    let mut d = TextStyle::new();
+    d.decoration = TextDecoration::none()
+        .with_underline_style(pinion_core::style::UnderlineStyle::Curly)
+        .with_underline_color(Some(Color::rgba(0xE1, 0x1D, 0x1D, 0xFF)));
+
+    for sample in [TextStyle::new(), a, b, c, d] {
         let encoded = text_style_to_json(&sample);
         let decoded = json_to_text_style(encoded.as_object().unwrap());
         assert_eq!(
             decoded, sample,
             "json_to_text_style must invert text_style_to_json"
+        );
+    }
+}
+
+/// R1540 §5.36 — the TWO writers of a `TextDecoration` agree about the
+/// underline.
+///
+/// A `TextStyle` reaches the wire two ways: `text_style_to_json` builds the
+/// object by hand here, and `pinion_core`'s `style_to_value` serializes the
+/// struct with serde derive for the external-introspect path. Only the first
+/// had an inverse guard (`r770_1_...`), so the second was free to spell this
+/// enum differently — and it did: the derive emitted the Rust variant name
+/// `"None"` while the hand-built object emitted `"none"`, and the READER that
+/// sits beside the derive accepted only the lowercase form. A client that read
+/// a style and sent it back lost its underline, silently.
+///
+/// R1540 made serde's representation BE the wire spelling, so the two cannot
+/// diverge on this axis. This is the assertion that says so — the fix without
+/// it is a fix nothing would notice being undone.
+#[test]
+fn r1540_both_text_style_writers_spell_the_underline_alike() {
+    use pinion_core::style::{TextDecoration, UnderlineStyle};
+
+    for form in [
+        UnderlineStyle::None,
+        UnderlineStyle::Single,
+        UnderlineStyle::Double,
+        UnderlineStyle::Curly,
+        UnderlineStyle::Dotted,
+        UnderlineStyle::Dashed,
+    ] {
+        let deco = TextDecoration::none().with_underline_style(form);
+        let by_hand = text_decoration_to_json(deco);
+        let by_derive = serde_json::to_value(deco).expect("TextDecoration serializes");
+        assert_eq!(
+            by_hand.get("underline"),
+            by_derive.get("underline"),
+            "the hand-built and derive-serialized wire forms must spell \
+             {form:?} the same way",
+        );
+        // And the reader accepts what BOTH of them write, which is the half
+        // the round trip actually broke on.
+        let token = by_derive
+            .get("underline")
+            .and_then(serde_json::Value::as_str)
+            .expect("a string token");
+        assert_eq!(
+            UnderlineStyle::from_wire(token),
+            Some(form),
+            "the reader must accept the derive's spelling too",
         );
     }
 }
@@ -3602,8 +3661,23 @@ fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
         Some(&Value::String("Center".into())),
     );
     let dec = style.get("decoration").unwrap().as_object().unwrap();
-    assert_eq!(dec.get("underline"), Some(&Value::Bool(true)));
+    // R1540 — `underline` is a STYLE token, not a bool: the wire says WHICH
+    // form, in the same lowercase vocabulary the terminal cell's
+    // `attrs.underline` has spoken since R1399. A census, so a field added to
+    // `TextDecoration` without a wire decision fails here.
+    assert_eq!(
+        dec.keys().cloned().collect::<Vec<_>>(),
+        vec![
+            "strikethrough".to_string(),
+            "underline".to_string(),
+            "underline_color".to_string(),
+        ],
+    );
+    assert_eq!(dec.get("underline"), Some(&Value::String("single".into())));
     assert_eq!(dec.get("strikethrough"), Some(&Value::Bool(false)));
+    // `null` rather than absent: the underline colour is always ANSWERED, and
+    // `null` is the answer "it tracks the text colour" (Qt's default).
+    assert_eq!(dec.get("underline_color"), Some(&Value::Null));
     assert_eq!(
         style.get("overflow"),
         Some(&Value::String("Ellipsis".into())),

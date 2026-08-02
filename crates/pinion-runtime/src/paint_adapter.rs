@@ -3645,10 +3645,30 @@ fn paint_text(
 /// backend, and deriving them here re-ran them on every frame.
 fn paint_decorations(out: &mut VelloScene, run: &PositionedRun, transform: Affine) {
     let (start, end) = (f64::from(run.start_x), f64::from(run.end_x));
-    for deco in [run.underline.as_ref(), run.strikethrough.as_ref()]
-        .into_iter()
-        .flatten()
-    {
+    // R1540 — the underline goes through the SAME `paint_underline` the cell
+    // grid has used since R1399. Until now this function stroked one flat rule
+    // for every style, so the tree could draw an undercurl in a terminal and
+    // not on screen, with the painter that knew how sitting in this file.
+    //
+    // `paint_underline` takes the rule's BOTTOM edge and lays the stroke one
+    // width above it; parley reports the rule's own y, so the y passed here is
+    // that plus one width. Both painters then place the same style identically,
+    // which is what lets a GUI and a TUI screenshot of one document agree.
+    if let Some(ul) = run.underline.as_ref() {
+        paint_underline(
+            out,
+            transform,
+            to_peniko(ul.rule.brush),
+            start,
+            end,
+            f64::from(ul.rule.y) + f64::from(ul.rule.size),
+            f64::from(ul.rule.size),
+            ul.style,
+        );
+    }
+    if let Some(deco) = run.strikethrough.as_ref() {
+        // A strikethrough has one form in both SGR (9) and Qt, so it stays on
+        // the plain primitive rather than borrowing a form axis it cannot use.
         stroke_hrule(
             out,
             transform,

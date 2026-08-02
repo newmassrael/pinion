@@ -1901,19 +1901,131 @@ impl TextAlign {
     }
 }
 
-/// Inline text decoration (§5.36 R47.5 Figma-fidelity).
+/// How an underline is drawn (R1399 §5.41 terminal, R1540 §5.36 GUI).
 ///
-/// Both `underline` and `strikethrough` may be `true` simultaneously
-/// (Figma allows this combination). R47.6 wires each into parley as
-/// `StyleProperty::Underline(bool)` + `StyleProperty::Strikethrough(bool)`;
-/// offset / brush per-decoration tuning is R47.x carry.
+/// One vocabulary for both backends. R1399 gave the terminal cell the full
+/// ECMA-48 SGR 4:x axis — the set `kitty` / `vte` / `alacritty` and `termwiz`
+/// speak — while a GUI text run kept a single `bool`, so **the same tree could
+/// draw an undercurl in a terminal and not on screen**. R1540 moved the enum
+/// here, to the general text-style home, because a run and a cell are the same
+/// question asked of two backends; SGR 4:x is one ENCODING of this vocabulary
+/// and lives with the terminal writer that speaks it.
+///
+/// The distinction is load-bearing rather than decorative: an editor's LSP
+/// diagnostics need a red curly error and a blue dotted spellcheck to be
+/// separately renderable, not flattened to one rule.
+///
+/// **Against Qt 6.11.** `QTextCharFormat::UnderlineStyle` has eight arms;
+/// this has six, and the two it does not adopt — `DashDotLine` and
+/// `DashDotDotLine` — are deliberate. They exist in Qt because they are
+/// `Qt::PenStyle` arms, they have no SGR encoding, and adopting them would
+/// make the same document render differently by backend for a mark no editor
+/// draws. What is gained instead is the thing Qt has no equivalent for: this
+/// vocabulary reaches a **terminal** as well as a screen.
+///
+/// The set is the complete, closed SGR vocabulary (SGR `4` / `4:0`–`4:5` and
+/// `21`), so `#[non_exhaustive]` is deliberately **not** applied and callers
+/// may match exhaustively. The underline *colour* is a separate, orthogonal
+/// axis — [`TextDecoration::underline_color`] for a run, `TermCell`'s own
+/// field (SGR 58 / 59) for a cell — exactly as a glyph's colour is separate
+/// from its weight.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+// R1540 — serde's representation IS the wire spelling. Without this the derive
+// emits the Rust variant name (`"None"`) while `wire` emits `"none"`, and the
+// tree had BOTH on one wire: `style_to_value` serializes a whole `TextStyle`
+// by derive, `text_decoration_to_json` builds the object by hand. The reader
+// beside the first of those accepted only the second's spelling, so a client
+// that read a style and sent it back silently lost the underline.
+#[serde(rename_all = "lowercase")]
+pub enum UnderlineStyle {
+    /// SGR 24 / 4:0 — no underline. The default.
+    #[default]
+    None,
+    /// SGR 4 / 4:1 — a single straight rule (the classic underline).
+    Single,
+    /// SGR 21 / 4:2 — a double straight rule.
+    Double,
+    /// SGR 4:3 — an *undercurl*: a wavy squiggle, the form an editor draws
+    /// under an error / warning / spelling diagnostic.
+    Curly,
+    /// SGR 4:4 — a dotted rule.
+    Dotted,
+    /// SGR 4:5 — a dashed rule.
+    Dashed,
+}
+
+impl UnderlineStyle {
+    /// `true` for any drawn underline — i.e. every variant but
+    /// [`Self::None`]. The one query a backend that cannot distinguish
+    /// styles (the ratatui TUI has a single `UNDERLINED` modifier) needs.
+    #[must_use]
+    pub const fn is_on(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// The lowercase wire token for this style (R1399 terminal `attrs`,
+    /// R1540 GUI run `decoration`). Closed match — the SGR 4:x axis has no
+    /// further variant.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Single => "single",
+            Self::Double => "double",
+            Self::Curly => "curly",
+            Self::Dotted => "dotted",
+            Self::Dashed => "dashed",
+        }
+    }
+
+    /// Parse a [`Self::wire`] token; `None` for anything else.
+    ///
+    /// The reader half of ONE table. Before R1540 the writer lived in
+    /// `pinion-rpc` and there was no reader at all, so a wire vocabulary
+    /// could only be checked by reading two files — the shape
+    /// [[wire-form-read-write-symmetry]] exists to prevent.
+    #[must_use]
+    pub fn from_wire(token: &str) -> Option<Self> {
+        [
+            Self::None,
+            Self::Single,
+            Self::Double,
+            Self::Curly,
+            Self::Dotted,
+            Self::Dashed,
+        ]
+        .into_iter()
+        .find(|s| s.wire() == token)
+    }
+}
+
+/// Inline text decoration (§5.36 R47.5 Figma-fidelity; R1540 underline axis).
+///
+/// A run may be underlined and struck through at once (Figma allows the
+/// combination). R47.6 wires the strikethrough into parley as
+/// `StyleProperty::Strikethrough(bool)`; the underline's METRICS come from
+/// parley the same way, and the stroke itself is drawn by the paint adapter
+/// so the [`UnderlineStyle`] vocabulary reaches pixels.
 #[non_exhaustive]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
 pub struct TextDecoration {
-    pub underline: bool,
+    /// How the underline is drawn — R1540. Was a `bool` until the GUI could
+    /// only state "a rule or nothing" while the terminal beside it stated
+    /// five forms. [`UnderlineStyle::None`] is "no underline".
+    pub underline: UnderlineStyle,
     pub strikethrough: bool,
+    /// R1540 — the underline's own colour (Qt `setUnderlineColor`, SGR 58).
+    ///
+    /// `None` (the default) means the underline tracks the text colour, which
+    /// is Qt's default and the only behaviour available before R1540. `Some`
+    /// makes it independent, which is what a diagnostic mark needs: a red
+    /// curly error under otherwise normally-coloured code is one run, not a
+    /// recolouring of the code beneath it.
+    pub underline_color: Option<Color>,
 }
 
 impl TextDecoration {
@@ -1922,43 +2034,72 @@ impl TextDecoration {
     #[must_use]
     pub const fn none() -> Self {
         Self {
-            underline: false,
+            underline: UnderlineStyle::None,
             strikethrough: false,
+            underline_color: None,
         }
     }
 
-    /// Both `underline` and `strikethrough` enabled — Figma allows
+    /// Both a single underline and a strikethrough — Figma allows
     /// this combination.
     #[must_use]
     pub const fn both() -> Self {
         Self {
-            underline: true,
+            underline: UnderlineStyle::Single,
             strikethrough: true,
+            underline_color: None,
         }
     }
 
-    /// Set only `underline = true`.
+    /// A single underline and nothing else.
     #[must_use]
     pub const fn underline() -> Self {
         Self {
-            underline: true,
+            underline: UnderlineStyle::Single,
             strikethrough: false,
+            underline_color: None,
         }
     }
 
-    /// Set only `strikethrough = true`.
+    /// A strikethrough and nothing else.
     #[must_use]
     pub const fn strikethrough() -> Self {
         Self {
-            underline: false,
+            underline: UnderlineStyle::None,
             strikethrough: true,
+            underline_color: None,
         }
     }
 
-    /// Builder: toggle the underline flag.
+    /// Builder: draw the underline in `style` (R1540).
+    #[must_use]
+    pub const fn with_underline_style(mut self, style: UnderlineStyle) -> Self {
+        self.underline = style;
+        self
+    }
+
+    /// Builder: give the underline its own colour (R1540, Qt
+    /// `setUnderlineColor`). `None` returns it to tracking the text colour.
+    #[must_use]
+    pub const fn with_underline_color(mut self, color: Option<Color>) -> Self {
+        self.underline_color = color;
+        self
+    }
+
+    /// Builder: turn a plain underline on or off (Qt `setFontUnderline`).
+    ///
+    /// `true` selects [`UnderlineStyle::Single`] — Qt's own bool setter has
+    /// exactly this meaning, and it is what every pre-R1540 caller intended.
+    /// `false` clears the underline WHATEVER its style, so a caller that
+    /// turns a squiggle off does not have to know it was a squiggle. Reach
+    /// for [`Self::with_underline_style`] to pick a form.
     #[must_use]
     pub const fn with_underline(mut self, on: bool) -> Self {
-        self.underline = on;
+        self.underline = if on {
+            UnderlineStyle::Single
+        } else {
+            UnderlineStyle::None
+        };
         self
     }
 

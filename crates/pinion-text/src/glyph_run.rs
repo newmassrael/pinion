@@ -45,7 +45,8 @@
 //! measurement above already includes.
 
 use parley::FontData;
-use pinion_core::style::Color;
+use pinion_core::scene::StyleRun;
+use pinion_core::style::{Color, TextStyle, UnderlineStyle};
 
 /// One glyph, positioned in its layout's own coordinate frame.
 ///
@@ -81,6 +82,22 @@ pub struct RunDecoration {
     pub brush: Color,
 }
 
+/// R1540 §5.36 — a run's underline: where the rule sits, and which FORM it
+/// takes.
+///
+/// A separate type from [`RunDecoration`] rather than a field on it, because
+/// only the underline has a form axis — a strikethrough is one straight rule
+/// in both SGR (9) and Qt. Folding them together would put a field on the
+/// strikethrough that no reader could act on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunUnderline {
+    /// Where and how thick, resolved against the font metrics.
+    pub rule: RunDecoration,
+    /// Which form the rule takes. Never [`UnderlineStyle::None`]: an absent
+    /// underline is the enclosing `Option`, so the two cannot disagree.
+    pub style: UnderlineStyle,
+}
+
 /// One shaped, positioned glyph run: everything a painter needs to draw it,
 /// with nothing left to derive.
 ///
@@ -109,7 +126,7 @@ pub struct PositionedRun {
     /// end of a decoration.
     pub end_x: f32,
     /// The run's underline, already resolved against its font metrics.
-    pub underline: Option<RunDecoration>,
+    pub underline: Option<RunUnderline>,
     /// The run's strikethrough, already resolved against its font metrics.
     pub strikethrough: Option<RunDecoration>,
 }
@@ -119,8 +136,19 @@ pub struct PositionedRun {
 /// The walk this exists to run exactly once per shaped layout. Kept beside the
 /// types rather than inside `LayoutCache` so the derivation is testable against
 /// a `Layout` a caller shaped itself.
+///
+/// R1540 — `base` + `style_runs` are the SAME inputs the layout was shaped
+/// from, and they are needed again here because parley's run style carries the
+/// underline's brush and metrics but not its FORM (parley has no notion of an
+/// undercurl). The form is resolved per run by byte offset, mirroring parley's
+/// own last-push-wins overlap rule, so a run's form is the one the bytes it
+/// covers were given.
 #[must_use]
-pub fn positioned_runs(layout: &crate::Layout) -> Vec<PositionedRun> {
+pub fn positioned_runs(
+    layout: &crate::Layout,
+    base: &TextStyle,
+    style_runs: &[StyleRun],
+) -> Vec<PositionedRun> {
     use parley::PositionedLayoutItem;
 
     let mut out = Vec::new();
@@ -140,16 +168,26 @@ pub fn positioned_runs(layout: &crate::Layout) -> Vec<PositionedRun> {
                 brush: deco.brush,
             };
             let style = run.style();
+            // A parley run is a maximal span of uniform style, so the form at
+            // its first byte holds for all of it.
+            let ul_style = underline_style_at(base, style_runs, parley_run.text_range().start);
             out.push(PositionedRun {
                 font: parley_run.font().clone(),
                 font_size: parley_run.font_size(),
                 brush: style.brush,
                 start_x: run.offset(),
                 end_x: run.offset() + run.advance(),
-                underline: style
-                    .underline
-                    .as_ref()
-                    .map(|d| rule(d, metrics.underline_offset, metrics.underline_size)),
+                underline: style.underline.as_ref().map(|d| RunUnderline {
+                    rule: rule(d, metrics.underline_offset, metrics.underline_size),
+                    // parley was asked for a decoration iff the form is drawn
+                    // (`is_on`), so a `Some` here cannot carry `None`. The
+                    // fallback keeps that stated rather than assumed.
+                    style: if ul_style.is_on() {
+                        ul_style
+                    } else {
+                        UnderlineStyle::Single
+                    },
+                }),
                 strikethrough: style
                     .strikethrough
                     .as_ref()
@@ -166,4 +204,17 @@ pub fn positioned_runs(layout: &crate::Layout) -> Vec<PositionedRun> {
         }
     }
     out
+}
+
+/// The underline form in effect at `offset` (R1540).
+///
+/// Mirrors parley's overlap rule for the same spans: the styles were pushed in
+/// list order and parley resolves overlaps last-push-wins, so the LAST run
+/// covering the offset is the one that applies. A byte no run covers takes the
+/// base style.
+fn underline_style_at(base: &TextStyle, runs: &[StyleRun], offset: usize) -> UnderlineStyle {
+    runs.iter()
+        .filter(|r| (r.start as usize..r.end as usize).contains(&offset))
+        .next_back()
+        .map_or(base.decoration.underline, |r| r.style.decoration.underline)
 }

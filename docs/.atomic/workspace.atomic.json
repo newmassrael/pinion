@@ -79312,6 +79312,62 @@
         "The census is hand-written and the gate proves it TRUE, not that it was written deliberately. A round that adds a field and pastes the gate's expectation satisfies both. The demo-consumer list is what makes that a decision rather than a reflex, and nothing forces it to be read."
       ]
     },
+    "Round 1540": {
+      "decision_summary": "A text run states its underline form and colour: the GUI adopts the SGR 4:x vocabulary the terminal has spoken since R1399, so a diagnostic undercurl is drawable on screen and not only in a cell grid.",
+      "changes_bullets": [
+        "`UnderlineStyle` moves from `term_grid` to `style`, the general text-style home, and is re-exported so its 61 existing sites are undisturbed. A run and a cell are the same question asked of two backends; SGR 4:x is one ENCODING of the vocabulary, and it stays with the terminal writer that speaks it.",
+        "`TextDecoration.underline` becomes that enum instead of a `bool`, and gains `underline_color: Option<Color>` (Qt `setUnderlineColor`, SGR 58). One field, not two: a bool beside a style would be two sources for one fact. `with_underline(bool)` keeps Qt's `setFontUnderline` meaning — on selects `Single`, off clears whatever form was there — so every pre-R1540 caller reads unchanged.",
+        "`paint_decorations` calls `paint_underline`, the painter the cell grid has used since R1399. Both now place a form identically, which is what lets a GUI and a TUI rendering of one document agree. The strikethrough stays on the plain primitive: it has exactly one form in both SGR (9) and Qt, so it borrows no axis it cannot use.",
+        "The form is resolved per run by byte offset in `positioned_runs`, mirroring parley's own last-push-wins overlap rule — parley carries the underline's brush and metrics but has no notion of an undercurl. `PositionedRun.underline` becomes `Option<RunUnderline>` so the form and the rule travel together and cannot disagree about whether there is an underline.",
+        "`hello-richtext` carries the two canonical diagnostic marks: a blue dotted rule under purple text, a red undercurl under saddle-brown italic. The colours are unlike the text they sit under, because that is the contract a separate colour axis exists for."
+      ],
+      "verification_bullets": [
+        "`crates/pinion-shell` `r1540_glyph_run_underline_draws_its_form` — a pixel witness, font-independent by construction: same text, size, position and font across every render, each DIFFERENCED against an unstyled baseline so only the underline's own ink is measured and no glyph enters an assertion. `None` adds zero ink (the negative control), `Double` inks past `Single`, `Dotted`/`Dashed` ink less with the dashed duty cycle higher, `Curly`'s crest rises above a straight rule, and a red squiggle inks red and not green.",
+        "`tools/demos/r1540_underline_states_its_form.py` PASS: 29 assertion sites (39 with loops expanded) over the live wire. Neither mark is `single` — a bool could already express a plain rule, so a demo showing only one could not tell this round from the last.",
+        "Five counterfactuals, one at a time, each restored and every restore verified: (1) the painter flattened back to one rule; (2) parley never handed the underline's own brush; (3) the wire spelling capitalized; (4) the overlap precedence inverted to first-wins; (5) the serde spelling unification removed.",
+        "Counterfactual (4) closed a hole the first draft had: nothing exercised OVERLAPPING style runs, so the mirror of parley's overlap rule was stated and unasserted. The new unit test asserts the AGREEMENT OF TWO INDEPENDENT OBSERVATIONS — parley picks the winning span's brush by its own rule, pinion picks its form by the mirror — so a drifted mirror shows up as one span's form under the other's colour.",
+        "A demo census over the changed wire form found `r967_textarea_toggle_format.py`, which asserted `underline == False`. Running it surfaced a REAL pre-existing defect this round would otherwise have shipped.",
+        "Local gates green on every crate whose behaviour changed: tests + clippy `-D pedantic` on pinion-core, pinion-text, pinion-runtime, pinion-rpc, pinion-tui, pinion-shell and hello-richtext, plus `cargo fmt --all --check`. Every demo that reads a decoration was run: r1540, r713, r967, r1399, r974, r1403, todomvc r664/r665/r666."
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "The mark is invisible to assistive technology. A red undercurl says \"error\" to a sighted reader and nothing at all to a screen reader, which is the defect R1536 named for grid decorations. Qt is in the same position — `QTextCharFormat`'s underline style is presentation-only — so this is Qt-parity rather than below it, but it is the axis's largest remaining gap and there is no per-run a11y surface in the tree to hang it on yet.",
+        "Qt's `DashDotLine` / `DashDotDotLine` are deliberately not adopted. They exist because they are `Qt::PenStyle` arms, they have no SGR encoding, and adopting them would make one document render differently by backend for a mark no editor draws. The capability (multiple distinguishable forms including a wave) is present; the shape was chosen, which is what [[qt-is-the-floor-not-the-target]] permits.",
+        "The ratatui TUI arm still collapses every form to one `UNDERLINED` modifier. That is ratatui's vocabulary, not ours — the SGR forms reach a real terminal through the cell-grid arm — but it means the same document has three fidelities (GUI, cell grid, ratatui) and only two of them are guarded.",
+        "A `TextStyle` still reaches the wire by TWO writers — `text_style_to_json` builds the object by hand, `style_to_value` serializes by serde derive — and only the first has an inverse guard. R1540 made them agree about the underline and pinned it with a test; every OTHER field is still unchecked between them, and `text_align` is known to differ in case (R1504).",
+        "`LayoutKey` now carries two more fields that do not affect shaping, widening [[debt-layout-key-includes-paint-color]]: a colour crossfade on an underline re-shapes the text. The debt's cost statement is now larger than R1521 measured it."
+      ],
+      "publishable_decision_summary": "A text run states its underline form and colour: the GUI adopts the SGR 4:x vocabulary the terminal has spoken since R1399, so a diagnostic undercurl is drawable on screen and not only in a cell grid.",
+      "publishable_changes_bullets": [
+        "`UnderlineStyle` moves from `term_grid` to `style`, the general text-style home, and is re-exported so its 61 existing sites are undisturbed. A run and a cell are the same question asked of two backends; SGR 4:x is one ENCODING of the vocabulary, and it stays with the terminal writer that speaks it.",
+        "`TextDecoration.underline` becomes that enum instead of a `bool`, and gains `underline_color: Option<Color>` (Qt `setUnderlineColor`, SGR 58). One field, not two: a bool beside a style would be two sources for one fact. `with_underline(bool)` keeps Qt's `setFontUnderline` meaning — on selects `Single`, off clears whatever form was there — so every pre-R1540 caller reads unchanged.",
+        "`paint_decorations` calls `paint_underline`, the painter the cell grid has used since R1399. Both now place a form identically, which is what lets a GUI and a TUI rendering of one document agree. The strikethrough stays on the plain primitive: it has exactly one form in both SGR (9) and Qt, so it borrows no axis it cannot use.",
+        "The form is resolved per run by byte offset in `positioned_runs`, mirroring parley's own last-push-wins overlap rule — parley carries the underline's brush and metrics but has no notion of an undercurl. `PositionedRun.underline` becomes `Option<RunUnderline>` so the form and the rule travel together and cannot disagree about whether there is an underline.",
+        "`hello-richtext` carries the two canonical diagnostic marks: a blue dotted rule under purple text, a red undercurl under saddle-brown italic. The colours are unlike the text they sit under, because that is the contract a separate colour axis exists for."
+      ],
+      "publishable_verification_bullets": [
+        "`crates/pinion-shell` `r1540_glyph_run_underline_draws_its_form` — a pixel witness, font-independent by construction: same text, size, position and font across every render, each DIFFERENCED against an unstyled baseline so only the underline's own ink is measured and no glyph enters an assertion. `None` adds zero ink (the negative control), `Double` inks past `Single`, `Dotted`/`Dashed` ink less with the dashed duty cycle higher, `Curly`'s crest rises above a straight rule, and a red squiggle inks red and not green.",
+        "`tools/demos/r1540_underline_states_its_form.py` PASS: 29 assertion sites (39 with loops expanded) over the live wire. Neither mark is `single` — a bool could already express a plain rule, so a demo showing only one could not tell this round from the last.",
+        "Five counterfactuals, one at a time, each restored and every restore verified: (1) the painter flattened back to one rule; (2) parley never handed the underline's own brush; (3) the wire spelling capitalized; (4) the overlap precedence inverted to first-wins; (5) the serde spelling unification removed.",
+        "Counterfactual (4) closed a hole the first draft had: nothing exercised OVERLAPPING style runs, so the mirror of parley's overlap rule was stated and unasserted. The new unit test asserts the AGREEMENT OF TWO INDEPENDENT OBSERVATIONS — parley picks the winning span's brush by its own rule, pinion picks its form by the mirror — so a drifted mirror shows up as one span's form under the other's colour.",
+        "A demo census over the changed wire form found `r967_textarea_toggle_format.py`, which asserted `underline == False`. Running it surfaced a REAL pre-existing defect this round would otherwise have shipped.",
+        "Local gates green on every crate whose behaviour changed: tests + clippy `-D pedantic` on pinion-core, pinion-text, pinion-runtime, pinion-rpc, pinion-tui, pinion-shell and hello-richtext, plus `cargo fmt --all --check`. Every demo that reads a decoration was run: r1540, r713, r967, r1399, r974, r1403, todomvc r664/r665/r666."
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The mark is invisible to assistive technology. A red undercurl says \"error\" to a sighted reader and nothing at all to a screen reader, which is the defect R1536 named for grid decorations. Qt is in the same position — `QTextCharFormat`'s underline style is presentation-only — so this is Qt-parity rather than below it, but it is the axis's largest remaining gap and there is no per-run a11y surface in the tree to hang it on yet.",
+        "Qt's `DashDotLine` / `DashDotDotLine` are deliberately not adopted. They exist because they are `Qt::PenStyle` arms, they have no SGR encoding, and adopting them would make one document render differently by backend for a mark no editor draws. The capability (multiple distinguishable forms including a wave) is present; the shape was chosen, which is what [[qt-is-the-floor-not-the-target]] permits.",
+        "The ratatui TUI arm still collapses every form to one `UNDERLINED` modifier. That is ratatui's vocabulary, not ours — the SGR forms reach a real terminal through the cell-grid arm — but it means the same document has three fidelities (GUI, cell grid, ratatui) and only two of them are guarded.",
+        "A `TextStyle` still reaches the wire by TWO writers — `text_style_to_json` builds the object by hand, `style_to_value` serializes by serde derive — and only the first has an inverse guard. R1540 made them agree about the underline and pinned it with a test; every OTHER field is still unchecked between them, and `text_align` is known to differ in case (R1504).",
+        "`LayoutKey` now carries two more fields that do not affect shaping, widening [[debt-layout-key-includes-paint-color]]: a colour crossfade on an underline re-shapes the text. The debt's cost statement is now larger than R1521 measured it."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -4871,7 +4871,10 @@ fn cell_attrs_to_json(attrs: pinion_core::CellAttrs) -> Value {
     obj.insert("italic".to_string(), Value::Bool(attrs.italic));
     obj.insert(
         "underline".to_string(),
-        Value::String(underline_style_wire(attrs.underline).to_string()),
+        // R1540 — through the vocabulary's own table. This was a second,
+        // identical hand-written match; two copies of one mapping is how a
+        // wire vocabulary comes to have two spellings.
+        Value::String(attrs.underline.wire().to_string()),
     );
     obj.insert("blink".to_string(), Value::Bool(attrs.blink));
     obj.insert("reverse".to_string(), Value::Bool(attrs.reverse));
@@ -4881,22 +4884,6 @@ fn cell_attrs_to_json(attrs: pinion_core::CellAttrs) -> Value {
         Value::Bool(attrs.strikethrough),
     );
     Value::Object(obj)
-}
-
-/// R1399 §5.41 — the wire string for an [`UnderlineStyle`](pinion_core::UnderlineStyle)
-/// used as the `attrs.underline` discriminator (mirroring the
-/// `cursor.shape` / `run.width` wire vocabularies). Closed match — the SGR
-/// 4:x axis has no further variant.
-fn underline_style_wire(style: pinion_core::UnderlineStyle) -> &'static str {
-    use pinion_core::UnderlineStyle;
-    match style {
-        UnderlineStyle::None => "none",
-        UnderlineStyle::Single => "single",
-        UnderlineStyle::Double => "double",
-        UnderlineStyle::Curly => "curly",
-        UnderlineStyle::Dotted => "dotted",
-        UnderlineStyle::Dashed => "dashed",
-    }
 }
 
 /// R973 §5.41 — wire form for one [`TermColorSnapshot`]: the stored
@@ -5278,8 +5265,20 @@ fn text_align_to_json(a: pinion_core::style::TextAlign) -> Value {
 /// strikethrough combo), so the wire keeps them as independent bools.
 fn text_decoration_to_json(d: pinion_core::style::TextDecoration) -> Value {
     let mut obj = serde_json::Map::new();
-    obj.insert("underline".to_string(), Value::Bool(d.underline));
+    // R1540 — the underline is a STYLE token, not a bool, and it is the same
+    // lowercase vocabulary the terminal cell's `attrs.underline` already
+    // speaks. One enum must not have two wire spellings, so both sides call
+    // `UnderlineStyle::wire` and the reader half
+    // (`pinion_core`'s text-style decoder) calls `from_wire`.
+    obj.insert(
+        "underline".to_string(),
+        Value::String(d.underline.wire().to_string()),
+    );
     obj.insert("strikethrough".to_string(), Value::Bool(d.strikethrough));
+    obj.insert(
+        "underline_color".to_string(),
+        d.underline_color.map_or(Value::Null, color_to_json),
+    );
     Value::Object(obj)
 }
 

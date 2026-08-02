@@ -12,6 +12,11 @@ shares, so the human + AI channels flip identically.
 
   invoke("toggle-format", "bold"|"italic"|"underline"|"strikethrough")
 
+R1540 — `decoration.underline` is a FORM token (`"none"` / `"single"` / …), not
+a bool. `toggle-format underline` still means Qt's `setFontUnderline(bool)`:
+on selects `"single"`, off clears whatever form was there. The bool VERB is
+unchanged; only what the wire reports is finer.
+
 It toggles ONE field over the live selection (or arms a pending mark at a
 collapsed caret), preserving the covered run's OTHER fields, and returns the
 new on-state. underline / strikethrough have no toolbar button — the RPC
@@ -90,7 +95,7 @@ def body() -> None:
         assert_eq(seed["style"]["font_weight"], 400, "seed is normal weight")
         assert_eq(seed["style"]["font_style"], "Normal", "seed is upright")
         assert_eq(color(seed["style"]), RED, "seed is red")
-        assert_eq(seed["style"]["decoration"]["underline"], False, "seed not underlined")
+        assert_eq(seed["style"]["decoration"]["underline"], "none", "seed not underlined")
 
         # ── (A) ATOMIC toggle-format bold: ONE RPC call, colour preserved
         # (apply-style would have clobbered the colour — the whole point).
@@ -122,19 +127,23 @@ def body() -> None:
         select(ta, 0, 5)
         assert_eq(toggle(ta, "underline"), True, "underline on (an RPC-only field)")
         r = run_at(ta, 0)
-        assert_eq(r["style"]["decoration"]["underline"], True, "underline set")
+        assert_eq(r["style"]["decoration"]["underline"], "single", "underline set")
         assert_eq(r["style"]["font_weight"], 700, "underline left the weight")
         assert_eq(r["style"]["font_style"], "Italic", "underline left the style")
         select(ta, 0, 5)
         assert_eq(toggle(ta, "strikethrough"), True, "strikethrough on")
         r = run_at(ta, 0)
         assert_eq(r["style"]["decoration"]["strikethrough"], True, "strikethrough set")
-        assert_eq(r["style"]["decoration"]["underline"], True, "underline still set (orthogonal)")
+        assert_eq(
+            r["style"]["decoration"]["underline"],
+            "single",
+            "underline still set (orthogonal)",
+        )
         # reverse underline only — strikethrough stays
         select(ta, 0, 5)
         assert_eq(toggle(ta, "underline"), False, "underline off")
         r = run_at(ta, 0)
-        assert_eq(r["style"]["decoration"]["underline"], False, "underline cleared")
+        assert_eq(r["style"]["decoration"]["underline"], "none", "underline cleared")
         assert_eq(r["style"]["decoration"]["strikethrough"], True, "strikethrough kept through the underline toggle")
         assert_eq(color(r["style"]), RED, "colour survived every toggle")
 

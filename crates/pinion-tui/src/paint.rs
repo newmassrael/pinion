@@ -694,7 +694,12 @@ fn apply_text_style(cell: &mut ratatui::buffer::Cell, style: &TextStyle) {
     if matches!(style.font_style, FontStyle::Italic | FontStyle::Oblique(_)) {
         modifier |= Modifier::ITALIC;
     }
-    if style.decoration.underline {
+    // R1540 — ratatui's `Modifier` has ONE underline bit, so every drawn form
+    // collapses to it here. `is_on` is exactly the query
+    // `UnderlineStyle` documents for a backend that cannot distinguish forms;
+    // the SGR 4:x forms reach a real terminal through the cell-grid arm, which
+    // writes the escape itself.
+    if style.decoration.underline.is_on() {
         modifier |= Modifier::UNDERLINED;
     }
     if style.decoration.strikethrough {

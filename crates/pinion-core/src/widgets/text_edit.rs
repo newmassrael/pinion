@@ -116,7 +116,7 @@ impl FormatField {
         match self {
             FormatField::Bold => style.font_weight == crate::style::FontWeight::BOLD,
             FormatField::Italic => style.font_style == crate::style::FontStyle::Italic,
-            FormatField::Underline => style.decoration.underline,
+            FormatField::Underline => style.decoration.underline.is_on(),
             FormatField::Strikethrough => style.decoration.strikethrough,
         }
     }
@@ -139,7 +139,11 @@ impl FormatField {
                     crate::style::FontStyle::Normal
                 };
             }
-            FormatField::Underline => style.decoration.underline = on,
+            FormatField::Underline => {
+                // Through the builder, so the bool <-> UnderlineStyle mapping
+                // (R1540) has one home and cannot disagree with itself.
+                style.decoration = style.decoration.with_underline(on);
+            }
             FormatField::Strikethrough => style.decoration.strikethrough = on,
         }
     }
@@ -5448,9 +5452,11 @@ mod tests {
             crate::style::FontStyle::Italic,
             "italic set, weight untouched"
         );
-        assert!(
+        assert_eq!(
             st.decoration.underline,
-            "underline set, weight + style untouched"
+            crate::style::UnderlineStyle::Single,
+            "underline set to the plain rule the bool verb means (R1540), \
+             weight + style untouched"
         );
         assert_eq!(
             st.fg_color,

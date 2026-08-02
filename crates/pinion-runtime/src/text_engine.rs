@@ -222,7 +222,7 @@ pub fn self_hosted_text_eligible(
         && matches!(style.line_height, LineHeight::Normal)
         && style.font_weight == FontWeight::NORMAL
         && matches!(style.font_style, FontStyle::Normal)
-        && !style.decoration.underline
+        && !style.decoration.underline.is_on()
         && !style.decoration.strikethrough
 }
 
