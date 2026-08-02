@@ -486,9 +486,49 @@ AXES = [
         # axis kind here at all** (the bar chart's x is a `BarGeom` slot metric
         # on a separate code path); no polar / candlestick / box-plot / spline /
         # 3D-surface series.
-        "judged_at": 1534,
-        "completion": 77,
-        "evidence_snapshot": {"example-name": 24, "round-axis": 3},
+        #
+        # R1545 re-judgment, 77 -> 82, demanded by the tool (the round ledger
+        # took this axis 3 -> 4). It closes the item the last TWO re-judgments
+        # both named, and closes it whole: **category is an axis kind now**.
+        # `Categories` / `CategoryScale` are the fourth `AxisKind` arm (Qt
+        # `QBarCategoryAxis`, d3 `scaleBand`), the bar chart's private slot
+        # metric IS that axis, and `LineChart::x_category` /
+        # `ScatterChart::x_category` swap it into a numeric-x chart the way
+        # the log and time kinds already swapped. Of QtCharts' axis classes
+        # the crate now has four of five interchangeable.
+        #
+        # Two things past Qt 6.11, both read over the wire by the demo:
+        # `CategoryScale::band` publishes where a category is DRAWN (a Qt bar's
+        # rect is computed inside the private `QBarSeriesPrivate` painter, and
+        # the absence of that accessor is exactly why `bar.rs` carried three
+        # copies of `left + i * slot`), and a window is resolved from NAMES
+        # before it can reach a chart — `Categories::window` answers a
+        # `Result`, where `setRange(QString, QString)` returns `void` and
+        # silently ignores a name that is not a category.
+        #
+        # +5 and not more, the same size R1534 got for half of its item,
+        # because the remaining list is long and mostly untouched. Audited at
+        # R1545:
+        #
+        #   * Qt's OTHER category axis, `QCategoryAxis` — labels attached to
+        #     arbitrary value RANGES rather than to discrete slots — is absent.
+        #     It is a different kind, not a variant of this one.
+        #   * Label thinning is absent: a windowless 60-category axis labels
+        #     all 60 and they collide. How many labels fit is a measured-TEXT-
+        #     WIDTH decision and a scale has no text measurement, so
+        #     `axis_ticks` ignores its tick target on this kind.
+        #   * A slot has no band-level a11y. R1545's consumer names the WINDOW
+        #     to an AT; an individual category label is painted text with no
+        #     accessible relationship. Qt is the same, so a stated limit.
+        #   * Still open from R1534, all four: no drag pan / rubber-band zoom
+        #     (an `External` has no pointer-down hook), no y-window, the plot
+        #     zoom is invisible to a screen reader, one consumer.
+        #   * Still open from R1529: local time needs a tzdb.
+        #   * Still open from R1519: no polar / candlestick / box-plot /
+        #     spline / 3D-surface series — a whole dimension, untouched.
+        "judged_at": 1545,
+        "completion": 82,
+        "evidence_snapshot": {"example-name": 25, "round-axis": 4},
     },
     {
         "key": "text",
