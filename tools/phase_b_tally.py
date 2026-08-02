@@ -588,9 +588,45 @@ AXES = [
                 "forge-counter",
             ]),
         ],
-        "judged_at": 1519,
-        "completion": 30,
-        "evidence_snapshot": {"example-name": 7, "round-axis": 0},
+        # R1539 re-judged 30 -> 42, demanded by the tool: this axis had never
+        # declared a round, so its first one moved `round-axis` past the band.
+        # The largest single move any axis has had here, and the reason is that
+        # the baseline was the lowest. R1519's 30% described a surface an agent
+        # could ENUMERATE but not READ: `rpc/methods` answered with names and an
+        # OCC class, and its own module doc deferred the rest as "added when a
+        # consumer needs it" — a defer [[qt-parity-over-yagni]] does not admit,
+        # and one R1538 then supplied a consumer for the hard way.
+        #
+        # What R1539 added is the whole missing half of a describable API:
+        #
+        #  - `rpc/schema` publishes a census of all 82 serialized types — key
+        #    sets, JSON types, absence, nullability, and `$ref` nesting — so an
+        #    agent discovers the SHAPE of what it will be answered with.
+        #  - a source-parse gate proves that census true of the Rust types, so
+        #    a silent breaking change to any response is now impossible. That
+        #    is the core of a stabilisation story: not the freeze itself, but a
+        #    machine that can tell you the surface moved.
+        #
+        # +12 and not more. The axis is named for STABILISATION, and the
+        # describability half is what moved; every guarantee half is untouched.
+        # Audited at R1539 rather than assumed:
+        #
+        #  - NO METHOD -> TYPE BINDING, on either side. Qt's `QMetaMethod` has
+        #    `returnMetaType()` AND `parameterTypes()`; pinion has neither, so
+        #    the vocabulary is discoverable and its use is not. Withheld rather
+        #    than shipped partial: 28 `*Outcome` types against 91 methods, so
+        #    the column would read `null` for most of the surface and an agent
+        #    reads a null return type as "answers with nothing".
+        #  - no version negotiation, no deprecation path, no compatibility
+        #    policy, and no freeze — the four things "stabilisation" names.
+        #  - no per-method error taxonomy. `RpcError` is censused as a shape;
+        #    which codes a given method can answer with is undeclared.
+        #  - the census covers `pinion-rpc` only. `scene/snapshot` and
+        #    `scene/access` answer with trees built in `pinion-core` and
+        #    `pinion-a11y`, which the gate's source parse does not reach.
+        "judged_at": 1539,
+        "completion": 42,
+        "evidence_snapshot": {"example-name": 7, "round-axis": 1},
     },
 ]
 
