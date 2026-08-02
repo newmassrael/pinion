@@ -520,9 +520,48 @@ AXES = [
         # And R1531 leaves one of its own: the draw lists are held per cache
         # entry at ~12 bytes a glyph, so MAX_CAPACITY's stated ~26 MB is now
         # an understatement by an amount nobody has measured.
-        "judged_at": 1531,
-        "completion": 69,
-        "evidence_snapshot": {"example-name": 4, "demo-body": 9, "round-axis": 4},
+        #
+        # R1538 re-judgment, demanded by this axis's round count going 4 -> 6.
+        # BOTH gaps R1531 named at 69% are now closed, which is the largest
+        # single move this axis has had:
+        #
+        #  - R1537 closed the GPU-timestamp half. It had been recorded as an
+        #    UPSTREAM blocker and was not one: `vello::Renderer::new` takes a
+        #    `&Device` the caller owns, so pinion owns it (`pinion-gpu`), asks
+        #    for TIMESTAMP_QUERY, and publishes `gpu_us`.
+        #  - R1538 closed the large-scene end-to-end half. Not by timing a big
+        #    binding — a wall-clock threshold reads the host, so it either
+        #    flakes or proves nothing — but by noticing what the claim IS.
+        #    "60fps at scale" is a complexity claim (per-frame work is bounded
+        #    by what is visible, not by the model), and a count can state it.
+        #    `scene/frame_timings` carries scene/layout/encode node censuses;
+        #    `hello-scene-scale` grows its model 1e2 -> 1e6 at runtime and the
+        #    painted tree does not move, with an EAGER arm as the negative
+        #    control that proves the guard can fail.
+        #
+        # +9 and not more, because naming those closed surfaced a dimension
+        # this axis had never named at all — audited at R1538 rather than
+        # assumed:
+        #
+        #  - NO MEMORY MEASUREMENT ANYWHERE. Census of the 70-method RPC
+        #    surface: not one reports bytes. `cache_stats.entries` and
+        #    `text_cache_stats.capacity` are counts of things, and a count is
+        #    not a footprint. A pro tool states its own (Unreal `stat memory`).
+        #    This is also where R1531's leftover lives: MAX_CAPACITY's ~26 MB
+        #    is an unmeasured claim, and nothing can measure it.
+        #  - the census counts NODES, not their cost. A Container and a
+        #    4,000-glyph Text leaf are both 1, so a scene that grew heavier
+        #    without growing wider is invisible to R1538's guard.
+        #  - the a11y walk is outside every counter. `access_node` runs its
+        #    own traversal per paint and nothing counts it, so a binding that
+        #    windows its paint while enumerating its whole model satisfies
+        #    every assertion this axis has.
+        #  - present latency is still unmeasured, and is genuinely EXTERNAL:
+        #    the GPU span covers rasterize + blit, and what the compositor
+        #    does after `present()` needs an extension wgpu does not expose.
+        "judged_at": 1538,
+        "completion": 78,
+        "evidence_snapshot": {"example-name": 5, "demo-body": 11, "round-axis": 6},
     },
     {
         "key": "osnative",
