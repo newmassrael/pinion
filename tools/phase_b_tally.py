@@ -602,9 +602,54 @@ AXES = [
         # what it counts. Deliberately NOT decided here — an axis-set change is
         # the R1522/R1526 class of round, and doing it as a side effect of a
         # feature round is how the last two got made by accident.
-        "judged_at": 1542,
-        "completion": 75,
-        "evidence_snapshot": {"example-name": 9, "round-axis": 2},
+        #
+        # R1546 re-judged 75 -> 80, demanded by the tool (round count 2 -> 3).
+        #
+        # It closes the item R1540's audit named FIRST and largest: a text run
+        # had no background. `TextStyle` carried a foreground and nothing else,
+        # while `TermCell` beside it had carried `fg` AND `bg` since the §5.41
+        # grid arm — so one document was paintable with a highlight in a
+        # terminal and not as text, the same shape R1540 itself found in the
+        # underline. And the absent extension point showed up as workaround
+        # code, exactly as R1532 predicts: the paint layer hand-rolls FOUR band
+        # kinds (selection / find-match / current-line / IME-preedit), each an
+        # absolute-positioned box with its own fill fn, under a comment
+        # conceding all four bodies were byte-identical.
+        #
+        # `TextStyle::bg_color` (Qt `QTextCharFormat::setBackground`) is now a
+        # run-level declaration whose band is cut by BYTE and measured by
+        # `selection_rects_for_range` — the function the selection band already
+        # calls — so a highlight and a selection over the same bytes are one
+        # function called twice rather than two derivations that agree. Two
+        # things past Qt 6.11, both read over the wire: the PAINTED EXTENT is
+        # published (Qt computes the rect inside the private
+        # `QTextLayout::draw` and discards it, so a Qt application re-derives
+        # it from `cursorToX` — a second implementation free to disagree with
+        # the painter's), and the fg/bg pair publishes its WCAG contrast, so
+        # "no highlight in this application drops below 4.5:1" is one call
+        # where Qt will paint any brush behind any pen and say nothing.
+        #
+        # +5 and not more, and the remainder is audited at R1546 rather than
+        # carried. The CHARACTER-format half is now nearly complete: what is
+        # left of it is **vertical alignment** (super/subscript — the OS/2
+        # metrics are parsed in `pinion-text-font` and nothing consumes them)
+        # and **overline** (`TextDecoration` is underline-form + strikethrough
+        # + underline-colour). Both small. What dominates the axis now is the
+        # half that is untouched: **there is no document model at all** —
+        # `QTextList`, `QTextTable`, `QTextBlockFormat`'s per-paragraph indent
+        # and margins, `setMarkdown` / `toHtml`. Not one of those has a scene
+        # primitive. Also unchanged, and now for a RECORDED reason rather than
+        # by omission: the four view-level bands stay separate, because a
+        # `StyleRun` carries a fully-resolved style and layering a selection
+        # run over a syntax run would clobber the syntax run's foreground —
+        # which is why Qt splits the same way (`QTextCharFormat` for the
+        # document, `QTextEdit::ExtraSelection` for the view).
+        #
+        # The R1542 name/evidence mismatch above still stands and is still
+        # deliberately undecided here.
+        "judged_at": 1546,
+        "completion": 80,
+        "evidence_snapshot": {"example-name": 10, "round-axis": 3},
     },
     {
         "key": "perf",
