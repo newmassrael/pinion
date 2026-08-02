@@ -552,10 +552,6 @@ AXES = [
         #  - the census counts NODES, not their cost. A Container and a
         #    4,000-glyph Text leaf are both 1, so a scene that grew heavier
         #    without growing wider is invisible to R1538's guard.
-        #  - the a11y walk is outside every counter. `access_node` runs its
-        #    own traversal per paint and nothing counts it, so a binding that
-        #    windows its paint while enumerating its whole model satisfies
-        #    every assertion this axis has.
         #  - present latency is still unmeasured, and is genuinely EXTERNAL:
         #    the GPU span covers rasterize + blit, and what the compositor
         #    does after `present()` needs an extension wgpu does not expose.

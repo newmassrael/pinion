@@ -75,7 +75,7 @@ use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::compute_visible_range;
+use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
@@ -533,13 +533,26 @@ impl WidgetCore for SceneScaleView {
 impl WidgetA11y for SceneScaleView {
     fn access_node(state: &ScaleState, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
-        let window = compute_visible_range(
-            scroll_state.offset_y(),
-            VIEWPORT_H,
-            state.rows,
-            ROW_PITCH,
-            OVERSCAN,
-        );
+        // The eager arm is unwindowed in BOTH of its walks, not only in the
+        // paint. `V::access_node` runs every frame and builds its own tree, so
+        // a binding can window its paint perfectly and still enumerate its
+        // whole model to assistive technology — and every assertion about the
+        // painted tree would hold while the frame did O(model) work. Giving
+        // the negative control that shape too is what lets the guard see it.
+        let window = if state.eager {
+            VisibleWindow {
+                first: 0,
+                count: state.rows,
+            }
+        } else {
+            compute_visible_range(
+                scroll_state.offset_y(),
+                VIEWPORT_H,
+                state.rows,
+                ROW_PITCH,
+                OVERSCAN,
+            )
+        };
         let mut nodes = windowed_list_nodes(
             LIST_TAG,
             "Asset list",

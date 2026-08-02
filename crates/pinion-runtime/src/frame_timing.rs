@@ -290,6 +290,20 @@ pub struct FrameTiming {
     /// [`Self::encode_us`] already makes there — a terminal frame really is
     /// build + commit.
     pub encode_nodes: u32,
+    /// (R1538 §5.16 §5.40) How many accessibility nodes the frame's AT-tree
+    /// walk produced.
+    ///
+    /// The **second** per-frame traversal, and the one the other three counts
+    /// cannot see. `V::access_node` runs per paint and builds its own tree, so
+    /// a binding can window its paint perfectly and still enumerate its whole
+    /// model to the assistive-technology layer — every scale assertion the
+    /// other counts support would hold while the frame did O(model) work.
+    ///
+    /// Counted where the emit happens, so it describes the tree that was
+    /// actually assembled. `0` on a window with no AT adapter and on a backend
+    /// that assembles no tree per paint, which is the same "that work does not
+    /// exist here" the `mirror` group reports on a backend with no mirror.
+    pub access_nodes: u32,
 }
 
 impl FrameTiming {
@@ -316,7 +330,22 @@ impl FrameTiming {
             scene_nodes: 0,
             layout_nodes: 0,
             encode_nodes: 0,
+            access_nodes: 0,
         }
+    }
+
+    /// (R1538 §5.16 §5.40) Attach the frame's **accessibility** census.
+    ///
+    /// Its own builder rather than a fourth `u32` on [`Self::with_census`],
+    /// for the reason [`Self::with_gpu`] is one: it describes a different
+    /// pipeline. The other three count the walk that produces the picture;
+    /// this counts the walk that produces the tree an assistive technology
+    /// reads. They run at different points of the frame, and one backend has
+    /// the first without the second.
+    #[must_use]
+    pub fn with_access_census(mut self, access_nodes: u32) -> Self {
+        self.access_nodes = access_nodes;
+        self
     }
 
     /// (R1538 §5.16) Attach the frame's **node census** to a sample built by
@@ -524,10 +553,12 @@ impl FrameTimingStats {
         // R1538 — the census peaks. Max only: the property they guard is an
         // upper bound, and a mean cannot state one.
         let (mut max_scene_nodes, mut max_layout_nodes, mut max_encode_nodes) = (0u32, 0u32, 0u32);
+        let mut max_access_nodes = 0u32;
         for s in &self.samples {
             max_scene_nodes = max_scene_nodes.max(s.scene_nodes);
             max_layout_nodes = max_layout_nodes.max(s.layout_nodes);
             max_encode_nodes = max_encode_nodes.max(s.encode_nodes);
+            max_access_nodes = max_access_nodes.max(s.access_nodes);
             min_total = min_total.min(s.total_us);
             max_total = max_total.max(s.total_us);
             sum_total = sum_total.saturating_add(s.total_us);
@@ -575,6 +606,7 @@ impl FrameTimingStats {
             max_scene_nodes,
             max_layout_nodes,
             max_encode_nodes,
+            max_access_nodes,
             gpu_sample_count,
             // Filled by the backend after projection — see the field doc.
             gpu_timing_supported: false,
@@ -911,6 +943,9 @@ pub struct FrameTimingsSnapshot {
     /// could not serve (a resize, a theme change, the first paint), which is
     /// the honest worst case rather than a defect.
     pub max_encode_nodes: u32,
+    /// (R1538 §5.16 §5.40) Largest [`FrameTiming::access_nodes`] in this
+    /// window — the biggest AT tree any recent frame assembled.
+    pub max_access_nodes: u32,
     /// (R1537 §5.16) How many samples in this window carry a GPU timing.
     ///
     /// Published rather than implied because it is the *denominator* of

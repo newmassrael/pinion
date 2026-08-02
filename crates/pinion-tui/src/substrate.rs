@@ -606,6 +606,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                         // R1538 — `encode_nodes` is `0` for the same reason
                         // `encode_us` is: a terminal frame has no encode phase
                         // to walk. The build-side census is real and shared.
+                        // No `with_access_census` either: this backend has no
+                        // AT adapter and assembles no tree per paint, so its
+                        // `access_nodes` stays at the constructor's `0` — the
+                        // same "that work does not exist here" its all-zero
+                        // `mirror` group reports.
                         .with_census(f.scene_nodes, f.layout_nodes, 0),
                 );
         }

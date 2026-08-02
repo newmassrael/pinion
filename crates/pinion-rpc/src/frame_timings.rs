@@ -44,7 +44,8 @@
 //!       "work_us": 510,
 //!       "settle_passes": 1, "settled": true, "shape_misses": 0,
 //!       "gpu_us": 640,
-//!       "scene_nodes": 412, "layout_nodes": 412, "encode_nodes": 9
+//!       "scene_nodes": 412, "layout_nodes": 412, "encode_nodes": 9,
+//!       "access_nodes": 21
 //!     },
 //!     "produce": {
 //!       "passes_total": 9, "shape_misses_total": 130, "nodes_total": 3708
@@ -62,7 +63,7 @@
 //!       "gpu_sample_count": 118, "gpu_timing_supported": true,
 //!       "gpu_dropped_total": 0,
 //!       "max_scene_nodes": 412, "max_layout_nodes": 824,
-//!       "max_encode_nodes": 412
+//!       "max_encode_nodes": 412, "max_access_nodes": 21
 //!     },
 //!     "mean_fps": 116.3,
 //!     "budget_us": 8333,
@@ -132,7 +133,13 @@
 //!   can assert that invariance without a wall-clock threshold, which is the
 //!   only way to assert it without flaking.
 //!
-//!   Read them as three questions: `scene_nodes` is the painted tree's size,
+//!   `access_nodes` is the FOURTH, and it counts a different walk: the AT
+//!   tree `V::access_node` builds every paint. Without it a binding that
+//!   windows its paint and enumerates its whole model to assistive technology
+//!   satisfies every assertion the other three support while doing O(model)
+//!   work each frame.
+//!
+//!   Read the first three as three questions: `scene_nodes` is the painted tree's size,
 //!   `layout_nodes` is what the settle loop measured to get there (they differ
 //!   exactly when `settle_passes > 1`), and `encode_nodes` is how much of the
 //!   tree the paint had to re-walk — far below `scene_nodes` on a frame the
@@ -313,6 +320,14 @@ pub struct FrameTimingsLast {
     /// backend with no encode phase, which is the statement its
     /// [`Self::encode_us`] already makes there.
     pub encode_nodes: u32,
+    /// R1538 — nodes the frame's accessibility walk produced.
+    ///
+    /// The SECOND per-frame traversal, and the one the other three cannot
+    /// see: `V::access_node` builds its own tree every paint, so a binding
+    /// can window its paint perfectly and still enumerate its whole model to
+    /// the AT layer — every scale claim the other counts support would hold
+    /// while the frame did O(model) work. `0` on a window with no AT adapter.
+    pub access_nodes: u32,
 }
 
 /// R1460 §5.16 §2 #2 — cumulative work the RPC **scene producer** has done
@@ -459,6 +474,9 @@ pub struct FrameTimingsWindow {
     /// not serve (a resize, a theme change, the first paint) — the honest
     /// worst case rather than a defect.
     pub max_encode_nodes: u32,
+    /// R1538 — largest `access_nodes` in the window: the biggest AT tree any
+    /// recent frame assembled.
+    pub max_access_nodes: u32,
 }
 
 /// Snapshot returned by [`frame_timings`]. Projects
@@ -537,6 +555,7 @@ pub fn frame_timings(
             scene_nodes: s.last.scene_nodes,
             layout_nodes: s.last.layout_nodes,
             encode_nodes: s.last.encode_nodes,
+            access_nodes: s.last.access_nodes,
         },
         produce: FrameTimingsProduce {
             passes_total: s.produce.passes,
@@ -570,6 +589,7 @@ pub fn frame_timings(
             max_scene_nodes: s.max_scene_nodes,
             max_layout_nodes: s.max_layout_nodes,
             max_encode_nodes: s.max_encode_nodes,
+            max_access_nodes: s.max_access_nodes,
         },
         mean_fps: s.mean_fps,
         budget_us: s.budget_us,
@@ -868,10 +888,36 @@ mod tests {
     }
 
     #[test]
+    fn r1538_the_access_walk_is_counted_separately_from_the_paint() {
+        // The a11y tree is a SECOND traversal. If it rode any of the other
+        // three counts, a binding that windows its paint and enumerates its
+        // whole model would be invisible — which is the exact failure this
+        // field exists to catch, so the two must be independently settable.
+        let windowed = FrameTiming::new(100, 10, 0, 20, 200)
+            .with_census(63, 63, 1)
+            .with_access_census(21);
+        let leaking = FrameTiming::new(100, 10, 0, 20, 200)
+            .with_census(63, 63, 1)
+            .with_access_census(1_000_000);
+
+        let a = frame_timings(Some(snapshot_of(&[windowed]))).unwrap();
+        let b = frame_timings(Some(snapshot_of(&[leaking]))).unwrap();
+        assert_eq!(a.last.access_nodes, 21);
+        assert_eq!(b.last.access_nodes, 1_000_000);
+        assert_eq!(
+            a.last.scene_nodes, b.last.scene_nodes,
+            "identical painted trees — only the AT walk differs, and only \
+             this field can say so",
+        );
+        assert_eq!(a.window.max_access_nodes, 21);
+        assert_eq!(b.window.max_access_nodes, 1_000_000);
+    }
+
+    #[test]
     fn r1538_census_serializes_under_last_and_window() {
-        let out = frame_timings(Some(snapshot_of(&[
-            FrameTiming::new(300, 100, 0, 80, 540).with_census(412, 824, 9)
-        ])))
+        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)
+            .with_census(412, 824, 9)
+            .with_access_census(21)])))
         .unwrap();
         let json = serde_json::to_value(out).unwrap();
         for (group, key, want) in [
@@ -881,6 +927,8 @@ mod tests {
             ("window", "max_scene_nodes", 412),
             ("window", "max_layout_nodes", 824),
             ("window", "max_encode_nodes", 9),
+            ("last", "access_nodes", 21),
+            ("window", "max_access_nodes", 21),
         ] {
             assert_eq!(
                 json.get(group)
@@ -902,6 +950,7 @@ mod tests {
         assert_eq!(out.last.scene_nodes, 0);
         assert_eq!(out.last.layout_nodes, 0);
         assert_eq!(out.last.encode_nodes, 0);
+        assert_eq!(out.last.access_nodes, 0);
     }
 
     #[test]

@@ -1364,6 +1364,7 @@ impl<V: WidgetView> AppShell<V> {
         timing: pinion_runtime::FrameTiming,
         gpu: GpuFrameReport,
         encode_nodes: u32,
+        access_nodes: u32,
     ) {
         let work = self.core.last_frame_work_for_window(window);
         self.core.record_frame_timing(
@@ -1371,6 +1372,7 @@ impl<V: WidgetView> AppShell<V> {
             timing
                 .with_work(work.passes, work.settled, work.shape_misses)
                 .with_census(work.scene_nodes, work.layout_nodes, encode_nodes)
+                .with_access_census(access_nodes)
                 .with_gpu(gpu.us),
         );
         self.core
@@ -1432,6 +1434,10 @@ impl<V: WidgetView> AppShell<V> {
     /// from the pre-R670.B inline version; only the slot lookup +
     /// disjoint-borrow split (slot.accesskit, slot vs self.core)
     /// differ.
+    ///
+    /// R1538 §5.40 — returns how many nodes the AT-tree walk produced, for the
+    /// frame's accessibility census. `0` when this window has no adapter, which
+    /// is the honest count: the walk did not run.
     fn emit_accesskit_for_window(
         &mut self,
         window_id: WindowId,
@@ -1440,12 +1446,12 @@ impl<V: WidgetView> AppShell<V> {
         size_w: u32,
         size_h: u32,
         scale_factor: f64,
-    ) {
+    ) -> u32 {
         let Some(slot) = self.windows.get_mut(&window_id) else {
-            return;
+            return 0;
         };
         if slot.accesskit.is_none() {
-            return;
+            return 0;
         }
         // R813 §5.40 — thread the resolved spec id so the substrate calls
         // `V::access_node_for_window(spec_id, ...)`: each window's AT tree
@@ -1456,8 +1462,12 @@ impl<V: WidgetView> AppShell<V> {
         // Re-acquire the slot mutable borrow now that the substrate
         // borrows released (collect_access_emit_inputs +
         // plan_access_emit take `&mut self.core`).
+        // R1538 — the census is the size of the tree the WALK produced, taken
+        // before the emit decision: a frame whose tree matched the last one
+        // emits nothing, and it still did the work of finding that out.
+        let access_nodes = u32::try_from(nodes.len()).unwrap_or(u32::MAX);
         let Some(slot) = self.windows.get_mut(&window_id) else {
-            return;
+            return access_nodes;
         };
         if decision.should_emit
             && let Some(adapter) = slot.accesskit.as_mut()
@@ -1498,6 +1508,7 @@ impl<V: WidgetView> AppShell<V> {
         // !should_emit so the next frame's plan diffs against the
         // post-emit baseline.
         self.core.commit_access_emit(nodes, at_focus.as_ref());
+        access_nodes
     }
 
     /// Build the paint scene for the current cached state, run layout,
@@ -1524,6 +1535,14 @@ impl<V: WidgetView> AppShell<V> {
     /// when its [`RenderState`] is `Suspended` (GPU released, mobile
     /// platform cycle). Mirrors the pre-R670.B `let RenderState::
     /// Active { .. } = &mut self.render else { return; }` guard.
+    // R1538 — the frame pipeline: build, encode, acquire, submit, present,
+    // close. Its length is the sequence, not accumulated incidental work —
+    // each phase must stay inside the `Instant` bracket that measures it and
+    // inside the slot borrow that owns the renderer, so the phases cannot be
+    // reordered or hoisted into helpers without breaking one or the other.
+    // The one part of it with a single job of its own, the frame close, is
+    // `close_frame`; the rest is the pipeline itself.
+    #[allow(clippy::too_many_lines, reason = "the frame pipeline is a sequence")]
     fn render_window(&mut self, window_id: WindowId) {
         // R670.B §5.16 — read the slot's spec id + inner size first
         // without holding a long-lived `&mut self.windows` borrow,
@@ -1764,7 +1783,14 @@ impl<V: WidgetView> AppShell<V> {
         // (`w`, `h`) dims (matching the logical paint scene the AccessNode
         // rects are collected from); `scale` rides through to the root
         // node transform so the AT side still sees physical-pixel coords.
-        self.emit_accesskit_for_window(window_id, &spec_id, &paint_scene, w.get(), h.get(), scale);
+        let access_nodes = self.emit_accesskit_for_window(
+            window_id,
+            &spec_id,
+            &paint_scene,
+            w.get(),
+            h.get(),
+            scale,
+        );
         // R56.2.c §5.13 §5.38 — push IME candidate window position
         // to the platform IME (per-window since R670.B).
         self.publish_ime_for_window(window_id, &paint_scene);
@@ -1814,6 +1840,87 @@ impl<V: WidgetView> AppShell<V> {
         let target_window: &str = spec_id_for_finalize
             .as_deref()
             .unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        self.close_frame(
+            target_window,
+            paint_scene,
+            cache_stats,
+            FrameClose {
+                frame_start,
+                build_us,
+                encode_us,
+                acquire_us,
+                render_us,
+                gpu,
+                encode_nodes,
+                access_nodes,
+                has_immediate_subtree,
+            },
+        );
+    }
+}
+
+/// (R1538 §5.16) Everything one painted frame measured about itself, handed
+/// from [`AppShell::render_window`] to [`AppShell::close_frame`].
+///
+/// A struct and not eight arguments: six of the nine are same-typed numbers
+/// measured hundreds of lines above the call that consumes them, which is the
+/// transposition [`pinion_runtime::PaintWork`] refused for the same reason.
+/// Every round that adds a per-frame observable adds a field here rather than
+/// another positional `u64` nobody can check at the call site.
+#[derive(Clone, Copy)]
+struct FrameClose {
+    /// When the productive frame opened; `total_us` closes against it.
+    frame_start: Instant,
+    /// `view` + layout pass.
+    build_us: u64,
+    /// Structured-scene to `vello` fragment encode.
+    encode_us: u64,
+    /// The vsync block (idle, not work).
+    acquire_us: u64,
+    /// GPU command-buffer record + submit, CPU-side.
+    render_us: u64,
+    /// What this paint learned about the GPU's own clock (R1537).
+    gpu: GpuFrameReport,
+    /// Scene nodes the encode walk entered (R1538).
+    encode_nodes: u32,
+    /// Nodes the accessibility walk produced (R1538).
+    access_nodes: u32,
+    /// Whether the painted scene carried an immediate-mode subtree.
+    has_immediate_subtree: bool,
+}
+
+impl FrameClose {
+    /// The phase durations as a [`pinion_runtime::FrameTiming`], with the
+    /// total the caller just closed.
+    fn timing(&self, total_us: u64) -> pinion_runtime::FrameTiming {
+        pinion_runtime::FrameTiming::new(
+            self.build_us,
+            self.encode_us,
+            self.acquire_us,
+            self.render_us,
+            total_us,
+        )
+    }
+}
+
+impl<V: WidgetView + 'static> AppShell<V> {
+    /// R1538 §5.16 — close the frame: publish what the paint measured, hand
+    /// the scene to the substrate, record the sample, and publish the pacing
+    /// signal the next `about_to_wait` reads.
+    ///
+    /// Lifted out of [`Self::render_window`] because it is the one part of
+    /// that function with a single job, and because every round that adds a
+    /// per-frame observable adds a line here — R1537 the GPU report, R1538 two
+    /// censuses. The parts arrive as [`FrameClose`] rather than as loose
+    /// arguments for [`pinion_runtime::PaintWork`]'s reason: they are same-typed
+    /// numbers, and this is a call made once, far from where they were measured.
+    fn close_frame(
+        &mut self,
+        target_window: &str,
+        paint_scene: pinion_core::Scene,
+        cache_stats: Option<pinion_runtime::FragmentCacheStats>,
+        close: FrameClose,
+    ) {
         if let Some(stats) = cache_stats {
             self.core.publish_fragment_cache_stats(target_window, stats);
         }
@@ -1833,7 +1940,7 @@ impl<V: WidgetView> AppShell<V> {
         // and record the sample into the per-window rolling profiler
         // window. The O(window) aggregate fold is deferred to the
         // AI-paced `scene/frame_timings` read, never run here.
-        let total_us = instant_delta_us(frame_start, Instant::now());
+        let total_us = instant_delta_us(close.frame_start, Instant::now());
         // R1459 §5.16 §5.36 — the frame's WORK counts ride the same sample as
         // its durations. `build_us` is the whole settle loop, so a 4ms frame
         // that ran one heavy pass and a 4ms frame whose four cheap passes
@@ -1842,9 +1949,10 @@ impl<V: WidgetView> AppShell<V> {
         // counts and the spans describe the same frame.
         self.record_frame_sample(
             target_window,
-            pinion_runtime::FrameTiming::new(build_us, encode_us, acquire_us, render_us, total_us),
-            gpu,
-            encode_nodes,
+            close.timing(total_us),
+            close.gpu,
+            close.encode_nodes,
+            close.access_nodes,
         );
         // R1361 §5.16 §5.22 — hand the freshly-recorded history to any
         // in-app profiler HUD (`use_frame_timings`). Immediately after
@@ -1863,7 +1971,7 @@ impl<V: WidgetView> AppShell<V> {
         // same frame budget from it — pacing and observability cannot
         // disagree because they read this one signal.
         self.core
-            .set_immediate_subtree_for_window(target_window, has_immediate_subtree);
+            .set_immediate_subtree_for_window(target_window, close.has_immediate_subtree);
     }
 
     /// R668 §5.16 / R1072.1 — the `IntrinsicAfterFirstPaint` post-first-paint

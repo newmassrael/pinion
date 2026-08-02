@@ -19,6 +19,12 @@ carries the frame's node census:
   * `last.encode_nodes` — nodes the encode walk entered (a fragment-cache hit
                           short-circuits its subtree, so this is far below
                           `scene_nodes` on a steady frame)
+  * `last.access_nodes` — nodes the accessibility walk produced. A SECOND
+                          traversal: `V::access_node` builds its own tree every
+                          paint, so a binding can window its paint perfectly
+                          and still enumerate its whole model to assistive
+                          technology, doing O(model) work while every other
+                          count stays flat.
 
 with `window.max_*` peers, because the guarded property is an upper bound and
 a mean cannot state one.
@@ -161,15 +167,24 @@ def census_of(ft: dict) -> tuple[int, int, int]:
     return last["scene_nodes"], last["layout_nodes"], last["encode_nodes"]
 
 
+def access_of(ft: dict) -> int:
+    return ft["last"]["access_nodes"]
+
+
 def assert_wire_shape(ft: dict, label: str) -> None:
     """Present, typed, and mutually coherent — before any of it is believed."""
     last, win = ft["last"], ft["window"]
-    for field in ("scene_nodes", "layout_nodes", "encode_nodes"):
+    for field in ("scene_nodes", "layout_nodes", "encode_nodes", "access_nodes"):
         assert field in last, f"{label}: `last.{field}` missing from the wire"
         assert isinstance(last[field], int) and not isinstance(last[field], bool), (
             f"{label}: `last.{field}` must be an integer count, got {last[field]!r}"
         )
-    for field in ("max_scene_nodes", "max_layout_nodes", "max_encode_nodes"):
+    for field in (
+        "max_scene_nodes",
+        "max_layout_nodes",
+        "max_encode_nodes",
+        "max_access_nodes",
+    ):
         assert field in win, (
             f"{label}: `window.{field}` missing — the peak is what an upper-bound "
             f"claim reads, and a mean would hide the one frame that built the model"
@@ -182,6 +197,12 @@ def assert_wire_shape(ft: dict, label: str) -> None:
         f"{label}: the settle loop measured {last['layout_nodes']} nodes but "
         f"produced a {last['scene_nodes']}-node tree — the sum cannot be below "
         f"its own last term"
+    )
+    assert last["access_nodes"] >= 1, (
+        f"{label}: the accessibility walk produced no nodes. This binding "
+        f"declares an AT tree on every frame, so `0` is not a small tree — it "
+        f"is an unmeasured walk, and section (B)'s flatness assertion would "
+        f"pass on a column of zeros"
     )
     assert last["encode_nodes"] >= 1, (
         f"{label}: the encode walked no nodes at all. A paint enters at least "
@@ -197,6 +218,7 @@ def assert_wire_shape(ft: dict, label: str) -> None:
         ("max_scene_nodes", "scene_nodes"),
         ("max_layout_nodes", "layout_nodes"),
         ("max_encode_nodes", "encode_nodes"),
+        ("max_access_nodes", "access_nodes"),
     ):
         assert win[peak] >= last[cur], (
             f"{label}: window.{peak}={win[peak]} is below this frame's "
@@ -221,12 +243,14 @@ def body() -> None:
         # One process, one window, one cache. The only thing that changes is
         # how big the model says it is.
         virtual_census: dict[int, tuple[int, int, int]] = {}
+        virtual_access: dict[int, int] = {}
         for rows in LADDER:
             set_rows(tf, rows)
             count = int(tf.frame_timings()["frame_count"])
             ft = drive_frame(tf, count, f"virtual arm at {rows} rows")
             assert_wire_shape(ft, f"virtual/{rows}")
             virtual_census[rows] = census_of(ft)
+            virtual_access[rows] = access_of(ft)
 
         scene_counts = {rows: c[0] for rows, c in virtual_census.items()}
         assert len(set(scene_counts.values())) == 1, (
@@ -241,6 +265,14 @@ def body() -> None:
             f"the window holds {flat} nodes, which is not a WINDOW of a "
             f"{LADDER[-1]}-row model — a flat number that happens to be huge "
             f"would satisfy the invariance above and prove nothing"
+        )
+
+        assert len(set(virtual_access.values())) == 1, (
+            f"the ACCESSIBILITY walk must be flat too. It is a second "
+            f"traversal that runs every paint and that none of the three "
+            f"paint counts can see, so a binding whose AT tree grew with the "
+            f"model would satisfy every assertion above while doing O(model) "
+            f"work a frame: {virtual_access}"
         )
 
         layout_counts = {rows: c[1] for rows, c in virtual_census.items()}
@@ -361,12 +393,14 @@ def body() -> None:
         assert_eq(tf.query(f"{EXT}/eager"), True, "the eager arm is entered")
 
         eager_census: dict[int, tuple[int, int, int]] = {}
+        eager_access: dict[int, int] = {}
         for rows in rungs:
             set_rows(tf, rows)
             count = int(tf.frame_timings()["frame_count"])
             ft = drive_frame(tf, count, f"eager arm at {rows} rows")
             assert_wire_shape(ft, f"eager/{rows}")
             eager_census[rows] = census_of(ft)
+            eager_access[rows] = access_of(ft)
 
         small, large = eager_census[rungs[0]], eager_census[rungs[-1]]
         grew = large[0] - small[0]
@@ -378,6 +412,11 @@ def body() -> None:
             f"above measured a constant and asserted nothing"
         )
         assert large[1] >= large[0], "eager: the layout sum still bounds the tree"
+        assert eager_access[rungs[-1]] > eager_access[rungs[0]], (
+            f"the eager arm is unwindowed in BOTH walks, so its AT tree must "
+            f"grow with the model too ({eager_access}). If it did not, the "
+            f"a11y half of section (B) would be asserting a constant"
+        )
 
         # The cap refuses rather than clamps — a guard reading a clamped value
         # would believe it was measuring a model the binding does not hold.

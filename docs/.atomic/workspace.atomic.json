@@ -79212,6 +79212,46 @@
         "The census counts nodes, not their cost. A Container and a 4,000-glyph Text leaf are both 1, so a scene that grew heavier without growing wider is invisible to this guard. `shape_misses` covers the text half; nothing covers image or External payloads."
       ]
     },
+    "Round 1538.1": {
+      "decision_summary": "The a11y walk joins the census: it is the frame's second traversal, and without it a binding that windows its paint while enumerating its whole model to assistive technology passes every assertion R1538 added.",
+      "changes_bullets": [
+        "`FrameTiming::access_nodes` (builder `with_access_census`, wire `last.access_nodes` + `window.max_access_nodes`) counts the frame's SECOND traversal — the AT tree `V::access_node` builds every paint. Without it a binding that windows its paint perfectly while enumerating its whole model to assistive technology satisfies every assertion R1538 added, doing O(model) work a frame. Counted at the emit, before the diff decision, because a frame whose tree matched the last one emits nothing and still did the work of finding out.",
+        "`hello-scene-scale`'s eager arm is now unwindowed in BOTH walks, so the guard's negative control covers the a11y axis too. `AppShell::close_frame` + `FrameClose` lift the frame-close sequence out of `render_window`: every round that adds a per-frame observable was lengthening the pipeline function, and the close is the one part of it with a single job."
+      ],
+      "verification_bullets": [
+        "The demo asserts the a11y walk is flat across the same 10,000x model growth and GROWS in the eager arm, plus `access_nodes >= 1` — without that floor, section (B)'s flatness assertion would pass on a column of zeros. Counterfactual (7), hardcoding the census to 0, fails on exactly that assertion; restored and verified by grep.",
+        "Re-ran every gate after the `close_frame` extraction: demo PASS, tests + clippy `-D pedantic` on the four changed crates, `cargo fmt --all --check`, `cargo doc --workspace --no-deps --document-private-items`."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "No wall-clock 60fps measurement at scale, and deliberately none: this round proves the WORK is scale-invariant, which is the property that makes 60fps possible, not that any host achieves it. A threshold would read the machine.",
+        "The census counts nodes, not their cost. A Container and a 4,000-glyph Text leaf are both 1, so a scene that grew heavier without growing wider is invisible. `shape_misses` covers the text half; nothing covers image or External payloads.",
+        "`encode_nodes` has no TUI arm and `access_nodes` no TUI or headless arm — both report 0 there, the same statement `encode_us: 0` already makes. The TUI's cell-paint walk is a real traversal nobody counts.",
+        "`render_window` now carries `#[allow(clippy::too_many_lines)]`. The frame close was extracted; what is left is the pipeline sequence, whose phases cannot leave the `Instant` bracket or the slot borrow that owns them. Stated rather than hidden."
+      ],
+      "publishable_decision_summary": "The a11y walk joins the census: it is the frame's second traversal, and without it a binding that windows its paint while enumerating its whole model to assistive technology passes every assertion R1538 added.",
+      "publishable_changes_bullets": [
+        "`FrameTiming::access_nodes` (builder `with_access_census`, wire `last.access_nodes` + `window.max_access_nodes`) counts the frame's SECOND traversal — the AT tree `V::access_node` builds every paint. Without it a binding that windows its paint perfectly while enumerating its whole model to assistive technology satisfies every assertion R1538 added, doing O(model) work a frame. Counted at the emit, before the diff decision, because a frame whose tree matched the last one emits nothing and still did the work of finding out.",
+        "`hello-scene-scale`'s eager arm is now unwindowed in BOTH walks, so the guard's negative control covers the a11y axis too. `AppShell::close_frame` + `FrameClose` lift the frame-close sequence out of `render_window`: every round that adds a per-frame observable was lengthening the pipeline function, and the close is the one part of it with a single job."
+      ],
+      "publishable_verification_bullets": [
+        "The demo asserts the a11y walk is flat across the same 10,000x model growth and GROWS in the eager arm, plus `access_nodes >= 1` — without that floor, section (B)'s flatness assertion would pass on a column of zeros. Counterfactual (7), hardcoding the census to 0, fails on exactly that assertion; restored and verified by grep.",
+        "Re-ran every gate after the `close_frame` extraction: demo PASS, tests + clippy `-D pedantic` on the four changed crates, `cargo fmt --all --check`, `cargo doc --workspace --no-deps --document-private-items`."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "No wall-clock 60fps measurement at scale, and deliberately none: this round proves the WORK is scale-invariant, which is the property that makes 60fps possible, not that any host achieves it. A threshold would read the machine.",
+        "The census counts nodes, not their cost. A Container and a 4,000-glyph Text leaf are both 1, so a scene that grew heavier without growing wider is invisible. `shape_misses` covers the text half; nothing covers image or External payloads.",
+        "`encode_nodes` has no TUI arm and `access_nodes` no TUI or headless arm — both report 0 there, the same statement `encode_us: 0` already makes. The TUI's cell-paint walk is a real traversal nobody counts.",
+        "`render_window` now carries `#[allow(clippy::too_many_lines)]`. The frame close was extracted; what is left is the pipeline sequence, whose phases cannot leave the `Instant` bracket or the slot borrow that owns them. Stated rather than hidden."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
