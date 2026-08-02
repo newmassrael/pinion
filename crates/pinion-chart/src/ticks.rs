@@ -37,6 +37,8 @@
 //! nice number), so the ladder is bracketed by [`nice_step`] at both ends
 //! and the mixed-radix region is exactly second-to-year.
 
+use crate::scale::Categories;
+
 use crate::civil::{
     Civil, MAX_TIME_MS, MS_PER_DAY, MS_PER_DAY_F64, MS_PER_HOUR, MS_PER_MINUTE, MS_PER_SECOND,
     month_abbrev,
@@ -706,7 +708,12 @@ fn to_f64(v: i64) -> f64 {
 /// what the label should say.
 ///
 /// Minor ticks have no arm here because a minor tick is never labelled.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// R1545 added the fourth arm and with it dropped `Copy`, for the reason
+/// [`AxisKind`](crate::AxisKind) did: a categorical label is not *derived*
+/// from its value the way a number, a magnitude or an instant is — it is
+/// looked up, so the format has to carry the list. The clone is a refcount
+/// bump ([`Categories`] is shared).
+#[derive(Debug, Clone, PartialEq)]
 pub enum TickFormat {
     /// Linear axis — every label carries the decimals this constant step
     /// implies ([`format_axis_tick`]).
@@ -717,17 +724,27 @@ pub enum TickFormat {
     /// Time axis — every label is the finest calendar field that
     /// distinguishes its tick ([`format_time_tick`]).
     Time,
+    /// Categorical axis — every label is the NAME of the slot its tick
+    /// indexes (Qt `QBarCategoryAxis`), so the format carries the list.
+    Category(Categories),
 }
 
 impl TickFormat {
     /// The label for one tick `value` on this axis — a label that sits in a
     /// ROW of them, and may lean on its neighbours to be legible.
+    ///
+    /// A categorical value that names no slot answers the empty string. That
+    /// is not a silent hole: a tick comes from its own axis's generator
+    /// (`crate::plot::axis_ticks`), which only ever emits indices the list
+    /// carries, and a *data* value naming no slot is reported through
+    /// [`OffScale`](crate::OffScale) rather than labelled.
     #[must_use]
-    pub fn label(self, value: f64) -> String {
+    pub fn label(&self, value: f64) -> String {
         match self {
-            Self::Step(step) => format_axis_tick(value, step),
+            Self::Step(step) => format_axis_tick(value, *step),
             Self::Log => format_log_tick(value),
             Self::Time => format_time_tick(value),
+            Self::Category(c) => category_label(c, value),
         }
     }
 
@@ -744,13 +761,32 @@ impl TickFormat {
     /// One method rather than a rule each caller re-applies: this
     /// distinction reached R1529 already spelled differently in the timeline
     /// and the line chart, and a rule with two spellings is two rules.
+    ///
+    /// A categorical label is already self-contained — a category name means
+    /// the same thing alone as it does in a row — so it takes the numeric
+    /// arm's identity.
     #[must_use]
-    pub fn readout(self, value: f64) -> String {
+    pub fn readout(&self, value: f64) -> String {
         match self {
             Self::Time => format_time_stamp(value),
-            Self::Step(_) | Self::Log => self.label(value),
+            Self::Step(_) | Self::Log | Self::Category(_) => self.label(value),
         }
     }
+}
+
+/// The label of the category `value` indexes — the name at `round(value)`, or
+/// the empty string when the value names no slot (see [`TickFormat::label`]).
+fn category_label(categories: &Categories, value: f64) -> String {
+    if !categories.spans(value) {
+        return String::new();
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "`spans` bounded the value to -0.5 ..= len-0.5, so the rounded index is a non-negative in-range display cardinality"
+    )]
+    let index = value.round().max(0.0) as usize;
+    categories.at(index).unwrap_or_default().to_string()
 }
 
 /// Render `value` as a label on a **logarithmic** axis.

@@ -557,7 +557,7 @@ pub(crate) fn y_tick_labels(
     rect_x: u32,
     ticks: &[f64],
     y_positions: &[f32],
-    format: TickFormat,
+    format: &TickFormat,
     style: &ChartStyle,
     prefix: &str,
 ) -> Vec<Scene> {

@@ -102,7 +102,7 @@ use crate::plot::{
     AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
     off_scale_points, tick_pixels,
 };
-use crate::scale::AxisKind;
+use crate::scale::{AxisKind, Categories};
 use crate::series::{DataPoint, Series, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::TickFormat;
@@ -481,6 +481,49 @@ impl LineChart {
         self
     }
 
+    /// Plot the **x**-axis over named categories (R1545) — Qt's
+    /// `QBarCategoryAxis` attached to a line series, d3's `scalePoint`.
+    /// Sample `x` values are read as category **indices**: category `i` sits
+    /// at `x = i`.
+    ///
+    /// This is the trend-over-categories chart — a line across the same
+    /// buckets a [`BarChart`](crate::BarChart) would draw as bars, so the two
+    /// can share an axis and be read against each other. Until R1545 the
+    /// crate's categorical layout lived only in the bar builder's private
+    /// slot metric, so a line chart could name its buckets only by pinning a
+    /// numeric domain and letting the axis label them `0, 1, 2`.
+    ///
+    /// A sample whose x names no slot — index `9` of six categories, or a
+    /// negative one — has **no pixel** and is reported by
+    /// [`off_scale`](Self::off_scale), the R1528 stance for a log axis's zero
+    /// applied to the arm where "no such slot" is the failure. Fractional
+    /// positions between slots do map: that is where a segment crossing from
+    /// one category to the next lives.
+    #[must_use]
+    pub fn x_category<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.kinds.x = AxisKind::Category(Categories::new(categories));
+        self
+    }
+
+    /// Plot the **y**-axis over named categories (R1545) — the y-axis twin of
+    /// [`x_category`](Self::x_category); see it for the whole contract. This
+    /// is the axis a horizontal category chart puts its buckets on, exactly
+    /// as Qt attaches a `QBarCategoryAxis` to the y of a
+    /// `QHorizontalBarSeries`.
+    #[must_use]
+    pub fn y_category<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.kinds.y = AxisKind::Category(Categories::new(categories));
+        self
+    }
+
     /// Every point this chart's axes cannot place, in series then point
     /// order (R1528) — empty for an all-linear chart over finite data.
     ///
@@ -490,7 +533,7 @@ impl LineChart {
     /// silence. `examples/hello-log-chart` renders it as a caption.
     #[must_use]
     pub fn off_scale(&self) -> Vec<OffScale> {
-        off_scale_points(&self.series, self.kinds)
+        off_scale_points(&self.series, &self.kinds)
     }
 
     /// The chart body, authored in the frame `rect` describes — the ONE
@@ -513,7 +556,7 @@ impl LineChart {
             self.y_domain,
             style,
             self.rescale(),
-            self.kinds,
+            &self.kinds,
         );
         let (y_lo, y_hi) = plot.y.domain();
         // One tick-set resolver, shared with `inspect_readout` so the
@@ -532,7 +575,7 @@ impl LineChart {
         // Inspect overlay, split so the crosshair paints behind the
         // series, the markers on top of the lines, and the tooltip above
         // everything.
-        let (crosshair, markers, tooltip) = match self.resolve_inspect(&plot, rect, style, steps) {
+        let (crosshair, markers, tooltip) = match self.resolve_inspect(&plot, rect, style, &steps) {
             Some(i) => (Some(i.crosshair), i.markers, i.tooltip),
             None => (None, Vec::new(), Vec::new()),
         };
@@ -548,7 +591,7 @@ impl LineChart {
         children.extend(self.axes(&plot, style));
         children.extend(self.series_layer(&plot, baseline, style));
         children.extend(markers);
-        children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, steps));
+        children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, &steps));
         if style.legend {
             // R1440 — one colour legend, never two: a value encoding replaces
             // the series swatch row with the colour bar, because the swatches
@@ -796,12 +839,12 @@ impl LineChart {
         x_ticks: &[f64],
         y_ticks: &[f64],
         style: &ChartStyle,
-        steps: Steps,
+        steps: &Steps,
     ) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
         let y_pos = tick_pixels(&plot.y, y_ticks);
         let mut out =
-            crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, steps.y, style, &self.tag_prefix);
+            crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, &steps.y, style, &self.tag_prefix);
         // The numeric x-axis labels stay here: shared only with the scatter chart
         // (two consumers) — the categorical bar chart labels its slots with
         // category names instead — so the numeric x-label loop is deferred from
@@ -928,7 +971,7 @@ impl LineChart {
             self.y_domain,
             style,
             self.rescale(),
-            self.kinds,
+            &self.kinds,
         );
         let x_ticks: Vec<f64> = axis_ticks(&plot.x, style.x_ticks);
         let y_ticks: Vec<f64> = axis_ticks(&plot.y, style.y_ticks);
@@ -954,7 +997,7 @@ impl LineChart {
         plot: &CartesianPlot,
         rect: Rect,
         style: &ChartStyle,
-        steps: Steps,
+        steps: &Steps,
     ) -> Option<Inspect> {
         let (focus_x, hits) = self.resolve_focus(plot, rect)?;
         let focus_pixel = plot.x.map(focus_x)?;
@@ -1003,7 +1046,7 @@ impl LineChart {
         focus_x: f64,
         hits: &[(usize, DataPoint)],
         style: &ChartStyle,
-        steps: Steps,
+        steps: &Steps,
     ) -> Vec<Scene> {
         let header = format!("x = {}", steps.x.readout(focus_x));
         let rows: Vec<CalloutRow> = hits
@@ -1030,7 +1073,7 @@ impl LineChart {
 }
 
 /// Per-axis label format — the precision axis and tooltip labels format at.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Steps {
     x: TickFormat,
     y: TickFormat,
@@ -2194,6 +2237,93 @@ mod tests {
         Rect::new(0, 0, 480, 320)
     }
 
+    // ---- R1545: the axis is swappable to categorical ----------------------
+
+    /// ★ The gap this round closes, stated as a test: a NUMERIC-x chart can
+    /// now take the categorical axis, exactly as it can take the log and time
+    /// ones. Its x labels become the category names — over the identical data
+    /// the default linear axis labels the same positions `0, 1, 2, …`, which
+    /// is the counterfactual.
+    #[test]
+    fn r1545_a_line_chart_can_swap_in_the_category_axis() {
+        let series = vec![Series::new(
+            "revenue",
+            (0..4)
+                .map(|i| DataPoint::new(f64::from(i), 10.0 + f64::from(i)))
+                .collect(),
+        )];
+        let names = ["North", "South", "East", "West"];
+
+        let categorical = LineChart::new(series.clone())
+            .x_category(names)
+            .build(rect(), &ChartStyle::default());
+        let labels: Vec<String> = (0..4)
+            .map(|k| label_text(&categorical, &format!("chart.label.x.{k}")))
+            .collect();
+        assert_eq!(labels, names, "the axis labels its slots by name");
+
+        let linear = LineChart::new(series).build(rect(), &ChartStyle::default());
+        assert_ne!(
+            label_text(&linear, "chart.label.x.0"),
+            "North",
+            "a linear x labels the same positions numerically"
+        );
+    }
+
+    /// ★ A sample that names no slot draws no vertex and is reported — the
+    /// same contract the log axis's zero has, on the categorical arm.
+    ///
+    /// Read on the **y**-axis, because the x-axis clip is a different rule
+    /// that would mask this one: a sample past the x-domain is clipped to the
+    /// domain edge with an interpolated crossing (R1356, so a windowed line
+    /// meets the plot edge), and that crossing IS a position the axis
+    /// defines. So on x the off-list sample is reported and its own position
+    /// is never placed, while on y — where no clip runs — the vertex simply
+    /// is not there.
+    #[test]
+    fn r1545_a_sample_off_the_category_list_is_reported_not_drawn() {
+        let samples = || {
+            vec![Series::new(
+                "s",
+                vec![
+                    DataPoint::new(0.0, 0.0),
+                    DataPoint::new(1.0, 1.0),
+                    DataPoint::new(2.0, 7.0),
+                ],
+            )]
+        };
+        let verts = |scene: &Scene| match find(scene, "chart.series.0") {
+            Some(Scene::Path(p)) => p.commands.len(),
+            _ => panic!("the series is a path"),
+        };
+
+        let chart = LineChart::new(samples()).y_category(["low", "mid", "high"]);
+        let off = chart.off_scale();
+        assert_eq!(off.len(), 1, "only the sample naming no slot: {off:?}");
+        assert!((off[0].point.y - 7.0).abs() < f64::EPSILON);
+        assert_eq!(
+            verts(&chart.build(rect(), &ChartStyle::default())),
+            2,
+            "the off-list sample contributes no vertex"
+        );
+        // The counterfactual: over the identical data a linear y carries all
+        // three, so the missing vertex is the AXIS's decision, not the data's.
+        assert_eq!(
+            verts(&LineChart::new(samples()).build(rect(), &ChartStyle::default())),
+            3
+        );
+
+        // And on x the report is the same, from the same `defines` rule.
+        let on_x = LineChart::new(vec![Series::new(
+            "s",
+            vec![DataPoint::new(0.0, 5.0), DataPoint::new(7.0, 9.0)],
+        )])
+        .x_category(["a", "b", "c"]);
+        let off = on_x.off_scale();
+        assert_eq!(off.len(), 1);
+        assert!((off[0].point.x - 7.0).abs() < f64::EPSILON);
+    }
+
     #[test]
     fn r1528_log_y_axis_snaps_to_decades_and_labels_them() {
         let scene = LineChart::new(decades())
@@ -2248,7 +2378,7 @@ mod tests {
             None,
             &ChartStyle::default(),
             Rescale::default(),
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         let spread = plot.y.map(0.4).unwrap() - plot.y.map(12.0).unwrap();
         assert!(

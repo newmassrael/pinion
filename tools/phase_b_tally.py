@@ -449,6 +449,11 @@ AXES = [
                 "legend", "brush", "elevation", "market-map", "stat-tiles",
                 "topology", "series-toggle", "rescale-toggle", "autoscale-y",
                 "cross-filter", "live-data", "deviation-grid",
+                # R1545 — an axis-KIND consumer need not be named "chart":
+                # `hello-category-axis` plots a bar chart and a line chart
+                # from one axis, and the census flagged it UNCLASSIFIED
+                # because every pattern here named a chart TYPE.
+                "axis",
             ]),
         ],
         # R1534 re-judgment, 72 -> 77, demanded by the tool (the round ledger

@@ -14,10 +14,31 @@
 //! axis-based chart the mid-level ASSEMBLY was waiting for, so the horizontal
 //! gridlines, the two axes, and the y-tick-label loop are now the SHARED
 //! [`crate::draw`] furniture (`gridlines` / `axes` / `y_tick_labels`) this
-//! builder CALLS rather than re-derives; the categorical `chart.xlabel.{i}` loop
-//! stays its own (a bar's x-axis has no numeric ticks). Both builders emit the
-//! same tagged, layout-native `Scene`, so a bar chart docks / flexes / resizes
-//! and reads back over §2 #7 introspection exactly as a line chart does.
+//! builder CALLS rather than re-derives. Both builders emit the same tagged,
+//! layout-native `Scene`, so a bar chart docks / flexes / resizes and reads
+//! back over §2 #7 introspection exactly as a line chart does.
+//!
+//! # The x is an axis (R1545)
+//!
+//! It did not used to be. The slot metric was `left + i * slot`, written out
+//! three times in this file — for the bar box, for its label, for its click
+//! surface — and reachable from nowhere else, which is why the crate's
+//! charting axis could offer linear, logarithmic and time but not
+//! categorical. It is now a [`CategoryScale`]: the bar
+//! box, the label box and the hit region are all one
+//! [`band`](crate::CategoryScale::band) call, the label text comes from the
+//! axis's own [`TickFormat`], the inspect hit-test is the axis's
+//! [`nearest`](crate::CategoryScale::nearest), and the same axis can be
+//! handed to a line or scatter chart
+//! ([`LineChart::x_category`](crate::LineChart::x_category)).
+//!
+//! [`CategoryScale`]: crate::CategoryScale
+//!
+//! What that bought beyond tidiness is [`BarChart::x_window`] — Qt's
+//! `QBarCategoryAxis::setRange`. A window narrows the axis domain, and
+//! because everything above derives from the axis, the bars, their labels,
+//! their click surfaces and the inspect hit-test all follow with no further
+//! code.
 //!
 //! # Introspection
 //!
@@ -71,9 +92,12 @@ use crate::draw::{
     plot_rect, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
-use crate::scale::LinearScale;
+use crate::plot::axis_format;
+use crate::scale::{
+    Categories, CategoryScale, CategoryWindow, LinearScale, ValueScale, index_value,
+};
 use crate::style::ChartStyle;
-use crate::ticks::{format_axis_tick, nice_ticks, tick_step};
+use crate::ticks::{TickFormat, format_axis_tick, nice_ticks, tick_step};
 
 /// The fraction of each bar's slot left empty as the inter-bar gap (so
 /// adjacent bars read as distinct). `0.2` = a bar fills 80% of its slot.
@@ -149,15 +173,24 @@ pub struct BarChart {
     /// numeric filter. Orthogonal to the categorical [`selected`](Self::selected)
     /// mask; either dims a bar.
     select_x_range: Option<(f64, f64)>,
+    /// R1545 — the x-axis's category list, derived from the bar labels once at
+    /// construction. Held rather than rebuilt per frame because it is what the
+    /// [`AxisKind::Category`](crate::AxisKind) the axis resolves from carries,
+    /// and rebuilding it would clone `n` heap strings on every paint.
+    categories: Categories,
+    /// R1545 — the visible slice of the category axis (Qt
+    /// `QBarCategoryAxis::setRange`). `None` shows every category.
+    x_window: Option<CategoryWindow>,
     tag_prefix: String,
 }
 
 impl BarChart {
     /// A bar chart over `bars`, using the default palette, an auto y-domain
     /// (baseline `0` to the data max, nice-tick-snapped), no inspect overlay,
-    /// and the `"chart"` tag prefix.
+    /// every category in view, and the `"chart"` tag prefix.
     #[must_use]
     pub fn new(bars: Vec<Bar>) -> Self {
+        let categories = Categories::new(bars.iter().map(|b| b.label.clone()));
         Self {
             bars,
             palette: CategoricalPalette::default(),
@@ -166,8 +199,54 @@ impl BarChart {
             selected: Vec::new(),
             select_tags: None,
             select_x_range: None,
+            categories,
+            x_window: None,
             tag_prefix: "chart".to_string(),
         }
+    }
+
+    /// This chart's x-axis category list (R1545) — Qt's
+    /// `QBarCategoryAxis::categories`, derived from the bar labels.
+    ///
+    /// The entry point for resolving a [`x_window`](Self::x_window) by NAME:
+    /// `chart.categories().window("Mar", "Aug")` answers a
+    /// [`CategoryWindow`] or names why the request could not be honoured
+    /// ([`CategoryLookup`](crate::CategoryLookup)).
+    #[must_use]
+    pub const fn categories(&self) -> &Categories {
+        &self.categories
+    }
+
+    /// Show only `window`'s slice of the category axis — Qt's
+    /// `QBarCategoryAxis::setRange(min, max)`, with the resolution already
+    /// done (see [`categories`](Self::categories)).
+    ///
+    /// The bars, their labels, their click surfaces and the inspect hit-test
+    /// all narrow together, because all four derive from the axis. A 60-bar
+    /// chart in 600px gives every bar 10px; windowed to twelve it gives each
+    /// one 50px, which is the difference between a readable axis and a comb.
+    ///
+    /// Qt takes the two endpoints as `QString`s and returns `void`, so a name
+    /// that is not a category leaves the axis silently unwindowed. Here the
+    /// name is resolved before it can reach the chart, so a typo is a value
+    /// the caller must handle rather than a chart that quietly ignored it.
+    #[must_use]
+    pub const fn x_window(mut self, window: CategoryWindow) -> Self {
+        self.x_window = Some(window);
+        self
+    }
+
+    /// The categories currently **in view** in a chart of `rect` under
+    /// `style` — the window a wheel zoom or [`x_window`](Self::x_window) has
+    /// left, resolved through the same axis the bars are drawn from.
+    ///
+    /// `None` when the chart carries no category, or when the window has
+    /// closed past every one of them. Qt has no equivalent: a
+    /// `QBarCategoryAxis` reports `count()` (all of them) and the min/max
+    /// names it was *set* to, never which slots a live window is showing.
+    #[must_use]
+    pub fn visible_categories(&self, rect: Rect, style: &ChartStyle) -> Option<CategoryWindow> {
+        self.geom(rect, style).x.visible()
     }
 
     /// Override the default bar-colour palette (a bar's own
@@ -365,12 +444,18 @@ impl BarChart {
         // is "no filter" and leaves every bar full.
         let any_selected = self.selected.iter().any(|&a| a);
 
-        // Bars — evenly spaced slots across the plot width, each bar centred
-        // in its slot and grown from the baseline to its value. The per-slot
-        // geometry lives in `bar_slot_center_and_rect`, the shared source the
-        // inspect highlight also reads.
+        // Bars — one per VISIBLE category (R1545: the window narrows what is
+        // drawn, not only what is domained), each centred in its band and
+        // grown from the baseline to its value. The per-slot geometry lives in
+        // `bar_slot_center_and_rect`, the shared source the inspect highlight
+        // also reads.
         let size = style.label_size_px.max(1);
-        for (i, bar) in self.bars.iter().enumerate() {
+        // The label text comes from the AXIS, not from `bar.label` directly, so
+        // the string under a slot is the one the axis carries for it — the same
+        // derivation the tick labels of every other axis kind take (R1525).
+        let x_format = axis_format(&g.x_axis(), &[]);
+        for i in visible_indices(&g) {
+            let bar = &self.bars[i];
             let (_, bar_rect) = self.bar_slot_center_and_rect(&g, i);
             if let Some(r) = bar_rect {
                 // A bar defaults to its palette colour BY INDEX (a categorical
@@ -391,12 +476,12 @@ impl BarChart {
             }
             // Category label centred under the slot (always, even for a
             // non-finite bar, so the axis stays legible).
-            let slot_x = g.left + (i as f32) * g.slot;
+            let (slot_lo, slot_hi) = g.x.band(i).unwrap_or((g.left, g.left));
             children.push(label_node(
-                bar.label.clone(),
-                to_u32(slot_x),
+                x_format.label(index_value(i)),
+                to_u32(slot_lo),
                 to_u32(g.bottom) + 4,
-                to_u32(g.slot),
+                to_u32(slot_hi - slot_lo).max(1),
                 TextAlign::Center,
                 style.label,
                 size,
@@ -420,7 +505,7 @@ impl BarChart {
             // log axis has no zero — so this axis is linear by construction
             // and takes the constant-step format (R1528). Qt permits a log
             // bar chart; the length encoding is what makes it a lie.
-            crate::ticks::TickFormat::Step(g.y_step),
+            &TickFormat::Step(g.y_step),
             style,
             &self.tag_prefix,
         ));
@@ -436,18 +521,16 @@ impl BarChart {
         // bar / mute beneath it — it exists only to be hit.
         if let Some(tags) = &self.select_tags {
             let col_h = to_u32(g.bottom - g.top);
-            for (i, tag) in tags.iter().enumerate() {
-                if i >= g.n {
-                    break;
-                }
-                let slot_x = g.left + (i as f32) * g.slot;
+            for i in visible_indices(&g) {
+                let Some(tag) = tags.get(i) else { continue };
+                let (slot_lo, slot_hi) = g.x.band(i).unwrap_or((g.left, g.left));
                 children.push(Scene::Container(
                     ContainerNode::new(Vec::new())
                         .with_tag(tag.clone())
                         .with_layout(
                             LayoutStyle::new()
-                                .with_absolute_position(to_u32(slot_x), to_u32(g.top))
-                                .with_size(Size::px(to_u32(g.slot), col_h))
+                                .with_absolute_position(to_u32(slot_lo), to_u32(g.top))
+                                .with_size(Size::px(to_u32(slot_hi - slot_lo).max(1), col_h))
                                 .with_focusable(true),
                         ),
                 ));
@@ -477,13 +560,15 @@ impl BarChart {
         // The baseline the bars grow from — 0 when it is in the domain, else
         // the nearer domain edge.
         let baseline_y = y.map(0.0_f64.clamp(y_lo, y_hi));
-        let n = self.bars.len();
-        let slot = if n > 0 {
-            (right - left).max(1.0) / n as f32
-        } else {
-            0.0
-        };
-        let bar_w = (slot * (1.0 - BAR_GAP_FRAC)).max(1.0);
+        // R1545 — the x-axis. Its domain is the category window when one is
+        // set (Qt `QBarCategoryAxis::setRange`), else the whole band run; the
+        // slot width the bars are sized from is the axis's own band width, so
+        // "how wide is a bar" and "where is category i" answer from one place.
+        let domain = self
+            .x_window
+            .map_or_else(|| self.categories.extent(), CategoryWindow::domain);
+        let x = CategoryScale::new(self.categories.clone(), domain, (left, right));
+        let bar_w = (x.band_width() * (1.0 - BAR_GAP_FRAC)).max(1.0);
         BarGeom {
             left,
             right,
@@ -493,25 +578,25 @@ impl BarChart {
             y_ticks,
             y_step,
             baseline_y,
-            n,
-            slot,
+            x,
             bar_w,
         }
     }
 
     /// Bar `i`'s slot-centre x (the inspect anchor) and its filled box rect —
-    /// `None` for a non-finite value (present as a slot, but no drawn box). The
-    /// single arithmetic both [`Self::build_body`] and the inspect highlight
-    /// read, so the ring lands exactly on the bar.
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "the bar index is a small display count, exact in f32"
-    )]
+    /// `None` for a non-finite value (present as a slot, but no drawn box), or
+    /// for an index the axis carries no category for. The single arithmetic
+    /// both [`Self::build_body`] and the inspect highlight read, so the ring
+    /// lands exactly on the bar.
     fn bar_slot_center_and_rect(&self, g: &BarGeom, i: usize) -> (f32, Option<Rect>) {
-        let slot_x = g.left + (i as f32) * g.slot;
-        let bx = slot_x + (g.slot - g.bar_w) / 2.0;
+        // R1545 — the band IS the slot: `(lo, hi)` from the axis, where this
+        // file used to compute `left + i * slot` itself.
+        let (slot_lo, slot_hi) = g.x.band(i).unwrap_or((g.left, g.left));
+        let bx = slot_lo + ((slot_hi - slot_lo) - g.bar_w) / 2.0;
         let center_x = bx + g.bar_w / 2.0;
-        let bar = &self.bars[i];
+        let Some(bar) = self.bars.get(i) else {
+            return (center_x, None);
+        };
         let rect = bar.value.is_finite().then(|| {
             // Clamp the bar top into the plot: a value outside a PINNED
             // `y_domain` would otherwise map past the plot edge and — a
@@ -540,30 +625,22 @@ impl BarChart {
     }
 
     /// The slot index the inspect cursor is over, or `None` when inspection is
-    /// off / there are no bars / the plot is degenerate. A CATEGORICAL
-    /// hit-test: the fraction across the chart rect maps to a plot fraction,
-    /// which selects one of the `n` evenly-spaced slots — the bar-chart
-    /// analogue of the line chart's nearest-numeric-point resolve.
+    /// off / no category is in view / the plot is degenerate. A CATEGORICAL
+    /// hit-test — the bar-chart analogue of the line chart's
+    /// nearest-numeric-point resolve.
+    ///
+    /// R1545 asks the axis ([`CategoryScale::nearest`]) rather than dividing
+    /// the plot width by the bar count, which is what makes the hit-test
+    /// follow a window: with categories `20..=31` in view, the pixel under the
+    /// cursor inverts to an index in that range instead of to a fraction of
+    /// all sixty.
     fn resolve_focus(&self, g: &BarGeom, rect: Rect) -> Option<usize> {
         let fraction = self.inspect?;
-        if g.n == 0 {
-            return None;
-        }
-        let span = g.right - g.left;
-        if span <= 0.0 {
+        if g.right - g.left <= 0.0 {
             return None;
         }
         let cursor_px = to_f32(rect.x) + fraction.clamp(0.0, 1.0) * to_f32(rect.w);
-        let plot_frac = ((cursor_px - g.left) / span).clamp(0.0, 1.0);
-        #[allow(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "plot_frac is 0..=1 and n a small slot count; the product is \
-                      a valid slot index, clamped to the last slot below"
-        )]
-        let idx = (plot_frac * g.n as f32).floor() as usize;
-        Some(idx.min(g.n - 1))
+        g.x.nearest(cursor_px.clamp(g.left, g.right))
     }
 
     /// Resolve the inspect overlay: a highlight ring around the focused bar
@@ -651,9 +728,20 @@ struct BarGeom {
     y_ticks: Vec<f64>,
     y_step: f64,
     baseline_y: f32,
-    n: usize,
-    slot: f32,
+    /// R1545 — the categorical x-axis. Every slot position in this file used
+    /// to be `left + i * slot`, written out three times; it is now one
+    /// [`CategoryScale::band`] call, and the axis is a [`ValueScale`] arm the
+    /// line and scatter charts can take too.
+    x: CategoryScale,
     bar_w: f32,
+}
+
+impl BarGeom {
+    /// The categorical x-axis as a [`ValueScale`], for the shared axis
+    /// furniture (tick set, label format) that takes one.
+    fn x_axis(&self) -> ValueScale {
+        ValueScale::Category(self.x.clone())
+    }
 }
 
 /// The resolved inspect overlay: a highlight ring around the focused bar
@@ -663,6 +751,12 @@ struct BarGeom {
 struct BarInspect {
     highlight: Option<Scene>,
     tooltip: Vec<Scene>,
+}
+
+/// The category indices this geometry draws — the axis's visible window, or
+/// nothing when no category is in view (R1545).
+fn visible_indices(g: &BarGeom) -> impl Iterator<Item = usize> {
+    g.x.visible().into_iter().flat_map(|w| w.lo()..=w.hi())
 }
 
 /// A bar's value formatted at the y-axis precision, or `"—"` for a non-finite
@@ -721,6 +815,129 @@ mod tests {
             Bar::new("b", 40.0),
             Bar::new("c", 20.0),
         ]
+    }
+
+    // ---- R1545: the bar chart plots through the category axis --------------
+
+    fn twelve() -> Vec<Bar> {
+        [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, m)| Bar::new(*m, 10.0 + index_value(i)))
+        .collect()
+    }
+
+    /// ★ The window narrows what is DRAWN, not only what is domained — the
+    /// bars, their labels and their click surfaces all follow, because all
+    /// three come from the one axis. The counterfactual is the un-windowed
+    /// chart in the same test: it emits all twelve.
+    #[test]
+    fn r1545_a_category_window_narrows_the_bars_their_labels_and_their_hits() {
+        let rect = Rect::new(0, 0, 600, 300);
+        let style = ChartStyle::default();
+        let hits: Vec<String> = (0..12).map(|i| format!("pick.{i}")).collect();
+        let full = BarChart::new(twelve()).selectable(hits.clone());
+        let all = tags(&full.build(rect, &style));
+        for i in 0..12 {
+            assert!(
+                all.contains(&format!("chart.bar.{i}")),
+                "bar {i} unwindowed"
+            );
+            assert!(all.contains(&format!("pick.{i}")), "hit {i} unwindowed");
+        }
+
+        let chart = BarChart::new(twelve()).selectable(hits);
+        let window = chart.categories().window("Mar", "Jun").expect("named");
+        let scene = chart.x_window(window).build(rect, &style);
+        let t = tags(&scene);
+        for i in 2..=5 {
+            assert!(t.contains(&format!("chart.bar.{i}")), "bar {i} in window");
+            assert!(t.contains(&format!("chart.xlabel.{i}")), "label {i}");
+            assert!(t.contains(&format!("pick.{i}")), "hit region {i}");
+        }
+        for i in [0, 1, 6, 11] {
+            assert!(
+                !t.contains(&format!("chart.bar.{i}")),
+                "bar {i} is windowed out"
+            );
+            assert!(!t.contains(&format!("chart.xlabel.{i}")));
+            assert!(!t.contains(&format!("pick.{i}")));
+        }
+    }
+
+    /// ★ A windowed bar is WIDER, because the axis band widened. This is the
+    /// point of the feature — twelve bars in 600px give each 50px of gutter-
+    /// less width; four give each 150.
+    #[test]
+    fn r1545_a_window_widens_the_bars_it_keeps() {
+        let rect = Rect::new(0, 0, 600, 300);
+        let style = ChartStyle::default();
+        let width = |chart: &BarChart, i: usize| {
+            let scene = chart.build(rect, &style);
+            let Scene::Box(b) = find(&scene, &format!("chart.bar.{i}")).unwrap() else {
+                panic!("bar is a box")
+            };
+            b.rect.w
+        };
+        let full = BarChart::new(twelve());
+        let windowed = BarChart::new(twelve()).x_window(CategoryWindow::new(2, 5));
+        let (wide, narrow) = (width(&windowed, 3), width(&full, 3));
+        assert!(
+            wide > narrow * 2,
+            "3 of 12 -> 4 of 12 visible should widen a lot: {narrow} -> {wide}"
+        );
+        // And the visible window is reportable — what Qt's axis cannot answer.
+        assert_eq!(
+            windowed.visible_categories(rect, &style),
+            Some(CategoryWindow::new(2, 5))
+        );
+        assert_eq!(
+            full.visible_categories(rect, &style),
+            Some(CategoryWindow::new(0, 11))
+        );
+        assert_eq!(
+            BarChart::new(Vec::new()).visible_categories(rect, &style),
+            None
+        );
+    }
+
+    /// ★ The label under a slot is the string the AXIS carries for it, not a
+    /// second read of `bar.label` — so a window cannot shift the labels off
+    /// their bars. Checked by index, which is where an off-by-one would show.
+    #[test]
+    fn r1545_the_slot_label_is_the_one_the_axis_carries() {
+        let rect = Rect::new(0, 0, 600, 300);
+        let style = ChartStyle::default();
+        let chart = BarChart::new(twelve()).x_window(CategoryWindow::new(2, 5));
+        let scene = chart.build(rect, &style);
+        for (i, name) in [(2, "Mar"), (3, "Apr"), (4, "May"), (5, "Jun")] {
+            assert_eq!(
+                text_of(&scene, &format!("chart.xlabel.{i}")),
+                Some(name),
+                "slot {i} is labelled by its own category"
+            );
+        }
+        assert_eq!(chart.categories().at(5), Some("Jun"));
+    }
+
+    /// ★ The inspect hit-test follows the window: the same cursor fraction
+    /// resolves to a different category once the axis is windowed, which a
+    /// `floor(fraction * bar_count)` hit-test could not do.
+    #[test]
+    fn r1545_the_inspect_hit_test_follows_the_window() {
+        let rect = Rect::new(0, 0, 600, 300);
+        let style = ChartStyle::default();
+        let header = |chart: BarChart| {
+            let scene = chart.inspect(Some(0.5)).build(rect, &style);
+            text_of(&scene, "chart.inspect.header").map(str::to_string)
+        };
+        let full = header(BarChart::new(twelve()));
+        let windowed = header(BarChart::new(twelve()).x_window(CategoryWindow::new(2, 5)));
+        assert_eq!(full.as_deref(), Some("Jun"), "mid-axis of all twelve");
+        assert_eq!(windowed.as_deref(), Some("Apr"), "mid-axis of Mar..Jun");
+        assert_ne!(full, windowed);
     }
 
     #[test]

@@ -1950,6 +1950,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-category-axis"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-cell-select"
 version = "0.0.1"
 dependencies = [

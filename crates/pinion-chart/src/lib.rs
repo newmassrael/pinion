@@ -133,6 +133,30 @@
 //! needing a timezone database that would also make every axis test read the
 //! host's configuration.
 //!
+//! And (R1545) the fourth axis kind, and the first that was already *drawn*
+//! before it was an axis — [`LineChart::x_category`] /
+//! [`ScatterChart::x_category`] and their `y_` twins, plus
+//! [`BarChart::x_window`] (Qt's `QBarCategoryAxis`, d3's `scaleBand`). The
+//! bar chart has had a categorical x since R1374, but as a private slot
+//! metric: `left + i * slot`, written out three times inside `bar.rs` for the
+//! bar box, its label and its click surface, reachable by no other chart and
+//! by no consumer. Making it an [`AxisKind`] arm gives it what the other
+//! three have — the shared tick set, the shared label format, and the domain
+//! pinning through which a [`PlotWindow`] wheel zoom and a category window
+//! both reach it — and gives every cartesian chart the ability to plot over
+//! named slots.
+//!
+//! Three things follow and are worth knowing before using it. Sample `x`
+//! values are category **indices** (category `i` sits at `x = i`, occupying
+//! the band `i ± 0.5`), and one that names no slot has no pixel, so it is
+//! reported by [`LineChart::off_scale`] rather than drawn somewhere invented.
+//! [`CategoryScale::band`] publishes where a category is drawn, which Qt's
+//! axis cannot answer at all — a Qt bar's rect is computed inside the private
+//! series painter. And a window is resolved from names *before* it reaches a
+//! chart ([`Categories::window`] → [`CategoryWindow`]), where Qt's
+//! `setRange(QString, QString)` returns `void` and silently ignores a name
+//! that is not a category.
+//!
 //! Not yet: cross-filtering between two ARBITRARY chart types, and a y-rescale
 //! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
 //! — follow-up slices on that same core. (A frequency *histogram* is a consumer
@@ -224,7 +248,10 @@ pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;
 pub use plot::OffScale;
-pub use scale::{AxisKind, DEFAULT_LOG_BASE, LinearScale, LogScale, ValueScale};
+pub use scale::{
+    AxisKind, Categories, CategoryLookup, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE,
+    LinearScale, LogScale, ValueScale,
+};
 pub use scatter::ScatterChart;
 pub use series::{
     Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, value_bounds, visible_data_bounds,

@@ -7,14 +7,20 @@
 //! second numeric-x consumer a `crate::line::Plot` import would read as "the
 //! scatter chart borrows the line chart's plot"; the neutral module makes it
 //! shared substrate — the same reasoning that moved [`crate::style::ChartStyle`]
-//! out of `line.rs` at the second chart. The categorical [`crate::bar`] keeps
-//! its own `BarGeom` (a slot metric, not a numeric x-scale), so this is the
-//! two-numeric-axis resolver, not a universal one.
+//! out of `line.rs` at the second chart.
+//!
+//! R1545 made the categorical axis a [`ValueScale`] arm, so this resolver is
+//! no longer numeric-only: `AxisKinds { x: Category(..), .. }` resolves a
+//! [`CategoryScale`] here like any other kind, and a line or scatter chart
+//! plots over named slots through it. [`crate::bar`] still keeps its own
+//! `BarGeom` — a bar chart carries a baseline, a bar width and a gap
+//! fraction that no other chart has — but the x inside it IS this crate's
+//! category axis now, not a private slot metric.
 
 use pinion_core::scene::Rect;
 
 use crate::draw::{plot_rect, to_f32};
-use crate::scale::{AxisKind, LinearScale, LogScale, ValueScale};
+use crate::scale::{AxisKind, CategoryScale, LinearScale, LogScale, ValueScale, index_value};
 use crate::series::{
     Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, in_domain, nearest_point_in,
     visible_data_bounds,
@@ -46,12 +52,13 @@ pub(crate) struct Rescale {
     pub y_to_x_window: bool,
 }
 
-/// Which KIND each axis of a cartesian plot is (R1528 log, R1529 time).
+/// Which KIND each axis of a cartesian plot is (R1528 log, R1529 time,
+/// R1545 category).
 ///
 /// A named-field value for the same reason [`Rescale`] is one: two
 /// positional axis settings at a call site are a silent swap waiting to
 /// happen. `Default` is linear on both axes.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AxisKinds {
     /// The x-axis's kind.
     pub x: AxisKind,
@@ -60,7 +67,7 @@ pub(crate) struct AxisKinds {
 }
 
 /// The resolved plot rectangle (in float pixels) plus the two value scales.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct CartesianPlot {
     /// Plot-area left edge (px).
     pub left: f32,
@@ -97,13 +104,18 @@ impl CartesianPlot {
     /// on just that window's values. A window with no points, or a pinned
     /// `y_domain`, leaves the y-domain untouched.
     ///
-    /// [`AxisKinds`] chooses each axis's *kind* (R1528 log, R1529 time), which
-    /// decides how an AUTO domain is snapped. A logarithmic axis takes its
-    /// extent from the strictly positive part of the data
+    /// [`AxisKinds`] chooses each axis's *kind* (R1528 log, R1529 time, R1545
+    /// category), which decides how an AUTO domain is snapped. A logarithmic
+    /// axis takes its extent from the strictly positive part of the data
     /// ([`Bounds::positive_x`] / [`Bounds::positive_y`]) and snaps to whole
     /// decades ([`nice_log_domain`]); a time axis snaps to calendar
-    /// boundaries ([`nice_time_domain`]); a linear axis to nice ticks. A
-    /// pinned domain wins over all three.
+    /// boundaries ([`nice_time_domain`]); a linear axis to nice ticks; a
+    /// categorical axis ignores the data entirely and takes the extent its
+    /// category list declares ([`kind_extent`]). A pinned domain wins over
+    /// all four — which is how a category WINDOW
+    /// ([`CategoryWindow::domain`](crate::CategoryWindow::domain)) and a
+    /// [`PlotWindow`](crate::PlotWindow) zoom reach a categorical axis
+    /// through the one pinning path every other kind already used.
     pub(crate) fn resolve(
         rect: Rect,
         series: &[Series],
@@ -111,7 +123,7 @@ impl CartesianPlot {
         y_domain: Option<(f64, f64)>,
         style: &ChartStyle,
         rescale: Rescale,
-        kinds: AxisKinds,
+        kinds: &AxisKinds,
     ) -> Self {
         let (left, right, top, bottom) = plot_rect(rect, style.margin);
 
@@ -121,12 +133,12 @@ impl CartesianPlot {
             data_bounds(series)
         };
         let raw_x = x_domain
-            .or_else(|| bounds.and_then(|b| x_extent(b, kinds.x)))
-            .unwrap_or_else(|| fallback_extent(kinds.x));
+            .or_else(|| bounds.and_then(|b| x_extent(b, &kinds.x)))
+            .unwrap_or_else(|| kind_extent(&kinds.x));
         // The x-window must be settled before the y-fit reads it, so resolve the
         // final x-domain first. A pinned domain is honoured verbatim; an auto one
         // snaps to the nice-tick extent so the outer gridlines land on the edges.
-        let dom_x = axis_domain(x_domain, raw_x, style.x_ticks, kinds.x);
+        let dom_x = axis_domain(x_domain, raw_x, style.x_ticks, &kinds.x);
         // y: a pinned domain wins; else an opt-in fit to the x-window's points
         // (R1397); else the whole measured extent. The window fit falls back to
         // `bounds` when it is empty, so a brush past the data keeps the grid.
@@ -134,21 +146,21 @@ impl CartesianPlot {
             .or_else(|| {
                 rescale
                     .y_to_x_window
-                    .then(|| bounds_in_x_window(series, dom_x).and_then(|b| y_extent(b, kinds.y)))
+                    .then(|| bounds_in_x_window(series, dom_x).and_then(|b| y_extent(b, &kinds.y)))
                     .flatten()
             })
-            .or_else(|| bounds.and_then(|b| y_extent(b, kinds.y)))
-            .unwrap_or_else(|| fallback_extent(kinds.y));
-        let dom_y = axis_domain(y_domain, raw_y, style.y_ticks, kinds.y);
+            .or_else(|| bounds.and_then(|b| y_extent(b, &kinds.y)))
+            .unwrap_or_else(|| kind_extent(&kinds.y));
+        let dom_y = axis_domain(y_domain, raw_y, style.y_ticks, &kinds.y);
 
         Self {
             left,
             right,
             top,
             bottom,
-            x: axis_scale(dom_x, (left, right), kinds.x),
+            x: axis_scale(dom_x, (left, right), &kinds.x),
             // y is inverted: domain-hi maps to the top (small pixel).
-            y: axis_scale(dom_y, (bottom, top), kinds.y),
+            y: axis_scale(dom_y, (bottom, top), &kinds.y),
         }
     }
 
@@ -191,7 +203,7 @@ pub struct OffScale {
 /// are absent because the consumer hid them, which the consumer already
 /// knows, whereas an off-scale point is absent because the *axis* cannot
 /// carry it. Filter by [`OffScale::series`] if only the visible ones matter.
-pub(crate) fn off_scale_points(series: &[Series], kinds: AxisKinds) -> Vec<OffScale> {
+pub(crate) fn off_scale_points(series: &[Series], kinds: &AxisKinds) -> Vec<OffScale> {
     let mut out = Vec::new();
     for (i, s) in series.iter().enumerate() {
         for p in &s.points {
@@ -206,64 +218,81 @@ pub(crate) fn off_scale_points(series: &[Series], kinds: AxisKinds) -> Vec<OffSc
     out
 }
 
-/// The x-extent one axis measures: the whole one, or — when the axis is
-/// logarithmic — only its strictly positive part, which is the only part a
-/// logarithm is defined on. A time axis measures the whole extent: an
-/// instant before 1970 is an ordinary negative value.
-const fn x_extent(b: Bounds, kind: AxisKind) -> Option<(f64, f64)> {
+/// The x-extent one axis measures **from the data**: the whole one, or — when
+/// the axis is logarithmic — only its strictly positive part, which is the
+/// only part a logarithm is defined on. A time axis measures the whole extent:
+/// an instant before 1970 is an ordinary negative value.
+///
+/// A categorical axis measures NOTHING here (`None`): its extent is the
+/// category list it carries, not the values plotted on it, so it falls
+/// through to [`kind_extent`]. That is the difference between a slot axis and
+/// a value axis — a bar chart with one bar still has all of its categories.
+const fn x_extent(b: Bounds, kind: &AxisKind) -> Option<(f64, f64)> {
     match kind {
         AxisKind::Log(_) => b.positive_x,
+        AxisKind::Category(_) => None,
         AxisKind::Linear | AxisKind::Time => Some(b.x),
     }
 }
 
 /// [`x_extent`] for the y-axis.
-const fn y_extent(b: Bounds, kind: AxisKind) -> Option<(f64, f64)> {
+const fn y_extent(b: Bounds, kind: &AxisKind) -> Option<(f64, f64)> {
     match kind {
         AxisKind::Log(_) => b.positive_y,
+        AxisKind::Category(_) => None,
         AxisKind::Linear | AxisKind::Time => Some(b.y),
     }
 }
 
-/// The extent an axis falls back to when nothing measurable is present —
-/// `0..1` for a linear axis, the unit decade for a logarithmic one (where
-/// `0` is not a value the axis can carry), and the epoch's first day for a
-/// time one (where `0..1` would be a one-millisecond domain). A log chart
-/// whose data is entirely non-positive lands here: it draws a legible empty
-/// decade and reports every point as off-scale, rather than collapsing.
-fn fallback_extent(kind: AxisKind) -> (f64, f64) {
+/// The extent an axis kind DECLARES, independent of any data: `0..1` for a
+/// linear axis, the unit decade for a logarithmic one (where `0` is not a
+/// value the axis can carry), the epoch's first day for a time one (where
+/// `0..1` would be a one-millisecond domain), and the whole category band run
+/// for a categorical one.
+///
+/// For the three value kinds this is a *fallback*, reached only when nothing
+/// measurable is present — a log chart whose data is entirely non-positive
+/// lands here and draws a legible empty decade rather than collapsing. For
+/// the categorical kind it is the extent itself: [`x_extent`] measures no
+/// data, so this is always what a category axis resolves to before pinning.
+fn kind_extent(kind: &AxisKind) -> (f64, f64) {
     match kind {
-        AxisKind::Log(base) => (1.0, base),
+        AxisKind::Log(base) => (1.0, *base),
         AxisKind::Linear => (0.0, 1.0),
         AxisKind::Time => (0.0, 86_400_000.0),
+        AxisKind::Category(c) => c.extent(),
     }
 }
 
 /// Resolve one axis's final domain — a pinned domain verbatim, else the raw
 /// extent snapped the way that axis kind snaps: to nice ticks when linear,
-/// to whole decades when logarithmic, to calendar boundaries when time.
+/// to whole decades when logarithmic, to calendar boundaries when time, and
+/// not at all when categorical (the band extent is already exact — snapping
+/// it to nice numbers would put the axis edge half a slot off).
 fn axis_domain(
     pinned: Option<(f64, f64)>,
     raw: (f64, f64),
     target: usize,
-    kind: AxisKind,
+    kind: &AxisKind,
 ) -> (f64, f64) {
     if let Some(d) = pinned {
         return d;
     }
     match kind {
-        AxisKind::Log(base) => nice_log_domain(raw.0, raw.1, base),
+        AxisKind::Log(base) => nice_log_domain(raw.0, raw.1, *base),
         AxisKind::Time => nice_time_domain(raw.0, raw.1, target),
         AxisKind::Linear => domain_from_ticks(None, raw, target),
+        AxisKind::Category(_) => raw,
     }
 }
 
 /// Build one axis's [`ValueScale`] over `domain` onto the pixel `range`.
-fn axis_scale(domain: (f64, f64), range: (f32, f32), kind: AxisKind) -> ValueScale {
+fn axis_scale(domain: (f64, f64), range: (f32, f32), kind: &AxisKind) -> ValueScale {
     match kind {
-        AxisKind::Log(base) => ValueScale::Log(LogScale::new(domain, range, base)),
+        AxisKind::Log(base) => ValueScale::Log(LogScale::new(domain, range, *base)),
         AxisKind::Linear => ValueScale::Linear(LinearScale::new(domain, range)),
         AxisKind::Time => ValueScale::Time(LinearScale::new(domain, range)),
+        AxisKind::Category(c) => ValueScale::Category(CategoryScale::new(c.clone(), domain, range)),
     }
 }
 
@@ -300,6 +329,16 @@ pub(crate) fn axis_ticks(scale: &ValueScale, target: usize) -> Vec<f64> {
         ValueScale::Log(s) => log_ticks(lo, hi, s.base(), target),
         ValueScale::Time(_) => time_ticks(lo, hi, target),
         ValueScale::Linear(_) => nice_ticks(lo, hi, target),
+        // R1545 — a categorical axis's ticks are its VISIBLE slots, and every
+        // one of them is labelled: there is no nice-number ladder to snap to
+        // and no reader expectation that a category be a round number. The
+        // `target` count is deliberately ignored — thinning a category axis is
+        // a decision about how many LABELS fit, which needs a measured text
+        // width the scale does not have; the window is what bounds the count.
+        ValueScale::Category(s) => s
+            .visible()
+            .map(|w| (w.lo()..=w.hi()).map(index_value).collect())
+            .unwrap_or_default(),
     };
     raw.into_iter().filter(|t| in_domain(*t, lo, hi)).collect()
 }
@@ -324,6 +363,7 @@ pub(crate) fn axis_format(scale: &ValueScale, ticks: &[f64]) -> TickFormat {
         AxisKind::Log(_) => TickFormat::Log,
         AxisKind::Time => TickFormat::Time,
         AxisKind::Linear => TickFormat::Step(tick_step(ticks)),
+        AxisKind::Category(c) => TickFormat::Category(c),
     }
 }
 
@@ -342,7 +382,7 @@ pub(crate) fn axis_minor_ticks(scale: &ValueScale) -> Vec<f64> {
             .into_iter()
             .filter(|t| in_domain(*t, lo, hi))
             .collect(),
-        ValueScale::Linear(_) | ValueScale::Time(_) => Vec::new(),
+        ValueScale::Linear(_) | ValueScale::Time(_) | ValueScale::Category(_) => Vec::new(),
     }
 }
 
@@ -414,6 +454,125 @@ mod tests {
         ]
     }
 
+    // ---- R1545: the categorical axis, resolved as one ---------------------
+
+    fn category_kinds() -> AxisKinds {
+        AxisKinds {
+            x: AxisKind::Category(crate::Categories::new(["a", "b", "c", "d"])),
+            y: AxisKind::default(),
+        }
+    }
+
+    /// ★ A categorical axis's extent is its category list, not its data —
+    /// the property that separates a slot axis from a value axis. The
+    /// counterfactual is in the same test: the LINEAR axis over the identical
+    /// data does move with it, so "ignore the data" is not something every
+    /// kind does.
+    #[test]
+    fn r1545_a_category_axis_domains_from_its_list_not_its_data() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        // One point, at category 1. A value axis would collapse onto it.
+        let series = vec![Series::new("s", vec![DataPoint::new(1.0, 5.0)])];
+
+        let plot = CartesianPlot::resolve(
+            rect,
+            &series,
+            None,
+            None,
+            &style,
+            Rescale::default(),
+            &category_kinds(),
+        );
+        assert_eq!(plot.x.domain(), (-0.5, 3.5), "all four slots are in view");
+
+        let linear = CartesianPlot::resolve(
+            rect,
+            &series,
+            None,
+            None,
+            &style,
+            Rescale::default(),
+            &AxisKinds::default(),
+        );
+        assert_ne!(
+            linear.x.domain(),
+            (-0.5, 3.5),
+            "a linear x DOES follow the data, so the category arm is doing work"
+        );
+    }
+
+    /// ★ The ticks of a category axis are its visible slots and its labels
+    /// are their names — resolved through the same `axis_ticks` / `axis_format`
+    /// pair every other kind uses, so a chart cannot label a category axis
+    /// with numbers by taking the wrong branch.
+    #[test]
+    fn r1545_category_ticks_are_the_visible_slots_labelled_by_name() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        let plot = CartesianPlot::resolve(
+            rect,
+            &[],
+            None,
+            None,
+            &style,
+            Rescale::default(),
+            &category_kinds(),
+        );
+        let ticks = axis_ticks(&plot.x, style.x_ticks);
+        assert_eq!(ticks, vec![0.0, 1.0, 2.0, 3.0], "one tick per slot");
+        let format = axis_format(&plot.x, &ticks);
+        let labels: Vec<String> = ticks.iter().map(|&t| format.label(t)).collect();
+        assert_eq!(labels, vec!["a", "b", "c", "d"]);
+        assert_eq!(format.readout(2.0), "c", "a name is already self-contained");
+        // A category axis has no minor subdivisions — a slot has no interior.
+        assert!(axis_minor_ticks(&plot.x).is_empty());
+        // The tick target is deliberately not applied: four slots survive a
+        // target of one, because thinning a category axis is a label-width
+        // decision the scale cannot make.
+        assert_eq!(axis_ticks(&plot.x, 1).len(), 4);
+
+        // Windowed: only the visible slots tick, and they keep their names.
+        let windowed = CartesianPlot::resolve(
+            rect,
+            &[],
+            Some((0.5, 2.5)),
+            None,
+            &style,
+            Rescale::default(),
+            &category_kinds(),
+        );
+        let ticks = axis_ticks(&windowed.x, style.x_ticks);
+        assert_eq!(ticks, vec![1.0, 2.0]);
+        let format = axis_format(&windowed.x, &ticks);
+        assert_eq!(format.label(1.0), "b");
+    }
+
+    /// ★ A sample naming no slot is REPORTED, not drawn somewhere invented —
+    /// the R1528 log-zero stance on the arm where "no such slot" is the
+    /// failure. The counterfactual: the in-range samples of the same series
+    /// are not reported, so this is not "a category axis reports everything".
+    #[test]
+    fn r1545_a_sample_naming_no_slot_is_reported() {
+        let series = vec![Series::new(
+            "s",
+            vec![
+                DataPoint::new(0.0, 1.0),
+                DataPoint::new(3.0, 2.0),
+                DataPoint::new(9.0, 3.0),
+                DataPoint::new(-2.0, 4.0),
+            ],
+        )];
+        let off = off_scale_points(&series, &category_kinds());
+        assert_eq!(off.len(), 2, "only the two that name no slot: {off:?}");
+        let xs: Vec<f64> = off.iter().map(|o| o.point.x).collect();
+        assert_eq!(xs, vec![9.0, -2.0]);
+        assert!(off.iter().all(|o| o.series == 0));
+        // On a linear x the same samples are ordinary — off-scale is a
+        // property of the AXIS, not of the data.
+        assert!(off_scale_points(&series, &AxisKinds::default()).is_empty());
+    }
+
     #[test]
     fn resolve_focus_skips_hidden_series() {
         let rect = Rect::new(0, 0, 400, 300);
@@ -425,7 +584,7 @@ mod tests {
             None,
             &style,
             Rescale::default(),
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
 
         // Both visible -> a hit per series.
@@ -476,7 +635,7 @@ mod tests {
             None,
             &style,
             Rescale::default(),
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         let (_, hi_default) = default.y.domain();
         assert!(
@@ -495,7 +654,7 @@ mod tests {
             None,
             &style,
             visible,
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         let (_, hi_rescaled) = rescaled.y.domain();
         assert!(
@@ -511,7 +670,7 @@ mod tests {
             Some((0.0, 9000.0)),
             &style,
             visible,
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         assert_eq!(
             pinned.y.domain(),
@@ -547,7 +706,7 @@ mod tests {
             None,
             &style,
             Rescale::default(),
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         let (_, hi_off) = off.y.domain();
         assert!(
@@ -566,7 +725,7 @@ mod tests {
             None,
             &style,
             fit,
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         let (_, hi_on) = on.y.domain();
         assert!(
@@ -583,7 +742,7 @@ mod tests {
             None,
             &style,
             fit,
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         let (_, hi_full) = full.y.domain();
         assert!(
@@ -600,7 +759,7 @@ mod tests {
             None,
             &style,
             fit,
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         let (_, hi_empty) = empty.y.domain();
         assert!(
@@ -616,7 +775,7 @@ mod tests {
             Some((0.0, 500.0)),
             &style,
             fit,
-            AxisKinds::default(),
+            &AxisKinds::default(),
         );
         assert_eq!(
             pinned.y.domain(),

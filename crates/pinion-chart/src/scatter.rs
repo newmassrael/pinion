@@ -55,7 +55,7 @@ use crate::plot::{
     AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
     off_scale_points, resolve_focus, tick_pixels,
 };
-use crate::scale::AxisKind;
+use crate::scale::{AxisKind, Categories};
 use crate::series::{DataPoint, Series, in_domain, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::TickFormat;
@@ -299,11 +299,38 @@ impl ScatterChart {
         self
     }
 
+    /// Plot the **x**-axis over named categories (R1545) — see
+    /// [`LineChart::x_category`](crate::LineChart::x_category). On a scatter
+    /// chart this is the strip / dot plot: every sample of one category
+    /// stacked over its slot, which is how a distribution per bucket is read
+    /// without binning it into a histogram first.
+    #[must_use]
+    pub fn x_category<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.kinds.x = AxisKind::Category(Categories::new(categories));
+        self
+    }
+
+    /// Plot the **y**-axis over named categories (R1545) — see
+    /// [`LineChart::y_category`](crate::LineChart::y_category).
+    #[must_use]
+    pub fn y_category<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.kinds.y = AxisKind::Category(Categories::new(categories));
+        self
+    }
+
     /// Every point this chart's axes cannot place (R1528) — see
     /// [`LineChart::off_scale`](crate::LineChart::off_scale).
     #[must_use]
     pub fn off_scale(&self) -> Vec<OffScale> {
-        off_scale_points(&self.series, self.kinds)
+        off_scale_points(&self.series, &self.kinds)
     }
 
     /// The chart body, authored in the frame `rect` describes — the ONE builder
@@ -316,7 +343,7 @@ impl ScatterChart {
             self.y_domain,
             style,
             Rescale::default(),
-            self.kinds,
+            &self.kinds,
         );
         let x_ticks = axis_ticks(&plot.x, style.x_ticks);
         let y_ticks = axis_ticks(&plot.y, style.y_ticks);
@@ -327,7 +354,7 @@ impl ScatterChart {
 
         // Inspect overlay, split so the crosshair paints behind the points, the
         // rings over them, and the tooltip above everything.
-        let (crosshair, rings, tooltip) = match self.resolve_inspect(&plot, rect, style, steps) {
+        let (crosshair, rings, tooltip) = match self.resolve_inspect(&plot, rect, style, &steps) {
             Some(i) => (Some(i.crosshair), i.rings, i.tooltip),
             None => (None, Vec::new(), Vec::new()),
         };
@@ -363,7 +390,7 @@ impl ScatterChart {
         ));
         children.extend(self.point_marks(&plot, style));
         children.extend(rings);
-        children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, steps));
+        children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, &steps));
         if style.legend {
             // R1438 — one colour legend, never two: a value encoding replaces
             // the series swatch row with the colour bar, because the swatches
@@ -482,12 +509,12 @@ impl ScatterChart {
         x_ticks: &[f64],
         y_ticks: &[f64],
         style: &ChartStyle,
-        steps: Steps,
+        steps: &Steps,
     ) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
         let y_pos = tick_pixels(&plot.y, y_ticks);
         let mut out =
-            crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, steps.y, style, &self.tag_prefix);
+            crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, &steps.y, style, &self.tag_prefix);
         let slot = 60;
         for (k, &t) in x_ticks.iter().enumerate() {
             // (R1396) Clamp the box inside `rect` (see the line chart's twin) so
@@ -570,7 +597,7 @@ impl ScatterChart {
             self.y_domain,
             style,
             Rescale::default(),
-            self.kinds,
+            &self.kinds,
         );
         let x_step = axis_format(&plot.x, &axis_ticks(&plot.x, style.x_ticks));
         let y_step = axis_format(&plot.y, &axis_ticks(&plot.y, style.y_ticks));
@@ -608,7 +635,7 @@ impl ScatterChart {
         plot: &CartesianPlot,
         rect: Rect,
         style: &ChartStyle,
-        steps: Steps,
+        steps: &Steps,
     ) -> Option<Inspect> {
         let (focus_x, hits) = resolve_focus(&self.series, self.inspect?, plot, rect)?;
         // Only inspect points that are actually DRAWN. `resolve_focus` (shared
@@ -668,7 +695,7 @@ impl ScatterChart {
         focus_x: f64,
         hits: &[(usize, DataPoint)],
         style: &ChartStyle,
-        steps: Steps,
+        steps: &Steps,
     ) -> Vec<Scene> {
         let header = format!("x = {}", steps.x.readout(focus_x));
         let rows: Vec<CalloutRow> = hits
@@ -718,7 +745,7 @@ fn ring_node(cx: f32, cy: f32, r: u32, stroke: Stroke, tag: String) -> Scene {
 /// format at (bundled so the inspect helpers stay under the argument limit,
 /// mirroring the line chart's `Steps`). A trivial two-field bundle kept
 /// per-chart: a shared cross-module `Steps` type would not earn its coupling.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Steps {
     x: TickFormat,
     y: TickFormat,

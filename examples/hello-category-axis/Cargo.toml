@@ -1,0 +1,30 @@
+[package]
+name = "hello-category-axis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1545 category-axis consumer — the forcing consumer for pinion-chart's Categories / CategoryScale, the crate's fourth axis kind (Qt QBarCategoryAxis). Twelve monthly buckets are drawn twice from ONE axis: as a BarChart whose bands, labels, click surfaces and hit-test all come from it, and as a LineChart::x_category over the same slots. The window is set the way Qt sets it — by category NAME — but resolved before it can reach a chart, so an unknown or duplicated name is reported instead of silently ignored, and the categories actually in view are readable back over RPC, which Qt's axis cannot answer at all."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1545 — the categorical axis under test (BarChart::x_window +
+# LineChart::x_category -> Scene).
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for the window group's a11y nodes.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+# §5.15 item 8 — the window external answers `range` with a JSON argument pair.
+serde_json = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the `HelloCategoryAxisRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

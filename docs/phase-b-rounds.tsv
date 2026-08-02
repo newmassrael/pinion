@@ -66,3 +66,4 @@
 1542	text	a grid states the winsize its producer was given, not the one its rect implies
 1543	catalog	a label declares its mnemonic, Qt &File + accesskey + scene/mnemonics
 1544	dcc	the cell states whether it can be edited, the delegate editing half + EditRole
+1545	dataviz	a category is an axis kind, Qt QBarCategoryAxis + a resolved window

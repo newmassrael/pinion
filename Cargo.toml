@@ -109,6 +109,7 @@ members = [
     "examples/hello-dock-chart",
     "examples/hello-autoscale-y",
     "examples/hello-live-chart",
+    "examples/hello-category-axis",
     "examples/hello-log-chart",
     "examples/hello-time-chart",
     "examples/hello-hex-dump",
