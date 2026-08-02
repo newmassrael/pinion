@@ -102,13 +102,19 @@ def body() -> None:
         assert "mirror" in timings, f"the mirror group is on the wire: {timings}"
         assert_eq(
             sorted(timings["mirror"]),
-            ["passes_total", "scenes_total", "shape_misses_total", "unsettled_total"],
-            "A: the four questions a stored mirror can be asked",
+            [
+                "nodes_total",
+                "passes_total",
+                "scenes_total",
+                "shape_misses_total",
+                "unsettled_total",
+            ],
+            "A: the five questions a stored mirror can be asked",
         )
         assert_eq(
             sorted(timings["produce"]),
-            ["passes_total", "shape_misses_total"],
-            "A: and its sibling group is unchanged",
+            ["nodes_total", "passes_total", "shape_misses_total"],
+            "A: and the same for its sibling group",
         )
         for field, value in timings["mirror"].items():
             assert isinstance(value, int) and value >= 0, (

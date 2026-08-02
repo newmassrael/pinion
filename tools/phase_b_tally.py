@@ -617,6 +617,11 @@ NOT_EVIDENCE = {
         "exercises cache_stats only to prove it rejects a bogus window "
         "(window-identity round, not a cost measurement)"
     ),
+    "r1539_wire_states_its_shape.py": (
+        "calls cache_stats / text_cache_stats to check the SHAPE of their "
+        "answers against the published census (§7 API round); it asserts on "
+        "no counter's value, so it is not a cost measurement"
+    ),
 }
 
 

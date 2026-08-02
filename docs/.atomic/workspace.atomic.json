@@ -79252,6 +79252,66 @@
         "`render_window` now carries `#[allow(clippy::too_many_lines)]`. The frame close was extracted; what is left is the pipeline sequence, whose phases cannot leave the `Instant` bracket or the slot borrow that owns them. Stated rather than hidden."
       ]
     },
+    "Round 1539": {
+      "decision_summary": "The wire states the shape of what it answers: every serialized type declares its key set, nesting, absence and nullability, published by rpc/schema and gated against the types it describes.",
+      "changes_bullets": [
+        "`pinion_rpc::wire_census` — `WIRE_TYPES`, a census of all 82 types this crate serializes: per type a `WireShape` (object / string enum / internally-tagged union / scalar union), per field the wire name, the JSON type, whether the key may be ABSENT, whether it may be `null`, and `of` — a `$ref` naming the censused type nested there. References, not inline shapes, so `LayoutNode.children` can name `LayoutNode` without the const cycle inlining would need.",
+        "`optional` and `nullable` are separate columns because they are separate contracts. `#[serde(skip_serializing_if)]` omits the KEY; a bare `Option<T>` keeps the key and writes `null`. Both are `Option<T>` in Rust and look identical there — the first census conflated them and was wrong about twelve fields until the gate compared it against the source.",
+        "New method `rpc/schema` publishes the census, so an agent discovers the SHAPE of what it will be answered with and not only the names of methods. The census describes ITSELF (§2 #7): `WireType`, `WireField`, `WireShape`, `WireTy`, `RpcSchema` are all in it, so the reply that lists the shapes has a listed shape.",
+        "`crates/pinion-rpc/tests/wire_census_matches_types.rs` parses this crate's own source and asserts the census matches it — set-equality on the type names AND per-type equality of the field lists. The same edit that took CI red now fails in `pinion-rpc`'s unit gate, in the round that makes it.",
+        "On failure the gate NAMES the demos that assert on the changed field names, ranked by how many they name. The local gate runs the demos a round TOUCHED; the ones a wire change breaks are exactly the ones it did not.",
+        "`tools/demos/r1465_mirror_work.py` expects five mirror fields and three produce fields — the R1538 addition it was still red on."
+      ],
+      "verification_bullets": [
+        "`tools/demos/r1539_wire_states_its_shape.py` PASS: 32 assertion sites, several over the whole 82-type census (281 field checks). Six live methods are validated against their declared type recursively, exercising all four shape kinds.",
+        "Six counterfactuals, one at a time, each restored and every restore verified: (1) a field added to `FrameTimingsMirror` exactly as R1538 added `nodes_total`; (2) a new `Serialize` type absent from the census; (3) `optional` claimed where the source says `nullable`; (4) a wrong JSON type; (5) a dangling `of` reference; (6) a type dropped from the census.",
+        "Counterfactual (1) is the round's central claim: the gate fails, and the FIRST demo it names is `r1465_mirror_work.py` — the one that took CI red 44 minutes into the R1538 sweep.",
+        "Counterfactual (3) fails in BOTH gates independently: the unit test reports `string|null` against `string?`, and the demo reports the live `focus/get` answering `null` under a declaration that forbids it. The two checks are not one check twice.",
+        "Counterfactual (2) was proved by the round's own work rather than staged: adding `RpcSchema` made the completeness gate fail until the census was extended.",
+        "The gate found three defects in its own first draft — a `Response` type the bootstrap generator's regex missed, multi-line `#[serde(...)]` attributes read as one line, and one-line struct variants read as a single field. The parser was rewritten character-driven.",
+        "Local gates green on both crates whose behaviour changed: `cargo test -p pinion-rpc` (1026 + 4), `cargo test -p pinion-shell` (428), `cargo clippy -p pinion-rpc --all-targets -D pedantic`, `cargo fmt --all --check`. Demos affected by the new catalog entry run and pass: r1465, r1539, r1089, r1419.",
+        "`tools/phase_b_tally.py --selftest` PASS; the new demo is registered in `NOT_EVIDENCE` because it calls `cache_stats` to check a shape, not to measure a cost."
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "Which method answers with which type is NOT declared. This is the one place Qt 6.11 is still ahead — `QMetaMethod::returnMetaType()` binds a return type to a method. It is withheld rather than shipped partial: the census holds 28 `*Outcome` types against 91 routed methods, so a `response` column would read `null` for most of the surface, and an agent reads a null return type as \"answers with nothing\" rather than \"not described yet\". Giving those handlers response types is the named next slice.",
+        "The census covers `pinion-rpc` only. `scene/snapshot` and `scene/access` answer with trees built in `pinion-core` and `pinion-a11y`, and the gate's source parse does not reach them. It is a stated boundary, not an oversight — but the same class of defect can still land there unseen.",
+        "The gate is source-text, the trade `catalog_matches_dispatch_match_arms` already makes. It is loud rather than lenient — an unmodelled `#[serde]` attribute panics — but a `flatten` or a custom `serialize_with` would need the parser taught before it could be used.",
+        "The census is hand-written and the gate proves it TRUE, not that it was written deliberately. A round that adds a field and pastes the gate's expectation satisfies both. The demo-consumer list is what makes that a decision rather than a reflex, and nothing forces it to be read."
+      ],
+      "publishable_decision_summary": "The wire states the shape of what it answers: every serialized type declares its key set, nesting, absence and nullability, published by rpc/schema and gated against the types it describes.",
+      "publishable_changes_bullets": [
+        "`pinion_rpc::wire_census` — `WIRE_TYPES`, a census of all 82 types this crate serializes: per type a `WireShape` (object / string enum / internally-tagged union / scalar union), per field the wire name, the JSON type, whether the key may be ABSENT, whether it may be `null`, and `of` — a `$ref` naming the censused type nested there. References, not inline shapes, so `LayoutNode.children` can name `LayoutNode` without the const cycle inlining would need.",
+        "`optional` and `nullable` are separate columns because they are separate contracts. `#[serde(skip_serializing_if)]` omits the KEY; a bare `Option<T>` keeps the key and writes `null`. Both are `Option<T>` in Rust and look identical there — the first census conflated them and was wrong about twelve fields until the gate compared it against the source.",
+        "New method `rpc/schema` publishes the census, so an agent discovers the SHAPE of what it will be answered with and not only the names of methods. The census describes ITSELF (§2 #7): `WireType`, `WireField`, `WireShape`, `WireTy`, `RpcSchema` are all in it, so the reply that lists the shapes has a listed shape.",
+        "`crates/pinion-rpc/tests/wire_census_matches_types.rs` parses this crate's own source and asserts the census matches it — set-equality on the type names AND per-type equality of the field lists. The same edit that took CI red now fails in `pinion-rpc`'s unit gate, in the round that makes it.",
+        "On failure the gate NAMES the demos that assert on the changed field names, ranked by how many they name. The local gate runs the demos a round TOUCHED; the ones a wire change breaks are exactly the ones it did not.",
+        "`tools/demos/r1465_mirror_work.py` expects five mirror fields and three produce fields — the R1538 addition it was still red on."
+      ],
+      "publishable_verification_bullets": [
+        "`tools/demos/r1539_wire_states_its_shape.py` PASS: 32 assertion sites, several over the whole 82-type census (281 field checks). Six live methods are validated against their declared type recursively, exercising all four shape kinds.",
+        "Six counterfactuals, one at a time, each restored and every restore verified: (1) a field added to `FrameTimingsMirror` exactly as R1538 added `nodes_total`; (2) a new `Serialize` type absent from the census; (3) `optional` claimed where the source says `nullable`; (4) a wrong JSON type; (5) a dangling `of` reference; (6) a type dropped from the census.",
+        "Counterfactual (1) is the round's central claim: the gate fails, and the FIRST demo it names is `r1465_mirror_work.py` — the one that took CI red 44 minutes into the R1538 sweep.",
+        "Counterfactual (3) fails in BOTH gates independently: the unit test reports `string|null` against `string?`, and the demo reports the live `focus/get` answering `null` under a declaration that forbids it. The two checks are not one check twice.",
+        "Counterfactual (2) was proved by the round's own work rather than staged: adding `RpcSchema` made the completeness gate fail until the census was extended.",
+        "The gate found three defects in its own first draft — a `Response` type the bootstrap generator's regex missed, multi-line `#[serde(...)]` attributes read as one line, and one-line struct variants read as a single field. The parser was rewritten character-driven.",
+        "Local gates green on both crates whose behaviour changed: `cargo test -p pinion-rpc` (1026 + 4), `cargo test -p pinion-shell` (428), `cargo clippy -p pinion-rpc --all-targets -D pedantic`, `cargo fmt --all --check`. Demos affected by the new catalog entry run and pass: r1465, r1539, r1089, r1419.",
+        "`tools/phase_b_tally.py --selftest` PASS; the new demo is registered in `NOT_EVIDENCE` because it calls `cache_stats` to check a shape, not to measure a cost."
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Which method answers with which type is NOT declared. This is the one place Qt 6.11 is still ahead — `QMetaMethod::returnMetaType()` binds a return type to a method. It is withheld rather than shipped partial: the census holds 28 `*Outcome` types against 91 routed methods, so a `response` column would read `null` for most of the surface, and an agent reads a null return type as \"answers with nothing\" rather than \"not described yet\". Giving those handlers response types is the named next slice.",
+        "The census covers `pinion-rpc` only. `scene/snapshot` and `scene/access` answer with trees built in `pinion-core` and `pinion-a11y`, and the gate's source parse does not reach them. It is a stated boundary, not an oversight — but the same class of defect can still land there unseen.",
+        "The gate is source-text, the trade `catalog_matches_dispatch_match_arms` already makes. It is loud rather than lenient — an unmodelled `#[serde]` attribute panics — but a `flatten` or a custom `serialize_with` would need the parser taught before it could be used.",
+        "The census is hand-written and the gate proves it TRUE, not that it was written deliberately. A round that adds a field and pastes the gate's expectation satisfies both. The demo-consumer list is what makes that a decision rather than a reflex, and nothing forces it to be read."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

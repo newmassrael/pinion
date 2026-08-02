@@ -85,6 +85,7 @@ use crate::theme::{
 };
 use crate::wait_for::{WaitForError, WaitOutcome, wait_for};
 use crate::window_move::{WindowMoveError, WindowMoveParams, window_move};
+use crate::wire_census::rpc_schema;
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2307,6 +2308,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     (handle_scene_pacing_state(pacing_state), HandlerKind::Read)
                 }
                 "rpc/methods" => (handle_rpc_methods(), HandlerKind::Read),
+                "rpc/schema" => (handle_rpc_schema(), HandlerKind::Read),
                 "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
                 "scene/cross_window_drop" => (
                     handle_scene_cross_window_drop(cross_window_drop, request.params.as_ref()),
@@ -3413,6 +3415,16 @@ fn handle_scene_windows(windows: Option<Vec<DeclaredWindow>>) -> Result<Value, R
 /// catalog is a const), so it never errors except on a serialize fault.
 fn handle_rpc_methods() -> Result<Value, RpcError> {
     serde_json::to_value(rpc_methods())
+        .map_err(|e| RpcError::invalid_params(format!("serialize: {e}")))
+}
+
+/// R1539 §5.7 §5.12 §2 #7 — `rpc/schema` handler: serialize the
+/// [`crate::wire_census::WIRE_TYPES`] census, so an AI discovers the SHAPE of
+/// every response this dispatcher can produce and not merely the names of the
+/// methods that produce them. Context-free (the census is a const), so it
+/// never errors except on a serialize fault.
+fn handle_rpc_schema() -> Result<Value, RpcError> {
+    serde_json::to_value(rpc_schema())
         .map_err(|e| RpcError::invalid_params(format!("serialize: {e}")))
 }
 

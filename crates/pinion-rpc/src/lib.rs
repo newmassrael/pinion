@@ -49,6 +49,7 @@ pub mod transport;
 pub mod wait_for;
 pub mod waiter;
 pub mod window_move;
+pub mod wire_census;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;
