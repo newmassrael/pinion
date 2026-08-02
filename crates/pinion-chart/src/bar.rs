@@ -450,9 +450,15 @@ impl BarChart {
         // `bar_slot_center_and_rect`, the shared source the inspect highlight
         // also reads.
         let size = style.label_size_px.max(1);
-        // The label text comes from the AXIS, not from `bar.label` directly, so
-        // the string under a slot is the one the axis carries for it — the same
-        // derivation the tick labels of every other axis kind take (R1525).
+        // The label text comes from the AXIS, not from `bar.label` directly —
+        // the same derivation the tick labels of every other axis kind take.
+        // This is a STRUCTURAL property and deliberately not an observable
+        // one: `Categories` is built FROM the bar labels, so the two strings
+        // are equal by construction and R1545's counterfactual pass confirmed
+        // no assertion can separate them. That IS the point (R1525 — agreement
+        // by derivation is one path, not two that happen to match); what the
+        // tests can and do check is that each surviving slot is labelled with
+        // its OWN category under a window, where an off-by-one would show.
         let x_format = axis_format(&g.x_axis(), &[]);
         for i in visible_indices(&g) {
             let bar = &self.bars[i];
@@ -903,11 +909,16 @@ mod tests {
         );
     }
 
-    /// ★ The label under a slot is the string the AXIS carries for it, not a
-    /// second read of `bar.label` — so a window cannot shift the labels off
-    /// their bars. Checked by index, which is where an off-by-one would show.
+    /// ★ A windowed chart labels each surviving slot with its OWN category —
+    /// checked by index, which is where an off-by-one in the window loop
+    /// would show.
+    ///
+    /// Deliberately NOT claiming "the label comes from the axis": the axis's
+    /// categories are built from these same labels, so that routing is
+    /// structural and unobservable (see `build_body`). A test that claimed it
+    /// would pass with the route removed, which is worse than not claiming it.
     #[test]
-    fn r1545_the_slot_label_is_the_one_the_axis_carries() {
+    fn r1545_a_windowed_slot_is_labelled_with_its_own_category() {
         let rect = Rect::new(0, 0, 600, 300);
         let style = ChartStyle::default();
         let chart = BarChart::new(twelve()).x_window(CategoryWindow::new(2, 5));

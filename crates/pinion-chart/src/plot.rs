@@ -335,6 +335,14 @@ pub(crate) fn axis_ticks(scale: &ValueScale, target: usize) -> Vec<f64> {
         // `target` count is deliberately ignored — thinning a category axis is
         // a decision about how many LABELS fit, which needs a measured text
         // width the scale does not have; the window is what bounds the count.
+        //
+        // R1545's own counterfactual pass found this arm and `(0..len)` to be
+        // EQUIVALENT — the shared `in_domain` filter below clips either to the
+        // same set, so no assertion can separate them. `visible()` is kept
+        // because the cost differs, not the answer: it allocates one entry per
+        // category IN VIEW, where the other allocates one per category in the
+        // model and throws most of them away. Recorded here so a later reader
+        // does not "simplify" it back on the strength of a green suite.
         ValueScale::Category(s) => s
             .visible()
             .map(|w| (w.lo()..=w.hi()).map(index_value).collect())
