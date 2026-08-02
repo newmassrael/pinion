@@ -1544,6 +1544,118 @@ mod tests {
         }
     }
 
+    /// R1542 §5.41 §2 #6 — a **declared** winsize narrower than the rect is a
+    /// sub-grid margin, and R1028's fill owns it.
+    ///
+    /// The acceptance criterion the sprag field report (PINION-PR80) states:
+    /// with `with_winsize` set, `cols()` / `rows()` answer the declaration
+    /// **and** the rect is still filled edge to edge with the palette default
+    /// background, so neither a sub-cell nor a sub-*grid* margin exposes the
+    /// parent surface. That is what makes the split honest — the obvious
+    /// alternative, shrinking the rect to the producer's grid, would satisfy
+    /// the first half by breaking the second.
+    ///
+    /// The buffer is deliberately WIDER than the declaration (4 columns
+    /// delivered, 3 declared). A painter that drew the buffer and leaned on
+    /// the rect clip — which is what this arm did before R1542 — paints that
+    /// 4th column red, because it is inside the rect. It is not inside the
+    /// grid. The TUI backend has clamped to the node's winsize since R995, so
+    /// before R1542 the two backends disagreed about this column (§2 #6).
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the sibling headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1542_declared_winsize_leaves_the_sub_grid_margin_to_the_gutter_fill() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        const CW: u32 = 10;
+        const CH: u32 = 12;
+        const DELIVERED: u16 = 4; // what the producer sent
+        const DECLARED: u16 = 3; // what it was TOLD to hold
+        const ROWS: u16 = 2;
+        // The rect spans all four delivered columns, so the 4th is inside the
+        // paint extent and only the declaration excludes it.
+        const W: u32 = CW * DELIVERED as u32; // 40
+        const H: u32 = CH * ROWS as u32; // 24
+        const DECLARED_W: u32 = CW * DECLARED as u32; // 30
+
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let red = TermColor::Rgb(Color::rgb(0xff, 0x00, 0x00));
+        let cell = TermCell::new(" ", TermColor::Default, red);
+        let row = vec![cell.clone(), cell.clone(), cell.clone(), cell.clone()];
+        let buffer = GridBuffer::new(DELIVERED, ROWS)
+            .with_row(0, row.clone())
+            .with_row(1, row);
+        let mut node = TextGridNode::new(metric)
+            .with_cells(buffer)
+            .with_winsize(DECLARED, ROWS);
+        node.rect = Rect::new(0, 0, W, H);
+        assert_eq!(
+            (node.cols(), node.rows()),
+            (DECLARED, ROWS),
+            "precondition: the node answers the declaration",
+        );
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        // WHITE clear — the parent-surface analog, exactly as R1028 does it.
+        let base = vello::peniko::Color::WHITE;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+
+        let at = |x: u32, y: u32| -> (i64, i64, i64) {
+            let i = ((y * W + x) * 4) as usize;
+            (
+                i64::from(rgba8[i]),
+                i64::from(rgba8[i + 1]),
+                i64::from(rgba8[i + 2]),
+            )
+        };
+
+        // Inside the declared grid — the delivered cells paint normally.
+        for &(x, y) in &[(5, 6), (25, 18)] {
+            let (r, g, b) = at(x, y);
+            assert!(
+                r > 200 && g < 60 && b < 60,
+                "a cell inside the declared grid must stay red, got \
+                 ({r},{g},{b}) at ({x},{y})"
+            );
+        }
+        // The sub-grid margin — the 4th delivered column, inside the rect and
+        // outside the grid. Palette default bg (black): NOT the delivered
+        // red (the pre-R1542 behaviour) and NOT the white parent clear (what
+        // shrinking the rect instead would have produced).
+        for y in [6, 18] {
+            for x in [DECLARED_W + 2, W - 2] {
+                let (r, g, b) = at(x, y);
+                assert!(
+                    r < 50 && g < 50 && b < 50,
+                    "the sub-grid margin at ({x},{y}) must be the palette \
+                     default bg — got ({r},{g},{b}). Red means the painter \
+                     drew a column the node does not hold; white means the \
+                     gutter fill stopped covering the rect."
+                );
+            }
+        }
+    }
+
     /// R1028.1 §5.41 §2 #6 — pass 0 must run BEFORE the empty-grid early-out, so
     /// a geometry-only grid (a sized rect with no cells — a documented
     /// `TextGridNode::new` state, and the transient first frame before a

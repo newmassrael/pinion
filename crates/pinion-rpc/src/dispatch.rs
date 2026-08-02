@@ -4755,6 +4755,17 @@ fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &Te
     obj.insert("cursor".to_string(), grid_cursor_to_json(&snap.cursor));
     // R977 §5.41 — which screen this projection is (main / alternate).
     obj.insert("screen".to_string(), Value::String(snap.screen.to_string()));
+    // R1542 §5.41 — which AUTHORITY decided `(cols, rows)`: `"layout"` (they
+    // are derived from `rect`) or `"producer"` (something else sized the
+    // producer and `rect` is only the paint extent). This is what makes the
+    // `buffer_*` comparison above answerable — under `"producer"` a
+    // divergence is unambiguously an undelivered resize, where under
+    // `"layout"` it may be one in flight. Not derivable client-side: a
+    // declaration equal to the derivation is byte-identical to none.
+    obj.insert(
+        "winsize_source".to_string(),
+        Value::String(snap.winsize_source.to_string()),
+    );
 }
 
 /// R975 §5.41 — wire form for a [`GridCursorSnapshot`]: `{col, row, shape,

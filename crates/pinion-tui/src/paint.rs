@@ -819,11 +819,17 @@ fn paint_text_grid_inner(
     let screen_row_px = i64::from(n.rect.y) + i64::from(offset_px.1);
     let origin_col = pixels_to_cell_floor(screen_col_px, CELL.cell_w());
     let origin_row = pixels_to_cell_floor(screen_row_px, CELL.cell_h());
-    // Crop an over-large producer buffer to the node's rect-derived winsize,
-    // matching the Vello adapter's clip-to-`rect` (the buffer dims and the
-    // layout-derived winsize are distinct facts that diverge during an
+    // Crop an over-large producer buffer to the node's winsize (the buffer
+    // dims and the winsize are distinct facts that diverge during an
     // in-flight resize, R974.1) — so both backends show the same logical
     // window of cells (§2 #6).
+    //
+    // R1542 — `n.cols()` / `n.rows()` are no longer necessarily derived from
+    // `rect`: a producer sized by some other authority declares its winsize
+    // and this clamp then honours the declaration. The Vello adapter grew the
+    // identical clamp in the same round; before it, that arm leaned on its
+    // `rect` clip, which agrees with this only while the winsize IS the
+    // derivation.
     let max_rows = grid.rows().min(n.rows());
     let max_cols = grid.cols().min(n.cols());
     for row in 0..max_rows {
@@ -1888,6 +1894,58 @@ mod tests {
             "(1,0) truecolor fg"
         );
         assert_eq!(buf[(3, 0)].fg, TuiColor::Reset, "(3,0) default fg → Reset");
+    }
+
+    /// R1542 §5.41 §2 #6 — a declared winsize bounds what the TUI paints,
+    /// and the sub-grid margin is left untouched.
+    ///
+    /// This arm has clamped to `n.cols()` / `n.rows()` since R995, so R1542
+    /// changed no code here — it changed what those two answer. The guard is
+    /// what makes that a property rather than a coincidence: the buffer
+    /// delivers 4 columns, the producer was told to hold 3, and the 4th must
+    /// not reach the terminal buffer even though the node's rect spans it.
+    ///
+    /// Its Vello sibling is `pinion-shell`'s
+    /// `r1542_declared_winsize_leaves_the_sub_grid_margin_to_the_gutter_fill`,
+    /// which asserts the same column is the palette default background rather
+    /// than the delivered cell. Before R1542 the two backends disagreed about
+    /// it: this one clamped, that one leaned on the rect clip and painted it.
+    #[test]
+    fn r1542_declared_winsize_bounds_what_the_tui_paints() {
+        use pinion_core::CellMetric;
+        use pinion_core::scene::TextGridNode;
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+
+        fn cell(c: &'static str) -> TermCell {
+            TermCell::new(c, TermColor::Default, TermColor::Default)
+        }
+        let buffer =
+            GridBuffer::new(4, 1).with_row(0, vec![cell("a"), cell("b"), cell("c"), cell("d")]);
+        // The rect spans all four columns (32px / 8px), so only the
+        // declaration excludes the last one.
+        let mut node = TextGridNode::new(CellMetric::DEFAULT)
+            .with_cells(buffer)
+            .with_winsize(3, 1);
+        node.rect = Rect::new(0, 0, 32, 16);
+        assert_eq!((node.cols(), node.rows()), (3, 1), "precondition");
+        let scene = Scene::TextGrid(node);
+
+        let mut buf = Buffer::empty(TuiRect::new(0, 0, 8, 4));
+        to_buffer(&scene, &mut buf);
+
+        for (col, want) in [(0u16, "a"), (1, "b"), (2, "c")] {
+            assert_eq!(
+                buf[(col, 0u16)].symbol(),
+                want,
+                "column {col} is inside the declared grid",
+            );
+        }
+        assert_eq!(
+            buf[(3u16, 0u16)].symbol(),
+            " ",
+            "column 3 was DELIVERED but not declared: it is the sub-grid \
+             margin, and the terminal cell must be left as the parent drew it",
+        );
     }
 
     // ─────────────────────────────────────────────────────────────

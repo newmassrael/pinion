@@ -8787,6 +8787,68 @@ fn r1516_every_census_kind_reaches_the_wire_under_its_own_name() {
     }
 }
 
+/// R1542 §5.41 §2 #7 — the EXACT key set a `TextGrid` node puts on the wire.
+///
+/// This is the check whose absence R1539 recorded and R1542 then walked into
+/// a second time. R1538 grew `FrameTimingsMirror` by a field and
+/// `r1465_mirror_work.py` — which asserts that group's exact key set — went
+/// red 44 minutes into CI, with nothing between the edit and the push able to
+/// see it. R1539 answered that with [`crate::wire_census`], and the gate it
+/// built is a real census — over every type this crate `derive`s `Serialize`
+/// for. `TextGridSnapshot` derives none: it is hand-serialized into a
+/// `serde_json::Map` by [`text_grid_snapshot_fields`], along with 50 other
+/// response shapes in this module. So R1542 added `winsize_source` to a
+/// published response and every gate in the tree stayed green.
+///
+/// The general fix — teaching the census a second discriminator so the
+/// hand-serialized surface is covered too — is a campaign the size of R1539
+/// itself and is named as the next slice of that axis. What is closed HERE is
+/// R1542's own exposure: the type this round changed now has the assertion
+/// the derived types get for free, and it is an exact set, so a key added or
+/// removed fails in this crate's unit tests rather than in a demo sweep.
+#[test]
+fn r1542_the_text_grid_wire_states_its_exact_key_set() {
+    use std::collections::BTreeSet;
+
+    let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT);
+    node.rect = pinion_core::scene::Rect::new(0, 0, 304, 272);
+    let json =
+        snapshot_node_to_json(snapshot(&pinion_core::scene::Scene::TextGrid(node), "").unwrap());
+
+    let keys: BTreeSet<&str> = json
+        .as_object()
+        .expect("a TextGrid node serializes to an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let expected: BTreeSet<&str> = [
+        "type",
+        "rect",
+        "tag",
+        "cell_w",
+        "cell_h",
+        "cols",
+        "rows",
+        "buffer_cols",
+        "buffer_rows",
+        "grid_rows",
+        "cursor",
+        "screen",
+        "winsize_source",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        keys, expected,
+        "the TextGrid wire shape changed. Every key here is a published \
+         contract an agent reads; adding one is fine and removing or \
+         renaming one is a breaking change. Demos that assert on this \
+         object: r972/r973/r974/r975/r976/r977/r978 textgrid, r1008 grid \
+         pointer, r1399 underline, r1403 hyperlink, r1424/r1425/r1427 \
+         cursor, r1542 tiled winsize.",
+    );
+}
+
 /// The other direction: which census kind a [`SnapshotNode`] mirrors.
 ///
 /// The test above walks census → wire and would still pass if the mirror

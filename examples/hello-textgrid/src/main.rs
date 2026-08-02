@@ -617,6 +617,41 @@ fn cursor_blink_buffer() -> GridBuffer {
         )
 }
 
+/// Tag of the R1542 producer-declared-winsize grid, and its placement.
+const TILED_TAG: &str = "htg_tiled";
+/// In the free strip below the cursor-axis grids.
+const TILED_POS: (u32, u32) = (400, 884);
+/// The sprag case, at demo scale: a multiplexer daemon tiles a session in
+/// CELLS and hands this pane `TILED_COLS` columns via `TIOCSWINSZ`; the
+/// display client lays the panes out in PIXELS (a dock flex ratio), and the
+/// pixel boundary it lands on happens to span one more whole cell. Both
+/// quantisations are correct and they disagree by a column.
+///
+/// The rect therefore spans `TILED_SPAN_COLS` cells while the producer holds
+/// `TILED_COLS`. The extra column is this client's layout slack — not a
+/// resize in flight, not a producer bug — and before R1542 the node had no
+/// way to say so: `cols` was derived from the rect, so every snapshot
+/// reported a permanent divergence from `buffer_cols`.
+const TILED_COLS: u16 = 7;
+const TILED_ROWS: u16 = 2;
+const TILED_SPAN_COLS: u16 = 8;
+/// The PAINT extent, derived from the span rather than written down beside
+/// it: the whole point of this grid is that the rect and the winsize are two
+/// facts, so the one the rect encodes is stated once. `8 × 2` cells at the
+/// `8×16` baseline metric → `64 × 32` px.
+const TILED_SIZE: (u32, u32) = (TILED_SPAN_COLS as u32 * 8, TILED_ROWS as u32 * 16);
+
+/// Build the R1542 tiled-pane projection: a buffer sized to what the daemon
+/// gave the producer (`TILED_COLS`), not to what the widget spans. The
+/// content names its own width so a reader can see the last declared column
+/// is real content and the column past it is margin.
+fn tiled_buffer() -> GridBuffer {
+    let default = |c: char| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default);
+    GridBuffer::new(TILED_COLS, TILED_ROWS)
+        .with_row(0, "7 cells".chars().map(default))
+        .with_row(1, "abcdefg".chars().map(default))
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -697,6 +732,19 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         UNDERLINE_POS,
         UNDERLINE_SIZE,
     );
+    // R1542 — the producer-declared winsize arm: the rect spans
+    // TILED_SPAN_COLS cells, the daemon gave the producer TILED_COLS.
+    let tiled = Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(TILED_TAG)
+            .with_cells(tiled_buffer())
+            .with_winsize(TILED_COLS, TILED_ROWS)
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(TILED_POS.0, TILED_POS.1)
+                    .with_size(Size::px(TILED_SIZE.0, TILED_SIZE.1)),
+            ),
+    );
     let hyperlink = celled_grid(
         HYPERLINK_TAG,
         hyperlink_buffer(),
@@ -742,6 +790,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             hyperlink,
             cursor_color,
             cursor_blink,
+            tiled,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),

@@ -2712,6 +2712,17 @@ fn paint_text_grid(
         return;
     }
     let metric = n.cell_metric();
+    // R1542 §5.41 §2 #6 — paint at most the grid the NODE holds, mirroring the
+    // TUI backend's identical clamp (`pinion_tui::paint`). Until R1542 this
+    // arm relied on the `rect` clip alone, which is equivalent only while the
+    // node's winsize is derived FROM that rect. It stopped being equivalent in
+    // two ways: a rect whose width is not a whole number of cells left the
+    // GUI painting a sliver of one more column than the TUI showed, and a
+    // producer-declared winsize (R1542) can be narrower than the rect on
+    // purpose — where the cells beyond it are not the grid at all, they are
+    // the "sub-grid margin" R1028's fill is responsible for.
+    let paint_cols = grid.cols().min(n.cols());
+    let paint_rows = grid.rows().min(n.rows());
     let cell_w = f64::from(metric.cell_w());
     let cell_h = f64::from(metric.cell_h());
     // Glyphs paint in the grid-local frame translated to the node's
@@ -2738,8 +2749,8 @@ fn paint_text_grid(
     // effective fg / bg before resolution; a [`CellWidth::Trailer`] carries
     // the wide head's colours (R976), so filling each cell's own `bg` paints
     // the head background across both columns with no special case.
-    for row in 0..grid.rows() {
-        for col in 0..grid.cols() {
+    for row in 0..paint_rows {
+        for col in 0..paint_cols {
             let Some(cell) = grid.cell(col, row) else {
                 continue;
             };
@@ -2755,8 +2766,8 @@ fn paint_text_grid(
     // overflowing wide head glyph (its natural ~1em advance spilling into the
     // trailer column) visible: it now lands over the trailer background
     // instead of under it.
-    for row in 0..grid.rows() {
-        for col in 0..grid.cols() {
+    for row in 0..paint_rows {
+        for col in 0..paint_cols {
             let Some(cell) = grid.cell(col, row) else {
                 continue;
             };
@@ -2829,7 +2840,17 @@ fn paint_text_grid(
     // Cursor overlay (R993) — drawn after the cells so it sits on top, inside
     // the same clip layer. Split into its own pass (the cursor's effective-
     // colour + per-shape geometry is a concern distinct from the cell grid).
-    paint_grid_cursor(out, grid, metric, palette, cache, &style, origin, cursor);
+    paint_grid_cursor(
+        out,
+        grid,
+        (paint_cols, paint_rows),
+        metric,
+        palette,
+        cache,
+        &style,
+        origin,
+        cursor,
+    );
     out.pop_layer();
 }
 
@@ -2865,6 +2886,7 @@ fn paint_text_grid(
 fn paint_grid_cursor(
     out: &mut VelloScene,
     grid: &GridBuffer,
+    painted: (u16, u16),
     metric: CellMetric,
     palette: Palette,
     cache: &mut LayoutCache,
@@ -2873,9 +2895,13 @@ fn paint_grid_cursor(
     flags: CursorPaintFlags,
 ) {
     let cursor = grid.cursor();
+    // R1542 — bounded by what this frame PAINTED, not by the buffer alone: a
+    // cursor outside the node's winsize sits in the sub-grid margin, where
+    // there is no cell for it to invert and R1028's fill owns the pixels.
+    let (painted_cols, painted_rows) = painted;
     if !(cursor.shown_this_phase(flags.blink_on)
-        && cursor.col < grid.cols()
-        && cursor.row < grid.rows())
+        && cursor.col < painted_cols
+        && cursor.row < painted_rows)
     {
         return;
     }

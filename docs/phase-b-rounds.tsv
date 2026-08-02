@@ -63,3 +63,4 @@
 1539	api	the wire states the shape of what it answers, rpc/schema + census gate
 1540	text	a text run states its underline form and colour, Qt setUnderlineColor + SGR 4:x
 1541	perf	a cold connection is admitted on readiness, not on a 50ms timer
+1542	text	a grid states the winsize its producer was given, not the one its rect implies

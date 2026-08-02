@@ -291,6 +291,24 @@ pub struct ImmediateModeSnapshot {
 /// terminal's two screens this projection represents (a fullscreen app's
 /// alternate screen vs. the main shell surface), so a client reads the
 /// terminal's mode without inferring it from content.
+///
+/// R1542 §5.41 — `winsize_source` is `"layout"` / `"producer"`: **which
+/// authority decided `cols` / `rows`**, and it is what makes the R974.1
+/// rule above conditional rather than merely wrong for half the bindings.
+/// `"layout"` is the case that rule was written for — the grid's extent is
+/// derived from `rect`, so a divergence from `buffer_cols` / `buffer_rows`
+/// is an in-flight resize or a producer bug. `"producer"` means something
+/// else sized the producer (a multiplexer daemon tiling a session in cells
+/// while a display client lays the panes out in pixels), `rect` is only the
+/// paint extent, and a divergence is unambiguously the producer failing to
+/// deliver the size it was given.
+///
+/// It is a field rather than something a client derives, because the
+/// authority is **not recoverable from the values**: a declaration that
+/// happens to equal the derivation is byte-identical to no declaration, and
+/// re-deriving it would mean a client reimplementing `CellMetric`'s own
+/// flooring against `rect` + `cell_w` — the inference R974.1 made
+/// `buffer_cols` first-class precisely to retire.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextGridSnapshot {
@@ -305,6 +323,7 @@ pub struct TextGridSnapshot {
     pub grid_rows: Vec<GridRowSnapshot>,
     pub cursor: GridCursorSnapshot,
     pub screen: &'static str,
+    pub winsize_source: &'static str,
 }
 
 /// R973 §5.41 — one row of a [`TextGridSnapshot`] cell projection: the
@@ -618,6 +637,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                 grid_rows: text_grid_rows(node.cells(), &node.palette()),
                 cursor: grid_cursor_snapshot(node.cells().cursor()),
                 screen: screen_wire(node.cells().screen()),
+                winsize_source: winsize_source_wire(node.winsize()),
             })
         }
         // `Scene` is non_exhaustive; future variants surface as Unknown
@@ -787,6 +807,20 @@ fn screen_wire(screen: ScreenKind) -> &'static str {
     }
 }
 
+/// R1542 §5.41 — the wire string for which authority sized a grid, taken
+/// from the node's declared winsize (mirroring how [`screen_wire`] maps a
+/// [`ScreenKind`]).
+///
+/// The `Option` is read for its *presence*, never for its value: a producer
+/// that declares exactly what the layout would have derived is still
+/// producer-sized, and that is the whole distinction this field carries.
+fn winsize_source_wire(declared: Option<(u16, u16)>) -> &'static str {
+    match declared {
+        Some(_) => "producer",
+        None => "layout",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,9 +871,80 @@ mod tests {
                 assert!(!snap.cursor.visible);
                 // R977 — and the main screen (the default).
                 assert_eq!(snap.screen, "main");
+                // R1542 — nothing declared a winsize, so the layout is the
+                // authority and the snapshot says so.
+                assert_eq!(snap.winsize_source, "layout");
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_declared_winsize_reaches_the_snapshot_with_its_authority() {
+        // R1542 §5.41 — the sprag case over the introspection plane: the pane
+        // spans 38 cells' worth of pixels and the daemon gave the producer 37
+        // columns. Before R1542 the snapshot said 38 and there was no way to
+        // say otherwise, so every client reading it saw a permanent
+        // "divergence" that pinion's own docs define as an in-flight resize
+        // or a producer bug.
+        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_winsize(37, 17);
+        node.rect = Rect::new(0, 0, 304, 272); // 38 x 17 @ 8x16
+        node.tag = Some("tiled".into());
+        let cells = pinion_core::term_grid::GridBuffer::new(37, 17);
+        node = node.with_cells(cells);
+        let scene = Scene::TextGrid(node);
+        match snapshot(&scene, "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                assert_eq!(
+                    snap.rect,
+                    Rect::new(0, 0, 304, 272),
+                    "the rect is unchanged — it is the paint extent",
+                );
+                assert_eq!((snap.cols, snap.rows), (37, 17), "the declared grid");
+                assert_ne!(
+                    u32::from(snap.cols),
+                    snap.rect.w / snap.cell_w,
+                    "the point of the round: the answer is NOT the derivation",
+                );
+                assert_eq!(
+                    (snap.buffer_cols, snap.buffer_rows),
+                    (37, 17),
+                    "and it agrees with what the producer delivered — the \
+                     steady state R974.1 describes, now reachable",
+                );
+                assert_eq!(snap.winsize_source, "producer");
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_authority_is_reported_even_when_the_values_agree() {
+        // A producer that declares exactly what the layout would have derived
+        // is still producer-sized. Nothing in `cols` / `rows` / `rect` can
+        // tell a client that, which is why `winsize_source` is a field and
+        // not something a client computes.
+        let mut declared = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_winsize(38, 17);
+        declared.rect = Rect::new(0, 0, 304, 272);
+        let mut derived = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT);
+        derived.rect = Rect::new(0, 0, 304, 272);
+
+        let (a, b) = match (
+            snapshot(&Scene::TextGrid(declared), "").unwrap(),
+            snapshot(&Scene::TextGrid(derived), "").unwrap(),
+        ) {
+            (SnapshotNode::TextGrid(a), SnapshotNode::TextGrid(b)) => (a, b),
+            other => panic!("expected two TextGrids, got {other:?}"),
+        };
+        assert_eq!((a.cols, a.rows), (b.cols, b.rows), "identical values");
+        assert_eq!(a.rect, b.rect, "identical rects");
+        assert_ne!(
+            a.winsize_source, b.winsize_source,
+            "and yet different claims — the field carries what the values \
+             cannot",
+        );
     }
 
     #[test]

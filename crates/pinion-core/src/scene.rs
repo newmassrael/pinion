@@ -3515,6 +3515,30 @@ pub struct TextGridNode {
     /// Vello-only render size is deliberately separate — the TUI
     /// character-cell backend has no font size.
     pub font_size_px: Option<u32>,
+    /// R1542 §5.41 — the winsize the **producer** was told to size to, when
+    /// something other than this layout is the authority that decided it.
+    /// `None` (the default) derives it from [`rect`](Self::rect), which is
+    /// the pre-R1542 behaviour bit for bit.
+    ///
+    /// One `rect` cannot mean two things. It is the **paint extent** — R1028
+    /// fills all of it with the palette default background so a sub-cell
+    /// margin cannot leak the parent surface — and it was also the only
+    /// source of the grid's cell extent. Those agree exactly when the layout
+    /// is what sizes the producer. When something else is (a terminal
+    /// multiplexer whose daemon tiles a session in *cells* and hands each
+    /// pane a `TIOCSWINSZ`, while a display client lays those panes out in
+    /// *pixels*), one boundary is quantised twice and no `rect` can satisfy
+    /// both: shrink it to the producer's grid and R1028's gutter fill shrinks
+    /// with it, leave it as the paint extent and the node cannot state the
+    /// grid it actually holds.
+    ///
+    /// Declaring it separates the two facts instead of trading them. The
+    /// third term completes the model R974.1 began — what the producer
+    /// *delivered* (`buffer_cols`), what the layout *derived* (this field
+    /// unset), and what the producer was *instructed* to hold (this field
+    /// set) — so `cols == buffer_cols` is the steady state under either
+    /// authority and a divergence means what the docs already say it means.
+    pub winsize: Option<(u16, u16)>,
 }
 
 impl TextGridNode {
@@ -3533,6 +3557,7 @@ impl TextGridNode {
             cells: GridBuffer::default(),
             palette: Palette::xterm_default(),
             font_size_px: None,
+            winsize: None,
         }
     }
 
@@ -3577,19 +3602,54 @@ impl TextGridNode {
         self.font_size_px
     }
 
-    /// Whole cell columns the grid holds — derived from the
-    /// layout-resolved [`Rect`] width via [`CellMetric::cols_for`] (the
-    /// R1.4 PTY-winsize authority; a trailing partial cell floors).
+    /// R1542 §5.41 — declare the producer's winsize (builder form), for a
+    /// binding whose grid is sized by an authority other than this layout.
+    ///
+    /// [`cols`](Self::cols) / [`rows`](Self::rows) then answer `cols` / `rows`
+    /// instead of deriving them from [`rect`](Self::rect), and `rect` goes on
+    /// meaning exactly what it meant — the paint extent R1028 fills. See
+    /// [`winsize`](Self::winsize) for why the two cannot be one value.
     #[must_use]
-    pub fn cols(&self) -> u16 {
-        self.metric.cols_for(self.rect.w)
+    pub const fn with_winsize(mut self, cols: u16, rows: u16) -> Self {
+        self.winsize = Some((cols, rows));
+        self
     }
 
-    /// Whole cell rows the grid holds — derived from the layout-resolved
-    /// [`Rect`] height via [`CellMetric::rows_for`].
+    /// R1542 §5.41 — the declared producer winsize, or `None` when the
+    /// layout is the authority and [`cols`](Self::cols) / [`rows`](Self::rows)
+    /// derive from [`rect`](Self::rect).
+    ///
+    /// This is the *authority*, which is not recoverable from the values: a
+    /// declaration that happens to equal the derivation reads identically to
+    /// no declaration at all, and the two are different claims about what a
+    /// divergence from the delivered buffer means.
+    #[must_use]
+    pub const fn winsize(&self) -> Option<(u16, u16)> {
+        self.winsize
+    }
+
+    /// Whole cell columns the grid holds: the
+    /// [declared](Self::with_winsize) winsize when the producer states one,
+    /// otherwise derived from the layout-resolved [`Rect`] width via
+    /// [`CellMetric::cols_for`] (the R1.4 PTY-winsize authority; a trailing
+    /// partial cell floors).
+    #[must_use]
+    pub fn cols(&self) -> u16 {
+        match self.winsize {
+            Some((cols, _)) => cols,
+            None => self.metric.cols_for(self.rect.w),
+        }
+    }
+
+    /// Whole cell rows the grid holds: the [declared](Self::with_winsize)
+    /// winsize when the producer states one, otherwise derived from the
+    /// layout-resolved [`Rect`] height via [`CellMetric::rows_for`].
     #[must_use]
     pub fn rows(&self) -> u16 {
-        self.metric.rows_for(self.rect.h)
+        match self.winsize {
+            Some((_, rows)) => rows,
+            None => self.metric.rows_for(self.rect.h),
+        }
     }
 
     /// Set the retained cell projection (builder form). The producer
@@ -3773,6 +3833,85 @@ mod tests {
 
     fn stub_handle() -> Box<dyn External> {
         Box::new(StubExternal::new())
+    }
+
+    // ─── R1542 §5.41: rect is the paint extent, winsize is the grid ─────────
+
+    /// A grid whose rect spans `(w, h)` px at the default 8x16 metric.
+    fn grid_at(w: u32, h: u32) -> TextGridNode {
+        let mut node = TextGridNode::new(crate::CellMetric::DEFAULT);
+        node.rect = Rect::new(0, 0, w, h);
+        node
+    }
+
+    #[test]
+    fn an_undeclared_grid_derives_its_winsize_from_the_rect() {
+        // The pre-R1542 behaviour, pinned as the DEFAULT rather than assumed:
+        // every binding in the tree is this case, so a regression here is a
+        // silent change to all of them. 304x272 @ 8x16 = 38 x 17.
+        let node = grid_at(304, 272);
+        assert_eq!(node.winsize(), None, "nothing declared");
+        assert_eq!((node.cols(), node.rows()), (38, 17));
+    }
+
+    #[test]
+    fn a_declared_winsize_is_what_the_grid_answers() {
+        // The sprag case, exactly: a multiplexer daemon tiled the session and
+        // gave this pane 37 columns; the display client's flex ratio happens
+        // to span 38 cells' worth of pixels. The 38th column is this
+        // client's layout slack, and the node must say 37.
+        let node = grid_at(304, 272).with_winsize(37, 17);
+        assert_eq!(node.winsize(), Some((37, 17)));
+        assert_eq!((node.cols(), node.rows()), (37, 17));
+    }
+
+    #[test]
+    fn declaring_a_winsize_does_not_touch_the_rect() {
+        // The whole point of the split: `rect` still means the paint extent,
+        // so R1028's gutter fill covers the same pixels it did before. If a
+        // future "fix" shrank the rect to the declared grid instead, this
+        // fails — and so does the pixel guard that measures the gutter
+        // (`pinion-shell`'s `r1542_declared_winsize_keeps_the_rect_gutter`).
+        let plain = grid_at(304, 272);
+        let declared = grid_at(304, 272).with_winsize(37, 17);
+        assert_eq!(declared.rect, plain.rect, "the paint extent is unchanged");
+        assert_eq!(
+            declared.cell_metric().cols_for(declared.rect.w),
+            38,
+            "the derivation still reads 38 from the rect — it is not gone, \
+             it is no longer the ANSWER",
+        );
+    }
+
+    #[test]
+    fn a_declaration_equal_to_the_derivation_is_still_a_declaration() {
+        // The authority is not recoverable from the values, which is why
+        // `winsize()` returns the Option rather than a bool comparison. A
+        // producer that declares exactly what the layout would have derived
+        // is still producer-sized, and a client that inferred the authority
+        // by comparing numbers would read this one wrong.
+        let node = grid_at(304, 272).with_winsize(38, 17);
+        assert_eq!((node.cols(), node.rows()), (38, 17));
+        assert_eq!(
+            node.winsize(),
+            Some((38, 17)),
+            "equal values, different claim",
+        );
+    }
+
+    #[test]
+    fn a_declared_winsize_survives_a_rect_the_layout_later_resolves() {
+        // The layout pass writes `rect` every frame (`assign_rect`). A
+        // declaration must not be a one-shot that the next layout erases,
+        // or the node would answer correctly only on the frame it was built.
+        let mut node = grid_at(304, 272).with_winsize(37, 17);
+        node.rect = Rect::new(0, 0, 160, 272); // the pane got narrower
+        assert_eq!(
+            (node.cols(), node.rows()),
+            (37, 17),
+            "the producer's winsize is the producer's until the producer \
+             changes it",
+        );
     }
 
     /// R1417 — the lifted [`capture_surface`] is BYTE-IDENTICAL to the
