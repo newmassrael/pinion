@@ -46,6 +46,7 @@ pub mod snapshot;
 pub mod substrate_introspect;
 pub mod text;
 pub mod text_backgrounds;
+pub mod text_blocks;
 pub mod text_cache_stats;
 pub mod text_state;
 pub mod theme;

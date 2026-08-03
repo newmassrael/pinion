@@ -5879,6 +5879,15 @@ impl<V: WidgetView> ShellCore<V> {
                     pinion_rpc::text_backgrounds::collect_bands(paint, text_cache_ptr)
                 })
             });
+            // R1551 §5.36 §5.12 — the same shape for `scene/text_blocks`: one
+            // string comparison for every other method, and an EMPTY list (not
+            // `None`) when this shell has not painted, because "no paragraphs
+            // yet" is a true answer while `None` means "cannot shape at all".
+            let text_blocks = (request.method == "scene/text_blocks").then(|| {
+                last_paint_scene_ref.map_or_else(Vec::new, |paint| {
+                    pinion_rpc::text_blocks::collect_blocks(paint, text_cache_ptr)
+                })
+            });
             let produce_work_ptr = &mut self.produce_work;
             // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,
             // so a `scene/snapshot from: paint` (and the post-dispatch
@@ -6008,6 +6017,11 @@ impl<V: WidgetView> ShellCore<V> {
             // `scene/text_backgrounds` only.
             if let Some(bands) = text_backgrounds {
                 ctx = ctx.with_text_backgrounds(bands);
+            }
+            // R1551 §5.36 §5.12 — the paragraphs collected above, for
+            // `scene/text_blocks` only.
+            if let Some(blocks) = text_blocks {
+                ctx = ctx.with_text_blocks(blocks);
             }
             // R670.B §5.16 — surface the resolved window id so future
             // RPC consumers can read it through `DispatchContext`.

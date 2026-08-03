@@ -761,6 +761,11 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // pointer click routes through hit-test, not an AT action; a future
         // keyboard-roving model would surface expand/collapse on the `Row`,
         // not the header cell). Joins the zero-action arm.
+        // R1551 §5.40 — a `heading` is structural: AT reads its name and
+        // `aria-level` to build the document outline a screen-reader user
+        // navigates by, and it owns no AT action (a heading is not activatable).
+        // The level itself is carried by the shared `set_level` call above,
+        // which the `TreeItem` depth axis already drives.
         AriaRole::Tooltip
         | AriaRole::ColumnHeader
         | AriaRole::RowHeader
@@ -768,6 +773,7 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         | AriaRole::ProgressBar
         | AriaRole::Status
         | AriaRole::Navigation
+        | AriaRole::Heading
         | AriaRole::Group => {}
     }
 }

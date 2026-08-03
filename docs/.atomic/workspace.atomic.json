@@ -80296,6 +80296,76 @@
         "MODEL DRIFT, newly registered and the one carry here that is neither external nor a stated scope: `hash_table_bytes` uses the map's own `capacity()` rather than reproducing hashbrown's bucket geometry, and `lru_table_bytes` models `lru`'s node and index layout. If either crate changes its layout the published bytes go silently wrong — nothing fails to compile and no test breaks. It is the second axis the destructuring fuse cannot cover, the first being a whole new cache type (which the demo's source-parse gate does cover)"
       ]
     },
+    "Round 1551": {
+      "decision_summary": "R1551 a paragraph states its own block format",
+      "changes_bullets": [
+        "pinion-core: `style::BlockFormat` — the block (paragraph) format, Qt `QTextBlockFormat`: left/right indent, space above/below, heading level. Typed and exhaustive where Qt's is a `QVariant` property bag, and every length is CSS px where Qt mixes `indent()` (indent-width units) with `leftMargin()` (pixels) in one class",
+        "pinion-core: `style::TextIndent` — CSS `text-indent` with both keywords (`hanging`, `each-line`) Qt's bare `qreal textIndent` has no spelling for; joins `text_align` as a paragraph-level field of `TextStyle`, so every shaping caller reaches it through the `&TextStyle` it already passes",
+        "pinion-core: `TextNode::block` + `with_block`, the ONE lowering site — the format's four lengths become the node's `LayoutStyle::margin`, so the ordinary flex pass indents a paragraph with no document-specific layout code, on both backends. The declaration is kept beside the box it produced because a margin cannot be read back as a block format",
+        "pinion-core: `Scene::for_each_text_leaf` — the scroll-offset fold over text leaves, lifted at its second consumer (`scene/text_backgrounds` had spelled it, `scene/text_blocks` was about to)",
+        "pinion-core: `composite_tag::DocumentTag` — the document/paragraph paint-tag SSOT, in the `'_'` presentational family",
+        "pinion-text: `shape` calls parley `Layout::set_text_indent` before breaking, because the indent is a BREAKING input — an indented line has less room, so where it breaks depends on it. parley's `IndentOptions` carry the same two CSS keywords, so this is a rename and not a re-derivation",
+        "pinion-text: `line_boxes` + `TextLineBox` — parley's own per-line metrics, published so the shaped result is checkable",
+        "pinion-text-unicode: `wrap_paragraph_with_line_budget` + `LineContext` — the breaker asks for each line's budget instead of taking one for the paragraph, and reports the two flags CSS selects on (`is_block_start` / `is_scope_start`) because only the breaker knows which lines those are. `wrap_paragraph_with_measure` is now its constant-budget case",
+        "pinion-tui: `CellTextLayout::place` + `CellLine` + `GapPad` — the cell backend honours BOTH paragraph-level fields: `text-indent` (including a negative one, which widens the node clip so an outdent is drawn rather than erased) and `text-align`, which reached the terminal for the first time. Justify distributes leftover cells across inter-word gaps; `wrap` survives as the `TextStyle::new()` case of `place`",
+        "pinion-a11y: `AriaRole::Heading` + `attach_block_headings` — a declared heading level becomes a WAI-ARIA `heading` with `aria-level`, named by the PAINTED text, riding the `build_access_tree` chokepoint so it reaches every binding",
+        "pinion-rpc: `scene/text_blocks` — each paragraph's declaration BESIDE where its shaped lines landed, plus `block` on `scene/snapshot`'s text nodes and `text_indent` in its style object; four new wire-census types",
+        "pinion-widget-paint: `document::{TextBlock, view_document}` — a document is a column of block nodes, so it composes with the rest of the tree; `QTextDocumentLayout` is a private second layout engine that cannot"
+      ],
+      "verification_bullets": [
+        "`tools/demos/r1551_block_format.py` — 45 assertion sites over a real binding: the declared format as scene data, the shaped line boxes beside it, the first-line indent landing at the declared px with no other line moving, the hanging mirror from the same amount, the quote's indents cross-checked against `scene/snapshot`'s independent rect, a negative control (an ordinary label is not a paragraph), the heading outline over `scene/access`, and the R1539 census covering the new types",
+        "Four counterfactuals, one at a time, each FAILING as required: parley's `set_text_indent` call dropped (the first-line and hanging tests fail) / the TUI line placement dropped (the terminal test fails) / `with_block` not writing the margin (the box test fails) / the heading pass emitting nothing (the outline test fails)",
+        "`examples/hello-richtext-blocks` — 8 tests, including the §2 #6 claim asserted by the CONSUMER: the same view scene painted through the terminal backend indents the same line",
+        "`cargo test` green on pinion-core (2955), pinion-text, pinion-text-unicode (288), pinion-a11y (258), pinion-widget-paint (781), pinion-rpc (1055), pinion-tui (166), pinion-shell, hello-richtext-blocks; `cargo clippy --workspace --all-targets` pedantic clean; `cargo fmt --all --check` and `cargo doc --workspace` clean",
+        "The R1539 wire census demanded the four new types before pinion-rpc's own tests would pass — the gate working as built",
+        "Re-ran the demos that read the changed text surfaces: r1546_run_background, r1540_underline_states_its_form, r713_richtext, r1505_alignment_reaches_glyphs — all PASS"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.12",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "The document model is OPENED, not complete. `QTextList` (list markers with automatic numbering), `QTextTable`, `setMarkdown` / `toHtml`, and `QTextBlockFormat`'s `marker` / `nonBreakableLines` / `pageBreakPolicy` / `tabPositions` have no scene primitive. These are axis gaps rather than round debt: this round closed the item the axis's own audit named — per-paragraph indent and margins — whole",
+        "A heading is announced only when its `TextNode` carries a tag, because everything in the AT tree is addressed by tag. `view_document` tags every block from one encode point, so a heading built that way always has one; a hand-built untagged heading is silent. Stated in `attach_block_headings`'s doc and asserted by a test rather than left implicit",
+        "The GUI and the cell backend still break lines with different breakers (parley vs pinion's own UAX #14), which R1344 recorded and this round inherits: their break POINTS can differ for the same paragraph, so an indent selects the same LINES on both and the lines themselves need not be identical. The floor until §5.37 becomes the production pixel path",
+        "The cell backend's justify front-loads the remainder of an uneven division across the leading gaps, where parley adds a fractional advance to every space. A cell grid has no sub-cell positions, so this is a property of the medium rather than a divergence to close"
+      ],
+      "publishable_decision_summary": "R1551 a paragraph states its own block format",
+      "publishable_changes_bullets": [
+        "pinion-core: `style::BlockFormat` — the block (paragraph) format, Qt `QTextBlockFormat`: left/right indent, space above/below, heading level. Typed and exhaustive where Qt's is a `QVariant` property bag, and every length is CSS px where Qt mixes `indent()` (indent-width units) with `leftMargin()` (pixels) in one class",
+        "pinion-core: `style::TextIndent` — CSS `text-indent` with both keywords (`hanging`, `each-line`) Qt's bare `qreal textIndent` has no spelling for; joins `text_align` as a paragraph-level field of `TextStyle`, so every shaping caller reaches it through the `&TextStyle` it already passes",
+        "pinion-core: `TextNode::block` + `with_block`, the ONE lowering site — the format's four lengths become the node's `LayoutStyle::margin`, so the ordinary flex pass indents a paragraph with no document-specific layout code, on both backends. The declaration is kept beside the box it produced because a margin cannot be read back as a block format",
+        "pinion-core: `Scene::for_each_text_leaf` — the scroll-offset fold over text leaves, lifted at its second consumer (`scene/text_backgrounds` had spelled it, `scene/text_blocks` was about to)",
+        "pinion-core: `composite_tag::DocumentTag` — the document/paragraph paint-tag SSOT, in the `'_'` presentational family",
+        "pinion-text: `shape` calls parley `Layout::set_text_indent` before breaking, because the indent is a BREAKING input — an indented line has less room, so where it breaks depends on it. parley's `IndentOptions` carry the same two CSS keywords, so this is a rename and not a re-derivation",
+        "pinion-text: `line_boxes` + `TextLineBox` — parley's own per-line metrics, published so the shaped result is checkable",
+        "pinion-text-unicode: `wrap_paragraph_with_line_budget` + `LineContext` — the breaker asks for each line's budget instead of taking one for the paragraph, and reports the two flags CSS selects on (`is_block_start` / `is_scope_start`) because only the breaker knows which lines those are. `wrap_paragraph_with_measure` is now its constant-budget case",
+        "pinion-tui: `CellTextLayout::place` + `CellLine` + `GapPad` — the cell backend honours BOTH paragraph-level fields: `text-indent` (including a negative one, which widens the node clip so an outdent is drawn rather than erased) and `text-align`, which reached the terminal for the first time. Justify distributes leftover cells across inter-word gaps; `wrap` survives as the `TextStyle::new()` case of `place`",
+        "pinion-a11y: `AriaRole::Heading` + `attach_block_headings` — a declared heading level becomes a WAI-ARIA `heading` with `aria-level`, named by the PAINTED text, riding the `build_access_tree` chokepoint so it reaches every binding",
+        "pinion-rpc: `scene/text_blocks` — each paragraph's declaration BESIDE where its shaped lines landed, plus `block` on `scene/snapshot`'s text nodes and `text_indent` in its style object; four new wire-census types",
+        "pinion-widget-paint: `document::{TextBlock, view_document}` — a document is a column of block nodes, so it composes with the rest of the tree; `QTextDocumentLayout` is a private second layout engine that cannot"
+      ],
+      "publishable_verification_bullets": [
+        "`tools/demos/r1551_block_format.py` — 45 assertion sites over a real binding: the declared format as scene data, the shaped line boxes beside it, the first-line indent landing at the declared px with no other line moving, the hanging mirror from the same amount, the quote's indents cross-checked against `scene/snapshot`'s independent rect, a negative control (an ordinary label is not a paragraph), the heading outline over `scene/access`, and the R1539 census covering the new types",
+        "Four counterfactuals, one at a time, each FAILING as required: parley's `set_text_indent` call dropped (the first-line and hanging tests fail) / the TUI line placement dropped (the terminal test fails) / `with_block` not writing the margin (the box test fails) / the heading pass emitting nothing (the outline test fails)",
+        "`examples/hello-richtext-blocks` — 8 tests, including the §2 #6 claim asserted by the CONSUMER: the same view scene painted through the terminal backend indents the same line",
+        "`cargo test` green on pinion-core (2955), pinion-text, pinion-text-unicode (288), pinion-a11y (258), pinion-widget-paint (781), pinion-rpc (1055), pinion-tui (166), pinion-shell, hello-richtext-blocks; `cargo clippy --workspace --all-targets` pedantic clean; `cargo fmt --all --check` and `cargo doc --workspace` clean",
+        "The R1539 wire census demanded the four new types before pinion-rpc's own tests would pass — the gate working as built",
+        "Re-ran the demos that read the changed text surfaces: r1546_run_background, r1540_underline_states_its_form, r713_richtext, r1505_alignment_reaches_glyphs — all PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.12",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The document model is OPENED, not complete. `QTextList` (list markers with automatic numbering), `QTextTable`, `setMarkdown` / `toHtml`, and `QTextBlockFormat`'s `marker` / `nonBreakableLines` / `pageBreakPolicy` / `tabPositions` have no scene primitive. These are axis gaps rather than round debt: this round closed the item the axis's own audit named — per-paragraph indent and margins — whole",
+        "A heading is announced only when its `TextNode` carries a tag, because everything in the AT tree is addressed by tag. `view_document` tags every block from one encode point, so a heading built that way always has one; a hand-built untagged heading is silent. Stated in `attach_block_headings`'s doc and asserted by a test rather than left implicit",
+        "The GUI and the cell backend still break lines with different breakers (parley vs pinion's own UAX #14), which R1344 recorded and this round inherits: their break POINTS can differ for the same paragraph, so an indent selects the same LINES on both and the lines themselves need not be identical. The floor until §5.37 becomes the production pixel path",
+        "The cell backend's justify front-loads the remainder of an uneven division across the leading gaps, where parley adds a fractional advance to every space. A cell grid has no sub-cell positions, so this is a property of the medium rather than a divergence to close"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

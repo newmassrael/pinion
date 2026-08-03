@@ -124,6 +124,16 @@ pub struct TextSnapshot {
     /// (§2 #7 scene-as-data) — `RichText` is introspectable without
     /// OCR'ing per-colour glyphs off a screenshot.
     pub runs: Vec<pinion_core::scene::StyleRun>,
+    /// R1551 §5.36 — the declared [`BlockFormat`](pinion_core::style::BlockFormat)
+    /// when this text is a document block (Qt `QTextBlockFormat`), `None` for an
+    /// ordinary label.
+    ///
+    /// The declaration, not its lowering: the indents it states also become the
+    /// node's layout margin, and a margin cannot be read back as a block format
+    /// (a paragraph indented 24px and a container that insets 24px produce the
+    /// same box). Where the shaped lines LANDED is `scene/text_blocks`, which
+    /// needs the layout this surface deliberately does not carry.
+    pub block: Option<pinion_core::style::BlockFormat>,
 }
 
 /// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry,
@@ -551,6 +561,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             content: node.content.clone(),
             style: node.style.clone(),
             runs: node.runs.clone(),
+            block: node.block,
         }),
         Scene::Path(node) => SnapshotNode::Path(PathSnapshot {
             rect: node.rect,

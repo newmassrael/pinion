@@ -530,6 +530,9 @@ pub struct DispatchContext<'a> {
     /// a host that never shapes is a different fact from a frame that
     /// highlights nothing.
     pub text_backgrounds: Option<Vec<crate::text_backgrounds::TextBackgroundBand>>,
+    /// R1551 §5.36 §5.12 — the paragraph reports the embedder collected for
+    /// `scene/text_blocks`.
+    pub text_blocks: Option<Vec<crate::text_blocks::TextBlockReport>>,
 
     /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
     /// Resolved by the embedder before dispatch (the
@@ -1422,6 +1425,7 @@ impl<'a> DispatchContext<'a> {
             text_cache_stats: None,
             memory_census: None,
             text_backgrounds: None,
+            text_blocks: None,
             frame_timings: None,
             render_fidelity: None,
             screenshot: None,
@@ -1645,6 +1649,16 @@ impl<'a> DispatchContext<'a> {
         bands: Vec<crate::text_backgrounds::TextBackgroundBand>,
     ) -> Self {
         self.text_backgrounds = Some(bands);
+        self
+    }
+
+    /// R1551 §5.36 §5.12 — builder: attach the paragraph reports the embedder
+    /// collected with `text_blocks::collect_blocks`. `scene/text_blocks` reads
+    /// the slot; every other arm ignores it. `None` (the default) surfaces
+    /// `TextBlocksUnavailable`.
+    #[must_use]
+    pub fn with_text_blocks(mut self, blocks: Vec<crate::text_blocks::TextBlockReport>) -> Self {
+        self.text_blocks = Some(blocks);
         self
     }
 
@@ -1907,6 +1921,8 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // out for the dispatch lifetime (owned, non-`Copy`); only
     // `scene/text_backgrounds` reads it.
     let text_backgrounds = ctx.text_backgrounds.take();
+    // R1551 §5.36 — the same shape: `scene/text_blocks` reads it.
+    let text_blocks = ctx.text_blocks.take();
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
@@ -2386,6 +2402,12 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 ),
                 // R1546 §5.36 — where each declared text background was
                 // actually painted, and whether the text on it reads.
+                // R1551 §5.36 — what each paragraph declared about itself, and
+                // where its shaped lines landed.
+                "scene/text_blocks" => (
+                    crate::text_blocks::handle_scene_text_blocks(text_blocks.as_deref()),
+                    HandlerKind::Read,
+                ),
                 "scene/text_backgrounds" => (
                     crate::text_backgrounds::handle_scene_text_backgrounds(
                         text_backgrounds.as_deref(),
@@ -4750,6 +4772,15 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
             // so AI clients read `RichText` structure as data.
             let runs: Vec<Value> = snap.runs.iter().map(style_run_to_json).collect();
             obj.insert("runs".to_string(), Value::Array(runs));
+            // R1551 §5.36 — the declared block format (Qt `QTextBlockFormat`),
+            // `null` for an ordinary label. The DECLARATION, not its lowering:
+            // the indents it states also become this node's layout margin, and
+            // a margin cannot be read back as a block format. Where the shaped
+            // lines landed is `scene/text_blocks`.
+            obj.insert(
+                "block".to_string(),
+                snap.block.map_or(Value::Null, block_format_to_json),
+            );
         }
         SnapshotNode::Path(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
@@ -5400,6 +5431,52 @@ fn text_decoration_to_json(d: pinion_core::style::TextDecoration) -> Value {
     Value::Object(obj)
 }
 
+/// R1551 §5.36 — wire serialization for `BlockFormat`: every declared field,
+/// because the whole point of a struct where Qt has a property bag is that a
+/// reader can enumerate what a block said rather than guessing which properties
+/// to ask about.
+///
+/// The derived `aria_level` is NOT here. `scene/snapshot` carries scene data,
+/// and the announcement a heading level produces is a fact about the
+/// accessibility tree — `scene/text_blocks` publishes the pair, and
+/// `scene/access` publishes the announcement itself.
+fn block_format_to_json(b: pinion_core::style::BlockFormat) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "left_indent_px".to_string(),
+        Value::Number(b.left_indent_px.into()),
+    );
+    obj.insert(
+        "right_indent_px".to_string(),
+        Value::Number(b.right_indent_px.into()),
+    );
+    obj.insert(
+        "space_above_px".to_string(),
+        Value::Number(b.space_above_px.into()),
+    );
+    obj.insert(
+        "space_below_px".to_string(),
+        Value::Number(b.space_below_px.into()),
+    );
+    obj.insert(
+        "heading_level".to_string(),
+        Value::Number(b.heading_level.into()),
+    );
+    Value::Object(obj)
+}
+
+/// R1551 §5.36 — wire serialization for `TextIndent`: the amount and both CSS
+/// keywords, spelled as an object so a reader cannot mistake the sign of the
+/// amount for the `hanging` keyword. They are different things — a negative
+/// amount outdents the lines the keywords SELECT.
+fn text_indent_to_json(i: pinion_core::style::TextIndent) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("amount_px".to_string(), Value::Number(i.amount_px.into()));
+    obj.insert("hanging".to_string(), Value::Bool(i.hanging));
+    obj.insert("each_line".to_string(), Value::Bool(i.each_line));
+    Value::Object(obj)
+}
+
 /// R55.G.10 §5.49 — wire serialization for `TextOverflow`. Bare
 /// string per variant; wildcard arm for future additions.
 fn text_overflow_to_json(o: pinion_core::style::TextOverflow) -> Value {
@@ -5474,6 +5551,15 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
     obj.insert(
         "text_align".to_string(),
         text_align_to_json(style.text_align),
+    );
+    // R1551 §5.36 — the DECLARED CSS `text-indent` (Qt
+    // `QTextBlockFormat::setTextIndent`, plus the two CSS keywords Qt has no
+    // spelling for). Where the indented line actually landed is
+    // `scene/text_blocks`, because that needs the shaped layout and this is
+    // scene data.
+    obj.insert(
+        "text_indent".to_string(),
+        text_indent_to_json(style.text_indent),
     );
     obj.insert(
         "decoration".to_string(),

@@ -31,8 +31,8 @@ use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
 use crate::mnemonic::Mnemonic;
 use crate::style::{
-    Align, BoxStyle, Color, CursorHint, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle,
-    UnderlineStyle,
+    Align, BlockFormat, BoxStyle, Color, CursorHint, ImageStyle, LayoutStyle, PathStyle, Size,
+    TextStyle, UnderlineStyle,
 };
 use crate::term_grid::{GridBuffer, Palette};
 use crate::widgets::measured_rows::MeasuredRowState;
@@ -793,6 +793,12 @@ impl Scene {
                 // frame-to-frame — only a label/field sharing identical text
                 // would have deduped, and they sit in distinct containers).
                 t.caret_bearing.hash(&mut h);
+                // R1551 §5.36 — fold the block format: it lowers to this
+                // node's margin (already hashed via `layout`) but ALSO to its
+                // heading level, which the a11y pass reads and the layout
+                // never sees. Two paragraphs identical but for their heading
+                // level would otherwise share a fragment.
+                t.block.hash(&mut h);
                 h.finish()
             }
             Scene::Path(p) => {
@@ -1208,6 +1214,49 @@ impl Scene {
     /// `scene/snapshot from: paint` ring assertions verifiable against
     /// the real geometry rather than tautologically
     /// ([[introspection-from-paint-not-screen]]).
+    /// R1551 §5.12 §5.45 — visit every [`TextNode`] in the tree, in paint
+    /// order, with the window-absolute offset that applies to it.
+    ///
+    /// The callback receives `(node, x_off, y_off)`; the node's window-absolute
+    /// origin is `(x_off + node.rect.x, y_off + node.rect.y)`. The fold is the
+    /// same one [`Self::rect_for_tag_absolute`] performs — a [`Scene::Scroll`]
+    /// shifts its content by `viewport - offset` — so a caller placing a text
+    /// leaf on screen agrees with the resolver every other surface uses.
+    ///
+    /// It is a **separate** walk from that resolver rather than a
+    /// generalisation of it, because the two answer different questions: the
+    /// resolver searches for ONE tag, returns early, and clips to the enclosing
+    /// viewport stack, while this visits every leaf and clips nothing. What was
+    /// worth sharing is the arithmetic, and this is where the second caller for
+    /// it arrived: `scene/text_backgrounds` (R1546) and `scene/text_blocks`
+    /// (R1551) both derive per-leaf geometry from a shaped layout, and each had
+    /// spelled the fold for itself.
+    ///
+    /// No clipping and no visibility test: a leaf scrolled out of view is still
+    /// visited, with the offset that would place it. The introspection surfaces
+    /// that use this publish where something *is*, and "off screen" is an
+    /// answer their callers can compute; dropping it here would make an absent
+    /// row ambiguous between "not painted" and "scrolled away".
+    pub fn for_each_text_leaf<'a>(&'a self, mut f: impl FnMut(&'a TextNode, i64, i64)) {
+        fn visit<'a>(scene: &'a Scene, x: i64, y: i64, f: &mut impl FnMut(&'a TextNode, i64, i64)) {
+            match scene {
+                Scene::Text(t) => f(t, x, y),
+                Scene::Container(c) => {
+                    for child in &c.children {
+                        visit(child, x, y, f);
+                    }
+                }
+                Scene::Scroll(n) => {
+                    let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
+                    let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
+                    visit(&n.content, x + dx, y + dy, f);
+                }
+                _ => {}
+            }
+        }
+        visit(self, 0, 0, &mut f);
+    }
+
     #[must_use]
     pub fn rect_for_tag_absolute(&self, target: &str) -> Option<Rect> {
         self.rect_for_tag_with_offset(target, 0, 0, None)
@@ -1935,8 +1984,9 @@ pub fn capture_surface(tag: impl Into<Cow<'static, str>>, rect: Rect, focusable:
 /// fields take effect per range — `font_size_px`, `fg_color`,
 /// `font_weight`, `font_style`, `letter_spacing`, `line_height`,
 /// `decoration`, `font_family`. The **paragraph-level** fields
-/// (`text_align`, `overflow`) are resolved once for the whole node
-/// from [`TextNode::style`]; a per-run value for them is ignored. This
+/// (`text_align`, `text_indent`, `overflow`) are resolved once for the
+/// whole node from [`TextNode::style`]; a per-run value for them is
+/// ignored. This
 /// mirrors CSS, where block properties (`text-align`) set on an inline
 /// span have no effect. Authoring convention: build each run's style
 /// from the node's base style so it inherits the paragraph-level
@@ -2109,6 +2159,26 @@ pub struct TextNode {
     /// the display string and the mark from one authored literal, so the
     /// painted label and the key it binds cannot drift apart.
     pub mnemonic: Option<Mnemonic>,
+    /// R1551 §5.36 — this text is a **document block** (a paragraph), and this
+    /// is its [`BlockFormat`] (Qt `QTextBlockFormat`).
+    ///
+    /// `None` (the default) is an ordinary label: it has no paragraph
+    /// semantics, so nothing about it is a block declaration. Every static
+    /// label in the tree keeps that shape, which is why this is an `Option`
+    /// where Qt gives every block a format — in Qt a `QTextBlock` only exists
+    /// inside a `QTextDocument`, and here a `TextNode` is used for both.
+    ///
+    /// **This field is the authority**, in the same sense as
+    /// [`Self::mnemonic`]. The format lowers to [`Self::layout`]'s margin (by
+    /// [`Self::with_block`], the one derivation site) and, through
+    /// [`TextStyle::text_indent`](crate::style::TextStyle::text_indent), to
+    /// how the shaper breaks the first line. Neither is recoverable: a margin
+    /// is a margin whether a paragraph asked for it or its container did. So
+    /// the declaration is kept beside the box it produced and the §7 wire
+    /// publishes both — `scene/text_blocks` answers what was declared *and*
+    /// where the lines landed, which is the check that the one reached the
+    /// other.
+    pub block: Option<BlockFormat>,
 }
 
 /// R51.81 §5.40 — accessibility role hint attached to a [`TextNode`].
@@ -2153,6 +2223,7 @@ impl TextNode {
             role: None,
             caret_bearing: false,
             mnemonic: None,
+            block: None,
         }
     }
 
@@ -2188,6 +2259,36 @@ impl TextNode {
     #[must_use]
     pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
         self.layout = f(self.layout);
+        self
+    }
+
+    /// R1551 §5.36 — declare this text a document block and lower its
+    /// [`BlockFormat`] into the layout box (builder form).
+    ///
+    /// **The one derivation site.** The format's four lengths become the
+    /// node's [`LayoutStyle::margin`] — `left_indent_px` / `right_indent_px`
+    /// on the inline axis, `space_above_px` / `space_below_px` on the block
+    /// axis — so a paragraph's indent is honoured by the same flex pass that
+    /// lays out everything else, on both backends, with no text-specific
+    /// stacking code. Qt's block margins are known only to
+    /// `QTextDocumentLayout`, which is why a Qt block's indent cannot
+    /// participate in the surrounding widget layout at all.
+    ///
+    /// It writes the margin rather than merging into it: a node cannot both be
+    /// a paragraph whose format states its indents and carry an unrelated
+    /// margin meaning something else, and adding the two would make the
+    /// resulting box unattributable to either. Call [`Self::with_layout`]
+    /// *first* if the node needs other layout fields — this preserves them and
+    /// replaces only the margin.
+    #[must_use]
+    pub fn with_block(mut self, block: BlockFormat) -> Self {
+        self.block = Some(block);
+        self.layout.margin = Rect {
+            x: block.left_indent_px,
+            y: block.space_above_px,
+            w: block.right_indent_px,
+            h: block.space_below_px,
+        };
         self
     }
 

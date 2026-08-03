@@ -3554,6 +3554,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-richtext-blocks"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "pinion-text",
+ "pinion-tui",
+ "pinion-widget-paint",
+ "ratatui",
+ "vello",
+]
+
+[[package]]
 name = "hello-rotate-gesture"
 version = "0.0.1"
 dependencies = [

@@ -2131,6 +2131,276 @@ pub enum TextOverflow {
     Ellipsis,
 }
 
+/// R1551 §5.36 — CSS `text-indent`: how far the *first* line of a paragraph
+/// starts from the paragraph's own start edge (Qt `QTextBlockFormat::
+/// setTextIndent`).
+///
+/// This is a **paragraph-level** field: it describes the first line of the
+/// whole [`TextStyle`]-bearing node, so a per-run value is ignored exactly the
+/// way [`TextAlign`] is (see [`StyleRun`](crate::scene::StyleRun)).
+///
+/// # Why three fields where Qt has one number
+///
+/// Qt's `textIndent()` is a bare `qreal` applied to the first line. CSS names
+/// two more cases that real documents want and that a bare number cannot say:
+///
+/// * `hanging` inverts which lines are indented — the *continuation* lines
+///   move in and the first line stays put. That is the shape of a dictionary
+///   entry, a bibliography, and every list item whose marker hangs in the
+///   margin, and expressing it Qt's way needs a negative indent plus a
+///   compensating left margin, i.e. two properties that must agree.
+/// * `each_line` re-applies the indent after every *hard* break inside the
+///   same block, which is what a poem stanza or an address block wants.
+///
+/// A negative `amount_px` is legal and independent of `hanging`: it outdents
+/// whichever lines the flags select, so the first line can protrude into the
+/// left indent without the paragraph's box moving.
+#[non_exhaustive]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub struct TextIndent {
+    /// Indent in CSS px, signed — negative outdents (protrudes past the start
+    /// edge). `0` (the default) is "no indent".
+    pub amount_px: i32,
+    /// CSS `hanging` keyword: indent the continuation lines instead of the
+    /// first line.
+    pub hanging: bool,
+    /// CSS `each-line` keyword: re-apply after every hard line break in the
+    /// block, not only at its start.
+    pub each_line: bool,
+}
+
+impl TextIndent {
+    /// No indent — the CSS initial value and the default.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            amount_px: 0,
+            hanging: false,
+            each_line: false,
+        }
+    }
+
+    /// Indent the first line by `amount_px` (CSS `text-indent: <length>`).
+    #[must_use]
+    pub const fn first_line(amount_px: i32) -> Self {
+        Self {
+            amount_px,
+            hanging: false,
+            each_line: false,
+        }
+    }
+
+    /// Indent every line *except* the first by `amount_px`
+    /// (CSS `text-indent: <length> hanging`).
+    #[must_use]
+    pub const fn hanging(amount_px: i32) -> Self {
+        Self {
+            amount_px,
+            hanging: true,
+            each_line: false,
+        }
+    }
+
+    /// Builder: re-apply after every hard line break (CSS `each-line`).
+    #[must_use]
+    pub const fn with_each_line(mut self) -> Self {
+        self.each_line = true;
+        self
+    }
+
+    /// Whether this indent moves any line at all.
+    ///
+    /// A zero amount cannot shift a line whatever the flags say, so the two
+    /// keywords are only meaningful alongside a non-zero amount. Callers that
+    /// short-circuit the indent path ask *this* rather than comparing to
+    /// [`Self::none`], which would report a difference for
+    /// `TextIndent { amount_px: 0, hanging: true, .. }` that no reader could
+    /// see on screen.
+    #[must_use]
+    pub const fn is_none(self) -> bool {
+        self.amount_px == 0
+    }
+
+    /// Whether a line is indented, given whether it is the block's first line
+    /// and whether it starts a *hard-break scope* (the block's first line, or
+    /// the first line after an explicit `U+000A`).
+    ///
+    /// One rule, two backends: parley's own resolver is fed the same two flags
+    /// on the GUI path, and the cell backend asks this directly, so a
+    /// declaration cannot select different lines in a terminal than on screen.
+    /// The `^` is CSS's definition — `hanging` inverts which lines are
+    /// selected rather than negating the amount.
+    #[must_use]
+    pub const fn indents_line(self, is_block_start: bool, is_scope_start: bool) -> bool {
+        let selected = if self.each_line {
+            is_scope_start
+        } else {
+            is_block_start
+        };
+        selected ^ self.hanging
+    }
+}
+
+/// R1551 §5.36 — the **block** (paragraph) format: everything about a
+/// paragraph that is not about its characters. Qt `QTextBlockFormat`.
+///
+/// # Why this is a separate type from [`TextStyle`]
+///
+/// Qt splits character formatting (`QTextCharFormat`) from block formatting
+/// (`QTextBlockFormat`) because the two have different *extents*: a character
+/// format applies to a byte range, a block format applies to a whole
+/// paragraph. pinion had only the character half, so a paragraph could say how
+/// its glyphs looked and nothing about how the paragraph itself sat — no
+/// indent, no space between paragraphs, no way to mark one a heading.
+///
+/// The two fields Qt puts here that pinion already had keep their existing
+/// homes rather than being duplicated: **alignment** is
+/// [`TextStyle::text_align`] and **line height** is [`TextStyle::line_height`]
+/// (which is finer than Qt's — pinion resolves it per
+/// [`StyleRun`](crate::scene::StyleRun), Qt only per block). Restating either
+/// here would be two declarations that must agree, and the round that added
+/// this type is the round after the one that fused exactly such a pair.
+///
+/// # Units
+///
+/// Every length here is CSS px. Qt's is not one unit: `QTextBlockFormat::
+/// indent()` is an `int` multiplied by the document-wide
+/// `QTextDocument::indentWidth`, while `leftMargin()` and friends are `qreal`
+/// pixels — so a number read off a Qt block format does not say what it
+/// measures. A single unit is why [`Self::left_indent_px`] can absorb both of
+/// Qt's left-side properties without a conversion table.
+///
+/// # The declaration outlives its lowering
+///
+/// A block format lowers to the node's [`LayoutStyle::margin`], and a margin
+/// cannot be read back as a block format — a paragraph indented 24px and a
+/// paragraph in a container that happens to inset 24px produce the same box.
+/// So [`TextNode::block`](crate::scene::TextNode::block) keeps the declaration
+/// alongside the box it produced, and the §7 wire publishes it. Qt keeps its
+/// block formats in the document and its geometry in the (separate) document
+/// layout, and exposes neither as data.
+#[non_exhaustive]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub struct BlockFormat {
+    /// Space between the paragraph's start edge and its container's, in px.
+    /// Qt `setLeftMargin` + `setIndent` × `QTextDocument::indentWidth`, which
+    /// this collapses into one number because both measure the same distance.
+    pub left_indent_px: u32,
+    /// Space between the paragraph's end edge and its container's, in px.
+    /// Qt `setRightMargin`.
+    pub right_indent_px: u32,
+    /// Space above the paragraph, in px. Qt `setTopMargin`.
+    pub space_above_px: u32,
+    /// Space below the paragraph, in px. Qt `setBottomMargin`.
+    pub space_below_px: u32,
+    /// `0` = ordinary paragraph; `1..=6` = a heading of that level
+    /// (`1` is the most significant). Qt `setHeadingLevel`.
+    ///
+    /// Unlike Qt's, this reaches assistive technology: the block is announced
+    /// as a heading of this level. Qt's `QAccessibleTextInterface` — the
+    /// interface a `QTextEdit` implements — has no method that reports block
+    /// structure at all, so a Qt document's heading levels are visible to the
+    /// layout and invisible to a screen reader.
+    ///
+    /// Levels beyond 6 are clamped at the a11y wire (WAI-ARIA `aria-level`
+    /// counts from 1 and HTML stops at 6); the value stored here is whatever
+    /// the author declared, because a format is a declaration and clamping it
+    /// on the way in would lose what was asked for.
+    pub heading_level: u8,
+}
+
+impl BlockFormat {
+    /// A paragraph with no indent, no spacing and no heading level — the CSS
+    /// initial block box and the default.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            left_indent_px: 0,
+            right_indent_px: 0,
+            space_above_px: 0,
+            space_below_px: 0,
+            heading_level: 0,
+        }
+    }
+
+    /// Builder: indent both edges by `px` — the block-quote shape.
+    #[must_use]
+    pub const fn with_indent(mut self, px: u32) -> Self {
+        self.left_indent_px = px;
+        self.right_indent_px = px;
+        self
+    }
+
+    /// Builder: indent the start edge by `px` (Qt `setLeftMargin`).
+    #[must_use]
+    pub const fn with_left_indent(mut self, px: u32) -> Self {
+        self.left_indent_px = px;
+        self
+    }
+
+    /// Builder: indent the end edge by `px` (Qt `setRightMargin`).
+    #[must_use]
+    pub const fn with_right_indent(mut self, px: u32) -> Self {
+        self.right_indent_px = px;
+        self
+    }
+
+    /// Builder: vertical space above and below the paragraph, in px.
+    #[must_use]
+    pub const fn with_spacing(mut self, above_px: u32, below_px: u32) -> Self {
+        self.space_above_px = above_px;
+        self.space_below_px = below_px;
+        self
+    }
+
+    /// Builder: declare this paragraph a heading of `level` (Qt
+    /// `setHeadingLevel`; `0` un-declares it).
+    #[must_use]
+    pub const fn with_heading_level(mut self, level: u8) -> Self {
+        self.heading_level = level;
+        self
+    }
+
+    /// Whether this block declares itself a heading.
+    #[must_use]
+    pub const fn is_heading(self) -> bool {
+        self.heading_level > 0
+    }
+
+    /// The WAI-ARIA `aria-level` this heading announces, or `None` when the
+    /// block is not a heading.
+    ///
+    /// Clamped into `1..=6`: `aria-level` counts from 1 and the HTML heading
+    /// vocabulary stops at 6, so a declared `9` announces as `6` rather than
+    /// as a level no assistive technology has a name for. The clamp lives
+    /// here, at the one place the a11y value is derived, so the stored
+    /// declaration stays exactly what the author wrote.
+    #[must_use]
+    pub const fn aria_level(self) -> Option<u8> {
+        if self.heading_level == 0 {
+            None
+        } else if self.heading_level > 6 {
+            Some(6)
+        } else {
+            Some(self.heading_level)
+        }
+    }
+
+    /// The horizontal px this block's indents remove from the width available
+    /// to its text.
+    ///
+    /// Used by both the box lowering and the cell backend, so the two cannot
+    /// disagree about how much room a block-quote leaves for its own lines.
+    #[must_use]
+    pub const fn horizontal_indent_px(self) -> u32 {
+        self.left_indent_px + self.right_indent_px
+    }
+}
+
 /// CSS generic font *class* (R1002 §5.36) — a font family selected by
 /// category, not by installed name. Mirrors the CSS `font-family` generic
 /// keywords (and `fontique::GenericFamily`); `pinion-text` maps each variant
@@ -2342,6 +2612,18 @@ pub struct TextStyle {
     pub letter_spacing: i32,
     /// CSS `text-align` (R47.5). Default = [`TextAlign::Start`].
     pub text_align: TextAlign,
+    /// CSS `text-indent` (R1551) — the first line's own start offset, and the
+    /// only field of Qt's `QTextBlockFormat` that changes how the text is
+    /// *broken* rather than where its box sits.
+    ///
+    /// It lives here, beside [`Self::text_align`], because that is where this
+    /// type already keeps its paragraph-level fields: everything the shaper
+    /// needs reaches it through one `&TextStyle`, so no shaping caller had to
+    /// learn a second parameter and the layout cache key covers it for free.
+    /// [`BlockFormat`] carries the block properties that are about the
+    /// paragraph's *box* instead. Like the other paragraph-level fields, a
+    /// per-[`StyleRun`](crate::scene::StyleRun) value is ignored.
+    pub text_indent: TextIndent,
     /// CSS `text-decoration` (R47.5). Default = both `false`.
     pub decoration: TextDecoration,
     /// CSS `text-overflow` (R47.5). Default = [`TextOverflow::Visible`].
@@ -2365,9 +2647,17 @@ impl TextStyle {
             line_height: LineHeight::Normal,
             letter_spacing: 0,
             text_align: TextAlign::Start,
+            text_indent: TextIndent::none(),
             decoration: TextDecoration::none(),
             overflow: TextOverflow::Visible,
         }
+    }
+
+    /// Builder: override the paragraph's CSS `text-indent` (R1551).
+    #[must_use]
+    pub const fn with_text_indent(mut self, indent: TextIndent) -> Self {
+        self.text_indent = indent;
+        self
     }
 
     /// Builder: override the font size in CSS pixels.

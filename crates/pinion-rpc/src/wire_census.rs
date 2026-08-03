@@ -267,6 +267,21 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "BlockFormatWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("left_indent_px", WireTy::Integer, None),
+                WireField::new("right_indent_px", WireTy::Integer, None),
+                WireField::new("space_above_px", WireTy::Integer, None),
+                WireField::new("space_below_px", WireTy::Integer, None),
+                WireField::new("heading_level", WireTy::Integer, None),
+                // Absent as a level when the block is not a heading, which is a
+                // different fact from level 0 — see `BlockFormat::aria_level`.
+                WireField::new("aria_level", WireTy::Integer, None).nullable(),
+            ],
+        },
+    },
+    WireType {
         name: "CacheStatsOutcome",
         shape: WireShape::Object {
             fields: &[
@@ -1082,6 +1097,33 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "TextBlockReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("x", WireTy::Integer, None),
+                WireField::new("y", WireTy::Integer, None),
+                WireField::new("width", WireTy::Integer, None),
+                WireField::new("height", WireTy::Integer, None),
+                // Absent for a paragraph that declares only a text indent.
+                WireField::new("block", WireTy::Object, Some("BlockFormatWire")).nullable(),
+                WireField::new("text_indent", WireTy::Object, Some("TextIndentWire")),
+                WireField::new("align", WireTy::String, None),
+                WireField::new("lines", WireTy::Array, Some("TextLineWire")),
+            ],
+        },
+    },
+    WireType {
+        name: "TextBlocksOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "blocks",
+                WireTy::Array,
+                Some("TextBlockReport"),
+            )],
+        },
+    },
+    WireType {
         name: "TextCacheStatsOutcome",
         shape: WireShape::Object {
             fields: &[
@@ -1094,6 +1136,30 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("growths", WireTy::Integer, None),
                 WireField::new("font_scans", WireTy::Integer, None),
                 WireField::new("at_ceiling", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
+        name: "TextIndentWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("amount_px", WireTy::Integer, None),
+                WireField::new("hanging", WireTy::Boolean, None),
+                WireField::new("each_line", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
+        name: "TextLineWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("start", WireTy::Integer, None),
+                WireField::new("end", WireTy::Integer, None),
+                WireField::new("x", WireTy::Number, None),
+                WireField::new("y", WireTy::Number, None),
+                WireField::new("advance", WireTy::Number, None),
+                WireField::new("trailing_whitespace", WireTy::Number, None),
+                WireField::new("height", WireTy::Number, None),
             ],
         },
     },

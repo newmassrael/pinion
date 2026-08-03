@@ -84,7 +84,7 @@
 //! [`TextStyle::bg_color`]: pinion_core::style::TextStyle::bg_color
 
 use pinion_core::contrast::contrast_ratio;
-use pinion_core::scene::{Scene, effective_style_at};
+use pinion_core::scene::{Scene, TextNode, effective_style_at};
 use pinion_core::style::Color;
 use pinion_text::LayoutCache;
 use serde::Serialize;
@@ -188,8 +188,31 @@ pub enum TextBackgroundsError {
 /// opinion that could disagree with the pixels.
 #[must_use]
 pub fn collect_bands(scene: &Scene, cache: &mut LayoutCache) -> Vec<TextBackgroundBand> {
+    // A background is rare, and asking costs a cache lookup plus (on the first
+    // ask) a derivation. Skipping the leaves that declare none keeps this
+    // method O(highlighted text) rather than O(scene).
+    //
+    // R1546 — this skip is COST-ONLY and deliberately not asserted. Removing it
+    // changes no published answer: a leaf declaring no background derives an
+    // empty band list, so the response is identical either way. The only
+    // observable difference is `background_builds`, which would then count
+    // every text leaf in the scene rather than the highlighted ones — and
+    // pinning that number would make an unrelated scene edit fail this method's
+    // tests. So the reason lives here rather than in an assertion: a
+    // counterfactual that deletes this filter SHOULD pass.
+    //
+    // R1551 — collected first, then shaped, so the walk's borrow of `scene` and
+    // the derivation's mutable borrow of `cache` stay apart.
+    let mut leaves: Vec<(&pinion_core::scene::TextNode, i64, i64)> = Vec::new();
+    scene.for_each_text_leaf(|t, x, y| {
+        if t.style.bg_color.is_some() || t.runs.iter().any(|r| r.style.bg_color.is_some()) {
+            leaves.push((t, x, y));
+        }
+    });
     let mut bands = Vec::new();
-    collect(scene, 0, 0, cache, &mut bands);
+    for (t, x, y) in leaves {
+        bands_of(t, x, y, cache, &mut bands);
+    }
     bands
 }
 
@@ -218,71 +241,38 @@ pub fn handle_scene_text_backgrounds(
     .map_err(RpcError::internal_error)
 }
 
-/// Walk `scene` in paint order, folding scroll offsets into `(x_off, y_off)`.
+/// The bands one painted text leaf contributes.
 ///
-/// The fold mirrors `Scene::rect_for_tag_absolute`'s: a `Scene::Scroll` shifts
-/// its content by `viewport - offset`. Written out here rather than reused
-/// because that resolver searches for ONE tag and returns early, while this
-/// visits every text leaf; the shared part is the arithmetic, and stating it
-/// twice is cheaper than a visitor abstraction with one other caller.
-fn collect(
-    scene: &Scene,
+/// `(x_off, y_off)` is the window-absolute offset `Scene::for_each_text_leaf`
+/// resolved for this leaf, so a highlight inside a scroll reports where it is
+/// on screen rather than where it is in its own content tree.
+fn bands_of(
+    t: &TextNode,
     x_off: i64,
     y_off: i64,
     cache: &mut LayoutCache,
     out: &mut Vec<TextBackgroundBand>,
 ) {
-    match scene {
-        Scene::Text(t) => {
-            // A background is rare, and asking costs a cache lookup plus (on
-            // the first ask) a derivation. Skipping the leaves that declare
-            // none keeps this method O(highlighted text) rather than O(scene).
-            //
-            // R1546 — this skip is COST-ONLY and deliberately not asserted.
-            // Removing it changes no published answer: a leaf declaring no
-            // background derives an empty band list, so the response is
-            // identical either way. The only observable difference is
-            // `background_builds`, which would then count every text leaf in
-            // the scene rather than the highlighted ones — and pinning that
-            // number would make an unrelated scene edit fail this method's
-            // tests. So the reason lives here rather than in an assertion:
-            // a counterfactual that deletes these two lines SHOULD pass.
-            if t.style.bg_color.is_none() && t.runs.iter().all(|r| r.style.bg_color.is_none()) {
-                return;
-            }
-            let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
-            let derived = cache
-                .backgrounds(&t.content, &t.style, &t.runs, max_width)
-                .to_vec();
-            for band in derived {
-                let fg = effective_style_at(&t.style, &t.runs, band.start as usize).fg_color;
-                let opaque = band.color.a == u8::MAX;
-                out.push(TextBackgroundBand {
-                    tag: t.tag.as_ref().map(std::string::ToString::to_string),
-                    start: band.start,
-                    end: band.end,
-                    x: x_off + i64::from(t.rect.x) + round_to_i64(band.x),
-                    y: y_off + i64::from(t.rect.y) + round_to_i64(band.y),
-                    width: round_to_u32(band.width),
-                    height: round_to_u32(band.height),
-                    color: band.color.into(),
-                    fg_color: fg.into(),
-                    contrast: opaque.then(|| f64::from(contrast_ratio(fg, band.color))),
-                    contrast_note: (!opaque).then(|| TRANSLUCENT_NOTE.to_owned()),
-                });
-            }
-        }
-        Scene::Container(c) => {
-            for child in &c.children {
-                collect(child, x_off, y_off, cache, out);
-            }
-        }
-        Scene::Scroll(n) => {
-            let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
-            let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
-            collect(&n.content, x_off + dx, y_off + dy, cache, out);
-        }
-        _ => {}
+    let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
+    let derived = cache
+        .backgrounds(&t.content, &t.style, &t.runs, max_width)
+        .to_vec();
+    for band in derived {
+        let fg = effective_style_at(&t.style, &t.runs, band.start as usize).fg_color;
+        let opaque = band.color.a == u8::MAX;
+        out.push(TextBackgroundBand {
+            tag: t.tag.as_ref().map(std::string::ToString::to_string),
+            start: band.start,
+            end: band.end,
+            x: x_off + i64::from(t.rect.x) + round_to_i64(band.x),
+            y: y_off + i64::from(t.rect.y) + round_to_i64(band.y),
+            width: round_to_u32(band.width),
+            height: round_to_u32(band.height),
+            color: band.color.into(),
+            fg_color: fg.into(),
+            contrast: opaque.then(|| f64::from(contrast_ratio(fg, band.color))),
+            contrast_note: (!opaque).then(|| TRANSLUCENT_NOTE.to_owned()),
+        });
     }
 }
 

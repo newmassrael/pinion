@@ -52,6 +52,7 @@ pub mod described;
 pub mod focus;
 pub mod grid;
 pub mod grouped;
+pub mod heading;
 pub mod listbox;
 pub mod menu;
 pub mod navigation;
@@ -83,6 +84,7 @@ pub use grouped::{
     GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec, grouped_focus_target,
     grouped_grid_access_nodes, grouped_tree_access_nodes,
 };
+pub use heading::attach_block_headings;
 pub use listbox::{ListOption, listbox_option_nodes};
 pub use menu::{MenuItemCell, SubmenuCell, menu_item_nodes};
 pub use navigation::{NavLink, navigation_link_nodes};

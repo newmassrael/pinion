@@ -195,7 +195,10 @@ pub mod linebreak;
 pub use linebreak::{BreakOpportunity, LineBreak, line_break_class, line_break_opportunities};
 
 pub mod wrap;
-pub use wrap::{LineRange, trim_trailing_break, wrap_paragraph_with_measure};
+pub use wrap::{
+    LineContext, LineRange, trim_trailing_break, wrap_paragraph_with_line_budget,
+    wrap_paragraph_with_measure,
+};
 
 pub mod script;
 pub use script::{Script, ScriptRun, script, script_runs};

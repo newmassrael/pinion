@@ -58,6 +58,28 @@ pub struct LineRange {
     pub end: usize,
 }
 
+/// R1551 §5.36 — what the breaker knows about a line *before* it fills it, so a
+/// caller can hand back that line's own width budget.
+///
+/// The two booleans are the pair CSS `text-indent` selects on: the plain
+/// keyword indents the block's first line, and `each-line` indents the first
+/// line after every hard break as well. The breaker is the only thing that
+/// knows which lines those are — it is what decides where the breaks fall — so
+/// it reports them rather than making a caller re-derive them from the ranges
+/// it returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineContext {
+    /// 0-based index of this line within the paragraph.
+    pub index: usize,
+    /// Byte offset the line begins at.
+    pub start: usize,
+    /// This is the paragraph's first line.
+    pub is_block_start: bool,
+    /// This line starts a hard-break scope: it is the first line, or the first
+    /// line after a UAX #14 *mandatory* break.
+    pub is_scope_start: bool,
+}
+
 /// Greedily break `paragraph` into lines no wider than `max_width`, at UAX #14
 /// opportunities (§5.37.7), measuring each inter-opportunity segment with
 /// `measure`.
@@ -83,7 +105,44 @@ pub fn wrap_paragraph_with_measure(
         return Vec::new();
     }
     let adv_to = cumulative_advances(paragraph, &breaks, measure);
-    greedy_break(&breaks, &adv_to, max_width)
+    greedy_break(&breaks, &adv_to, |_| max_width)
+}
+
+/// R1551 §5.36 — break `paragraph` into lines where each line's width budget is
+/// asked for, rather than fixed for the whole paragraph.
+///
+/// This is [`wrap_paragraph_with_measure`] with the constant budget replaced by
+/// a function of [`LineContext`]; that function is called once per line, before
+/// the line is filled. It exists because CSS `text-indent` narrows exactly one
+/// line of a paragraph (or all but one, with `hanging`), and a breaker that
+/// cannot vary its budget can only approximate that by shrinking every line.
+///
+/// The indent *rule* deliberately does not live here. This crate has no
+/// external dependencies and no notion of a paragraph style; the caller owns
+/// the rule (`pinion_core::style::TextIndent::indents_line`) and this owns the
+/// breaking. Keeping the rule in one place is what lets the cell backend and
+/// parley select the same lines — the alternative was a second copy of CSS's
+/// `^ hanging` in a crate that cannot see the type it is implementing.
+///
+/// A budget of `f32::MAX` (or any value no line can exceed) is the unwrapped
+/// case, exactly as for the constant form.
+///
+/// `FnMut` rather than `Fn`: the breaker calls it exactly once per line, in
+/// line order, so a caller may record what it was asked. The §7 wire uses that
+/// to publish which lines an indent actually selected, which is the check that
+/// a declared indent reached the layout.
+#[must_use]
+pub fn wrap_paragraph_with_line_budget(
+    paragraph: &str,
+    measure: impl Fn(&str) -> f32,
+    budget: impl FnMut(LineContext) -> f32,
+) -> Vec<LineRange> {
+    let breaks = line_break_opportunities(paragraph);
+    if breaks.is_empty() {
+        return Vec::new();
+    }
+    let adv_to = cumulative_advances(paragraph, &breaks, measure);
+    greedy_break(&breaks, &adv_to, budget)
 }
 
 /// Whether `c` is a UAX #14 mandatory break — the *same* classification LB4 /
@@ -160,47 +219,73 @@ fn cumulative_advances(
 /// `adv_to[i] - base`. The width check precedes the mandatory-ness check so an
 /// optional break that fits is taken before a following mandatory break whose
 /// segment would overflow.
-fn greedy_break(breaks: &[BreakOpportunity], adv_to: &[f32], max_width: f32) -> Vec<LineRange> {
+fn greedy_break(
+    breaks: &[BreakOpportunity],
+    adv_to: &[f32],
+    mut budget: impl FnMut(LineContext) -> f32,
+) -> Vec<LineRange> {
     let mut lines: Vec<LineRange> = Vec::new();
     let mut line_start = 0usize;
     let mut base = 0.0_f32; // cumulative advance at the current line's start
     let mut last_fit: Option<usize> = None; // break index that fits the current line
     let mut i = 0usize;
+    // R1551 — the budget is asked for exactly once per line, lazily, when that
+    // line's first segment is examined. Lazily and not on close, because a
+    // close is not proof another line follows: asking eagerly would bill the
+    // caller for a line that never materialises, and a caller recording what it
+    // was asked would report a phantom. `scope_start` tracks whether the line
+    // about to be filled follows a mandatory break; constant-budget callers
+    // ignore it and everything else here.
+    let mut scope_start = true;
+    let mut max_width: Option<f32> = None;
+    // Close the current line at `end`, resume at `resume` with cumulative
+    // advance `resume_adv`, and drop the budget so the next line asks anew.
+    macro_rules! close_line {
+        ($end:expr, $resume:expr, $resume_adv:expr, $next_scope:expr) => {{
+            lines.push(LineRange {
+                start: line_start,
+                end: $end,
+            });
+            line_start = $resume;
+            base = $resume_adv;
+            last_fit = None;
+            scope_start = $next_scope;
+            max_width = None;
+        }};
+    }
     while i < breaks.len() {
         let bp = breaks[i];
+        // Named apart from the `Option` it comes from: the macro below assigns
+        // `max_width = None`, and a same-named shadow here would make which
+        // binding it clears a question about macro hygiene rather than a
+        // question about line breaking.
+        let limit = *max_width.get_or_insert_with(|| {
+            budget(LineContext {
+                index: lines.len(),
+                start: line_start,
+                is_block_start: lines.is_empty(),
+                is_scope_start: scope_start,
+            })
+        });
         let width = adv_to[i] - base;
-        if width <= max_width {
+        if width <= limit {
             if bp.mandatory {
-                lines.push(LineRange {
-                    start: line_start,
-                    end: bp.offset,
-                });
-                line_start = bp.offset;
-                base = adv_to[i];
-                last_fit = None;
+                close_line!(bp.offset, bp.offset, adv_to[i], true);
             } else {
                 last_fit = Some(i);
             }
             i += 1;
         } else if let Some(fit) = last_fit {
             // Overflow: end the line at the last fitting opportunity, then
-            // re-examine the current break on the next line.
-            lines.push(LineRange {
-                start: line_start,
-                end: breaks[fit].offset,
-            });
-            line_start = breaks[fit].offset;
-            base = adv_to[fit];
-            last_fit = None;
+            // re-examine the current break on the next line. A mandatory break
+            // is consumed by the branch above, so `fit` is never one and the
+            // resumed line continues the same hard-break scope.
+            close_line!(breaks[fit].offset, breaks[fit].offset, adv_to[fit], false);
         } else {
             // Overflow with no earlier opportunity: emit this segment alone.
-            lines.push(LineRange {
-                start: line_start,
-                end: bp.offset,
-            });
-            line_start = bp.offset;
-            base = adv_to[i];
-            last_fit = None;
+            // This break may itself be mandatory (a too-long word ending at a
+            // newline), in which case the next line does start a new scope.
+            close_line!(bp.offset, bp.offset, adv_to[i], bp.mandatory);
             i += 1;
         }
     }
@@ -209,7 +294,10 @@ fn greedy_break(breaks: &[BreakOpportunity], adv_to: &[f32], max_width: f32) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{LineRange, trim_trailing_break, wrap_paragraph_with_measure};
+    use super::{
+        LineContext, LineRange, trim_trailing_break, wrap_paragraph_with_line_budget,
+        wrap_paragraph_with_measure,
+    };
 
     /// A measure model with no font at all: one unit per `char`. Enough to pin
     /// the breaker's decisions independently of any shaping crate.
@@ -249,6 +337,105 @@ mod tests {
     #[test]
     fn empty_paragraph_yields_no_lines() {
         assert!(wrap("", 10.0).is_empty());
+    }
+
+    /// R1551 — the text of each line, for readable indent assertions.
+    fn texts<'a>(src: &'a str, lines: &[LineRange]) -> Vec<&'a str> {
+        lines
+            .iter()
+            .map(|l| trim_trailing_break(&src[l.start..l.end]))
+            .collect()
+    }
+
+    /// R1551 — a constant budget through the varying-budget entry point is the
+    /// same breaker. This is what makes `wrap_paragraph_with_measure` a special
+    /// case rather than a second implementation.
+    #[test]
+    fn constant_budget_matches_the_fixed_width_breaker() {
+        let src = "alpha beta gamma delta epsilon";
+        for w in [4.0_f32, 7.0, 11.0, 12.0, 30.0] {
+            assert_eq!(
+                wrap_paragraph_with_line_budget(src, chars, |_| w),
+                wrap(src, w),
+                "budget {w} must break exactly as the constant form"
+            );
+        }
+    }
+
+    /// R1551 — CSS `text-indent`: only the FIRST line is narrowed, so the first
+    /// line holds less than the rest.
+    #[test]
+    fn first_line_indent_narrows_only_line_zero() {
+        let src = "aaa bbb ccc ddd";
+        let lines =
+            wrap_paragraph_with_line_budget(
+                src,
+                chars,
+                |c| {
+                    if c.is_block_start { 7.0 } else { 11.0 }
+                },
+            );
+        // Budget 7 fits "aaa bbb" on line 0; budget 11 fits "ccc ddd" after.
+        assert_eq!(texts(src, &lines), vec!["aaa ", "bbb ccc ddd"]);
+        // Same paragraph at a flat 7 breaks three ways — the indent is not a
+        // uniform narrowing.
+        assert_eq!(texts(src, &wrap(src, 7.0)), vec!["aaa ", "bbb ", "ccc ddd"]);
+    }
+
+    /// R1551 — CSS `hanging`: the first line keeps the full width and every
+    /// continuation line is narrowed. The mirror of the case above.
+    #[test]
+    fn hanging_indent_narrows_every_line_but_the_first() {
+        let src = "aaa bbb ccc ddd";
+        let lines =
+            wrap_paragraph_with_line_budget(
+                src,
+                chars,
+                |c| {
+                    if c.is_block_start { 11.0 } else { 7.0 }
+                },
+            );
+        assert_eq!(texts(src, &lines), vec!["aaa bbb ", "ccc ddd"]);
+    }
+
+    /// R1551 — `is_scope_start` is true again after a MANDATORY break and false
+    /// after a soft one. That distinction is CSS `each-line`, and only the
+    /// breaker knows it: both kinds of line start look identical in the ranges
+    /// it returns.
+    #[test]
+    fn scope_restarts_after_a_hard_break_only() {
+        let src = "aaa bbb\nccc ddd";
+        let mut seen: Vec<(usize, bool, bool)> = Vec::new();
+        let lines = wrap_paragraph_with_line_budget(src, chars, |c: LineContext| {
+            seen.push((c.index, c.is_block_start, c.is_scope_start));
+            4.0
+        });
+        assert_eq!(texts(src, &lines), vec!["aaa ", "bbb", "ccc ", "ddd"]);
+        assert_eq!(
+            seen,
+            vec![
+                (0, true, true),   // block start
+                (1, false, false), // soft wrap inside "aaa bbb"
+                (2, false, true),  // after the U+000A
+                (3, false, false), // soft wrap inside "ccc ddd"
+            ],
+        );
+    }
+
+    /// R1551 — an over-long word with no interior opportunity still advances,
+    /// and when it ends at a hard break the following line starts a new scope.
+    /// The emergency branch is the one place `is_scope_start` is not simply
+    /// `false`.
+    #[test]
+    fn emergency_break_at_a_newline_starts_a_new_scope() {
+        let src = "aaaaaaaa\nbb";
+        let mut scopes: Vec<bool> = Vec::new();
+        let lines = wrap_paragraph_with_line_budget(src, chars, |c: LineContext| {
+            scopes.push(c.is_scope_start);
+            3.0
+        });
+        assert_eq!(texts(src, &lines), vec!["aaaaaaaa", "bb"]);
+        assert_eq!(scopes, vec![true, true]);
     }
 
     #[test]

@@ -442,6 +442,25 @@ pub enum AriaRole {
     /// independently-tabbable toggle buttons is the simplest WAI-ARIA
     /// multi-select toggle pattern.
     Group,
+    /// R1551 §5.40 — WAI-ARIA 1.2 §4.3 `heading` role: a paragraph that
+    /// declares itself a section title, carrying `aria-level` in
+    /// [`AccessNode::level`](crate::AccessNode::level).
+    ///
+    /// Emitted by [`crate::attach_block_headings`] from a `TextNode` whose
+    /// [`BlockFormat::heading_level`](pinion_core::style::BlockFormat::heading_level)
+    /// is non-zero, so the announced structure is derived from the same
+    /// declaration that indents and spaces the paragraph — one authority, not a
+    /// heading marked twice.
+    ///
+    /// **Qt has the declaration and not the announcement.**
+    /// `QTextBlockFormat::headingLevel()` exists (Qt 5.15+), but a
+    /// `QTextEdit`'s accessibility surface is `QAccessibleTextInterface`, whose
+    /// whole vocabulary is character offsets, selections and text attributes —
+    /// it has no method that reports block structure, so a Qt document's
+    /// heading levels reach its layout and stop there. Headings are the primary
+    /// way a screen-reader user navigates a long document, which is what makes
+    /// that gap worth crossing rather than matching.
+    Heading,
     Generic,
 }
 
@@ -454,6 +473,7 @@ impl AriaRole {
     #[must_use]
     pub const fn to_accesskit(self) -> Role {
         match self {
+            Self::Heading => Role::Heading,
             Self::Button => Role::Button,
             Self::Switch => Role::Switch,
             Self::CheckBox => Role::CheckBox,
@@ -521,6 +541,9 @@ impl AriaRole {
     #[must_use]
     pub const fn aria_name(self) -> &'static str {
         match self {
+            // R1551 — the WAI-ARIA literal; the level rides `aria-level`, not
+            // the role (HTML's `h1`..`h6` collapse to one ARIA role).
+            Self::Heading => "heading",
             Self::Button => "button",
             Self::Switch => "switch",
             Self::CheckBox => "checkbox",

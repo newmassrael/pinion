@@ -15,8 +15,9 @@
 //! genuinely meaningless there — but **line breaking** is not shaping. UAX #14
 //! break opportunities are a property of the text, not the font. So the cell
 //! backend reuses pinion's own UAX #14 breaker
-//! ([`pinion_text_unicode::wrap_paragraph_with_measure`], §5.37.7) and supplies
-//! the only genuinely backend-specific input: how wide a segment is, in cells.
+//! ([`pinion_text_unicode::wrap_paragraph_with_line_budget`], §5.37.7) and
+//! supplies the only genuinely backend-specific inputs: how wide a segment is,
+//! in cells, and how much room each line has.
 //!
 //! ### Honest scope: this is not yet ONE breaker across both backends
 //!
@@ -38,9 +39,27 @@
 //! pinion's breaker was hand-rolling a third one, which is what the pre-R1344
 //! grapheme loop effectively was.
 //!
+//! ## R1551 — the same module PLACES the line, not only breaks it
+//!
+//! A paragraph's own format decides where each of its lines starts: CSS
+//! `text-indent` moves one line (or all but one, with `hanging`), and
+//! `text-align` distributes whatever the line did not use. Both are one
+//! question — "which column does this line begin at" — so
+//! [`CellTextLayout::place`] answers it once, and the indent is asked for
+//! inside the breaker's per-line budget callback because it is *also* a
+//! breaking input: an indented line has less room, so where it breaks depends
+//! on it. Splitting the two would be two derivations of one CSS rule that must
+//! agree about which lines are selected, and the selection is not recoverable
+//! from the ranges — a line after a soft wrap and a line after a hard break
+//! look identical there.
+//!
+//! [`CellTextLayout::wrap`] survives as the `TextStyle::new()` case of
+//! `place`, so a caller with no paragraph style gets the pre-R1551 behaviour by
+//! construction rather than through a second function.
+//!
 //! ## One SSOT, two callers
 //!
-//! [`CellTextLayout::wrap`] is called from both:
+//! [`CellTextLayout::place`] is called from both:
 //!
 //! * the **measure** pass — `impl TextMeasure`, consulted by
 //!   `compute_layout_with_text_measure` to size a `Scene::Text` node; and
@@ -49,11 +68,12 @@
 //! They must agree exactly, or a box sized for N rows gets N±1 rows of text. The
 //! R1070 Vello precedent learned this the hard way (see `TextMeasure`'s rustdoc
 //! on sharing the `single_line_overflows` SSOT between its measure and paint
-//! arms); here the coupling is structural — there is one `wrap` and both call it.
+//! arms); here the coupling is structural — there is one `place` and both call
+//! it.
 //!
 //! ## Control characters never reach a cell
 //!
-//! [`pinion_text_unicode::wrap_paragraph_with_measure`] emits line ranges that
+//! [`pinion_text_unicode::wrap_paragraph_with_line_budget`] emits line ranges that
 //! span *through* their terminating break codepoint. A glyph rasterizer shapes
 //! that harmlessly, but writing `U+000A` into a terminal cell emits a raw line
 //! feed into the output stream mid-frame — the cursor moves and the frame
@@ -67,10 +87,10 @@
 use pinion_core::Scene;
 use pinion_core::cell_metric::CellMetric;
 use pinion_core::scene::StyleRun;
-use pinion_core::style::TextStyle;
+use pinion_core::style::{TextAlign, TextIndent, TextStyle};
 use pinion_runtime::layout::{TextBox, TextMeasure};
 use pinion_runtime::{LayoutCache, LayoutPass, compute_layout_with_text_measure};
-use pinion_text_unicode::{LineRange, trim_trailing_break, wrap_paragraph_with_measure};
+use pinion_text_unicode::{LineRange, trim_trailing_break, wrap_paragraph_with_line_budget};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -145,6 +165,141 @@ impl CellTextLayout {
         Self { metric }
     }
 
+    /// R1551 §5.36 — this style's CSS `text-indent` in cells, signed.
+    ///
+    /// The magnitude floors to whole cells the way every other px→cell
+    /// conversion here does (a 2.5-cell indent indents 2), and the sign is
+    /// applied afterwards so an outdent of the same length is the same number
+    /// of cells. Flooring the *signed* value instead would make a −20px indent
+    /// on an 8px cell come out at −3 where +20px comes out at +2.
+    #[must_use]
+    pub const fn indent_cols(self, indent: TextIndent) -> i32 {
+        let cell_w = self.metric.cell_w();
+        if cell_w == 0 {
+            return 0;
+        }
+        let magnitude = indent.amount_px.unsigned_abs() / cell_w;
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "an indent is a UI length; its cell count is far below i32::MAX"
+        )]
+        let cells = magnitude as i32;
+        if indent.amount_px < 0 { -cells } else { cells }
+    }
+
+    /// R1551 §5.36 — break `content` to `max_cols` **and place each line in the
+    /// box** according to the paragraph-level fields of `style`: CSS
+    /// `text-indent` and `text-align`.
+    ///
+    /// Placement and breaking are one operation because the indent is both: it
+    /// narrows the line it applies to (so it changes where the break falls) and
+    /// it shifts that line (so it changes where the glyphs go). Computing them
+    /// apart would be two derivations of one CSS rule that must agree about
+    /// which lines are selected — and the selection is not recoverable from the
+    /// ranges, because a line after a soft wrap and a line after a hard break
+    /// look identical there. So the rule
+    /// ([`TextIndent::indents_line`](pinion_core::style::TextIndent::indents_line))
+    /// is asked once, inside the breaker's own per-line budget callback, and
+    /// its answer is recorded for the placement pass.
+    ///
+    /// Alignment offsets are measured against the line's **trailing-trimmed**
+    /// width, mirroring parley's `free_space` (which adds
+    /// `trailing_whitespace` back). Without that an end-aligned line would sit
+    /// short of the edge by however many spaces the greedy breaker left on it.
+    #[must_use]
+    pub fn place(self, content: &str, max_cols: u32, style: &TextStyle) -> Vec<CellLine> {
+        let indent = self.indent_cols(style.text_indent);
+        let box_cols = i64::from(max_cols);
+        // One entry per line, in line order — the breaker calls the budget
+        // exactly once per line it produces, which is what makes this parallel
+        // to `lines` by construction rather than by a second walk.
+        let mut indented: Vec<bool> = Vec::new();
+        let lines = wrap_paragraph_with_line_budget(
+            content,
+            |seg| {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "a segment's cell width is bounded by the text length"
+                )]
+                let w = cell_width(seg) as f32;
+                w
+            },
+            |ctx| {
+                let is_indented = style
+                    .text_indent
+                    .indents_line(ctx.is_block_start, ctx.is_scope_start);
+                indented.push(is_indented);
+                let budget = if is_indented {
+                    box_cols - i64::from(indent)
+                } else {
+                    box_cols
+                };
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "a cell budget is a terminal column count"
+                )]
+                let w = budget.max(0) as f32;
+                w
+            },
+        );
+        let last = lines.len().saturating_sub(1);
+        lines
+            .iter()
+            .enumerate()
+            .map(|(i, range)| {
+                let indent_col = if indented.get(i).copied().unwrap_or(false) {
+                    indent
+                } else {
+                    0
+                };
+                let raw = &content[range.start..range.end];
+                let text = trim_trailing_break(raw);
+                let measured = i64::try_from(cell_width(text.trim_end())).unwrap_or(i64::MAX);
+                let avail = (box_cols - i64::from(indent_col)).max(0);
+                let free = (avail - measured).max(0);
+                // A line that ends the paragraph, or ends at a hard break, is
+                // never justified — CSS and parley agree, and a stretched last
+                // line is the classic justification artefact.
+                let ends_scope = i == last || raw.len() != text.len();
+                let (align_col, gap_pad) =
+                    Self::distribute(style.text_align, free, text, ends_scope);
+                CellLine {
+                    range: *range,
+                    indent_col,
+                    align_col,
+                    gap_pad,
+                }
+            })
+            .collect()
+    }
+
+    /// R1551 — give a line's `free` cells to its alignment: an offset for
+    /// start / centre / end, inter-word padding for justify.
+    fn distribute(align: TextAlign, free: i64, text: &str, ends_scope: bool) -> (i32, GapPad) {
+        let offset = |v: i64| i32::try_from(v).unwrap_or(i32::MAX);
+        match align {
+            TextAlign::Center => (offset(free / 2), GapPad::NONE),
+            TextAlign::End => (offset(free), GapPad::NONE),
+            TextAlign::Justify if !ends_scope => {
+                let gaps = i64::from(justify_gaps(text));
+                if gaps == 0 || free == 0 {
+                    (0, GapPad::NONE)
+                } else {
+                    (
+                        0,
+                        GapPad {
+                            each: u32::try_from(free / gaps).unwrap_or(u32::MAX),
+                            leading_extra: u32::try_from(free % gaps).unwrap_or(0),
+                        },
+                    )
+                }
+            }
+            // `Start`, and `Justify` on a line that ends its scope — CSS
+            // start-aligns the last line of a justified paragraph.
+            _ => (0, GapPad::NONE),
+        }
+    }
+
     /// Wrap `content` into lines no wider than `max_cols` cells — **the SSOT**
     /// both the measure pass and the paint walker resolve against.
     ///
@@ -158,21 +313,17 @@ impl CellTextLayout {
     /// Returns byte ranges into `content`, contiguous and covering it. Each range
     /// may include a trailing break codepoint; use [`Self::line_text`] to read
     /// the printable slice.
+    /// R1551 — the un-placed break, for callers with no paragraph style: the
+    /// `TextStyle::new()` case of [`Self::place`], not a second breaker. The
+    /// CSS initial values (no indent, start alignment) place every line at
+    /// column 0, so this is exactly the pre-R1551 behaviour and stays so by
+    /// construction rather than by two functions agreeing.
     #[must_use]
     pub fn wrap(self, content: &str, max_cols: u32) -> Vec<LineRange> {
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "max_cols is a terminal column count — far below f32's exact-integer range"
-        )]
-        let max_width = max_cols as f32;
-        wrap_paragraph_with_measure(content, max_width, |seg| {
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "a segment's cell width is bounded by the text length"
-            )]
-            let w = cell_width(seg) as f32;
-            w
-        })
+        self.place(content, max_cols, &TextStyle::new())
+            .into_iter()
+            .map(|l| l.range)
+            .collect()
     }
 
     /// The printable text of `line` within `content` — the trailing UAX #14
@@ -190,17 +341,35 @@ impl CellTextLayout {
         self.wrap(content, max_width_px / self.metric.cell_w())
     }
 
+    /// R1551 — [`Self::place`] against a **pixel** box width, the unit taffy and
+    /// `TextNode.rect` speak.
+    #[must_use]
+    pub fn place_px(self, content: &str, max_width_px: u32, style: &TextStyle) -> Vec<CellLine> {
+        self.place(content, max_width_px / self.metric.cell_w(), style)
+    }
+
     /// The laid-out box for `content` in cells: `(cols, rows)`.
     ///
     /// `cols` is the widest printable line (never more than `max_cols` unless a
     /// single unbreakable segment overflows — the breaker's documented overflow
     /// rule, which the paint walker clips). `rows` is the line count.
+    ///
+    /// R1551 — a line's own **indent** counts toward the measured width (an
+    /// indented line does occupy those cells), while its **alignment** does
+    /// not: alignment distributes space the box already has, so letting it
+    /// widen the box would make an end-aligned paragraph's intrinsic size
+    /// depend on the box it is being measured for. That is why [`CellLine`]
+    /// keeps the two offsets apart instead of storing only their sum.
     #[must_use]
-    pub fn measure_cells(self, content: &str, max_cols: u32) -> (u32, u32) {
-        let lines = self.wrap(content, max_cols);
+    pub fn measure_cells(self, content: &str, max_cols: u32, style: &TextStyle) -> (u32, u32) {
+        let lines = self.place(content, max_cols, style);
         let cols = lines
             .iter()
-            .map(|l| cell_width(self.line_text(content, *l)))
+            .map(|l| {
+                let w =
+                    i64::try_from(cell_width(self.line_text(content, l.range))).unwrap_or(i64::MAX);
+                (i64::from(l.indent_col) + w).max(0)
+            })
             .max()
             .unwrap_or(0);
         (
@@ -208,6 +377,105 @@ impl CellTextLayout {
             u32::try_from(lines.len()).unwrap_or(u32::MAX),
         )
     }
+}
+
+/// R1551 §5.36 — one wrapped line, **placed** in its box by the paragraph-level
+/// style fields.
+///
+/// The two offsets stay separate because they answer different questions.
+/// `indent_col` is content — an indented line occupies those cells, so it
+/// belongs to the paragraph's intrinsic width. `align_col` is distribution —
+/// it hands the line space the box already had, so it must not feed back into
+/// the box's size. Storing only [`Self::start_col`] would collapse the two and
+/// make an end-aligned paragraph's measured width grow with the box measuring
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellLine {
+    /// Byte range into the source content, as [`CellTextLayout::wrap`] returns.
+    pub range: LineRange,
+    /// Signed cells this line is indented by CSS `text-indent`. Negative means
+    /// it protrudes past the box's start edge, which is what a negative indent
+    /// means (and what parley does on the pixel path).
+    pub indent_col: i32,
+    /// Cells of the line's unused width handed to it by CSS `text-align`
+    /// (`0` for `Start`, and for `Justify`, which pads gaps instead).
+    pub align_col: i32,
+    /// Extra cells inserted at this line's inter-word gaps (CSS `justify`).
+    pub gap_pad: GapPad,
+}
+
+impl CellLine {
+    /// The column this line's first cell occupies, relative to the box's start
+    /// edge: indent plus alignment.
+    #[must_use]
+    pub const fn start_col(self) -> i32 {
+        self.indent_col + self.align_col
+    }
+}
+
+/// R1551 §5.36 — how a justified line's leftover cells are spread across its
+/// inter-word gaps.
+///
+/// A cell grid has no sub-cell positions, so the leftover rarely divides
+/// evenly. `each` is the share every gap gets; `leading_extra` is how many of
+/// the *leading* gaps get one more. Front-loading the remainder is a choice a
+/// pixel backend does not have to make (parley adds a fractional advance to
+/// every space), and it is the one that keeps the line's right edge exactly on
+/// the box edge, which is the whole point of justifying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GapPad {
+    /// Cells added to every inter-word gap.
+    pub each: u32,
+    /// How many of the leading gaps get one extra cell.
+    pub leading_extra: u32,
+}
+
+impl GapPad {
+    /// No padding — every alignment but `Justify`, and `Justify` on a line that
+    /// ends its paragraph.
+    pub const NONE: Self = Self {
+        each: 0,
+        leading_extra: 0,
+    };
+
+    /// Extra cells for the `n`-th inter-word gap of the line (0-based).
+    #[must_use]
+    pub const fn for_gap(self, n: u32) -> u32 {
+        if n < self.leading_extra {
+            self.each + 1
+        } else {
+            self.each
+        }
+    }
+
+    /// Whether this pad moves anything.
+    #[must_use]
+    pub const fn is_none(self) -> bool {
+        self.each == 0 && self.leading_extra == 0
+    }
+}
+
+/// R1551 — inter-word gaps a justified line can stretch.
+///
+/// Counts runs of `U+0020`, not individual spaces: a double space is one gap,
+/// so justification does not silently widen it twice. Trailing whitespace is
+/// excluded by the caller (it hangs past the line's measured edge), and no
+/// other codepoint counts — `U+00A0` is a *non-breaking* space, and stretching
+/// it would defeat the reason an author typed it.
+fn justify_gaps(text: &str) -> u32 {
+    let mut gaps = 0u32;
+    let mut in_gap = false;
+    for c in text.trim_end().chars() {
+        if c == ' ' {
+            if !in_gap {
+                gaps = gaps.saturating_add(1);
+                in_gap = true;
+            }
+        } else {
+            in_gap = false;
+        }
+    }
+    gaps
 }
 
 /// Resolve `scene` for a `cols`×`rows` terminal — **the TUI's one layout
@@ -285,7 +553,7 @@ impl TextMeasure for CellTextLayout {
     fn measure_text(
         &self,
         content: &str,
-        _style: &TextStyle,
+        style: &TextStyle,
         _runs: &[StyleRun],
         max_width: Option<u32>,
         _caret_bearing: bool,
@@ -309,7 +577,10 @@ impl TextMeasure for CellTextLayout {
             Some(px) => px / self.metric.cell_w(),
             None => u32::MAX,
         };
-        let (cols, rows) = self.measure_cells(content, max_cols);
+        // R1551 — the style reaches the measure, so a paragraph's own indent is
+        // budgeted for. Without it a first-line indent would break lines the
+        // paint places at columns the box was never sized for.
+        let (cols, rows) = self.measure_cells(content, max_cols, style);
         #[allow(
             clippy::cast_precision_loss,
             reason = "cell counts × 8/16 px stay far below f32's exact-integer range"
@@ -330,7 +601,7 @@ impl TextMeasure for CellTextLayout {
 #[cfg(test)]
 mod tests {
     use super::{CellTextLayout, cell_width};
-    use pinion_core::style::TextStyle;
+    use pinion_core::style::{TextAlign, TextIndent, TextStyle};
     use pinion_runtime::layout::TextMeasure;
 
     const GA: &str = "\u{AC00}"; // 가 — wide (2 cells)
@@ -512,6 +783,177 @@ mod tests {
                 cell_width(l.line_text(&text, *line)) <= 4,
                 "no line exceeds the 4-cell budget",
             );
+        }
+    }
+
+    // ---- R1551 paragraph placement: text-indent + text-align on cells ----
+
+    /// The painted text of each placed line, with its start column — the pair
+    /// the paint walker actually consumes.
+    fn placed(text: &str, cols: u32, style: &TextStyle) -> Vec<(i32, String)> {
+        let l = layout();
+        l.place(text, cols, style)
+            .into_iter()
+            .map(|line| (line.start_col(), l.line_text(text, line.range).to_string()))
+            .collect()
+    }
+
+    /// R1551 — an indent narrows the FIRST line's break budget, not the whole
+    /// paragraph's. The counterfactual is in the test: the same text at the
+    /// same width with no indent breaks differently.
+    #[test]
+    fn first_line_indent_narrows_only_the_first_line() {
+        // 8px cells: a 16px indent is 2 cells.
+        let style = TextStyle::new().with_text_indent(TextIndent::first_line(16));
+        assert_eq!(
+            placed("aaa bbb ccc", 9, &style),
+            vec![(2, "aaa ".to_string()), (0, "bbb ccc".to_string())],
+        );
+        // Without the indent the first line holds one more word.
+        assert_eq!(
+            placed("aaa bbb ccc", 9, &TextStyle::new()),
+            vec![(0, "aaa bbb ".to_string()), (0, "ccc".to_string())],
+        );
+    }
+
+    /// R1551 — CSS `hanging` inverts the selection: the first line keeps the
+    /// full width and the continuations move in.
+    #[test]
+    fn hanging_indent_moves_the_continuations() {
+        let style = TextStyle::new().with_text_indent(TextIndent::hanging(16));
+        assert_eq!(
+            placed("aaa bbb ccc", 9, &style),
+            vec![(0, "aaa bbb ".to_string()), (2, "ccc".to_string())],
+        );
+    }
+
+    /// R1551 — `each_line` re-applies after a HARD break; without it only the
+    /// paragraph's own first line is indented. Same text, same width, one flag.
+    #[test]
+    fn each_line_indents_after_a_hard_break() {
+        let plain = TextStyle::new().with_text_indent(TextIndent::first_line(16));
+        let each = TextStyle::new().with_text_indent(TextIndent::first_line(16).with_each_line());
+        assert_eq!(
+            placed("aa\nbb", 9, &plain),
+            vec![(2, "aa".to_string()), (0, "bb".to_string())],
+        );
+        assert_eq!(
+            placed("aa\nbb", 9, &each),
+            vec![(2, "aa".to_string()), (2, "bb".to_string())],
+        );
+    }
+
+    /// R1551 — a negative indent protrudes past the box's start edge, matching
+    /// what parley does on the pixel path.
+    #[test]
+    fn negative_indent_outdents_the_first_line() {
+        let style = TextStyle::new().with_text_indent(TextIndent::first_line(-16));
+        let lines = placed("aa bb", 9, &style);
+        assert_eq!(lines[0].0, -2, "the first line starts left of the box");
+    }
+
+    /// R1551 — the indent counts toward the measured box (an indented line
+    /// occupies those cells); the ALIGNMENT does not, or an end-aligned
+    /// paragraph's intrinsic width would grow with the box measuring it.
+    #[test]
+    fn measure_counts_the_indent_and_not_the_alignment() {
+        let l = layout();
+        let plain = TextStyle::new();
+        let indented = TextStyle::new().with_text_indent(TextIndent::first_line(16));
+        let ended = TextStyle::new().with_align(TextAlign::End);
+        assert_eq!(l.measure_cells("abc", 40, &plain), (3, 1));
+        assert_eq!(l.measure_cells("abc", 40, &indented), (5, 1));
+        assert_eq!(
+            l.measure_cells("abc", 40, &ended),
+            (3, 1),
+            "alignment distributes space the box already has",
+        );
+    }
+
+    /// R1551 — centre and end alignment place each line inside its own box.
+    /// Trailing whitespace hangs (parley subtracts it from `free_space`), so a
+    /// wrapped line's trailing space does not push it off the edge.
+    #[test]
+    fn center_and_end_alignment_place_each_line() {
+        let center = TextStyle::new().with_align(TextAlign::Center);
+        let end = TextStyle::new().with_align(TextAlign::End);
+        assert_eq!(
+            placed("aaa bbb", 9, &center),
+            vec![(1, "aaa bbb".to_string())],
+        );
+        assert_eq!(placed("aaa bbb", 9, &end), vec![(2, "aaa bbb".to_string())]);
+        // Wrapped: line 0 is "aaa " (4 cells raw, 3 trimmed) in a 5-cell box.
+        assert_eq!(
+            placed("aaa bbb", 5, &end),
+            vec![(2, "aaa ".to_string()), (2, "bbb".to_string())],
+        );
+    }
+
+    /// R1551 — justify pads the inter-word gaps of every line EXCEPT the one
+    /// that ends the paragraph, which CSS start-aligns.
+    #[test]
+    fn justify_pads_gaps_but_not_the_last_line() {
+        let style = TextStyle::new().with_align(TextAlign::Justify);
+        let l = layout();
+        let lines = l.place("aa bb cc dd", 8, &style);
+        assert_eq!(lines.len(), 2, "breaks into two lines at 8 cells");
+        // Line 0 is "aa bb " — 5 printable cells trimmed, 3 free, 1 gap.
+        assert_eq!(lines[0].gap_pad.each, 3);
+        assert_eq!(lines[0].gap_pad.leading_extra, 0);
+        assert_eq!(
+            lines[0].align_col, 0,
+            "justify pads gaps, it does not shift"
+        );
+        // The paragraph's last line is never justified.
+        assert!(lines[1].gap_pad.is_none());
+    }
+
+    /// R1551 — the remainder of an uneven division goes to the LEADING gaps, so
+    /// the padded width is exactly the free space and the right edge lands on
+    /// the box edge.
+    #[test]
+    fn justify_remainder_lands_on_the_leading_gaps() {
+        let style = TextStyle::new().with_align(TextAlign::Justify);
+        let l = layout();
+        // "a b c " is 5 printable cells with 2 gaps in a 10-cell box: 5 free
+        // cells over 2 gaps does not divide.
+        let src = "a b c dddddddddd";
+        let lines = l.place(src, 10, &style);
+        let first = lines[0];
+        let pad = first.gap_pad;
+        let total: u32 = (0..2).map(|i| pad.for_gap(i)).sum();
+        let text = l.line_text(src, first.range);
+        let width = u32::try_from(cell_width(text.trim_end())).unwrap();
+        assert_eq!(width + total, 10, "a justified line fills its box exactly");
+        assert_eq!(pad.for_gap(0), pad.for_gap(1) + 1, "remainder goes first");
+    }
+
+    /// R1551 — a line that ends at a HARD break is not justified either: it
+    /// ends its paragraph's scope even though more lines follow.
+    #[test]
+    fn justify_skips_a_line_ending_at_a_hard_break() {
+        let style = TextStyle::new().with_align(TextAlign::Justify);
+        let lines = layout().place("a b\nc d e f", 9, &style);
+        assert!(
+            lines[0].gap_pad.is_none(),
+            "the line before the newline ends its scope",
+        );
+    }
+
+    /// R1551 — `wrap` is `place` at the CSS initial values, so the two cannot
+    /// disagree about where a plain paragraph breaks.
+    #[test]
+    fn wrap_is_place_at_the_initial_style() {
+        let l = layout();
+        for text in ["aa bb cc", "가나 다라", "aaaaaaaa\nbb", ""] {
+            for cols in [0_u32, 1, 3, 5, 40] {
+                let ranges: Vec<_> = l
+                    .place(text, cols, &TextStyle::new())
+                    .into_iter()
+                    .map(|line| line.range)
+                    .collect();
+                assert_eq!(l.wrap(text, cols), ranges, "{text:?} at {cols}");
+            }
         }
     }
 

@@ -49,6 +49,9 @@ pub fn build_access_tree(
 ) -> (Vec<AccessNode>, Option<AccessFocus>) {
     let mut nodes = owner.run(node_fn);
     if let Some(paint) = paint_scene {
+        // R1551 §5.40 §5.36 — the document outline, BEFORE the name pass so a
+        // heading appended here is named by the same rule every other node is.
+        crate::attach_block_headings(&mut nodes, paint);
         enrich_names_from_scene(&mut nodes, paint);
         // R1543 §5.40 §5.39 — the mnemonic announcement, derived from the same
         // painted tree by the same kind of pass. It rides the assembler for the

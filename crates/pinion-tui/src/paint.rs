@@ -48,7 +48,7 @@
 //! The column cursor advances by the cluster width so wide graphemes
 //! reserve their second cell implicitly.
 
-use crate::text_layout::{CellTextLayout, grapheme_cells};
+use crate::text_layout::{CellTextLayout, GapPad, grapheme_cells};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, Color, FontStyle, FontWeight, TextStyle};
 use pinion_core::term_grid::{CellAttrs, CellWidth, TermColor};
@@ -520,8 +520,20 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
     let layout = CellTextLayout::new(CELL);
     let box_cols = t.rect.w / CELL.cell_w();
     let box_rows = t.rect.h / CELL.cell_h();
+    // R1551 §5.36 — place the lines BEFORE the clip, because a negative CSS
+    // `text-indent` protrudes past the box's start edge (parley: "Negative
+    // values cause the line to protrude beyond the start edge") and a clip
+    // pinned at the box would erase on the terminal exactly what the pixel
+    // backend draws. The widening is bounded by the declared outdent, so it can
+    // never exceed what the paragraph asked for.
+    let lines = layout.place_px(&t.content, t.rect.w, &t.style);
+    let outdent = lines
+        .iter()
+        .map(|l| l.start_col().min(0))
+        .min()
+        .unwrap_or(0);
     let node_clip = CellClip {
-        x0: cell_col,
+        x0: cell_col.saturating_add(outdent),
         y0: cell_row,
         x1: cell_col.saturating_add(clamp_to_i32(i64::from(box_cols))),
         y1: cell_row.saturating_add(clamp_to_i32(i64::from(box_rows))),
@@ -531,7 +543,7 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
         return;
     }
 
-    for (line_idx, line) in layout.wrap_px(&t.content, t.rect.w).into_iter().enumerate() {
+    for (line_idx, line) in lines.into_iter().enumerate() {
         let row =
             cell_row.saturating_add(clamp_to_i32(i64::try_from(line_idx).unwrap_or(i64::MAX)));
         // Rows below the box / clip: every later line is lower still.
@@ -544,8 +556,18 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
         // `line_text` drops the trailing UAX #14 break codepoint, so no
         // control byte can reach a cell (a raw `\n` in the buffer would
         // emit a line feed mid-frame and corrupt the terminal).
-        let text = layout.line_text(&t.content, line);
-        paint_text_line(t, text, line.start, row, cell_col, buf, buf_area, clip);
+        let text = layout.line_text(&t.content, line.range);
+        paint_text_line(
+            t,
+            text,
+            line.range.start,
+            row,
+            cell_col.saturating_add(line.start_col()),
+            line.gap_pad,
+            buf,
+            buf_area,
+            clip,
+        );
     }
 }
 
@@ -564,15 +586,39 @@ fn paint_text_line(
     line_start: usize,
     row: i32,
     cell_col: i32,
+    gap_pad: GapPad,
     buf: &mut Buffer,
     buf_area: TuiRect,
     clip: CellClip,
 ) {
     let mut col = cell_col;
+    // R1551 §5.36 — CSS `text-align: justify` on a cell grid: the leftover
+    // cells were divided across this line's inter-word gaps at placement time,
+    // and here each gap simply advances further. Counting gaps the same way the
+    // placement did (runs of `U+0020`, so a double space is one gap) is what
+    // makes the painted right edge land where the placement computed it.
+    let mut gap_index = 0u32;
+    let mut in_gap = false;
     // R1337 §5.41 §2#6 — `grapheme_indices` (not `graphemes`) so each
     // cluster's UTF-8 byte offset resolves which `TextNode.runs` span
     // (rich text) governs it; empty `runs` falls back to `t.style`.
     for (byte_off, grapheme) in text.grapheme_indices(true) {
+        if !gap_pad.is_none() {
+            if grapheme == " " {
+                if !in_gap {
+                    // Pad at the gap's FIRST space, before drawing it, so the
+                    // widened gap sits between the two words rather than after
+                    // a run of drawn spaces.
+                    col = col.saturating_add(
+                        i32::try_from(gap_pad.for_gap(gap_index)).unwrap_or(i32::MAX),
+                    );
+                    gap_index = gap_index.saturating_add(1);
+                    in_gap = true;
+                }
+            } else {
+                in_gap = false;
+            }
+        }
         // R1344 — the SSOT advance rule, shared with the measure pass.
         // Zero-width: joiners / combining marks (the segmenter emits
         // these as separate clusters before joining) and control

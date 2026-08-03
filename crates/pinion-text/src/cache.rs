@@ -28,7 +28,7 @@ use lru::LruCache;
 use parley::fontique::Blob;
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontFamilyName, GenericFamily,
-    LayoutContext, LineHeight as ParleyLineHeight, StyleProperty,
+    IndentOptions, LayoutContext, LineHeight as ParleyLineHeight, StyleProperty,
 };
 use pinion_core::reactive::SystemFontStatus;
 use pinion_core::scene::StyleRun;
@@ -1115,6 +1115,25 @@ impl LayoutCache {
             }
         }
         let mut layout = builder.build(shape_input);
+        // R1551 §5.36 — the paragraph's CSS `text-indent`, set before line
+        // breaking because it *is* a breaking input: an indented first line
+        // has less room, so where it breaks depends on the indent. parley
+        // documents the ordering requirement (`set_text_indent` before
+        // `break_all_lines` and before `align`), and its `IndentOptions` carry
+        // the same two CSS keywords `TextIndent` does — this is a rename, not
+        // a re-derivation, so the two cannot disagree about which lines move.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "text-indent |v| <= 2^24 px in practice"
+        )]
+        let indent_px = style.text_indent.amount_px as f32;
+        layout.set_text_indent(
+            indent_px,
+            IndentOptions {
+                each_line: style.text_indent.each_line,
+                hanging: style.text_indent.hanging,
+            },
+        );
         #[allow(
             clippy::cast_precision_loss,
             reason = "max_width <= 2^24 px in practice"

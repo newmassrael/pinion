@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1551 §5.36 block-format consumer: pinion-forge renderer manifest for
+  hello-richtext-blocks. Emits `HelloRichTextBlocksRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper). Same emit template as
+  hello-richtext-background; only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloRichTextBlocksRenderer"
+        backend="vello"/>

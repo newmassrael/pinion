@@ -72,3 +72,4 @@
 1548	modelview	a row is asked for its header, Qt headerData Qt::Vertical as a typed axis + rowheader named from paint
 1549	catalog	press-and-hold auto-repeat, Qt setAutoRepeat + setAccelerated as a declared cadence + the published run
 1550	perf	an arena states what it is holding in bytes, Qt QPixmapCache budget + the usage Qt never publishes
+1551	text	a paragraph states its own block format, Qt QTextBlockFormat lowered to the layout box + published beside its shaped lines

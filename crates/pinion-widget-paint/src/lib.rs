@@ -87,6 +87,7 @@ pub mod devtools;
 pub mod dialog;
 pub mod disclosure;
 pub mod dock;
+pub mod document;
 pub mod drawer;
 pub mod elevation;
 pub mod file_browser;

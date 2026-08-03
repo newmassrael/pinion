@@ -416,3 +416,54 @@ mod footprint {
         }
     }
 }
+
+/// R1551 §5.36 — one shaped line's box, in the layout's own coordinate frame.
+///
+/// This is where a line **landed**, as the painter has it: parley's own
+/// `LineMetrics`, not a re-derivation. It is what makes a paragraph-level
+/// declaration checkable — a first-line indent is a claim about where line 0
+/// starts, and only the shaped layout can say whether it got there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextLineBox {
+    /// UTF-8 byte offset of the line's first byte (inclusive).
+    pub start: u32,
+    /// UTF-8 byte offset one past the line's last byte.
+    pub end: u32,
+    /// Layout-relative x of the line's first glyph — parley's
+    /// `LineMetrics::offset`, which is where the CSS `text-indent` and the
+    /// alignment both land.
+    pub x: f32,
+    /// Layout-relative y of the line's top edge (`block_min_coord`).
+    pub y: f32,
+    /// Full advance of the line, trailing whitespace included.
+    pub advance: f32,
+    /// Advance of the line's trailing whitespace, so a consumer can compute the
+    /// inked width (`advance - trailing_whitespace`) the way alignment does.
+    pub trailing_whitespace: f32,
+    /// The line box's height (`block_max_coord - block_min_coord`).
+    pub height: f32,
+}
+
+/// R1551 §5.36 — every shaped line's box, top to bottom.
+///
+/// One call over [`parley::Layout::lines`]; nothing is recomputed, so the boxes
+/// published here are the ones the glyph walk uses.
+#[must_use]
+pub fn line_boxes(layout: &crate::Layout) -> Vec<TextLineBox> {
+    layout
+        .lines()
+        .map(|line| {
+            let m = line.metrics();
+            let range = line.text_range();
+            TextLineBox {
+                start: u32::try_from(range.start).unwrap_or(u32::MAX),
+                end: u32::try_from(range.end).unwrap_or(u32::MAX),
+                x: m.offset,
+                y: m.block_min_coord,
+                advance: m.advance,
+                trailing_whitespace: m.trailing_whitespace,
+                height: m.block_max_coord - m.block_min_coord,
+            }
+        })
+        .collect()
+}

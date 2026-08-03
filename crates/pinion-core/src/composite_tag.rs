@@ -470,6 +470,36 @@ impl GridTag {
     }
 }
 
+/// R1551 §5.36 §5.40 — paint-tag SSOT for a **rich-text document**: the
+/// container and the paragraphs inside it.
+///
+/// Stays in the [`GridTag`] `'_'` presentational family (no `'#'`), so a
+/// paragraph never enters the composite click-router namespace — a document is
+/// read, not clicked, and a block that declares a heading needs a tag only so
+/// assistive technology and the `scene/text_blocks` wire can address it.
+///
+/// Tags: the document container `"{tag}_doc"`, block `i` `"{tag}_blk{i}"`.
+pub struct DocumentTag;
+
+impl DocumentTag {
+    /// The document's container node — `"{tag}_doc"`.
+    #[must_use]
+    pub fn document(tag: &str) -> String {
+        format!("{tag}_doc")
+    }
+
+    /// The `i`-th paragraph — `"{tag}_blk{i}"`.
+    ///
+    /// One encode point, because two things read a block's tag and they must
+    /// agree: the a11y heading pass (which finds it in the painted scene) and
+    /// any client addressing a paragraph over the wire. A format string spelled
+    /// twice is the drift this family exists to prevent.
+    #[must_use]
+    pub fn block(tag: &str, i: usize) -> String {
+        format!("{tag}_blk{i}")
+    }
+}
+
 /// R742.4 §5.16 §5.35 — split a (possibly composite) paint tag at the
 /// `#` separator into `(primary, Some(sub))`, the companion of
 /// [`parse_send_payload`] for the *tag* side of the R51.42 protocol.

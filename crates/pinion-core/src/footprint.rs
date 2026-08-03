@@ -182,8 +182,10 @@ footprint_is_zero!(
     crate::style::FontWeight,
     crate::style::GenericFontFamily,
     crate::style::LineHeight,
+    crate::style::BlockFormat,
     crate::style::TextAlign,
     crate::style::TextDecoration,
+    crate::style::TextIndent,
     crate::style::TextOverflow,
     crate::style::UnderlineStyle,
 );
@@ -225,6 +227,7 @@ impl Footprint for crate::style::TextStyle {
             line_height,
             letter_spacing,
             text_align,
+            text_indent,
             decoration,
             overflow,
         } = self;
@@ -237,6 +240,7 @@ impl Footprint for crate::style::TextStyle {
             + line_height.footprint()
             + letter_spacing.footprint()
             + text_align.footprint()
+            + text_indent.footprint()
             + decoration.footprint()
             + overflow.footprint()
     }
