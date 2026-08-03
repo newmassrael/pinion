@@ -751,6 +751,39 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "MemoryArena",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("arena", WireTy::String, None),
+                WireField::new("window", WireTy::String, None).nullable(),
+                WireField::new("bytes", WireTy::Integer, None),
+                WireField::new("entries", WireTy::Integer, None),
+                WireField::new("basis", WireTy::String, None),
+                WireField::new("unmeasured", WireTy::Array, Some("MemoryUnmeasured")),
+                WireField::new("budget_bytes", WireTy::Integer, None).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "MemoryOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("arenas", WireTy::Array, Some("MemoryArena")),
+                WireField::new("total_bytes", WireTy::Integer, None),
+                WireField::new("process_rss_bytes", WireTy::Integer, None).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "MemoryUnmeasured",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("type", WireTy::String, None),
+                WireField::new("count", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "MethodEntry",
         shape: WireShape::Object {
             fields: &[

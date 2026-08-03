@@ -127,6 +127,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/list_previews", MethodOcc::Read),
     ("scene/locate", MethodOcc::Read),
     ("scene/locate_region", MethodOcc::Read),
+    ("scene/memory", MethodOcc::Read),
     ("scene/mnemonics", MethodOcc::Read),
     ("scene/modifiers", MethodOcc::Mutate),
     ("scene/pacing_state", MethodOcc::Read),

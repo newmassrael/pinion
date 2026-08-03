@@ -2608,3 +2608,209 @@ mod tests {
         );
     }
 }
+
+/// R1550 §5.36 §5.7 — what the shape cache is holding, in bytes.
+///
+/// # Why this arena cannot be exact
+///
+/// Three of its values are parley's, and parley keeps its buffers behind a
+/// `pub(crate)` field: `Layout`'s glyphs / clusters / runs / lines (one per
+/// cache entry), the `LayoutContext` scratch space, and the `FontContext`'s
+/// collection. No API outside that crate can size any of them, so the row this
+/// cache publishes names them and their counts rather than reporting a total
+/// that quietly omits them — see
+/// [`ArenaFootprint::unmeasured`](pinion_core::memory_census::ArenaFootprint::unmeasured).
+///
+/// # What this replaces
+///
+/// [`LayoutCache::MAX_CAPACITY`]'s doc has stated a bound of "~26 MB" since
+/// R1521, derived from 8,192 entries times a *measured average* entry. An
+/// average is not a bound — one entry holding a 10,000-character paragraph
+/// with its draw list breaks it on its own — and R1531 then widened the gap by
+/// caching draw lists in entries the average predated. This is the same claim
+/// as a number the caller can read.
+///
+/// # Cost
+///
+/// [`Footprint::footprint`](pinion_core::footprint::Footprint::footprint) walks every entry and every glyph in every cached
+/// draw list, so it is O(glyphs) and belongs on a `scene/memory` dispatch
+/// rather than in [`LayoutCache::stats`], which every RPC dispatch calls
+/// unconditionally. That is why bytes are NOT a `TextCacheStats` field:
+/// one method per axis, and this axis costs a walk.
+mod footprint {
+    use super::{CachedLayout, LayoutCache, LayoutKey};
+    use pinion_core::footprint::Footprint;
+    use pinion_core::memory_census::{Arena, ArenaFootprint, MeasuredArena, UnmeasuredValues};
+
+    impl Footprint for LayoutKey {
+        fn footprint(&self) -> usize {
+            let Self {
+                text,
+                style,
+                runs,
+                max_width,
+            } = self;
+            text.footprint() + style.footprint() + runs.footprint() + max_width.footprint()
+        }
+    }
+
+    impl Footprint for CachedLayout {
+        fn footprint(&self) -> usize {
+            let Self {
+                // parley's, and opaque — counted as an unmeasured value on the
+                // arena's row rather than as a zero here.
+                layout: _,
+                runs,
+                backgrounds,
+            } = self;
+            runs.footprint() + backgrounds.footprint()
+        }
+    }
+
+    impl Footprint for LayoutCache {
+        fn footprint(&self) -> usize {
+            let Self {
+                inner,
+                ghosts,
+                max_capacity,
+                growths,
+                // parley's font collection — opaque, and named on the row.
+                font_cx: _,
+                font_scans,
+                shapes,
+                run_builds,
+                background_builds,
+                font_status,
+                app_families,
+                default_family,
+                // parley's shaping scratch space — opaque, and named on the row.
+                layout_cx: _,
+            } = self;
+            inner.footprint()
+                + ghosts.footprint()
+                + max_capacity.footprint()
+                + growths.footprint()
+                + font_scans.footprint()
+                + shapes.footprint()
+                + run_builds.footprint()
+                + background_builds.footprint()
+                + font_status.footprint()
+                + app_families.footprint()
+                + default_family.footprint()
+        }
+    }
+
+    impl MeasuredArena for LayoutCache {
+        fn arena_footprint(&self) -> ArenaFootprint {
+            let entries = self.inner.len() as u64;
+            ArenaFootprint::partial(
+                Arena::TextShapes,
+                self.footprint() as u64,
+                entries,
+                vec![
+                    UnmeasuredValues::new("parley::Layout", entries),
+                    UnmeasuredValues::new("parley::LayoutContext", 1),
+                    UnmeasuredValues::new("parley::FontContext", u64::from(self.font_cx.is_some())),
+                ],
+            )
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::LayoutCache;
+        use pinion_core::footprint::Footprint;
+        use pinion_core::memory_census::{Arena, FootprintBasis, MeasuredArena};
+        use pinion_core::style::TextStyle;
+
+        /// A fresh cache is not free — it allocates its ghost index at
+        /// construction — and the arena that has shaped nothing still holds
+        /// parley's scratch context, so the derived basis says `Partial`
+        /// without naming a single `Layout`.
+        #[test]
+        fn r1550_an_empty_cache_still_holds_its_index() {
+            let cache = LayoutCache::new();
+            assert!(cache.footprint() > 100_000, "{}", cache.footprint());
+            let row = cache.arena_footprint();
+            assert_eq!(row.entries, 0);
+            assert_eq!(row.arena, Arena::TextShapes);
+            assert_eq!(row.basis(), FootprintBasis::Partial);
+            let named: Vec<&str> = row
+                .unmeasured
+                .iter()
+                .filter(|u| u.count > 0)
+                .map(|u| u.type_name)
+                .collect();
+            assert_eq!(named, ["parley::LayoutContext"]);
+        }
+
+        /// The claim the whole round rests on: entries are not the resource.
+        /// Two caches holding ONE entry each, priced by their content.
+        #[test]
+        fn r1550_a_long_entry_costs_more_than_a_short_one() {
+            let style = TextStyle::new();
+            let mut short = LayoutCache::new();
+            let mut long = LayoutCache::new();
+            let empty = short.footprint();
+            short.layout("OK", &style, None);
+            long.layout(&"lorem ipsum dolor sit amet ".repeat(200), &style, None);
+            assert_eq!(short.len(), long.len(), "one entry each");
+            let (short_cost, long_cost) = (short.footprint() - empty, long.footprint() - empty);
+            // The difference tracks the TEXT, byte for byte: 5,400 characters
+            // of key against 2.
+            assert!(
+                long_cost - short_cost >= 5_000,
+                "the content is what costs: {short_cost} vs {long_cost}",
+            );
+            // And the ratio is content-dominated rather than unbounded: an
+            // entry carries a fixed ~450 bytes of LRU node and inline
+            // `CachedLayout` whatever it holds, which is precisely why a
+            // per-entry AVERAGE (what `MAX_CAPACITY`'s ~26 MB was derived
+            // from) cannot bound anything.
+            assert!(
+                long_cost > 10 * short_cost,
+                "one entry, 12x the bytes: {short_cost} vs {long_cost}",
+            );
+        }
+
+        /// R1531's cached draw list is part of what an entry costs, and a
+        /// lazily-derived one is not free the moment it arrives. Without this,
+        /// dropping `runs` from the accounting would leave every other
+        /// assertion in this round green.
+        #[test]
+        fn r1550_deriving_a_draw_list_grows_the_entry() {
+            let style = TextStyle::new();
+            let mut cache = LayoutCache::new();
+            let text = "the quick brown fox jumps over the lazy dog";
+            cache.layout(text, &style, None);
+            let shaped = cache.footprint();
+            cache.positioned_runs(text, &style, &[], None);
+            let with_runs = cache.footprint();
+            assert_eq!(cache.len(), 1, "still one entry");
+            assert!(
+                with_runs > shaped,
+                "the draw list is held in the entry it was derived from: \
+                 {shaped} -> {with_runs}",
+            );
+        }
+
+        /// One opaque `Layout` per cached entry — the count that makes the
+        /// `partial` basis an attributable limit rather than a disclaimer.
+        #[test]
+        fn r1550_one_opaque_layout_per_entry() {
+            let style = TextStyle::new();
+            let mut cache = LayoutCache::new();
+            for i in 0..7 {
+                cache.layout(&format!("row {i}"), &style, None);
+            }
+            let row = cache.arena_footprint();
+            assert_eq!(row.entries, 7);
+            let layouts = row
+                .unmeasured
+                .iter()
+                .find(|u| u.type_name == "parley::Layout")
+                .expect("the opaque type is named");
+            assert_eq!(layouts.count, 7);
+        }
+    }
+}

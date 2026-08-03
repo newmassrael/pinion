@@ -611,3 +611,69 @@ fn r1549_5_the_tui_wire_reports_a_non_repeating_hold_as_a_hold() {
         "it just declares no cadence: {held}",
     );
 }
+
+/// R1550 §5.41 §5.36 §5.7 §2 #6 — `scene/memory` answers over the TUI wire.
+///
+/// The arena census is a GUI-shaped fact in three of its four parts — the
+/// paint-fragment cache holds `vello::Scene` encodings and the image caches
+/// hold decoded RGBA8, neither of which a cell grid has — and that is exactly
+/// the shape R1460 and R1549.2 both record as the §2 #6 trap: a method whose
+/// GUI arm lands and whose terminal arm answers `Unavailable` forever, which
+/// reads as "this backend has no memory" rather than "this backend has these
+/// arenas".
+///
+/// A terminal holds one of them. `ShellCoreTui` keeps a `LayoutCache` even
+/// though it never shapes (its measure arm lays text out on the cell grid),
+/// and keeping it is not free: `LayoutCache` allocates its ghost index at
+/// construction. So the row is present, priced, and — with nothing shaped —
+/// exactly measured.
+#[test]
+fn r1550_scene_memory_answers_over_the_tui_wire() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let paint = core.compute_paint_scene(80, 24);
+    core.update_paint_scene(paint);
+
+    let ask = r#"{"jsonrpc":"2.0","id":1,"method":"scene/memory","params":{}}"#;
+    let response = core
+        .dispatch_rpc(ask)
+        .expect("scene/memory must answer on the TUI");
+
+    assert!(
+        response.contains(r#""arena":"text-shapes""#),
+        "the shape cache is the arena a terminal holds: {response}",
+    );
+    assert!(
+        !response.contains(r#""arena":"paint-fragments""#)
+            && !response.contains(r#""arena":"images""#),
+        "and the two it does not hold are ABSENT rather than zeroed — zero \
+         bytes in an arena that exists and zero bytes in an arena that does \
+         not are different facts: {response}",
+    );
+    assert!(
+        response.contains(r#""window":null"#),
+        "the shape cache is per shell, not per window: {response}",
+    );
+    assert!(
+        !response.contains(r#""type":"parley::Layout""#),
+        "this backend never shapes, so it holds no opaque LAYOUTS — the \
+         derived basis is a fact about what is held, not a label on the \
+         type: {response}",
+    );
+    assert!(
+        response.contains(r#""type":"parley::LayoutContext""#)
+            && response.contains(r#""basis":"partial""#),
+        "it does hold parley's shaping scratch space, whose interior is as \
+         opaque as a Layout's, and the row names it rather than rounding it \
+         to zero: {response}",
+    );
+    assert!(
+        !response.contains(r#""total_bytes":0"#),
+        "and the arena is not free: a LayoutCache allocates its ghost index \
+         at construction: {response}",
+    );
+    assert!(
+        response.contains(r#""process_rss_bytes""#),
+        "the process total rides beside the arenas on this backend too: \
+         {response}",
+    );
+}

@@ -5569,6 +5569,7 @@ impl<V: WidgetView> ShellCore<V> {
         request: Request,
         resize_request: &mut dyn FnMut(u32, u32),
         screenshot: Option<pinion_rpc::Screenshot>,
+        window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
     ) -> Option<String> {
         let scope: String = request
             .window_scope()
@@ -5576,7 +5577,13 @@ impl<V: WidgetView> ShellCore<V> {
             .flatten()
             .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
             .to_owned();
-        self.dispatch_rpc_inner(request, Some(&scope), resize_request, screenshot)
+        self.dispatch_rpc_inner(
+            request,
+            Some(&scope),
+            resize_request,
+            screenshot,
+            window_arenas,
+        )
     }
 
     /// R670.B §5.7 — single-window dispatch entry. Accepts the raw
@@ -5609,7 +5616,12 @@ impl<V: WidgetView> ShellCore<V> {
         // surface to read back, so `scene/screenshot` gets no captured
         // frame here and falls through to `RenderBackendUnavailable`
         // (the AppShell windowed path supplies the real capture).
-        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request, None)
+        // R1550 §5.7 — and no per-window arenas either: the fragment and image
+        // caches live on `AppShell`'s window slots, so this entry answers
+        // `scene/memory` with the shell-wide rows alone (the shape cache and
+        // the process total), which is exactly what a host with no windows
+        // holds.
+        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request, None, None)
     }
 
     // R1026 — rustfmt's reflow pushed this 4 lines over the workspace
@@ -5622,6 +5634,7 @@ impl<V: WidgetView> ShellCore<V> {
         window_id: Option<&str>,
         resize_request: &mut dyn FnMut(u32, u32),
         screenshot: Option<pinion_rpc::Screenshot>,
+        window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
     ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
         // detect `focus/set` (or any other focus-mutating method)
@@ -5637,6 +5650,23 @@ impl<V: WidgetView> ShellCore<V> {
         // window shapes through it. Taken here, before the disjoint-field
         // borrow split below, and `Copy` so it costs a struct move.
         let text_cache_stats = self.text_cache.stats();
+        // R1550 §5.36 §5.7 — the memory census, assembled only when asked for.
+        // The embedder above hands in the per-window rows (its window slots own
+        // the fragment and image caches); this adds the shell-wide shape cache
+        // — which pricing WALKS, hence the method gate — and the process total
+        // the arenas are read against.
+        let memory_census = window_arenas.map(|arenas| {
+            let mut census = pinion_core::memory_census::MemoryCensus {
+                arenas,
+                process_rss_bytes: pinion_platform_memory::process_rss_bytes(),
+            };
+            census
+                .arenas
+                .push(pinion_core::memory_census::MeasuredArena::arena_footprint(
+                    &self.text_cache,
+                ));
+            census
+        });
         // R1087 §5.16 §5.41 §2 #7 PR-31 — resolve the binding's declared
         // window set for `scene/windows` only (a GLOBAL read, not
         // window-scoped, so it lives here rather than in
@@ -6019,6 +6049,11 @@ impl<V: WidgetView> ShellCore<V> {
             // all (a `pinion-tui` host, which never shapes), not for a shell
             // that has not shaped yet — that one honestly reports zeros.
             ctx = ctx.with_text_cache_stats(text_cache_stats);
+            // R1550 §5.7 — present only on a `scene/memory` dispatch; every
+            // other method leaves the slot `None` and pays no walk.
+            if let Some(census) = memory_census {
+                ctx = ctx.with_memory_census(census);
+            }
             if let Some(timings) = window_reads.frame_timings {
                 ctx = ctx.with_frame_timings(timings);
             }

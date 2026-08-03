@@ -1166,6 +1166,31 @@ impl<V: WidgetView> AppShell<V> {
     /// the drain is now INSIDE the one method that owns the window-control RPC
     /// path, and taking `event_loop` makes the requirement compiler-enforced
     /// (a caller cannot invoke this without the handle the close/app-exit needs).
+    /// R1550 §5.16 §5.7 — every arena this shell's windows hold, as census
+    /// rows.
+    ///
+    /// One `paint-fragments` row and one `images` row per window, because the
+    /// caches are per-window and can differ by orders of magnitude (a DCC
+    /// viewport against a palette), plus one shell-wide `images` row for the
+    /// producer store a `memory://` source resolves through. The store is
+    /// counted here and nowhere else: every window's `ImageCache` holds a
+    /// handle to it, so counting it per window would report one registered
+    /// image once per window.
+    fn arena_footprints(&self) -> Vec<pinion_core::memory_census::ArenaFootprint> {
+        use pinion_core::memory_census::MeasuredArena;
+        let mut rows = Vec::with_capacity(self.windows.len() * 2 + 1);
+        for slot in self.windows.values() {
+            rows.push(
+                slot.fragment_cache
+                    .arena_footprint()
+                    .in_window(&slot.spec_id),
+            );
+            rows.push(slot.image_cache.arena_footprint().in_window(&slot.spec_id));
+        }
+        rows.push(image_cache::resolve_image_store(self.core.root_owner()).arena_footprint());
+        rows
+    }
+
     fn dispatch_rpc(&mut self, frame: RpcFrame, event_loop: &ActiveEventLoop) {
         // R-PR47 §5.7 — split the frame into its raw request + the reply
         // sink that routes the response back to the originating
@@ -1289,9 +1314,21 @@ impl<V: WidgetView> AppShell<V> {
         } else {
             None
         };
-        let resp = self
-            .core
-            .dispatch_rpc_scoped(parsed_request, &mut resize_req, screenshot);
+        // R1550 §5.16 §5.7 — the arenas only AppShell can reach: each window
+        // slot's paint-fragment and decoded-image caches, plus the shell-wide
+        // producer image store. Method-gated like the screenshot readback
+        // above, and for a stronger reason — pricing an arena WALKS it, so an
+        // ungated census would put an O(fragments + glyphs) traversal on every
+        // `scene/click`. `ShellCore` adds its own shape-cache row and the
+        // process total; see `ShellCore::dispatch_rpc_inner`.
+        let window_arenas =
+            (parsed_request.method == "scene/memory").then(|| self.arena_footprints());
+        let resp = self.core.dispatch_rpc_scoped(
+            parsed_request,
+            &mut resize_req,
+            screenshot,
+            window_arenas,
+        );
         // R-PR47 §5.7 — route the response (if any) back through the
         // frame's reply sink. A JSON-RPC notification produces `None`:
         // `reply` is then dropped unused, sending nothing — identical to

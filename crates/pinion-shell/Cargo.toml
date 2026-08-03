@@ -13,6 +13,10 @@ description = "R51.30 §5.16/§5.20/§5.35 paint-side AppShell — winit lifecyc
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# R1550 §5.7 — the process's resident set size, published beside the per-arena
+# memory census so the unattributed remainder is a subtraction rather than an
+# implication.
+pinion-platform-memory = { path = "../pinion-platform-memory", version = "0.0.1" }
 # (R1160 §5.16) The shell owns the process entry (`run::<V>()`), so it installs
 # the global tracing subscriber once — env-filtered by `PINION_LOG` (per-target
 # levels: `PINION_LOG=pinion::dock=debug`) so any live issue is analysable

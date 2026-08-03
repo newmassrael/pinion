@@ -1,0 +1,11 @@
+[package]
+name = "pinion-platform-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1550 §5.7 — platform process-memory bridge. Reports the resident set size the OS attributes to this process, which is the total the per-arena memory census is measured against."
+
+[lints]
+workspace = true

@@ -28,6 +28,7 @@ pub mod intervene;
 pub mod invoke;
 pub mod layout_query;
 pub mod locate;
+pub mod memory;
 pub mod methods;
 pub mod mnemonics;
 pub mod origin;
@@ -107,6 +108,7 @@ pub use layout_query::{
 pub use locate::{
     BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
 };
+pub use memory::{MemoryArena, MemoryError, MemoryOutcome, MemoryUnmeasured, memory};
 pub use methods::{MethodEntry, MethodOcc, OCC_DOC, RPC_METHODS, RpcMethods, rpc_methods};
 pub use origin::{AnswerOrigin, QueryRefusal, Refusal, SceneSource};
 pub use path::{PathError, ResolvedPath, resolve};

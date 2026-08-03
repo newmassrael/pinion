@@ -3872,7 +3872,7 @@ mod r889_window_known_gate {
         let mut nr = no_resize;
         let req = parse_request(&frame(id, method, window, extra)).expect("frame parses");
         let resp = core
-            .dispatch_rpc_scoped(req, &mut nr, None)
+            .dispatch_rpc_scoped(req, &mut nr, None, None)
             .expect("call requests always answer");
         serde_json::from_str(&resp).expect("response is JSON")
     }
@@ -4454,7 +4454,7 @@ mod r684_headless_rpc_floating_window_finalize {
         );
         let req = parse_request(&snapshot_request(1, "floating", 320, 200))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         // Post-condition: produce ran (snapshot calls it), so the
         // post-dispatch finalize populated the router.
         assert!(
@@ -4501,7 +4501,7 @@ mod r684_headless_rpc_floating_window_finalize {
         core.register_window("floating");
         let req =
             parse_request(&focus_get_request(1, "floating")).expect("focus_get request parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         assert!(
             !core.has_last_paint_scene_for_window("floating"),
             "focus/get must not call produce → no post-dispatch finalize",
@@ -4523,7 +4523,7 @@ mod r684_headless_rpc_floating_window_finalize {
         core.register_window("panel_b");
         let req = parse_request(&snapshot_request(1, "panel_a", 200, 100))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         assert!(
             core.has_last_paint_scene_for_window("panel_a"),
             "addressed window's router populated",
@@ -4546,7 +4546,7 @@ mod r684_headless_rpc_floating_window_finalize {
         for id in 1_u64..=3 {
             let req = parse_request(&snapshot_request(id, "floating", 320, 200))
                 .expect("snapshot request parses");
-            let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+            let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
             assert!(
                 core.has_last_paint_scene_for_window("floating"),
                 "router stays populated across repeat dispatches (iter {id})",
@@ -4573,7 +4573,7 @@ mod r684_headless_rpc_floating_window_finalize {
         );
         let req = parse_request(&snapshot_request(1, "floating", 320, 200))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         let layout = core
             .last_paint_layout_for_window("floating")
             .expect("post-dispatch finalize feeds the projection");
@@ -4603,14 +4603,14 @@ mod r684_headless_rpc_floating_window_finalize {
         // Paint A via a viewport-supplied layout call (runs produce +
         // the R684 finalize stores A's scene).
         let req = parse_request(&snapshot_request(1, "win_a", 320, 200)).expect("frame parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         // A's viewport:null read = A's own frame.
         let req = parse_request(
             r#"{"jsonrpc":"2.0","id":2,"method":"scene/layout","params":{"window":"win_a"}}"#,
         )
         .expect("frame parses");
         let resp = core
-            .dispatch_rpc_scoped(req, &mut no_resize, None)
+            .dispatch_rpc_scoped(req, &mut no_resize, None, None)
             .expect("response");
         assert!(
             resp.contains(r#""result""#) && resp.contains(r#""w":320"#),
@@ -4622,7 +4622,7 @@ mod r684_headless_rpc_floating_window_finalize {
         )
         .expect("frame parses");
         let resp = core
-            .dispatch_rpc_scoped(req, &mut no_resize, None)
+            .dispatch_rpc_scoped(req, &mut no_resize, None, None)
             .expect("response");
         assert!(
             resp.contains(r#""error""#) && resp.contains("NoLastPaintLayout"),
@@ -4646,7 +4646,7 @@ mod r684_headless_rpc_floating_window_finalize {
         let req = parse_request(&snapshot_request(1, "any_unknown_window_id", 400, 300))
             .expect("snapshot request parses");
         let resp = core
-            .dispatch_rpc_scoped(req, &mut no_resize, None)
+            .dispatch_rpc_scoped(req, &mut no_resize, None, None)
             .expect("call requests always get a response frame");
         assert!(
             resp.contains(r#""code":-32602"#) && resp.contains("unknown_window"),
@@ -4739,7 +4739,7 @@ mod r684_headless_rpc_floating_window_finalize {
 
         // Paint the window with the target at the TOP.
         let req = parse_request(&snapshot_request(1, "win", 200, 200)).expect("parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         assert!(core.has_last_paint_scene_for_window("win"), "it painted");
         assert_eq!(core.focus().focused(), None, "nothing focused yet");
 
@@ -4758,7 +4758,7 @@ mod r684_headless_rpc_floating_window_finalize {
             r#"{"jsonrpc":"2.0","id":2,"method":"scene/click","params":{"window":"win","path":"target"}}"#,
         )
         .expect("parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
 
         assert_eq!(
             core.focus().focused(),
@@ -4792,7 +4792,7 @@ mod r684_headless_rpc_floating_window_finalize {
         // Paint both, so the fan-out below has two windows to re-store.
         for (id, window) in [(1_u64, "win_a"), (2, "win_b")] {
             let req = parse_request(&snapshot_request(id, window, 320, 200)).expect("parses");
-            let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+            let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         }
         // One recorded frame per window makes the projection readable; its
         // count is also the control that none of this becomes a frame.
@@ -4811,7 +4811,7 @@ mod r684_headless_rpc_floating_window_finalize {
         //     and reaches neither producer.
         let req = parse_request(r#"{"jsonrpc":"2.0","id":3,"method":"focus/get","params":{}}"#)
             .expect("parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         let after_read = mirror_of(&core);
         assert_eq!(
             after_read.mirror, before.mirror,
@@ -4829,7 +4829,7 @@ mod r684_headless_rpc_floating_window_finalize {
             r#"{"jsonrpc":"2.0","id":4,"method":"focus/set","params":{"tag":"test"}}"#,
         )
         .expect("parses");
-        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize, None, None);
         let after_write = mirror_of(&core);
         assert_eq!(
             after_write.mirror.scenes - after_read.mirror.scenes,

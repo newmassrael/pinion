@@ -40,6 +40,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use lru::LruCache;
+
 use pinion_asset::DecodedImage;
 use pinion_core::{Owner, ProviderSlot};
 use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
@@ -203,9 +205,25 @@ pub fn use_image_store() -> MemoryImageStore {
 /// Per-shell cache mapping an image source string to its decoded
 /// `peniko::ImageData` (or `None` when the source could not be loaded /
 /// decoded — cached so the failure is not retried every frame).
-#[derive(Default)]
 pub struct ImageCache {
-    entries: HashMap<String, Option<ImageData>>,
+    /// Decoded images by source, most-recently-resolved first.
+    ///
+    /// R1550 — an `LruCache` rather than the `HashMap` this held until then,
+    /// because the map had **no bound of any kind**: every image a session ever
+    /// painted stayed decoded for the life of the window, and one 4K frame is
+    /// 33 MB of RGBA8. Qt bounds the same arena — `QPixmapCache::setCacheLimit`
+    /// — so an unbounded one sits below the floor rather than beside it.
+    ///
+    /// The recency order is what makes the bound safe to apply: eviction takes
+    /// the image painted longest ago, and a re-resolve re-decodes it.
+    entries: LruCache<String, Option<ImageData>>,
+    /// R1550 — the byte budget [`Self::evict_to_budget`] holds `entries` under.
+    ///
+    /// See [`Self::DEFAULT_BUDGET_BYTES`]. One entry may exceed it — the entry
+    /// just resolved is never evicted, which is a deliberate deviation from
+    /// `QPixmapCache::insert`, whose refusal to cache an over-limit pixmap
+    /// would put a re-decode of that image on every frame that paints it.
+    budget_bytes: u64,
     /// The producer [`MemoryImageStore`] (R1404) this cache resolves
     /// `memory://<key>` sources through, or `None` for a bare cache (a
     /// `memory://` source then paints nothing). The shell builds each
@@ -219,9 +237,69 @@ impl ImageCache {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: Self::empty_entries(),
+            budget_bytes: Self::DEFAULT_BUDGET_BYTES,
             store: None,
         }
+    }
+
+    /// R1550 — the default byte budget: 10 MiB of decoded pixels, which is
+    /// `QPixmapCache`'s own default (`cacheLimit()` reports 10240 KB) and about
+    /// three 1080p frames.
+    ///
+    /// A budget rather than an entry count for the reason R1550 exists: entries
+    /// are not the resource. A hundred 16x16 icons cost 100 kB and one 4K
+    /// screenshot costs 33 MB, and an entry-count bound prices them the same.
+    pub const DEFAULT_BUDGET_BYTES: u64 = 10 * 1024 * 1024;
+
+    /// An entry map with no count bound — the bound this cache enforces is
+    /// [`Self::budget_bytes`], and stating a second one in entries would be a
+    /// second answer to "how much may this hold".
+    ///
+    /// `unbounded` rather than `new(NonZeroUsize::MAX)`: `lru` allocates its
+    /// index map at the stated capacity, so naming a huge one aborts on the
+    /// spot with a hash-table capacity overflow.
+    fn empty_entries() -> LruCache<String, Option<ImageData>> {
+        LruCache::unbounded()
+    }
+
+    /// R1550 — set the byte budget, evicting immediately if the new one is
+    /// smaller than what is held. Qt's `QPixmapCache::setCacheLimit`.
+    pub fn set_budget_bytes(&mut self, budget_bytes: u64) {
+        self.budget_bytes = budget_bytes;
+        self.evict_to_budget(None);
+    }
+
+    /// R1550 — the byte budget this cache evicts toward.
+    #[must_use]
+    pub fn budget_bytes(&self) -> u64 {
+        self.budget_bytes
+    }
+
+    /// R1550 — drop least-recently-resolved entries until the arena is within
+    /// [`Self::budget_bytes`], never dropping `keep` (the entry the caller just
+    /// resolved, which a paint is about to use).
+    fn evict_to_budget(&mut self, keep: Option<&str>) {
+        while self.entry_bytes() > self.budget_bytes {
+            let Some((lru_key, _)) = self.entries.peek_lru() else {
+                return;
+            };
+            if Some(lru_key.as_str()) == keep {
+                return;
+            }
+            if self.entries.pop_lru().is_none() {
+                return;
+            }
+        }
+    }
+
+    /// R1550 — decoded bytes held by [`Self::entries`], pixels only.
+    fn entry_bytes(&self) -> u64 {
+        self.entries
+            .iter()
+            .filter_map(|(_, slot)| slot.as_ref())
+            .map(|image| image.data.len() as u64)
+            .sum()
     }
 
     /// A cache wired to a producer [`MemoryImageStore`], so `memory://<key>`
@@ -230,7 +308,8 @@ impl ImageCache {
     #[must_use]
     pub fn with_store(store: MemoryImageStore) -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: Self::empty_entries(),
+            budget_bytes: Self::DEFAULT_BUDGET_BYTES,
             store: Some(store),
         }
     }
@@ -250,11 +329,14 @@ impl ImageCache {
         if let Some(key) = source.strip_prefix(MEMORY_SCHEME) {
             return self.store.as_ref()?.get(key);
         }
+        // `LruCache::get` is `&mut self` by construction: reading an entry is
+        // what makes it recent, and recency is what the budget evicts by.
         if let Some(slot) = self.entries.get(source) {
             return slot.clone();
         }
         let loaded = load_source(source).map(|d| to_image_data(&d));
-        self.entries.insert(source.to_owned(), loaded.clone());
+        self.entries.put(source.to_owned(), loaded.clone());
+        self.evict_to_budget(Some(source));
         loaded
     }
 
@@ -279,8 +361,15 @@ impl ImageCache {
     /// would land in the decode-once map that [`resolve`](Self::resolve)
     /// bypasses for that scheme.)
     pub fn insert_decoded(&mut self, source: impl Into<String>, image: &DecodedImage) {
-        self.entries
-            .insert(source.into(), Some(to_image_data(image)));
+        let source = source.into();
+        self.entries.put(source.clone(), Some(to_image_data(image)));
+        self.evict_to_budget(Some(&source));
+    }
+}
+
+impl Default for ImageCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -445,4 +534,204 @@ mod tests {
         super::IMAGE_STORE,
         MemoryImageStore::new
     );
+}
+
+/// R1550 §5.16 §5.7 — what the decoded-image arenas are holding, in bytes.
+///
+/// Exact. A `peniko::ImageData` is a `Blob` over an `Arc<[u8]>` of pixels and
+/// four plain fields, and the blob reports its own length — no interior is
+/// hidden the way parley's `Layout` hides its glyph buffers.
+///
+/// # Two arenas, not one
+///
+/// A window's [`ImageCache`] holds what it decoded from the filesystem; the
+/// shell-wide [`MemoryImageStore`] holds what a producer registered under
+/// `memory://`. They are separately owned and separately sized — a terminal
+/// emitting Kitty frames grows the store while every window's decode cache
+/// stays empty — so they publish separate rows.
+///
+/// [`ImageCache::store`] is a handle to the second arena, and is deliberately
+/// not in the first one's total: counting it in every window would report one
+/// registered image once per window.
+mod footprint {
+    use super::{ImageCache, MemoryImageStore};
+    use pinion_core::footprint::{Footprint, hash_table_bytes, lru_table_bytes};
+    use pinion_core::memory_census::{Arena, ArenaFootprint, MeasuredArena};
+    use vello::peniko::ImageData;
+
+    /// The pixels an [`ImageData`] holds. A free function rather than a
+    /// `Footprint` impl: both the type and the trait are foreign to this
+    /// crate, which the orphan rule forbids.
+    fn image_bytes(image: &ImageData) -> usize {
+        let ImageData {
+            data,
+            format: _,
+            alpha_type: _,
+            width: _,
+            height: _,
+        } = image;
+        data.len()
+    }
+
+    impl Footprint for ImageCache {
+        fn footprint(&self) -> usize {
+            let Self {
+                entries,
+                budget_bytes,
+                // The producer store is a shared handle — see the module note.
+                store: _,
+            } = self;
+            let _ = budget_bytes;
+            lru_table_bytes::<String, Option<ImageData>>(entries.len(), entries.len())
+                + entries
+                    .iter()
+                    .map(|(source, slot)| source.footprint() + slot.as_ref().map_or(0, image_bytes))
+                    .sum::<usize>()
+        }
+    }
+
+    impl MeasuredArena for ImageCache {
+        fn arena_footprint(&self) -> ArenaFootprint {
+            ArenaFootprint::exact(Arena::Images, self.footprint() as u64, self.len() as u64)
+                .with_budget(self.budget_bytes())
+        }
+    }
+
+    impl Footprint for MemoryImageStore {
+        fn footprint(&self) -> usize {
+            let map = self.read();
+            hash_table_bytes::<(String, ImageData)>(map.capacity())
+                + map
+                    .iter()
+                    .map(|(key, image)| key.footprint() + image_bytes(image))
+                    .sum::<usize>()
+        }
+    }
+
+    impl MeasuredArena for MemoryImageStore {
+        fn arena_footprint(&self) -> ArenaFootprint {
+            ArenaFootprint::exact(Arena::Images, self.footprint() as u64, self.len() as u64)
+        }
+    }
+}
+
+#[cfg(test)]
+mod r1550_tests {
+    use super::*;
+    use pinion_core::footprint::Footprint;
+    use pinion_core::memory_census::{FootprintBasis, MeasuredArena};
+
+    /// A `w`x`h` solid image — `w * h * 4` bytes of RGBA8.
+    fn decoded(w: u32, h: u32, fill: u8) -> DecodedImage {
+        DecodedImage::from_rgba8(w, h, vec![fill; (w * h * 4) as usize]).unwrap()
+    }
+
+    /// The whole point of a byte budget over an entry count: the arena is
+    /// priced by what it holds, not by how many things it holds.
+    #[test]
+    fn r1550_footprint_tracks_pixels_not_entries() {
+        let mut small = ImageCache::new();
+        let mut large = ImageCache::new();
+        small.insert_decoded("a", &decoded(16, 16, 1));
+        large.insert_decoded("a", &decoded(256, 256, 1));
+        assert_eq!(small.len(), large.len(), "same entry count");
+        assert!(
+            large.footprint() > 200 * small.footprint(),
+            "256x256 costs 256x the pixels of 16x16: {} vs {}",
+            large.footprint(),
+            small.footprint(),
+        );
+    }
+
+    #[test]
+    fn r1550_over_budget_evicts_the_least_recently_resolved() {
+        let mut cache = ImageCache::new();
+        // 32x32 RGBA8 = 4,096 bytes each; three of them exceed a 10,000-byte
+        // budget by one.
+        cache.set_budget_bytes(10_000);
+        cache.insert_decoded("first", &decoded(32, 32, 1));
+        cache.insert_decoded("second", &decoded(32, 32, 2));
+        assert_eq!(cache.len(), 2, "two fit");
+        cache.insert_decoded("third", &decoded(32, 32, 3));
+        assert_eq!(cache.len(), 2, "the third pushed the first out");
+        assert!(
+            cache.resolve("first").is_none(),
+            "and 'first' is the one gone — least recently resolved",
+        );
+    }
+
+    /// Recency is what the bound evicts by, so a *read* must move an entry
+    /// out of the firing line. This is the assertion that fails if `resolve`
+    /// peeks instead of touching.
+    #[test]
+    fn r1550_resolving_an_entry_protects_it_from_the_next_eviction() {
+        let mut cache = ImageCache::new();
+        cache.set_budget_bytes(10_000);
+        cache.insert_decoded("first", &decoded(32, 32, 1));
+        cache.insert_decoded("second", &decoded(32, 32, 2));
+        assert!(cache.resolve("first").is_some(), "touch 'first'");
+        cache.insert_decoded("third", &decoded(32, 32, 3));
+        assert!(
+            cache.resolve("first").is_some(),
+            "'first' was resolved most recently, so it stays",
+        );
+        assert!(cache.resolve("second").is_none(), "'second' went instead");
+    }
+
+    /// Qt's `QPixmapCache::insert` refuses a pixmap larger than the limit and
+    /// returns false. Here the entry is kept, deliberately: `resolve` is on
+    /// the paint path, so refusing to cache would re-read and re-decode that
+    /// image on **every frame** that paints it.
+    #[test]
+    fn r1550_an_entry_larger_than_the_budget_is_kept() {
+        let mut cache = ImageCache::new();
+        cache.set_budget_bytes(1_000);
+        cache.insert_decoded("huge", &decoded(64, 64, 1));
+        assert_eq!(cache.len(), 1);
+        assert!(
+            cache.footprint() > 1_000,
+            "the arena states that it is over budget rather than thrashing",
+        );
+        // And it is the only survivor: a second image evicts nothing else,
+        // because there is nothing else to evict.
+        cache.insert_decoded("also-huge", &decoded(64, 64, 2));
+        assert_eq!(cache.len(), 1, "each oversized entry displaces the last");
+    }
+
+    #[test]
+    fn r1550_shrinking_the_budget_evicts_immediately() {
+        let mut cache = ImageCache::new();
+        cache.insert_decoded("a", &decoded(32, 32, 1));
+        cache.insert_decoded("b", &decoded(32, 32, 2));
+        assert_eq!(cache.len(), 2);
+        cache.set_budget_bytes(5_000);
+        assert_eq!(cache.len(), 1, "Qt's setCacheLimit, applied at once");
+    }
+
+    #[test]
+    fn r1550_arena_row_is_exact_and_states_its_budget() {
+        let mut cache = ImageCache::new();
+        cache.insert_decoded("a", &decoded(16, 16, 1));
+        let row = cache.arena_footprint();
+        assert_eq!(row.basis(), FootprintBasis::Exact, "pixels are measurable");
+        assert_eq!(row.entries, 1);
+        assert!(row.bytes >= 16 * 16 * 4);
+        assert_eq!(row.budget_bytes, Some(ImageCache::DEFAULT_BUDGET_BYTES));
+    }
+
+    /// The producer store is a separate arena. A window's cache holding a
+    /// handle to it must not report the store's images as its own, or a
+    /// three-window shell would count one registered image three times.
+    #[test]
+    fn r1550_the_producer_store_is_not_counted_by_the_window_cache() {
+        let store = MemoryImageStore::new();
+        store.insert("frame", &decoded(64, 64, 7));
+        let cache = ImageCache::with_store(store.clone());
+        assert_eq!(cache.footprint(), 0, "the window cache decoded nothing");
+        assert!(
+            store.footprint() >= 64 * 64 * 4,
+            "and the store owns the pixels",
+        );
+        assert_eq!(store.arena_footprint().entries, 1);
+    }
 }

@@ -5893,6 +5893,10 @@ name = "pinion-platform-fonts"
 version = "0.0.1"
 
 [[package]]
+name = "pinion-platform-memory"
+version = "0.0.1"
+
+[[package]]
 name = "pinion-platform-print"
 version = "0.0.1"
 dependencies = [
@@ -5944,6 +5948,7 @@ name = "pinion-runtime"
 version = "0.0.1"
 dependencies = [
  "futures-executor",
+ "lru 0.18.0",
  "pinion-asset",
  "pinion-core",
  "pinion-platform-fonts",
@@ -5965,6 +5970,7 @@ dependencies = [
  "pinion-gpu",
  "pinion-overlay",
  "pinion-pdf",
+ "pinion-platform-memory",
  "pinion-rpc",
  "pinion-runtime",
  "pinion-shell",
@@ -6016,6 +6022,7 @@ dependencies = [
  "crossterm",
  "pinion-a11y",
  "pinion-core",
+ "pinion-platform-memory",
  "pinion-rpc",
  "pinion-runtime",
  "pinion-text-unicode",

@@ -23,6 +23,9 @@ workspace = true
 test-fixtures = ["pinion-core/test-fixtures", "pinion-a11y/test-fixtures"]
 
 [dependencies]
+# R1550 §5.7 §2 #6 — the process's resident set size, so `scene/memory`
+# answers with the same shape on both backends.
+pinion-platform-memory = { path = "../pinion-platform-memory", version = "0.0.1" }
 # §5.41 R51.109.2 — `WidgetRenderer` trait lives in pinion-core so the
 # TUI backend depends only on the lowest-level crate (no winit / wgpu
 # transitive). pinion-shell stays the Vello-coupled binary path; this

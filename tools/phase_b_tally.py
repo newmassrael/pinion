@@ -772,6 +772,13 @@ AXES = [
                 # R1537: 1 of 490 demos mentions it, and it did not exist
                 # before the round that added it.
                 "gpu_us",
+                # R1550 — the memory axis. `total_bytes` is the per-arena
+                # census's own total, and the counter a round that SHRINKS a
+                # cache asserts against; measured at R1550, 0 of 499 demos
+                # mentioned it before the round that added it. Deliberately not
+                # `bytes`, which appears in `font/parse`'s input array and in
+                # every screenshot demo's pixel arithmetic.
+                "total_bytes",
             ]),
         ],
         # R1527 re-judgment, forced by this axis's round count going 2 -> 3.

@@ -28,6 +28,10 @@ vello = ["dep:vello", "dep:pinion-text-font", "dep:pinion-platform-fonts"]
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# R1550 — the decode-once image cache is LRU-bounded by BYTES (the arena had
+# no bound at all before, and one 4K frame is 33 MB). Same crate the §5.36
+# shape cache and `ResourceCache` already use; 3rd consumer.
+lru = { workspace = true }
 # §5.36 R47.4 text shaping primitive — backend-orthogonal: layout
 # (compute_layout MeasureFunc) + paint (`paint_adapter::to_vello`'s
 # Text arm) 양쪽이 같은 `LayoutCache` 인스턴스를 공유하여 shape work

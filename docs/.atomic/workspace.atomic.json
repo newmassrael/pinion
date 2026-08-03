@@ -80160,6 +80160,68 @@
         "No carry. The R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all"
       ]
     },
+    "Round 1550": {
+      "decision_summary": "R1550 an arena states what it is holding, in bytes",
+      "changes_bullets": [
+        "pinion-core: `footprint::Footprint` — heap bytes a value uniquely owns, with every impl destructuring its type so a new field fails to compile until it is accounted for; blanket impls for String / Vec / Option / Box / HashMap / HashSet / LruCache plus the scene's plain style values",
+        "pinion-core: `memory_census::{Arena, ArenaFootprint, UnmeasuredValues, FootprintBasis, MemoryCensus, MeasuredArena}` — the wire-facing census types, with `basis()` DERIVED from `unmeasured` so a row cannot claim exactness while naming what it could not size",
+        "pinion-text: `Footprint` + `MeasuredArena` for `LayoutCache` — keys, cached draw lists, background bands and the ghost index priced; parley's `Layout` / `LayoutContext` / `FontContext` named as unmeasured with their counts",
+        "pinion-runtime: `encoded_scene_bytes` + `Footprint`/`MeasuredArena` for `FragmentCache` — a `vello::Scene`'s encoding streams report their own capacities, so the paint arena is exact",
+        "pinion-runtime: `ImageCache` is LRU-bounded by BYTES (`DEFAULT_BUDGET_BYTES` = QPixmapCache's own 10 MiB default); it had no bound of any kind, which sat below Qt's floor. The entry just resolved is never evicted, deliberately unlike `QPixmapCache::insert`, which would put a re-decode on every frame",
+        "pinion-runtime: `MemoryImageStore` is its own arena row; the window cache holds a handle to it and excludes it, so a three-window shell counts one registered image once",
+        "pinion-platform-memory: new leaf crate — `process_rss_bytes` parses `/proc/self/status` VmRSS (no libc, no unsafe); `None` off Linux rather than a fabricated zero",
+        "pinion-rpc: `scene/memory` + `MemoryOutcome`/`MemoryArena`/`MemoryUnmeasured` + the R1539 wire-census entries + the DispatchContext slot",
+        "pinion-shell: `AppShell::arena_footprints` collects each window slot's fragment and image arenas plus the shell-wide store; `ShellCore` adds its shape-cache row and the process total. Method-gated, because pricing an arena walks it",
+        "pinion-tui: `terminal_memory_census` — the terminal answers with the one arena it holds, and the two it does not are ABSENT rather than zeroed"
+      ],
+      "verification_bullets": [
+        "`tools/demos/r1550_arena_states_its_bytes.py` — 59 assertion sites over two real bindings: census shape and completeness, per-window attribution, exact-vs-partial basis, the published budget with the usage against it, process RSS, scale invariance across a 1e2 -> 1e6 model with the eager arm as negative control, and a source-parse coverage gate over every cache type in the workspace",
+        "Ten counterfactuals, one at a time, each FAILING as required: window rows not collected / shell-wide shape row not pushed / producer-store row not published / RSS not read / TUI census not installed / the store counted through the window handle / evict_to_budget a no-op / the draw-list term dropped / the inner+ghosts terms dropped / the opaque-layout count reported as zero",
+        "`cargo test` green on pinion-core (2955), pinion-text, pinion-runtime, pinion-rpc (1052), pinion-shell, pinion-tui, pinion-platform-memory; clippy pedantic clean on all seven; `cargo fmt --all --check` clean",
+        "The R1539 wire census demanded the three new types before pinion-rpc's own tests would pass — the gate working as built",
+        "Re-ran the demos that read the changed surfaces: r740_image, r1404_memory_image, r1089_rpc_methods, r1539_wire_states_its_shape — all PASS"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.36",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "parley's `Layout` / `LayoutContext` / `FontContext` interiors are unmeasurable from outside that crate (`pub(crate)` field). EXTERNAL: the fix is a `Layout::memory_usage()` upstream, which is not ours to make; the census names them and their counts rather than reporting a total that omits them",
+        "The census covers framework-owned arenas only; a binding's own `ResourceCache` is outside it. An arena registry is the extension point and is unbuilt — the coverage gate names the exclusion rather than leaving it silent, so a new framework cache cannot slip in unnoticed",
+        "`pinion-tui`'s dispatch function now sits at exactly the clippy `too_many_lines` ceiling (100/100). Pre-existing at 97; the next line added there forces the extraction"
+      ],
+      "publishable_decision_summary": "R1550 an arena states what it is holding, in bytes",
+      "publishable_changes_bullets": [
+        "pinion-core: `footprint::Footprint` — heap bytes a value uniquely owns, with every impl destructuring its type so a new field fails to compile until it is accounted for; blanket impls for String / Vec / Option / Box / HashMap / HashSet / LruCache plus the scene's plain style values",
+        "pinion-core: `memory_census::{Arena, ArenaFootprint, UnmeasuredValues, FootprintBasis, MemoryCensus, MeasuredArena}` — the wire-facing census types, with `basis()` DERIVED from `unmeasured` so a row cannot claim exactness while naming what it could not size",
+        "pinion-text: `Footprint` + `MeasuredArena` for `LayoutCache` — keys, cached draw lists, background bands and the ghost index priced; parley's `Layout` / `LayoutContext` / `FontContext` named as unmeasured with their counts",
+        "pinion-runtime: `encoded_scene_bytes` + `Footprint`/`MeasuredArena` for `FragmentCache` — a `vello::Scene`'s encoding streams report their own capacities, so the paint arena is exact",
+        "pinion-runtime: `ImageCache` is LRU-bounded by BYTES (`DEFAULT_BUDGET_BYTES` = QPixmapCache's own 10 MiB default); it had no bound of any kind, which sat below Qt's floor. The entry just resolved is never evicted, deliberately unlike `QPixmapCache::insert`, which would put a re-decode on every frame",
+        "pinion-runtime: `MemoryImageStore` is its own arena row; the window cache holds a handle to it and excludes it, so a three-window shell counts one registered image once",
+        "pinion-platform-memory: new leaf crate — `process_rss_bytes` parses `/proc/self/status` VmRSS (no libc, no unsafe); `None` off Linux rather than a fabricated zero",
+        "pinion-rpc: `scene/memory` + `MemoryOutcome`/`MemoryArena`/`MemoryUnmeasured` + the R1539 wire-census entries + the DispatchContext slot",
+        "pinion-shell: `AppShell::arena_footprints` collects each window slot's fragment and image arenas plus the shell-wide store; `ShellCore` adds its shape-cache row and the process total. Method-gated, because pricing an arena walks it",
+        "pinion-tui: `terminal_memory_census` — the terminal answers with the one arena it holds, and the two it does not are ABSENT rather than zeroed"
+      ],
+      "publishable_verification_bullets": [
+        "`tools/demos/r1550_arena_states_its_bytes.py` — 59 assertion sites over two real bindings: census shape and completeness, per-window attribution, exact-vs-partial basis, the published budget with the usage against it, process RSS, scale invariance across a 1e2 -> 1e6 model with the eager arm as negative control, and a source-parse coverage gate over every cache type in the workspace",
+        "Ten counterfactuals, one at a time, each FAILING as required: window rows not collected / shell-wide shape row not pushed / producer-store row not published / RSS not read / TUI census not installed / the store counted through the window handle / evict_to_budget a no-op / the draw-list term dropped / the inner+ghosts terms dropped / the opaque-layout count reported as zero",
+        "`cargo test` green on pinion-core (2955), pinion-text, pinion-runtime, pinion-rpc (1052), pinion-shell, pinion-tui, pinion-platform-memory; clippy pedantic clean on all seven; `cargo fmt --all --check` clean",
+        "The R1539 wire census demanded the three new types before pinion-rpc's own tests would pass — the gate working as built",
+        "Re-ran the demos that read the changed surfaces: r740_image, r1404_memory_image, r1089_rpc_methods, r1539_wire_states_its_shape — all PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.36",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "parley's `Layout` / `LayoutContext` / `FontContext` interiors are unmeasurable from outside that crate (`pub(crate)` field). EXTERNAL: the fix is a `Layout::memory_usage()` upstream, which is not ours to make; the census names them and their counts rather than reporting a total that omits them",
+        "The census covers framework-owned arenas only; a binding's own `ResourceCache` is outside it. An arena registry is the extension point and is unbuilt — the coverage gate names the exclusion rather than leaving it silent, so a new framework cache cannot slip in unnoticed",
+        "`pinion-tui`'s dispatch function now sits at exactly the clippy `too_many_lines` ceiling (100/100). Pre-existing at 97; the next line added there forces the extraction"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

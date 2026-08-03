@@ -246,6 +246,25 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     produce_work: pinion_runtime::ProduceWork,
 }
 
+/// R1550 §5.36 §5.7 §2 #6 — the arenas a terminal holds.
+///
+/// One: the §5.36 shape cache. The paint-fragment and image arenas are
+/// `vello::Scene` encodings and decoded RGBA8, neither of which a cell grid
+/// has, so their rows are ABSENT rather than zeroed — zero bytes in an arena
+/// that exists and zero bytes in an arena that does not are different facts,
+/// and a census that flattened them would answer the second question with the
+/// first one's number.
+///
+/// A free function rather than a method because it borrows one field, and the
+/// dispatch site that calls it holds disjoint borrows of several others.
+fn terminal_memory_census(layout_cache: &LayoutCache) -> pinion_core::memory_census::MemoryCensus {
+    use pinion_core::memory_census::MeasuredArena;
+    pinion_core::memory_census::MemoryCensus {
+        arenas: vec![layout_cache.arena_footprint()],
+        process_rss_bytes: pinion_platform_memory::process_rss_bytes(),
+    }
+}
+
 impl<V: WidgetViewTui> Default for ShellCoreTui<V> {
     /// Equivalent to [`Self::new`]; provided for the conventional
     /// `Default` trait surface tests reach through.
@@ -1961,6 +1980,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 }
                 (nodes, focus)
             };
+            // R1550 §5.36 §5.7 §2 #6 — `scene/memory` answers on the TUI too,
+            // the same missing-mirror shape the two comments below record for
+            // `scene/frame_timings` and `scene/auto_repeat`. Method-gated for
+            // the GUI's reason: pricing an arena walks it. What a terminal
+            // holds, and what it does not, is in `terminal_memory_census`.
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_access_producer(&mut produce_access)
@@ -1989,6 +2013,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // records for `scene/frame_timings`. Unconditional: an empty
             // census IS the answer for a terminal with nothing held.
             ctx = ctx.with_auto_repeat_holds(auto_repeat_holds);
+            if parsed_request.method == "scene/memory" {
+                ctx = ctx.with_memory_census(terminal_memory_census(&layout_cache.borrow()));
+            }
             if let Some(exec_arc) = executor_for_rpc.as_ref() {
                 ctx = ctx.with_commands_executor(exec_arc.as_ref());
             }

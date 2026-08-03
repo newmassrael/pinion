@@ -6705,3 +6705,131 @@ mod tests {
         assert_eq!(count(0, 0, 1, 1, 3), 3);
     }
 }
+
+/// R1550 §5.16 §5.7 — what an encoded fragment is holding, in bytes.
+///
+/// A `vello::Scene` is a command stream, and `Scene::encoding()` hands out the
+/// whole of it: eight `Vec`s of plain data plus a `Resources` of five more.
+/// Every one reports its own capacity, so this arena is measured **to the
+/// byte** — no foreign interior is hidden behind a private field the way
+/// parley's `Layout` hides its glyph buffers.
+///
+/// The count that matters here is capacity, not length. A fragment encoded for
+/// a large container and then re-encoded smaller keeps the larger buffer, and
+/// the buffer is what the process is holding.
+#[must_use]
+pub fn encoded_scene_bytes(scene: &VelloScene) -> usize {
+    let enc = scene.encoding();
+    let res = &enc.resources;
+    // `capacity * size_of::<element>()` per stream. `size_of_val` over the
+    // slice would price the LENGTH, and a buffer that shrank still holds what
+    // it grew to.
+    let stream = |cap: usize, elem: usize| cap.saturating_mul(elem);
+    stream(
+        enc.path_tags.capacity(),
+        size_of_val_of_first(&enc.path_tags),
+    )
+    .saturating_add(stream(enc.path_data.capacity(), size_of::<u32>()))
+    .saturating_add(stream(
+        enc.draw_tags.capacity(),
+        size_of_val_of_first(&enc.draw_tags),
+    ))
+    .saturating_add(stream(enc.draw_data.capacity(), size_of::<u32>()))
+    .saturating_add(stream(
+        enc.transforms.capacity(),
+        size_of_val_of_first(&enc.transforms),
+    ))
+    .saturating_add(stream(
+        enc.styles.capacity(),
+        size_of_val_of_first(&enc.styles),
+    ))
+    .saturating_add(stream(
+        res.patches.capacity(),
+        size_of_val_of_first(&res.patches),
+    ))
+    .saturating_add(stream(
+        res.color_stops.capacity(),
+        size_of_val_of_first(&res.color_stops),
+    ))
+    .saturating_add(stream(
+        res.glyphs.capacity(),
+        size_of_val_of_first(&res.glyphs),
+    ))
+    .saturating_add(stream(
+        res.glyph_runs.capacity(),
+        size_of_val_of_first(&res.glyph_runs),
+    ))
+    .saturating_add(stream(
+        res.normalized_coords.capacity(),
+        size_of_val_of_first(&res.normalized_coords),
+    ))
+}
+
+/// The element size of a `Vec` whose element type is not nameable here.
+///
+/// Several `vello_encoding` stream element types (`PathTag`, `DrawTag`,
+/// `Style`, `Patch`, `GlyphRun`) are public values in types this crate cannot
+/// name through vello's re-export surface. `size_of` over the slice's element
+/// type is reachable generically, which is all the arithmetic needs.
+fn size_of_val_of_first<T>(_v: &[T]) -> usize {
+    size_of::<T>()
+}
+
+/// R1550 §5.16 §5.7 — the §5.16 paint fragment arena's accounting.
+///
+/// Exact: every value here is either plain data or a `vello::Scene`, and
+/// [`encoded_scene_bytes`] sizes those completely.
+mod footprint {
+    use super::{FragmentCache, encoded_scene_bytes};
+    use pinion_core::footprint::Footprint;
+    use pinion_core::memory_census::{Arena, ArenaFootprint, MeasuredArena};
+
+    impl Footprint for FragmentCache {
+        fn footprint(&self) -> usize {
+            let Self {
+                fragments,
+                seen_this_paint,
+                subsumes,
+                child_stack,
+                seen_last_paint,
+                misses_at_begin,
+                damage_acc_this_paint,
+                last_damage_region,
+                hits,
+                misses,
+                paint_count,
+                nodes_this_paint,
+                nodes_last_paint,
+            } = self;
+            // `fragments` is a `HashMap<u64, VelloScene>` and a `VelloScene`
+            // is foreign, so the map's own blanket impl cannot reach it; the
+            // table is priced here and its values through the accessor.
+            pinion_core::footprint::hash_table_bytes::<(u64, super::VelloScene)>(
+                fragments.capacity(),
+            )
+            .saturating_add(fragments.values().map(encoded_scene_bytes).sum::<usize>())
+                + seen_this_paint.footprint()
+                + subsumes.footprint()
+                + child_stack.footprint()
+                + seen_last_paint.footprint()
+                + misses_at_begin.footprint()
+                + damage_acc_this_paint.footprint()
+                + last_damage_region.footprint()
+                + hits.footprint()
+                + misses.footprint()
+                + paint_count.footprint()
+                + nodes_this_paint.footprint()
+                + nodes_last_paint.footprint()
+        }
+    }
+
+    impl MeasuredArena for FragmentCache {
+        fn arena_footprint(&self) -> ArenaFootprint {
+            ArenaFootprint::exact(
+                Arena::PaintFragments,
+                self.footprint() as u64,
+                self.entries() as u64,
+            )
+        }
+    }
+}

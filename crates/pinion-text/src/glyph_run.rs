@@ -338,3 +338,81 @@ pub fn backgrounds(
     }
     out
 }
+
+/// R1550 §5.36 — what a draw list is holding.
+///
+/// [`PositionedRun::font`] is deliberately not in the total. `FontData` is a
+/// `peniko::Blob` — an `Arc` over a font file that the font collection owns
+/// and every run over that face shares. Counting it per run would report one
+/// 5 MB face five hundred times, which is exactly the double-count the
+/// [`Footprint`](pinion_core::footprint::Footprint) contract's shared-interior
+/// rule exists to prevent.
+mod footprint {
+    use super::{PositionedGlyph, PositionedRun, RunDecoration, RunUnderline, TextBackground};
+    use pinion_core::footprint::Footprint;
+
+    impl Footprint for TextBackground {
+        fn footprint(&self) -> usize {
+            let Self {
+                start,
+                end,
+                x,
+                y,
+                width,
+                height,
+                color,
+            } = self;
+            start.footprint()
+                + end.footprint()
+                + x.footprint()
+                + y.footprint()
+                + width.footprint()
+                + height.footprint()
+                + color.footprint()
+        }
+    }
+
+    impl Footprint for PositionedGlyph {
+        fn footprint(&self) -> usize {
+            let Self { id, x, y } = self;
+            id.footprint() + x.footprint() + y.footprint()
+        }
+    }
+
+    impl Footprint for RunDecoration {
+        fn footprint(&self) -> usize {
+            let Self { y, size, brush } = self;
+            y.footprint() + size.footprint() + brush.footprint()
+        }
+    }
+
+    impl Footprint for RunUnderline {
+        fn footprint(&self) -> usize {
+            let Self { rule, style } = self;
+            rule.footprint() + style.footprint()
+        }
+    }
+
+    impl Footprint for PositionedRun {
+        fn footprint(&self) -> usize {
+            let Self {
+                // Shared with the font collection — see the module note.
+                font: _,
+                font_size,
+                brush,
+                glyphs,
+                start_x,
+                end_x,
+                underline,
+                strikethrough,
+            } = self;
+            font_size.footprint()
+                + brush.footprint()
+                + glyphs.footprint()
+                + start_x.footprint()
+                + end_x.footprint()
+                + underline.footprint()
+                + strikethrough.footprint()
+        }
+    }
+}

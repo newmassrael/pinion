@@ -503,6 +503,20 @@ pub struct DispatchContext<'a> {
     /// can tell "nothing shapes here" from "nothing has shaped yet".
     pub text_cache_stats: Option<pinion_core::text_cache_stats::TextCacheStats>,
 
+    /// R1550 §5.16 §5.36 §5.7 — every arena this process holds and what each
+    /// is holding, assembled by the embedder before dispatch. Consumed by
+    /// `scene/memory`.
+    ///
+    /// Assembled rather than read: the rows come from three owners — the
+    /// shell's shape cache, each window's fragment and image caches — and only
+    /// the embedder can reach all of them. Gated on the method there, because
+    /// pricing the shape cache walks every cached draw list.
+    ///
+    /// `None` means the host owns no arenas at all and surfaces
+    /// `MemoryCensusUnavailable`, distinct from a host whose arenas are empty
+    /// (which answers with rows of zeros).
+    pub memory_census: Option<pinion_core::memory_census::MemoryCensus>,
+
     /// R1546 §5.36 §5.12 — the painted background bands of the addressed
     /// window, collected by the embedder before dispatch. Consumed by
     /// `scene/text_backgrounds`.
@@ -1406,6 +1420,7 @@ impl<'a> DispatchContext<'a> {
             window_id: None,
             fragment_cache_stats: None,
             text_cache_stats: None,
+            memory_census: None,
             text_backgrounds: None,
             frame_timings: None,
             render_fidelity: None,
@@ -1607,6 +1622,16 @@ impl<'a> DispatchContext<'a> {
         stats: pinion_core::text_cache_stats::TextCacheStats,
     ) -> Self {
         self.text_cache_stats = Some(stats);
+        self
+    }
+
+    /// R1550 §5.16 §5.36 §5.7 — builder: attach the per-arena memory census
+    /// the embedder assembled from its arenas. `scene/memory` reads the slot;
+    /// every other arm ignores it. `None` (the default) surfaces
+    /// `MemoryCensusUnavailable`.
+    #[must_use]
+    pub fn with_memory_census(mut self, census: pinion_core::memory_census::MemoryCensus) -> Self {
+        self.memory_census = Some(census);
         self
     }
 
@@ -1875,6 +1900,9 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // `scene/text_cache_stats`. Per-shell rather than per-window; `Copy`, so
     // consulting it borrows nothing.
     let text_cache_stats = ctx.text_cache_stats;
+    // R1550 — the per-arena memory census. Taken out for the dispatch lifetime
+    // (owned, non-`Copy`); only `scene/memory` reads it.
+    let memory_census = ctx.memory_census.take();
     // R1546 §5.36 — the painted background bands the embedder collected. Taken
     // out for the dispatch lifetime (owned, non-`Copy`); only
     // `scene/text_backgrounds` reads it.
@@ -2349,6 +2377,11 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 ),
                 "scene/text_cache_stats" => (
                     handle_scene_text_cache_stats(text_cache_stats),
+                    HandlerKind::Read,
+                ),
+                // R1550 — what every arena is holding, in bytes.
+                "scene/memory" => (
+                    handle_scene_memory(memory_census.as_ref()),
                     HandlerKind::Read,
                 ),
                 // R1546 §5.36 — where each declared text background was
@@ -6113,6 +6146,25 @@ fn cache_stats_error_to_rpc(err: &CacheStatsError) -> RpcError {
             RpcError::invalid_params("fragment cache stats unavailable for this window")
                 .with_data_string("CacheStatsUnavailable")
         }
+    }
+}
+
+/// R1550 §5.16 §5.36 §5.7 — `scene/memory` typed handler. Reads the census
+/// the embedder assembled on [`DispatchContext::memory_census`] and emits the
+/// wire [`MemoryOutcome`](crate::memory::MemoryOutcome) shape.
+///
+/// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`] bump.
+fn handle_scene_memory(
+    census: Option<&pinion_core::memory_census::MemoryCensus>,
+) -> Result<Value, RpcError> {
+    match crate::memory::memory(census) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!("scene/memory: failed to serialize outcome: {e}"))
+        }),
+        Err(crate::memory::MemoryError::MemoryCensusUnavailable) => Err(RpcError::invalid_params(
+            "memory census unavailable for this embedder",
+        )
+        .with_data_string("MemoryCensusUnavailable")),
     }
 }
 

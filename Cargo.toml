@@ -26,6 +26,7 @@ members = [
     "crates/pinion-narrative",
     "crates/pinion-platform-file-dialog",
     "crates/pinion-platform-fonts",
+    "crates/pinion-platform-memory",
     "crates/pinion-chart",
     "crates/pinion-graph",
     "examples/hello-button",
