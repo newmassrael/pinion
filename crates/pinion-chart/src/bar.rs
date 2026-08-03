@@ -779,41 +779,8 @@ fn value_text(bar: &Bar, y_step: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene_probe::{find, tags};
     use pinion_core::scene::Rect;
-
-    fn tags(scene: &Scene) -> Vec<String> {
-        let mut out = Vec::new();
-        collect(scene, &mut out);
-        out
-    }
-    fn collect(scene: &Scene, out: &mut Vec<String>) {
-        match scene {
-            Scene::Container(c) => {
-                if let Some(t) = c.tag.as_deref() {
-                    out.push(t.to_string());
-                }
-                for ch in &c.children {
-                    collect(ch, out);
-                }
-            }
-            other => {
-                if let Some(t) = other.tag() {
-                    out.push(t.to_string());
-                }
-            }
-        }
-    }
-    fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
-        match scene {
-            Scene::Container(c) => {
-                if c.tag.as_deref() == Some(tag) {
-                    return Some(scene);
-                }
-                c.children.iter().find_map(|ch| find(ch, tag))
-            }
-            other => (other.tag() == Some(tag)).then_some(scene),
-        }
-    }
 
     fn three() -> Vec<Bar> {
         vec![

@@ -69,6 +69,25 @@ pub(crate) fn stroke_path(points: &[(f32, f32)], stroke: Stroke, tag: String) ->
     )
 }
 
+/// A **closed** path from plot-space points, taking both `PathStyle` arms —
+/// the primitive for a mark whose outline is not a rectangle (R1553's box
+/// plot box, which grows a waist when notched).
+///
+/// Distinct from [`stroke_path`] (open polyline, stroke only) and
+/// [`area_path`] (closed against a baseline, fill only): this one is the
+/// general case where the caller states the whole outline and both arms.
+/// The bbox is padded by the stroke width so a stroked edge is not clipped
+/// by its own node rect.
+pub(crate) fn polygon_node(points: &[(f32, f32)], style: PathStyle, tag: String) -> Scene {
+    let bbox = bbox_of(points, style.stroke.as_ref().map_or(0, |s| s.width));
+    let commands = polyline_commands(&rebased(points, bbox), true);
+    Scene::Path(
+        PathNode::new(bbox, commands, style)
+            .with_tag(tag)
+            .with_layout(absolute(bbox)),
+    )
+}
+
 /// A filled area path: the polyline dropped to `baseline_y` and closed.
 pub(crate) fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag: String) -> Scene {
     let (bbox, commands) = area_geometry(points, baseline_y);

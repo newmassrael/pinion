@@ -763,18 +763,7 @@ struct Inspect {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
-        match scene {
-            Scene::Container(c) => {
-                if c.tag.as_deref() == Some(tag) {
-                    return Some(scene);
-                }
-                c.children.iter().find_map(|ch| find(ch, tag))
-            }
-            other => (other.tag() == Some(tag)).then_some(scene),
-        }
-    }
+    use crate::scene_probe::find;
 
     fn count_prefix(scene: &Scene, prefix: &str) -> usize {
         let mut n = 0;

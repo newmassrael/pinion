@@ -157,6 +157,43 @@
 //! `setRange(QString, QString)` returns `void` and silently ignores a name
 //! that is not a category.
 //!
+//! And (R1553) the crate's first datum that is **not a point** — a
+//! [`Distribution`], drawn by [`BoxPlotChart`] (Qt's `QBoxPlotSeries`).
+//! Every value above resolves to one position; a distribution occupies a
+//! span of the value axis and carries interior landmarks, so one datum emits
+//! a box, a median, two whiskers, two caps and a mark per outlier — Tukey's
+//! schema (*Exploratory Data Analysis*, 1977), optionally notched after
+//! `McGill`, Tukey & Larsen (1978).
+//!
+//! Qt's `QBoxSet` is five doubles and `QtCharts` computes none of them (its
+//! own box-plot example ships a `findMedian()` helper in the *example*).
+//! Four things follow and are worth knowing before using this:
+//!
+//! * The summary is **derived**, and by a *named* definition —
+//!   [`QuantileMethod`] carries three standard ones (Tukey's hinges, Hyndman
+//!   & Fan types 7 and 6) that disagree for small `n`, so the method is part
+//!   of the value rather than a caller's comment. Handing in five
+//!   pre-computed numbers is still supported
+//!   ([`Distribution::from_summary`], Qt's contract) — with the ordering
+//!   *checked*, where `QBoxSet::setValue` accepts an upper quartile below the
+//!   lower one and paints an inverted box in silence.
+//! * **Outliers exist.** The whiskers stop at Tukey's `k * IQR` fence and
+//!   each sample beyond it is its own addressable mark. `QBoxSet` has five
+//!   slots and no per-outlier geometry, so a Qt box plot cannot draw one at
+//!   any setting — and that fence is the defining half of the form.
+//! * The **notch** ([`BoxPlotChart::notched`]) is drawn only where the
+//!   statistic exists: it is a function of the sample count, which a
+//!   pre-computed summary does not carry, so such a box keeps its plain
+//!   rectangle in the same chart. `QBoxSet` carries no `n` at all.
+//! * The value axis may be **logarithmic** ([`BoxPlotChart::y_log`]) —
+//!   legitimately, unlike [`BarChart`]'s, because a box plot encodes five
+//!   positions rather than a length from zero. A landmark the axis cannot
+//!   place draws nothing and is reported by [`BoxPlotChart::off_scale`].
+//!
+//! Not yet: [`Distribution`]'s other reading — a candlestick (Qt's
+//! `QCandlestickSeries`) is the same interval geometry over open / high /
+//! low / close, and would be this box's second consumer.
+//!
 //! Not yet: cross-filtering between two ARBITRARY chart types, and a y-rescale
 //! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
 //! — follow-up slices on that same core. (A frequency *histogram* is a consumer
@@ -221,9 +258,11 @@
 //!   §2 #6 today, and that gap is stated here rather than left silent.
 
 mod bar;
+mod boxplot;
 mod brush;
 mod civil;
 mod color_scale;
+mod distribution;
 mod donut;
 mod draw;
 mod line;
@@ -232,6 +271,8 @@ mod palette;
 mod plot;
 mod scale;
 mod scatter;
+#[cfg(test)]
+mod scene_probe;
 mod series;
 mod sparkline;
 mod style;
@@ -241,8 +282,13 @@ mod treemap;
 mod window;
 
 pub use bar::{Bar, BarChart};
+pub use boxplot::{BoxPlotChart, LandmarkKind, OffScaleLandmark};
 pub use brush::{Brush, BrushStripColors};
 pub use color_scale::{ColorScale, contrast_ratio, readable_ink, relative_luminance};
+pub use distribution::{
+    DEFAULT_FENCE, Distribution, DistributionError, DistributionSource, QuantileMethod,
+    SummaryPosition, distribution_bounds, positive_distribution_bounds,
+};
 pub use donut::{DonutChart, Slice};
 pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};

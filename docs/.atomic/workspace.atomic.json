@@ -80426,6 +80426,66 @@
         "No per-subscription FILTER: a subscriber is told the scene advanced, not which subtree. Qt has no equivalent at all, so this is an axis gap rather than round debt — but a large scene where an agent cares about one panel will want it"
       ]
     },
+    "Round 1553": {
+      "decision_summary": "R1553 a datum can be a distribution",
+      "changes_bullets": [
+        "pinion-chart: `distribution` — `Distribution`, the crate's first datum that is NOT a point. Every value it could plot resolved to one position; this one occupies a span of the value axis and carries interior landmarks, so ONE datum emits a box, a median, two whiskers, two caps and a mark per outlier",
+        "pinion-chart: `QuantileMethod` — Tukey's hinges, Hyndman & Fan type 7, type 6. They disagree at small n, so which one built a box is part of what the box MEANS; it lives in `DistributionSource::Samples` beside the count and the fence. Qt's QBoxSet is five doubles and QtCharts computes none of them, shipping a findMedian() helper in its own EXAMPLE",
+        "pinion-chart: Tukey's k*IQR fence limits each whisker and every sample beyond it becomes its own addressable mark. QBoxSet has five slots and no per-outlier geometry, so a Qt box plot cannot draw one at any setting, and that fence is the defining half of the form",
+        "pinion-chart: `Distribution::notch` — McGill, Tukey and Larsen 1978, median +- 1.58*IQR/sqrt(n). It answers None for a pre-computed summary because the statistic is a function of a sample count a summary never carried, so such a box keeps its plain rectangle in the same chart",
+        "pinion-chart: `from_summary` is Qt's own contract with the ordering CHECKED, naming the first landmark that goes backwards. QBoxSet::setValue accepts an upper quartile below the lower one and paints an inverted box in silence",
+        "pinion-chart: `boxplot` — `BoxPlotChart` over R1545's category axis and a full `ValueScale`, so `y_log` is R1528's axis rather than a second one. A log value axis is legitimate here where the bar chart is denied it: a box encodes five POSITIONS, not a length from zero",
+        "pinion-chart: `BoxPlotChart::off_scale` — a landmark the axis cannot place draws nothing and is REPORTED by kind, R1528's stance applied to a datum with extent rather than to a point",
+        "pinion-chart: `draw::polygon_node` — the closed-path primitive taking both PathStyle arms, so a box is ONE node kind whether or not it grew a waist",
+        "pinion-chart: `scene_probe` — obligation-3b lift. Eight copies of the test `find` walker in three spellings and three of `tags`, all semantically identical; this round wrote the eighth and the third",
+        "examples/hello-boxplot: the forcing consumer — five endpoints' RAW latencies, a quantile-method radio group, a notch toggle and a log-axis toggle"
+      ],
+      "verification_bullets": [
+        "tools/demos/r1553_distribution_datum.py — 57 assertion sites over a real binding: the mark cardinalities, the parts checked against EACH OTHER, the definition deciding an outlier, the whisker stopping at the fence, the notch read as both a command count and a narrowed median, and the log axis dropping two marks and reporting them",
+        "Ten counterfactuals, one at a time, each FAILING on an assertion: fence inert / one quantile definition / notch without n / box never notches / domain ignores outliers / off_scale silent / inverted summary accepted / median not inset / binding pins the method / caption drops the report",
+        "The counterfactual driver was itself wrong twice, both recorded lessons this round re-walked: a piped gate masked cargo's exit code so all ten first read as DEAD, and a uniqueness assertion placed outside the try block left one patch in the tree",
+        "Two of the ten first failed to COMPILE, which proves nothing; the driver now refuses a counterfactual whose gate did not fail on an assertion",
+        "cargo test green on pinion-chart (328) and hello-boxplot (8); clippy pedantic clean on both; cargo doc --no-deps --document-private-items clean"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "Four of the five series types R1519 named remain: polar, candlestick, spline, 3D-surface. Candlestick is the cheapest now, being the same interval geometry over open/high/low/close, and is deliberately left as the SECOND consumer that would decide whether the interval mark lifts",
+        "The pre-computed `from_summary` arm has no forcing consumer: hello-boxplot derives all five of its distributions, so Qt's own contract is exercised by unit tests only",
+        "A box has no per-mark a11y. The scrub readout names the whole summary and its provenance, which is past Qt since QtCharts implements no accessibility interface at all, but an individual outlier is painted geometry with no accessible relationship",
+        "The notch is deliberately NOT clamped to the box: a small sample with a wide IQR yields a bowtie, which is what R draws and warns about. Folding it in would hide the case a reader most needs to see"
+      ],
+      "publishable_decision_summary": "R1553 a datum can be a distribution",
+      "publishable_changes_bullets": [
+        "pinion-chart: `distribution` — `Distribution`, the crate's first datum that is NOT a point. Every value it could plot resolved to one position; this one occupies a span of the value axis and carries interior landmarks, so ONE datum emits a box, a median, two whiskers, two caps and a mark per outlier",
+        "pinion-chart: `QuantileMethod` — Tukey's hinges, Hyndman & Fan type 7, type 6. They disagree at small n, so which one built a box is part of what the box MEANS; it lives in `DistributionSource::Samples` beside the count and the fence. Qt's QBoxSet is five doubles and QtCharts computes none of them, shipping a findMedian() helper in its own EXAMPLE",
+        "pinion-chart: Tukey's k*IQR fence limits each whisker and every sample beyond it becomes its own addressable mark. QBoxSet has five slots and no per-outlier geometry, so a Qt box plot cannot draw one at any setting, and that fence is the defining half of the form",
+        "pinion-chart: `Distribution::notch` — McGill, Tukey and Larsen 1978, median +- 1.58*IQR/sqrt(n). It answers None for a pre-computed summary because the statistic is a function of a sample count a summary never carried, so such a box keeps its plain rectangle in the same chart",
+        "pinion-chart: `from_summary` is Qt's own contract with the ordering CHECKED, naming the first landmark that goes backwards. QBoxSet::setValue accepts an upper quartile below the lower one and paints an inverted box in silence",
+        "pinion-chart: `boxplot` — `BoxPlotChart` over R1545's category axis and a full `ValueScale`, so `y_log` is R1528's axis rather than a second one. A log value axis is legitimate here where the bar chart is denied it: a box encodes five POSITIONS, not a length from zero",
+        "pinion-chart: `BoxPlotChart::off_scale` — a landmark the axis cannot place draws nothing and is REPORTED by kind, R1528's stance applied to a datum with extent rather than to a point",
+        "pinion-chart: `draw::polygon_node` — the closed-path primitive taking both PathStyle arms, so a box is ONE node kind whether or not it grew a waist",
+        "pinion-chart: `scene_probe` — obligation-3b lift. Eight copies of the test `find` walker in three spellings and three of `tags`, all semantically identical; this round wrote the eighth and the third",
+        "examples/hello-boxplot: the forcing consumer — five endpoints' RAW latencies, a quantile-method radio group, a notch toggle and a log-axis toggle"
+      ],
+      "publishable_verification_bullets": [
+        "tools/demos/r1553_distribution_datum.py — 57 assertion sites over a real binding: the mark cardinalities, the parts checked against EACH OTHER, the definition deciding an outlier, the whisker stopping at the fence, the notch read as both a command count and a narrowed median, and the log axis dropping two marks and reporting them",
+        "Ten counterfactuals, one at a time, each FAILING on an assertion: fence inert / one quantile definition / notch without n / box never notches / domain ignores outliers / off_scale silent / inverted summary accepted / median not inset / binding pins the method / caption drops the report",
+        "The counterfactual driver was itself wrong twice, both recorded lessons this round re-walked: a piped gate masked cargo's exit code so all ten first read as DEAD, and a uniqueness assertion placed outside the try block left one patch in the tree",
+        "Two of the ten first failed to COMPILE, which proves nothing; the driver now refuses a counterfactual whose gate did not fail on an assertion",
+        "cargo test green on pinion-chart (328) and hello-boxplot (8); clippy pedantic clean on both; cargo doc --no-deps --document-private-items clean"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Four of the five series types R1519 named remain: polar, candlestick, spline, 3D-surface. Candlestick is the cheapest now, being the same interval geometry over open/high/low/close, and is deliberately left as the SECOND consumer that would decide whether the interval mark lifts",
+        "The pre-computed `from_summary` arm has no forcing consumer: hello-boxplot derives all five of its distributions, so Qt's own contract is exercised by unit tests only",
+        "A box has no per-mark a11y. The scrub readout names the whole summary and its provenance, which is past Qt since QtCharts implements no accessibility interface at all, but an individual outlier is painted geometry with no accessible relationship",
+        "The notch is deliberately NOT clamped to the box: a small sample with a wide IQR yields a bowtie, which is what R draws and warns about. Folding it in would hide the case a reader most needs to see"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -255,7 +255,7 @@ const fn y_extent(b: Bounds, kind: &AxisKind) -> Option<(f64, f64)> {
 /// lands here and draws a legible empty decade rather than collapsing. For
 /// the categorical kind it is the extent itself: [`x_extent`] measures no
 /// data, so this is always what a category axis resolves to before pinning.
-fn kind_extent(kind: &AxisKind) -> (f64, f64) {
+pub(crate) fn kind_extent(kind: &AxisKind) -> (f64, f64) {
     match kind {
         AxisKind::Log(base) => (1.0, *base),
         AxisKind::Linear => (0.0, 1.0),
@@ -269,7 +269,12 @@ fn kind_extent(kind: &AxisKind) -> (f64, f64) {
 /// to whole decades when logarithmic, to calendar boundaries when time, and
 /// not at all when categorical (the band extent is already exact — snapping
 /// it to nice numbers would put the axis edge half a slot off).
-fn axis_domain(
+///
+/// `pub(crate)` since R1553: the box plot resolves its value axis through
+/// this and [`axis_scale`] rather than re-deriving the snapping rules, so
+/// "how does a logarithmic axis choose its domain" has one definition no
+/// matter which chart asked.
+pub(crate) fn axis_domain(
     pinned: Option<(f64, f64)>,
     raw: (f64, f64),
     target: usize,
@@ -287,7 +292,7 @@ fn axis_domain(
 }
 
 /// Build one axis's [`ValueScale`] over `domain` onto the pixel `range`.
-fn axis_scale(domain: (f64, f64), range: (f32, f32), kind: &AxisKind) -> ValueScale {
+pub(crate) fn axis_scale(domain: (f64, f64), range: (f32, f32), kind: &AxisKind) -> ValueScale {
     match kind {
         AxisKind::Log(base) => ValueScale::Log(LogScale::new(domain, range, *base)),
         AxisKind::Linear => ValueScale::Linear(LinearScale::new(domain, range)),

@@ -1189,28 +1189,11 @@ fn clamp(value: f64, lo: f64, hi: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::draw::to_f32;
+    use crate::scene_probe::find;
     use crate::series::DataPoint;
     use crate::style::Margin;
     use pinion_core::scene::PathCommand;
     use pinion_core::style::{Size, SizeValue};
-
-    fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
-        match scene {
-            Scene::Container(c) => {
-                if c.tag.as_deref() == Some(tag) {
-                    return Some(scene);
-                }
-                c.children.iter().find_map(|ch| find(ch, tag))
-            }
-            other => {
-                if other.tag() == Some(tag) {
-                    Some(scene)
-                } else {
-                    None
-                }
-            }
-        }
-    }
 
     fn count_prefix(scene: &Scene, prefix: &str) -> usize {
         let mut n = 0;

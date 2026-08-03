@@ -779,20 +779,9 @@ fn percent_text(value: f64, total: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene_probe::find;
     use pinion_core::scene::Rect;
     use pinion_core::style::SizeValue;
-
-    fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
-        match scene {
-            Scene::Container(c) => {
-                if c.tag.as_deref() == Some(tag) {
-                    return Some(scene);
-                }
-                c.children.iter().find_map(|ch| find(ch, tag))
-            }
-            other => (other.tag() == Some(tag)).then_some(scene),
-        }
-    }
 
     fn count_prefix(scene: &Scene, prefix: &str) -> usize {
         let mut n = usize::from(scene.tag().is_some_and(|t| t.starts_with(prefix)));

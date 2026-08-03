@@ -313,21 +313,10 @@ struct SparkGeom {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene_probe::find;
     use pinion_core::scene::Rect;
 
     const RECT: Rect = Rect::new(0, 0, 120, 40);
-
-    fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
-        match scene {
-            Scene::Container(c) => {
-                if c.tag.as_deref() == Some(tag) {
-                    return Some(scene);
-                }
-                c.children.iter().find_map(|ch| find(ch, tag))
-            }
-            other => (other.tag() == Some(tag)).then_some(scene),
-        }
-    }
 
     fn path_rect(scene: &Scene, tag: &str) -> Rect {
         match find(scene, tag).unwrap_or_else(|| panic!("{tag} present")) {

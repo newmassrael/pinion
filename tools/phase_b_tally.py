@@ -536,6 +536,10 @@ AXES = [
                 # from one axis, and the census flagged it UNCLASSIFIED
                 # because every pattern here named a chart TYPE.
                 "axis",
+                # R1553 — `hello-boxplot`, flagged UNCLASSIFIED by the same
+                # census for the same reason the last one was: a chart type
+                # this axis did not yet name.
+                "boxplot",
             ]),
         ],
         # R1534 re-judgment, 72 -> 77, demanded by the tool (the round ledger
@@ -608,9 +612,66 @@ AXES = [
         #   * Still open from R1529: local time needs a tzdb.
         #   * Still open from R1519: no polar / candlestick / box-plot /
         #     spline / 3D-surface series — a whole dimension, untouched.
-        "judged_at": 1545,
-        "completion": 82,
-        "evidence_snapshot": {"example-name": 25, "round-axis": 4},
+        #
+        # R1553 re-judgment, 82 -> 87, demanded by the tool (the round ledger
+        # took this axis 4 -> 5). It opens the dimension the line above calls
+        # untouched, and opens it at the member with the most statistics
+        # behind it: the BOX PLOT (Qt `QBoxPlotSeries`).
+        #
+        # What earns +5 rather than the +2 a bare renderer would: this is the
+        # crate's first datum that is NOT A POINT. Every value it could plot
+        # resolved to one position; a `Distribution` occupies a span of the
+        # value axis and carries interior landmarks, so one datum emits a box,
+        # a median, two whiskers, two caps and a mark per outlier. That datum
+        # is the substrate the next member of the dimension (candlestick) is
+        # a different reading of, so the dimension is now open rather than
+        # one item shorter.
+        #
+        # Three things past Qt 6.11, all read over the wire by the demo, and
+        # all consequences of one decision — the summary is DERIVED here
+        # rather than handed in. `QBoxSet` is five doubles and `QtCharts`
+        # computes none of them (its own box-plot example ships a
+        # `findMedian()` helper IN THE EXAMPLE):
+        #
+        #   * The quantile DEFINITION is part of the value. `QuantileMethod`
+        #     carries three standard ones (Tukey's hinges, Hyndman & Fan
+        #     types 7 and 6) that disagree at small n — and the demo shows the
+        #     disagreement deciding whether a sample is an outlier at all. A
+        #     `QBoxSet` cannot record which definition built it.
+        #   * OUTLIERS exist. Tukey's `k * IQR` fence limits each whisker and
+        #     every sample beyond it is its own addressable mark. Qt's five
+        #     slots have no per-outlier geometry, so a Qt box plot cannot draw
+        #     one at any setting — and that fence is the defining half of the
+        #     form.
+        #   * The NOTCH, because the sample count survived the summary
+        #     (McGill, Tukey & Larsen 1978). `QBoxSet` carries no n, so Qt
+        #     could not offer it even as a paint option — and a distribution
+        #     handed in pre-computed keeps its plain box in the same chart,
+        #     which is the visible difference between a box a reader can apply
+        #     the test to and one they cannot.
+        #
+        # +5 and not more. Audited at R1553, and the R1545 list was RE-RUN
+        # rather than inherited — every one of its items still stands:
+        #
+        #   * FOUR of the five series types remain: polar, candlestick,
+        #     spline, 3D-surface. Candlestick is the cheapest of them now (the
+        #     same interval geometry over open / high / low / close) and is
+        #     deliberately not built here, being the second consumer that
+        #     would decide whether the interval mark lifts.
+        #   * The pre-computed path (`Distribution::from_summary`, Qt's own
+        #     contract) has no forcing consumer: `hello-boxplot` derives every
+        #     one of its five, so the summary arm is exercised by unit tests
+        #     only.
+        #   * A box has no per-mark a11y. The scrub readout names the whole
+        #     summary and its provenance, which is past Qt (QtCharts
+        #     implements no accessibility interface at all), but an individual
+        #     outlier is painted geometry with no accessible relationship.
+        #   * `QCategoryAxis`, label thinning, band-level a11y, drag pan /
+        #     rubber-band zoom, the y-window, the plot zoom's a11y, the second
+        #     zoom consumer, local time — all eight still open, unchanged.
+        "judged_at": 1553,
+        "completion": 87,
+        "evidence_snapshot": {"example-name": 26, "round-axis": 5},
     },
     {
         "key": "text",
