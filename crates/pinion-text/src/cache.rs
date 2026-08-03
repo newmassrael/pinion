@@ -217,14 +217,21 @@ struct CachedLayout {
 ///   keys never return, so the capacity stays where it started no matter
 ///   how many million lines pass through.
 ///
-/// Growth is bounded by [`Self::MAX_CAPACITY`]. Entries are ~3.1 KB
-/// measured (a 24-character label, RSS delta over 20,000 entries), so the
-/// bound is a memory statement: ~26 MB if a scene ever proves it needs the
-/// whole thing, against ~0.8 MB for the 256 that used to be the ceiling.
+/// Growth is bounded by [`Self::MAX_CAPACITY`], **in entries**. R1521 read
+/// that as a memory bound by multiplying it by a measured *average* entry
+/// (~3.1 KB, a 24-character label over an RSS delta) to get "~26 MB", and
+/// R1550 retired that reading: an average bounds nothing, because one entry
+/// holding a 10,000-character paragraph with its cached draw list breaks it
+/// on its own. What this cache is holding is now a **measurement** the caller
+/// reads — [`Footprint::footprint`](pinion_core::footprint::Footprint), and
+/// `scene/memory` over the wire — so the entry ceiling is what it says it is
+/// and the byte cost is a fact rather than a product of two estimates.
+///
 /// A caller that needs a hard bound states one with
 /// [`Self::with_max_capacity`]; that is the only way to get the old
 /// fixed-ceiling behaviour back, and it is now a decision rather than a
-/// default.
+/// default. Note it is still a bound in *entries*: this cache has no byte
+/// budget, unlike `pinion_runtime::image_cache::ImageCache`.
 pub struct LayoutCache {
     inner: LruCache<LayoutKey, CachedLayout>,
     /// R1521 — hashes of keys this cache evicted. A miss whose key hashes
@@ -404,12 +411,16 @@ impl LayoutCache {
 
     /// R1521 §5.36 — the ceiling an adaptively-grown cache will not pass.
     ///
-    /// 8,192 entries at the measured ~3.1 KB each is ~26 MB, and it takes a
-    /// scene of 8,192 simultaneously-painted text leaves to reach it — a
-    /// dense 4K pro-tool layout (180 rows x 30 columns) is about 5,400. The
-    /// bound exists so the growth rule cannot be turned into an unbounded
+    /// It takes a scene of 8,192 simultaneously-painted text leaves to reach
+    /// it — a dense 4K pro-tool layout (180 rows x 30 columns) is about 5,400.
+    /// The bound exists so the growth rule cannot be turned into an unbounded
     /// allocation by an adversarial access pattern, not because any measured
     /// scene approaches it.
+    ///
+    /// **In entries, and only in entries.** R1521's doc turned this into a
+    /// "~26 MB" memory bound by multiplying by an average entry; R1550 retired
+    /// that (see the type doc). What the cache holds in bytes is measured, not
+    /// derived, and a scene of 8,192 large entries costs far more than 26 MB.
     pub const MAX_CAPACITY: NonZeroUsize = NonZeroUsize::new(8192).expect("8192 is non-zero");
 
     /// Construct a cache that starts at `capacity` slots and may grow to

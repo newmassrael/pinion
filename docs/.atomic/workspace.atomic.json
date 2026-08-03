@@ -80262,6 +80262,40 @@
         "The two reachable fields are counted by LENGTH, not capacity: a slice does not report its Vec's spare capacity, so this term is a floor where every other Footprint impl states an allocation"
       ]
     },
+    "Round 1550.2": {
+      "decision_summary": "R1550.2 the retired bound is retired where it was written",
+      "changes_bullets": [
+        "pinion-text: the `~26 MB` bound is retired where it was written — both the `LayoutCache` type doc and `MAX_CAPACITY`'s own doc stated an entry ceiling times a measured AVERAGE entry as if it were a memory bound",
+        "R1550 called that reading wrong (one 10,000-character entry with its draw list breaks it) and then left the sentences standing, so the crate held two answers to \"how much can this hold\" and the retired one was the one a reader met first",
+        "Both now say what is true: the ceiling is in ENTRIES, and the byte cost is a measurement the caller reads through `Footprint` / `scene/memory`"
+      ],
+      "verification_bullets": [
+        "`cargo doc -p pinion-text --no-deps --document-private-items` clean; `cargo test -p pinion-text` 94 passed",
+        "Prompted by the user's audit question \"did you register all the debt\" — the answer was no, and the audit found three things: this doc residue, R1531's carry (d) still listed as OPEN in both watch-out lists when R1550 closed it, and the hashbrown / lru model-drift limit registered nowhere"
+      ],
+      "impact_refs": [
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "MODEL DRIFT, newly registered and the one carry here that is neither external nor a stated scope: `hash_table_bytes` uses the map's own `capacity()` rather than reproducing hashbrown's bucket geometry, and `lru_table_bytes` models `lru`'s node and index layout. If either crate changes its layout the published bytes go silently wrong — nothing fails to compile and no test breaks. It is the second axis the destructuring fuse cannot cover, the first being a whole new cache type (which the demo's source-parse gate does cover)"
+      ],
+      "publishable_decision_summary": "R1550.2 the retired bound is retired where it was written",
+      "publishable_changes_bullets": [
+        "pinion-text: the `~26 MB` bound is retired where it was written — both the `LayoutCache` type doc and `MAX_CAPACITY`'s own doc stated an entry ceiling times a measured AVERAGE entry as if it were a memory bound",
+        "R1550 called that reading wrong (one 10,000-character entry with its draw list breaks it) and then left the sentences standing, so the crate held two answers to \"how much can this hold\" and the retired one was the one a reader met first",
+        "Both now say what is true: the ceiling is in ENTRIES, and the byte cost is a measurement the caller reads through `Footprint` / `scene/memory`"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo doc -p pinion-text --no-deps --document-private-items` clean; `cargo test -p pinion-text` 94 passed",
+        "Prompted by the user's audit question \"did you register all the debt\" — the answer was no, and the audit found three things: this doc residue, R1531's carry (d) still listed as OPEN in both watch-out lists when R1550 closed it, and the hashbrown / lru model-drift limit registered nowhere"
+      ],
+      "publishable_impact_refs": [
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "MODEL DRIFT, newly registered and the one carry here that is neither external nor a stated scope: `hash_table_bytes` uses the map's own `capacity()` rather than reproducing hashbrown's bucket geometry, and `lru_table_bytes` models `lru`'s node and index layout. If either crate changes its layout the published bytes go silently wrong — nothing fails to compile and no test breaks. It is the second axis the destructuring fuse cannot cover, the first being a whole new cache type (which the demo's source-parse gate does cover)"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
