@@ -976,7 +976,7 @@ AXES = [
             ("example-name", [
                 "ai-introspect", "answer-origin", "encoded-answer",
                 "endpoint-identity", "viewport-question", "conn-lifecycle",
-                "forge-counter",
+                "forge-counter", "subscribe",
             ]),
         ],
         # R1539 re-judged 30 -> 42, demanded by the tool: this axis had never
@@ -1015,9 +1015,43 @@ AXES = [
         #  - the census covers `pinion-rpc` only. `scene/snapshot` and
         #    `scene/access` answer with trees built in `pinion-core` and
         #    `pinion-a11y`, which the gate's source parse does not reach.
-        "judged_at": 1539,
-        "completion": 42,
-        "evidence_snapshot": {"example-name": 7, "round-axis": 1},
+        #
+        # R1552 re-judged 42 -> 50, demanded by the tool: the round ledger took
+        # this axis 1 -> 2. It closes a gap none of R1539's four named, because
+        # it is a gap in a DIRECTION rather than in a description: the protocol
+        # had no server-initiated path at all. One frame carried one `FnOnce`
+        # reply, so one request could produce at most one response and a
+        # subscription was inexpressible at any price — which is what
+        # PINION-PR83 reported, and what `waiter.rs` had already recorded as a
+        # property ("no server-push, streaming, or subscription") without
+        # anyone reading it as an absence to close.
+        #
+        # `RpcEgress` is the mirror of `RpcIngress`, and `scene/subscribe`
+        # is the framework's own consumer of it. Three things past Qt 6.11,
+        # all read over the wire: the stream is ENUMERABLE (`scene/subscriptions`
+        # answers who is listening to what — Qt binds no server write to a named
+        # stream, so `QLocalServer` cannot be asked); a stream cannot be named
+        # to a client before the answer that told it the name (armed after the
+        # reply, structural rather than remembered); and a client that VANISHES
+        # has exactly its own stream released, with no unsubscribe ever sent.
+        #
+        # +8 and not more, because the axis is named for STABILISATION and this
+        # made the surface BIGGER. Audited at R1552, all four of R1539's gaps
+        # re-checked and all four still open:
+        #
+        #  - no method -> type binding, no version negotiation, no deprecation
+        #    path, no compatibility policy, no freeze, no per-method error
+        #    taxonomy, and the census still covers `pinion-rpc` only. R1552
+        #    added `SubscribeOutcome` / `UnsubscribeOutcome` / `SubscriptionView`
+        #    / `SubscriptionsOutcome` to that census the day it landed, which is
+        #    the R1539 gate working — but it moved none of the guarantees.
+        #  - NEW, and this round's own: a subscriber is told the scene advanced,
+        #    not WHICH SUBTREE. There is no per-subscription filter. Qt has no
+        #    equivalent at all so it is an axis gap rather than round debt, but
+        #    a large scene where an agent watches one panel will want it.
+        "judged_at": 1552,
+        "completion": 50,
+        "evidence_snapshot": {"example-name": 8, "round-axis": 2},
     },
 ]
 
