@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::animation_state::{AnimationStateError, AnimationStateOutcome, animation_state};
+use crate::auto_repeat::{AutoRepeatOutcome, auto_repeat};
 use crate::cache_stats::{CacheStatsError, CacheStatsOutcome, cache_stats};
 use crate::caret_state::{CaretStateOutcome, caret_state};
 use crate::commands::{CommandsError, list_pending_commands};
@@ -560,6 +561,15 @@ pub struct DispatchContext<'a> {
     /// (headless fixture / embedder opt-out), distinct from an
     /// all-empty snapshot.
     pub input_state: Option<pinion_core::InputStateSnapshot>,
+    /// R1549 §5.35 §5.38 — the dispatch-scoped window's in-flight
+    /// presses, resolved by the embedder before dispatch (the
+    /// [`Self::input_state`] pattern). Consumed by
+    /// `scene/auto_repeat`. No `Option`: "no press is held" is a
+    /// truthful empty list, not an unavailability, so this axis has no
+    /// `*Unavailable` token to distinguish (unlike [`Self::pacing_state`],
+    /// where "no override" and "backend keeps no clock" are different
+    /// facts).
+    pub auto_repeat_holds: Vec<pinion_runtime::AutoRepeatHold>,
     /// R888 §5.49 §5.28 — the dispatch-scoped window's frame-pacing
     /// target, resolved by the embedder before dispatch (the
     /// [`Self::input_state`] pattern). Consumed by
@@ -1401,6 +1411,7 @@ impl<'a> DispatchContext<'a> {
             render_fidelity: None,
             screenshot: None,
             input_state: None,
+            auto_repeat_holds: Vec::new(),
             pacing_state: None,
             declared_windows: None,
             cross_window_drop: None,
@@ -1656,6 +1667,18 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// R1549 §5.35 §5.38 — install the dispatch-scoped window's in-flight
+    /// press census, resolved by the embedder from
+    /// `CoreShell::auto_repeat_holds_for_window`. `scene/auto_repeat`
+    /// reads the slot; every other arm ignores it. Not calling this leaves
+    /// the empty list, which is the same answer a window with no pointer
+    /// pressed gives.
+    #[must_use]
+    pub fn with_auto_repeat_holds(mut self, holds: Vec<pinion_runtime::AutoRepeatHold>) -> Self {
+        self.auto_repeat_holds = holds;
+        self
+    }
+
     /// Builder: install the pre-resolved frame-pacing target for the
     /// dispatch-scoped window (R888 §5.49 §5.28). Consumed by
     /// `scene/pacing_state`; absent -> `PacingStateUnavailable`.
@@ -1874,6 +1897,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // inbox), `scene/input_state` is the only consumer.
     let input_state = ctx.input_state.take();
     // R888 §5.49 — same single-consumer take as `input_state`.
+    let auto_repeat_holds = std::mem::take(&mut ctx.auto_repeat_holds);
     let pacing_state = ctx.pacing_state.take();
     // R1087 §5.16 §5.41 §2 #7 — declared-window set; same single-consumer
     // take. `scene/windows` is the only reader; owned (carries a `Vec`).
@@ -2348,6 +2372,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 }
                 "scene/export_pdf" => (
                     handle_scene_export_pdf(last_paint_scene, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/auto_repeat" => (
+                    handle_scene_auto_repeat(&auto_repeat_holds),
                     HandlerKind::Read,
                 ),
                 "scene/pacing_state" => {
@@ -6128,6 +6156,32 @@ fn handle_scene_frame_timings(
         Ok(outcome) => frame_timings_outcome_to_json(&outcome),
         Err(err) => Err(frame_timings_error_to_rpc(&err)),
     }
+}
+
+/// R1549 §5.35 §5.38 §5.12 — `scene/auto_repeat` typed handler: every
+/// in-flight press in the dispatch-scoped window, with the repeat cadence
+/// of the widget under it.
+///
+/// **Total** — no error arm and no `*Unavailable` token, unlike its
+/// window-scoped read siblings. Their absent case is a backend that keeps
+/// no such clock; this one's is "nothing is held", which is a real state
+/// with a real answer (`{"holds": []}`). A token here would force a
+/// client polling through a gesture to distinguish "released" from
+/// "broken", which are not distinguishable facts about a released button.
+///
+/// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`]
+/// bump. In particular this does NOT advance the hold: ticking is
+/// `scene/tick`'s job, through the one clock the live paint also uses.
+fn handle_scene_auto_repeat(holds: &[pinion_runtime::AutoRepeatHold]) -> Result<Value, RpcError> {
+    auto_repeat_outcome_to_json(&auto_repeat(holds))
+}
+
+fn auto_repeat_outcome_to_json(out: &AutoRepeatOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/auto_repeat: failed to serialize outcome: {e}"
+        ))
+    })
 }
 
 fn frame_timings_outcome_to_json(out: &FrameTimingsOutcome) -> Result<Value, RpcError> {

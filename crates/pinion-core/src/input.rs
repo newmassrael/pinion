@@ -104,6 +104,211 @@ impl DragLatch {
     }
 }
 
+/// R1549 §5.35 §5.38 — press-and-hold **auto-repeat** cadence: how long a
+/// held press waits before it starts repeating, and how fast it repeats
+/// after that. The Qt `QAbstractButton::autoRepeatDelay` /
+/// `autoRepeatInterval` pair, plus the `QAbstractSpinBox::accelerated`
+/// axis Qt keeps on a different class, expressed as one closed-form
+/// declaration.
+///
+/// A widget declares one through
+/// [`External::auto_repeat`](crate::external::External::auto_repeat); the
+/// runtime router supplies the clock. Holding an increment arrow, a
+/// pagination chevron or a scroll step then keeps stepping — the desktop
+/// behaviour every professional tool has and which no pinion widget had
+/// before this type existed.
+///
+/// # Cadence
+///
+/// A hold fires at
+///
+/// ```text
+/// delay, delay + i(0), delay + i(0) + i(1), …
+/// where i(n) = max(min_interval, interval * accel^n)
+/// ```
+///
+/// so `accel == 1.0` (the default) is Qt's fixed-interval repeat and
+/// `accel < 1.0` is an accelerating one that bottoms out at
+/// `min_interval`. Closed-form in the fire ordinal — the ratified
+/// closed-form-primitive axis — so
+/// [`Self::interval_after`] answers any point of the ramp without
+/// replaying the hold, which is what lets the cadence be *published*
+/// rather than only observed.
+///
+/// # Defaults
+///
+/// [`Self::DEFAULT_DELAY_SECS`] = 300 ms and
+/// [`Self::DEFAULT_INTERVAL_SECS`] = 100 ms are Qt's
+/// `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL` (`qabstractbutton.cpp`) —
+/// the widest-deployed desktop pair, and the Qt-parity floor this
+/// framework measures against. Platform *keyboard* repeat (the OS
+/// `repeat` flag pinion already forwards on key presses) is a separate,
+/// user-configurable channel and is deliberately NOT read here: a
+/// pointer hold on a widget is the widget's cadence, not the keyboard's.
+///
+/// # Validation
+///
+/// Every constructor clamps into a sane domain, so a malformed
+/// declaration can never hang a frame: intervals are held at or above
+/// [`Self::MIN_INTERVAL_FLOOR_SECS`] (a non-finite or non-positive
+/// interval would make the router's catch-up loop unbounded for a large
+/// `dt`), the delay saturates at `0.0`, and `accel` is confined to
+/// `(0.0, 1.0]` (an `accel > 1.0` would *decelerate* without bound —
+/// expressible as a longer `interval` instead, so admitting it would be
+/// two spellings of one cadence).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoRepeat {
+    delay_secs: f32,
+    interval_secs: f32,
+    accel: f32,
+    min_interval_secs: f32,
+}
+
+impl AutoRepeat {
+    /// Qt `AUTO_REPEAT_DELAY` — the hold a press must survive before the
+    /// first repeat fires. Long enough that an ordinary click never
+    /// repeats.
+    pub const DEFAULT_DELAY_SECS: f32 = 0.300;
+
+    /// Qt `AUTO_REPEAT_INTERVAL` — the steady-state gap between repeats
+    /// once the delay has elapsed (10 Hz).
+    pub const DEFAULT_INTERVAL_SECS: f32 = 0.100;
+
+    /// Hard floor on any interval (1 ms = 1000 Hz). Bounds the router's
+    /// per-frame catch-up loop for any `dt`, so a pathological
+    /// declaration costs frames rather than hanging one.
+    pub const MIN_INTERVAL_FLOOR_SECS: f32 = 0.001;
+
+    /// The desktop default cadence — [`Self::DEFAULT_DELAY_SECS`] then
+    /// [`Self::DEFAULT_INTERVAL_SECS`] forever, Qt's
+    /// `QAbstractButton::setAutoRepeat(true)` with both properties left
+    /// alone.
+    #[must_use]
+    pub fn desktop() -> Self {
+        Self::new(Self::DEFAULT_DELAY_SECS, Self::DEFAULT_INTERVAL_SECS)
+    }
+
+    /// A fixed-interval cadence: wait `delay_secs`, then fire every
+    /// `interval_secs`. Both are clamped (see the type's validation
+    /// section).
+    #[must_use]
+    pub fn new(delay_secs: f32, interval_secs: f32) -> Self {
+        let interval = clamp_interval(interval_secs);
+        Self {
+            delay_secs: if delay_secs.is_finite() {
+                delay_secs.max(0.0)
+            } else {
+                0.0
+            },
+            interval_secs: interval,
+            accel: 1.0,
+            min_interval_secs: interval,
+        }
+    }
+
+    /// Add acceleration: each successive interval is `accel` times the
+    /// previous one, never dropping below `min_interval_secs`. Qt spells
+    /// this `QAbstractSpinBox::setAccelerated(true)` — a bare on/off with
+    /// no reachable curve; here the curve is the declaration, so two
+    /// widgets can ramp differently and each can say how.
+    ///
+    /// `accel` is clamped into `(0.0, 1.0]`; a non-finite value disables
+    /// acceleration rather than poisoning the cadence.
+    #[must_use]
+    pub fn accelerating(mut self, accel: f32, min_interval_secs: f32) -> Self {
+        self.accel = if accel.is_finite() {
+            accel.clamp(f32::MIN_POSITIVE, 1.0)
+        } else {
+            1.0
+        };
+        self.min_interval_secs = clamp_interval(min_interval_secs).min(self.interval_secs);
+        self
+    }
+
+    /// Seconds a press must be held before the FIRST repeat fires.
+    #[must_use]
+    pub const fn delay_secs(&self) -> f32 {
+        self.delay_secs
+    }
+
+    /// The un-accelerated (first) repeat interval in seconds.
+    #[must_use]
+    pub const fn interval_secs(&self) -> f32 {
+        self.interval_secs
+    }
+
+    /// Per-fire interval multiplier; `1.0` = no acceleration.
+    #[must_use]
+    pub const fn accel(&self) -> f32 {
+        self.accel
+    }
+
+    /// Floor the accelerating interval bottoms out at, in seconds. Equal
+    /// to [`Self::interval_secs`] when acceleration is off.
+    #[must_use]
+    pub const fn min_interval_secs(&self) -> f32 {
+        self.min_interval_secs
+    }
+
+    /// The gap that follows the `fires`-th repeat (0-based), i.e. how
+    /// long after fire *n* the next one lands. Closed form in `n`:
+    /// `max(min_interval, interval * accel^n)`.
+    ///
+    /// `powi` saturates to `0.0` for a long enough hold with `accel < 1`,
+    /// at which point the `max` pins the answer to the floor — so the
+    /// result is always at least [`Self::MIN_INTERVAL_FLOOR_SECS`],
+    /// however long the hold ran.
+    #[must_use]
+    pub fn interval_after(&self, fires: u32) -> f32 {
+        let ramped = self.interval_secs * self.accel.powi(clamp_exp(fires));
+        ramped.max(self.min_interval_secs)
+    }
+
+    /// Seconds from the press until the `n`-th repeat (1-based) fires —
+    /// `delay + Σ interval_after(k)` for `k < n - 1`. `0` answers the
+    /// delay itself (no repeat has fired yet), so the sequence reads
+    /// `elapsed_at_fire(1) == delay_secs`.
+    ///
+    /// The ramp is a geometric series, but summing it in closed form
+    /// would disagree with the router once the `min_interval` floor
+    /// truncates it; this walks the same [`Self::interval_after`] the
+    /// router steps, so the published schedule and the fired schedule
+    /// are one derivation. Bounded by `n`, which callers hold.
+    #[must_use]
+    pub fn elapsed_at_fire(&self, n: u32) -> f32 {
+        let mut t = self.delay_secs;
+        for k in 1..n {
+            t += self.interval_after(k - 1);
+        }
+        t
+    }
+}
+
+/// Clamp a declared interval into `[MIN_INTERVAL_FLOOR_SECS, ∞)`,
+/// mapping non-finite input onto the floor. Shared by
+/// [`AutoRepeat::new`] and [`AutoRepeat::accelerating`] so the two
+/// entry points cannot disagree about what a legal interval is.
+fn clamp_interval(secs: f32) -> f32 {
+    if secs.is_finite() {
+        secs.max(AutoRepeat::MIN_INTERVAL_FLOOR_SECS)
+    } else {
+        AutoRepeat::MIN_INTERVAL_FLOOR_SECS
+    }
+}
+
+/// `powi` takes an `i32`; a fire count past `i32::MAX` is unreachable in
+/// a hold (it would need ~10^9 frames) but the cast must still be total.
+/// Saturating keeps the ramp monotone at the extreme instead of wrapping
+/// it back to a *longer* interval.
+#[allow(clippy::cast_possible_wrap)]
+const fn clamp_exp(fires: u32) -> i32 {
+    if fires > i32::MAX as u32 {
+        i32::MAX
+    } else {
+        fires as i32
+    }
+}
+
 /// R882 §5.39 §5.35 — held-key absolute state for the **non-modifier
 /// chord vocabulary**: the [`Modifiers`] out-of-band cache pattern
 /// generalised past `ModifiersState`. Windowing systems deliver
@@ -1341,9 +1546,137 @@ mod tests {
     //! plain-keystroke branches.
 
     use super::{
-        DragLatch, HeldKeys, KEYBOARD_ACTIVATE_EVENT, Modifiers, PointerWireEvent,
+        AutoRepeat, DragLatch, HeldKeys, KEYBOARD_ACTIVATE_EVENT, Modifiers, PointerWireEvent,
         is_activation_event,
     };
+
+    // ─────────────────────────────────────────────────────────────
+    // R1549 §5.35 §5.38 — `AutoRepeat` cadence battery.
+    // ─────────────────────────────────────────────────────────────
+
+    /// The declared defaults ARE Qt's `qabstractbutton.cpp` constants; a
+    /// silent drift here would silently change every held button in the
+    /// catalogue, so the pair is pinned rather than merely documented.
+    #[test]
+    fn desktop_defaults_are_the_qt_pair() {
+        let r = AutoRepeat::desktop();
+        assert!((r.delay_secs() - 0.300).abs() < 1e-6, "AUTO_REPEAT_DELAY");
+        assert!(
+            (r.interval_secs() - 0.100).abs() < 1e-6,
+            "AUTO_REPEAT_INTERVAL",
+        );
+        assert!(
+            (r.accel() - 1.0).abs() < 1e-6,
+            "a plain Qt button does not accelerate",
+        );
+    }
+
+    /// Without acceleration every interval is the same one, forever — the
+    /// `powi` ramp must not drift the fixed cadence.
+    #[test]
+    fn fixed_cadence_never_ramps() {
+        let r = AutoRepeat::new(0.5, 0.25);
+        for n in [0_u32, 1, 7, 100, 10_000] {
+            assert!(
+                (r.interval_after(n) - 0.25).abs() < 1e-6,
+                "fire {n} keeps the declared interval",
+            );
+        }
+    }
+
+    /// An accelerating cadence shortens monotonically and stops at its
+    /// declared floor — the peer of `QAbstractSpinBox::setAccelerated`,
+    /// which Qt offers only as an on/off with no reachable curve.
+    #[test]
+    fn accelerating_cadence_ramps_down_to_its_floor() {
+        let r = AutoRepeat::new(0.3, 0.100).accelerating(0.5, 0.020);
+        assert!((r.interval_after(0) - 0.100).abs() < 1e-6);
+        assert!((r.interval_after(1) - 0.050).abs() < 1e-6);
+        assert!((r.interval_after(2) - 0.025).abs() < 1e-6);
+        assert!(
+            (r.interval_after(3) - 0.020).abs() < 1e-6,
+            "0.0125 would undercut the floor, so the floor answers",
+        );
+        assert!(
+            (r.interval_after(u32::MAX) - 0.020).abs() < 1e-6,
+            "and it still answers once `powi` has saturated to zero",
+        );
+    }
+
+    /// Every interval any declaration can produce stays at or above the
+    /// floor. This is what bounds the router's per-frame catch-up loop:
+    /// were it reachable-zero, one large `scene/tick` would spin forever.
+    #[test]
+    fn no_declaration_can_produce_a_zero_interval() {
+        for (interval, accel, floor) in [
+            (0.0_f32, 1.0_f32, 0.0_f32),
+            (-5.0, 1.0, -5.0),
+            (f32::NAN, 1.0, f32::NAN),
+            (f32::INFINITY, f32::NAN, 0.0),
+            (0.1, 0.0, 0.0),
+            (0.1, -1.0, 0.0),
+        ] {
+            let r = AutoRepeat::new(0.1, interval).accelerating(accel, floor);
+            for n in [0_u32, 1, 50] {
+                let i = r.interval_after(n);
+                assert!(
+                    i >= AutoRepeat::MIN_INTERVAL_FLOOR_SECS,
+                    "interval_after({n}) = {i} for ({interval}, {accel}, {floor})",
+                );
+            }
+        }
+    }
+
+    /// `accel > 1.0` would decelerate without bound. It is refused (pinned
+    /// to `1.0`) rather than admitted, because a slower cadence is already
+    /// spellable as a longer `interval_secs` — admitting both would be two
+    /// spellings of one cadence, and the published `accel` would stop
+    /// meaning "at or faster than `interval_secs`".
+    #[test]
+    fn deceleration_is_not_a_second_spelling_of_a_slow_cadence() {
+        let r = AutoRepeat::new(0.3, 0.1).accelerating(4.0, 0.1);
+        assert!((r.accel() - 1.0).abs() < 1e-6);
+        assert!((r.interval_after(3) - 0.1).abs() < 1e-6, "no growth");
+    }
+
+    /// A malformed delay saturates at `0.0` rather than poisoning the
+    /// schedule — the first repeat then lands immediately, which is a
+    /// legible cadence, where a `NaN` threshold would compare false
+    /// forever and silently disable the repeat.
+    #[test]
+    fn malformed_delay_saturates_instead_of_disabling() {
+        assert!((AutoRepeat::new(-1.0, 0.1).delay_secs() - 0.0).abs() < 1e-6);
+        assert!((AutoRepeat::new(f32::NAN, 0.1).delay_secs() - 0.0).abs() < 1e-6);
+        assert!(AutoRepeat::new(f32::NAN, 0.1).delay_secs().is_finite());
+    }
+
+    /// The published schedule is the schedule the router walks: the first
+    /// repeat lands at the delay, and each later one adds the interval
+    /// that followed its predecessor.
+    #[test]
+    fn published_schedule_matches_the_stepped_one() {
+        let r = AutoRepeat::new(0.3, 0.100).accelerating(0.5, 0.020);
+        assert!((r.elapsed_at_fire(1) - 0.300).abs() < 1e-6);
+        assert!((r.elapsed_at_fire(2) - 0.400).abs() < 1e-6);
+        assert!((r.elapsed_at_fire(3) - 0.450).abs() < 1e-6);
+        // Replay the router's own stepping and land on the same instant.
+        let mut t = r.delay_secs();
+        for k in 0..2 {
+            t += r.interval_after(k);
+        }
+        assert!((t - r.elapsed_at_fire(3)).abs() < 1e-6);
+    }
+
+    /// A floor above the declared interval is clamped down to it, so
+    /// `min_interval_secs <= interval_secs` always holds and the ramp is
+    /// never inverted (a floor ABOVE the start would make fire 0 the
+    /// fastest and every later one slower — deceleration by the back door).
+    #[test]
+    fn floor_cannot_exceed_the_interval_it_floors() {
+        let r = AutoRepeat::new(0.3, 0.05).accelerating(0.5, 0.5);
+        assert!(r.min_interval_secs() <= r.interval_secs());
+        assert!((r.interval_after(0) - 0.05).abs() < 1e-6);
+    }
 
     #[test]
     fn r885_held_names_enumerates_canonical_spellings() {

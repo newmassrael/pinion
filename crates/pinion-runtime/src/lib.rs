@@ -64,8 +64,8 @@ pub use frame_timing::{
 #[cfg(feature = "vello")]
 pub use image_cache::{MEMORY_SCHEME, MemoryImageStore, resolve_image_store, use_image_store};
 pub use input::{
-    CrossWindowDrop, InputRouter, Modifiers, PanRelease, PointerId, Touch, TouchPhase,
-    rect_for_tag, resolve_cross_window_drop,
+    AutoRepeatHold, CrossWindowDrop, InputRouter, Modifiers, PanRelease, PointerId, Touch,
+    TouchPhase, rect_for_tag, resolve_cross_window_drop,
 };
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use introspection_paint::IntrospectionPaint;

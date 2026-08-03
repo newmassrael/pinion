@@ -1453,6 +1453,59 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R1549 §5.35 §5.38 — press-and-hold **auto-repeat** declaration: the
+    /// cadence at which a press the user keeps holding re-activates this
+    /// widget, or `None` (default) for a widget that fires once per press.
+    /// Qt `QAbstractButton::setAutoRepeat` /
+    /// `QAbstractSpinBox::setAccelerated`, asked of the widget rather than
+    /// configured on it.
+    ///
+    /// # It is asked, not stored — and that is what makes a runaway repeat
+    /// unrepresentable
+    ///
+    /// The router re-asks on **every** frame of a hold, so this is a
+    /// *level* read of the widget's own state, never an edge the router
+    /// latched at press time. A widget answers `Some` only while it is
+    /// genuinely held:
+    ///
+    /// ```ignore
+    /// fn auto_repeat(&self) -> Option<AutoRepeat> {
+    ///     (self.inc.state() == ButtonState::Pressed).then(AutoRepeat::desktop)
+    /// }
+    /// ```
+    ///
+    /// so a press that slid off the target (its statechart already left
+    /// `Pressed` on `PointerLeave`), a widget that disabled itself
+    /// mid-hold, or one whose value hit its bound all stop repeating with
+    /// no un-arming code anywhere. Qt keeps a `QBasicTimer` that a missed
+    /// release / hide / disable path can leave running — the classic
+    /// runaway-spinbox bug class — because *arming* and *being pressed*
+    /// are two facts there that have to be kept in agreement.
+    ///
+    /// A `None` answer mid-hold also **resets** the router's ramp, so
+    /// sliding off a button and back on restarts from the delay rather
+    /// than resuming at speed (Qt's `mouseMoveEvent` does the same).
+    ///
+    /// # Which sub-region
+    ///
+    /// Composite widgets answer for the sub-region they recorded as
+    /// pressed: `PointerDown` reached the widget before the router can
+    /// ask, exactly as [`begin_drag`](Self::begin_drag) relies on. The
+    /// widget is therefore the authority on its own sub-regions, and the
+    /// router never needs to parse a composite tag to decide a cadence.
+    ///
+    /// # What a repeat actually does
+    ///
+    /// The router re-dispatches the widget's own activation arc
+    /// (`PointerUp` then `PointerDown`) — Qt's `released(); clicked();
+    /// pressed();` in statechart vocabulary. There is no separate
+    /// "repeat" event, so a repeat cannot mean anything different from a
+    /// click, and no widget has to grow an SCXML transition to be
+    /// repeatable.
+    fn auto_repeat(&self) -> Option<crate::input::AutoRepeat> {
+        None
+    }
+
     /// R880 §5.35 §5.49 — opt-in for the **bare** (non-composite) send wire
     /// to carry the R781 held-modifier token. When `true`, a background
     /// dispatch with a non-empty modifier state reaches `invoke("send", ...)`

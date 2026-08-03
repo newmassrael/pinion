@@ -79892,6 +79892,64 @@
         "adoption is four bindings: hello-data-grid and the other grids that drive view_virtual_grid_body directly would each compose the band themselves"
       ]
     },
+    "Round 1549": {
+      "decision_summary": "A held press repeats — the press-and-hold auto-repeat Qt has had since Qt 1 (`QAbstractButton::setAutoRepeat`, `QAbstractSpinBox` arrows on by default) and pinion had nowhere: censused, the single `auto_repeat` hit in the tree was keyboard-repeat SUPPRESSION (R1071), so holding a spin arrow stepped exactly once however long it was held. A widget DECLARES a cadence and the router supplies the clock; a fire re-dispatches the widget's own PointerUp+PointerDown arc, so a repeat is a click by the same derivation and no widget needed a new SCXML transition to become repeatable. Past Qt 6.11 in three ways, all read over the wire: (1) the hold is DRIVABLE AS DATA — Qt's is a QBasicTimer on the event loop, so a test sleeps and no client can express \"hold this for 900 ms\"; here it rides the same clock `scene/tick` drives, and the demo asserts exact fire counts with no tolerance; (2) the RUN IS PUBLISHED — `scene/auto_repeat` answers target, repeating, cadence, fires so far and seconds to the next, where Qt's only public fact is a static per-widget property and the run itself lives in a private timer observable only through its side effects; the census is PREDICTIVE, and the demo ticks exactly `next_fire_in_secs` then asserts the repeat landed; (3) a HELD ARROW AT ITS BOUND STOPS — `QAbstractSpinBox` keeps its 10 Hz timer running against a value pinned at `maximum()` for as long as the user holds, here the widget answers None, which also releases the frame loop. And the structural claim: armed-ness is re-ASKED of the widget every frame rather than stored, and the run lives IN the R876 press record, created and destroyed by the two statements that already opened and closed a press — so Qt's runaway-timer bug class (a missed release / hide / disable leaving the timer firing) has nowhere to live.",
+      "changes_bullets": [
+        "`AutoRepeat` (pinion-core §5.35): delay + interval + a closed-form accel ramp with a floor; Qt AUTO_REPEAT_DELAY/INTERVAL as the defaults, `QAbstractSpinBox::setAccelerated` as a curve rather than a bool. Every constructor clamps so no declaration can produce a zero interval, which is what bounds the router's catch-up loop",
+        "`External::auto_repeat() -> Option<AutoRepeat>` (§5.15/§5.38): the widget is ASKED every frame, so armed-ness is read off its own statechart and never stored. Consumers: `ButtonExternal` (opt-in, `QPushButton` default off), `SpinButtonExternal` and `PaginationExternal` (on by default, as Qt's spin arrows are)",
+        "`InputRouter::tick_auto_repeat` (§5.35): the run lives IN the R876 press record (`DragLatch` widened to `PressRecord`), created by `pointer_down` and removed by `pointer_up`, so a repeat outliving its press is unrepresentable. A fire re-dispatches the widget's own `PointerUp`+`PointerDown` arc, so a repeat IS a click by the same derivation",
+        "Clock: the paint's wall-clock delta (frozen while `set_fps 0`) and `scene/tick`'s injected delta drive ONE driver through the same substep splitter. The router's armed answer feeds the shell's redraw gate — the `Tickable::is_at_rest` peer for a gesture outside the animation registry",
+        "`scene/auto_repeat` (§5.12/§5.7): every in-flight press as data — target, repeating, declared cadence, fires so far, seconds to the next. Total (no `*Unavailable`): \"nothing held\" is `{\"holds\": []}`"
+      ],
+      "verification_bullets": [
+        "pinion-core 2945 unit tests green, incl. 8 `AutoRepeat` cadence tests (Qt-constant pin, ramp-to-floor, no-zero-interval over 6 malformed declarations, deceleration refused, published-vs-stepped schedule agreement) and 14 widget declaration tests across button/spin/pagination",
+        "pinion-runtime 627 green, incl. 13 router tests driven end-to-end through a REAL `ButtonExternal`/`SpinButtonExternal` (nothing stubbed): exact delay-then-interval cadence, undeclared button never repeats over 10s held, release ends it with no un-arm path, one large tick == 63 small frames, frozen and NaN deltas fire nothing yet still report armed, a quiet answer rewinds the ramp, catch-up stops at the bound it reaches mid-tick",
+        "3 counterfactuals, one at a time, each verified to FAIL the suite: drop the per-fire re-ask (bound test fails), drop the ramp rewind (rewind test fails), re-derive the press target from the live hover (target-identity test fails). The third PASSED on first attempt and exposed a blind spot in the assertions, which is why `r1549_the_hold_names_the_target_the_press_landed_on` exists",
+        "`tools/demos/r1549_held_press_repeats.py`, 58 assertions over the live wire: exact fire counts with no tolerance, the census read as a PREDICTION (tick exactly `next_fire_in_secs`, assert the repeat landed), a held arrow at its bound reported `repeating: false` while still `Pressed`, a strayed press keeping its identity, one big tick == 44 sixtieths. Demo counterfactual (remove the injected clock arm) verified to FAIL",
+        "R1539's `rpc/schema` source-parse gate caught the two new response types before any commit and named them; pinion-rpc 1051 green after registering them"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.38",
+        "5.12",
+        "5.7",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "No round carry. Three axis-level gaps are recorded rather than carried, each with its reason",
+        "Keyboard auto-repeat on a focused widget (Qt `setAutoRepeat` also covers held Space/Enter) rides the OS `repeat` flag pinion already forwards; unifying it with this pointer cadence needs a policy decision about whose interval wins, the widget's or the user's OS setting, and that is a round of its own",
+        "An AT hears one value-change per repeat (10/s at the default cadence). Qt is identical, so this is a stated limit at parity, not a divergence; throttling is an a11y-axis question the tally has no axis for [[debt-a11y-invisible-to-tally]]",
+        "Scrollbar line/page arrows are the obvious fourth consumer and have no `Button` sub-regions to declare from — the widget has no arrow affordances at all, so that is catalog work, not seam work"
+      ],
+      "publishable_decision_summary": "A held press repeats — the press-and-hold auto-repeat Qt has had since Qt 1 (`QAbstractButton::setAutoRepeat`, `QAbstractSpinBox` arrows on by default) and pinion had nowhere: censused, the single `auto_repeat` hit in the tree was keyboard-repeat SUPPRESSION (R1071), so holding a spin arrow stepped exactly once however long it was held. A widget DECLARES a cadence and the router supplies the clock; a fire re-dispatches the widget's own PointerUp+PointerDown arc, so a repeat is a click by the same derivation and no widget needed a new SCXML transition to become repeatable. Past Qt 6.11 in three ways, all read over the wire: (1) the hold is DRIVABLE AS DATA — Qt's is a QBasicTimer on the event loop, so a test sleeps and no client can express \"hold this for 900 ms\"; here it rides the same clock `scene/tick` drives, and the demo asserts exact fire counts with no tolerance; (2) the RUN IS PUBLISHED — `scene/auto_repeat` answers target, repeating, cadence, fires so far and seconds to the next, where Qt's only public fact is a static per-widget property and the run itself lives in a private timer observable only through its side effects; the census is PREDICTIVE, and the demo ticks exactly `next_fire_in_secs` then asserts the repeat landed; (3) a HELD ARROW AT ITS BOUND STOPS — `QAbstractSpinBox` keeps its 10 Hz timer running against a value pinned at `maximum()` for as long as the user holds, here the widget answers None, which also releases the frame loop. And the structural claim: armed-ness is re-ASKED of the widget every frame rather than stored, and the run lives IN the R876 press record, created and destroyed by the two statements that already opened and closed a press — so Qt's runaway-timer bug class (a missed release / hide / disable leaving the timer firing) has nowhere to live.",
+      "publishable_changes_bullets": [
+        "`AutoRepeat` (pinion-core §5.35): delay + interval + a closed-form accel ramp with a floor; Qt AUTO_REPEAT_DELAY/INTERVAL as the defaults, `QAbstractSpinBox::setAccelerated` as a curve rather than a bool. Every constructor clamps so no declaration can produce a zero interval, which is what bounds the router's catch-up loop",
+        "`External::auto_repeat() -> Option<AutoRepeat>` (§5.15/§5.38): the widget is ASKED every frame, so armed-ness is read off its own statechart and never stored. Consumers: `ButtonExternal` (opt-in, `QPushButton` default off), `SpinButtonExternal` and `PaginationExternal` (on by default, as Qt's spin arrows are)",
+        "`InputRouter::tick_auto_repeat` (§5.35): the run lives IN the R876 press record (`DragLatch` widened to `PressRecord`), created by `pointer_down` and removed by `pointer_up`, so a repeat outliving its press is unrepresentable. A fire re-dispatches the widget's own `PointerUp`+`PointerDown` arc, so a repeat IS a click by the same derivation",
+        "Clock: the paint's wall-clock delta (frozen while `set_fps 0`) and `scene/tick`'s injected delta drive ONE driver through the same substep splitter. The router's armed answer feeds the shell's redraw gate — the `Tickable::is_at_rest` peer for a gesture outside the animation registry",
+        "`scene/auto_repeat` (§5.12/§5.7): every in-flight press as data — target, repeating, declared cadence, fires so far, seconds to the next. Total (no `*Unavailable`): \"nothing held\" is `{\"holds\": []}`"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2945 unit tests green, incl. 8 `AutoRepeat` cadence tests (Qt-constant pin, ramp-to-floor, no-zero-interval over 6 malformed declarations, deceleration refused, published-vs-stepped schedule agreement) and 14 widget declaration tests across button/spin/pagination",
+        "pinion-runtime 627 green, incl. 13 router tests driven end-to-end through a REAL `ButtonExternal`/`SpinButtonExternal` (nothing stubbed): exact delay-then-interval cadence, undeclared button never repeats over 10s held, release ends it with no un-arm path, one large tick == 63 small frames, frozen and NaN deltas fire nothing yet still report armed, a quiet answer rewinds the ramp, catch-up stops at the bound it reaches mid-tick",
+        "3 counterfactuals, one at a time, each verified to FAIL the suite: drop the per-fire re-ask (bound test fails), drop the ramp rewind (rewind test fails), re-derive the press target from the live hover (target-identity test fails). The third PASSED on first attempt and exposed a blind spot in the assertions, which is why `r1549_the_hold_names_the_target_the_press_landed_on` exists",
+        "`tools/demos/r1549_held_press_repeats.py`, 58 assertions over the live wire: exact fire counts with no tolerance, the census read as a PREDICTION (tick exactly `next_fire_in_secs`, assert the repeat landed), a held arrow at its bound reported `repeating: false` while still `Pressed`, a strayed press keeping its identity, one big tick == 44 sixtieths. Demo counterfactual (remove the injected clock arm) verified to FAIL",
+        "R1539's `rpc/schema` source-parse gate caught the two new response types before any commit and named them; pinion-rpc 1051 green after registering them"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.38",
+        "5.12",
+        "5.7",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "No round carry. Three axis-level gaps are recorded rather than carried, each with its reason",
+        "Keyboard auto-repeat on a focused widget (Qt `setAutoRepeat` also covers held Space/Enter) rides the OS `repeat` flag pinion already forwards; unifying it with this pointer cadence needs a policy decision about whose interval wins, the widget's or the user's OS setting, and that is a round of its own",
+        "An AT hears one value-change per repeat (10/s at the default cadence). Qt is identical, so this is a stated limit at parity, not a divergence; throttling is an a11y-axis question the tally has no axis for [[debt-a11y-invisible-to-tally]]",
+        "Scrollbar line/page arrows are the obvious fourth consumer and have no `Button` sub-regions to declare from — the widget has no arrow affordances at all, so that is catalog work, not seam work"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

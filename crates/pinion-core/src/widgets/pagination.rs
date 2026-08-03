@@ -31,6 +31,7 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
     ThreadOwnership,
 };
+use crate::input::AutoRepeat;
 use crate::intent::Intent;
 use crate::widgets::WidgetTransition;
 use crate::widgets::button::{Button, ButtonEvent, ButtonState};
@@ -45,6 +46,10 @@ pub struct PaginationExternal {
     prev: Button,
     next: Button,
     count: usize,
+    /// R1549 §5.35 — cadence a held chevron repeats at. Holding a pager
+    /// arrow walks pages the way holding a scrollbar arrow walks lines;
+    /// before this it walked exactly one.
+    repeat: AutoRepeat,
 }
 
 // `Button` wraps a non-`Debug` SCXML `Widget`, so derive is unavailable;
@@ -82,9 +87,26 @@ impl PaginationExternal {
             prev: Button::new(),
             next: Button::new(),
             count,
+            repeat: AutoRepeat::desktop(),
         };
         me.sync_enabled();
         me
+    }
+
+    /// R1549 §5.35 — override the held-chevron repeat cadence (defaults to
+    /// [`AutoRepeat::desktop`]). A pager over thousands of pages wants an
+    /// [`AutoRepeat::accelerating`] cadence; one over five wants a slower
+    /// fixed one.
+    #[must_use]
+    pub fn with_auto_repeat(mut self, repeat: AutoRepeat) -> Self {
+        self.repeat = repeat;
+        self
+    }
+
+    /// The declared held-chevron repeat cadence.
+    #[must_use]
+    pub const fn auto_repeat_policy(&self) -> AutoRepeat {
+        self.repeat
     }
 
     /// Total page count.
@@ -236,6 +258,18 @@ impl External for PaginationExternal {
         Some(self)
     }
 
+    /// R1549 §5.35 — a held chevron keeps paging, read off the two chevron
+    /// statecharts. The end-of-range gate is already expressed as
+    /// `Disabled` by the widget's own `sync_enabled`, and a `Disabled`
+    /// button is not `Pressed`, so reaching the last page stops it through
+    /// the state machine that was already there — no bound check is
+    /// restated here.
+    fn auto_repeat(&self) -> Option<AutoRepeat> {
+        let held = matches!(self.prev.state(), ButtonState::Pressed)
+            || matches!(self.next.state(), ButtonState::Pressed);
+        held.then_some(self.repeat)
+    }
+
     fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
         // Page-selection `"selected"` intents (including those a prev /
         // next step produces) flow through the inner group's emitter. The
@@ -364,6 +398,70 @@ mod tests {
         for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
             let _ = p.invoke("send", IntrospectValue::Text(format!("{which}:{ev}")));
         }
+    }
+
+    /// Hold a chevron: the arc stops at `PointerDown`.
+    fn hold_chevron(p: &mut PaginationExternal, which: &str) {
+        for ev in ["PointerEnter", "PointerDown"] {
+            let _ = p.invoke("send", IntrospectValue::Text(format!("{which}:{ev}")));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1549 §5.35 §5.38 — held-chevron auto-repeat declaration.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn idle_pager_declares_no_repeat() {
+        assert_eq!(PaginationExternal::new(5, 0).auto_repeat(), None);
+    }
+
+    #[test]
+    fn held_chevron_declares_the_desktop_cadence() {
+        let mut p = PaginationExternal::new(5, 2);
+        hold_chevron(&mut p, "next");
+        assert_eq!(p.next_state(), ButtonState::Pressed);
+        assert_eq!(p.auto_repeat(), Some(AutoRepeat::desktop()));
+    }
+
+    /// The end-of-range stop costs no new code: `sync_enabled` already
+    /// spells it `Disabled`, and a `Disabled` chevron is not `Pressed`.
+    /// Holding the disabled end therefore declares nothing without any
+    /// bound arithmetic in `auto_repeat`.
+    #[test]
+    fn disabled_chevron_at_the_end_declares_nothing() {
+        let mut p = PaginationExternal::new(5, 0);
+        assert_eq!(p.prev_state(), ButtonState::Disabled, "first page");
+        hold_chevron(&mut p, "prev");
+        assert_eq!(p.auto_repeat(), None);
+    }
+
+    /// Walking a held chevron INTO the last page goes quiet at exactly
+    /// that page — the router's catch-up loop re-asks per fire, so this is
+    /// the property that stops a long `scene/tick` from paging past the end.
+    #[test]
+    fn held_chevron_goes_quiet_on_reaching_the_last_page() {
+        let mut p = PaginationExternal::new(4, 1);
+        hold_chevron(&mut p, "next");
+        let mut fires = 0;
+        while p.auto_repeat().is_some() {
+            fires += 1;
+            for ev in ["PointerUp", "PointerDown"] {
+                let _ = p.invoke("send", IntrospectValue::Text(format!("next:{ev}")));
+            }
+            assert!(fires < 10, "must terminate at the last page");
+        }
+        assert_eq!(fires, 2, "page 1 -> 2 -> 3 (last of 4), then quiet");
+        assert_eq!(p.current(), 3);
+    }
+
+    #[test]
+    fn cadence_is_declarable_per_pager() {
+        let slow = AutoRepeat::new(0.6, 0.4);
+        let mut p = PaginationExternal::new(5, 2).with_auto_repeat(slow);
+        assert_eq!(p.auto_repeat_policy(), slow);
+        hold_chevron(&mut p, "next");
+        assert_eq!(p.auto_repeat(), Some(slow));
     }
 
     #[test]

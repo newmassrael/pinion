@@ -12,6 +12,7 @@
 pub mod access;
 pub mod animate_control;
 pub mod animation_state;
+pub mod auto_repeat;
 pub mod cache_stats;
 pub mod caret_state;
 pub mod commands;
@@ -61,6 +62,7 @@ pub use animate_control::{
     AnimateControlError, AnimateControlOutcome, animate_cancel, animate_settle,
 };
 pub use animation_state::{AnimationStateError, AnimationStateOutcome, animation_state};
+pub use auto_repeat::{AutoRepeatHoldOutcome, AutoRepeatOutcome, auto_repeat};
 pub use cache_stats::{CacheStatsError, CacheStatsOutcome, CacheStatsRect, cache_stats};
 pub use caret_state::{CaretStateError, CaretStateOutcome, caret_state};
 pub use commands::{

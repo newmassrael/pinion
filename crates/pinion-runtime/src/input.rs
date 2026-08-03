@@ -124,7 +124,7 @@ const DOUBLE_CLICK_DIST_PX: f64 = 5.0;
 /// constant itself to `pinion-core::input` (the contract crate): a
 /// capture-path External judging its own click-vs-drag (the node graph)
 /// measures against the same value ([[helper-crate-home-ssot-axis]]).
-use pinion_core::DragLatch;
+use pinion_core::{AutoRepeat, DragLatch};
 
 /// R51.38 §5.35 — pointer identity used by every [`InputRouter`]
 /// input method to route per-pointer cursor / hover / capture state.
@@ -138,7 +138,12 @@ use pinion_core::DragLatch;
 /// allocation; `Debug` for diagnostic logging. The internal `u64`
 /// width matches winit's `FingerId` to avoid lossy narrowing when
 /// shells eventually wire touch events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// R1549 — `Ord` as well, so a census over the per-pointer routing tables
+/// (`scene/auto_repeat`'s in-flight holds) reads back in a stable order
+/// rather than `HashMap` iteration order. The mouse (`PointerId(0)`)
+/// sorts first, then touches in the order the platform numbered them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PointerId(u64);
 
 impl PointerId {
@@ -404,7 +409,13 @@ pub struct InputRouter {
     /// seed a `DoubleClick`). Covers every press flavour — capture
     /// (slider / scrub), `begin_drag` `DnD`, and plain free-mode — so no
     /// gesture path re-derives the determination ([[drag-release-trailing-pointerup-suppress]]).
-    press_gestures: HashMap<PointerId, DragLatch>,
+    ///
+    /// R1549 §5.35 §5.38 — the entry widened from a bare [`DragLatch`] to
+    /// a [`PressRecord`], because a *hold* is the same fact as a press:
+    /// the press-and-hold auto-repeat run is created and destroyed by the
+    /// two statements that already opened and closed this entry, so a
+    /// repeat cannot outlive its press.
+    press_gestures: HashMap<PointerId, PressRecord>,
     /// R881 §5.35 §5.49 — per-pointer in-flight pan-class gesture.
     /// Opened by [`middle_down`](Self::middle_down) (the middle-button
     /// chord) or [`left_pan_down`](Self::left_pan_down) (R882 — the
@@ -497,6 +508,109 @@ pub struct InputRouter {
 struct RawGrab {
     tag: String,
     buttons: PointerButtons,
+}
+
+/// R1549 §5.35 §5.38 — everything one in-flight press knows about itself:
+/// the R876 click-vs-drag latch it always carried, the target it landed
+/// on, and the press-and-hold auto-repeat run.
+///
+/// # Why the hold lives *in* the press record
+///
+/// A repeat that outlives its press is the classic runaway-button bug —
+/// Qt's `QAbstractButton` keeps a `QBasicTimer` beside `isDown`, so a
+/// missed release / hide / disable path leaves it firing. Here there is
+/// no separate place for a run to live: the record is created by
+/// [`InputRouter::pointer_down`] and removed by
+/// [`InputRouter::pointer_up`], the exact two statements that already
+/// existed, so "repeating while nothing is pressed" is not a state the
+/// router can represent.
+///
+/// The *cadence* is not stored at all — it is re-asked of the widget
+/// every frame through
+/// [`External::auto_repeat`](pinion_core::external::External::auto_repeat).
+/// So the two facts Qt has to keep in agreement (armed, and down) are one
+/// fact here, and it is the widget's own statechart.
+#[derive(Debug)]
+struct PressRecord {
+    /// R876 §5.49 §5.51 — the press-to-drag determination, unchanged.
+    latch: DragLatch,
+    /// The (possibly composite) paint tag this press landed on. Recorded
+    /// rather than re-derived from `hover_targets` / `captured_targets` at
+    /// use time: the press's target is its own fact, and the hover can
+    /// have moved on ([[drag-latch-router-owns-not-re-derive]]).
+    target: String,
+    /// Seconds this press has been held *while armed*. Published; also
+    /// the honest denominator for "how long before it started repeating".
+    held_secs: f32,
+    /// Seconds since the last repeat fired (or since the press opened,
+    /// while `fires == 0` and the delay is still running).
+    since_last_fire: f32,
+    /// Repeats fired so far. `0` for an ordinary click.
+    fires: u32,
+}
+
+impl PressRecord {
+    /// Open a record for a press at `origin` on `target`.
+    fn new(origin: (f64, f64), target: String) -> Self {
+        Self {
+            latch: DragLatch::new(origin),
+            target,
+            held_secs: 0.0,
+            since_last_fire: 0.0,
+            fires: 0,
+        }
+    }
+
+    /// The widget answered "not repeating" — rewind the ramp so a press
+    /// that strays off its target and comes back restarts from the delay
+    /// instead of resuming at speed (Qt's `mouseMoveEvent` does the same).
+    /// The press itself is untouched: this is not a release.
+    fn disarm(&mut self) {
+        self.held_secs = 0.0;
+        self.since_last_fire = 0.0;
+        self.fires = 0;
+    }
+
+    /// Seconds that must accrue before the NEXT repeat fires: the delay
+    /// while no repeat has fired yet, then the ramped interval that
+    /// follows the last one.
+    fn next_threshold(&self, policy: AutoRepeat) -> f32 {
+        if self.fires == 0 {
+            policy.delay_secs()
+        } else {
+            policy.interval_after(self.fires - 1)
+        }
+    }
+}
+
+/// R1549 §5.35 §5.12 — one in-flight press as published data: what a
+/// `scene/auto_repeat` reader sees.
+///
+/// Qt has no peer. `QAbstractButton::autoRepeat()` answers a *static*
+/// property of one widget you already have a pointer to; the in-flight
+/// run — is it repeating right now, how many times has it fired, when
+/// does the next one land — lives in a private `QBasicTimer` and is
+/// observable only through its side effects. An agent driving a pinion
+/// app reads the run itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutoRepeatHold {
+    /// The pointer holding this press.
+    pub pointer: PointerId,
+    /// The (possibly composite) paint tag under the press.
+    pub target: String,
+    /// Whether the target declares a repeat cadence *right now*. `false`
+    /// is a real answer, not an absence: a press on a non-repeating
+    /// widget, on a spin arrow already at its bound, or on a button that
+    /// disabled itself mid-hold all report a hold that is not repeating.
+    pub repeating: bool,
+    /// Seconds held while armed (`0.0` when not repeating).
+    pub held_secs: f32,
+    /// Repeats fired so far during this press.
+    pub fires: u32,
+    /// Declared cadence, when the target is repeating.
+    pub policy: Option<AutoRepeat>,
+    /// Seconds until the next repeat fires, when the target is repeating.
+    pub next_fire_in_secs: Option<f32>,
 }
 
 /// R1422 §5.35 — one button's last-press mark on the RAW stream, the state the
@@ -945,7 +1059,7 @@ impl InputRouter {
     /// consume — see [`press_became_drag`](Self::press_became_drag).
     fn track_press_drag(&mut self, id: PointerId, x: f64, y: f64) {
         if let Some(gesture) = self.press_gestures.get_mut(&id) {
-            gesture.advance((x, y));
+            gesture.latch.advance((x, y));
         }
     }
 
@@ -955,7 +1069,9 @@ impl InputRouter {
     /// query: a moved drag must neither activate its source on release (R794)
     /// nor seed a `DoubleClick` (R875).
     fn press_became_drag(&self, id: PointerId) -> bool {
-        self.press_gestures.get(&id).is_some_and(DragLatch::live)
+        self.press_gestures
+            .get(&id)
+            .is_some_and(|press| press.latch.live())
     }
 
     /// winit `CursorMoved` handler. Stores the new cursor position
@@ -1428,8 +1544,16 @@ impl InputRouter {
             // drag once it strays, and `pointer_up` closes it. One record per
             // pointer feeds both the trailing-click suppression and the
             // double-click detector.
+            // R1549 — the record also opens the press-and-hold auto-repeat
+            // run and remembers the target it landed on. Gated on a known
+            // cursor exactly as before: `hover_targets[id]` is only ever
+            // populated by a `cursor_moved` that also seeded `cursors[id]`,
+            // so the gate is satisfied on every real path, and defaulting
+            // the origin instead would make the very first move latch a
+            // drag against a phantom `(0, 0)`.
             if let Some(&origin) = self.cursors.get(&id) {
-                self.press_gestures.insert(id, DragLatch::new(origin));
+                self.press_gestures
+                    .insert(id, PressRecord::new(origin, tag.clone()));
             }
             // R51.40 §5.35 — read the cached wants_capture bit
             // populated by the matching `refresh_hover` instead of
@@ -1503,6 +1627,150 @@ impl InputRouter {
                 self.last_press.insert(id, (now, cx, cy, tag));
             }
         }
+    }
+
+    /// R1549 §5.35 §5.38 — advance every in-flight press's **auto-repeat**
+    /// by `dt` seconds and fire whatever repeats that crosses. Returns
+    /// whether any hold is currently *armed* — the backend's "keep
+    /// painting" cue, the [`Tickable::is_at_rest`] peer for a gesture that
+    /// lives in the router rather than the owner's animation registry.
+    ///
+    /// [`Tickable::is_at_rest`]: pinion_core::animation::Tickable::is_at_rest
+    ///
+    /// # The clock is the frame, not a wall-clock timer
+    ///
+    /// Qt's auto-repeat is a `QBasicTimer` on the event loop: a test has
+    /// to sleep, and there is no way to *express* "hold this for 900 ms"
+    /// to a running application. This rides the same `dt` the paint cycle
+    /// and the `scene/tick` RPC already supply, so a hold is reproducible
+    /// to the fire — which is also what keeps the §2 #3 `dry_run`
+    /// determinism invariant intact (a wall-clock timer inside input
+    /// routing would have broken it).
+    ///
+    /// # Boundaries
+    ///
+    /// The guarantee is *one fire per threshold crossed*, accumulated in
+    /// `f32`. A `dt` landing exactly ON a fire instant may or may not
+    /// include that fire, because the running remainder is a float
+    /// subtraction — the same latitude every float clock has, and orders
+    /// of magnitude tighter than Qt's millisecond `QBasicTimer` under
+    /// event-loop jitter. Callers who need an exact count should tick past
+    /// the instant, not onto it; `AutoRepeatHold::next_fire_in_secs`
+    /// publishes exactly how far that is.
+    ///
+    /// # Each fire re-asks
+    ///
+    /// The widget is consulted before the accumulation *and* before every
+    /// individual fire, so a large `dt` that crosses several thresholds
+    /// stops exactly where the widget stops answering — a spin arrow that
+    /// reaches its bound mid-catch-up does not overshoot. A `None` answer
+    /// rewinds the ramp (`PressRecord::disarm`) without ending the
+    /// press.
+    ///
+    /// # A fire is the widget's own activation
+    ///
+    /// `PointerUp` then `PointerDown` — Qt's `released(); clicked();
+    /// pressed();` in statechart vocabulary. No repeat-specific event
+    /// exists, so a repeat cannot come to mean something a click does
+    /// not, and no widget needs an SCXML transition to become repeatable.
+    /// Net interaction state is unchanged (`Pressed` before and after).
+    pub fn tick_auto_repeat(&mut self, dt: f32, state_scene: &mut Scene) -> bool {
+        if !dt.is_finite() || dt <= 0.0 {
+            // A frozen clock still reports whether a hold is armed, so a
+            // `scene/tick 0` does not read as "the hold ended".
+            return self.any_auto_repeat_armed(state_scene);
+        }
+        let mut armed_any = false;
+        let ids: Vec<PointerId> = self.press_gestures.keys().copied().collect();
+        for id in ids {
+            let Some(target) = self
+                .press_gestures
+                .get(&id)
+                .map(|press| press.target.clone())
+            else {
+                continue;
+            };
+            // `target` is cloned out because the fire below needs
+            // `&mut state_scene` while the record is borrowed for the
+            // accumulate; the QUERY itself is a shared read.
+            if widget_auto_repeat(state_scene, &target).is_none() {
+                if let Some(press) = self.press_gestures.get_mut(&id) {
+                    press.disarm();
+                }
+                continue;
+            }
+            if let Some(press) = self.press_gestures.get_mut(&id) {
+                press.held_secs += dt;
+                press.since_last_fire += dt;
+            }
+            // Catch-up loop: re-ask, then fire, for as long as the accrued
+            // time keeps crossing thresholds. `AutoRepeat` floors every
+            // interval at `MIN_INTERVAL_FLOOR_SECS`, so the loop is bounded
+            // by `dt / floor` for any declaration.
+            //
+            // The loop's exit reason IS the armed answer, which is why it
+            // is captured here rather than set before the loop: a hold that
+            // ran out of range mid-catch-up (a spin arrow reaching its
+            // bound on a large `scene/tick`) is no longer armed by the time
+            // this frame ends, and reporting the pre-loop answer would ask
+            // the backend for a frame that has nothing left to do.
+            loop {
+                let Some(policy) = widget_auto_repeat(state_scene, &target) else {
+                    break;
+                };
+                let Some(press) = self.press_gestures.get_mut(&id) else {
+                    break;
+                };
+                let threshold = press.next_threshold(policy);
+                if press.since_last_fire < threshold {
+                    armed_any = true;
+                    break;
+                }
+                press.since_last_fire -= threshold;
+                press.fires += 1;
+                dispatch_send(state_scene, &target, PointerWireEvent::Up.as_wire_name());
+                dispatch_send(state_scene, &target, PointerWireEvent::Down.as_wire_name());
+            }
+        }
+        armed_any
+    }
+
+    /// R1549 §5.35 — whether any in-flight press is on a target that
+    /// declares a repeat cadence right now. The read-only half of
+    /// [`Self::tick_auto_repeat`], used when the clock did not advance.
+    fn any_auto_repeat_armed(&self, state_scene: &Scene) -> bool {
+        self.press_gestures
+            .values()
+            .any(|press| widget_auto_repeat(state_scene, &press.target).is_some())
+    }
+
+    /// R1549 §5.35 §5.12 — every in-flight press as published data, for
+    /// the `scene/auto_repeat` introspection method. Ordered by pointer so
+    /// two simultaneous touch-holds read back deterministically.
+    ///
+    /// A press on a widget that does not repeat is still reported (with
+    /// `repeating: false`): "this press is held and nothing will come of
+    /// it" is the answer an agent needs, and omitting it would make a
+    /// non-repeating hold indistinguishable from no hold at all.
+    pub fn auto_repeat_holds(&self, state_scene: &Scene) -> Vec<AutoRepeatHold> {
+        let mut ids: Vec<PointerId> = self.press_gestures.keys().copied().collect();
+        ids.sort_unstable();
+        ids.into_iter()
+            .filter_map(|pointer| {
+                let press = self.press_gestures.get(&pointer)?;
+                let policy = widget_auto_repeat(state_scene, &press.target);
+                Some(AutoRepeatHold {
+                    pointer,
+                    target: press.target.clone(),
+                    repeating: policy.is_some(),
+                    held_secs: press.held_secs,
+                    fires: press.fires,
+                    policy,
+                    next_fire_in_secs: policy
+                        .map(|p| (press.next_threshold(p) - press.since_last_fire).max(0.0)),
+                })
+            })
+            .collect()
     }
 
     /// winit `MouseInput` (or touch-up) release handler for `id`.
@@ -2982,6 +3250,25 @@ fn resolve_drop_target_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String
 /// — `None` (no session) for a non-DnD widget or an out-of-sync tag.
 /// Called right after the matching `PointerDown` dispatch, so the widget
 /// has already recorded which sub-region was pressed.
+/// (R1549 §5.35 §5.38) Ask the widget under `target_tag` for its
+/// press-and-hold repeat cadence
+/// ([`External::auto_repeat`](pinion_core::external::External::auto_repeat)).
+/// Resolves the `ExternalNode` from the PRIMARY half of the (possibly
+/// composite) tag exactly like [`widget_begin_drag`] — the widget already
+/// recorded which sub-region the press reached, so it answers for that
+/// sub-region and the router never parses a composite tag to decide a
+/// cadence.
+///
+/// An unresolvable tag answers `None` (no repeat), which is also the
+/// safe direction: a target that left the scene mid-hold stops repeating.
+fn widget_auto_repeat(state_scene: &Scene, target_tag: &str) -> Option<AutoRepeat> {
+    let (primary, _) = split_subindex(target_tag);
+    state_scene
+        .find_external_with_tag(primary)?
+        .handle
+        .auto_repeat()
+}
+
 fn widget_begin_drag(state_scene: &mut Scene, target_tag: &str) -> Option<DragPayload> {
     let (primary, _) = split_subindex(target_tag);
     state_scene
@@ -4779,6 +5066,426 @@ mod tests {
         // Cursor off the divider (over a bare panel region) → no hint.
         router.cursor_moved(PointerId::MOUSE, 40.0, 50.0, &mut state);
         assert_eq!(router.cursor_hint(PointerId::MOUSE), None);
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // R1549 §5.35 §5.38 — press-and-hold auto-repeat.
+    //
+    // Driven end-to-end through a REAL `ButtonExternal`: its own SCXML
+    // decides whether it is `Pressed`, its own `auto_repeat()` answers the
+    // cadence, and the fires are counted from the `"click"` intents its
+    // own `WidgetTransition::detect` produces. Nothing here stubs the
+    // property under test — a repeat is a click by the same derivation a
+    // finger's click is.
+    // ═════════════════════════════════════════════════════════════
+
+    /// State scene holding one real [`ButtonExternal`] tagged `main_btn`,
+    /// optionally declaring a repeat cadence.
+    fn state_with_real_button(repeat: Option<pinion_core::AutoRepeat>) -> Scene {
+        let mut btn = pinion_core::widgets::button::ButtonExternal::new();
+        if let Some(r) = repeat {
+            btn = btn.with_auto_repeat(r);
+        }
+        Scene::External(ExternalNode::new(Box::new(btn)).with_tag("main_btn"))
+    }
+
+    /// Drain and count the `"click"` intents the button has buffered — one
+    /// per activation, whether a finger or the repeat driver caused it.
+    fn drain_clicks(state: &mut Scene) -> usize {
+        let Scene::External(node) = state else {
+            return 0;
+        };
+        let mut n = 0;
+        node.handle.drain_intents(&mut |intent| {
+            if intent.tag_str() == "click" {
+                n += 1;
+            }
+        });
+        n
+    }
+
+    /// Press and hold `main_btn`, leaving the press in flight.
+    fn press_and_hold(router: &mut InputRouter, state: &mut Scene) {
+        router.update_paint_scene(
+            paint_with_button(200, 200, Rect::new(80, 80, 40, 40)),
+            state,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, state);
+        router.pointer_down(PointerId::MOUSE, state);
+    }
+
+    /// The behaviour the round exists to add, and the exact cadence: the
+    /// delay must elapse before the first repeat, then one per interval.
+    #[test]
+    fn r1549_held_button_repeats_after_the_delay_then_per_interval() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.30, 0.10)));
+        press_and_hold(&mut router, &mut state);
+        assert_eq!(drain_clicks(&mut state), 0, "a press is not yet a click");
+
+        // Just short of the delay: nothing.
+        assert!(router.tick_auto_repeat(0.29, &mut state), "armed");
+        assert_eq!(drain_clicks(&mut state), 0, "0.29 < 0.30 delay");
+        // Crossing it: exactly one.
+        router.tick_auto_repeat(0.02, &mut state);
+        assert_eq!(drain_clicks(&mut state), 1, "the delay elapsed");
+        // Then one per interval, and no more.
+        router.tick_auto_repeat(0.09, &mut state);
+        assert_eq!(drain_clicks(&mut state), 0, "0.01 + 0.09 < 0.10");
+        router.tick_auto_repeat(0.02, &mut state);
+        assert_eq!(drain_clicks(&mut state), 1);
+    }
+
+    /// The pre-R1549 behaviour, still the default: a plain button held
+    /// forever activates once, on release.
+    #[test]
+    fn r1549_undeclared_button_never_repeats_however_long_it_is_held() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(None);
+        press_and_hold(&mut router, &mut state);
+        for _ in 0..100 {
+            assert!(
+                !router.tick_auto_repeat(0.1, &mut state),
+                "an undeclared target arms nothing",
+            );
+        }
+        assert_eq!(drain_clicks(&mut state), 0, "ten seconds, zero repeats");
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(drain_clicks(&mut state), 1, "one press, one click");
+    }
+
+    /// THE structural claim: a repeat cannot outlive its press. The
+    /// release removes the press record, and the record is the only place
+    /// a run can live — so this needs no un-arming code to be true, and no
+    /// amount of ticking resurrects it.
+    #[test]
+    fn r1549_release_ends_the_repeat_with_no_unarm_path() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.10, 0.05)));
+        press_and_hold(&mut router, &mut state);
+        router.tick_auto_repeat(0.20, &mut state);
+        assert!(drain_clicks(&mut state) >= 1, "it was repeating");
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let _ = drain_clicks(&mut state); // the release's own activation
+        for _ in 0..50 {
+            assert!(
+                !router.tick_auto_repeat(0.1, &mut state),
+                "nothing is held, so nothing is armed",
+            );
+        }
+        assert_eq!(drain_clicks(&mut state), 0, "five seconds after release");
+    }
+
+    /// A large `dt` — an agent's `scene/tick 1.0` — crosses many
+    /// thresholds and fires each of them, so injected time reproduces
+    /// wall-clock time exactly rather than costing one fire per frame.
+    #[test]
+    fn r1549_one_large_tick_fires_every_threshold_it_crosses() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.30, 0.10)));
+        press_and_hold(&mut router, &mut state);
+        // 1.05s: fires at 0.30 then every 0.10 through 1.00 = 8, with
+        // 0.05 to spare. Deliberately NOT a span that lands exactly on a
+        // fire instant — see `tick_auto_repeat`'s note on boundaries.
+        router.tick_auto_repeat(1.05, &mut state);
+        assert_eq!(drain_clicks(&mut state), 8, "1 delay + 7 intervals");
+    }
+
+    /// Sixty small frames and one big tick over the same span fire the
+    /// same number of times — the property that makes a hold reproducible
+    /// without a wall clock, and the one Qt's `QBasicTimer` cannot offer.
+    #[test]
+    fn r1549_many_small_frames_equal_one_large_tick() {
+        let policy = pinion_core::AutoRepeat::new(0.30, 0.10);
+        let mut a = InputRouter::new();
+        let mut sa = state_with_real_button(Some(policy));
+        press_and_hold(&mut a, &mut sa);
+        a.tick_auto_repeat(63.0 / 60.0, &mut sa);
+        let one_big = drain_clicks(&mut sa);
+
+        let mut b = InputRouter::new();
+        let mut sb = state_with_real_button(Some(policy));
+        press_and_hold(&mut b, &mut sb);
+        let mut many = 0;
+        for _ in 0..63 {
+            b.tick_auto_repeat(1.0 / 60.0, &mut sb);
+            many += drain_clicks(&mut sb);
+        }
+        assert_eq!(one_big, many, "the two time bases reproduce each other");
+        assert_eq!(one_big, 8, "and both are the arithmetic answer");
+    }
+
+    /// A frozen clock (`scene/tick 0`) fires nothing but still reports the
+    /// hold as armed — otherwise a client polling at dt=0 would read a
+    /// live hold as finished.
+    #[test]
+    fn r1549_zero_tick_fires_nothing_but_still_reports_armed() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.10, 0.05)));
+        press_and_hold(&mut router, &mut state);
+        assert!(router.tick_auto_repeat(0.0, &mut state), "armed");
+        assert_eq!(drain_clicks(&mut state), 0, "a frozen clock fires nothing");
+        // A non-finite delta takes the same road as a frozen one: it must
+        // not poison the accumulator (a `NaN` there would compare `false`
+        // against every threshold and silently kill the hold for good).
+        assert!(
+            router.tick_auto_repeat(f32::NAN, &mut state),
+            "a malformed delta still reports the hold",
+        );
+        assert_eq!(drain_clicks(&mut state), 0);
+        router.tick_auto_repeat(0.22, &mut state);
+        assert_eq!(
+            drain_clicks(&mut state),
+            3,
+            "and the clock still works afterwards (0.10, 0.15, 0.20)",
+        );
+    }
+
+    /// A widget that stops declaring mid-hold rewinds the ramp: coming
+    /// back does not resume at speed, it restarts from the delay (Qt's
+    /// `mouseMoveEvent` behaves the same). Driven by DISABLING the button
+    /// mid-hold — a `Disabled` button is not `Pressed`, so it answers
+    /// `None` through the statechart rather than any repeat-specific hook.
+    #[test]
+    fn r1549_a_quiet_answer_rewinds_the_ramp_rather_than_pausing_it() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.30, 0.10)));
+        press_and_hold(&mut router, &mut state);
+        router.tick_auto_repeat(0.29, &mut state); // 0.01 short of firing
+        assert_eq!(drain_clicks(&mut state), 0);
+
+        // Disable, tick, re-enable: the accrued 0.29 is gone.
+        send_to_button(&mut state, "Disable");
+        assert!(!router.tick_auto_repeat(0.10, &mut state), "not armed");
+        send_to_button(&mut state, "Enable");
+        send_to_button(&mut state, "PointerEnter");
+        send_to_button(&mut state, "PointerDown");
+        let _ = drain_clicks(&mut state);
+        router.tick_auto_repeat(0.29, &mut state);
+        assert_eq!(
+            drain_clicks(&mut state),
+            0,
+            "the delay restarted; a resumed ramp would have fired here",
+        );
+        router.tick_auto_repeat(0.02, &mut state);
+        assert_eq!(drain_clicks(&mut state), 1, "and it fires 0.30 in");
+    }
+
+    /// The published census: an agent can see the run it is driving —
+    /// which press, on what, at what cadence, how far in, and when the
+    /// next one lands. Qt keeps every one of these in a private timer.
+    #[test]
+    fn r1549_the_wire_states_the_run_it_is_driving() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.30, 0.10)));
+        assert!(
+            router.auto_repeat_holds(&state).is_empty(),
+            "nothing held yet",
+        );
+        press_and_hold(&mut router, &mut state);
+
+        let holds = router.auto_repeat_holds(&state);
+        assert_eq!(holds.len(), 1);
+        assert_eq!(holds[0].target, "main_btn");
+        assert!(holds[0].repeating);
+        assert_eq!(holds[0].fires, 0);
+        let next = holds[0].next_fire_in_secs.expect("a cadence is declared");
+        assert!((next - 0.30).abs() < 1e-5, "the whole delay is still ahead");
+
+        // Tick EXACTLY what the wire said, and a repeat lands: the census
+        // is predictive, not merely descriptive.
+        router.tick_auto_repeat(next, &mut state);
+        assert_eq!(drain_clicks(&mut state), 1);
+        let holds = router.auto_repeat_holds(&state);
+        assert_eq!(holds[0].fires, 1);
+        assert!((holds[0].held_secs - 0.30).abs() < 1e-5);
+        let next = holds[0].next_fire_in_secs.expect("still repeating");
+        assert!((next - 0.10).abs() < 1e-5, "now the interval");
+    }
+
+    /// A press on a NON-repeating widget is still published, with
+    /// `repeating: false` and no cadence. Omitting it would make "held,
+    /// and nothing will come of it" read identically to "not held".
+    #[test]
+    fn r1549_a_non_repeating_hold_is_reported_as_a_hold() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(None);
+        press_and_hold(&mut router, &mut state);
+        let holds = router.auto_repeat_holds(&state);
+        assert_eq!(holds.len(), 1, "the press IS in flight");
+        assert!(!holds[0].repeating);
+        assert_eq!(holds[0].policy, None);
+        assert_eq!(holds[0].next_fire_in_secs, None);
+    }
+
+    /// A target that leaves the scene mid-hold stops repeating rather than
+    /// dispatching into nothing — the router's own last line of defence,
+    /// independent of any widget's answer.
+    #[test]
+    fn r1549_a_target_that_leaves_the_scene_stops_repeating() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.10, 0.05)));
+        press_and_hold(&mut router, &mut state);
+        router.tick_auto_repeat(0.20, &mut state);
+        assert!(drain_clicks(&mut state) >= 1);
+        // The binding re-composed its tree and the button is gone.
+        let mut gone = Scene::Container(ContainerNode::new(vec![]));
+        assert!(!router.tick_auto_repeat(1.0, &mut gone), "nothing to ask");
+        assert!(
+            router.auto_repeat_holds(&gone)[0].repeating.eq(&false),
+            "the press is still in flight, but it repeats nothing",
+        );
+    }
+
+    /// The R876 click-vs-drag latch still works after the press record
+    /// grew a hold — the widening must not have cost the field its first
+    /// job (a press that strays is a drag, and a drag suppresses the
+    /// trailing click).
+    #[test]
+    fn r1549_press_record_still_answers_the_click_vs_drag_question() {
+        let mut router = InputRouter::new();
+        let mut state = state_with_real_button(None);
+        press_and_hold(&mut router, &mut state);
+        assert!(!router.press_became_drag(PointerId::MOUSE), "in place");
+        router.cursor_moved(PointerId::MOUSE, 140.0, 100.0, &mut state);
+        assert!(router.press_became_drag(PointerId::MOUSE), "strayed 40px");
+    }
+
+    /// A large tick against a COMPOSITE target that runs out of range
+    /// mid-catch-up stops exactly at the bound. This is the property the
+    /// per-fire re-ask buys: asking once and then firing N times would
+    /// have driven the value past its own maximum, and it also proves the
+    /// composite (`spin#inc`) path end-to-end — the widget answers for the
+    /// sub-region it recorded, and the router never parses the tag.
+    #[test]
+    fn r1549_catch_up_stops_at_the_bound_it_reaches_mid_tick() {
+        use pinion_core::widgets::spin_button::SpinButtonExternal;
+        let mut router = InputRouter::new();
+        // 3 of 10, single step: five repeats would reach 8, but a 10-second
+        // tick would fire ~97 times if the router asked only once.
+        let spin = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0);
+        let mut state = Scene::External(ExternalNode::new(Box::new(spin)).with_tag("spin"));
+        let mut paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        if let Scene::Container(root) = &mut paint {
+            if let Some(Scene::Container(c)) = root.children.first_mut() {
+                c.tag = Some("spin#inc".into());
+            }
+        }
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            router.auto_repeat_holds(&state)[0].target,
+            "spin#inc",
+            "the press landed on the sub-region",
+        );
+
+        assert!(
+            !router.tick_auto_repeat(10.0, &mut state),
+            "ran out mid-tick"
+        );
+        let Scene::External(node) = &state else {
+            unreachable!()
+        };
+        let value = node
+            .handle
+            .introspect()
+            .expect("spin introspects")
+            .query("value");
+        assert_eq!(
+            value,
+            Some(pinion_core::external::IntrospectValue::Float(10.0)),
+            "it stopped at max, not past it",
+        );
+        assert_eq!(
+            router.auto_repeat_holds(&state)[0].fires,
+            7,
+            "3 -> 10 is seven steps and the eighth was never asked for",
+        );
+    }
+
+    /// The census names the target the press LANDED on, not wherever the
+    /// cursor has since drifted. The two coincide for a capturing widget
+    /// (capture suppresses the mid-press hover change) and for most of the
+    /// paths a non-capturing one takes, which is exactly why the press's
+    /// target is *stored* rather than re-derived from `hover_targets`:
+    /// their agreement is a consequence of three other invariants, and a
+    /// hold that reported the drifted tag would send a stuck-press
+    /// investigation to the wrong widget.
+    #[test]
+    fn r1549_the_hold_names_the_target_the_press_landed_on() {
+        use pinion_core::widgets::spin_button::SpinButtonExternal;
+        let mut router = InputRouter::new();
+        let spin = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0);
+        let mut state = Scene::External(ExternalNode::new(Box::new(spin)).with_tag("spin"));
+        // Two sub-regions side by side: `spin#dec` at x 20..60, `spin#inc`
+        // at x 80..120. A spin button does NOT take pointer capture, so the
+        // hover really does move out from under the press.
+        let dec = {
+            let mut c = ContainerNode::new(vec![]).with_tag("spin#dec");
+            c.rect = Rect::new(20, 80, 40, 40);
+            Scene::Container(c)
+        };
+        let inc = {
+            let mut c = ContainerNode::new(vec![]).with_tag("spin#inc");
+            c.rect = Rect::new(80, 80, 40, 40);
+            Scene::Container(c)
+        };
+        let mut root = ContainerNode::new(vec![dec, inc]);
+        root.rect = Rect::new(0, 0, 200, 200);
+        router.update_paint_scene(Scene::Container(root), &mut state);
+
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(router.auto_repeat_holds(&state)[0].target, "spin#inc");
+
+        // Drag across to the other arrow. The hover moves; the press does not.
+        router.cursor_moved(PointerId::MOUSE, 40.0, 100.0, &mut state);
+        assert_eq!(
+            router.hover_target(PointerId::MOUSE),
+            Some("spin#dec"),
+            "precondition: the hover really moved",
+        );
+        let holds = router.auto_repeat_holds(&state);
+        assert_eq!(
+            holds[0].target, "spin#inc",
+            "the press is still the one the user started",
+        );
+        assert!(
+            !holds[0].repeating,
+            "and it repeats nothing — the arrow it left is no longer Pressed",
+        );
+        assert!(
+            !router.tick_auto_repeat(5.0, &mut state),
+            "five seconds of held-but-strayed fires nothing",
+        );
+        let Scene::External(node) = &state else {
+            unreachable!()
+        };
+        assert_eq!(
+            node.handle
+                .introspect()
+                .expect("introspects")
+                .query("value"),
+            Some(pinion_core::external::IntrospectValue::Float(3.0)),
+            "and in particular it did not start stepping the OTHER arrow",
+        );
+    }
+
+    /// Drive a named event straight into the state scene's button, the way
+    /// a binding's own dispatch would.
+    fn send_to_button(state: &mut Scene, event: &str) {
+        let Scene::External(node) = state else {
+            panic!("state root is the button");
+        };
+        let _ = node
+            .handle
+            .introspect_mut()
+            .expect("button introspects")
+            .invoke(
+                "send",
+                pinion_core::external::IntrospectValue::Text(event.to_owned()),
+            );
     }
 
     #[test]

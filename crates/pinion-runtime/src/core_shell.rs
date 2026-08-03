@@ -82,7 +82,7 @@ use pinion_core::{Command, HeldKeys, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
 use crate::focus::FocusManager;
-use crate::input::{InputRouter, PanRelease, PointerId, Touch, TouchPhase};
+use crate::input::{AutoRepeatHold, InputRouter, PanRelease, PointerId, Touch, TouchPhase};
 use crate::intent_queue::{IntentQueue, walk_scene_and_drain};
 
 /// R1426 §5.41 §5.28 — the reserved `Owner::cache` key for a window's
@@ -2450,6 +2450,49 @@ impl<V: WidgetCore> CoreShell<V> {
         let router = router_for(routers, window_id);
         let pan_dispatched = router.cursor_moved_with_modifiers(pid, x, y, modifiers, scene);
         (self.tail(), pan_dispatched)
+    }
+
+    /// R1549 §5.35 §5.38 — advance the addressed window's press-and-hold
+    /// **auto-repeat** by `dt` seconds, firing whatever repeats that
+    /// crosses, and harvest the result through the normal
+    /// [`Self::tail`] (so a repeat is observationally a click: same
+    /// intents, same `read_state` projection).
+    ///
+    /// The second tuple element is whether a hold is currently armed —
+    /// the backend's "request another frame" cue, mirroring
+    /// [`Self::wheel_with_modifiers_for_window`]'s repaint flag. Without
+    /// it a `ControlFlow::Wait` event loop would paint one frame of the
+    /// hold and then sleep, and the repeat would stop dead until the user
+    /// jiggled the mouse.
+    ///
+    /// Called once per paint cycle with the measured frame delta, and by
+    /// the `scene/tick` RPC with the injected one — one entry, so a hold
+    /// an AI client drives is the same hold a finger drives.
+    pub fn tick_auto_repeat_for_window(
+        &mut self,
+        window_id: &str,
+        dt: f32,
+    ) -> (DispatchTail<V::State>, bool) {
+        let Self { scene, routers, .. } = self;
+        // `.get_mut`, not the lazy-creating `router_for`: a window that has
+        // never seen input has no press to repeat, and a per-frame call
+        // must not conjure a router for every window that merely paints
+        // (the R882.1 no-phantom-router hygiene).
+        let armed = routers
+            .get_mut(window_id)
+            .is_some_and(|router| router.tick_auto_repeat(dt, scene));
+        (self.tail(), armed)
+    }
+
+    /// R1549 §5.35 §5.12 — the addressed window's in-flight presses as
+    /// published data (`scene/auto_repeat`). A window that has never seen
+    /// input answers an empty list rather than creating a router.
+    #[must_use]
+    pub fn auto_repeat_holds_for_window(&self, window_id: &str) -> Vec<AutoRepeatHold> {
+        self.routers
+            .get(window_id)
+            .map(|router| router.auto_repeat_holds(&self.scene))
+            .unwrap_or_default()
     }
 
     /// R1102 §5.51 PR-33 — whether the addressed window's router owns an

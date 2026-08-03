@@ -95,6 +95,10 @@ struct WindowScopedRpcReads {
     input_state: Option<pinion_core::InputStateSnapshot>,
     /// R888 — `scene/pacing_state`; `None` → `PacingStateUnavailable`.
     pacing_state: Option<pinion_rpc::PacingState>,
+    /// R1549 — `scene/auto_repeat`; the in-flight press census. Not an
+    /// `Option`: an empty list IS the answer for "nothing is held", so
+    /// there is no unavailability to distinguish.
+    auto_repeat_holds: Vec<pinion_runtime::AutoRepeatHold>,
     /// R889 — `Some(id)` rejects the whole request with `-32602
     /// unknown_window` before method routing.
     unknown_window: Option<String>,
@@ -1831,6 +1835,7 @@ impl<V: WidgetView> ShellCore<V> {
                 Some(self.modifiers),
                 Some(self.key_dispatch_focus_for_window(wid)),
             ),
+            auto_repeat_holds: self.core.auto_repeat_holds_for_window(wid),
             pacing_state: self.core.is_window_known(wid).then(|| {
                 match self.target_fps_for_window(wid) {
                     Some(fps) => pinion_rpc::PacingState::Override(fps),
@@ -3712,9 +3717,22 @@ impl<V: WidgetView> ShellCore<V> {
                 // so the next `scene/snapshot` re-render reflects the
                 // advanced frame. `dt == 0.0` is a no-op (clock frozen).
                 DeferredInput::Tick { dt } => {
+                    // R1549 §5.35 §5.38 — press-and-hold auto-repeat rides
+                    // the injected clock beside the animation clock, through
+                    // the same substep splitter. Without it a held button is
+                    // the one time-driven behaviour an agent cannot
+                    // reproduce — precisely the untestability of Qt's
+                    // `QBasicTimer` repeat. Tails are collected and applied
+                    // after the walk so one `scene/tick`'s repeats reach
+                    // `V::update` in a single batch.
+                    let mut tails = Vec::new();
                     pinion_runtime::substep(dt, |step| {
                         self.core.tick_animations_for_window(window_id, step);
+                        tails.push(self.core.tick_auto_repeat_for_window(window_id, step).0);
                     });
+                    for tail in &tails {
+                        self.handle_tail(tail);
+                    }
                     // R829 §2 #4 §5.28 — also queue this `dt` as the
                     // window's pending immediate-mode step. The animation
                     // clock advanced in-place above; immediate-mode
@@ -4464,6 +4482,35 @@ impl<V: WidgetView> ShellCore<V> {
         // R670.B 9-round honest carry on multi-window animation
         // compound is closed structurally here.
         self.core.tick_animations_for_window(window_key, dt);
+        // R1549 §5.35 §5.38 — advance press-and-hold auto-repeat, after the
+        // animation clock and BEFORE the view: a repeat that fires here is
+        // an input that arrived just before this frame, so `V::view` reads
+        // the stepped value on this paint rather than the next one. The
+        // tail goes through `handle_tail` like any other dispatched input,
+        // so a repeated click reaches `V::update` exactly as the first did.
+        //
+        // This is the LIVE clock arm — the wall-clock delta, frozen to zero
+        // while the window is paused (`scene/set_fps 0`) so an incidental
+        // repaint cannot fast-forward a frame-stepped hold, exactly as
+        // `sim_dt` below freezes the immediate-mode loop. The INJECTED arm
+        // is the `DeferredInput::Tick` handler, which advances the same one
+        // driver through the same `substep` splitter the animation clock
+        // uses: one stepping algorithm, two clock sources — the shape
+        // `tick_animations_for_window` already has.
+        //
+        // An injected tick must land THERE and synchronously, not on some
+        // later repaint: the RPC producer runs its own view + layout
+        // pipeline rather than this fn, so a client that ticked and then
+        // read would be racing a repaint it has no way to observe.
+        //
+        // `_pure_internal` deliberately omits all of this, exactly as it
+        // omits `reconcile_frame`: a dry_run / introspection paint advances
+        // no clock and fires no input.
+        let paused = self.target_fps_for_window(window_key) == Some(0);
+        let repeat_dt = if paused { 0.0 } else { dt.max(0.0) };
+        let (repeat_tail, repeat_armed) =
+            self.core.tick_auto_repeat_for_window(window_key, repeat_dt);
+        self.handle_tail(&repeat_tail);
         // R1006 §5.23 §5.22 — publish the layout viewport to the binding
         // BEFORE the view runs, so a reflow Effect (e.g. a PTY winsize ioctl)
         // reacts and the view reads the post-reflow producer state on this same
@@ -4700,10 +4747,10 @@ impl<V: WidgetView> ShellCore<V> {
         // [`pinion_runtime::substep`] splitter — two time bases that
         // could not reproduce each other; [[verify-seed-claims-audit-first]]).
         //
-        // `paused` (computed once) gates BOTH this frame's source clock
-        // AND the continuous-loop redraw re-arm further down, so the two
-        // cannot disagree on the pause state.
-        let paused = self.target_fps_for_window(window_key) == Some(0);
+        // `paused` (computed ONCE, up at the pre-view auto-repeat advance)
+        // gates this frame's source clock, the continuous-loop redraw re-arm
+        // further down, AND the R1549 held-press clock, so the three cannot
+        // disagree on the pause state.
         // Simulation seconds to advance this frame:
         //   - a pending `scene/tick` injection (an AI client frame-stepping
         //     a — typically paused — window), if present; else
@@ -4808,6 +4855,18 @@ impl<V: WidgetView> ShellCore<V> {
             .core
             .any_animation_active(pinion_core::DEFAULT_REST_EPSILON)
         {
+            self.redraw_requested = true;
+        }
+        // R1549 §5.35 §5.38 — keep painting while a press-and-hold repeat
+        // is armed. This is the `Tickable::is_at_rest` peer for a gesture
+        // that lives in the router rather than the owner's animation
+        // registry: without it a `ControlFlow::Wait` loop would paint the
+        // frame the press opened and then sleep, and the hold would fire
+        // exactly once — the very behaviour the round exists to fix. The
+        // flag falls to `false` the moment the widget stops declaring a
+        // cadence (released, slid off, disabled, or a spin arrow at its
+        // bound), so a forgotten finger does not pin the loop awake.
+        if repeat_armed {
             self.redraw_requested = true;
         }
         // R761.1 §5.22 — drain the owner-scoped `LocalTaskPump` one step
@@ -5955,6 +6014,10 @@ impl<V: WidgetView> ShellCore<V> {
             if let Some(pacing) = window_reads.pacing_state {
                 ctx = ctx.with_pacing_state(pacing);
             }
+            // R1549 §5.35 §5.38 — unconditional: an empty census is the
+            // honest answer for a window with nothing held, so there is no
+            // `Unavailable` leg to gate on.
+            ctx = ctx.with_auto_repeat_holds(window_reads.auto_repeat_holds);
             // R1087 §5.16 §5.41 §2 #7 PR-31 — the declared-window set
             // (resolved above, only for `scene/windows`).
             if let Some(windows) = declared_windows {

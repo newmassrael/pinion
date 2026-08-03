@@ -37,6 +37,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
+use crate::input::AutoRepeat;
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
@@ -118,6 +119,12 @@ pub struct ButtonExternal {
     /// `view_button`'s focus-ring argument — the same External → query →
     /// view channel the hover posture already uses.
     focused: bool,
+    /// R1549 §5.35 — declared press-and-hold repeat cadence: Qt
+    /// `QAbstractButton::setAutoRepeat` + `setAutoRepeatDelay` +
+    /// `setAutoRepeatInterval` collapsed into one value. `None` — the
+    /// default, matching `QPushButton` — means one activation per press,
+    /// however long it is held.
+    repeat: Option<AutoRepeat>,
 }
 
 impl ButtonExternal {
@@ -126,7 +133,30 @@ impl ButtonExternal {
         Self {
             em: IntentEmitter::default(),
             focused: false,
+            repeat: None,
         }
+    }
+
+    /// R1549 §5.35 — opt this button into press-and-hold auto-repeat at
+    /// `repeat`'s cadence. The Qt `setAutoRepeat(true)` +
+    /// `setAutoRepeatDelay` + `setAutoRepeatInterval` triple as one call:
+    /// there is no separate enable flag to disagree with the timings,
+    /// because a declared cadence *is* the enable.
+    ///
+    /// A repeating button re-runs its own `Pressed → Hover → Pressed`
+    /// activation arc, so it emits the same `"click"` intent a real click
+    /// does — a consumer needs no new handler to become repeatable.
+    #[must_use]
+    pub fn with_auto_repeat(mut self, repeat: AutoRepeat) -> Self {
+        self.repeat = Some(repeat);
+        self
+    }
+
+    /// The declared press-and-hold cadence, or `None` for a
+    /// fires-once-per-press button (Qt `autoRepeat()`).
+    #[must_use]
+    pub const fn auto_repeat_policy(&self) -> Option<AutoRepeat> {
+        self.repeat
     }
 
     /// Drive a [`ButtonEvent`] through the wrapped SCXML and enqueue
@@ -181,6 +211,20 @@ impl External for ButtonExternal {
     /// R741 §5.35 — a deliberate release off the widget cancels the press.
     fn cancel_on_release_off_target(&self) -> bool {
         true
+    }
+
+    /// R1549 §5.35 — the declared cadence, gated on the button actually
+    /// being held. Qt keeps `autoRepeat` and `isDown` as two facts and a
+    /// `QBasicTimer` bridging them; here the second fact is the
+    /// statechart's own [`ButtonState::Pressed`], so a repeat that
+    /// outlives its press has nowhere to live. A press that slid off the
+    /// widget is already `Hover` / `Idle` (R741 capture defers the leave
+    /// to the release), and a `Disabled` button answers `None` without a
+    /// disable hook.
+    fn auto_repeat(&self) -> Option<AutoRepeat> {
+        matches!(self.state(), ButtonState::Pressed)
+            .then_some(self.repeat)
+            .flatten()
     }
 
     fn backends(&self) -> BackendSupport {
@@ -374,6 +418,63 @@ impl ExternalIntrospect for ButtonStateSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Hold a `ButtonExternal` down over its own send surface.
+    fn hold(b: &mut ButtonExternal) {
+        b.send(ButtonEvent::PointerEnter);
+        b.send(ButtonEvent::PointerDown);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1549 §5.35 §5.38 — `QAbstractButton::setAutoRepeat` peer.
+    // ─────────────────────────────────────────────────────────────
+
+    /// `QPushButton`'s default: one activation per press, however long it
+    /// is held. A button that never declared a cadence answers `None`
+    /// whether or not it is down.
+    #[test]
+    fn plain_button_never_repeats_even_while_held() {
+        let mut b = ButtonExternal::new();
+        assert_eq!(b.auto_repeat_policy(), None);
+        hold(&mut b);
+        assert_eq!(b.state(), ButtonState::Pressed);
+        assert_eq!(b.auto_repeat(), None);
+    }
+
+    /// The declared cadence IS the enable — there is no second `autoRepeat`
+    /// bool that could disagree with the timings, which is the pair Qt
+    /// keeps separate.
+    #[test]
+    fn declared_cadence_is_the_enable() {
+        let policy = AutoRepeat::new(0.25, 0.05);
+        let mut b = ButtonExternal::new().with_auto_repeat(policy);
+        assert_eq!(b.auto_repeat_policy(), Some(policy));
+        assert_eq!(b.auto_repeat(), None, "declared, but not held");
+        hold(&mut b);
+        assert_eq!(b.auto_repeat(), Some(policy), "held and declared");
+    }
+
+    /// Release, stray and disable all stop the repeat through the
+    /// statechart, with no un-arming call on any of the three paths — the
+    /// runaway-timer bug class has nowhere to live.
+    #[test]
+    fn every_way_out_of_pressed_stops_the_declaration() {
+        for exit in [
+            ButtonEvent::PointerUp,
+            ButtonEvent::PointerLeave,
+            ButtonEvent::Disable,
+        ] {
+            let mut b = ButtonExternal::new().with_auto_repeat(AutoRepeat::desktop());
+            hold(&mut b);
+            assert!(b.auto_repeat().is_some(), "held");
+            b.send(exit);
+            assert_eq!(
+                b.auto_repeat(),
+                None,
+                "{exit:?} left Pressed, so the repeat is over",
+            );
+        }
+    }
 
     #[test]
     fn initial_state_is_idle() {

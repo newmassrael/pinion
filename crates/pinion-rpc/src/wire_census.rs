@@ -237,6 +237,36 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "AutoRepeatHoldOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("pointer", WireTy::Integer, None),
+                WireField::new("target", WireTy::String, None),
+                WireField::new("repeating", WireTy::Boolean, None),
+                WireField::new("held_secs", WireTy::Number, None),
+                WireField::new("fires", WireTy::Integer, None),
+                // The five cadence keys are absent — not null — on a hold
+                // that is not repeating: there is no cadence to state, and
+                // a `0` would read as "fires instantly".
+                WireField::new("delay_secs", WireTy::Number, None).optional(),
+                WireField::new("interval_secs", WireTy::Number, None).optional(),
+                WireField::new("accel", WireTy::Number, None).optional(),
+                WireField::new("min_interval_secs", WireTy::Number, None).optional(),
+                WireField::new("next_fire_in_secs", WireTy::Number, None).optional(),
+            ],
+        },
+    },
+    WireType {
+        name: "AutoRepeatOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "holds",
+                WireTy::Array,
+                Some("AutoRepeatHoldOutcome"),
+            )],
+        },
+    },
+    WireType {
         name: "CacheStatsOutcome",
         shape: WireShape::Object {
             fields: &[

@@ -31,7 +31,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
-use crate::input::Modifiers;
+use crate::input::{AutoRepeat, Modifiers};
 use crate::widgets::button::{Button, ButtonEvent, ButtonState};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -72,6 +72,12 @@ pub struct SpinButtonExternal {
     /// R1533 §5.45 — sub-notch wheel carry (see the `External::wheel` impl).
     /// Per instance, like Qt's per-spinbox `wheelDeltaRemainder`.
     wheel: WheelStepper,
+    /// R1549 §5.35 — cadence a held stepper repeats at. Qt's spin box
+    /// always auto-repeats its arrows (there is no property to turn it
+    /// off), so this is a value rather than an `Option`; the binding
+    /// re-declares it with [`Self::with_auto_repeat`] — including Qt's
+    /// `setAccelerated` axis, which is a curve here rather than a bool.
+    repeat: AutoRepeat,
 }
 
 impl SpinButtonExternal {
@@ -90,6 +96,7 @@ impl SpinButtonExternal {
             dec: Button::new(),
             inc: Button::new(),
             wheel: WheelStepper::new(),
+            repeat: AutoRepeat::desktop(),
         };
         s.set_value(value);
         s
@@ -100,6 +107,22 @@ impl SpinButtonExternal {
     pub fn with_page_step(mut self, page_step: f32) -> Self {
         self.page_step = page_step;
         self
+    }
+
+    /// R1549 §5.35 — override the held-stepper repeat cadence (defaults to
+    /// [`AutoRepeat::desktop`], Qt's 300 ms / 100 ms). Pass an
+    /// [`AutoRepeat::accelerating`] cadence for the peer of Qt's
+    /// `QAbstractSpinBox::setAccelerated(true)`.
+    #[must_use]
+    pub fn with_auto_repeat(mut self, repeat: AutoRepeat) -> Self {
+        self.repeat = repeat;
+        self
+    }
+
+    /// The declared held-stepper repeat cadence.
+    #[must_use]
+    pub const fn auto_repeat_policy(&self) -> AutoRepeat {
+        self.repeat
     }
 
     /// Current decrement-stepper interaction state (drives the hover /
@@ -215,6 +238,7 @@ impl core::fmt::Debug for SpinButtonExternal {
             .field("dec", &self.dec.state())
             .field("inc", &self.inc.state())
             .field("wheel", &self.wheel)
+            .field("repeat", &self.repeat)
             .finish()
     }
 }
@@ -238,6 +262,31 @@ impl External for SpinButtonExternal {
 
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
+    }
+
+    /// R1549 §5.35 §5.38 — a held stepper keeps stepping: Qt's spin box
+    /// auto-repeats its arrows, and before this the arrow stepped exactly
+    /// once however long it was held.
+    ///
+    /// Armed-ness is **read off the two stepper statecharts**, never
+    /// stored: a press that slid off the arrow already left `Pressed` via
+    /// `PointerLeave`, so it answers `None` with no un-arming code.
+    ///
+    /// Past Qt: a held arrow that can no longer move the value stops
+    /// repeating. Qt's `QAbstractSpinBox` keeps its 10 Hz timer running
+    /// against a value pinned at `maximum()` for as long as the user
+    /// holds; here the answer goes `None`, which also lets the frame loop
+    /// idle (the router requests frames only while some hold is live), so
+    /// a forgotten finger on a maxed-out arrow costs nothing.
+    fn auto_repeat(&self) -> Option<AutoRepeat> {
+        let can_move = if matches!(self.dec.state(), ButtonState::Pressed) {
+            self.value > self.min
+        } else if matches!(self.inc.state(), ButtonState::Pressed) {
+            self.value < self.max
+        } else {
+            return None;
+        };
+        can_move.then_some(self.repeat)
     }
 
     /// R1533 §5.45 §5.38 — the wheel steps the value: Qt
@@ -430,6 +479,107 @@ impl ExternalIntrospect for SpinButtonExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Drive a stepper's pointer arc over the wire, stopping wherever the
+    /// caller says — so a test can leave the arrow HELD.
+    fn drive(s: &mut SpinButtonExternal, sub: &str, events: &[&str]) {
+        for ev in events {
+            let _ = s.invoke("send", IntrospectValue::Text(format!("{sub}:{ev}")));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1549 §5.35 §5.38 — held-stepper auto-repeat declaration.
+    // ─────────────────────────────────────────────────────────────
+
+    /// An un-pressed spin button declares nothing, so a router that ticks
+    /// it advances nothing. Armed-ness is read off the statechart, so this
+    /// is not a flag anyone had to clear.
+    #[test]
+    fn idle_spin_button_declares_no_repeat() {
+        let s = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0);
+        assert_eq!(s.auto_repeat(), None);
+    }
+
+    /// Holding an arrow (Enter + Down, no Up) declares the cadence.
+    #[test]
+    fn held_arrow_declares_the_desktop_cadence() {
+        let mut s = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0);
+        drive(&mut s, "inc", &["PointerEnter", "PointerDown"]);
+        assert_eq!(s.inc_state(), ButtonState::Pressed);
+        assert_eq!(s.auto_repeat(), Some(AutoRepeat::desktop()));
+    }
+
+    /// Releasing stops it. There is no un-arm call — the SCXML left
+    /// `Pressed`, which IS the answer.
+    #[test]
+    fn released_arrow_declares_nothing_with_no_unarm_call() {
+        let mut s = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0);
+        drive(&mut s, "inc", &["PointerEnter", "PointerDown"]);
+        assert!(s.auto_repeat().is_some());
+        drive(&mut s, "inc", &["PointerUp"]);
+        assert_eq!(s.auto_repeat(), None, "the release is the disarm");
+    }
+
+    /// A press that slides off the arrow stops repeating and does so
+    /// through the leave transition the statechart already had.
+    #[test]
+    fn straying_off_the_arrow_stops_the_declaration() {
+        let mut s = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0);
+        drive(&mut s, "inc", &["PointerEnter", "PointerDown"]);
+        assert!(s.auto_repeat().is_some());
+        drive(&mut s, "inc", &["PointerLeave"]);
+        assert_eq!(s.auto_repeat(), None);
+    }
+
+    /// PAST Qt: a held arrow that can no longer move the value stops
+    /// declaring a cadence. `QAbstractSpinBox` keeps its 10 Hz timer
+    /// running against a value pinned at `maximum()` for as long as the
+    /// user holds — here the hold goes quiet, which is also what lets the
+    /// frame loop idle.
+    #[test]
+    fn held_arrow_at_its_bound_stops_repeating() {
+        let mut s = SpinButtonExternal::new(10.0, 0.0, 10.0, 1.0);
+        drive(&mut s, "inc", &["PointerEnter", "PointerDown"]);
+        assert_eq!(s.inc_state(), ButtonState::Pressed, "still visibly held");
+        assert_eq!(s.auto_repeat(), None, "but there is nowhere left to step");
+        // The OTHER direction is still live from the same position.
+        let mut d = SpinButtonExternal::new(10.0, 0.0, 10.0, 1.0);
+        drive(&mut d, "dec", &["PointerEnter", "PointerDown"]);
+        assert!(
+            d.auto_repeat().is_some(),
+            "down from the ceiling still steps"
+        );
+    }
+
+    /// The bound gate is per-direction and re-evaluated per ask: a hold
+    /// that walks INTO its bound goes quiet at exactly that step, so the
+    /// router's catch-up loop cannot overshoot on one large `dt`.
+    #[test]
+    fn declaration_goes_quiet_at_the_step_that_reaches_the_bound() {
+        let mut s = SpinButtonExternal::new(8.0, 0.0, 10.0, 1.0);
+        drive(&mut s, "inc", &["PointerEnter", "PointerDown"]);
+        let mut asks_answered = 0;
+        // Replay what the router does: ask, then fire, until it stops.
+        while s.auto_repeat().is_some() {
+            asks_answered += 1;
+            drive(&mut s, "inc", &["PointerUp", "PointerDown"]);
+            assert!(asks_answered < 10, "must terminate at the bound");
+        }
+        assert_eq!(asks_answered, 2, "8 -> 9 -> 10, then quiet");
+        assert!((s.value() - 10.0).abs() < f32::EPSILON);
+    }
+
+    /// Qt's `setAccelerated` axis is a declaration here, and it survives
+    /// onto the widget rather than being a router-side default.
+    #[test]
+    fn accelerating_cadence_is_declarable_per_widget() {
+        let fast = AutoRepeat::desktop().accelerating(0.5, 0.02);
+        let mut s = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0).with_auto_repeat(fast);
+        assert_eq!(s.auto_repeat_policy(), fast);
+        drive(&mut s, "inc", &["PointerEnter", "PointerDown"]);
+        assert_eq!(s.auto_repeat(), Some(fast));
+    }
 
     #[test]
     fn new_clamps_start_into_range() {

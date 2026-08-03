@@ -101,6 +101,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/animate_settle", MethodOcc::Mutate),
     ("scene/animation_state", MethodOcc::Read),
     ("scene/apply_preview", MethodOcc::Read),
+    ("scene/auto_repeat", MethodOcc::Read),
     ("scene/bbox", MethodOcc::Read),
     ("scene/cache_stats", MethodOcc::Read),
     ("scene/cancel_preview", MethodOcc::Read),
