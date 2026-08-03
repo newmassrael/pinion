@@ -47,7 +47,7 @@ use pinion_core::external::{
     SchemaField, int_of,
 };
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -270,15 +270,25 @@ fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
     for (c, &name) in COLS.iter().enumerate() {
         let glyph =
             pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, c)).unwrap_or(ARROW_NONE);
-        let label = Scene::Text(TextNode::styled(
-            format!("{name} {glyph}"),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(13)
-                .with_fg(theme.resolve(ColorRole::OnSurface)),
-        ));
+        let styled = |content: String| {
+            TextNode::styled(
+                content,
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(13)
+                    .with_fg(theme.resolve(ColorRole::OnSurface)),
+            )
+        };
+        // R1547 §5.40 — the label and the sort glyph are SEPARATE text nodes,
+        // the glyph presentational, exactly as `table.rs`'s `header_cell`
+        // paints them. Concatenated they read as ONE string to the §5.40 name
+        // derivation, so this header would announce "Name ▲". Until R1547 the
+        // a11y builder hid that by stamping the label itself — the second
+        // source for a column's name that this round removed.
+        let label = Scene::Text(styled(name.to_string()));
+        let arrow = Scene::Text(styled(glyph.to_string()).with_role(TextRole::Presentational));
         cells.push(Scene::Container(
-            ContainerNode::new(vec![label])
+            ContainerNode::new(vec![label, arrow])
                 .with_tag(format!("{SORT_TAG}#h{c}"))
                 .with_layout(
                     LayoutStyle::new()
@@ -512,12 +522,9 @@ impl WidgetA11y for GroupedGridSortView {
         );
         // Sortable columns: the active column carries its `aria-sort` in the
         // GridColumn slice (the one datum that differs from the static grid).
-        let columns: Vec<GridColumn> = COLS
-            .iter()
-            .enumerate()
-            .map(|(c, &name)| GridColumn {
+        let columns: Vec<GridColumn> = (0..COLS.len())
+            .map(|c| GridColumn {
                 tag: format!("{SORT_TAG}#h{c}"),
-                label: name.to_string(),
                 sort: col_sort_dir(sort, c).map(SortDirection::from_ascending),
             })
             .collect();
@@ -646,6 +653,49 @@ mod tests {
             first_group.windows(2).all(|w| w[0] > w[1]),
             "members descend within the leading group: {first_group:?}",
         );
+    }
+
+    /// R1547 — every painted text in `scene`, in DFS pre-order.
+    fn painted_texts(scene: &Scene, out: &mut Vec<String>) {
+        match scene {
+            Scene::Text(t) => out.push(t.content.to_string()),
+            Scene::Container(c) => c.children.iter().for_each(|ch| painted_texts(ch, out)),
+            Scene::Scroll(sc) => painted_texts(sc.content.as_ref(), out),
+            _ => {}
+        }
+    }
+
+    /// R1547 §5.40 — a `columnheader`'s announced name is the column's LABEL,
+    /// even while a sort glyph is drawn beside it.
+    ///
+    /// `grouped_grid_access_nodes` stamped every columnheader's name until
+    /// R1547; the name now comes from the painted header, and this header
+    /// paints label + glyph. Concatenated into one text node — how it was
+    /// written until R1547 — the §5.40 derivation reads `"Name \u{25B2}"`, and
+    /// nothing noticed, because the stamp had been hiding it.
+    #[test]
+    fn r1547_columnheader_announces_its_label_not_the_sort_glyph() {
+        Owner::new().run(|| {
+            let grid = use_grid_data();
+            grid.set_sort(Some((0, true)));
+            let scene = view(None, &Frame::default());
+            let mut painted = Vec::new();
+            painted_texts(&scene, &mut painted);
+            assert!(
+                painted.iter().any(|t| t.contains('\u{25B2}')),
+                "premise: the active sort column paints its direction glyph",
+            );
+            let mut nodes = vec![AccessNode::new(
+                format!("{SORT_TAG}#h0"),
+                pinion_a11y::AriaRole::ColumnHeader,
+            )];
+            pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+            assert_eq!(
+                nodes[0].name.as_deref(),
+                Some(COLS[0]),
+                "the sorted column announces its label alone",
+            );
+        });
     }
 
     #[test]

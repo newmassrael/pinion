@@ -35,12 +35,20 @@ use crate::role::{AriaRole, SortDirection};
 use pinion_core::widgets::radio::RadioState;
 
 /// A column header within a [`grid_table_nodes`] grid.
+///
+/// R1547 — it carries **no label**. It did until R1547, for one purpose:
+/// stamping the `columnheader`'s accessible name. That made the builder a
+/// second source for what a column is called and the paint the first, and an
+/// explicit name silently wins over the §5.40 derivation — so anything the
+/// painted header had to say beyond the bare label (a
+/// `Qt::DecorationRole` mark's meaning, since R1547) could not be heard. The
+/// name now comes from the painted header, as the `gridcell`'s has since R1536
+/// and the virtualized grid's since R1547, so the AT tree and the pixels cannot
+/// disagree about what a column is called.
 #[derive(Clone, Debug)]
 pub struct GridColumn {
     /// The column header's tag.
     pub tag: String,
-    /// Accessible name (the column title).
-    pub label: String,
     /// `aria-sort` direction when this is the active sort column, else
     /// `None` (the attribute is omitted).
     pub sort: Option<SortDirection>,
@@ -129,8 +137,9 @@ pub fn grid_table_nodes(
     }
     nodes.push(header_row);
     for column in columns {
-        let mut ch = AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader)
-            .with_name(column.label.as_str());
+        // R1547 §5.40 — NO `with_name`: the name is derived from the painted
+        // header (see `GridColumn`).
+        let mut ch = AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader);
         if let Some(dir) = column.sort {
             ch = ch.with_sort(dir);
         }
@@ -173,12 +182,10 @@ mod tests {
         vec![
             GridColumn {
                 tag: "g_ch0".into(),
-                label: "Name".into(),
                 sort: Some(SortDirection::Ascending),
             },
             GridColumn {
                 tag: "g_ch1".into(),
-                label: "Tier".into(),
                 sort: None,
             },
         ]
@@ -246,6 +253,47 @@ mod tests {
         assert_eq!(by_tag(&n, "g_ch0").role, AriaRole::ColumnHeader);
         assert_eq!(by_tag(&n, "g_row0").role, AriaRole::Row);
         assert_eq!(by_tag(&n, "g#0_0").role, AriaRole::GridCell);
+    }
+
+    /// R1547 §5.40 — **no builder names a `columnheader`.** The name is derived
+    /// from the painted header, and an explicit one silently wins over the
+    /// derivation, so a stamp here would hide whatever the header actually
+    /// draws — a `Qt::DecorationRole` mark's meaning, since R1547.
+    ///
+    /// Asserted as a census over every emitted node rather than on one sample:
+    /// the defect this closes was a stamp on *every* column, and a test that
+    /// checked one could be satisfied by a builder that stamped the rest.
+    #[test]
+    fn r1547_no_columnheader_is_named_by_the_builder() {
+        let n = nodes();
+        let headers: Vec<&AccessNode> = n
+            .iter()
+            .filter(|node| node.role == AriaRole::ColumnHeader)
+            .collect();
+        assert!(!headers.is_empty(), "premise: the grid emits columnheaders");
+        assert!(
+            headers.iter().all(|h| h.name.is_none()),
+            "every columnheader is left for the paint derivation to name; \
+             stamped: {:?}",
+            headers
+                .iter()
+                .filter(|h| h.name.is_some())
+                .map(|h| (&h.tag, &h.name))
+                .collect::<Vec<_>>(),
+        );
+        // The negative half: the builder DOES still name what has no painted
+        // text of its own, so "no name" here is a decision about headers and
+        // not a derivation that stopped running.
+        assert_eq!(
+            n[0].name.as_deref(),
+            Some("Catalog"),
+            "the grid root keeps its explicit name — it has no paint to take \
+             one from",
+        );
+        assert!(
+            by_tag(&n, "g#0_0").name.is_some(),
+            "and a gridcell built by this builder still carries its own name",
+        );
     }
 
     #[test]

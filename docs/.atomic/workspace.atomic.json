@@ -79782,6 +79782,50 @@
         "the tally did NOT demand a re-judgment (`rd` 6 -> 7 = +17%, inside the 25% band), so Model/View stays at 87% and the gap statement records what moved instead — R1535's own precedent when it opened the cell axis"
       ]
     },
+    "Round 1547.1": {
+      "decision_summary": "The paint names EVERY columnheader, not only a virtualized grid's. R1547 made `virtual_grid.rs` derive a section's accessible name from the painted header and left `grid.rs` / `grouped.rs` stamping theirs, which is the defect R1547's own rationale condemns — two contracts in one tree — and it had a concrete victim: the round shipped `TableData::header_decoration` on the eager surface while `grid_table_nodes` stamped a name that silently outranks the §5.40 derivation, so a mark's meaning could not be heard there however correctly the header painted it. Closing it found what the stamp had been hiding: two bindings paint `\\\"{label}{glyph}\\\"` as one text node, so their headers would have announced \\\"Asset up-arrow\\\", and nothing in the tree could see it — a counterfactual that concatenates them back passed 145 tests, 8 tests and three demos before this round added a guard. `GridColumn` no longer carries a label at all.",
+      "changes_bullets": [
+        "`GridColumn` loses its `label`: `grid_table_nodes` and `grouped_grid_access_nodes` no longer stamp a `columnheader` name, so all three grid-builder families now take the name from the paint",
+        "`hello-data-grid` and `hello-grouped-grid-sort` painted `\"{label}{glyph}\"` as ONE text node, which the derivation reads whole; the glyph is now a separate `TextRole::Presentational` node, the shape `table.rs`'s `header_cell` already had",
+        "`hello-table` answers `TableData::header_decoration` with the ICON arm on its identifying column — the eager surface's live consumer, without which the a11y half of the role R1547 shipped there was unproven",
+        "three guards where there were none: `r1547_no_columnheader_is_named_by_the_builder` (census over every emitted node) and a per-binding \"announces its label, not the sort glyph\" test in each of the two grids that paint one",
+        "`hello-column-visibility`'s header-name assertion is re-pointed at the PAINT through `enrich_names_from_scene`, which is stronger: it used to compare the builder's own slice with itself"
+      ],
+      "verification_bullets": [
+        "CF: restoring the builder's stamp is caught by the new census test AND by the demo's eager section (`expected 'Primary key Widget', got 'table_ch0'`)",
+        "CF: concatenating the glyph back into the label text node passed EVERYTHING before this round's guards existed — 145 `hello-data-grid` tests, 8 `hello-grouped-grid-sort` tests and three a11y demos — and is caught by both new per-binding guards now",
+        "`tools/demos/r1547_section_states_its_role.py` grows section (G): the eager `hello-table` paints the section role at the same address, through the ICON arm from a `memory://` source, and its meaning reaches the AT tree",
+        "gates: fmt / workspace clippy / `cargo doc` / pinion-a11y 249 / pinion-widget-paint 771 / the six affected example crates, and twelve demos over every binding whose columnheader name changed source"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "none. `treegrid_nodes` (`tree_view.rs`) still names its columnheaders from the builder, and that is correct rather than deferred: its headers are painted by `pinion_widget_paint::tree_view`, not by `table.rs`'s `header_cell`, so no header there can carry a decoration and there is nothing for a stamp to hide. It becomes this round's problem on the day that painter gains the role"
+      ],
+      "publishable_decision_summary": "The paint names EVERY columnheader, not only a virtualized grid's. R1547 made `virtual_grid.rs` derive a section's accessible name from the painted header and left `grid.rs` / `grouped.rs` stamping theirs, which is the defect R1547's own rationale condemns — two contracts in one tree — and it had a concrete victim: the round shipped `TableData::header_decoration` on the eager surface while `grid_table_nodes` stamped a name that silently outranks the §5.40 derivation, so a mark's meaning could not be heard there however correctly the header painted it. Closing it found what the stamp had been hiding: two bindings paint `\\\"{label}{glyph}\\\"` as one text node, so their headers would have announced \\\"Asset up-arrow\\\", and nothing in the tree could see it — a counterfactual that concatenates them back passed 145 tests, 8 tests and three demos before this round added a guard. `GridColumn` no longer carries a label at all.",
+      "publishable_changes_bullets": [
+        "`GridColumn` loses its `label`: `grid_table_nodes` and `grouped_grid_access_nodes` no longer stamp a `columnheader` name, so all three grid-builder families now take the name from the paint",
+        "`hello-data-grid` and `hello-grouped-grid-sort` painted `\"{label}{glyph}\"` as ONE text node, which the derivation reads whole; the glyph is now a separate `TextRole::Presentational` node, the shape `table.rs`'s `header_cell` already had",
+        "`hello-table` answers `TableData::header_decoration` with the ICON arm on its identifying column — the eager surface's live consumer, without which the a11y half of the role R1547 shipped there was unproven",
+        "three guards where there were none: `r1547_no_columnheader_is_named_by_the_builder` (census over every emitted node) and a per-binding \"announces its label, not the sort glyph\" test in each of the two grids that paint one",
+        "`hello-column-visibility`'s header-name assertion is re-pointed at the PAINT through `enrich_names_from_scene`, which is stronger: it used to compare the builder's own slice with itself"
+      ],
+      "publishable_verification_bullets": [
+        "CF: restoring the builder's stamp is caught by the new census test AND by the demo's eager section (`expected 'Primary key Widget', got 'table_ch0'`)",
+        "CF: concatenating the glyph back into the label text node passed EVERYTHING before this round's guards existed — 145 `hello-data-grid` tests, 8 `hello-grouped-grid-sort` tests and three a11y demos — and is caught by both new per-binding guards now",
+        "`tools/demos/r1547_section_states_its_role.py` grows section (G): the eager `hello-table` paints the section role at the same address, through the ICON arm from a `memory://` source, and its meaning reaches the AT tree",
+        "gates: fmt / workspace clippy / `cargo doc` / pinion-a11y 249 / pinion-widget-paint 771 / the six affected example crates, and twelve demos over every binding whose columnheader name changed source"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none. `treegrid_nodes` (`tree_view.rs`) still names its columnheaders from the builder, and that is correct rather than deferred: its headers are painted by `pinion_widget_paint::tree_view`, not by `table.rs`'s `header_cell`, so no header there can carry a decoration and there is nothing for a stamp to hide. It becomes this round's problem on the day that painter gains the role"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

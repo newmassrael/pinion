@@ -450,12 +450,9 @@ impl WidgetA11y for TableMultiView {
         // the slice.
         let grid_focused = focused == Some(PRIMARY_TAG);
         let (active_row, active_col) = active_cell(state);
-        let columns: Vec<GridColumn> = HEADERS
-            .iter()
-            .enumerate()
-            .map(|(col, label)| GridColumn {
+        let columns: Vec<GridColumn> = (0..HEADERS.len())
+            .map(|col| GridColumn {
                 tag: format!("{PRIMARY_TAG}_ch{col}"),
-                label: (*label).to_owned(),
                 sort: None,
             })
             .collect();

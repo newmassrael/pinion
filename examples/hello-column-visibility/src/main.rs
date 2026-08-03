@@ -371,12 +371,9 @@ impl WidgetA11y for ColumnVisibilityView {
         let mut nodes = toolbar_button_nodes(COLS_TAG, "Columns", &controls, cols_focus);
 
         // Grid projected to the visible columns (vp = visual position).
-        let columns: Vec<GridColumn> = visible
-            .iter()
-            .enumerate()
-            .map(|(vp, &src)| GridColumn {
+        let columns: Vec<GridColumn> = (0..visible.len())
+            .map(|vp| GridColumn {
                 tag: format!("{GRID_TAG}_ch{vp}"),
-                label: HEADERS[src].to_owned(),
                 sort: None,
             })
             .collect();
@@ -557,15 +554,27 @@ mod tests {
             .count();
         assert_eq!(ch2, 3, "hiding two columns drops the columnheader count");
         // The visible headers are Name / Size / Owner (cols 0, 2, 4).
-        let names: Vec<&str> = hidden
-            .iter()
+        //
+        // R1547 — read from the PAINT, through the derivation the shell runs,
+        // because that is where a `columnheader`'s name now lives: the builder
+        // stopped stamping one, so an a11y-only assertion could no longer see
+        // which source column survived the projection. The check is stronger
+        // for it — before R1547 it compared the builder's slice with itself,
+        // and now it compares the announced names with the drawn ones.
+        let scene = Owner::new().run(|| {
+            set_vis([true, false, true, false, true]);
+            view(ColsState::default(), &Frame::default())
+        });
+        let mut headers: Vec<AccessNode> = hidden
+            .into_iter()
             .filter(|n| n.role == AriaRole::ColumnHeader)
-            .filter_map(|n| n.name.as_deref())
             .collect();
+        pinion_a11y::enrich_names_from_scene(&mut headers, &scene);
+        let names: Vec<&str> = headers.iter().filter_map(|n| n.name.as_deref()).collect();
         assert_eq!(
             names,
             vec!["Name", "Size", "Owner"],
-            "the visible headers, in order"
+            "the visible headers, in order, as PAINTED"
         );
     }
 

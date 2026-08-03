@@ -414,12 +414,9 @@ impl WidgetA11y for GroupedGridView {
             OVERSCAN,
         );
         // Static (non-sortable) columns: tag + label, no aria-sort.
-        let columns: Vec<GridColumn> = COLS
-            .iter()
-            .enumerate()
-            .map(|(c, &name)| GridColumn {
+        let columns: Vec<GridColumn> = (0..COLS.len())
+            .map(|c| GridColumn {
                 tag: format!("{GRID_TAG}_col{c}"),
-                label: name.to_string(),
                 sort: None,
             })
             .collect();

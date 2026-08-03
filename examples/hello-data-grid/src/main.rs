@@ -182,7 +182,7 @@ use pinion_core::external::{
 };
 use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
 use pinion_core::reactive::{Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -4305,16 +4305,27 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>, model: &[CellValue]) 
         // the header cell carries the composite `Header` send tag so a
         // click routes to the coordinator's sort cycle (the same
         // `h<col>` sub-key grammar the read-only grids use).
-        let glyph = pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, col))
-            .map(|g| format!(" {g}"))
-            .unwrap_or_default();
-        let mut children = vec![Scene::Text(TextNode::styled(
-            format!("{label}{glyph}"),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(HEADER_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))];
+        let styled = |content: String| {
+            TextNode::styled(
+                content,
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(HEADER_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )
+        };
+        // R1547 §5.40 — label and glyph are SEPARATE text nodes, the glyph
+        // presentational, exactly as `table.rs`'s `header_cell` paints them.
+        // Concatenated they read as ONE string to the §5.40 name derivation, so
+        // this header would announce "Name ▲"; until R1547 the a11y builder hid
+        // that by stamping the label itself — the second source for a column's
+        // name that this round removed.
+        let mut children = vec![Scene::Text(styled((*label).to_string()))];
+        if let Some(glyph) = pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, col)) {
+            children.push(Scene::Text(
+                styled(format!(" {glyph}")).with_role(TextRole::Presentational),
+            ));
+        }
         // R966 — a column holding any modified cell shows a reset dot at the
         // header cell's trailing edge (the per-cell dot at column
         // granularity); a `resetcol<col>` click routes to reset_col. The dot
@@ -5185,12 +5196,9 @@ impl WidgetA11y for DataGridView {
         // tag, so `rect_for_tag` bounds attach and an AT activation routes to
         // the sort wire. The active column announces `aria-sort` (WAI-ARIA 1.2
         // §6.6.2).
-        let columns: Vec<GridColumn> = COL_NAMES
-            .iter()
-            .enumerate()
-            .map(|(col, label)| GridColumn {
+        let columns: Vec<GridColumn> = (0..COL_NAMES.len())
+            .map(|col| GridColumn {
                 tag: col_header_tag(col),
-                label: (*label).to_owned(),
                 sort: col_sort_dir(sort, col).map(SortDirection::from_ascending),
             })
             .collect();
@@ -5447,6 +5455,53 @@ mod tests {
             .find_external_with_tag(GRID_TAG)
             .and_then(|n| n.handle.introspect())
             .expect("grid external present")
+    }
+
+    /// R1547 — every painted text in `scene`, in DFS pre-order.
+    fn painted_texts(scene: &Scene, out: &mut Vec<String>) {
+        match scene {
+            Scene::Text(t) => out.push(t.content.to_string()),
+            Scene::Container(c) => c.children.iter().for_each(|ch| painted_texts(ch, out)),
+            Scene::Scroll(sc) => painted_texts(sc.content.as_ref(), out),
+            _ => {}
+        }
+    }
+
+    /// R1547 §5.40 — a `columnheader`'s announced name is the column's LABEL,
+    /// even while a sort glyph is drawn beside it.
+    ///
+    /// The guard for what R1547 had to change here. `grid_table_nodes` stamped
+    /// every columnheader's name until R1547; the name now comes from the
+    /// painted header, and this header paints label + glyph. Concatenated into
+    /// one text node — which is how it was written until R1547 — the derivation
+    /// reads `"Asset ▲"`, and nothing in this tree noticed, because the stamp
+    /// had been hiding it. The glyph is a separate `TextRole::Presentational`
+    /// node for exactly this reason, and this asserts it over the DERIVATION
+    /// the shell runs rather than over the scene's shape.
+    #[test]
+    fn r1547_columnheader_announces_its_label_not_the_sort_glyph() {
+        Owner::new().run(|| {
+            use_sort().set(Some((0, true)));
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            // Premise: a glyph really is painted, or the assertion below is
+            // satisfied by a header that simply has nothing extra to confuse.
+            let mut painted = Vec::new();
+            painted_texts(&scene, &mut painted);
+            assert!(
+                painted.iter().any(|t| t.contains('\u{25B2}')),
+                "premise: the active sort column paints its direction glyph",
+            );
+            let mut nodes = vec![AccessNode::new(
+                col_header_tag(0),
+                pinion_a11y::AriaRole::ColumnHeader,
+            )];
+            pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+            assert_eq!(
+                nodes[0].name.as_deref(),
+                Some(COL_NAMES[0]),
+                "the sorted column announces its label alone",
+            );
+        });
     }
 
     #[test]

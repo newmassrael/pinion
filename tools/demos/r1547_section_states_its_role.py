@@ -355,12 +355,74 @@ def wide_grid() -> None:
             )
 
 
+def eager_grid() -> None:
+    """(G) The EAGER surface, on `hello-table`.
+
+    Two things at once, both of which R1547 needed and neither of which the
+    virtualized grid can show:
+
+      * the eager `view_table` answers the section role too
+        (`TableData::header_decoration`), so the tree does not hold two header
+        contracts that disagree about whether it exists — the rule R1536
+        established on the cell axis;
+      * the **icon** arm on a header, drawn by the same lifted
+        `decoration_node` as the swatch, from a `memory://` source.
+
+    And it is the proof that the hole R1547 opened underneath itself is
+    closed: `grid_table_nodes` stamped every `columnheader`'s name, which
+    outranks the §5.40 derivation, so this meaning could not have been heard
+    however correctly the header painted it.
+    """
+    with RpcSubprocess("hello-table", boot_grace=1.5) as tf:
+        for _ in range(3):
+            tf.tick(0.016)
+        ns = nodes(tf, (560, 420))
+        a11y = access(tf)
+        headers = headers_of(a11y)
+        assert headers, "the eager grid emits columnheaders"
+
+        mark = by_tag(ns, header_deco_tag("table", 0))
+        assert mark is not None, (
+            "the eager surface paints the section role at the same address the "
+            "virtualized one does"
+        )
+        assert_eq(mark.get("type"), "Image", "the header's mark is the ICON arm")
+        assert str(mark.get("source") or "").startswith("memory://"), (
+            f"drawn from a producer-registered buffer: {mark.get('source')!r}"
+        )
+        rect = mark.get("rect") or {}
+        assert_eq(rect.get("w"), DECORATION_PX, "header mark width")
+        assert_eq(rect.get("h"), DECORATION_PX, "header mark height")
+        assert by_tag(ns, header_deco_tag("table", 1)) is None, (
+            "and no other column is marked — the negative half"
+        )
+
+        assert_eq(
+            headers[header_tag("table", 0)].get("name"),
+            f"{KEY_MEANING} Widget",
+            "the meaning joins the header's name ON THE EAGER PATH — until "
+            "R1547 `grid_table_nodes` stamped 'Widget' here, and an explicit "
+            "name silently outranks the derivation, so this was unhearable",
+        )
+        for col, label in enumerate(["Widget", "Round", "Status", "Role"]):
+            if col == 0:
+                continue
+            assert_eq(
+                headers[header_tag("table", col)].get("name"),
+                label,
+                f"column {col} is still named by its own painted label",
+            )
+        unnamed = [t for t, n in headers.items() if n.get("name") is None]
+        assert not unnamed, f"every eager columnheader is named: {unnamed}"
+
+
 def all_sections() -> None:
     """`run_demo` never returns (R1527 — it exits so a sweep cannot mistake a
-    failing demo for a passing one), so the two apps this round touches are
-    driven from ONE body rather than two calls."""
+    failing demo for a passing one), so the three apps this round touches are
+    driven from ONE body rather than three calls."""
     narrow_grid()
     wide_grid()
+    eager_grid()
 
 
 if __name__ == "__main__":

@@ -289,7 +289,9 @@ pub fn grouped_grid_access_nodes(
     nodes.push(header_row);
     for column in spec.columns {
         let mut col =
-            AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader).with_name(&column.label);
+            // R1547 §5.40 — NO `with_name`: the name is derived from the
+            // painted header (see `GridColumn`).
+            AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader);
         if let Some(dir) = column.sort {
             col = col.with_sort(dir);
         }
@@ -436,12 +438,10 @@ mod tests {
         [
             GridColumn {
                 tag: "c0".into(),
-                label: "Name".into(),
                 sort: Some(SortDirection::Ascending),
             },
             GridColumn {
                 tag: "c1".into(),
-                label: "Size".into(),
                 sort: None,
             },
         ]

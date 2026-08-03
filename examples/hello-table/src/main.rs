@@ -159,6 +159,27 @@ fn cell_decoration(c: CellIndex) -> Option<Decoration> {
     })
 }
 
+/// R1547 — the `memory://` source of the key glyph a column header carries, and
+/// what that glyph means. MEANINGFUL: the word "Widget" does not say that the
+/// column identifies the row, so the mark is the only thing that does.
+const ICON_KEY: &str = "memory://column-key";
+const KEY_MEANING: &str = "Primary key";
+
+/// R1547 §5.27 — the grid's **section**-axis `Qt::DecorationRole`, the icon arm
+/// on the header: a key glyph on the identifying column.
+///
+/// The EAGER surface's proof that the role reaches both axes and both arms. It
+/// also proves the half R1547 had to fix underneath: `grid_table_nodes` used to
+/// stamp every `columnheader`'s name, which silently outranks the §5.40
+/// derivation, so this meaning could not have been heard however correctly the
+/// header painted it.
+fn header_decoration(col: usize) -> Option<Decoration> {
+    (col == 0).then(|| Decoration::Icon {
+        source: ICON_KEY.to_string(),
+        meaning: KEY_MEANING.to_string(),
+    })
+}
+
 /// Immutable demo dataset: one row per recently-landed catalog widget.
 /// The data is a `const` (the single source of truth) so [`TableState`]
 /// stays `Copy` without a heap `Vec`; the coordinator is constructed from
@@ -357,6 +378,8 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
         "status-active",
         &disc_icon(theme.resolve(ColorRole::Accent)),
     );
+    // R1547 — and the key glyph the identifying COLUMN's header carries.
+    store.insert("column-key", &disc_icon(theme.resolve(ColorRole::Accent)));
     // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
     // scene-derived focus enumeration so its PRIMARY_TAG is collected.
     let style = TableStyle::m3();
@@ -376,7 +399,9 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
             row_ids: &state.order,
             // R1536 — Qt `data(index, Qt::DecorationRole)`, the icon arm.
             decoration: Some(&cell_decoration),
-            header_decoration: None,
+            // R1547 — the same role on the SECTION axis, Qt
+            // `headerData(section, Qt::Horizontal, Qt::DecorationRole)`.
+            header_decoration: Some(&header_decoration),
         },
         // Single-row selection only; the spreadsheet cell range selection is
         // the dedicated `hello-cell-select` grid's model (R953 — one selection
@@ -585,12 +610,9 @@ impl WidgetA11y for TableView {
         // The active sort column carries `aria-sort`.
         let grid_focused = focused == Some(PRIMARY_TAG);
         let (active_row, active_col) = active_cell(state);
-        let columns: Vec<GridColumn> = HEADERS
-            .iter()
-            .enumerate()
-            .map(|(col, label)| GridColumn {
+        let columns: Vec<GridColumn> = (0..HEADERS.len())
+            .map(|col| GridColumn {
                 tag: format!("{PRIMARY_TAG}_ch{col}"),
-                label: (*label).to_owned(),
                 sort: col_sort_dir(state.sort, col).map(SortDirection::from_ascending),
             })
             .collect();
