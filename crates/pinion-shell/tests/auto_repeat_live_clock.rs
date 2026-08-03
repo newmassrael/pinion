@@ -55,10 +55,13 @@ where
 
 /// Paint once through the real live path (the same fn the winit
 /// `RedrawRequested` arm calls), so the frame's wall-clock delta reaches
-/// whatever the paint drives.
-fn live_paint<V: pinion_shell::WidgetView>(core: &mut ShellCore<V>) {
+/// whatever the paint drives. Clears the redraw flag first, so a caller
+/// can ask what THIS frame asked for rather than what an earlier one did.
+fn live_paint<V: pinion_shell::WidgetView>(core: &mut ShellCore<V>) -> bool {
+    core.take_redraw_request();
     let paint = core.compute_paint_scene(W, H);
     core.finalize_frame(paint);
+    core.redraw_requested()
 }
 
 #[test]
@@ -88,6 +91,47 @@ fn r1549_3_the_live_paint_clock_advances_a_held_press() {
         holds[0].held_secs > 0.0,
         "the paint's own clock reached the hold; got held_secs = {}",
         holds[0].held_secs,
+    );
+}
+
+/// R1549.5 — advancing the hold is only half of it: the frame must also
+/// ASK FOR THE NEXT ONE. Without that arm a real window paints the frame
+/// the press opened and then sleeps on `ControlFlow::Wait`, so the user
+/// gets exactly one repeat — the feature dead in the live GUI while every
+/// test and the demo pass (measured: deleting the arm kept the whole
+/// pinion-shell suite green). The TUI's mirror of this was guarded at
+/// R1549.2 and this side was not, which is the fourth instance in one
+/// round of the guard landing on a different arm from the capability.
+#[test]
+fn r1549_5_an_armed_hold_asks_for_the_next_frame() {
+    let mut core = booted_and_held::<RepeatingButtonFixture>();
+    assert!(
+        live_paint(&mut core),
+        "a live hold keeps the loop awake, as an unsettled animation does",
+    );
+    assert!(live_paint(&mut core), "and it keeps asking while held");
+
+    core.mouse_released(PointerId::MOUSE);
+    // Two settling frames: the release itself dirties state (the button
+    // repaints Hover), so the honest assertion is that the asking STOPS,
+    // not that the very next frame is already quiet.
+    live_paint(&mut core);
+    assert!(
+        !live_paint(&mut core),
+        "released: nothing is armed, so the window may idle",
+    );
+}
+
+/// The negative control for the arm above — an undeclared button's press
+/// must not pin the loop awake, or "asks for a frame" would be true of
+/// every press and the assertion above would prove nothing.
+#[test]
+fn r1549_5_an_undeclared_press_does_not_pin_the_loop_awake() {
+    let mut core = booted_and_held::<EchoButtonFixture>();
+    live_paint(&mut core);
+    assert!(
+        !live_paint(&mut core),
+        "no cadence declared, so no reason to keep painting",
     );
 }
 

@@ -21,7 +21,7 @@
 //! tests (R51.83 / R51.196 / R666 / R51.73 axes); this file is the
 //! TUI side of the same contract.
 
-use pinion_core::test_fixtures::ButtonFixture as TestButtonView;
+use pinion_core::test_fixtures::{ButtonFixture as TestButtonView, RepeatingButtonFixture};
 use pinion_core::widgets::button::ButtonState;
 use pinion_tui::ShellCoreTui;
 
@@ -531,5 +531,83 @@ fn r1344_scene_layout_viewport_returns_measured_rects_not_zeros() {
     assert!(
         response.contains(r#""rect":{"h":384,"w":640,"x":0,"y":0}"#),
         "the root must resolve to the requested viewport: {response}",
+    );
+}
+
+/// R1549.5 §5.41 §5.35 §5.12 §2 #6 — `scene/auto_repeat` answers over the
+/// TUI WIRE, not merely through the substrate accessor.
+///
+/// R1549.2 added the census and a test that called
+/// `ShellCoreTui::auto_repeat_holds` directly, which left the dispatch
+/// wiring unexercised: measured, removing
+/// `ctx.with_auto_repeat_holds(...)` kept every pinion-tui test green
+/// while the TUI wire silently answered `{"holds": []}` for every press
+/// in flight. That is the fifth instance in one round of a guard landing
+/// on a different arm from the capability, and the reason this file — the
+/// §2 #6 wire-parity file — is where it belongs.
+#[test]
+fn r1549_5_scene_auto_repeat_answers_over_the_tui_wire() {
+    let mut core: ShellCoreTui<RepeatingButtonFixture> = ShellCoreTui::new();
+    let paint = core.compute_paint_scene(80, 24);
+    core.update_paint_scene(paint);
+
+    let ask = r#"{"jsonrpc":"2.0","id":1,"method":"scene/auto_repeat","params":{}}"#;
+    let idle = core
+        .dispatch_rpc(ask)
+        .expect("scene/auto_repeat must answer on the TUI");
+    assert!(
+        idle.contains(r#""holds":[]"#),
+        "nothing held is an empty list, not an error: {idle}",
+    );
+
+    core.cursor_moved(8.0, 8.0);
+    core.pointer_down();
+    let held = core
+        .dispatch_rpc(ask)
+        .expect("scene/auto_repeat must answer while held");
+    assert!(
+        held.contains(r#""target":"test_btn""#),
+        "the wire names the pressed target: {held}",
+    );
+    assert!(
+        held.contains(r#""repeating":true"#),
+        "and reports the declared cadence as live: {held}",
+    );
+    assert!(
+        held.contains(r#""delay_secs""#),
+        "with the cadence itself on the wire: {held}",
+    );
+
+    core.pointer_up();
+    let released = core
+        .dispatch_rpc(ask)
+        .expect("scene/auto_repeat must answer after release");
+    assert!(
+        released.contains(r#""holds":[]"#),
+        "the release empties the census: {released}",
+    );
+}
+
+/// The negative control: an undeclared button's press is still REPORTED
+/// over the wire, with `repeating` false — so the assertion above cannot
+/// be satisfied by a backend that marks every press as repeating.
+#[test]
+fn r1549_5_the_tui_wire_reports_a_non_repeating_hold_as_a_hold() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let paint = core.compute_paint_scene(80, 24);
+    core.update_paint_scene(paint);
+    core.cursor_moved(8.0, 8.0);
+    core.pointer_down();
+
+    let held = core
+        .dispatch_rpc(r#"{"jsonrpc":"2.0","id":1,"method":"scene/auto_repeat","params":{}}"#)
+        .expect("answers");
+    assert!(
+        held.contains(r#""target":"test_btn""#),
+        "the press IS in flight: {held}",
+    );
+    assert!(
+        held.contains(r#""repeating":false"#),
+        "it just declares no cadence: {held}",
     );
 }

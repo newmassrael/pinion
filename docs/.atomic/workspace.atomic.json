@@ -80118,6 +80118,48 @@
         "The Vello side needs no equivalent fuse: its advance lives inside `compute_paint_scene_internal` alongside everything else the frame does, so removing it means editing that fn — which `tests/auto_repeat_live_clock.rs` catches (verified R1549.3)"
       ]
     },
+    "Round 1549.5": {
+      "decision_summary": "Two more arms, then the inventory — because finding them one per question was itself the defect. R1549.2 through .4 each closed one instance of a guard landing on a different arm from the capability, and each was found by an audit prompted from outside. A fourth and fifth were still there: the GUI's keep-painting arm (delete it and a real window gives the user exactly ONE repeat before the event loop sleeps, while the whole suite and the 58-assertion demo stay green) and the TUI's dispatch wiring (delete it and the TUI wire answers an empty census for every press in flight). Both are the mirror of something already guarded on the other backend, which is the tell. So this round stops closing instances and enumerates the class instead: every arm the capability travels through, counterfactualled once each — ten of them, listed in the verification notes, all now guarded. That list is the durable artifact. The lesson underneath is that a capability threaded through two backends, two clock sources, a router and a wire has roughly ten places it can be severed, and a guard written where the code was easiest to reach covers one of them; the honest unit of coverage for a cross-cutting feature is the arm inventory, not the feature.",
+      "changes_bullets": [
+        "`r1549_5_an_armed_hold_asks_for_the_next_frame` + its undeclared-button control (pinion-shell): the GUI's keep-painting arm. Without it a real window paints the frame the press opened and then sleeps on `ControlFlow::Wait` — one repeat, feature dead in the live GUI, every test and the demo green",
+        "`r1549_5_scene_auto_repeat_answers_over_the_tui_wire` + its non-repeating control (pinion-tui `rpc_ingress`, the §2 #6 wire-parity file): the TUI's dispatch wiring. Without it the TUI wire answered `{\"holds\": []}` for every press in flight",
+        "`live_paint` now clears the redraw flag before painting and returns what THAT frame asked for, so the assertion is about the frame under test rather than about anything an earlier one left set"
+      ],
+      "verification_bullets": [
+        "Both counterfactuals verified to FAIL the new guards and leave their negative controls passing",
+        "COMPLETE ARM INVENTORY, each counterfactualled once: GUI RPC-tick arm (demo — with `set_fps 0` it is the only thing that can move the value, and the demo asserts exact equalities), GUI live-paint arm (R1549.3), GUI redraw gate (here), GUI dispatch ctx (demo asserts the census over the wire), TUI `begin_frame` advance (R1549.4), TUI `wants_next_frame` fold (R1549.2), TUI dispatch ctx (here), router fire pair, router press-record target, three widget declarations. Ten arms, all guarded",
+        "pinion-shell + pinion-tui full suites green, clippy clean on both"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35",
+        "5.12",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "No carry. The R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all"
+      ],
+      "publishable_decision_summary": "Two more arms, then the inventory — because finding them one per question was itself the defect. R1549.2 through .4 each closed one instance of a guard landing on a different arm from the capability, and each was found by an audit prompted from outside. A fourth and fifth were still there: the GUI's keep-painting arm (delete it and a real window gives the user exactly ONE repeat before the event loop sleeps, while the whole suite and the 58-assertion demo stay green) and the TUI's dispatch wiring (delete it and the TUI wire answers an empty census for every press in flight). Both are the mirror of something already guarded on the other backend, which is the tell. So this round stops closing instances and enumerates the class instead: every arm the capability travels through, counterfactualled once each — ten of them, listed in the verification notes, all now guarded. That list is the durable artifact. The lesson underneath is that a capability threaded through two backends, two clock sources, a router and a wire has roughly ten places it can be severed, and a guard written where the code was easiest to reach covers one of them; the honest unit of coverage for a cross-cutting feature is the arm inventory, not the feature.",
+      "publishable_changes_bullets": [
+        "`r1549_5_an_armed_hold_asks_for_the_next_frame` + its undeclared-button control (pinion-shell): the GUI's keep-painting arm. Without it a real window paints the frame the press opened and then sleeps on `ControlFlow::Wait` — one repeat, feature dead in the live GUI, every test and the demo green",
+        "`r1549_5_scene_auto_repeat_answers_over_the_tui_wire` + its non-repeating control (pinion-tui `rpc_ingress`, the §2 #6 wire-parity file): the TUI's dispatch wiring. Without it the TUI wire answered `{\"holds\": []}` for every press in flight",
+        "`live_paint` now clears the redraw flag before painting and returns what THAT frame asked for, so the assertion is about the frame under test rather than about anything an earlier one left set"
+      ],
+      "publishable_verification_bullets": [
+        "Both counterfactuals verified to FAIL the new guards and leave their negative controls passing",
+        "COMPLETE ARM INVENTORY, each counterfactualled once: GUI RPC-tick arm (demo — with `set_fps 0` it is the only thing that can move the value, and the demo asserts exact equalities), GUI live-paint arm (R1549.3), GUI redraw gate (here), GUI dispatch ctx (demo asserts the census over the wire), TUI `begin_frame` advance (R1549.4), TUI `wants_next_frame` fold (R1549.2), TUI dispatch ctx (here), router fire pair, router press-record target, three widget declarations. Ten arms, all guarded",
+        "pinion-shell + pinion-tui full suites green, clippy clean on both"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35",
+        "5.12",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "No carry. The R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
