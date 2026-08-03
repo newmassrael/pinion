@@ -874,9 +874,29 @@ AXES = [
         # wall clock. Note what the docstring's premises show about how such a
         # defect survives: both were TRUE when written, and a consumer's
         # architecture changed underneath them.
-        "judged_at": 1538,
-        "completion": 78,
-        "evidence_snapshot": {"example-name": 5, "demo-body": 11, "round-axis": 6},
+        #
+        # R1550 re-judgment, demanded by the tool (the ledger took this axis
+        # 6 -> 8, past the 25% band). 78 -> 83, because the FIRST of the three
+        # gaps the 78% named is closed outright, and it was total: a census of
+        # the RPC surface found not one field in BYTES. `scene/memory` is now
+        # the memory axis — one row per arena per owner, with the process RSS
+        # beside it — and the accounting is a trait whose every impl
+        # destructures its type, so a field added to a cached struct cannot
+        # silently go unpriced. It also closes R1531's leftover (`MAX_CAPACITY`
+        # bounded memory by an entry count times a measured AVERAGE, and an
+        # average bounds nothing) and fixes an arena that sat BELOW Qt's floor:
+        # the decoded-image cache had no bound of any kind and is now
+        # byte-bounded at `QPixmapCache`'s own 10 MiB default.
+        #
+        # +5 and not more. Two of the three gaps stand — the node census counts
+        # nodes rather than their cost, and present latency needs a wgpu
+        # extension that does not exist — and this axis's completion has
+        # always been gated on OPTIMISATIONS as much as on measurement: R1550
+        # made nothing faster. What it did is make the resource visible, which
+        # is the precondition for the round that shrinks it.
+        "judged_at": 1550,
+        "completion": 83,
+        "evidence_snapshot": {"example-name": 5, "demo-body": 12, "round-axis": 8},
     },
     {
         "key": "osnative",
