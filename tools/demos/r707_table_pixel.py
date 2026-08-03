@@ -21,6 +21,14 @@ Two complementary measurements (both glyph-robust):
      left-most cell, so the walk from the ring to the panel's left edge
      crosses NO data text — a clean anchor (the same reason the R706 date-
      picker demo used the left-most day column).
+
+     R1548 put a **vertical header band** between the panel's edge and that
+     first column, so the panel edge stopped being the column origin: the walk
+     now lands one band-width short. The band's width is READ FROM THE PAINT
+     (the corner cell's rect) rather than hard-coded, so this stays a
+     measurement of where the ring is and not a second statement of the
+     layout — and a table with no band measures 0 and the arithmetic is the
+     pre-R1548 one exactly.
   2. DELTA (catches a stuck / non-tracking ring): rove two columns right to
      (row 0, col 2) and assert the ring moved right by ~2 column pitches. The
      delta between two blue ring positions needs no panel anchor at all.
@@ -52,6 +60,35 @@ VIEWPORT = (600, 360)
 SHOT_A = "/tmp/r707_table_pixel_col0.png"
 SHOT_B = "/tmp/r707_table_pixel_col2.png"
 RING_BLUE = (26, 115, 232)  # Material focus blue #1A73E8 (shared R694 ring)
+
+
+def _row_header_band_width(d) -> int:
+    """R1548 — the width of the vertical header band, from the PAINT.
+
+    The band sits between the panel's left edge and column 0, so the pixel
+    walk's anchor is `panel_left + this`. Read from the corner cell's rect
+    (`GridTag::header_corner`) rather than restated as a constant: a demo that
+    carried its own copy of a layout number would keep passing after the
+    layout changed, which is the failure this whole file exists to catch one
+    level down.
+
+    `0` when the table paints no band — every pre-R1548 caller, and the
+    arithmetic then reduces to what it was.
+    """
+    found: list = []
+    _walk_tag(d.snapshot(source="paint", viewport=VIEWPORT), f"{T}_hcorner", found)
+    return max((int((n.get("rect") or {}).get("w") or 0) for n in found), default=0)
+
+
+def _walk_tag(node, tag: str, out: list) -> None:
+    if isinstance(node, dict):
+        if node.get("tag") == tag:
+            out.append(node)
+        for v in node.values():
+            _walk_tag(v, tag, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_tag(v, tag, out)
 
 
 def _skip(reason: str) -> int:
@@ -167,11 +204,13 @@ def body() -> int:
             if panel_left is None:
                 print("SKIP: could not locate the table panel edge")
                 return 0
+            band_w = _row_header_band_width(d)
 
             # (1) ABSOLUTE: the col-0 ring must sit in column 0. The walk left
-            # crossed only block padding (no text), so panel_left is the true
-            # panel edge and the offset is just the padding (< half a column).
-            offset0 = rl0 - panel_left
+            # crossed only block padding and the R1548 vertical header band (no
+            # data text), so `panel_left + band_w` is the column origin and the
+            # remaining offset is just the padding (< half a column).
+            offset0 = rl0 - panel_left - band_w
             col_index = round(offset0 / pitch)
             assert col_index == 0, (
                 f"col-0 focus ring is in column {col_index} (offset {offset0}px"

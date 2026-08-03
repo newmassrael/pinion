@@ -449,6 +449,23 @@ pub fn windowed_grid_nodes_multiselected(
 /// - `window` — the [`VisibleWindow`] over the *view* positions (same
 ///   `compute_visible_range` over `order.len()` the view fn uses), so the a11y
 ///   tree and the painted tree window identically.
+///
+/// # A second row emitter (recorded R1548)
+///
+/// This function builds its grid / header / row / cell nodes **itself** rather
+/// than through `grid_nodes`, which every other builder in this module shares.
+/// The two are structurally alike and differ in three things — the id is
+/// `order[view_pos]` instead of `view_pos`, `posinset` is the visual position,
+/// and the active column carries `aria-sort` — all three of which `grid_nodes`
+/// could express. It is therefore a latent divergence: a fix applied to the row
+/// topology in one lands in five builders and not in this one.
+///
+/// R1548 did **not** unify them, and the reason it could get away with that is
+/// the reason it is recorded here rather than fixed: the vertical header axis
+/// arrived as [`attach_row_headers`], a pass over already-built nodes, so it
+/// reaches this topology without either implementation learning about it. A
+/// flag would have had to be threaded into both. The next change that is *not*
+/// expressible as a pass is the one that has to do the merge.
 #[must_use]
 pub fn windowed_grid_nodes_sorted(
     grid_tag: &str,

@@ -162,13 +162,20 @@ def body() -> None:
                    desc="out-of-range column clamps to unsorted")
 
         # ── (F) the sorted header paints the direction glyph ────────
+        # R1548.1 — asked of the header CELL, not of a concatenated string.
+        # Until R1547.1 this binding painted `"{label}{glyph}"` as ONE text
+        # node, which is what made `startswith("Count") and "▲" in t` a legal
+        # reading; R1547.1 split them, because a label is the header's content
+        # (and its accessible name) while the sort glyph is presentational, and
+        # the joined node announced "Asset ▲" to a screen reader. The
+        # cell-scoped question is the one that survives the split — and it says
+        # something the string never did: that the glyph is inside the Count
+        # column's OWN cell, rather than anywhere in a string that happens to
+        # start with "Count".
         tf.invoke("/external/cycle_sort", 2)
         snap = wait_snap(
             tf,
-            lambda s: any(
-                t.startswith("Count") and "▲" in t
-                for t in _snap_texts(s)
-            ),
+            lambda s: {"Count", "▲"} <= _header_cell_texts(s, 2),
             viewport=VIEWPORT,
             desc="ascending glyph lands on the Count header",
         )
@@ -194,6 +201,36 @@ def _snap_texts(snap) -> list:
     out: list = []
     _walk_texts(snap, out)
     return out
+
+
+def _header_cell_texts(snap, col: int) -> set:
+    """R1548.1 — every text painted inside column `col`'s header cell.
+
+    The cell is the composite `"{GRID}#h{col}"` container the sort click
+    routes through, so this addresses the header by the tag the framework
+    publishes rather than by a position in a flattened text list. Stripped,
+    because the glyph node is padded (`" ▲"`) and the padding is a paint
+    detail, not part of what the header says.
+    """
+    found: list = []
+    _walk_node(snap, f"{GRID}#h{col}", found)
+    out: set = set()
+    for cell in found:
+        texts: list = []
+        _walk_texts(cell, texts)
+        out.update(t.strip() for t in texts)
+    return out
+
+
+def _walk_node(node, tag: str, out: list) -> None:
+    if isinstance(node, dict):
+        if node.get("tag") == tag:
+            out.append(node)
+        for v in node.values():
+            _walk_node(v, tag, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_node(v, tag, out)
 
 
 if __name__ == "__main__":
