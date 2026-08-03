@@ -3193,6 +3193,19 @@ impl Size {
 /// sidecar driving the taffy pass.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+// R1554 — five independent flags, and clippy's suggested remedies do not fit
+// either of them. They are not a state machine: `pointer_transparent`,
+// `focusable`, `drop_target` and the disabled pair are orthogonal CSS-shaped
+// properties (`pointer-events`, tab stop, drop region, `:disabled`), and any
+// combination is meaningful. They are not positional-construction hazards
+// either — `LayoutStyle` is built only through named builders, so a
+// transposition is not expressible. The one pair with a dependency, `disabled`
+// / `resolved_disabled`, is deliberately two fields: the declaration and the
+// cascade's derivation have different writers, and folding them into one enum
+// needs a fifth variant for "declared, cascade has not run" (the state every
+// fresh view scene is in) whose distinction from "declared, resolved" a reader
+// has to carry for no gain.
+#[allow(clippy::struct_excessive_bools)]
 pub struct LayoutStyle {
     pub display: Display,
     pub flex_direction: FlexDirection,
@@ -3361,6 +3374,63 @@ pub struct LayoutStyle {
     ///
     /// [`DropPoint`]: crate::external::DropPoint
     pub drop_target: bool,
+    /// (R1554 §5.39 §5.35 §5.40) **This node and everything under it is
+    /// disabled** — Qt's [`QWidget::setEnabled(false)`], HTML's
+    /// `<fieldset disabled>`, WAI-ARIA's `aria-disabled`.
+    ///
+    /// The one interaction property on this sidecar that is **inherited**.
+    /// [`Self::pointer_transparent`] / [`Self::focusable`] /
+    /// [`Self::drop_target`] / [`Self::cursor`] each describe the node that
+    /// carries them and nothing else; a disabled subtree is a statement about
+    /// a *region* of the tree, which is why no composition of the other four
+    /// expresses it (marking every descendant would need the binding to
+    /// enumerate them, and would still leave the AT and the ink to it).
+    ///
+    /// Four consequences follow, each resolved where that consequence is
+    /// already decided, so a binding states the fact once:
+    ///
+    /// * **Tab order** — [`Scene::collect_focusable_tags`](crate::Scene::collect_focusable_tags)
+    ///   does not descend, so no focus stop inside the region is enumerated.
+    /// * **Pointer** — [`Scene::hit_test`](crate::Scene::hit_test) does not
+    ///   descend: the disabled node itself is the deepest hit, so a press
+    ///   inside the region resolves to the region and never to the control
+    ///   under the cursor (Qt propagates such an event to the parent).
+    /// * **Assistive technology** — the a11y assembler stamps
+    ///   `AccessState::disabled` on every node in the region, so `aria-disabled`
+    ///   cannot disagree with the scene.
+    /// * **Ink** — [`resolve_disabled`](crate::scene_disabled::resolve_disabled)
+    ///   fades the region toward its backdrop by the Material 3
+    ///   [`DISABLED`](crate::widgets::interaction::DISABLED) token, the same
+    ///   fraction (and so the same ink) a self-disabled widget's state layer
+    ///   already uses.
+    ///
+    /// `false` (the default) is every pre-R1554 node — additive and
+    /// bit-identical for existing bindings.
+    ///
+    /// [`QWidget::setEnabled(false)`]: https://doc.qt.io/qt-6/qwidget.html#enabled-prop
+    pub disabled: bool,
+    /// (R1554 §5.39) Derived: the cascade has resolved this node as disabled —
+    /// by its own [`declaration`](Self::disabled) or by an ancestor's. Qt's
+    /// `QWidget::isEnabled()`, inverted.
+    ///
+    /// Written **only** by [`resolve_disabled`](crate::scene_disabled::resolve_disabled),
+    /// which recomputes it from the declarations on every produced paint scene
+    /// — never by a binding, which is why there is no builder for it. Keeping
+    /// the derived value in its own field beside the declaration is what lets
+    /// `scene/disabled` answer *which* ancestor disabled a node (Qt's
+    /// `isEnabled()` is a bool, and `isEnabledTo()` requires the caller to
+    /// already name the ancestor it is asking about), and it is what makes the
+    /// fade idempotent: the ink is faded on the pass that first sets this, so
+    /// laying the same scene out twice cannot fade it twice.
+    ///
+    /// It is a per-paint derivation, not stored state — `V::view` rebuilds the
+    /// tree from scratch every frame (R26), so the field arrives back at its
+    /// `false` default and the cascade re-derives it, in both directions. This
+    /// is the difference from Qt, whose `QWidgetPrivate::setEnabled_helper`
+    /// **writes** `WA_Disabled` into every descendant widget and must walk them
+    /// again to take it back, keeping N copies of one fact in step by
+    /// procedure — most delicately across a reparent.
+    pub resolved_disabled: bool,
     /// (R1196 §5.16 §5.39) The hover mouse **cursor** this node requests when
     /// the pointer is over it — a [`CursorHint`], or `None` (the default) for
     /// the OS default arrow. The shell resolves the deepest hinted node under
@@ -3447,6 +3517,11 @@ impl LayoutStyle {
             // (R1080 §5.51) `false` = deepest-tagged drop resolution, the
             // pre-R1080 default.
             drop_target: false,
+            // (R1554 §5.39) `false` = interactive, the pre-R1554 default.
+            disabled: false,
+            // (R1554 §5.39) Derived; `resolve_disabled` overwrites it every
+            // paint, in both directions.
+            resolved_disabled: false,
             // (R1196 §5.16 §5.39) `None` = the OS default arrow cursor.
             cursor: None,
         }
@@ -3490,6 +3565,21 @@ impl LayoutStyle {
     #[must_use]
     pub const fn with_focusable(mut self, focusable: bool) -> Self {
         self.focusable = focusable;
+        self
+    }
+
+    /// (R1554 §5.39 §5.35 §5.40) Builder: declare this node and its whole
+    /// subtree disabled — Qt `QWidget::setEnabled(false)`, HTML
+    /// `<fieldset disabled>`. See [`Self::disabled`] for the four consequences
+    /// the framework derives from it.
+    ///
+    /// There is deliberately no builder for
+    /// [`resolved_disabled`](Self::resolved_disabled): that half is the
+    /// cascade's to write, and a binding able to set it could claim a
+    /// descendant is disabled while its ancestors are not.
+    #[must_use]
+    pub const fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -3658,6 +3748,15 @@ impl core::hash::Hash for LayoutStyle {
         // (R1080 §5.51) Same single-byte `false`-default invariant —
         // pre-R1080 cache keys stay bit-identical.
         self.drop_target.hash(hasher);
+        // (R1554 §5.39) Both halves of the disabled axis are keyed. The
+        // DERIVED half is the load-bearing one for the §5.16 fragment cache:
+        // `resolve_disabled` fades a subtree's ink, so a fragment encoded
+        // while the region was live must not be replayed once it is not, and
+        // the faded colours alone would not say so on a node whose own style
+        // carries none (a bare Container). Same single-byte `false`-default
+        // invariant — pre-R1554 cache keys stay bit-identical.
+        self.disabled.hash(hasher);
+        self.resolved_disabled.hash(hasher);
     }
 }
 

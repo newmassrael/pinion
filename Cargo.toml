@@ -89,6 +89,7 @@ members = [
     "examples/hello-virtual-nav",
     "examples/hello-multi-select",
     "examples/hello-virtual-sort",
+    "examples/hello-group-box",
     "examples/hello-grouped-list",
     "examples/hello-grouped-sort",
     "examples/hello-grouped-grid",

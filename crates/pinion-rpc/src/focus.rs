@@ -41,6 +41,25 @@ pub enum FocusError {
     /// The supplied tag is not in the current `tab_order`. AI clients
     /// should call `focus/get` first to discover the focusable set.
     NotFocusable(String),
+    /// R1554 §5.39 — the tag is absent from the order for a *specific*
+    /// reason: it lies inside a region a container declared disabled. Carries
+    /// the tag and the nearest ancestor that disabled it, so the caller learns
+    /// what to act on instead of what to look up.
+    ///
+    /// A strict refinement of [`Self::NotFocusable`] — the tag was already
+    /// being refused, since the §5.39 enumeration does not descend into a
+    /// disabled region. What is new is that the answer names the cause. Qt's
+    /// `QWidget::setFocus()` on a disabled widget returns `void` and does
+    /// nothing at all: the caller cannot distinguish "focused it" from
+    /// "refused it", let alone learn why.
+    Disabled {
+        /// The refused tag.
+        tag: String,
+        /// The nearest ancestor that declared the disabled region, when it is
+        /// tagged. `None` for an untagged declarer — the region exists and is
+        /// refusing, but has no address to hand back.
+        declared_by: Option<String>,
+    },
 }
 
 /// Outcome of a [`focus_set`] / [`focus_get`] call.
@@ -73,6 +92,7 @@ pub struct FocusSetParams {
 pub fn focus_set(
     focus: &mut FocusManager,
     params: &FocusSetParams,
+    last_paint_scene: Option<&pinion_core::Scene>,
 ) -> Result<FocusState, FocusError> {
     match params.tag.as_deref() {
         None => {
@@ -93,6 +113,12 @@ pub fn focus_set(
             // the modal exactly as it confines Tab.
             let in_order = focus.active_tab_order().iter().any(|t| t == tag);
             if !in_order {
+                // R1554 §5.39 — refuse by CAUSE when the scene states one. The
+                // disabled census is consulted only on the failing path, so a
+                // successful `focus/set` walks no tree.
+                if let Some(refusal) = disabled_refusal(last_paint_scene, tag) {
+                    return Err(refusal);
+                }
                 return Err(FocusError::NotFocusable(tag.to_owned()));
             }
             let _ = focus.focus_set(tag);
@@ -102,6 +128,27 @@ pub fn focus_set(
         focused: focus.focused().map(str::to_owned),
         tab_order: None,
     })
+}
+
+/// R1554 §5.39 — the refusal `tag` earns because the painted scene says it is
+/// inside a disabled region, or [`None`] when it does not.
+///
+/// Returns the built [`FocusError`] rather than the ancestor it found, so the
+/// answer carries the reason instead of a value the caller has to interpret —
+/// and so "not disabled" and "disabled by an untagged region" stay distinct
+/// without nesting one `Option` inside another.
+fn disabled_refusal(
+    last_paint_scene: Option<&pinion_core::Scene>,
+    tag: &str,
+) -> Option<FocusError> {
+    let scene = last_paint_scene?;
+    pinion_core::scene_disabled::disabled_census(scene)
+        .into_iter()
+        .find(|d| d.tag == tag)
+        .map(|d| FocusError::Disabled {
+            tag: tag.to_owned(),
+            declared_by: d.declared_by,
+        })
 }
 
 /// `focus/get`. Returns the current focus + tab order in one round
@@ -182,6 +229,14 @@ fn err_from_focus(e: FocusError) -> RpcError {
         FocusError::NotFocusable(tag) => {
             RpcError::new(-32602, "tag_not_focusable").with_data_string(tag)
         }
+        // R1554 §5.39 — the `data` string is the ancestor to act on, not the
+        // tag that was refused: the caller already knows what it asked for, and
+        // what it lacks is the address of the control that would re-enable it.
+        // An untagged declarer falls back to the refused tag so `data` is never
+        // absent for this code.
+        FocusError::Disabled { tag, declared_by } => {
+            RpcError::new(-32602, "tag_disabled").with_data_string(declared_by.unwrap_or(tag))
+        }
     }
 }
 
@@ -195,13 +250,14 @@ fn err_from_focus(e: FocusError) -> RpcError {
 pub(crate) fn handle_focus_set(
     focus: Option<&mut FocusManager>,
     params: Option<&Value>,
+    last_paint_scene: Option<&pinion_core::Scene>,
 ) -> Result<Value, RpcError> {
     let focus = focus.ok_or_else(err_focus_unavailable)?;
     let parsed: FocusSetParams = match params {
         Some(p) => serde_json::from_value(p.clone()).map_err(RpcError::invalid_params)?,
         None => FocusSetParams { tag: None },
     };
-    let state = focus_set(focus, &parsed).map_err(err_from_focus)?;
+    let state = focus_set(focus, &parsed, last_paint_scene).map_err(err_from_focus)?;
     state_to_value(state)
 }
 
@@ -241,6 +297,7 @@ mod tests {
             &FocusSetParams {
                 tag: Some("main_btn".to_owned()),
             },
+            None,
         )
         .expect("known tag");
         assert_eq!(out.focused.as_deref(), Some("main_btn"));
@@ -251,7 +308,7 @@ mod tests {
     fn set_focus_null_clears() {
         let mut fm = fm_with(&["main_btn"]);
         let _ = fm.focus_set("main_btn");
-        let out = focus_set(&mut fm, &FocusSetParams { tag: None }).unwrap();
+        let out = focus_set(&mut fm, &FocusSetParams { tag: None }, None).unwrap();
         assert!(out.focused.is_none());
         assert!(fm.focused().is_none());
     }
@@ -264,6 +321,7 @@ mod tests {
             &FocusSetParams {
                 tag: Some("bogus".to_owned()),
             },
+            None,
         )
         .unwrap_err();
         assert_eq!(err, FocusError::NotFocusable("bogus".to_owned()));
@@ -277,12 +335,14 @@ mod tests {
             &FocusSetParams {
                 tag: Some("main_btn".to_owned()),
             },
+            None,
         );
         let out = focus_set(
             &mut fm,
             &FocusSetParams {
                 tag: Some("main_btn".to_owned()),
             },
+            None,
         )
         .unwrap();
         // Repeated set returns the same state, not an error.

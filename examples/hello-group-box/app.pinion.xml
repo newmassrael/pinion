@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1554 §5.39 §5.50: pinion-forge renderer manifest for hello-group-box.
+  Same single-source-of-truth template the rest of the gallery emits;
+  only the struct name diverges. backend=vello + default Area AA.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloGroupBoxRenderer"
+        backend="vello"/>

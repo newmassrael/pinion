@@ -378,6 +378,11 @@ AXES = [
                 "scrubber", "image", "commands", "dnd", "range-slider",
                 "popup", "gesture", "pinch-zoom", "smart-zoom", "raw-pointer",
                 "crosshair", "settings-panel", "todomvc", "figma-",
+                # R1554 — the group box. A titled frame that gates its
+                # contents is a catalog widget; the pattern list is a census,
+                # so a member with no pattern is reported UNCLASSIFIED rather
+                # than counted somewhere convenient.
+                "group-box",
             ]),
         ],
         # R1533 re-judgment, 82 -> 84, demanded by the tool: the round ledger
@@ -442,23 +447,28 @@ AXES = [
         #     Qt's spin arrows are).
         #   * Qt also has `wheelEvent` on `QComboBox` and `QTabBar`; R1533
         #     covered value arithmetic, not index arithmetic. Re-checked at
-        #     R1549: `External::wheel` still has exactly the two
-        #     implementors R1533 added, so this is now the largest
+        #     R1554: `External::wheel` still has exactly the two CATALOG
+        #     implementors R1533 added (`slider`, `spin_button`; two more
+        #     live in bindings' own Externals), so this is still the largest
         #     cross-cutting item left.
         #   * NEW at R1543 — the capability is universal but ADOPTION is
-        #     three sites (menu titles, menu items, one buddy label). Every
+        #     FOUR sites (menu titles, menu items, one buddy label, and
+        #     R1554's group-box legend — a new widget adopting it is how
+        #     this number moves, one helper at a time). Every
         #     other catalog paint helper takes a plain `&str` label and calls
         #     `TextNode::styled`, so `&Save` on a button is inert until each
         #     helper routes through `TextNode::mnemonic_styled`. Deliberately
         #     not done blind: a helper whose label ALSO feeds a hand-passed
         #     a11y name has to resolve the markup there too, which R1543 hit
         #     once (`menu_item_nodes`) and did not audit for across the tree.
-        #   * Absent widget kinds, in rough order of how much a pro tool
-        #     misses them: `QGroupBox` (especially checkable — no titled
-        #     group frame exists), `QDial`, a paged container
-        #     (`QStackedWidget` / `QWizard`), `QKeySequenceEdit`,
-        #     `QFontComboBox`, and the standard `QMessageBox` /
-        #     `QInputDialog` canned dialogs.
+        #   * Absent widget kinds. `QGroupBox` — the one R1549 put FIRST
+        #     and called out as "especially checkable" — is CLOSED R1554;
+        #     re-censused there, the other five are still absent: `QDial`
+        #     (no dial or knob; the one `dial` hit is a rotate GESTURE
+        #     example), a paged container (`QStackedWidget` / `QWizard`),
+        #     `QKeySequenceEdit`, `QFontComboBox`, and the standard
+        #     `QMessageBox` / `QInputDialog` canned dialogs — each of the
+        #     five appears in this tree only inside a doc comment.
         #
         # R1549 re-judgment, 87 -> 90, demanded by the tool (round ledger
         # 2 -> 3). +3, the same calibration R1543 got for mnemonics and for
@@ -476,9 +486,47 @@ AXES = [
         # stacked-page or wizard container, no `QKeySequenceEdit`, no font
         # combo, no canned message / input dialog). Six absent kinds is a
         # lot of surface for an axis whose name is "catalog".
-        "judged_at": 1549,
-        "completion": 90,
-        "evidence_snapshot": {"example-name": 73, "round-axis": 3},
+        # R1554 re-judgment, 90 -> 93, demanded by the tool (round ledger
+        # 3 -> 4). It closes the item R1549's list named FIRST among the
+        # absent widget kinds and flagged as the one a pro tool misses most —
+        # `QGroupBox`, "especially checkable" — and what made it absent was
+        # never the frame. It was that `setCheckable(true)`'s whole point,
+        # clearing the title checkbox to make the panel inert, was
+        # INEXPRESSIBLE: `LayoutStyle` carried four interaction declarations
+        # (`pointer_transparent`, `focusable`, `drop_target`, `cursor`) and
+        # every one described the node carrying it and nothing else. Qt's
+        # `QWidget::setEnabled` is the one that is INHERITED.
+        #
+        # So the round is a scene declaration (`with_disabled`) plus four
+        # derivations, each resolved where that consequence is already
+        # decided — the §5.39 focus enumeration, `Scene::hit_test`, the a11y
+        # assembler's stamp, and the ink — and it rides
+        # `settle_to_fixed_point`, the one loop every paint-scene producer in
+        # both backends passes through, so a window and a terminal cannot
+        # disagree about which controls are inert. Past Qt 6.11 in four
+        # places, all read over the wire: the CAUSE is published by name
+        # (`scene/disabled`'s `declared_by`; Qt's `isEnabled()` is a bool and
+        # `isEnabledTo()` needs the caller to have already guessed the
+        # ancestor), the SET is enumerable at all (Qt has no such query), a
+        # refusal has a NAME (`focus/set` -> `tag_disabled` handing back the
+        # region, where `QWidget::setFocus()` is a silent no-op), and whether
+        # the INK followed is stated per node rather than left to be
+        # discovered from a screenshot. The derived half is recomputed every
+        # paint instead of written into descendants, which is what Qt's
+        # `setEnabled_helper` does and must walk back.
+        #
+        # +3 and not more. Five of the six absent widget kinds remain, the
+        # wheel item is untouched and still the largest cross-cutting one,
+        # and the round adds gaps of its own, audited at R1554: the cascade
+        # has ONE consumer (every other catalog widget still expresses
+        # disabledness only through its own state enum, so a form cannot gate
+        # a section without a group box), and four node kinds carry content
+        # the fade cannot reach (`Image` / `External` / `ImmediateModeNode` /
+        # `TextGrid`) — Qt cannot grey a `QOpenGLWidget` either, so it is
+        # stated on the wire rather than fixed.
+        "judged_at": 1554,
+        "completion": 93,
+        "evidence_snapshot": {"example-name": 74, "round-axis": 4},
     },
     {
         "key": "dataviz",

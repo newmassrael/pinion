@@ -40,16 +40,16 @@ use pinion_core::theme::{ColorRole, Theme};
 // compiling against the same path.
 pub use pinion_core::widgets::interaction::InteractionState;
 
-/// Material 3 hover state-layer opacity — the cursor-over overlay fraction
-/// lerped from the resting fill toward `OnSurface`. M3 canonical 8 %.
-pub const HOVER: f32 = 0.08;
-
-/// Material 3 pressed state-layer opacity. M3 canonical 12 %.
-pub const PRESSED: f32 = 0.12;
-
-/// Material 3 disabled state-layer opacity — the fade fraction toward
-/// `Surface`. M3 canonical 38 %.
-pub const DISABLED: f32 = 0.38;
+// R1554 — the three M3 state-layer opacity tokens moved DOWN to
+// `pinion_core::widgets::interaction`, beside the `InteractionState` trait
+// R755 lifted there for the same reason: a second consumer appeared below this
+// crate. `pinion_core::scene_disabled::resolve_disabled` fades an inherited-
+// disabled subtree by `DISABLED`, and it must land on the same ink a
+// self-disabled widget's `state_layer` call produces — which it cannot do by
+// re-declaring the number, because two declarations of one token are two
+// tokens. Re-exported here so `pinion_widget_paint::state_layer::DISABLED` and
+// every existing caller path are unchanged.
+pub use pinion_core::widgets::interaction::{DISABLED, HOVER, PRESSED};
 
 /// R1372.2 — the DCC cell/row **selection** wash fraction: `Surface` lerped
 /// toward [`ColorRole::Accent`] (the theme's selection hue) by this amount.

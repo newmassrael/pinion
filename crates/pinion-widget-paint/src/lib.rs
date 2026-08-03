@@ -92,6 +92,7 @@ pub mod drawer;
 pub mod elevation;
 pub mod file_browser;
 pub mod glyph;
+pub mod group_box;
 pub mod group_header;
 pub mod listbox;
 pub mod menu;

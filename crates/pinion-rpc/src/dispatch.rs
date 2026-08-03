@@ -2395,6 +2395,13 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::mnemonics::handle_scene_mnemonics(last_paint_scene),
                     HandlerKind::Read,
                 ),
+                // R1554 §5.39 — which controls are inert, and which ancestor
+                // made them so. Read from the same painted scene the pointer
+                // router and the Tab enumeration refuse against.
+                "scene/disabled" => (
+                    crate::disabled::handle_scene_disabled(last_paint_scene),
+                    HandlerKind::Read,
+                ),
                 "scene/dry_run" => (
                     handle_scene_dry_run(scene, request.params.as_ref()),
                     HandlerKind::Read,
@@ -2840,6 +2847,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::focus::handle_focus_set(
                         focus_manager.as_deref_mut(),
                         request.params.as_ref(),
+                        last_paint_scene,
                     ),
                     // Focus state tracked independently of SceneRevision.
                     HandlerKind::Read,

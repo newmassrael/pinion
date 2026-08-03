@@ -17,6 +17,7 @@ pub mod cache_stats;
 pub mod caret_state;
 pub mod commands;
 pub mod cross_window_drop;
+pub mod disabled;
 pub mod dispatch;
 pub mod dry_run;
 pub mod export_pdf;

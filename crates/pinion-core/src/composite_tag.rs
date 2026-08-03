@@ -294,6 +294,38 @@ impl GridSendKey {
         }
     }
 }
+/// (R1554 §5.39 §5.40) The composite-tag SSOT for a **group box** — Qt
+/// `QGroupBox`, HTML `<fieldset>`/`<legend>`.
+///
+/// Three addresses, because a group box is three things an agent addresses
+/// separately: the group itself (`tag`, the `role=group` frame), its title
+/// (`"{tag}_title"`, which is the click target and Tab stop of a *checkable*
+/// group's checkbox), and its content region (`"{tag}_content"`, the node that
+/// carries the `disabled` declaration and therefore the one `scene/disabled`
+/// names as `declared_by`).
+///
+/// The content region has its own tag rather than reusing the group's for a
+/// concrete reason: the frame and the title must stay live while the contents
+/// are inert, which is Qt's checkable-group behaviour, and a region cannot be
+/// disabled without being addressable — `focus/set`'s `tag_disabled` answer
+/// hands this tag back as the thing to act on.
+pub struct GroupBoxTag;
+
+impl GroupBoxTag {
+    /// The title band — `"{tag}_title"`. Carries the legend, and the checkbox
+    /// of a checkable group.
+    #[must_use]
+    pub fn title(tag: &str) -> String {
+        format!("{tag}_title")
+    }
+
+    /// The content region — `"{tag}_content"`. The node a checkable group
+    /// declares `disabled` on.
+    #[must_use]
+    pub fn content(tag: &str) -> String {
+        format!("{tag}_content")
+    }
+}
 
 /// R862 §5.16 §5.40 — the **grid container-tag** scheme: the presentational
 /// `'_'`-separated container tags a virtualized data-grid / tree-grid

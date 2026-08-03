@@ -22,6 +22,25 @@
 //! the generic [`state_layer`](../../../pinion_widget_paint/state_layer/fn.state_layer.html)
 //! overlay keep compiling unchanged.
 
+/// Material 3 hover state-layer opacity — the cursor-over overlay fraction
+/// lerped from the resting fill toward `OnSurface`. M3 canonical 8 %.
+///
+/// R1554 moved this trio down from `pinion_widget_paint::state_layer` (which
+/// re-exports it, so every existing caller path is unchanged) for the reason
+/// R755 moved [`InteractionState`]: a consumer appeared below that crate.
+/// [`DISABLED`] is read by
+/// [`resolve_disabled`](crate::scene_disabled::resolve_disabled), so a subtree
+/// disabled by an ancestor and a widget disabled by its own state enum fade by
+/// one number rather than by two that agree today.
+pub const HOVER: f32 = 0.08;
+
+/// Material 3 pressed state-layer opacity. M3 canonical 12 %. See [`HOVER`].
+pub const PRESSED: f32 = 0.12;
+
+/// Material 3 disabled state-layer opacity — the fade fraction toward the
+/// backdrop. M3 canonical 38 %. See [`HOVER`].
+pub const DISABLED: f32 = 0.38;
+
 use crate::widgets::button::ButtonState;
 use crate::widgets::checkbox::CheckboxState;
 use crate::widgets::color_area::ColorAreaState;

@@ -2766,6 +2766,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-group-box"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-runtime",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-grouped-grid"
 version = "0.0.1"
 dependencies = [

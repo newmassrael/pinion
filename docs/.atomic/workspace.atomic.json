@@ -80486,6 +80486,66 @@
         "The notch is deliberately NOT clamped to the box: a small sample with a wide IQR yields a bowtie, which is what R draws and warns about. Folding it in would hide the case a reader most needs to see"
       ]
     },
+    "Round 1554": {
+      "decision_summary": "R1554 a container states that its subtree is inert",
+      "changes_bullets": [
+        "pinion-core: `LayoutStyle::disabled` — the first INHERITED interaction declaration on the layout sidecar. Its four peers (pointer_transparent R705, focusable R1020, drop_target R1080, cursor R1196) each describe the node carrying them and nothing else; Qt's QWidget::setEnabled is the one that reaches a whole subtree, which is why a checkable QGroupBox was inexpressible and no group container existed in this tree at all",
+        "pinion-core: `scene_disabled::resolve_disabled` — the cascade. It writes the derived half in BOTH directions on every produced paint scene, so nothing survives a frame to go stale. Qt's QWidgetPrivate::setEnabled_helper writes WA_Disabled into every descendant and must walk them back, keeping N copies of one fact in step by procedure",
+        "pinion-core: the ink fades by the M3 DISABLED token toward the nearest opaque backdrop — the same token and direction a self-disabled widget's state layer uses, which is why the token moved DOWN from pinion-widget-paint this round rather than being restated. Resolving to concrete channels rather than reducing alpha is what carries the fade into the terminal, where a TermCell has no alpha at all",
+        "pinion-core: the two descending walks read the DECLARATION at every level, so they are correct on a scene the cascade has not run over. collect_focusable_tags does not descend; hit_test treats the region as OPAQUE rather than transparent — the press stops there and never falls through to a peer painted beneath, which is Qt's propagate-to-parent",
+        "pinion-runtime: the cascade rides `settle_to_fixed_point`, the one loop all five paint-scene producers in both backends already pass through. Its generic scene parameter became concrete Scene to do it; a producer cannot forget the cascade because there is nowhere left to forget it",
+        "pinion-a11y: `stamp_inherited_disabled` at the R1518 chokepoint, WIDENING rather than replacing. Disabledness has two independent sources — the scene's regions and the widget's own state enum — so neither can deny the other, which is also Qt's WA_ForceDisabled rule",
+        "pinion-rpc: `scene/disabled` publishes the CAUSE. Qt's isEnabled() is a bool, isEnabledTo() needs the caller to have already guessed the ancestor, WA_ForceDisabled names nobody, and no Qt call enumerates a window's disabled set at all",
+        "pinion-rpc: focus/set answers `tag_disabled` handing back the region to act on, where QWidget::setFocus() on a disabled widget returns void and does nothing — the caller cannot tell a refusal from a success, let alone learn why",
+        "pinion-widget-paint: `view_group_box` — Qt QGroupBox with title, alignment, flat and the checkable gate. Its title sits ABOVE the frame rather than interrupting it: an overlapping title welds paint z-order to Tab order and they disagree, which the binding's own test caught",
+        "examples/hello-group-box: the forcing consumer — a gate checkbox and two members, with no disabled bookkeeping, no Tab-order list and no aria-disabled plumbing anywhere in it",
+        "examples/settings-panel FIX: its six notification checkboxes were seeded on slot \"value\", which CheckboxExternal rejects (a checkbox names its bool \"checked\"; ToggleExternal names its \"value\"). None had ever hydrated from its persisted signal, and `let _ =` on the Result kept that silent"
+      ],
+      "verification_bullets": [
+        "tools/demos/r1554_container_states_its_subtree.py — 49 assertion sites over a real binding: the Tab order shrinking with no list in the binding, the named refusal, the press landing on the region, aria-disabled on members that never claimed it, the exact faded ink re-derived from the M3 spec inside the demo itself, and the whole tree returning byte-for-byte when the gate is restored",
+        "Sixteen counterfactuals, one at a time, each FAILING on an assertion: focus walk / hit_test / cascade never clears / no transition gate / transparent ink materialised / backdrop frozen / outermost declarer / style runs unfaded / a11y stamp replaces / a11y stamp absent / settle loop not cascading / re-passed frame not cascaded / terminal never sees the fade / group gates itself / title after the frame / generic refusal",
+        "One counterfactual first read DEAD because it did not compile, which proves nothing; the driver requires an assertion failure, and its byte-restore revert is asserted rather than a git checkout",
+        "cargo test green on pinion-core, pinion-runtime, pinion-a11y, pinion-widget-paint, pinion-rpc, pinion-tui, pinion-shell, hello-group-box and settings-panel; clippy pedantic clean on all nine; cargo doc --no-deps --document-private-items clean; the three settings-panel demos still pass with the seeding fix"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The cascade has ONE consumer. Every other catalog widget expresses disabledness only through its own state enum, so a form cannot gate a section without a group box",
+        "Four node kinds carry content the fade cannot reach — Image, External, ImmediateModeNode, TextGrid. Qt cannot grey a QOpenGLWidget either, so it is PUBLISHED as each row's ink rather than left to be discovered from a screenshot",
+        "LayoutStyle now carries five bools and the struct_excessive_bools lint is allowed with a stated reason. The encodings that would satisfy it need a fifth enum variant for \"declared, cascade has not run\" whose distinction a reader must carry for no gain",
+        "The five remaining absent widget kinds this axis names — QDial, QStackedWidget/QWizard, QKeySequenceEdit, QFontComboBox, QMessageBox/QInputDialog — each appear in this tree only inside a doc comment"
+      ],
+      "publishable_decision_summary": "R1554 a container states that its subtree is inert",
+      "publishable_changes_bullets": [
+        "pinion-core: `LayoutStyle::disabled` — the first INHERITED interaction declaration on the layout sidecar. Its four peers (pointer_transparent R705, focusable R1020, drop_target R1080, cursor R1196) each describe the node carrying them and nothing else; Qt's QWidget::setEnabled is the one that reaches a whole subtree, which is why a checkable QGroupBox was inexpressible and no group container existed in this tree at all",
+        "pinion-core: `scene_disabled::resolve_disabled` — the cascade. It writes the derived half in BOTH directions on every produced paint scene, so nothing survives a frame to go stale. Qt's QWidgetPrivate::setEnabled_helper writes WA_Disabled into every descendant and must walk them back, keeping N copies of one fact in step by procedure",
+        "pinion-core: the ink fades by the M3 DISABLED token toward the nearest opaque backdrop — the same token and direction a self-disabled widget's state layer uses, which is why the token moved DOWN from pinion-widget-paint this round rather than being restated. Resolving to concrete channels rather than reducing alpha is what carries the fade into the terminal, where a TermCell has no alpha at all",
+        "pinion-core: the two descending walks read the DECLARATION at every level, so they are correct on a scene the cascade has not run over. collect_focusable_tags does not descend; hit_test treats the region as OPAQUE rather than transparent — the press stops there and never falls through to a peer painted beneath, which is Qt's propagate-to-parent",
+        "pinion-runtime: the cascade rides `settle_to_fixed_point`, the one loop all five paint-scene producers in both backends already pass through. Its generic scene parameter became concrete Scene to do it; a producer cannot forget the cascade because there is nowhere left to forget it",
+        "pinion-a11y: `stamp_inherited_disabled` at the R1518 chokepoint, WIDENING rather than replacing. Disabledness has two independent sources — the scene's regions and the widget's own state enum — so neither can deny the other, which is also Qt's WA_ForceDisabled rule",
+        "pinion-rpc: `scene/disabled` publishes the CAUSE. Qt's isEnabled() is a bool, isEnabledTo() needs the caller to have already guessed the ancestor, WA_ForceDisabled names nobody, and no Qt call enumerates a window's disabled set at all",
+        "pinion-rpc: focus/set answers `tag_disabled` handing back the region to act on, where QWidget::setFocus() on a disabled widget returns void and does nothing — the caller cannot tell a refusal from a success, let alone learn why",
+        "pinion-widget-paint: `view_group_box` — Qt QGroupBox with title, alignment, flat and the checkable gate. Its title sits ABOVE the frame rather than interrupting it: an overlapping title welds paint z-order to Tab order and they disagree, which the binding's own test caught",
+        "examples/hello-group-box: the forcing consumer — a gate checkbox and two members, with no disabled bookkeeping, no Tab-order list and no aria-disabled plumbing anywhere in it",
+        "examples/settings-panel FIX: its six notification checkboxes were seeded on slot \"value\", which CheckboxExternal rejects (a checkbox names its bool \"checked\"; ToggleExternal names its \"value\"). None had ever hydrated from its persisted signal, and `let _ =` on the Result kept that silent"
+      ],
+      "publishable_verification_bullets": [
+        "tools/demos/r1554_container_states_its_subtree.py — 49 assertion sites over a real binding: the Tab order shrinking with no list in the binding, the named refusal, the press landing on the region, aria-disabled on members that never claimed it, the exact faded ink re-derived from the M3 spec inside the demo itself, and the whole tree returning byte-for-byte when the gate is restored",
+        "Sixteen counterfactuals, one at a time, each FAILING on an assertion: focus walk / hit_test / cascade never clears / no transition gate / transparent ink materialised / backdrop frozen / outermost declarer / style runs unfaded / a11y stamp replaces / a11y stamp absent / settle loop not cascading / re-passed frame not cascaded / terminal never sees the fade / group gates itself / title after the frame / generic refusal",
+        "One counterfactual first read DEAD because it did not compile, which proves nothing; the driver requires an assertion failure, and its byte-restore revert is asserted rather than a git checkout",
+        "cargo test green on pinion-core, pinion-runtime, pinion-a11y, pinion-widget-paint, pinion-rpc, pinion-tui, pinion-shell, hello-group-box and settings-panel; clippy pedantic clean on all nine; cargo doc --no-deps --document-private-items clean; the three settings-panel demos still pass with the seeding fix"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The cascade has ONE consumer. Every other catalog widget expresses disabledness only through its own state enum, so a form cannot gate a section without a group box",
+        "Four node kinds carry content the fade cannot reach — Image, External, ImmediateModeNode, TextGrid. Qt cannot grey a QOpenGLWidget either, so it is PUBLISHED as each row's ink rather than left to be discovered from a screenshot",
+        "LayoutStyle now carries five bools and the struct_excessive_bools lint is allowed with a stated reason. The encodings that would satisfy it need a fifth enum variant for \"declared, cascade has not run\" whose distinction a reader must carry for no gain",
+        "The five remaining absent widget kinds this axis names — QDial, QStackedWidget/QWizard, QKeySequenceEdit, QFontComboBox, QMessageBox/QInputDialog — each appear in this tree only inside a doc comment"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

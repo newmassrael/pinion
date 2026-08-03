@@ -1283,14 +1283,21 @@ impl WidgetCore for SettingsPanelView {
         //
         // Each external seeded with the hydrated Signal value so the
         // first paint paints the right state (checked vs unchecked)
-        // even before any user interaction. CheckboxExternal
-        // canonical `value` slot mirrors the bool sidecar; the
-        // R654 [[r653-state-flags-bool-field]] retrofit makes this
-        // the single-source-of-truth path.
+        // even before any user interaction.
+        //
+        // R1554 FIX — the slot is `"checked"`, not `"value"`. It had been
+        // `"value"` here, which `CheckboxExternal::intervene` rejects with
+        // `UnknownPath`: `ToggleExternal` (seeded four lines above, correctly)
+        // names its bool `"value"`, a checkbox names its `"checked"`, and the
+        // comment this replaces asserted the opposite. So none of the six
+        // notification checkboxes had ever hydrated from its persisted signal,
+        // and `let _ =` on the Result is what kept that silent for ~900 rounds.
+        // The seed is asserted now rather than discarded.
         let mut notif_externals: Vec<ExtraExternal> = Vec::with_capacity(NOTIFICATION_COUNT);
         for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
             let mut ext = CheckboxExternal::new();
-            let _ = ext.intervene("value", IntrospectValue::Bool(notif.signals[i].get()));
+            ext.intervene("checked", IntrospectValue::Bool(notif.signals[i].get()))
+                .expect("CheckboxExternal accepts a bool on its `checked` slot");
             // R55.D.5 composite-tag: shell paint router walks the
             // base tag + parses the suffix per-row. (R688) The const
             // `&'static str` becomes a `Cow::Borrowed` in

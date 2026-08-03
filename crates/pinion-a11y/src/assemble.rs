@@ -60,10 +60,41 @@ pub fn build_access_tree(
         // the live AT emit and the `scene/access` dump pass through, so the
         // two cannot describe different trees.
         crate::enrich_access_keys_from_scene(&mut nodes, paint);
+        // R1554 §5.40 §5.39 — `aria-disabled` for every node inside a region a
+        // container declared disabled. Same chokepoint and same argument as
+        // `stamp_focus_flag`: a fact the scene already states, spelled once
+        // where the live AT emit and the `scene/access` dump both pass, so the
+        // two cannot describe different trees — and so a binding cannot leave a
+        // control inside a disabled group announced as actionable.
+        stamp_inherited_disabled(&mut nodes, paint);
     }
     let focus = owner.run(focus_fn);
     stamp_focus_flag(&mut nodes, focus.as_ref());
     (nodes, focus)
+}
+
+/// R1554 §5.40 §5.39 — set [`AccessState::disabled`](crate::AccessState::disabled)
+/// on every node the §5.39 disabled cascade resolved as disabled.
+///
+/// **Widening, not replacing** — the opposite of [`stamp_focus_flag`], and for a
+/// reason each way round. Focus has one bearer, so a claim the target does not
+/// name is wrong and is cleared. Disabledness has two independent sources: the
+/// scene's regions (this pass) and the widget's own state enum, which a binding
+/// projects through `AccessState::from_interaction` and which the scene knows
+/// nothing about. So the two are OR-ed. That is also Qt's rule — a
+/// `WA_ForceDisabled` child stays disabled when its parent is re-enabled — and
+/// it is the only combination that cannot announce an inert control as live:
+/// neither source can *deny* the other.
+fn stamp_inherited_disabled(nodes: &mut [AccessNode], paint: &Scene) {
+    let census = pinion_core::scene_disabled::disabled_census(paint);
+    if census.is_empty() {
+        return;
+    }
+    for node in nodes {
+        if census.iter().any(|d| d.tag == node.tag) {
+            node.state.disabled = true;
+        }
+    }
 }
 
 /// R1518 §5.40 §2 #7 — set [`AccessState::focused`](crate::AccessState::focused)
@@ -286,6 +317,101 @@ mod tests {
             0,
             "the named descendant is absent from the tree, so nobody bears the \
              flag — a stale cell cannot inherit it",
+        );
+    }
+
+    // ----- R1554 §5.40 §5.39 — aria-disabled from the scene's regions -----
+
+    /// A paint scene with `outer` live and `region` declared disabled, holding
+    /// `inner`.
+    fn disabled_scene() -> pinion_core::Scene {
+        use pinion_core::Scene;
+        use pinion_core::scene::ContainerNode;
+        use pinion_core::style::LayoutStyle;
+        Scene::Container(ContainerNode::new(vec![
+            Scene::Container(ContainerNode::new(vec![]).with_tag("outer")),
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Container(
+                    ContainerNode::new(vec![]).with_tag("inner"),
+                )])
+                .with_tag("region")
+                .with_layout(LayoutStyle::new().with_disabled(true)),
+            ),
+        ]))
+    }
+
+    /// The posture a widget projects for itself through
+    /// `AccessState::from_interaction` — the source the scene knows nothing
+    /// about, and so the one the stamp must not deny.
+    fn self_disabled() -> crate::AccessState {
+        crate::AccessState {
+            disabled: true,
+            ..crate::AccessState::default()
+        }
+    }
+
+    fn disabled_flags(nodes: Vec<AccessNode>) -> Vec<(String, bool)> {
+        let owner = Owner::new();
+        let scene = disabled_scene();
+        let (nodes, _) = build_access_tree(&owner, Some(&scene), || nodes, || None);
+        nodes
+            .into_iter()
+            .map(|n| (n.tag, n.state.disabled))
+            .collect()
+    }
+
+    #[test]
+    fn r1554_every_node_in_a_declared_region_is_announced_disabled() {
+        assert_eq!(
+            disabled_flags(vec![
+                AccessNode::new("outer", AriaRole::Button),
+                AccessNode::new("region", AriaRole::Group),
+                AccessNode::new("inner", AriaRole::Button),
+            ]),
+            vec![
+                ("outer".to_owned(), false),
+                ("region".to_owned(), true),
+                ("inner".to_owned(), true),
+            ],
+            "the declarer and its member, neither of which said so itself — a \
+             binding cannot leave a control inside a disabled group announced \
+             as actionable",
+        );
+    }
+
+    #[test]
+    fn r1554_the_stamp_widens_and_never_denies() {
+        // The opposite of `stamp_focus_flag`, deliberately. Disabledness has two
+        // independent sources — the scene's regions and the widget's own state
+        // enum, which the scene knows nothing about — so they are OR-ed. Qt's
+        // rule too: a `WA_ForceDisabled` child stays disabled when its parent is
+        // re-enabled.
+        assert_eq!(
+            disabled_flags(vec![
+                AccessNode::new("outer", AriaRole::Button).with_state(self_disabled()),
+                AccessNode::new("inner", AriaRole::Button),
+            ]),
+            vec![("outer".to_owned(), true), ("inner".to_owned(), true)],
+            "`outer` is outside every region and keeps its own claim; `inner` \
+             gains one it never made",
+        );
+    }
+
+    #[test]
+    fn r1554_a_tree_with_no_regions_leaves_every_claim_alone() {
+        use pinion_core::Scene;
+        use pinion_core::scene::ContainerNode;
+        let owner = Owner::new();
+        let scene = Scene::Container(ContainerNode::new(vec![]));
+        let (nodes, _) = build_access_tree(
+            &owner,
+            Some(&scene),
+            || vec![AccessNode::new("a", AriaRole::Button).with_state(self_disabled())],
+            || None,
+        );
+        assert!(
+            nodes[0].state.disabled,
+            "the early return must not clear what the binding projected",
         );
     }
 

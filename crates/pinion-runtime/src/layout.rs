@@ -263,11 +263,31 @@ pub struct Settled<S> {
 /// anything the next view run would read**. Side effects that must happen on
 /// every pass — the pane-viewport publish — belong inside `layout`, folded with
 /// `|` so they run even when the layout itself came back clean.
-pub fn settle_to_fixed_point<S>(
-    mut run_view: impl FnMut() -> S,
-    mut layout: impl FnMut(&mut S) -> bool,
-) -> Settled<S> {
+///
+/// # The disabled cascade rides here (R1554)
+///
+/// Every scene `run_view` produces goes through
+/// [`resolve_disabled`](pinion_core::scene_disabled::resolve_disabled) before
+/// it is laid out: the §5.39 inherited-disabled property is resolved, and a
+/// region a container declared disabled has its ink faded.
+///
+/// It rides this loop for the reason the loop exists. The cascade must reach
+/// every paint-scene producer in both backends — otherwise a window and a
+/// terminal, or a live paint and its `scene/snapshot` mirror, would disagree
+/// about which controls are inert — and this is the one place all five of them
+/// already pass through. A producer cannot forget the cascade because there is
+/// no longer anywhere to forget it: the return type is the settled scene, and
+/// the only way to get one is from here.
+///
+/// The generic scene parameter became concrete [`Scene`] to do it. All five
+/// call sites already produced one; the type variable was never carrying
+/// anything.
+pub fn settle_to_fixed_point(
+    mut run_view: impl FnMut() -> Scene,
+    mut layout: impl FnMut(&mut Scene) -> bool,
+) -> Settled<Scene> {
     let mut scene = run_view();
+    pinion_core::scene_disabled::resolve_disabled(&mut scene);
     let mut passes = 0_u32;
     for pass in 1..=SETTLE_PASS_BUDGET {
         passes = pass;
@@ -280,6 +300,11 @@ pub fn settle_to_fixed_point<S>(
         }
         if pass < SETTLE_PASS_BUDGET {
             scene = run_view();
+            // Each pass lays out a FRESH view scene, so each needs its own
+            // cascade. (The cascade is idempotent, so re-running it over an
+            // already-resolved scene would be harmless — but a scene that
+            // never had it run is not, and that is the case here.)
+            pinion_core::scene_disabled::resolve_disabled(&mut scene);
         }
     }
     Settled {
@@ -2586,6 +2611,103 @@ mod tests {
             );
         }
 
+        // ----- R1554 §5.39 — the disabled cascade rides the settle loop -----
+
+        /// A view scene with a declared-disabled region holding one coloured
+        /// leaf, over an opaque backdrop.
+        fn gated_view() -> Scene {
+            use pinion_core::scene::{BoxNode, ContainerNode};
+            use pinion_core::style::{BoxStyle, Color, LayoutStyle};
+            let leaf = Scene::Box(
+                BoxNode::new(
+                    pinion_core::scene::Rect::new(0, 0, 10, 10),
+                    BoxStyle::filled(Color::rgb(0x10, 0x20, 0x30)),
+                )
+                .with_tag("leaf"),
+            );
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Container(
+                    ContainerNode::new(vec![leaf])
+                        .with_tag("region")
+                        .with_layout(LayoutStyle::new().with_disabled(true)),
+                )])
+                .with_style(BoxStyle::filled(Color::rgb(0xff, 0xff, 0xff))),
+            )
+        }
+
+        fn leaf_fill(scene: &Scene) -> pinion_core::style::Color {
+            fn walk(s: &Scene) -> Option<pinion_core::style::Color> {
+                if s.tag() == Some("leaf") {
+                    if let Scene::Box(b) = s {
+                        return Some(b.style.fill);
+                    }
+                }
+                match s {
+                    Scene::Container(c) => c.children.iter().find_map(walk),
+                    Scene::Scroll(s) => walk(&s.content),
+                    _ => None,
+                }
+            }
+            walk(scene).expect("the leaf is in the tree")
+        }
+
+        /// The seam claim: EVERY paint-scene producer in both backends funnels
+        /// through this loop, so putting the cascade here is what makes a
+        /// window and a terminal agree about which controls are inert. Asserted
+        /// on the loop rather than on a shell, because the shells are what the
+        /// loop exists to keep from drifting.
+        #[test]
+        fn r1554_the_settle_loop_resolves_the_disabled_cascade() {
+            let raw = gated_view();
+            assert!(
+                !leaf_fill(&raw).eq(&pinion_core::style::Color::rgb(0x10, 0x20, 0x30).lerp(
+                    pinion_core::style::Color::rgb(0xff, 0xff, 0xff),
+                    pinion_core::widgets::interaction::DISABLED,
+                )),
+                "the raw view scene is NOT faded — otherwise the assertion \
+                 below could not tell the loop apart from the view fn",
+            );
+            let settled = settle_to_fixed_point(gated_view, |_| false);
+            assert_eq!(
+                leaf_fill(&settled.scene),
+                pinion_core::style::Color::rgb(0x10, 0x20, 0x30).lerp(
+                    pinion_core::style::Color::rgb(0xff, 0xff, 0xff),
+                    pinion_core::widgets::interaction::DISABLED,
+                ),
+                "the scene the loop hands back is cascaded",
+            );
+            assert!(
+                settled.scene.is_disabled()
+                    || matches!(&settled.scene, Scene::Container(c)
+                        if c.children[0].is_disabled()),
+                "and the derived flag is written, not only the ink",
+            );
+        }
+
+        /// Each settle pass re-runs the view, so each pass gets a FRESH,
+        /// un-cascaded scene — and the one the loop returns must be cascaded
+        /// whichever pass produced it. A cascade applied only before the loop
+        /// would leave every re-passed frame unfaded.
+        #[test]
+        fn r1554_a_re_passed_frame_is_cascaded_too() {
+            let mut passes = 0;
+            let settled = settle_to_fixed_point(gated_view, |_| {
+                passes += 1;
+                // Two dirty passes, then clean: the returned scene is the
+                // THIRD view run's.
+                passes < 3
+            });
+            assert_eq!(settled.passes, 3, "the loop re-ran the view twice");
+            assert_eq!(
+                leaf_fill(&settled.scene),
+                pinion_core::style::Color::rgb(0x10, 0x20, 0x30).lerp(
+                    pinion_core::style::Color::rgb(0xff, 0xff, 0xff),
+                    pinion_core::widgets::interaction::DISABLED,
+                ),
+                "and the scene it kept is cascaded exactly once",
+            );
+        }
+
         /// R1458 — the settle loop a shell paint runs: build the view from the
         /// current state, lay it out, and repeat while the pass reports it
         /// moved something. `passes` is capped so a non-converging fixture
@@ -3380,7 +3502,37 @@ mod tests {
     /// hand-written copies each had to get right.
     mod settle {
         use super::super::{SETTLE_PASS_BUDGET, settle_to_fixed_point};
+        use pinion_core::Scene;
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::style::BoxStyle;
         use std::cell::Cell;
+
+        /// R1554 — these three tests are about the LOOP's arithmetic, not about
+        /// any scene's content, so they carry the settling bound in the one
+        /// field of a one-node scene. They used a bare `u32` as the scene type
+        /// until `settle_to_fixed_point` became concrete over [`Scene`] (which
+        /// is what lets the disabled cascade ride the loop); the carrier
+        /// changed, the invariants did not.
+        fn scalar(n: u32) -> Scene {
+            Scene::Box(BoxNode::new(Rect::new(n, 0, 1, 1), BoxStyle::default()))
+        }
+
+        fn value(scene: &Scene) -> u32 {
+            match scene {
+                Scene::Box(b) => b.rect.x,
+                other => panic!("not the scalar carrier: {other:?}"),
+            }
+        }
+
+        fn bump(scene: &mut Scene) -> u32 {
+            match scene {
+                Scene::Box(b) => {
+                    b.rect.x += 1;
+                    b.rect.x
+                }
+                other => panic!("not the scalar carrier: {other:?}"),
+            }
+        }
 
         #[test]
         fn a_converging_chain_stops_at_its_fixed_point() {
@@ -3389,11 +3541,10 @@ mod tests {
             // input. A fixture whose view ignored it would measure nothing.
             let bound = Cell::new(0_u32);
             let settle = settle_to_fixed_point(
-                || bound.get(),
-                |scene: &mut u32| {
-                    if *scene < 3 {
-                        *scene += 1;
-                        bound.set(*scene);
+                || scalar(bound.get()),
+                |scene: &mut Scene| {
+                    if value(scene) < 3 {
+                        bound.set(bump(scene));
                         true
                     } else {
                         false
@@ -3402,15 +3553,19 @@ mod tests {
             );
             assert!(settle.settled, "it arrived");
             assert_eq!(settle.passes, 4, "three that grew it, one that agreed");
-            assert_eq!(settle.scene, 3, "and the scene is the fixed point's");
+            assert_eq!(
+                value(&settle.scene),
+                3,
+                "and the scene is the fixed point's"
+            );
         }
 
         #[test]
         fn a_chain_that_never_agrees_is_bounded_and_says_so() {
             let settle = settle_to_fixed_point(
-                || 0_u32,
-                |scene: &mut u32| {
-                    *scene += 1;
+                || scalar(0),
+                |scene: &mut Scene| {
+                    bump(scene);
                     true
                 },
             );
@@ -3430,20 +3585,17 @@ mod tests {
             for (label, mut step) in [
                 (
                     "converging",
-                    Box::new(|s: &mut u32| {
-                        *s += 1;
-                        *s < 3
-                    }) as Box<dyn FnMut(&mut u32) -> bool>,
+                    Box::new(|s: &mut Scene| bump(s) < 3) as Box<dyn FnMut(&mut Scene) -> bool>,
                 ),
-                ("runaway", Box::new(|_: &mut u32| true)),
+                ("runaway", Box::new(|_: &mut Scene| true)),
             ] {
                 let views = Cell::new(0_u32);
                 let settle = settle_to_fixed_point(
                     || {
                         views.set(views.get() + 1);
-                        0_u32
+                        scalar(0)
                     },
-                    |scene: &mut u32| step(scene),
+                    |scene: &mut Scene| step(scene),
                 );
                 assert_eq!(
                     views.get(),

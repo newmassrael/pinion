@@ -1012,6 +1012,62 @@ mod tests {
         node
     }
 
+    // ----- R1554 §5.39 §2 #6 — the disabled fade reaches the CELLS -----
+
+    /// The §5.39 cascade fades a disabled region's colours in the scene, which
+    /// is what carries the fade into the terminal: a `TermCell` has no alpha
+    /// and [`color_to_tui`] drops it, so an alpha-reduction fade — the smaller
+    /// change — would have dimmed the window and left the terminal at full
+    /// contrast.
+    ///
+    /// Run, not assumed. The scene here is built and cascaded exactly as a
+    /// producer's is, then painted through the real `to_buffer`, and the cell
+    /// the label lands in is read back.
+    #[test]
+    fn r1554_a_disabled_region_paints_faded_glyphs_into_the_terminal() {
+        use pinion_core::scene_disabled::resolve_disabled;
+        use pinion_core::style::{BoxStyle, Color, LayoutStyle};
+
+        let ink = Color::rgb(0x1a, 0x1a, 0x1a);
+        let backdrop = Color::rgb(0xff, 0xff, 0xff);
+        let build = |disabled: bool| {
+            let mut label = text_at(0, 0, "Verbose");
+            label.style.fg_color = ink;
+            let region = ContainerNode::new(vec![Scene::Text(label)])
+                .with_layout(LayoutStyle::new().with_disabled(disabled));
+            let mut root = ContainerNode::new(vec![Scene::Container(region)])
+                .with_style(BoxStyle::filled(backdrop));
+            root.rect = Rect::new(0, 0, 40 * CELL.cell_w(), CELL.cell_h());
+            let mut scene = Scene::Container(root);
+            resolve_disabled(&mut scene);
+            let mut buf = Buffer::empty(TuiRect::new(0, 0, 40, 1));
+            to_buffer(&scene, &mut buf);
+            buf
+        };
+
+        let live = build(false);
+        let gated = build(true);
+        let cell = |b: &Buffer| b[(0, 0)].fg;
+        assert_ne!(
+            cell(&gated),
+            cell(&live),
+            "a terminal cell inside a disabled region is not painted with the \
+             ink a live one is",
+        );
+        assert_eq!(
+            cell(&live),
+            color_to_tui(ink),
+            "and the live arm is the declared ink, so the difference above is \
+             the fade and not some other divergence",
+        );
+        assert_eq!(
+            cell(&gated),
+            color_to_tui(ink.lerp(backdrop, pinion_core::widgets::interaction::DISABLED)),
+            "the cell carries the M3 disabled ink over the region's backdrop \
+             — the same value the window paints",
+        );
+    }
+
     /// R1546 §5.36 — the lifted resolution answers what the pre-lift body
     /// answered, at every offset a text node can be asked about.
     ///

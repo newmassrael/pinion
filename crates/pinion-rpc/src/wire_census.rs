@@ -449,6 +449,27 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "DisabledEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("self_declared", WireTy::Boolean, None),
+                WireField::new("declared_by", WireTy::String, None).nullable(),
+                WireField::new("ink", WireTy::String, None),
+            ],
+        },
+    },
+    WireType {
+        name: "DisabledOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "disabled",
+                WireTy::Array,
+                Some("DisabledEntry"),
+            )],
+        },
+    },
+    WireType {
         name: "DisposeOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("existed", WireTy::Boolean, None)],

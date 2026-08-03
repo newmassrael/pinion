@@ -1,0 +1,35 @@
+[package]
+name = "hello-group-box"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1554 §5.39 §5.50: Qt QGroupBox — a titled frame whose title checkbox makes its whole subtree inert, the first consumer of the inherited-disabled scene declaration"
+publish = false
+
+[[bin]]
+name = "hello-group-box"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1554 §5.50 — `view_group_box`, the widget this binding dogfoods.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# R1554 — the layout pass the two hit-test tests run, so the rects they probe
+# are the ones the shell would paint.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

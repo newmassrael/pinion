@@ -420,6 +420,80 @@ impl Scene {
         }
     }
 
+    /// (R1554 §5.39) The node's own
+    /// [`disabled`](crate::style::LayoutStyle::disabled) DECLARATION — Qt
+    /// `QWidget::setEnabled(false)` written on this widget rather than
+    /// inherited from an ancestor (Qt's `WA_ForceDisabled`).
+    ///
+    /// This is what the two descending walks ([`Self::hit_test`],
+    /// [`Self::collect_focusable_tags`]) test, because each of them is already
+    /// at every level of the tree on its way down: checking the declaration
+    /// where it is written is what makes them correct on a scene the cascade
+    /// has not run over, and so independent of pass ordering.
+    /// [`Scene::Effect`] carries no layout sidecar and is never disabled.
+    #[must_use]
+    pub fn declares_disabled(&self) -> bool {
+        self.layout_style().is_some_and(|l| l.disabled)
+    }
+
+    /// (R1554 §5.39) Whether the node is disabled at all — its own
+    /// [`declaration`](Self::declares_disabled), or the
+    /// [`resolved`](crate::style::LayoutStyle::resolved_disabled) half the
+    /// cascade wrote. Qt's `QWidget::isEnabled()` inverted.
+    ///
+    /// Only meaningful after
+    /// [`resolve_disabled`](crate::scene_disabled::resolve_disabled) has run
+    /// over the tree; on a raw view scene the inherited half is still at its
+    /// default and this answers the declaration alone.
+    #[must_use]
+    pub fn is_disabled(&self) -> bool {
+        self.layout_style()
+            .is_some_and(|l| l.disabled || l.resolved_disabled)
+    }
+
+    /// (R1554 §5.39) The node's layout sidecar, or [`None`] for
+    /// [`Scene::Effect`] — the one variant that carries none.
+    ///
+    /// A single `match` the disabled axis reads through, rather than one per
+    /// question: `is_focusable` / `is_pointer_transparent` / `is_drop_target`
+    /// each spell the same nine arms, and a tenth node kind is added by
+    /// editing all of them (the read-site duplication R1547 lifted
+    /// `decoration_node` out of).
+    #[must_use]
+    pub fn layout_style(&self) -> Option<&crate::style::LayoutStyle> {
+        match self {
+            Scene::Box(n) => Some(&n.layout),
+            Scene::Text(n) => Some(&n.layout),
+            Scene::Path(n) => Some(&n.layout),
+            Scene::Image(n) => Some(&n.layout),
+            Scene::Container(n) => Some(&n.layout),
+            Scene::External(n) => Some(&n.layout),
+            Scene::Scroll(n) => Some(&n.layout),
+            Scene::ImmediateModeNode(n) => Some(&n.layout),
+            Scene::TextGrid(n) => Some(&n.layout),
+            Scene::Effect(_) => None,
+        }
+    }
+
+    /// (R1554 §5.39) Mutable peer of [`Self::layout_style`], the write path
+    /// [`resolve_disabled`](crate::scene_disabled::resolve_disabled) uses to
+    /// record the inherited half.
+    #[must_use]
+    pub fn layout_style_mut(&mut self) -> Option<&mut crate::style::LayoutStyle> {
+        match self {
+            Scene::Box(n) => Some(&mut n.layout),
+            Scene::Text(n) => Some(&mut n.layout),
+            Scene::Path(n) => Some(&mut n.layout),
+            Scene::Image(n) => Some(&mut n.layout),
+            Scene::Container(n) => Some(&mut n.layout),
+            Scene::External(n) => Some(&mut n.layout),
+            Scene::Scroll(n) => Some(&mut n.layout),
+            Scene::ImmediateModeNode(n) => Some(&mut n.layout),
+            Scene::TextGrid(n) => Some(&mut n.layout),
+            Scene::Effect(_) => None,
+        }
+    }
+
     /// (R55.G.19 §5.49) Returns `true` when this scene tree contains
     /// at least one node tagged `target`. Walks depth-first matching
     /// [`Self::tag`] before descending into `Container.children` and
@@ -486,6 +560,15 @@ impl Scene {
     }
 
     fn collect_focusable_tags_into(&self, out: &mut Vec<String>) {
+        // R1554 §5.39 — a disabled region contributes no Tab stops, its own
+        // node included. Qt skips a disabled widget in `focusNextPrevChild`
+        // for the same reason: Tab must not park on a control that cannot act.
+        // Returning here (rather than filtering afterwards) is what makes the
+        // property structural — the region is never enumerated, so there is no
+        // intermediate list in which a disabled stop exists.
+        if self.declares_disabled() {
+            return;
+        }
         if self.is_focusable() {
             if let Some(tag) = self.tag() {
                 out.push(tag.to_owned());
@@ -1059,6 +1142,21 @@ impl Scene {
                 // beneath them keeps receiving pointer input.
                 if child.is_pointer_transparent() {
                     continue;
+                }
+                // R1554 §5.39 §5.35 — a disabled region is OPAQUE to the
+                // pointer but not transparent to it: the press stops at the
+                // region instead of reaching the control under the cursor, and
+                // does NOT fall through to whatever sibling is painted
+                // beneath. Qt's disabled widget behaves the same way — the
+                // event propagates to the PARENT, never to an occluded peer.
+                // `continue` (the pointer-transparent arm above) would be the
+                // wrong shape here for exactly that reason.
+                if child.declares_disabled() && rect_contains(child.rect(), x, y) {
+                    let seg = child.tag().map_or_else(|| idx.to_string(), String::from);
+                    return Some(HitPath {
+                        segments: vec![seg],
+                        bbox: child.rect(),
+                    });
                 }
                 if let Some(mut child_hit) = child.hit_test(x, y) {
                     let seg = child.tag().map_or_else(|| idx.to_string(), String::from);
@@ -4605,6 +4703,89 @@ mod tests {
             hit.segments.first().map(String::as_str),
             Some("btn"),
             "overlay skipped — hit lands on the widget tag, not the ring",
+        );
+    }
+
+    // ----- R1554 §5.39 §5.35 — the disabled region, in the two walks -----
+
+    /// A disabled region + the sibling painted UNDER it, so the two failure
+    /// modes are distinguishable: the press must land on the region (Qt
+    /// propagates to the parent) and must not fall through to the peer beneath
+    /// (which `continue`, the pointer-transparent arm's shape, would do).
+    fn disabled_region_over_a_peer() -> Scene {
+        let under = tagged_box_at(0, 0, 100, 100, "under");
+        let mut region = ContainerNode::new(vec![tagged_box_at(0, 0, 100, 100, "inner")]);
+        region.rect = Rect::new(0, 0, 100, 100);
+        region.tag = Some("region".into());
+        region.layout = region.layout.with_disabled(true);
+        container_at(0, 0, 100, 100, vec![under, Scene::Container(region)])
+    }
+
+    #[test]
+    fn r1554_hit_test_stops_at_a_disabled_region() {
+        let hit = disabled_region_over_a_peer()
+            .hit_test(50, 50)
+            .expect("inside");
+        assert_eq!(
+            hit.segments,
+            vec!["region".to_owned()],
+            "the press resolves to the region, never to the control inside it",
+        );
+    }
+
+    #[test]
+    fn r1554_a_disabled_region_is_opaque_not_transparent() {
+        // The distinguishing assertion: `pointer_transparent` would hand the
+        // press to `under`, which is painted BENEATH the region and is live.
+        // Clicking a greyed panel must not actuate whatever it covers.
+        let hit = disabled_region_over_a_peer()
+            .hit_test(50, 50)
+            .expect("inside");
+        assert_ne!(
+            hit.segments.first().map(String::as_str),
+            Some("under"),
+            "a disabled region absorbs the press; it does not pass it down",
+        );
+    }
+
+    #[test]
+    fn r1554_a_disabled_region_contributes_no_tab_stops() {
+        let stop = |tag: &'static str| {
+            let mut b = BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default());
+            b.tag = Some(tag.into());
+            b.layout = b.layout.with_focusable(true);
+            Scene::Box(b)
+        };
+        let mut region = ContainerNode::new(vec![stop("inner_a"), stop("inner_b")]);
+        region.tag = Some("region".into());
+        region.layout = region.layout.with_focusable(true).with_disabled(true);
+        let scene = Scene::Container(ContainerNode::new(vec![
+            stop("before"),
+            Scene::Container(region),
+            stop("after"),
+        ]));
+        assert_eq!(
+            scene.collect_focusable_tags(),
+            vec!["before".to_owned(), "after".to_owned()],
+            "neither the region's own focusable node nor its members are stops \
+             — Tab must not park where nothing can act",
+        );
+    }
+
+    #[test]
+    fn r1554_the_walks_read_the_declaration_so_they_do_not_depend_on_the_cascade() {
+        // Both walks test `declares_disabled` at every level on their way down,
+        // which is what makes them correct on a raw view scene — one the
+        // cascade has not run over yet. A pass-ordering bug in a shell cannot
+        // silently re-enable a region's input.
+        let scene = disabled_region_over_a_peer();
+        assert!(
+            !crate::scene_disabled::disabled_census(&scene).is_empty(),
+            "the census sees it too, from the declaration alone",
+        );
+        assert_eq!(
+            scene.hit_test(50, 50).expect("inside").segments,
+            vec!["region".to_owned()],
         );
     }
 
