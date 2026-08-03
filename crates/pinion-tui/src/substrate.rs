@@ -504,8 +504,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     ///
     /// `&self` — the timestamp lives in a [`Cell`], the same interior
     /// mutability [`Self::compute_paint_scene`] already relies on.
+    ///
+    /// R1549.4 — **private**. A frame delta and a held press's advance
+    /// have to be produced together, or the pairing is optional in a way
+    /// no test can see: R1549.2 handed the delta to the run loop and let
+    /// it call [`Self::tick_auto_repeat`] alongside, and deleting that
+    /// second call kept every test green (measured). [`Self::begin_frame`]
+    /// is now the only producer of a delta the run loop can paint against.
     #[must_use]
-    pub fn measure_frame_dt(&self) -> f32 {
+    fn measure_frame_dt(&self) -> f32 {
         let now = Instant::now();
         let raw_dt = self
             .last_paint_instant
@@ -519,7 +526,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     }
 
     /// R1549.2 §5.41 §5.28 — [`Self::compute_paint_scene`] against a
-    /// delta the caller already measured with [`Self::measure_frame_dt`].
+    /// delta the caller already opened the frame with
+    /// ([`Self::begin_frame`]).
     #[must_use]
     pub fn compute_paint_scene_with_dt(&self, cols: u16, rows: u16, dt: f32) -> Scene {
         // R1460 — the produce span's start. Taken here rather than carried
@@ -1033,6 +1041,24 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let _ = self.handle_tail(&tail);
         self.auto_repeat_armed.set(armed);
         armed
+    }
+
+    /// R1549.4 §5.41 §5.28 §5.35 — open a frame: measure its delta AND
+    /// advance whatever press is being held through it, returning the
+    /// delta the paint then lays out against.
+    ///
+    /// The two are one call because they were two, and the wiring between
+    /// them turned out to be optional in exactly the way a test could not
+    /// see — R1549.2's guard called [`Self::tick_auto_repeat`] directly,
+    /// so deleting the run loop's call to it left the whole suite green.
+    /// The paint needs a delta and the only producer of one advances the
+    /// hold, so "painted a frame without advancing its hold" stopped being
+    /// a sequence anyone can write. Same move as R1548's header axis and
+    /// R1549's press record: fuse the two statements that had to agree.
+    pub fn begin_frame(&mut self) -> f32 {
+        let dt = self.measure_frame_dt();
+        self.tick_auto_repeat(dt);
+        dt
     }
 
     /// R1549.2 §5.35 §5.12 §2 #6 — the in-flight press census this
@@ -2253,6 +2279,38 @@ mod tests {
         assert!(
             !core.wants_next_frame(pinion_core::DEFAULT_REST_EPSILON),
             "so the terminal may park on its idle poll",
+        );
+    }
+
+    /// R1549.4 — the WIRING, not the method. The test above drives
+    /// `tick_auto_repeat` directly, so it stays green even if nothing
+    /// calls it: measured, deleting the run loop's call kept the whole
+    /// suite passing. This one goes through `begin_frame` — the single
+    /// producer of the delta `commit_paint` lays out against — and
+    /// asserts on `held_secs`, the accumulator every armed frame advances
+    /// before any threshold applies, so it needs no sleep and no
+    /// tolerance (the R1549.3 shape, applied to its own mirror).
+    #[test]
+    fn r1549_4_opening_a_frame_advances_the_held_press() {
+        use pinion_core::test_fixtures::RepeatingButtonFixture;
+        let mut core: ShellCoreTui<RepeatingButtonFixture> = ShellCoreTui::new();
+        let paint = core.compute_paint_scene(80, 24);
+        core.update_paint_scene(paint);
+        assert!(core.cursor_moved(8.0, 8.0));
+        assert!(core.pointer_down());
+        assert!(
+            (core.auto_repeat_holds()[0].held_secs - 0.0).abs() < f32::EPSILON,
+            "no frame has opened since the press",
+        );
+
+        // Two opens: the first seeds the clock (dt == 0), the second
+        // measures real elapsed time. Nothing here depends on HOW long a
+        // frame takes, only that the clock moved.
+        core.begin_frame();
+        core.begin_frame();
+        assert!(
+            core.auto_repeat_holds()[0].held_secs > 0.0,
+            "opening a frame is what advances the hold",
         );
     }
 

@@ -564,19 +564,25 @@ fn dispatch_mouse<V: WidgetViewTui>(
 /// ratatui buffer allocation + the `WidgetRenderer::render` commit.
 /// Returning the paint scene keeps the substrate's R51.112
 /// `InputRouter` hit-test snapshot in sync with the visible state.
-/// R1549.2 §5.41 §5.28 — `dt` is measured by the CALLER
-/// ([`ShellCoreTui::measure_frame_dt`]) rather than here, because the
-/// frame now has work on both sides of the view: the press-and-hold
-/// auto-repeat advance runs first (it is an input, and needs `&mut`),
-/// then this produce. Measuring in both places would put the two halves
-/// of one frame on two clocks.
+/// R1549.4 §5.41 §5.28 §5.35 — the frame is OPENED here
+/// ([`ShellCoreTui::begin_frame`]: measure this frame's delta AND advance
+/// the held press through it), then laid out against that same delta.
+///
+/// One call rather than a measure the caller pairs with an advance by
+/// hand, because the hand-paired version left the wiring optional in a
+/// way no test could see: R1549.2's guard called
+/// [`ShellCoreTui::tick_auto_repeat`] directly, so deleting the run
+/// loop's call to it kept every test green (measured). A frame that
+/// paints without advancing its hold is now not a sequence this module
+/// can express — the paint needs a delta, and the only producer of one
+/// advances the hold.
 fn commit_paint<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
-    core: &ShellCoreTui<V>,
+    core: &mut ShellCoreTui<V>,
     cols: u16,
     rows: u16,
-    dt: f32,
     renderer: &mut TuiRenderer<CrosstermBackend<Stdout>>,
 ) -> io::Result<Scene> {
+    let dt = core.begin_frame();
     let paint_scene = core.compute_paint_scene_with_dt(cols, rows, dt);
     let mut buf = Buffer::empty(Rect::new(0, 0, cols, rows));
     // R1426 §5.41 §5.28 — thread this frame's terminal-cursor blink phase
@@ -603,14 +609,7 @@ fn commit_and_finalize<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<
     rows: u16,
     renderer: &mut TuiRenderer<CrosstermBackend<Stdout>>,
 ) -> io::Result<()> {
-    // R1549.2 §5.41 §5.35 §2 #6 — advance press-and-hold auto-repeat on
-    // THIS frame's delta, before the paint, so a repeated value reaches
-    // this frame's view (the Vello sibling's ordering). The delta is
-    // measured once here and handed to the produce, so the two halves of
-    // the frame cannot end up on different clocks.
-    let dt = core.measure_frame_dt();
-    core.tick_auto_repeat(dt);
-    let paint_scene = commit_paint::<V>(core, cols, rows, dt, renderer)?;
+    let paint_scene = commit_paint::<V>(core, cols, rows, renderer)?;
     core.update_paint_scene(paint_scene);
     Ok(())
 }

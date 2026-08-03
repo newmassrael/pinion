@@ -80076,6 +80076,48 @@
         "No carry. The two R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing R1549.2 finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all"
       ]
     },
+    "Round 1549.4": {
+      "decision_summary": "The same hole, a third time, on the mirror of what R1549.3 just fixed — and this time the fix is structural rather than another test. Asked whether the debt was registered, the audit ran the R1549.3 counterfactual against the TUI: deleting the run loop's `core.tick_auto_repeat(dt)` kept every pinion-tui test green, because R1549.2's guard called `tick_auto_repeat` DIRECTLY and so never exercised the wiring that calls it. Three instances in one round — Vello-vs-TUI (R1549.2), injected-vs-live (R1549.3), method-vs-wiring (here) — is not three oversights; it is one habit, testing at whatever seam is easiest to reach, and a fourth test written the same way would have the same blind spot. So the response is to remove the degree of freedom instead: `begin_frame` measures the frame's delta AND advances the held press, `measure_frame_dt` goes private, and `commit_paint` loses its `dt` parameter and opens the frame itself. The paint needs a delta; the only producer of one advances the hold. \"Painted a frame without advancing its hold\" is no longer a sequence the module can express — the same move R1548 made for the header axis and R1549 for the press record, now applied to the place my own guards kept failing to reach.",
+      "changes_bullets": [
+        "`ShellCoreTui::begin_frame` (§5.41 §5.28 §5.35): measure the frame's delta AND advance the held press, returning the delta. `measure_frame_dt` is now PRIVATE, so the run loop cannot obtain a delta without the advance",
+        "`commit_paint` takes `&mut ShellCoreTui` and opens the frame itself; its `dt` parameter is gone. \"Painted a frame without advancing its hold\" stopped being a sequence the module can express — the same fuse-two-statements move as R1548's header axis and R1549's press record",
+        "`r1549_4_opening_a_frame_advances_the_held_press`: drives `begin_frame`, not `tick_auto_repeat`, and asserts on `held_secs` so it needs no sleep and no tolerance (the R1549.3 shape applied to its own mirror)"
+      ],
+      "verification_bullets": [
+        "The counterfactual that found it: deleting the run loop's `core.tick_auto_repeat(dt)` kept every pinion-tui test green, because R1549.2's guard called the method directly",
+        "After: the only remaining way to break the wiring is to gut `begin_frame` itself, and that is verified to FAIL the new test while the other two pass",
+        "pinion-tui full suite green, clippy clean"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.28",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "No carry. The R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all",
+        "The Vello side needs no equivalent fuse: its advance lives inside `compute_paint_scene_internal` alongside everything else the frame does, so removing it means editing that fn — which `tests/auto_repeat_live_clock.rs` catches (verified R1549.3)"
+      ],
+      "publishable_decision_summary": "The same hole, a third time, on the mirror of what R1549.3 just fixed — and this time the fix is structural rather than another test. Asked whether the debt was registered, the audit ran the R1549.3 counterfactual against the TUI: deleting the run loop's `core.tick_auto_repeat(dt)` kept every pinion-tui test green, because R1549.2's guard called `tick_auto_repeat` DIRECTLY and so never exercised the wiring that calls it. Three instances in one round — Vello-vs-TUI (R1549.2), injected-vs-live (R1549.3), method-vs-wiring (here) — is not three oversights; it is one habit, testing at whatever seam is easiest to reach, and a fourth test written the same way would have the same blind spot. So the response is to remove the degree of freedom instead: `begin_frame` measures the frame's delta AND advances the held press, `measure_frame_dt` goes private, and `commit_paint` loses its `dt` parameter and opens the frame itself. The paint needs a delta; the only producer of one advances the hold. \"Painted a frame without advancing its hold\" is no longer a sequence the module can express — the same move R1548 made for the header axis and R1549 for the press record, now applied to the place my own guards kept failing to reach.",
+      "publishable_changes_bullets": [
+        "`ShellCoreTui::begin_frame` (§5.41 §5.28 §5.35): measure the frame's delta AND advance the held press, returning the delta. `measure_frame_dt` is now PRIVATE, so the run loop cannot obtain a delta without the advance",
+        "`commit_paint` takes `&mut ShellCoreTui` and opens the frame itself; its `dt` parameter is gone. \"Painted a frame without advancing its hold\" stopped being a sequence the module can express — the same fuse-two-statements move as R1548's header axis and R1549's press record",
+        "`r1549_4_opening_a_frame_advances_the_held_press`: drives `begin_frame`, not `tick_auto_repeat`, and asserts on `held_secs` so it needs no sleep and no tolerance (the R1549.3 shape applied to its own mirror)"
+      ],
+      "publishable_verification_bullets": [
+        "The counterfactual that found it: deleting the run loop's `core.tick_auto_repeat(dt)` kept every pinion-tui test green, because R1549.2's guard called the method directly",
+        "After: the only remaining way to break the wiring is to gut `begin_frame` itself, and that is verified to FAIL the new test while the other two pass",
+        "pinion-tui full suite green, clippy clean"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.28",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "No carry. The R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all",
+        "The Vello side needs no equivalent fuse: its advance lives inside `compute_paint_scene_internal` alongside everything else the frame does, so removing it means editing that fn — which `tests/auto_repeat_live_clock.rs` catches (verified R1549.3)"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
