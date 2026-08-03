@@ -414,14 +414,37 @@ AXES = [
         #     ink and the binding come from one parse instead of Qt's two,
         #     and `accesskey` stays distinct from `keyboard_shortcut` where
         #     `QAccessible::Accelerator` collapses them.
-        #   * Press-and-hold auto-repeat (`QAbstractButton::setAutoRepeat`):
-        #     holding a spin arrow or a scrollbar arrow steps ONCE here. No
-        #     repeat timer exists anywhere in the tree (the `auto_repeat`
-        #     hits are all about OS *key* repeat, a different thing). With
-        #     mnemonics closed this is now the largest CROSS-CUTTING item —
-        #     the other remaining ones are individual widget kinds.
+        #   * ~~Press-and-hold auto-repeat~~ — CLOSED R1549. It was the
+        #     item R1543 named FIRST and called the largest cross-cutting
+        #     one left, and it was 100% absent: holding a spin arrow
+        #     stepped ONCE, and the tree contained no repeat timer at all
+        #     (the one `auto_repeat` hit was OS *key*-repeat SUPPRESSION,
+        #     R1071 — a different thing). R1549 made the cadence a
+        #     DECLARATION the widget answers (`External::auto_repeat`) and
+        #     gave the router the clock; a fire re-dispatches the widget's
+        #     own `PointerUp`+`PointerDown` arc, so a repeat is a click by
+        #     the same derivation and no widget needed a new SCXML
+        #     transition. Past Qt in three places, all read over the wire:
+        #     the hold is DRIVABLE AS DATA (Qt's `QBasicTimer` cannot be
+        #     told "hold for 900 ms"; this rides the `scene/tick` clock and
+        #     the demo asserts exact fire counts with no tolerance), the RUN
+        #     IS PUBLISHED and predictive (`scene/auto_repeat` gives target
+        #     / repeating / cadence / fires / seconds-to-next, where Qt's
+        #     only public fact is a static per-widget property), and a held
+        #     arrow AT ITS BOUND stops (`QAbstractSpinBox` keeps its 10 Hz
+        #     timer running against a value pinned at `maximum()`).
+        #     Armed-ness is re-ASKED every frame instead of stored, and the
+        #     run lives IN the R876 press record, so Qt's runaway-timer bug
+        #     class has nowhere to live. Adoption is COMPLETE for the widget
+        #     classes that can express a hold — all three that own `Button`
+        #     sub-regions (`ButtonExternal` opt-in as `QPushButton` is,
+        #     `SpinButtonExternal` and `PaginationExternal` on by default as
+        #     Qt's spin arrows are).
         #   * Qt also has `wheelEvent` on `QComboBox` and `QTabBar`; R1533
-        #     covered value arithmetic, not index arithmetic.
+        #     covered value arithmetic, not index arithmetic. Re-checked at
+        #     R1549: `External::wheel` still has exactly the two
+        #     implementors R1533 added, so this is now the largest
+        #     cross-cutting item left.
         #   * NEW at R1543 — the capability is universal but ADOPTION is
         #     three sites (menu titles, menu items, one buddy label). Every
         #     other catalog paint helper takes a plain `&str` label and calls
@@ -437,14 +460,25 @@ AXES = [
         #     `QFontComboBox`, and the standard `QMessageBox` /
         #     `QInputDialog` canned dialogs.
         #
-        # R1543 re-judgment, 84 -> 87, demanded by the tool (round ledger
-        # 1 -> 2). +3 and not more: what closed is cross-cutting and closed
-        # past Qt, but what remains is six absent widget kinds plus the
-        # second cross-cutting interaction gap — more surface than the round
-        # filled — and the round added a stated gap of its own (adoption).
-        "judged_at": 1543,
-        "completion": 87,
-        "evidence_snapshot": {"example-name": 73, "round-axis": 2},
+        # R1549 re-judgment, 87 -> 90, demanded by the tool (round ledger
+        # 2 -> 3). +3, the same calibration R1543 got for mnemonics and for
+        # the same reason: what closed is not one widget but an axis every
+        # pressable widget sits on, it was wholly absent, and it closed past
+        # Qt in three places. Unlike R1543 it also added NO gap of its own —
+        # adoption is complete for the widget classes that can express a
+        # hold. Not more than +3 because the audit that produced this list
+        # was RE-RUN at R1549 rather than inherited ([[r1532-column-declares
+        # -its-painter]]: a gap list is worth only what it is checked
+        # against), and every other item still stands, verified by census:
+        # `External::wheel` still has exactly two implementors, mnemonic
+        # adoption is still three sites, and all six absent widget kinds are
+        # still absent (no `group_box` / `fieldset`, no dial or knob, no
+        # stacked-page or wizard container, no `QKeySequenceEdit`, no font
+        # combo, no canned message / input dialog). Six absent kinds is a
+        # lot of surface for an axis whose name is "catalog".
+        "judged_at": 1549,
+        "completion": 90,
+        "evidence_snapshot": {"example-name": 73, "round-axis": 3},
     },
     {
         "key": "dataviz",
