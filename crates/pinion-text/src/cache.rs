@@ -2613,10 +2613,13 @@ mod tests {
 ///
 /// # Why this arena cannot be exact
 ///
-/// Three of its values are parley's, and parley keeps its buffers behind a
-/// `pub(crate)` field: `Layout`'s glyphs / clusters / runs / lines (one per
-/// cache entry), the `LayoutContext` scratch space, and the `FontContext`'s
-/// collection. No API outside that crate can size any of them, so the row this
+/// Three of its values are parley's, and parley keeps most of their buffers
+/// behind a `pub(crate)` field: `Layout`'s glyphs / clusters / runs / lines
+/// (one per cache entry), the `LayoutContext` scratch space, and the
+/// `FontContext`'s collection. R1550.1 narrowed this from "no API outside that
+/// crate can size any of them" — a `Layout`'s `styles` and `inline_boxes` ARE
+/// reachable and are now counted (see `parley_reachable_bytes`); the rest is
+/// not, because the element types are `pub(crate)` as well. So the row this
 /// cache publishes names them and their counts rather than reporting a total
 /// that quietly omits them — see
 /// [`ArenaFootprint::unmeasured`](pinion_core::memory_census::ArenaFootprint::unmeasured).
@@ -2654,16 +2657,41 @@ mod footprint {
         }
     }
 
+    /// R1550.1 §5.36 — the part of a `parley::Layout` that CAN be sized from
+    /// outside parley.
+    ///
+    /// R1550 wrote that no API outside that crate can size any of a `Layout`'s
+    /// buffers, and reported the whole value as unmeasured. **Two of them can
+    /// be**: `styles()` and `inline_boxes()` hand out slices of `parley::Style`
+    /// and `parley::InlineBox`, both `pub`, so `size_of` is nameable and the
+    /// length is readable. The claim was checked against the crate on the round
+    /// that made it and still came out one notch too strong, which is the
+    /// R1537 shape — a limit recorded as external that was partly ours.
+    ///
+    /// What is genuinely unreachable is the rest: glyphs, clusters, runs,
+    /// lines, line items, fonts and coords live in a `pub(crate) LayoutData`
+    /// whose element types are `pub(crate)` too, so `size_of::<ClusterData>()`
+    /// cannot even be written here. That half needs a `Layout::memory_usage()`
+    /// upstream (linebender/parley), and parley has no size accessor of any
+    /// kind today — censused at R1550.1.
+    ///
+    /// **Length, not capacity.** A slice does not report its `Vec`'s spare
+    /// capacity, so this term is a floor for the two fields it covers, unlike
+    /// every other [`Footprint`] impl here.
+    /// The row still reports the whole `Layout` as unmeasured — this makes
+    /// `bytes` less wrong, not complete.
+    fn parley_reachable_bytes(layout: &super::Layout) -> usize {
+        std::mem::size_of_val(layout.styles()) + std::mem::size_of_val(layout.inline_boxes())
+    }
+
     impl Footprint for CachedLayout {
         fn footprint(&self) -> usize {
             let Self {
-                // parley's, and opaque — counted as an unmeasured value on the
-                // arena's row rather than as a zero here.
-                layout: _,
+                layout,
                 runs,
                 backgrounds,
             } = self;
-            runs.footprint() + backgrounds.footprint()
+            parley_reachable_bytes(layout) + runs.footprint() + backgrounds.footprint()
         }
     }
 
@@ -2791,6 +2819,49 @@ mod footprint {
                 with_runs > shaped,
                 "the draw list is held in the entry it was derived from: \
                  {shaped} -> {with_runs}",
+            );
+        }
+
+        /// R1550.1 — the reachable half of a `parley::Layout` is COUNTED.
+        ///
+        /// Discriminating by construction: adding style runs grows two things
+        /// at once — the cache KEY (which holds the `Vec<StyleRun>`) and
+        /// parley's own `styles` collection (which holds a resolved
+        /// `parley::Style` per run boundary). If `parley_reachable_bytes` were
+        /// dropped from the entry's accounting, the entry would grow by the
+        /// key alone, so the assertion is against the key's own growth rather
+        /// than against zero.
+        #[test]
+        fn r1550_1_the_reachable_half_of_a_parley_layout_is_counted() {
+            use pinion_core::scene::StyleRun;
+            let base = TextStyle::new();
+            let text = "the quick brown fox jumps over the lazy dog".repeat(4);
+            let mut plain = LayoutCache::new();
+            let mut styled = LayoutCache::new();
+            let empty = plain.footprint();
+
+            plain.layout(&text, &base, None);
+            // DISTINCT styles per run. An earlier draft cloned one style 32
+            // times and measured a delta exactly equal to the key's growth —
+            // parley resolves identical styles to a single entry, so the test
+            // was asserting against a collection that had not grown. The
+            // failure was the finding, not a wrong threshold.
+            let runs: Vec<StyleRun> = (0..32u32)
+                .map(|i| {
+                    let mut style = base.clone();
+                    style.font_size_px = 12 + i;
+                    StyleRun::new(i * 4, i * 4 + 2, style)
+                })
+                .collect();
+            styled.layout_with_runs(&text, &base, &runs, None);
+
+            let key_growth = runs.footprint();
+            let delta = (styled.footprint() - empty) - (plain.footprint() - empty);
+            assert!(
+                delta > key_growth,
+                "32 style runs grow parley's own style collection as well as \
+                 the key, so the entry must cost MORE than the key's own \
+                 growth: delta {delta}, key {key_growth}",
             );
         }
 

@@ -80222,6 +80222,46 @@
         "`pinion-tui`'s dispatch function now sits at exactly the clippy `too_many_lines` ceiling (100/100). Pre-existing at 97; the next line added there forces the extraction"
       ]
     },
+    "Round 1550.1": {
+      "decision_summary": "R1550.1 a limit recorded as upstream was partly ours",
+      "changes_bullets": [
+        "pinion-text: `parley_reachable_bytes` — a `Layout`'s `styles()` and `inline_boxes()` are slices of PUBLIC types, so their bytes are counted; R1550 reported the whole value as unmeasured",
+        "pinion-text: the claim is narrowed where it was written — what is genuinely unreachable is the `pub(crate) LayoutData` whose element types are `pub(crate)` too, so `size_of::<ClusterData>()` cannot be named at all",
+        "CLAUDE.md + the demo docstring say \"most of whose buffers\", and name the upstream (linebender/parley) plus the censused fact that parley has no size accessor of any kind"
+      ],
+      "verification_bullets": [
+        "`r1550_1_the_reachable_half_of_a_parley_layout_is_counted` — discriminating by construction: style runs grow the cache KEY and parley's own style collection at once, so it asserts against the key's own growth rather than against zero",
+        "The counterfactual (drop the term from the entry's accounting) FAILS: delta 2304 against key 2304, exactly equal",
+        "Two process findings, both recorded: the first draft cloned ONE style 32 times and parley coalesced them, so the delta equalled the key's growth and the test was measuring a collection that had not grown; and the first counterfactual run reported PASS because its replacement string never matched — a counterfactual must assert that it applied"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "Most of `parley::Layout` stays unmeasurable: glyphs / clusters / runs / lines / line items / fonts / coords are in a `pub(crate) LayoutData` with `pub(crate)` element types. EXTERNAL (linebender/parley) — a `Layout::memory_usage()` is the fix and parley has no size accessor of any kind today",
+        "The two reachable fields are counted by LENGTH, not capacity: a slice does not report its Vec's spare capacity, so this term is a floor where every other Footprint impl states an allocation"
+      ],
+      "publishable_decision_summary": "R1550.1 a limit recorded as upstream was partly ours",
+      "publishable_changes_bullets": [
+        "pinion-text: `parley_reachable_bytes` — a `Layout`'s `styles()` and `inline_boxes()` are slices of PUBLIC types, so their bytes are counted; R1550 reported the whole value as unmeasured",
+        "pinion-text: the claim is narrowed where it was written — what is genuinely unreachable is the `pub(crate) LayoutData` whose element types are `pub(crate)` too, so `size_of::<ClusterData>()` cannot be named at all",
+        "CLAUDE.md + the demo docstring say \"most of whose buffers\", and name the upstream (linebender/parley) plus the censused fact that parley has no size accessor of any kind"
+      ],
+      "publishable_verification_bullets": [
+        "`r1550_1_the_reachable_half_of_a_parley_layout_is_counted` — discriminating by construction: style runs grow the cache KEY and parley's own style collection at once, so it asserts against the key's own growth rather than against zero",
+        "The counterfactual (drop the term from the entry's accounting) FAILS: delta 2304 against key 2304, exactly equal",
+        "Two process findings, both recorded: the first draft cloned ONE style 32 times and parley coalesced them, so the delta equalled the key's growth and the test was measuring a collection that had not grown; and the first counterfactual run reported PASS because its replacement string never matched — a counterfactual must assert that it applied"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Most of `parley::Layout` stays unmeasurable: glyphs / clusters / runs / lines / line items / fonts / coords are in a `pub(crate) LayoutData` with `pub(crate)` element types. EXTERNAL (linebender/parley) — a `Layout::memory_usage()` is the fix and parley has no size accessor of any kind today",
+        "The two reachable fields are counted by LENGTH, not capacity: a slice does not report its Vec's spare capacity, so this term is a floor where every other Footprint impl states an allocation"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

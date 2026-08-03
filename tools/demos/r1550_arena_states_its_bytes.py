@@ -23,9 +23,11 @@ Four things this proves that Qt 6.11 cannot answer:
 
   2. THE ACCOUNTING STATES ITS OWN BASIS. `basis: "partial"` on the shape
      cache is not hedging: the measured bytes are exact, and the row NAMES
-     what it could not reach (`parley::Layout`, whose buffers are behind a
-     `pub(crate)` field) with a count. Qt's `QImage::sizeInBytes()` is a
-     formula over two members with nothing tying it to the object's fields.
+     what it could not reach (`parley::Layout`, MOST of whose buffers are
+     behind a `pub(crate)` field — the two it hands out as slices of public
+     types are counted, R1550.1) with a count. Qt's `QImage::sizeInBytes()`
+     is a formula over two members with nothing tying it to the object's
+     fields.
 
   3. MEMORY IS ATTRIBUTED PER WINDOW, AND SHARED ARENAS EXACTLY ONCE. The
      producer image store is held by every window's cache and counted in
