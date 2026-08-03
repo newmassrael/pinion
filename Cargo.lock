@@ -3835,6 +3835,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-subscribe"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-rpc",
+ "pinion-rpc-transport",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-syntax-highlight"
 version = "0.0.1"
 dependencies = [

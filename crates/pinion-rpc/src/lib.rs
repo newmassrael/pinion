@@ -43,6 +43,7 @@ pub mod screenshot;
 pub mod scroll_state;
 pub mod simulate;
 pub mod snapshot;
+pub mod subscribe;
 pub mod substrate_introspect;
 pub mod text;
 pub mod text_backgrounds;
@@ -135,6 +136,11 @@ pub use snapshot::{
     BoxSnapshot, ContainerSnapshot, ExternalSnapshot, ImageSnapshot, PathSnapshot, ScrollSnapshot,
     SnapshotError, SnapshotNode, TextSnapshot, snapshot,
 };
+pub use subscribe::{
+    CHANGED_METHOD, PublishReport, SubscribeError, SubscribeOutcome, Subscriber,
+    SubscriptionRegistry, SubscriptionView, SubscriptionsOutcome, UnsubscribeOutcome,
+    changed_notification, process_registry, subscribe, subscriptions, unsubscribe,
+};
 pub use substrate_introspect::{
     SubstrateIntrospectError, introspect_error_to_data, lookup as substrate_lookup,
 };
@@ -146,7 +152,9 @@ pub use theme::{
     SetThemeModeParams, ThemeTokenView, ThemeTokensError, ThemeTokensOutcome, set_theme_mode,
     theme_tokens,
 };
-pub use transport::{ConnId, RpcFrame, RpcIngress, RpcReply};
+pub use transport::{
+    ConnId, FnEgress, FrameOrigin, NullEgress, RpcEgress, RpcFrame, RpcIngress, RpcReply,
+};
 pub use wait_for::{WaitForError, WaitOutcome, wait_for};
 pub use waiter::{WaiterRegistry, try_async_wait_for, waiter_response};
 pub use window_move::{WindowMoveError, WindowMoveOutcome, WindowMoveParams, window_move};

@@ -1068,6 +1068,36 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "SubscribeOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("subscription", WireTy::Integer, None),
+                WireField::new("revision", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "SubscriptionView",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("subscription", WireTy::Integer, None),
+                WireField::new("conn", WireTy::Integer, None),
+                WireField::new("revision", WireTy::Integer, None),
+                WireField::new("delivered_count", WireTy::Integer, None),
+                WireField::new("armed", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
+        name: "SubscriptionsOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("subscriptions", WireTy::Array, Some("SubscriptionView")),
+                WireField::new("published_total", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "TextBackgroundBand",
         shape: WireShape::Object {
             fields: &[
@@ -1205,6 +1235,15 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("system_scheme", WireTy::String, None),
                 WireField::new("active", WireTy::String, None),
                 WireField::new("palettes", WireTy::Object, Some("PaletteCatalogue")),
+            ],
+        },
+    },
+    WireType {
+        name: "UnsubscribeOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("subscription", WireTy::Integer, None),
+                WireField::new("delivered_count", WireTy::Integer, None),
             ],
         },
     },

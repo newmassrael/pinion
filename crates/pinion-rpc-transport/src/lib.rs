@@ -75,7 +75,7 @@ use std::time::Duration;
 
 use rustix::event::{PollFd, PollFlags, poll};
 
-use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply};
+use pinion_rpc::{ConnId, FnEgress, RpcEgress, RpcFrame, RpcIngress};
 
 /// How long the accept loop backs off after an error it cannot act on.
 ///
@@ -697,6 +697,20 @@ fn handle_connection(stream: &UnixStream, ingress: &Arc<dyn RpcIngress>) {
     let conn = ConnId::allocate();
     ingress.on_connect(conn);
 
+    // R1552 §5.7 PINION-PR83 — this connection's egress: the writer, named.
+    // Built ONCE for the connection rather than once per frame, because a
+    // subscription outlives the frame that opened it and keeps writing here.
+    // Every frame's reply is derived from it (`RpcFrame::new` →
+    // `RpcReply::over`), so a response and a `scene/changed` notification go
+    // down the same channel to the same writer thread — they cannot interleave
+    // mid-frame and cannot be reordered against each other.
+    let egress: Arc<dyn RpcEgress> = FnEgress::new(move |frame: String| {
+        // The writer is gone once the client closed mid-flight. `false` is what
+        // prunes a subscription whose peer has vanished without waiting for
+        // `on_disconnect` — the two agree, and either alone would do.
+        tx.send(frame).is_ok()
+    });
+
     let reader = BufReader::new(read_half);
     for line in reader.lines() {
         let Ok(text) = line else {
@@ -705,13 +719,7 @@ fn handle_connection(stream: &UnixStream, ingress: &Arc<dyn RpcIngress>) {
         if text.trim().is_empty() {
             continue;
         }
-        let reply_tx = tx.clone();
-        let reply = RpcReply::new(move |response| {
-            // Writer may already be gone if the client closed mid-flight;
-            // a failed send is then simply dropped.
-            let _ = reply_tx.send(response);
-        });
-        ingress.submit(RpcFrame::new(conn, text, reply));
+        ingress.submit(RpcFrame::new(conn, text, Arc::clone(&egress)));
     }
 
     // R-PR67 — the reader loop ended: the client closed its write side
@@ -723,10 +731,17 @@ fn handle_connection(stream: &UnixStream, ingress: &Arc<dyn RpcIngress>) {
     // that follows only flushes already-produced replies).
     ingress.on_disconnect(conn);
 
-    // Client closed the read side. Drop this frame-submitting `tx` so the
-    // writer's channel closes once every in-flight reply clone has fired
-    // or been dropped, then wait for the writer to flush and exit.
-    drop(tx);
+    // Client closed the read side. Drop this connection's egress so the
+    // writer's channel closes once every in-flight reply — and every
+    // subscription still holding a clone — has fired or been released, then
+    // wait for the writer to flush and exit.
+    //
+    // R1552 — the release of the subscription clones is what `on_disconnect`
+    // above just did: an egress clone IS per-connection state, which is the
+    // state that hook's contract already requires an ingress to release. An
+    // ingress that kept one past its disconnect would park this writer thread
+    // forever, which is why the ordering here is disconnect-then-drop.
+    drop(egress);
     if let Ok(handle) = writer {
         let _ = handle.join();
     }

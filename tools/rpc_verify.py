@@ -270,6 +270,8 @@ class SocketClient(AbstractContextManager["SocketClient"]):
                     raise
                 time.sleep(0.02)
         self._buf = b""
+        # R1552 — server-initiated frames read past while awaiting a response.
+        self._notifications: list[dict] = []
 
     def rpc(self, method: str, params: Any = None, rid: int = 1) -> Optional[dict]:
         """Send one frame and return the response, or `None` if the endpoint
@@ -290,6 +292,22 @@ class SocketClient(AbstractContextManager["SocketClient"]):
             # The refusal beat our write. There is nothing left to read on a
             # socket that is already gone.
             return None
+        # R1552 PINION-PR83 — read until the frame that answers THIS request.
+        # Before R1552 the next line was necessarily the response, because
+        # nothing else could arrive; now a subscription's `scene/changed`
+        # notification can land between the request and its answer, and
+        # returning it as the response would silently corrupt every caller.
+        while True:
+            frame = self._next_frame()
+            if frame is None:
+                return None
+            if frame.get("id") is None and "method" in frame:
+                self._notifications.append(frame)
+                continue
+            return frame
+
+    def _next_frame(self) -> Optional[dict]:
+        """One line-delimited frame off the socket, or `None` on EOF / reset."""
         while b"\n" not in self._buf:
             try:
                 chunk = self.sock.recv(4096)
@@ -300,6 +318,47 @@ class SocketClient(AbstractContextManager["SocketClient"]):
             self._buf += chunk
         line, self._buf = self._buf.split(b"\n", 1)
         return json.loads(line.decode())
+
+    def notifications(self, method: Optional[str] = None) -> list[dict]:
+        """R1552 — server-initiated frames this connection has received.
+
+        Collected by `rpc` as it reads past them. A caller expecting a stream
+        with no request to make uses `await_notifications`.
+        """
+        if method is None:
+            return list(self._notifications)
+        return [n for n in self._notifications if n.get("method") == method]
+
+    def await_notifications(
+        self,
+        method: str,
+        count: int,
+        *,
+        timeout: float = 5.0,
+    ) -> list[dict]:
+        """Block on the socket until `count` notifications of `method` have
+        arrived, and return them.
+
+        Bounded by the socket's own timeout rather than by a sleep. Raises
+        `RpcError` naming how many were actually seen, so a failure is a count
+        and not a hang.
+        """
+        deadline = time.monotonic() + timeout
+        while len(self.notifications(method)) < count:
+            if time.monotonic() >= deadline:
+                raise RpcError(
+                    -32099,
+                    f"timed out awaiting {count} {method} notification(s); "
+                    f"saw {len(self.notifications(method))}",
+                )
+            remaining = max(0.01, deadline - time.monotonic())
+            self.sock.settimeout(remaining)
+            frame = self._next_frame()
+            if frame is None:
+                break
+            if frame.get("id") is None and "method" in frame:
+                self._notifications.append(frame)
+        return self.notifications(method)
 
     def close(self) -> None:
         """Close the connection. A plain close is the crash analog: the
@@ -389,6 +448,13 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
 
         self._proc: Optional[subprocess.Popen] = None
         self._inbox: "queue.Queue[str]" = queue.Queue()
+        # R1552 PINION-PR83 — server-initiated frames (a `method`, no `id`).
+        # Before R1552 nothing could arrive here unprompted, so `request`'s
+        # id-matching loop simply DISCARDED every non-matching line. Now that
+        # the server can speak first, discarding would silently drop the whole
+        # subscription stream — and, worse, a demo asserting "no notification
+        # arrived" would pass whether or not one did.
+        self._notifications: list[dict] = []
         self._stderr_lines: list[str] = []
         self._stderr_thread: Optional[threading.Thread] = None
         self._stdout_thread: Optional[threading.Thread] = None
@@ -630,6 +696,14 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if msg.get("id") is None and "method" in msg:
+                # R1552 — a JSON-RPC 2.0 notification (spec §4.1). Kept, not
+                # dropped: it is somebody's subscription stream. This is the
+                # discriminator the whole wire form turns on — a second
+                # RESPONSE carrying this request's own id would be
+                # indistinguishable from the answer below.
+                self._notifications.append(msg)
+                continue
             if msg.get("id") != request_id:
                 continue
             if "error" in msg:
@@ -640,6 +714,66 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                     err.get("data"),
                 )
             return Response(id=msg.get("id"), result=msg.get("result"))
+
+    def notifications(self, method: Optional[str] = None) -> list[dict]:
+        """R1552 — every server-initiated frame seen so far, optionally
+        filtered by `method`.
+
+        Notifications are collected as a side effect of `request`, which is
+        the only thing that reads the inbox. A demo that wants to observe a
+        stream therefore drives a request (any request) between checks — see
+        `drain_notifications`.
+        """
+        if method is None:
+            return list(self._notifications)
+        return [n for n in self._notifications if n.get("method") == method]
+
+    def drain_notifications(self, method: Optional[str] = None) -> list[dict]:
+        """Read the inbox WITHOUT sending a request, then return
+        `notifications(method)`.
+
+        `request` only sees frames that arrive while it is waiting for its own
+        answer, so a stream that lands between requests would otherwise sit in
+        the queue unseen. Non-blocking: it takes what is already there.
+        """
+        while True:
+            try:
+                line = self._inbox.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") is None and "method" in msg:
+                self._notifications.append(msg)
+        return self.notifications(method)
+
+    def await_notifications(
+        self,
+        method: str,
+        count: int,
+        *,
+        timeout: float = 5.0,
+    ) -> list[dict]:
+        """Block until at least `count` notifications of `method` have been
+        seen, and return them.
+
+        Bounded and deterministic — never a fixed sleep. Raises `RpcError` on
+        timeout naming what was actually seen, so a failure reports the count
+        rather than an opaque hang.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            seen = self.drain_notifications(method)
+            if len(seen) >= count:
+                return seen
+            if time.monotonic() >= deadline:
+                raise RpcError(
+                    -32099,
+                    f"timed out awaiting {count} {method} notification(s); saw {len(seen)}",
+                    "\n".join(self._stderr_lines[-10:]),
+                )
 
     def query(self, path: str, *, with_origin: bool = False) -> Any:
         """`scene/query` typed wrapper (§5.12).

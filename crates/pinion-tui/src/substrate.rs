@@ -329,6 +329,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // `pinion_shell::ShellCore::new`.
         let root_owner = shell.core.root_owner().clone();
         shell.focus.attach_owner(root_owner);
+        // R1552 §5.7 §2 #6 PINION-PR83 — publish scene advances to change-stream
+        // subscribers. The drain already publishes after every dispatched frame,
+        // so this observer is what covers the bumps NO frame caused: a keystroke
+        // the terminal delivered, a producer's arrival. Without it a subscriber
+        // would hear only about changes it had itself provoked, which is the one
+        // case it did not need telling about.
+        shell.revision.set_observer(move |new| {
+            pinion_rpc::process_registry().publish(new);
+        });
         shell.refresh_focusable_from_view();
         shell
     }
@@ -1814,6 +1823,24 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// the alternate-screen + raw-mode terminal holds stdout — see
     /// [`crate::shell::run`] for the response-writer wiring rationale).
     pub fn dispatch_rpc(&mut self, request: &str) -> Option<String> {
+        self.dispatch_rpc_from(request, None)
+    }
+
+    /// R1552 §5.7 §2 #6 PINION-PR83 — [`Self::dispatch_rpc`] with the
+    /// **origin** of the frame: the connection it arrived on and that
+    /// connection's writer.
+    ///
+    /// The transport entry, mirroring the GUI backend's
+    /// `ShellCore::dispatch_rpc_scoped`. `origin` is what `scene/subscribe`
+    /// needs, and it is `None` on the bare entry above (a synthetic or
+    /// in-test dispatch has no connection), where the three subscription
+    /// methods then answer `SubscriptionsUnavailable` by name rather than
+    /// opening a stream nothing could deliver.
+    pub fn dispatch_rpc_from(
+        &mut self,
+        request: &str,
+        origin: Option<pinion_rpc::FrameOrigin<'_>>,
+    ) -> Option<String> {
         // R889 §5.41 §5.49 — parse once (the R671 GUI single-parse
         // shape) so the out-of-band `{window: "<id>"}` scope is
         // visible pre-dispatch. Pre-R889 the TUI never read the
@@ -1967,28 +1994,25 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // GUI's entry-focus convention.
             let access_focused = focus_before.clone();
             let mut produce_access = || {
-                let (mut nodes, focus) = pinion_a11y::build_access_tree(
+                terminal_access_tree::<V>(
                     &root_owner,
                     last_paint_scene_ref,
-                    || V::access_node(&cached_state, access_focused.as_deref()),
-                    || V::access_focus_target(&cached_state, access_focused.as_deref()),
-                );
-                if let Some(paint) = last_paint_scene_ref {
-                    pinion_a11y::resolve_access_bounds(&mut nodes, |tag| {
-                        pinion_runtime::rect_for_tag(paint, tag)
-                    });
-                }
-                (nodes, focus)
+                    &cached_state,
+                    access_focused.as_deref(),
+                )
             };
             // R1550 §5.36 §5.7 §2 #6 — `scene/memory` answers on the TUI too,
             // the same missing-mirror shape the two comments below record for
             // `scene/frame_timings` and `scene/auto_repeat`. Method-gated for
             // the GUI's reason: pricing an arena walks it. What a terminal
             // holds, and what it does not, is in `terminal_memory_census`.
+            // R1552 §5.7 §2 #6 — `with_frame_origin`: same wire as the GUI
+            // backend, different fd. `None` when no transport supplied one.
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_access_producer(&mut produce_access)
-                .with_focus_manager(focus_ptr);
+                .with_focus_manager(focus_ptr)
+                .with_frame_origin(origin);
             // R890.1 §5.12 §2 #6 — one channel: snapshot from:paint,
             // layout viewport:null, and hit-test dims all read this
             // borrow (GUI parity; see the split-borrow comment above).
@@ -2181,6 +2205,38 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let tail = self.core.tail();
         self.handle_tail(&tail)
     }
+}
+
+/// R1552 §5.7 §5.40 §2 #6 — build the terminal backend's accessibility tree:
+/// the binding's declared nodes, enriched from the committed paint scene and
+/// resolved to that scene's cell geometry.
+///
+/// Lifted out of `dispatch_rpc_from`'s `access_producer` closure, which is
+/// where it lived as fourteen inline lines. It is a pure function of its four
+/// inputs — nothing it does needs the dispatcher's borrow split — and the
+/// closure that remains is the part that is genuinely about dispatch: which
+/// captures to hand it.
+fn terminal_access_tree<V: WidgetViewTui>(
+    root_owner: &Owner,
+    last_paint: Option<&Scene>,
+    state: &V::State,
+    focused: Option<&str>,
+) -> (
+    Vec<pinion_a11y::AccessNode>,
+    Option<pinion_a11y::AccessFocus>,
+) {
+    let (mut nodes, focus) = pinion_a11y::build_access_tree(
+        root_owner,
+        last_paint,
+        || V::access_node(state, focused),
+        || V::access_focus_target(state, focused),
+    );
+    if let Some(paint) = last_paint {
+        pinion_a11y::resolve_access_bounds(&mut nodes, |tag| {
+            pinion_runtime::rect_for_tag(paint, tag)
+        });
+    }
+    (nodes, focus)
 }
 
 #[cfg(test)]

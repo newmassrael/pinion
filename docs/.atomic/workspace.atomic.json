@@ -80366,6 +80366,66 @@
         "The cell backend's justify front-loads the remainder of an uneven division across the leading gaps, where parley adds a fractional advance to every space. A cell grid has no sub-cell positions, so this is a property of the medium rather than a divergence to close"
       ]
     },
+    "Round 1552": {
+      "decision_summary": "R1552 the server speaks first",
+      "changes_bullets": [
+        "pinion-rpc: `transport::RpcEgress` — one connection's WRITER, the mirror of `RpcIngress`. Without it a request was the only thing that could produce a frame, so one request could produce at most one response and a subscription was inexpressible on this transport at any price (PINION-PR83)",
+        "pinion-rpc: `RpcReply::over` — the reply is now DERIVED from the connection's egress, and `RpcFrame::new` takes the egress rather than a reply. So a response and an unsolicited notification reach a client through the SAME writer in the order produced, structurally rather than by two constructions agreeing",
+        "pinion-rpc: `subscribe` — `scene/subscribe` / `scene/unsubscribe` / `scene/subscriptions`, and `scene/changed` as a JSON-RPC 2.0 NOTIFICATION (spec 4.1 — a method, no id). PR-83 asked first for a repeated Response; rejected because the spec pairs one Response to one Request and every client keyed on that pairing discards the second, including this repo's own tools/rpc_verify.py",
+        "pinion-rpc: a subscription is registered DISARMED and armed by the dispatch site after its own response has gone out, so a client can never be sent a notification naming a subscription it has not been told about. Structural rather than a rule to remember, the trade PR-48's bind-time exposure made",
+        "pinion-rpc: `process_registry` — process-level rather than Owner-scoped, for two structural reasons: a subscription is keyed by `ConnId`, which is process-unique by construction, and `on_disconnect` runs on a transport thread where the Owner thread-local is empty, so a slot could not serve the one call that keeps a stream from outliving its connection",
+        "pinion-rpc: `DispatchContext::with_frame_origin` + `FrameOrigin` — the pair both backends thread, taking the Option itself so neither spells the same `if let` and neither can pair an origin with a different registry",
+        "pinion-rpc-transport / pinion-shell / pinion-tui: each transport builds ONE egress per connection (socket writer channel / stdout / stderr). The shell's `ProxyRpcIngress::on_disconnect` releases a vanished client's streams synchronously on the transport thread, because the transport joins its writer immediately after",
+        "pinion-tui: `terminal_access_tree` — the a11y producer lifted out of the dispatch entry, paying down the clippy line ceiling this round would otherwise have crossed",
+        "tools/rpc_verify.py: `RpcSubprocess` and `SocketClient` no longer DISCARD frames that do not match the pending id — they collect notifications. Before this round nothing could arrive unprompted, so discarding was correct; after it, discarding would drop the whole stream and let a demo asserting nothing arrived pass either way",
+        "examples/hello-subscribe: the reference consumer — paints the scene revision and the live streams, so the number a subscriber is TOLD and the number the app PAINTS are two readings a demo holds against each other"
+      ],
+      "verification_bullets": [
+        "tools/demos/r1552_subscribe.py — 45 assertion sites over a real binding: unprompted delivery, the frame carrying no id, paint and stream naming the same generation, two connections getting two independent streams, a client that VANISHES having exactly its own stream released, one connection refused another's, and rpc/methods plus rpc/schema covering the new surface",
+        "Seven counterfactuals, one at a time, each FAILING as required: the armed gate removed / NullEgress claiming a peer / the cursor not advanced / close ignoring its owner / the notification carrying an id / the revision observer not publishing / on_disconnect not releasing streams",
+        "The observer counterfactual PASSED at first, which is the finding of the round. An unconditional post-dispatch publish was delivering every advance, so nothing exercised the observer path. Narrowing that call to fire only when a subscription was just opened made the counterfactual fail as it must",
+        "cargo test green on pinion-rpc (1069, including 15 new and the R1539 wire census), pinion-rpc-transport, pinion-shell, pinion-tui, hello-subscribe; clippy pedantic clean on all five; cargo fmt --all --check clean",
+        "Re-ran every demo that reads the changed harness or wire: r1393_conn_lifecycle, r1469_transport_exposure, r1478_endpoint_identity, r1539_wire_states_its_shape — all PASS"
+      ],
+      "impact_refs": [
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The stream is the REVISION cursor, coalesced: a subscriber learns that the scene moved and to where, not every intermediate generation. The same contract scene/waitFor has, for the same reason — one scene has one version token. A consumer needing an event log is asking for a different thing, and it is stated rather than implied",
+        "A socket connection's writer thread ends by refcount, so an ingress that kept an egress clone past its own on_disconnect would park that thread forever. Not a new rule: on_disconnect's contract already requires releasing the connection's state, and an egress clone is that state. Recorded because the failure would be silent",
+        "scene/subscribe answers only where a connection-bound transport supplied an origin; a synthetic or single-window dispatch gets SubscriptionsUnavailable BY NAME rather than the method appearing absent. That is why the bare dispatch entries still exist unchanged",
+        "No per-subscription FILTER: a subscriber is told the scene advanced, not which subtree. Qt has no equivalent at all, so this is an axis gap rather than round debt — but a large scene where an agent cares about one panel will want it"
+      ],
+      "publishable_decision_summary": "R1552 the server speaks first",
+      "publishable_changes_bullets": [
+        "pinion-rpc: `transport::RpcEgress` — one connection's WRITER, the mirror of `RpcIngress`. Without it a request was the only thing that could produce a frame, so one request could produce at most one response and a subscription was inexpressible on this transport at any price (PINION-PR83)",
+        "pinion-rpc: `RpcReply::over` — the reply is now DERIVED from the connection's egress, and `RpcFrame::new` takes the egress rather than a reply. So a response and an unsolicited notification reach a client through the SAME writer in the order produced, structurally rather than by two constructions agreeing",
+        "pinion-rpc: `subscribe` — `scene/subscribe` / `scene/unsubscribe` / `scene/subscriptions`, and `scene/changed` as a JSON-RPC 2.0 NOTIFICATION (spec 4.1 — a method, no id). PR-83 asked first for a repeated Response; rejected because the spec pairs one Response to one Request and every client keyed on that pairing discards the second, including this repo's own tools/rpc_verify.py",
+        "pinion-rpc: a subscription is registered DISARMED and armed by the dispatch site after its own response has gone out, so a client can never be sent a notification naming a subscription it has not been told about. Structural rather than a rule to remember, the trade PR-48's bind-time exposure made",
+        "pinion-rpc: `process_registry` — process-level rather than Owner-scoped, for two structural reasons: a subscription is keyed by `ConnId`, which is process-unique by construction, and `on_disconnect` runs on a transport thread where the Owner thread-local is empty, so a slot could not serve the one call that keeps a stream from outliving its connection",
+        "pinion-rpc: `DispatchContext::with_frame_origin` + `FrameOrigin` — the pair both backends thread, taking the Option itself so neither spells the same `if let` and neither can pair an origin with a different registry",
+        "pinion-rpc-transport / pinion-shell / pinion-tui: each transport builds ONE egress per connection (socket writer channel / stdout / stderr). The shell's `ProxyRpcIngress::on_disconnect` releases a vanished client's streams synchronously on the transport thread, because the transport joins its writer immediately after",
+        "pinion-tui: `terminal_access_tree` — the a11y producer lifted out of the dispatch entry, paying down the clippy line ceiling this round would otherwise have crossed",
+        "tools/rpc_verify.py: `RpcSubprocess` and `SocketClient` no longer DISCARD frames that do not match the pending id — they collect notifications. Before this round nothing could arrive unprompted, so discarding was correct; after it, discarding would drop the whole stream and let a demo asserting nothing arrived pass either way",
+        "examples/hello-subscribe: the reference consumer — paints the scene revision and the live streams, so the number a subscriber is TOLD and the number the app PAINTS are two readings a demo holds against each other"
+      ],
+      "publishable_verification_bullets": [
+        "tools/demos/r1552_subscribe.py — 45 assertion sites over a real binding: unprompted delivery, the frame carrying no id, paint and stream naming the same generation, two connections getting two independent streams, a client that VANISHES having exactly its own stream released, one connection refused another's, and rpc/methods plus rpc/schema covering the new surface",
+        "Seven counterfactuals, one at a time, each FAILING as required: the armed gate removed / NullEgress claiming a peer / the cursor not advanced / close ignoring its owner / the notification carrying an id / the revision observer not publishing / on_disconnect not releasing streams",
+        "The observer counterfactual PASSED at first, which is the finding of the round. An unconditional post-dispatch publish was delivering every advance, so nothing exercised the observer path. Narrowing that call to fire only when a subscription was just opened made the counterfactual fail as it must",
+        "cargo test green on pinion-rpc (1069, including 15 new and the R1539 wire census), pinion-rpc-transport, pinion-shell, pinion-tui, hello-subscribe; clippy pedantic clean on all five; cargo fmt --all --check clean",
+        "Re-ran every demo that reads the changed harness or wire: r1393_conn_lifecycle, r1469_transport_exposure, r1478_endpoint_identity, r1539_wire_states_its_shape — all PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The stream is the REVISION cursor, coalesced: a subscriber learns that the scene moved and to where, not every intermediate generation. The same contract scene/waitFor has, for the same reason — one scene has one version token. A consumer needing an event log is asking for a different thing, and it is stated rather than implied",
+        "A socket connection's writer thread ends by refcount, so an ingress that kept an egress clone past its own on_disconnect would park that thread forever. Not a new rule: on_disconnect's contract already requires releasing the connection's state, and an egress clone is that state. Recorded because the failure would be silent",
+        "scene/subscribe answers only where a connection-bound transport supplied an origin; a synthetic or single-window dispatch gets SubscriptionsUnavailable BY NAME rather than the method appearing absent. That is why the bare dispatch entries still exist unchanged",
+        "No per-subscription FILTER: a subscriber is told the scene advanced, not which subtree. Qt has no equivalent at all, so this is an axis gap rather than round debt — but a large scene where an agent cares about one panel will want it"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

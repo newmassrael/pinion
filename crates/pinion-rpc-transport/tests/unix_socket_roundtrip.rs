@@ -71,6 +71,7 @@ impl RpcIngress for RecordingIngress {
             conn,
             request,
             reply,
+            ..
         } = frame;
         // Record the frame BEFORE producing the echo, so a client that has
         // read the response is guaranteed the frame is already logged.

@@ -36,7 +36,7 @@ use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_core::style::CursorHint;
-use pinion_rpc::{ConnId, RpcFrame, RpcIngress, RpcReply, try_async_wait_for};
+use pinion_rpc::{ConnId, FnEgress, RpcEgress, RpcFrame, RpcIngress, try_async_wait_for};
 use pinion_runtime::instant_delta_us;
 use pinion_runtime::{CommandExecutor, HandlerRegistry, PointerId, image_cache, paint_adapter};
 use vello::Scene as VelloScene;
@@ -1145,14 +1145,14 @@ impl<V: WidgetView> AppShell<V> {
     /// R51.76 §5.40 — thin wrapper around [`ShellCore::dispatch_rpc`]
     /// that builds the production `resize_request` closure from the
     /// live winit `Window` and routes the JSON-RPC response through the
-    /// frame's [`RpcReply`] sink. Headless tests call
+    /// frame's [`RpcReply`](pinion_rpc::RpcReply) sink. Headless tests call
     /// `ShellCore::dispatch_rpc` directly with a no-op closure.
     ///
     /// R-PR47 §5.7 — the response used to be hard-written to
     /// `std::io::stdout` here; now it goes to `frame.reply`, so a frame
     /// that arrived over a socket is answered on that socket. The
     /// built-in stdin producer supplies a stdout-writing reply
-    /// ([`stdout_reply`]), keeping the `stdin → stdout` path
+    /// ([`stdout_egress`]), keeping the `stdin → stdout` path
     /// byte-identical.
     ///
     /// R1188 §5.16 §5.49 §2 #2 — a `scene/click` on a window-control tag queues
@@ -1199,10 +1199,14 @@ impl<V: WidgetView> AppShell<V> {
         // R-PR67 — `conn` is carried on the frame but unused by the GUI
         // shell (its `ProxyRpcIngress` keeps the default no-op lifecycle
         // hooks); a stateful ingress reads it instead.
+        // R1552 §5.7 PINION-PR83 — `conn` and `egress` are no longer
+        // discarded: together they are what lets a handler on this frame keep
+        // writing to this client after the response (`scene/subscribe`).
         let RpcFrame {
             request,
             reply,
-            conn: _,
+            conn,
+            egress,
         } = frame;
         // R671 §5.7 §5.16 — single-parse per-window RPC dispatch.
         // Pre-R671 (R670.B) AppShell parsed the JSON-RPC envelope
@@ -1323,11 +1327,12 @@ impl<V: WidgetView> AppShell<V> {
         // process total; see `ShellCore::dispatch_rpc_inner`.
         let window_arenas =
             (parsed_request.method == "scene/memory").then(|| self.arena_footprints());
-        let resp = self.core.dispatch_rpc_scoped(
+        let resp = self.core.dispatch_rpc_scoped_from(
             parsed_request,
             &mut resize_req,
             screenshot,
             window_arenas,
+            Some((conn, &egress)),
         );
         // R-PR47 §5.7 — route the response (if any) back through the
         // frame's reply sink. A JSON-RPC notification produces `None`:
@@ -1335,6 +1340,20 @@ impl<V: WidgetView> AppShell<V> {
         // the pre-PR47 `if let Some` guard that skipped the stdout write.
         if let Some(resp) = resp {
             reply.send(resp);
+        }
+        // R1552 §5.7 PINION-PR83 — a subscription opened by THIS frame becomes
+        // eligible only now, after its own response has gone out, so a client
+        // can never receive `scene/changed {subscription: N}` before the answer
+        // that told it `N`. The publish is gated on there having BEEN one:
+        // ordinary scene advances are delivered by the `SceneRevision` observer
+        // (see `ShellCore::with_core`), and this call exists only to hand a
+        // fresh subscription the catch-up a stale `since` is owed. Publishing
+        // unconditionally here would deliver those advances too — which is
+        // harmless, and hid the observer path from every test that could have
+        // exercised it.
+        let subscriptions = pinion_rpc::process_registry();
+        if subscriptions.arm_pending() > 0 {
+            subscriptions.publish(self.core.revision_token().current());
         }
         // R1190 §5.16 §5.49 §2 #2 — execute the window-control presses the RPC
         // click drain queued during this dispatch (`ShellCore` is headless, so
@@ -3973,24 +3992,30 @@ fn dispatch_named_key_str(named: NamedKey) -> Option<&'static str> {
     }
 }
 
-/// R-PR47 §5.7 — build the reply sink for a frame that arrived on the
-/// process's own stdin: its response is written to stdout, one line,
-/// exactly as the pre-PR47 inline `AppShell::dispatch_rpc` write did (so
-/// the built-in `stdin → stdout` transport stays byte-identical — a
-/// broken pipe silently skips rather than aborting the loop). The closure
-/// runs on the UI thread, where dispatch invokes the reply.
-fn stdout_reply() -> RpcReply {
-    RpcReply::new(|response: String| {
+/// R-PR47 §5.7 — build the egress for the connection that is the process's
+/// own stdin: every frame it carries — a response, or (R1552) a
+/// `scene/changed` notification nobody asked for — is written to stdout,
+/// one line, exactly as the pre-PR47 inline `AppShell::dispatch_rpc` write
+/// did (so the built-in `stdin → stdout` transport stays byte-identical — a
+/// broken pipe silently skips rather than aborting the loop).
+///
+/// R1552 — built once for the stdin connection rather than once per frame,
+/// because a subscription outlives the frame that opened it. `false` reports
+/// a stdout that has gone away, which is what prunes such a subscription;
+/// `writeln!` is the one call that can see it, since stdout is not checked
+/// anywhere else.
+fn stdout_egress() -> Arc<dyn RpcEgress> {
+    FnEgress::new(|frame: String| {
         let mut out = std::io::stdout().lock();
         // stdout closed (downstream consumer gone) — silently skip; do
         // not abort the GUI loop on a broken pipe.
-        let _ = writeln!(out, "{response}");
+        writeln!(out, "{frame}").is_ok()
     })
 }
 
 /// The built-in stdin transport: a background thread that reads JSON-RPC
 /// 2.0 lines from stdin and submits each through the [`RpcIngress`] seam
-/// with a [`stdout_reply`]. Blank lines are skipped; EOF or any read
+/// with a [`stdout_egress`]. Blank lines are skipped; EOF or any read
 /// error terminates the thread quietly (the GUI loop keeps running).
 /// [`RpcIngress::submit`] becomes a no-op after the event loop has shut
 /// down, so a post-shutdown line is simply dropped.
@@ -4008,6 +4033,10 @@ fn spawn_stdin_rpc_reader(ingress: Arc<dyn RpcIngress>) {
         // lifecycle hooks (default no-op), so the pipe workflow is unchanged.
         let conn = ConnId::allocate();
         ingress.on_connect(conn);
+        // R1552 — one egress for this one logical connection; every frame's
+        // reply is derived from it, so a response and an unsolicited
+        // notification reach stdout through the same writer.
+        let egress = stdout_egress();
         let stdin = std::io::stdin();
         let handle = stdin.lock();
         for line in handle.lines() {
@@ -4017,7 +4046,7 @@ fn spawn_stdin_rpc_reader(ingress: Arc<dyn RpcIngress>) {
             if text.trim().is_empty() {
                 continue;
             }
-            ingress.submit(RpcFrame::new(conn, text, stdout_reply()));
+            ingress.submit(RpcFrame::new(conn, text, Arc::clone(&egress)));
         }
         // EOF (or a read error): the stdin peer closed. Balance on_connect.
         ingress.on_disconnect(conn);
@@ -4047,6 +4076,24 @@ impl RpcIngress for ProxyRpcIngress {
         // the frame (and its reply) are then dropped — matching the old
         // reader's "break on send failure" behaviour.
         let _ = self.proxy.send_event(AppEvent::RpcRequest(frame));
+    }
+
+    /// R1552 §5.7 PINION-PR83 — release this connection's change streams.
+    ///
+    /// Done **here, synchronously on the transport's own reader thread**,
+    /// rather than queued to the UI thread as frames are: a subscription
+    /// holds a clone of the connection's
+    /// [`RpcEgress`], the transport drops its own
+    /// clone immediately after this returns, and it then joins the writer
+    /// thread. Deferring the release would park that join behind the next
+    /// UI turn — and behind *nothing at all* if the event loop has already
+    /// shut down, which is exactly when connections are being torn down.
+    ///
+    /// This is the contract `on_disconnect` already states: release the
+    /// connection's state however the client went away. An egress clone is
+    /// that state.
+    fn on_disconnect(&self, conn: ConnId) {
+        pinion_rpc::process_registry().close_connection(conn);
     }
 }
 

@@ -517,6 +517,22 @@ pub struct DispatchContext<'a> {
     /// (which answers with rows of zeros).
     pub memory_census: Option<pinion_core::memory_census::MemoryCensus>,
 
+    /// R1552 §5.7 PINION-PR83 — the connection this frame arrived on and the
+    /// registry its change streams live in. Consumed by `scene/subscribe`,
+    /// `scene/unsubscribe` and `scene/subscriptions`.
+    ///
+    /// Threaded by the embedder because both halves are its own: the
+    /// [`ConnId`](crate::transport::ConnId) and
+    /// [`RpcEgress`](crate::transport::RpcEgress) ride on the
+    /// [`RpcFrame`](crate::transport::RpcFrame) a transport built, and the
+    /// registry is shared with the [`SceneRevision`] observer that publishes.
+    ///
+    /// `None` means this backend has no connection-bound transport at all, and
+    /// surfaces `SubscriptionsUnavailable` — so an agent learns the method
+    /// exists and why it cannot serve, rather than reading "method not found"
+    /// and concluding the capability is absent from pinion.
+    pub subscriber: Option<crate::subscribe::Subscriber<'a>>,
+
     /// R1546 §5.36 §5.12 — the painted background bands of the addressed
     /// window, collected by the embedder before dispatch. Consumed by
     /// `scene/text_backgrounds`.
@@ -1424,6 +1440,7 @@ impl<'a> DispatchContext<'a> {
             fragment_cache_stats: None,
             text_cache_stats: None,
             memory_census: None,
+            subscriber: None,
             text_backgrounds: None,
             text_blocks: None,
             frame_timings: None,
@@ -1637,6 +1654,38 @@ impl<'a> DispatchContext<'a> {
     pub fn with_memory_census(mut self, census: pinion_core::memory_census::MemoryCensus) -> Self {
         self.memory_census = Some(census);
         self
+    }
+
+    /// R1552 §5.7 PINION-PR83 — builder: attach the connection this frame
+    /// arrived on and the registry its change streams live in. The three
+    /// `scene/subscribe*` arms read the slot; every other arm ignores it.
+    /// `None` (the default) surfaces `SubscriptionsUnavailable`.
+    #[must_use]
+    pub fn with_subscriber(mut self, subscriber: crate::subscribe::Subscriber<'a>) -> Self {
+        self.subscriber = Some(subscriber);
+        self
+    }
+
+    /// R1552 §5.7 §2 #6 PINION-PR83 — builder: attach the **frame's origin** —
+    /// the connection it arrived on and that connection's writer — pairing it
+    /// with the process's subscription registry.
+    ///
+    /// The form both backends use, because both hold exactly this: an
+    /// `Option` a transport either supplied or did not. Taking the `Option`
+    /// here rather than at the call site is what keeps the GUI and TUI
+    /// dispatchers from each spelling out the same `if let` — and what keeps
+    /// them from being able to pair an origin with a *different* registry,
+    /// which would silently give one backend its own private set of streams.
+    #[must_use]
+    pub fn with_frame_origin(self, origin: Option<crate::transport::FrameOrigin<'a>>) -> Self {
+        match origin {
+            Some((conn, egress)) => self.with_subscriber(crate::subscribe::Subscriber {
+                conn,
+                egress,
+                registry: crate::subscribe::process_registry(),
+            }),
+            None => self,
+        }
     }
 
     /// R1546 §5.36 §5.12 — builder: attach the painted background bands the
@@ -1917,6 +1966,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // R1550 — the per-arena memory census. Taken out for the dispatch lifetime
     // (owned, non-`Copy`); only `scene/memory` reads it.
     let memory_census = ctx.memory_census.take();
+    let subscriber = ctx.subscriber.take();
     // R1546 §5.36 — the painted background bands the embedder collected. Taken
     // out for the dispatch lifetime (owned, non-`Copy`); only
     // `scene/text_backgrounds` reads it.
@@ -2398,6 +2448,23 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 // R1550 — what every arena is holding, in bytes.
                 "scene/memory" => (
                     handle_scene_memory(memory_census.as_ref()),
+                    HandlerKind::Read,
+                ),
+                // R1552 §5.7 PINION-PR83 — the server speaking first: one
+                // request opens a stream that answers many times, as
+                // `scene/changed` notifications. All three are `Read` — they
+                // change no scene state, so an OCC bump would make every
+                // subscriber's own subscribe look like a scene change.
+                "scene/subscribe" => (
+                    handle_scene_subscribe(subscriber.as_ref(), request.params.as_ref(), revision),
+                    HandlerKind::Read,
+                ),
+                "scene/unsubscribe" => (
+                    handle_scene_unsubscribe(subscriber.as_ref(), request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/subscriptions" => (
+                    handle_scene_subscriptions(subscriber.as_ref()),
                     HandlerKind::Read,
                 ),
                 // R1546 §5.36 — where each declared text background was
@@ -6252,6 +6319,63 @@ fn handle_scene_memory(
         )
         .with_data_string("MemoryCensusUnavailable")),
     }
+}
+
+/// R1552 §5.7 PINION-PR83 — `scene/subscribe`: open a change stream on the
+/// connection this frame arrived on.
+///
+/// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`] bump,
+/// which is load-bearing here rather than incidental: bumping would make every
+/// subscribe look to every OTHER subscriber like a scene change.
+fn handle_scene_subscribe(
+    subscriber: Option<&crate::subscribe::Subscriber<'_>>,
+    params: Option<&Value>,
+    revision: &SceneRevision,
+) -> Result<Value, RpcError> {
+    match crate::subscribe::subscribe(subscriber, params, revision.current()) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!("scene/subscribe: failed to serialize outcome: {e}"))
+        }),
+        Err(err) => Err(subscribe_error(&err)),
+    }
+}
+
+/// R1552 §5.7 PINION-PR83 — `scene/unsubscribe`: end a stream this connection
+/// opened. Read-only, as [`handle_scene_subscribe`].
+fn handle_scene_unsubscribe(
+    subscriber: Option<&crate::subscribe::Subscriber<'_>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    match crate::subscribe::unsubscribe(subscriber, params) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!(
+                "scene/unsubscribe: failed to serialize outcome: {e}"
+            ))
+        }),
+        Err(err) => Err(subscribe_error(&err)),
+    }
+}
+
+/// R1552 §5.7 §2 #7 PINION-PR83 — `scene/subscriptions`: enumerate the live
+/// streams. Read-only, as [`handle_scene_subscribe`].
+fn handle_scene_subscriptions(
+    subscriber: Option<&crate::subscribe::Subscriber<'_>>,
+) -> Result<Value, RpcError> {
+    match crate::subscribe::subscriptions(subscriber) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!(
+                "scene/subscriptions: failed to serialize outcome: {e}"
+            ))
+        }),
+        Err(err) => Err(subscribe_error(&err)),
+    }
+}
+
+/// The one place a [`SubscribeError`](crate::subscribe::SubscribeError) becomes
+/// a JSON-RPC error, so the three arms cannot disagree about a shared variant's
+/// code or `data` tag.
+fn subscribe_error(err: &crate::subscribe::SubscribeError) -> RpcError {
+    RpcError::invalid_params(err.message()).with_data_string(err.tag())
 }
 
 /// R1521 §5.36 §5.7 — `scene/text_cache_stats` typed handler. Reads the

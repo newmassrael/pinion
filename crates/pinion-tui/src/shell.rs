@@ -97,7 +97,7 @@ use std::time::Duration;
 use pinion_core::event::WheelDelta;
 use pinion_core::renderer::WidgetRenderer;
 use pinion_core::{Intent, Scene};
-use pinion_rpc::{ConnId, RpcFrame, RpcReply};
+use pinion_rpc::{ConnId, FnEgress, RpcEgress, RpcFrame};
 use pinion_runtime::{CommandExecutor, HandlerRegistry};
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
@@ -291,7 +291,7 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
     // (stderr here, stdout on the GUI) is no longer hard-coded in the
     // drain: it is chosen per frame by the reply the producer attaches.
     // The built-in stdin reader attaches a stderr reply
-    // ([`stderr_reply`]); a future injected transport would attach its
+    // ([`stderr_egress`]); a future injected transport would attach its
     // own, with no change to the drain.
     let (rpc_tx, rpc_rx) = mpsc::channel::<RpcFrame>();
     spawn_stdin_rpc_reader_tui(rpc_tx);
@@ -662,17 +662,28 @@ fn drain_rpc_into_substrate<V: WidgetViewTui>(
     while let Ok(RpcFrame {
         request,
         reply,
-        conn: _,
+        conn,
+        egress,
     }) = rx.try_recv()
     {
         // R-PR47 §5.7 — dispatch through the identical transport-agnostic
         // core, then route the response (if any) through the frame's own
         // reply sink rather than a hard-coded stderr write. For the
         // built-in stdin reader that reply IS a stderr write
-        // ([`stderr_reply`]), so the drained bytes are unchanged; a
+        // ([`stderr_egress`]), so the drained bytes are unchanged; a
         // notification (no response) drops the reply, writing nothing.
-        if let Some(response) = core.dispatch_rpc(&request) {
+        if let Some(response) = core.dispatch_rpc_from(&request, Some((conn, &egress))) {
             reply.send(response);
+        }
+        // R1552 §5.7 PINION-PR83 — arm a stream this frame opened only after
+        // its own response has gone out, then flush what a stale `since` is
+        // owed. Gated on a subscription having been opened, for the reason the
+        // GUI backend's `dispatch_rpc` gives: ordinary advances belong to the
+        // `SceneRevision` observer. Identical ordering to that backend; §2 #6
+        // means both answer the same wire the same way.
+        let subscriptions = pinion_rpc::process_registry();
+        if subscriptions.arm_pending() > 0 {
+            subscriptions.publish(core.revision());
         }
         any_frame = true;
     }
@@ -684,7 +695,7 @@ fn drain_rpc_into_substrate<V: WidgetViewTui>(
 /// `pinion_shell::spawn_stdin_rpc_reader` — reads line-delimited
 /// JSON-RPC 2.0 frames off stdin and forwards each non-blank line
 /// through the supplied `mpsc::Sender<RpcFrame>` (R-PR47 §5.7 — each
-/// line paired with a [`stderr_reply`] so the response routes back to
+/// line paired with a [`stderr_egress`] so the response routes back to
 /// the TUI diagnostic wire) so the crossterm event loop drains them on
 /// every tick. Blank lines are skipped
 /// (so a trailing newline in a piped JSON file does not enqueue an
@@ -732,6 +743,9 @@ fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<RpcFrame>) {
         // hook to fire here — the id is carried for wire parity with the
         // socket transport.
         let conn = ConnId::allocate();
+        // R1552 — one egress for this one logical connection, so a response
+        // and a notification reach stderr through the same writer.
+        let egress = stderr_egress();
         let stdin = std::io::stdin();
         let handle = stdin.lock();
         for line in handle.lines() {
@@ -741,27 +755,44 @@ fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<RpcFrame>) {
             if text.trim().is_empty() {
                 continue;
             }
-            if tx.send(RpcFrame::new(conn, text, stderr_reply())).is_err() {
+            if tx
+                .send(RpcFrame::new(conn, text, Arc::clone(&egress)))
+                .is_err()
+            {
                 break;
             }
         }
     });
 }
 
-/// R-PR47 §5.7 — the reply sink for a frame that arrived on the process's
-/// own stdin under the TUI backend: its response is written to **stderr**,
-/// one line. The alternate-screen + raw-mode terminal owns stdout (ratatui
-/// commits cells through that fd; any byte written there would corrupt the
-/// visible frame), so the JSON-RPC response wire pairs with the diagnostic
+/// R-PR47 §5.7 — the egress for the connection that is the process's own
+/// stdin under the TUI backend: every frame it carries — a response, or
+/// (R1552) a `scene/changed` notification nobody asked for — is written to
+/// **stderr**, one line. The alternate-screen + raw-mode terminal owns stdout
+/// (ratatui commits cells through that fd; any byte written there would
+/// corrupt the visible frame), so the JSON-RPC wire pairs with the diagnostic
 /// stream — the same rationale that routes `PINION_TUI_LOG` to
-/// stderr-or-file. A broken-pipe write silently skips so a disconnecting
-/// consumer does not abort the TUI loop. Pre-PR47 this stderr write was
-/// hard-coded in the drain; making it the stdin reader's reply is what
-/// lets an injected transport route its own responses elsewhere.
-fn stderr_reply() -> RpcReply {
-    RpcReply::new(|response: String| {
+/// stderr-or-file. Pre-PR47 this stderr write was hard-coded in the drain;
+/// making it the stdin reader's egress is what lets an injected transport
+/// route its own frames elsewhere.
+///
+/// # R1552 — why this backend needs no disconnect hook
+///
+/// A subscription holds a clone of this egress, and the socket transport
+/// needs `RpcIngress::on_disconnect` to release such a clone because its
+/// egress owns a channel into a writer *thread* that cannot exit while a
+/// sender lives. This one owns a **file descriptor** instead: a broken pipe
+/// surfaces as a failed `writeln!` and is reported as `false`, which is what
+/// prunes the subscription on the next publish. The TUI stdin reader is a raw
+/// `mpsc::Sender` with no lifecycle hooks at all (see
+/// `spawn_stdin_rpc_reader_tui`), so self-reporting is not a convenience here
+/// — it is the only signal there is.
+fn stderr_egress() -> Arc<dyn RpcEgress> {
+    FnEgress::new(|frame: String| {
         let mut err = stderr().lock();
-        let _ = writeln!(err, "{response}");
+        // A broken pipe silently skips so a disconnecting consumer does not
+        // abort the TUI loop, and is REPORTED so a stream to it is dropped.
+        writeln!(err, "{frame}").is_ok()
     })
 }
 

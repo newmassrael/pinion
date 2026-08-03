@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1552 §5.7 PINION-PR83 change streams: pinion-forge renderer manifest
+  for hello-subscribe. Emits `HelloSubscribeRenderer` (Vello-backed).
+  Same manifest shape as hello-live-data / hello-chart-fill — only the struct
+  name diverges; the scene structure lives entirely in the binding's view fn.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloSubscribeRenderer"
+        backend="vello"/>

@@ -831,9 +831,17 @@ impl<V: WidgetView> ShellCore<V> {
         // mutation, shell input, or an external-data producer's arrival bump —
         // wakes parked waiters through this one observer, so the registry needs
         // no version counter of its own.
+        // R1552 §5.7 PINION-PR83 — the SAME observer also publishes to the
+        // process's change-stream subscribers. It has to be this one closure:
+        // `set_observer` is install-once by design, so a second wake source
+        // cannot be added beside it — and that is the right shape anyway,
+        // because both are answers to one question ("the scene reached
+        // revision N"), differing only in whether the client asked once or
+        // asked to keep being told.
         let waiters = crate::waiter::resolve_waiter_registry(shell.core.root_owner());
         shell.revision.set_observer(move |new| {
             waiters.wake(new);
+            pinion_rpc::process_registry().publish(new);
         });
         // R1335 §5.39 (PR-53) — hand the focus manager this binding's root owner
         // so its `commit_focus` funnel publishes the focused tag into the owner
@@ -5571,6 +5579,26 @@ impl<V: WidgetView> ShellCore<V> {
         screenshot: Option<pinion_rpc::Screenshot>,
         window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
     ) -> Option<String> {
+        self.dispatch_rpc_scoped_from(request, resize_request, screenshot, window_arenas, None)
+    }
+
+    /// R1552 §5.7 PINION-PR83 — [`Self::dispatch_rpc_scoped`] with the
+    /// **origin** of the frame: the connection it arrived on and that
+    /// connection's writer.
+    ///
+    /// The live-transport entry `AppShell::dispatch_rpc` uses. `origin` is what
+    /// `scene/subscribe` needs and what a synthetic dispatch does not have; the
+    /// bare entry above passes `None`, where the three subscription methods
+    /// then answer `SubscriptionsUnavailable` by name rather than opening a
+    /// stream nothing could deliver.
+    pub fn dispatch_rpc_scoped_from(
+        &mut self,
+        request: Request,
+        resize_request: &mut dyn FnMut(u32, u32),
+        screenshot: Option<pinion_rpc::Screenshot>,
+        window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
+        origin: Option<pinion_rpc::FrameOrigin<'_>>,
+    ) -> Option<String> {
         let scope: String = request
             .window_scope()
             .ok()
@@ -5583,6 +5611,7 @@ impl<V: WidgetView> ShellCore<V> {
             resize_request,
             screenshot,
             window_arenas,
+            origin,
         )
     }
 
@@ -5621,7 +5650,7 @@ impl<V: WidgetView> ShellCore<V> {
         // `scene/memory` with the shell-wide rows alone (the shape cache and
         // the process total), which is exactly what a host with no windows
         // holds.
-        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request, None, None)
+        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request, None, None, None)
     }
 
     // R1026 — rustfmt's reflow pushed this 4 lines over the workspace
@@ -5635,6 +5664,7 @@ impl<V: WidgetView> ShellCore<V> {
         resize_request: &mut dyn FnMut(u32, u32),
         screenshot: Option<pinion_rpc::Screenshot>,
         window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
+        origin: Option<pinion_rpc::FrameOrigin<'_>>,
     ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
         // detect `focus/set` (or any other focus-mutating method)
@@ -6068,6 +6098,11 @@ impl<V: WidgetView> ShellCore<V> {
             if let Some(census) = memory_census {
                 ctx = ctx.with_memory_census(census);
             }
+            // R1552 §5.7 PINION-PR83 — the connection this frame arrived on.
+            // `None` for the single-window entry and any synthetic dispatch, so
+            // `scene/subscribe` there answers `SubscriptionsUnavailable` rather
+            // than opening a stream nothing could deliver.
+            ctx = ctx.with_frame_origin(origin);
             if let Some(timings) = window_reads.frame_timings {
                 ctx = ctx.with_frame_timings(timings);
             }
