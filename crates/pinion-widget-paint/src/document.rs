@@ -179,6 +179,35 @@ mod tests {
         assert_eq!(quote.block.expect("declared").left_indent_px, 32);
     }
 
+    /// R1551 — the block and layout builders are order-independent, so a
+    /// paragraph cannot end up declaring an indent it does not have. The
+    /// desync this rules out is exactly R1543's on the mnemonic axis: a
+    /// declaration bound with its derived ink missing.
+    #[test]
+    fn the_block_and_layout_builders_are_order_independent() {
+        use pinion_core::scene::{Rect, TextNode};
+        use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle};
+        let fmt = BlockFormat::new().with_indent(32).with_spacing(4, 6);
+        let extra = LayoutStyle::new()
+            .flex(FlexDirection::Column)
+            .with_align_items(AlignItems::Stretch);
+        let a = TextNode::new("q", Rect::new(0, 0, 0, 0))
+            .with_block(fmt)
+            .with_layout(extra);
+        let b = TextNode::new("q", Rect::new(0, 0, 0, 0))
+            .with_layout(extra)
+            .with_block(fmt);
+        assert_eq!(a.layout.margin, b.layout.margin, "the same margin");
+        assert_eq!(a.layout.margin.x, 32, "and it is the declared indent");
+        assert_eq!(
+            a.layout.align_items, b.layout.align_items,
+            "with the other layout fields kept in both orders",
+        );
+        let mapped = a.map_layout(|l| l.with_gap(3));
+        assert_eq!(mapped.layout.margin.x, 32, "map_layout re-derives it too");
+        assert_eq!(mapped.layout.gap, 3, "while keeping what the map set");
+    }
+
     /// A paragraph with no style of its own inherits the document's, and one
     /// with a style keeps it — including its paragraph-level text indent.
     #[test]

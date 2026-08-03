@@ -2249,6 +2249,9 @@ impl TextNode {
     #[must_use]
     pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
+        // R1551 — a declared block format owns this node's margin, so restate
+        // it rather than let the call order decide. See `apply_block_margin`.
+        self.apply_block_margin();
         self
     }
 
@@ -2259,6 +2262,7 @@ impl TextNode {
     #[must_use]
     pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
         self.layout = f(self.layout);
+        self.apply_block_margin();
         self
     }
 
@@ -2277,19 +2281,39 @@ impl TextNode {
     /// It writes the margin rather than merging into it: a node cannot both be
     /// a paragraph whose format states its indents and carry an unrelated
     /// margin meaning something else, and adding the two would make the
-    /// resulting box unattributable to either. Call [`Self::with_layout`]
-    /// *first* if the node needs other layout fields — this preserves them and
-    /// replaces only the margin.
+    /// resulting box unattributable to either. The layout builders re-derive it
+    /// (see `apply_block_margin`), so the call order does not matter and every
+    /// other layout field survives.
     #[must_use]
     pub fn with_block(mut self, block: BlockFormat) -> Self {
         self.block = Some(block);
+        self.apply_block_margin();
+        self
+    }
+
+    /// R1551 §5.36 — re-derive the block margin from [`Self::block`].
+    ///
+    /// Called by [`Self::with_block`] and by both layout builders, so the
+    /// builders are **order-independent**: `with_block().with_layout()` and
+    /// `with_layout().with_block()` produce the same node. That is R1543's rule
+    /// on this axis — a builder pair whose result depends on the call order is
+    /// a desync waiting to happen, and there the desync was a mnemonic bound to
+    /// a key with no underline drawn. Here it would be a paragraph that
+    /// declares an indent and is not indented, which the §7 wire would then
+    /// publish as a declaration whose lowering is absent.
+    ///
+    /// A node with no block format is untouched, so an ordinary label's margin
+    /// is its own.
+    fn apply_block_margin(&mut self) {
+        let Some(block) = self.block else {
+            return;
+        };
         self.layout.margin = Rect {
             x: block.left_indent_px,
             y: block.space_above_px,
             w: block.right_indent_px,
             h: block.space_below_px,
         };
-        self
     }
 
     /// R51.81 §5.40 — attach a [`TextRole`] hint for the
