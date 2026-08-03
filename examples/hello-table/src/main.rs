@@ -81,7 +81,7 @@ use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_runtime::{DecodedImage, use_image_store};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellDecoration, CellIndex, TableData, TableSelection, TableStyle, view_table,
+    CellIndex, Decoration, TableData, TableSelection, TableStyle, view_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -144,7 +144,7 @@ fn disc_icon(color: pinion_core::style::Color) -> DecodedImage {
 /// cell, so announcing it would make a screen reader read the status twice;
 /// `alt=""` is the correct markup for exactly this. The peer case, a mark that
 /// carries what no text says, is `hello-virtual-table`'s mark-only column.
-fn cell_decoration(c: CellIndex) -> Option<CellDecoration> {
+fn cell_decoration(c: CellIndex) -> Option<Decoration> {
     if c.col != STATUS_COL {
         return None;
     }
@@ -153,7 +153,7 @@ fn cell_decoration(c: CellIndex) -> Option<CellDecoration> {
     } else {
         ICON_ACTIVE
     };
-    Some(CellDecoration::Icon {
+    Some(Decoration::Icon {
         source: source.to_string(),
         meaning: String::new(),
     })
@@ -376,6 +376,7 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
             row_ids: &state.order,
             // R1536 — Qt `data(index, Qt::DecorationRole)`, the icon arm.
             decoration: Some(&cell_decoration),
+            header_decoration: None,
         },
         // Single-row selection only; the spreadsheet cell range selection is
         // the dedicated `hello-cell-select` grid's model (R953 — one selection

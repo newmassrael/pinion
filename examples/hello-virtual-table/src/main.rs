@@ -47,7 +47,7 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellDecoration, CellIndex, CellPainter, CellRender, GridModel, GridScroll, TableStyle,
+    CellIndex, CellPainter, CellRender, Decoration, GridModel, GridScroll, TableStyle,
     VirtualTableData, header_from_slice, no_edit, view_virtual_table,
 };
 
@@ -136,6 +136,44 @@ fn is_flagged(row: usize) -> bool {
     row % 3 == 1
 }
 
+/// R1547 — what the `Index` column's header mark means. MEANINGFUL: the word
+/// "Index" does not say that the column is the table's key, so the mark is the
+/// only thing that does. This is the canonical header decoration — Qt's
+/// `headerData(section, Qt::Horizontal, Qt::DecorationRole)` exists for exactly
+/// the key / type / filter glyphs a professional grid puts in its header — and
+/// in Qt it would be silent to a screen reader, because
+/// `QAccessibleTableHeaderCell` names a section from its `DisplayRole` alone.
+const KEY_MEANING: &str = "Primary key";
+
+/// R1547 §5.27 — the grid's **section**-axis `Qt::DecorationRole`: the mark
+/// drawn ahead of a column's label.
+///
+/// Asked once per painted section, and the two cases it answers are the same
+/// pair the cell axis answers, on the axis above it:
+///
+/// - `Index` — MEANINGFUL. [`KEY_MEANING`] joins the `columnheader`'s
+///   accessible name, so a screen-reader user learns what the sighted user
+///   learns from the glyph.
+/// - `Status` — DECORATIVE (`meaning: ""`). The swatch is a legend for the
+///   marks in that column's own cells; the header already says "Status", so
+///   announcing it would say the word twice. `alt=""`, by the R1536 rule.
+///
+/// The other three columns answer `None`, which is the negative half: "marked"
+/// must be able to be false or the role conveys nothing.
+fn header_decoration(col: usize, theme: &Theme) -> Option<Decoration> {
+    match col {
+        0 => Some(Decoration::Swatch {
+            color: theme.resolve(ColorRole::Accent),
+            meaning: KEY_MEANING.to_string(),
+        }),
+        STATUS_COL => Some(Decoration::Swatch {
+            color: theme.resolve(ColorRole::OnSurfaceMuted),
+            meaning: String::new(),
+        }),
+        _ => None,
+    }
+}
+
 /// R1535 §5.27 — the grid's `Qt::DecorationRole`: a colour swatch on every
 /// `Status` cell, keyed to that **row**'s status.
 ///
@@ -147,7 +185,7 @@ fn is_flagged(row: usize) -> bool {
 ///
 /// The colour comes from the same `row % STATUS_KINDS` the label does, so the
 /// swatch and the word can never disagree.
-fn cell_decoration(c: CellIndex, theme: &Theme) -> Option<CellDecoration> {
+fn cell_decoration(c: CellIndex, theme: &Theme) -> Option<Decoration> {
     match c.col {
         // R1536 — DECORATIVE. The swatch restates what the cell's own label
         // already says, so announcing it would make a screen reader read the
@@ -159,7 +197,7 @@ fn cell_decoration(c: CellIndex, theme: &Theme) -> Option<CellDecoration> {
                 1 => ColorRole::Accent,
                 _ => ColorRole::Outline,
             };
-            Some(CellDecoration::Swatch {
+            Some(Decoration::Swatch {
                 color: theme.resolve(role),
                 meaning: String::new(),
             })
@@ -170,7 +208,7 @@ fn cell_decoration(c: CellIndex, theme: &Theme) -> Option<CellDecoration> {
         // which is exactly what a Qt `DecorationRole` column is, because Qt's
         // decoration is appearance and its accessible text is a different role
         // the item view does not wire to it.
-        FLAG_COL if is_flagged(c.row) => Some(CellDecoration::Swatch {
+        FLAG_COL if is_flagged(c.row) => Some(Decoration::Swatch {
             color: theme.resolve(ColorRole::Accent),
             meaning: "Flagged".to_string(),
         }),
@@ -290,6 +328,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridModel {
             cell: cell_text,
             header: header_from_slice(&HEADERS),
+            // R1547 — Qt `headerData(section, Qt::Horizontal,
+            // Qt::DecorationRole)`: the same role on the section axis, so the
+            // grid now answers a role on BOTH of its axes.
+            header_decoration: |col: usize| header_decoration(col, &theme),
             // R1535 — Qt `data(index, Qt::DecorationRole)`: one column answers
             // with a mark whose colour varies by row, which is the axis a
             // per-column delegate cannot express.
@@ -364,7 +406,7 @@ impl WidgetA11y for VirtualTableView {
         windowed_grid_nodes(
             TABLE_TAG,
             "Virtual data grid",
-            &HEADERS,
+            HEADERS.len(),
             u32::try_from(N).unwrap_or(u32::MAX),
             &window,
         )

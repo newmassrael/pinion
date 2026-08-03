@@ -53,7 +53,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
     CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    no_decoration, no_edit, view_virtual_table,
+    no_decoration, no_edit, no_header_decoration, view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -218,6 +218,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridModel {
             cell: cell_text,
             header: header_from_slice(&HEADERS),
+            header_decoration: no_header_decoration,
             decoration: no_decoration,
             edit: no_edit,
         },
@@ -344,7 +345,7 @@ impl WidgetA11y for GridHscrollView {
         windowed_grid_nodes(
             TABLE_TAG,
             "Horizontally scrolling data grid",
-            &HEADERS,
+            HEADERS.len(),
             u32::try_from(N).unwrap_or(u32::MAX),
             &window,
         )

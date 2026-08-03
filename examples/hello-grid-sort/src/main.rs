@@ -63,7 +63,7 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
     CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    materialize_cells, no_decoration, no_edit, view_virtual_table,
+    materialize_cells, no_decoration, no_edit, no_header_decoration, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -235,6 +235,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| grid_sort.cell(c.row, c.col).to_string(),
             header: header_from_slice(&HEADERS),
+            header_decoration: no_header_decoration,
             decoration: no_decoration,
             edit: no_edit,
         },
@@ -331,7 +332,7 @@ impl WidgetA11y for GridSortView {
         windowed_grid_nodes_sorted(
             GRID_TAG,
             "Sortable data grid",
-            &HEADERS,
+            HEADERS.len(),
             order.as_slice(),
             sort,
             *selected,

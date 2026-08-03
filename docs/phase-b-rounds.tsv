@@ -68,3 +68,4 @@
 1544	dcc	the cell states whether it can be edited, the delegate editing half + EditRole
 1545	dataviz	a category is an axis kind, Qt QBarCategoryAxis + a resolved window
 1546	text	a text run states its background, Qt setBackground + published extent + WCAG contrast
+1547	modelview	a header section is asked for its role, Qt headerData DecorationRole + the columnheader named from paint

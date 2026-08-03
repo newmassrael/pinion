@@ -77,7 +77,7 @@ use pinion_core::{
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
     CellEditRender, CellEditorPainter, GridEditing, GridModel, GridScroll, TableStyle,
-    VirtualTableData, header_from_slice, no_decoration, view_virtual_table,
+    VirtualTableData, header_from_slice, no_decoration, no_header_decoration, view_virtual_table,
 };
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -435,6 +435,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         GridModel {
             cell: |c: CellIndex| cell_text(c, &overlay),
             header: header_from_slice(&HEADERS),
+            header_decoration: no_header_decoration,
             decoration: no_decoration,
             // R1544 — Qt `data(index, Qt::EditRole)` fused with
             // `flags() & Qt::ItemIsEditable`: the identity column answers
@@ -779,7 +780,7 @@ impl WidgetA11y for GridNavView {
         let mut nodes = windowed_grid_nodes_selected(
             TABLE_TAG,
             "Navigable data grid",
-            &HEADERS,
+            HEADERS.len(),
             u32::try_from(N).unwrap_or(u32::MAX),
             &window,
             *selected,

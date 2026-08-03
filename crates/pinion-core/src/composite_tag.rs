@@ -395,6 +395,26 @@ impl GridTag {
         format!("{tag}_deco{row}_{col}")
     }
 
+    /// (R1547) One column header's **decoration** mark —
+    /// `"{tag}_hdeco{col}"`, the `Qt::DecorationRole` answer painted inside the
+    /// header of column `col` (Qt `headerData(section, Qt::Horizontal,
+    /// Qt::DecorationRole)`).
+    ///
+    /// The section-axis peer of [`Self::cell_decoration`] and addressable for
+    /// the same reason: a painted thing with no tag can only be reached by
+    /// walking a header cell's children by position. It needs its own prefix
+    /// rather than a `row`-less `cell_decoration` because a header is not row
+    /// `0` — `"{tag}_deco0_3"` is a real *cell* address, and reusing it would
+    /// make the two collide in the one namespace that must stay unique.
+    ///
+    /// Presentational (`'_'`, no `'#'`), so the click target of a marked header
+    /// stays the header itself — which here means the mark cannot swallow a
+    /// sort click.
+    #[must_use]
+    pub fn header_decoration(tag: &str, col: usize) -> String {
+        format!("{tag}_hdeco{col}")
+    }
+
     /// (R863) The tree-grid's **name**-column header cell — `"{tag}_chtree"`.
     /// The frozen tree column's `columnheader` (the metadata columns reuse
     /// the numeric [`Self::col_header`]); a dedicated tag keeps the
@@ -487,6 +507,15 @@ mod tests {
         // R863 — metadata cell + tree-column header.
         assert_eq!(GridTag::metadata_cell("tg", "f3-o1", 2), "tg_dcellf3-o1_2");
         assert_eq!(GridTag::tree_col_header("tg"), "tg_chtree");
+        // R1547 — the two decoration addresses, pinned together because the
+        // point of the header's own prefix is that it cannot collide with a
+        // cell's. `_deco0_3` is cell (0, 3); the header of column 3 is not it.
+        assert_eq!(GridTag::cell_decoration("vtbl", 0, 3), "vtbl_deco0_3");
+        assert_eq!(GridTag::header_decoration("vtbl", 3), "vtbl_hdeco3");
+        assert_ne!(
+            GridTag::header_decoration("vtbl", 3),
+            GridTag::cell_decoration("vtbl", 0, 3)
+        );
     }
 
     #[test]

@@ -82,7 +82,7 @@ use pinion_widget_paint::menu::{
 };
 use pinion_widget_paint::table::{
     CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    materialize_cells, no_decoration, no_edit, view_virtual_table,
+    materialize_cells, no_decoration, no_edit, no_header_decoration, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -361,6 +361,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| grid_sort.cell(c.row, c.col).to_string(),
             header: header_from_slice(&HEADERS),
+            header_decoration: no_header_decoration,
             decoration: no_decoration,
             edit: no_edit,
         },
@@ -559,7 +560,7 @@ impl WidgetA11y for GridHeaderMenuView {
         let mut nodes = windowed_grid_nodes_sorted(
             GRID_TAG,
             "Sortable data grid (right-click a header for column actions)",
-            &HEADERS,
+            HEADERS.len(),
             order.as_slice(),
             sort,
             None,

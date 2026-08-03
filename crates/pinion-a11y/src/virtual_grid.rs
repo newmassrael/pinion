@@ -37,7 +37,9 @@ use pinion_core::widgets::virtual_list::VisibleWindow;
 ///   `{grid_tag}#{id}_{col}`).
 /// - `grid_name` — the grid's accessible name (no paint-scene equivalent,
 ///   so it is an explicit override).
-/// - `headers` — column header labels; `headers.len()` is the column count.
+/// - `columns` — how many columns the tree holds. R1547: a count, not the
+///   labels. The `columnheader`s are named from the painted header band, so
+///   nothing here needs to know what a column is called (see `GridColumns`).
 /// - `set_size` — the *full* data-row count (not the rendered window
 ///   count) — the value `aria-setsize` conveys on the grid and every row.
 /// - `window` — the [`VisibleWindow`] the binding's view fn windowed
@@ -53,14 +55,14 @@ use pinion_core::widgets::virtual_list::VisibleWindow;
 pub fn windowed_grid_nodes(
     grid_tag: &str,
     grid_name: &str,
-    headers: &[&str],
+    columns: usize,
     set_size: u32,
     window: &VisibleWindow,
 ) -> Vec<AccessNode> {
     grid_nodes(
         grid_tag,
         grid_name,
-        GridColumns::all(headers),
+        GridColumns::all(columns),
         set_size,
         window,
         GridSelection::Display,
@@ -90,14 +92,14 @@ pub fn windowed_grid_nodes(
 pub fn windowed_grid_nodes_frozen(
     grid_tag: &str,
     grid_name: &str,
-    headers: &[&str],
+    columns: usize,
     set_size: u32,
     window: &VisibleWindow,
 ) -> Vec<AccessNode> {
     grid_nodes(
         grid_tag,
         grid_name,
-        GridColumns::all(headers),
+        GridColumns::all(columns),
         set_size,
         window,
         GridSelection::Display,
@@ -135,57 +137,58 @@ fn cell_tag(grid_tag: &str, id: usize, col: usize) -> String {
 /// once an axis holds a slice, the slice has to say what it is a slice of, or
 /// the AT reads a 200-column table as five columns wide.
 ///
-/// Private — every public builder either takes the whole header slice
-/// ([`Self::all`], the pre-R1523 shape) or a header slice plus a column
-/// [`VisibleWindow`] it resolves here, so no caller assembles this by hand.
+/// R1547 — it holds **counts, not labels**. Until R1547 it carried the label of
+/// every column in the tree, for one purpose: stamping each `columnheader`'s
+/// accessible name. That made the builder a *second* source for what a column
+/// is called, and the paint the first — the shape R1536 removed from the cell
+/// axis, where a hand-stamped name would have silently won over the derivation
+/// and hidden whatever the grid actually drew. Now the name comes from the
+/// painted header, so the AT tree and the pixels cannot disagree, and a
+/// section's `Qt::DecorationRole` mark can reach the name at all (it is painted
+/// there, and nothing here could see it).
+///
+/// Private — every public builder either states the tree holds every column
+/// ([`Self::all`]) or states a window plus the table's width, so no caller
+/// assembles this by hand.
 #[derive(Clone, Copy)]
-struct GridColumns<'a> {
-    /// Labels of the columns present in the tree.
-    labels: &'a [&'a str],
-    /// Absolute table-column index of `labels[0]`.
+struct GridColumns {
+    /// How many columns are present in the tree.
+    count: usize,
+    /// Absolute table-column index of the first of them.
     first: usize,
     /// Total number of columns the grid is drawn from (`aria-colcount`).
     total: usize,
 }
 
-impl<'a> GridColumns<'a> {
+impl GridColumns {
     /// Every column is in the tree — the un-windowed column axis.
-    fn all(labels: &'a [&'a str]) -> Self {
+    fn all(count: usize) -> Self {
         Self {
-            labels,
+            count,
             first: 0,
-            total: labels.len(),
+            total: count,
         }
     }
 
-    /// R1530 — `labels` are **already** the window: the caller asked its model
-    /// for the sections it is describing and no others, so this only records
-    /// where the window starts and how wide the table is. Until R1530 this took
-    /// every label and sliced here, which required the caller to hold them all.
+    /// R1530 — `count` is **already** the window: the caller describes the
+    /// sections it painted and no others. Until R1530 this took every label and
+    /// sliced here, which required the caller to hold them all.
     ///
-    /// `total` is stated rather than derived (`labels.len()` is the window's
-    /// width now, not the table's) — the same reason the paint side carries
+    /// `total` is stated rather than derived (`count` is the window's width, not
+    /// the table's) — the same reason the paint side carries
     /// `VirtualTableData::column_count`.
-    fn window(labels: &'a [&'a str], first: usize, total: usize) -> Self {
+    fn window(count: usize, first: usize, total: usize) -> Self {
         Self {
-            labels,
+            count,
             first,
             total,
         }
     }
 
-    /// `(absolute column index, label)` for each column in the tree.
-    fn enumerate(&self) -> impl Iterator<Item = (usize, &'a str)> + '_ {
-        self.labels
-            .iter()
-            .enumerate()
-            .map(move |(i, label)| (self.first + i, *label))
-    }
-
     /// Absolute indices of the columns in the tree.
     fn indices(&self) -> impl Iterator<Item = usize> + '_ {
         let first = self.first;
-        (0..self.labels.len()).map(move |i| first + i)
+        (0..self.count).map(move |i| first + i)
     }
 
     /// `aria-colcount` as the saturating `u32` the node carries.
@@ -201,13 +204,13 @@ impl<'a> GridColumns<'a> {
 fn grid_nodes(
     grid_tag: &str,
     grid_name: &str,
-    cols: GridColumns<'_>,
+    cols: GridColumns,
     set_size: u32,
     window: &VisibleWindow,
     selection: GridSelection,
     frozen: bool,
 ) -> Vec<AccessNode> {
-    let ncols = cols.labels.len();
+    let ncols = cols.count;
     // grid + header row + ncols columnheaders + per windowed row (1 row +
     // ncols cells).
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
@@ -242,10 +245,13 @@ fn grid_nodes(
         hrow = hrow.with_child(GridTag::col_header(grid_tag, col));
     }
     nodes.push(hrow);
-    for (col, label) in cols.enumerate() {
+    for col in cols.indices() {
+        // R1547 §5.40 — NO `with_name`. The name is derived from the painted
+        // header (`enrich_names_from_scene` skips any node that already has
+        // one), which is what lets a section's `Qt::DecorationRole` mark join
+        // it and what keeps the announced string identical to the drawn one.
         nodes.push(
             AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
-                .with_name(label)
                 .with_column(col),
         );
     }
@@ -298,15 +304,14 @@ fn grid_nodes(
 /// *less* readable than before it scaled — a 200-column table announced as five
 /// columns wide.
 ///
-/// - `labels` — the labels of the columns `cols` selects, in column order, and
-///   **only** those. R1530: until then this took every column's label and
-///   sliced the window out here, which meant an AT pass over a 200-column grid
-///   materialized 200 strings to read five — the same defect the paint path
-///   carried, and the reason the two now share one per-section accessor
-///   (`GridModel::header`) instead of one whole-table slice.
+/// - `columns` — how many columns `cols` selects, i.e. how many the tree holds.
+///   R1530 made this a window rather than the whole table (an AT pass over a
+///   200-column grid materialized 200 strings to read five); R1547 made it a
+///   count rather than a slice of labels, because the `columnheader`s are named
+///   from the painted header band and nothing here reads a label any more.
 /// - `column_count` — the **full** column extent (`aria-colcount`). Passed
-///   rather than derived, because `labels` is now a window and its length is
-///   not the table's width. This is the column-axis peer of `set_size`.
+///   rather than derived, because `columns` is a window and is not the table's
+///   width. This is the column-axis peer of `set_size`.
 /// - `rows` — the row window (the same `compute_visible_range` the view painted
 ///   against).
 /// - `cols` — the column window, from
@@ -321,7 +326,7 @@ fn grid_nodes(
 pub fn windowed_grid_nodes_wide(
     grid_tag: &str,
     grid_name: &str,
-    labels: &[&str],
+    columns: usize,
     column_count: usize,
     set_size: u32,
     rows: &VisibleWindow,
@@ -330,7 +335,7 @@ pub fn windowed_grid_nodes_wide(
     grid_nodes(
         grid_tag,
         grid_name,
-        GridColumns::window(labels, cols.first, column_count),
+        GridColumns::window(columns, cols.first, column_count),
         set_size,
         rows,
         GridSelection::Display,
@@ -360,7 +365,7 @@ pub fn windowed_grid_nodes_wide(
 pub fn windowed_grid_nodes_selected(
     grid_tag: &str,
     grid_name: &str,
-    headers: &[&str],
+    columns: usize,
     set_size: u32,
     window: &VisibleWindow,
     selected: Option<usize>,
@@ -368,7 +373,7 @@ pub fn windowed_grid_nodes_selected(
     grid_nodes(
         grid_tag,
         grid_name,
-        GridColumns::all(headers),
+        GridColumns::all(columns),
         set_size,
         window,
         GridSelection::Single(selected),
@@ -403,7 +408,7 @@ pub fn windowed_grid_nodes_selected(
 pub fn windowed_grid_nodes_multiselected(
     grid_tag: &str,
     grid_name: &str,
-    headers: &[&str],
+    columns: usize,
     set_size: u32,
     window: &VisibleWindow,
     selection: &std::collections::BTreeSet<usize>,
@@ -411,7 +416,7 @@ pub fn windowed_grid_nodes_multiselected(
     grid_nodes(
         grid_tag,
         grid_name,
-        GridColumns::all(headers),
+        GridColumns::all(columns),
         set_size,
         window,
         GridSelection::Multi(selection),
@@ -448,13 +453,13 @@ pub fn windowed_grid_nodes_multiselected(
 pub fn windowed_grid_nodes_sorted(
     grid_tag: &str,
     grid_name: &str,
-    headers: &[&str],
+    columns: usize,
     order: &[usize],
     sort: Option<(usize, bool)>,
     selected: Option<usize>,
     window: &VisibleWindow,
 ) -> Vec<AccessNode> {
-    let ncols = headers.len();
+    let ncols = columns;
     let total = u32::try_from(order.len()).unwrap_or(u32::MAX);
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
 
@@ -481,9 +486,10 @@ pub fn windowed_grid_nodes_sorted(
         hrow = hrow.with_child(GridTag::col_header(grid_tag, col));
     }
     nodes.push(hrow);
-    for (col, label) in headers.iter().enumerate() {
+    for col in 0..ncols {
+        // R1547 — named from the painted header, like every other
+        // `columnheader`; see `GridColumns`.
         let mut ch = AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
-            .with_name(*label)
             .with_column(col);
         // R886.1 — active-column decision + bool→direction through the
         // two SSOTs (`col_sort_dir` / `SortDirection::from_ascending`);
@@ -573,7 +579,10 @@ pub fn mark_grid_editability(
 mod tests {
     use super::*;
 
-    const HEADERS: [&str; 3] = ["Index", "Name", "Status"];
+    /// R1547 — the test grid's WIDTH. It was the labels until R1547; the
+    /// builders no longer read one, because the `columnheader`s are named from
+    /// the painted header band.
+    const NCOLS: usize = 3;
 
     fn window(first: usize, count: usize) -> VisibleWindow {
         VisibleWindow { first, count }
@@ -581,29 +590,19 @@ mod tests {
 
     // ── R1523 column-axis windowing ─────────────────────────────────
 
-    /// The 200-column table's width. Only a handful of its labels are ever
-    /// built — see [`wide_labels`].
+    /// The 200-column table's width. Only a handful of its columns are ever in
+    /// the tree.
     const WIDE_NCOLS: usize = 200;
-
-    /// R1530 — the labels of the columns `cols` selects, and only those: what a
-    /// binding produces by asking its model per section. Before R1530 this
-    /// fixture built all 200 and the builder sliced, which is the shape the
-    /// round removed.
-    fn wide_labels(cols: &VisibleWindow) -> Vec<String> {
-        cols.indices().map(|c| format!("C{c:03}")).collect()
-    }
 
     /// The two-axis contract: the tree holds the windowed columns, and says how
     /// many columns they were drawn from.
     #[test]
     fn r1523_wide_grid_windows_columns_and_declares_the_full_extent() {
         let cols = window(50, 5);
-        let labels = wide_labels(&cols);
-        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let nodes = windowed_grid_nodes_wide(
             "vcol",
             "Wide grid",
-            &refs,
+            cols.count,
             WIDE_NCOLS,
             10_000,
             &window(0, 2),
@@ -621,9 +620,17 @@ mod tests {
             .collect();
         assert_eq!(columnheaders.len(), 5, "only the windowed columns exist");
         assert_eq!(
-            columnheaders[0].name.as_deref(),
-            Some("C050"),
-            "the window starts at the label of column 50, not column 0",
+            columnheaders[0].column_index,
+            Some(51),
+            "the window starts at column 50 (one-based 51), not at column 0",
+        );
+        // R1547 — and it starts there without the builder being told what the
+        // column is CALLED. The name is left for the paint derivation, so this
+        // node is deliberately unnamed at construction; a name here would win
+        // over the painted header and could differ from it.
+        assert!(
+            columnheaders.iter().all(|n| n.name.is_none()),
+            "no columnheader is named by the builder — the painted header is",
         );
         // 2 windowed rows x 5 windowed columns.
         let cells: Vec<&AccessNode> = nodes
@@ -638,10 +645,15 @@ mod tests {
     #[test]
     fn r1523_colindex_is_one_based_and_absolute() {
         let cols = window(50, 3);
-        let labels = wide_labels(&cols);
-        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let nodes =
-            windowed_grid_nodes_wide("vcol", "G", &refs, WIDE_NCOLS, 10_000, &window(0, 1), &cols);
+        let nodes = windowed_grid_nodes_wide(
+            "vcol",
+            "G",
+            cols.count,
+            WIDE_NCOLS,
+            10_000,
+            &window(0, 1),
+            &cols,
+        );
         let cols: Vec<u32> = nodes
             .iter()
             .filter(|n| n.role == AriaRole::ColumnHeader)
@@ -668,12 +680,10 @@ mod tests {
     #[test]
     fn r1523_row_axis_extent_is_unchanged_by_column_windowing() {
         let cols = window(50, 3);
-        let labels = wide_labels(&cols);
-        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let nodes = windowed_grid_nodes_wide(
             "vcol",
             "G",
-            &refs,
+            cols.count,
             WIDE_NCOLS,
             10_000,
             &window(100, 2),
@@ -688,26 +698,28 @@ mod tests {
         assert_eq!(first_data.size_of_set, Some(10_000));
     }
 
-    /// R1530 — the builder describes exactly the labels it is handed, and the
+    /// R1530 — the builder describes exactly the window it is handed, and the
     /// extent it is told, with no arithmetic between them.
     ///
     /// R1523 clamped a window that ran past the header list, because the two
     /// arrived separately (two reads of the same reactive state, so a frame
     /// that saw them disagree was reachable) and a bad slice would panic the
-    /// a11y walker. There is no slice left to get wrong: the labels ARE the
+    /// a11y walker. There is no slice left to get wrong: the count IS the
     /// window. The out-of-range case is therefore not clamped here but simply
     /// absent — a caller past the end asks its model for nothing and hands over
     /// nothing — and the `aria-colcount` still contextualises whatever is left.
     #[test]
-    fn r1530_builder_describes_the_labels_it_is_given() {
-        let one = ["Value"];
-        let nodes =
-            windowed_grid_nodes_wide("vcol", "G", &one, 3, 10, &window(0, 1), &window(2, 1));
+    fn r1530_builder_describes_the_window_it_is_given() {
+        let nodes = windowed_grid_nodes_wide("vcol", "G", 1, 3, 10, &window(0, 1), &window(2, 1));
         let columnheaders: Vec<&AccessNode> = nodes
             .iter()
             .filter(|n| n.role == AriaRole::ColumnHeader)
             .collect();
-        assert_eq!(columnheaders.len(), 1, "one label in, one columnheader out");
+        assert_eq!(
+            columnheaders.len(),
+            1,
+            "one column in, one columnheader out"
+        );
         assert_eq!(
             columnheaders[0].column_index,
             Some(3),
@@ -716,12 +728,10 @@ mod tests {
         assert_eq!(
             nodes[0].column_count,
             Some(3),
-            "the extent is stated, not counted from the labels"
+            "the extent is stated, not counted from the window"
         );
         // Nothing in range: no columns, no panic, extent intact.
-        let empty: [&str; 0] = [];
-        let none =
-            windowed_grid_nodes_wide("vcol", "G", &empty, 3, 10, &window(0, 1), &window(99, 0));
+        let none = windowed_grid_nodes_wide("vcol", "G", 0, 3, 10, &window(0, 1), &window(99, 0));
         assert_eq!(
             none.iter()
                 .filter(|n| n.role == AriaRole::ColumnHeader)
@@ -736,28 +746,20 @@ mod tests {
     /// absence of an attribute).
     #[test]
     fn r1523_every_grid_declares_its_column_count() {
-        let display = windowed_grid_nodes("vtbl", "G", &HEADERS, 10, &window(0, 1));
+        let display = windowed_grid_nodes("vtbl", "G", NCOLS, 10, &window(0, 1));
         assert_eq!(display[0].column_count, Some(3));
-        let selected =
-            windowed_grid_nodes_selected("vtbl", "G", &HEADERS, 10, &window(0, 1), Some(0));
+        let selected = windowed_grid_nodes_selected("vtbl", "G", NCOLS, 10, &window(0, 1), Some(0));
         assert_eq!(selected[0].column_count, Some(3));
-        let sorted = windowed_grid_nodes_sorted(
-            "vtbl",
-            "G",
-            &HEADERS,
-            &[0, 1, 2],
-            None,
-            None,
-            &window(0, 1),
-        );
+        let sorted =
+            windowed_grid_nodes_sorted("vtbl", "G", NCOLS, &[0, 1, 2], None, None, &window(0, 1));
         assert_eq!(sorted[0].column_count, Some(3));
-        let frozen = windowed_grid_nodes_frozen("vtbl", "G", &HEADERS, 10, &window(0, 1));
+        let frozen = windowed_grid_nodes_frozen("vtbl", "G", NCOLS, 10, &window(0, 1));
         assert_eq!(frozen[0].column_count, Some(3));
     }
 
     #[test]
     fn emits_grid_header_and_windowed_rows() {
-        let nodes = windowed_grid_nodes("vtbl", "Data grid", &HEADERS, 10_000, &window(0, 2));
+        let nodes = windowed_grid_nodes("vtbl", "Data grid", NCOLS, 10_000, &window(0, 2));
         assert_eq!(nodes[0].role, AriaRole::Grid);
         assert_eq!(nodes[0].name.as_deref(), Some("Data grid"));
         assert_eq!(
@@ -790,7 +792,7 @@ mod tests {
 
     #[test]
     fn posinset_is_one_based_and_tracks_the_window() {
-        let nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(100, 2));
+        let nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &window(100, 2));
         let first_data = nodes
             .iter()
             .find(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
@@ -801,7 +803,7 @@ mod tests {
 
     #[test]
     fn display_only_omits_aria_selected() {
-        let nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
+        let nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &window(0, 2));
         for n in nodes
             .iter()
             .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
@@ -819,7 +821,7 @@ mod tests {
     fn unsplit_grid_rows_carry_no_bounds_union() {
         // The shared (non-frozen) builders never list a frozen-pane fragment —
         // a single-pane row resolves bounds from its own tag alone.
-        let nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
+        let nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &window(0, 2));
         for n in nodes.iter().filter(|n| n.role == AriaRole::Row) {
             assert!(
                 n.bounds_union_tags.is_empty(),
@@ -833,8 +835,7 @@ mod tests {
     fn frozen_grid_rows_union_the_frozen_pane_strip() {
         // The frozen builder makes the header Row + each data Row span both
         // panes: the scrolling-pane strip (own tag) ∪ the frozen-pane strip.
-        let nodes =
-            windowed_grid_nodes_frozen("gfz", "Frozen grid", &HEADERS, 10_000, &window(0, 2));
+        let nodes = windowed_grid_nodes_frozen("gfz", "Frozen grid", NCOLS, 10_000, &window(0, 2));
         let hrow = nodes.iter().find(|n| n.tag == "gfz_hrow").unwrap();
         assert_eq!(
             hrow.bounds_union_tags,
@@ -857,8 +858,8 @@ mod tests {
         // row + cell topology as the display-only builder — only each Row's
         // bounds_union_tags fragment is added (the gridcells already resolve
         // per-pane, so they are byte-identical).
-        let plain = windowed_grid_nodes("gfz", "G", &HEADERS, 10_000, &window(0, 2));
-        let frozen = windowed_grid_nodes_frozen("gfz", "G", &HEADERS, 10_000, &window(0, 2));
+        let plain = windowed_grid_nodes("gfz", "G", NCOLS, 10_000, &window(0, 2));
+        let frozen = windowed_grid_nodes_frozen("gfz", "G", NCOLS, 10_000, &window(0, 2));
         assert_eq!(plain.len(), frozen.len());
         for (p, f) in plain.iter().zip(&frozen) {
             assert_eq!(p.tag, f.tag);
@@ -881,7 +882,7 @@ mod tests {
     fn selected_marks_only_the_selected_row() {
         // Window 100..102, row 101 selected.
         let nodes =
-            windowed_grid_nodes_selected("vtbl", "G", &HEADERS, 10_000, &window(100, 2), Some(101));
+            windowed_grid_nodes_selected("vtbl", "G", NCOLS, 10_000, &window(100, 2), Some(101));
         let row100 = nodes.iter().find(|n| n.tag == "vtbl_row100").unwrap();
         let row101 = nodes.iter().find(|n| n.tag == "vtbl_row101").unwrap();
         assert_eq!(row100.selected, Some(false));
@@ -895,9 +896,9 @@ mod tests {
 
     #[test]
     fn selected_is_a_superset_of_the_display_topology() {
-        let plain = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
+        let plain = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &window(0, 2));
         let decorated =
-            windowed_grid_nodes_selected("vtbl", "G", &HEADERS, 10_000, &window(0, 2), None);
+            windowed_grid_nodes_selected("vtbl", "G", NCOLS, 10_000, &window(0, 2), None);
         assert_eq!(plain.len(), decorated.len());
         for (p, d) in plain.iter().zip(&decorated) {
             assert_eq!(p.tag, d.tag);
@@ -917,7 +918,7 @@ mod tests {
     #[test]
     fn selected_outside_window_marks_no_visible_row() {
         let nodes =
-            windowed_grid_nodes_selected("vtbl", "G", &HEADERS, 10_000, &window(0, 2), Some(9_999));
+            windowed_grid_nodes_selected("vtbl", "G", NCOLS, 10_000, &window(0, 2), Some(9_999));
         for n in nodes
             .iter()
             .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
@@ -936,7 +937,7 @@ mod tests {
         let nodes = windowed_grid_nodes_multiselected(
             "vtbl",
             "G",
-            &HEADERS,
+            NCOLS,
             10_000,
             &window(100, 4),
             &selection,
@@ -971,9 +972,9 @@ mod tests {
         // container `aria-multiselectable` + per-row `aria-selected` are
         // added.
         let empty = std::collections::BTreeSet::new();
-        let plain = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
+        let plain = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &window(0, 2));
         let decorated =
-            windowed_grid_nodes_multiselected("vtbl", "G", &HEADERS, 10_000, &window(0, 2), &empty);
+            windowed_grid_nodes_multiselected("vtbl", "G", NCOLS, 10_000, &window(0, 2), &empty);
         assert_eq!(plain.len(), decorated.len());
         for (p, d) in plain.iter().zip(&decorated) {
             assert_eq!(p.tag, d.tag);
@@ -1003,7 +1004,7 @@ mod tests {
         let nodes = windowed_grid_nodes_sorted(
             "vtbl",
             "Sorted grid",
-            &HEADERS,
+            NCOLS,
             &order,
             Some((1, true)),
             Some(2),
@@ -1043,7 +1044,7 @@ mod tests {
         let nodes = windowed_grid_nodes_sorted(
             "vtbl",
             "Filtered grid",
-            &HEADERS,
+            NCOLS,
             &order,
             None,
             None,
@@ -1076,11 +1077,9 @@ mod tests {
     #[test]
     fn r1544_editability_marks_only_the_non_editable_cells() {
         let window = VisibleWindow { first: 0, count: 2 };
-        let mut nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10, &window);
+        let mut nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10, &window);
         // Column 0 is the read-only identity column.
-        mark_grid_editability(&mut nodes, "vtbl", &window, 0..HEADERS.len(), |c| {
-            c.col != 0
-        });
+        mark_grid_editability(&mut nodes, "vtbl", &window, 0..NCOLS, |c| c.col != 0);
         let read_only = |row: usize, col: usize| {
             nodes
                 .iter()
@@ -1091,7 +1090,7 @@ mod tests {
         };
         assert!(read_only(0, 0), "the fixed column says so to AT");
         assert!(read_only(1, 0));
-        for col in 1..HEADERS.len() {
+        for col in 1..NCOLS {
             assert!(
                 !read_only(0, col),
                 "an editable cell stays silent — aria-readonly defaults to false"
@@ -1114,10 +1113,10 @@ mod tests {
         // The orphan-free rule: asking about rows the tree does not contain
         // adds nothing rather than inventing nodes for them.
         let built = VisibleWindow { first: 0, count: 1 };
-        let mut nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10, &built);
+        let mut nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10, &built);
         let before = nodes.len();
         let wider = VisibleWindow { first: 0, count: 5 };
-        mark_grid_editability(&mut nodes, "vtbl", &wider, 0..HEADERS.len() + 4, |_| false);
+        mark_grid_editability(&mut nodes, "vtbl", &wider, 0..NCOLS + 4, |_| false);
         assert_eq!(nodes.len(), before, "no node is created by the pass");
         assert!(
             nodes
@@ -1136,7 +1135,7 @@ mod tests {
         let nodes = windowed_grid_nodes_multiselected(
             "vtbl",
             "G",
-            &HEADERS,
+            NCOLS,
             10_000,
             &VisibleWindow::EMPTY,
             &selection,

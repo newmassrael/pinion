@@ -79716,6 +79716,72 @@
         "`readable_ink` moved to `pinion-core` with its two siblings while still having one caller. Kept together deliberately — `contrast_ratio` cannot move without `relative_luminance`, and leaving the third behind would put a sibling of the moved pair in the crate that imports them."
       ]
     },
+    "Round 1547": {
+      "decision_summary": "A header section is asked for its role. `GridModel` had four accessors, three addressing a cell and one addressing a section, and the section could answer exactly one question: what the column is called. Qt reaches both axes through one role enum and `QHeaderView::paintSection` consumes `Qt::DecorationRole` into `QStyleOptionHeader::icon`, so a Qt grid can put a key, type, filter or lock glyph in a column header; nothing here could mark a column at all. R1547 opens the section axis's role dimension with the role R1535 opened the cell axis with, answered with the same type and drawn by the same painter. Two things past Qt 6.11: the mark's meaning reaches assistive technology (Qt's `QAccessibleTableHeaderCell::text(Name)` answers from `DisplayRole` alone, so a Qt header whose distinguishing information IS its glyph announces only the column's name), and the `columnheader` is named by what is PAINTED — the a11y builders no longer receive labels at all, so no second source is left to disagree with the pixels, where Qt derives that name from the model on a path independent of `paintSection`. Reaching for the second found the reason it was reachable: the builders' hand-stamped name would have silently won over the derivation, which is the same write-path/read-path split R1536 found on the cell axis.",
+      "changes_bullets": [
+        "`GridModel::header_decoration` (Qt `headerData(section, Qt::Horizontal, Qt::DecorationRole)`), asked once per PAINTED section like `header` beside it; `no_header_decoration` is the section-axis peer of `no_decoration`",
+        "`CellDecoration` renamed `Decoration`: a role is not axis-specific (Qt reaches both axes through one role and one `QVariant`), and two types would be two contracts that must agree about what a mark is",
+        "`HeaderSection` binds a section's two role answers where they are asked, so a header band cannot paint a section with its neighbour's mark; `header_texts` becomes `header_sections`",
+        "`decoration_node` lifts the arm `match` out of both paint sites (obligation 3b) — `Decoration::meaning`'s own doc records that a read-site match is how an arm gets forgotten, and R1547 was about to write a second one",
+        "`GridTag::header_decoration` -> `\"{tag}_hdeco{col}\"`, its own prefix because `\"{tag}_deco0_{col}\"` is a real CELL address and the namespace must stay unique",
+        "`TableData::header_decoration` gives the eager `view_table` the same role, so the tree does not hold two header contracts that disagree about whether it exists",
+        "a marked header's `meaning` joins the `columnheader`'s accessible name ahead of the label (R1536's rule on the section axis); empty stays the decorative answer",
+        "the a11y `columnheader` is named from the PAINT: `GridColumns` holds counts not labels, and all six `windowed_grid_nodes*` builders take a column count — closing R1536's stated gap that five of six took every label",
+        "`hello-virtual-table` answers the meaningful (\"Primary key\" on `Index`) and decorative (a legend swatch on `Status`) arms; `hello-virtual-columns` answers it over 200 columns and publishes the per-frame ask count at `vcol_hdstatus`",
+        "the widget-paint test helper `cell_access_name` now CALLS `enrich_names_from_scene` instead of restating its precedence — the R1536 mirror answered `None` for a header cell because it looked only at direct children"
+      ],
+      "verification_bullets": [
+        "`tools/demos/r1547_section_states_its_role.py` — 46 assertions over two apps: the mark painted at its own address on the answered sections and only those, a section mark is not a cell mark, meaningful announced / decorative silent, every `columnheader` named and named by the painted label, the role asked once per painted section over 200 columns, and all of it surviving a horizontal scroll",
+        "7 unit tests in `pinion-widget-paint` (paint, address separation, per-section ask count, additive-when-unanswered node count, the announced / silent pair, name-from-paint) + 2 in `hello-virtual-columns` (ask equality, readout) + the rewritten `r1547_access_pass_asks_for_no_labels_at_all` asserting the AT pass asks for 0 labels and stamps 0 names",
+        "7 counterfactuals, one at a time, every one caught: mark never painted (4 tests), meaning never composed (1), builder re-stamps a name (a11y + example), role asked for every column (2), decorative mark announced (1), header mark reusing the cell address space (3), and the binding answering no role at all (the DEMO, at release, section A)",
+        "gates: `cargo test` pinion-core 2922 / pinion-a11y 248+17 / pinion-widget-paint 771, 15 affected example crates green, `cargo fmt --all --check`, workspace clippy, `cargo doc --workspace --no-deps --document-private-items`, `validate-workspace` T1 orphan 0",
+        "24 grid / table / column demos re-run locally green, including every demo that reads a `columnheader` name (r1450, r1451, r990) and every demo on the twelve bindings whose a11y builder call changed"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "the section axis answers ONE role: Qt's `ToolTipRole`, `TextAlignmentRole`, `InitialSortOrderRole` and `SizeHintRole` on a header are all still absent — the dimension is opened, not complete, exactly as R1535 opened the cell axis",
+        "there is no VERTICAL header axis at all (Qt `headerData(..., Qt::Vertical)` — row headers); a whole second section axis, untouched",
+        "`EditRole` stays behind the delegate's editing half and `ToolTipRole` behind a per-cell hover path, unchanged from R1536",
+        "a binding still states its column window twice (paint + a11y) — R1530's last small item, unchanged",
+        "the tally did NOT demand a re-judgment (`rd` 6 -> 7 = +17%, inside the 25% band), so Model/View stays at 87% and the gap statement records what moved instead — R1535's own precedent when it opened the cell axis"
+      ],
+      "publishable_decision_summary": "A header section is asked for its role. `GridModel` had four accessors, three addressing a cell and one addressing a section, and the section could answer exactly one question: what the column is called. Qt reaches both axes through one role enum and `QHeaderView::paintSection` consumes `Qt::DecorationRole` into `QStyleOptionHeader::icon`, so a Qt grid can put a key, type, filter or lock glyph in a column header; nothing here could mark a column at all. R1547 opens the section axis's role dimension with the role R1535 opened the cell axis with, answered with the same type and drawn by the same painter. Two things past Qt 6.11: the mark's meaning reaches assistive technology (Qt's `QAccessibleTableHeaderCell::text(Name)` answers from `DisplayRole` alone, so a Qt header whose distinguishing information IS its glyph announces only the column's name), and the `columnheader` is named by what is PAINTED — the a11y builders no longer receive labels at all, so no second source is left to disagree with the pixels, where Qt derives that name from the model on a path independent of `paintSection`. Reaching for the second found the reason it was reachable: the builders' hand-stamped name would have silently won over the derivation, which is the same write-path/read-path split R1536 found on the cell axis.",
+      "publishable_changes_bullets": [
+        "`GridModel::header_decoration` (Qt `headerData(section, Qt::Horizontal, Qt::DecorationRole)`), asked once per PAINTED section like `header` beside it; `no_header_decoration` is the section-axis peer of `no_decoration`",
+        "`CellDecoration` renamed `Decoration`: a role is not axis-specific (Qt reaches both axes through one role and one `QVariant`), and two types would be two contracts that must agree about what a mark is",
+        "`HeaderSection` binds a section's two role answers where they are asked, so a header band cannot paint a section with its neighbour's mark; `header_texts` becomes `header_sections`",
+        "`decoration_node` lifts the arm `match` out of both paint sites (obligation 3b) — `Decoration::meaning`'s own doc records that a read-site match is how an arm gets forgotten, and R1547 was about to write a second one",
+        "`GridTag::header_decoration` -> `\"{tag}_hdeco{col}\"`, its own prefix because `\"{tag}_deco0_{col}\"` is a real CELL address and the namespace must stay unique",
+        "`TableData::header_decoration` gives the eager `view_table` the same role, so the tree does not hold two header contracts that disagree about whether it exists",
+        "a marked header's `meaning` joins the `columnheader`'s accessible name ahead of the label (R1536's rule on the section axis); empty stays the decorative answer",
+        "the a11y `columnheader` is named from the PAINT: `GridColumns` holds counts not labels, and all six `windowed_grid_nodes*` builders take a column count — closing R1536's stated gap that five of six took every label",
+        "`hello-virtual-table` answers the meaningful (\"Primary key\" on `Index`) and decorative (a legend swatch on `Status`) arms; `hello-virtual-columns` answers it over 200 columns and publishes the per-frame ask count at `vcol_hdstatus`",
+        "the widget-paint test helper `cell_access_name` now CALLS `enrich_names_from_scene` instead of restating its precedence — the R1536 mirror answered `None` for a header cell because it looked only at direct children"
+      ],
+      "publishable_verification_bullets": [
+        "`tools/demos/r1547_section_states_its_role.py` — 46 assertions over two apps: the mark painted at its own address on the answered sections and only those, a section mark is not a cell mark, meaningful announced / decorative silent, every `columnheader` named and named by the painted label, the role asked once per painted section over 200 columns, and all of it surviving a horizontal scroll",
+        "7 unit tests in `pinion-widget-paint` (paint, address separation, per-section ask count, additive-when-unanswered node count, the announced / silent pair, name-from-paint) + 2 in `hello-virtual-columns` (ask equality, readout) + the rewritten `r1547_access_pass_asks_for_no_labels_at_all` asserting the AT pass asks for 0 labels and stamps 0 names",
+        "7 counterfactuals, one at a time, every one caught: mark never painted (4 tests), meaning never composed (1), builder re-stamps a name (a11y + example), role asked for every column (2), decorative mark announced (1), header mark reusing the cell address space (3), and the binding answering no role at all (the DEMO, at release, section A)",
+        "gates: `cargo test` pinion-core 2922 / pinion-a11y 248+17 / pinion-widget-paint 771, 15 affected example crates green, `cargo fmt --all --check`, workspace clippy, `cargo doc --workspace --no-deps --document-private-items`, `validate-workspace` T1 orphan 0",
+        "24 grid / table / column demos re-run locally green, including every demo that reads a `columnheader` name (r1450, r1451, r990) and every demo on the twelve bindings whose a11y builder call changed"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the section axis answers ONE role: Qt's `ToolTipRole`, `TextAlignmentRole`, `InitialSortOrderRole` and `SizeHintRole` on a header are all still absent — the dimension is opened, not complete, exactly as R1535 opened the cell axis",
+        "there is no VERTICAL header axis at all (Qt `headerData(..., Qt::Vertical)` — row headers); a whole second section axis, untouched",
+        "`EditRole` stays behind the delegate's editing half and `ToolTipRole` behind a per-cell hover path, unchanged from R1536",
+        "a binding still states its column window twice (paint + a11y) — R1530's last small item, unchanged",
+        "the tally did NOT demand a re-judgment (`rd` 6 -> 7 = +17%, inside the 25% band), so Model/View stays at 87% and the gap statement records what moved instead — R1535's own precedent when it opened the cell axis"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

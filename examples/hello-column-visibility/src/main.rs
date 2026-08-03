@@ -218,6 +218,7 @@ fn view(state: ColsState, _frame: &Frame) -> Scene {
             rows: &rows_slices,
             row_ids: &[],
             decoration: None,
+            header_decoration: None,
         },
         TableSelection {
             rows: &row_sel,

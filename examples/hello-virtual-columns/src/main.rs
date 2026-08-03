@@ -69,8 +69,8 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, no_decoration, no_edit,
-    view_virtual_table,
+    CellIndex, Decoration, GridModel, GridScroll, TableStyle, VirtualTableData, no_decoration,
+    no_edit, view_virtual_table,
 };
 use std::cell::Cell;
 
@@ -115,6 +115,11 @@ const STATUS_TAG: &str = "vcol_status";
 /// R1530 — tag of the header-request readout, the `scene/snapshot` slot the
 /// demo reads the per-frame **section**-request count from.
 const HEADER_STATUS_TAG: &str = "vcol_hstatus";
+/// R1547 — tag of the header **mark**-request readout: how many sections were
+/// asked for their `Qt::DecorationRole` this frame. Its own slot for the reason
+/// R1530 gave the label count its own — a role that stopped being windowed
+/// would otherwise hide inside a neighbour's number.
+const HEADER_DECO_STATUS_TAG: &str = "vcol_hdstatus";
 
 /// Width of column `col`, in logical pixels.
 ///
@@ -150,6 +155,25 @@ fn header_text(col: usize) -> String {
     format!("C{col:03}")
 }
 
+/// R1547 — how often a column carries a header mark: every tenth. Sparse on
+/// purpose, so the negative half is observable — a role every section answers
+/// cannot show that it is *asked* per section, only that it is answered.
+const MARKED_EVERY: usize = 10;
+
+/// R1547 §5.27 — the grid's **section**-axis `Qt::DecorationRole`.
+///
+/// Windowed like the label: over 200 columns showing five, this is asked five
+/// times. The mark means "Sampled", which the label `C137` does not say — so it
+/// joins the `columnheader`'s accessible name and a screen-reader user learns
+/// what the glyph tells a sighted one.
+fn header_decoration(col: usize, theme: &Theme) -> Option<Decoration> {
+    HEADER_DECO_REQUESTS.with(|n| n.set(n.get() + 1));
+    (col % MARKED_EVERY == 0).then(|| Decoration::Swatch {
+        color: theme.resolve(ColorRole::Accent),
+        meaning: "Sampled".to_string(),
+    })
+}
+
 fn table_style() -> TableStyle {
     TableStyle {
         row_height: ROW_H,
@@ -180,6 +204,16 @@ thread_local! {
     /// differently (cells scale with both windows, headers with one), and a
     /// single total would let a regression on either hide inside the other.
     static HEADER_REQUESTS: Cell<usize> = const { Cell::new(0) };
+
+    /// R1547 — how many column headers the grid asked for a **mark** while
+    /// building the current frame.
+    ///
+    /// Its own counter for the reason [`HEADER_REQUESTS`] is its own: a role is
+    /// a separate question, and a role that quietly stopped being windowed
+    /// would hide inside a total. It should track [`HEADER_REQUESTS`] exactly —
+    /// both are per painted section — and the test asserts that rather than a
+    /// bound, because "asks for what it paints" is an equality.
+    static HEADER_DECO_REQUESTS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// The synthetic text of **one cell** — the R1524 per-cell contract
@@ -203,7 +237,7 @@ fn cell_text(c: CellIndex) -> String {
 /// test-only). The demo instead cross-checks `asked` against an independent
 /// observable: how many cells the snapshot actually holds. Equality of those
 /// two is exactly what "the grid asks for the cells it paints" means.
-fn status_bar(asked: usize, headers: usize, theme: &Theme) -> Scene {
+fn status_bar(asked: usize, headers: usize, marks: usize, theme: &Theme) -> Scene {
     let readout = |content: String, tag: &'static str| {
         Scene::Text(
             TextNode::styled(
@@ -227,8 +261,12 @@ fn status_bar(asked: usize, headers: usize, theme: &Theme) -> Scene {
         format!("\u{00B7} asked {headers} headers"),
         HEADER_STATUS_TAG,
     );
+    let dtext = readout(
+        format!("\u{00B7} asked {marks} marks"),
+        HEADER_DECO_STATUS_TAG,
+    );
     Scene::Container(
-        ContainerNode::new(vec![text, htext])
+        ContainerNode::new(vec![text, htext, dtext])
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHigh),
             ))
@@ -258,6 +296,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
 
     CELL_REQUESTS.with(|n| n.set(0));
     HEADER_REQUESTS.with(|n| n.set(0));
+    HEADER_DECO_REQUESTS.with(|n| n.set(0));
     let grid = view_virtual_table(
         TABLE_TAG,
         GridScroll {
@@ -284,6 +323,9 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridModel {
             cell: cell_text,
             header: header_text,
+            // R1547 — Qt `headerData(section, Qt::Horizontal,
+            // Qt::DecorationRole)`, windowed like the label beside it.
+            header_decoration: |col: usize| header_decoration(col, &theme),
             decoration: no_decoration,
             edit: no_edit,
         },
@@ -293,11 +335,15 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // previous frame's.
     let asked = CELL_REQUESTS.with(Cell::get);
     let asked_headers = HEADER_REQUESTS.with(Cell::get);
+    let asked_marks = HEADER_DECO_REQUESTS.with(Cell::get);
 
     Scene::Container(
-        ContainerNode::new(vec![status_bar(asked, asked_headers, &theme), grid])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+        ContainerNode::new(vec![
+            status_bar(asked, asked_headers, asked_marks, &theme),
+            grid,
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
 }
 
@@ -357,16 +403,16 @@ impl WidgetA11y for VirtualColumnsView {
         let (measured_w, _) = h_scroll.measured_viewport();
         let rows = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_H, OVERSCAN);
         let cols = widths.visible_columns(h_scroll.offset_x(), measured_w, OVERSCAN);
-        // R1530 — the AT pass asks the same per-section accessor the paint pass
-        // does, for the same window. It used to build all 200 labels here too,
-        // so an introspection frame carried the defect a second time; and the
-        // labels an AT reads now come from the function the pixels came from.
-        let labels: Vec<String> = cols.indices().map(header_text).collect();
-        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        // R1530 made the AT pass ask the same per-section accessor the paint
+        // pass does, for the same window, instead of building all 200 labels
+        // here too. R1547 removes the ask entirely: a `columnheader`'s name is
+        // derived from the painted header band, so this pass states only which
+        // sections exist and the label reaches the AT from the one place that
+        // drew it. Asking twice was the remaining way for the two to disagree.
         windowed_grid_nodes_wide(
             TABLE_TAG,
             "Wide data grid",
-            &label_refs,
+            cols.count,
             NCOLS,
             u32::try_from(N).unwrap_or(u32::MAX),
             &rows,
@@ -461,6 +507,8 @@ mod tests {
     struct Asked {
         cells: usize,
         sections: usize,
+        /// R1547 — how many sections were asked for their `Qt::DecorationRole`.
+        marks: usize,
     }
 
     /// Render the view with both viewports measured, as the shell does after
@@ -478,6 +526,7 @@ mod tests {
             let asked = Asked {
                 cells: CELL_REQUESTS.with(Cell::get),
                 sections: HEADER_REQUESTS.with(Cell::get),
+                marks: HEADER_DECO_REQUESTS.with(Cell::get),
             };
             (scene, asked)
         })
@@ -764,11 +813,17 @@ mod tests {
         );
     }
 
-    /// The introspection pass carries the same contract as the paint pass: it
-    /// asks for its window and no more. Before R1530 it built all 200 labels
-    /// here too — the defect a paint-only counter would not have seen.
+    /// **R1547 strengthens R1530's property.** The introspection pass used to
+    /// ask for its window's labels — an order of magnitude fewer than the 200 it
+    /// built before R1530, but still a second read of what the paint pass had
+    /// already asked for, and therefore still a way for the two to disagree.
+    ///
+    /// It now asks for **none**: a `columnheader`'s name is derived from the
+    /// painted header band, so this pass states only which sections exist. The
+    /// assertion is exact (`0`), because "fewer" was the property that let the
+    /// duplicate survive.
     #[test]
-    fn r1530_access_pass_asks_only_for_its_window() {
+    fn r1547_access_pass_asks_for_no_labels_at_all() {
         HEADER_REQUESTS.with(|n| n.set(0));
         let nodes = run_access(WIN_W, 360, 6_000);
         let asked = HEADER_REQUESTS.with(Cell::get);
@@ -778,17 +833,59 @@ mod tests {
             .count();
         assert!(columnheaders > 0, "the AT tree holds columnheaders");
         assert_eq!(
-            asked, columnheaders,
-            "the AT pass asked for {asked} sections and describes {columnheaders}",
+            asked, 0,
+            "the AT pass describes {columnheaders} sections without asking the \
+             model for a single label — the paint already answered",
         );
         assert!(
-            asked * 10 < NCOLS,
-            "and that is an order of magnitude below the {NCOLS} it used to build",
+            nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::ColumnHeader)
+                .all(|n| n.name.is_none()),
+            "and it stamps no name, so nothing here can differ from the pixels",
         );
         assert_eq!(
             nodes[0].column_count,
             Some(u32::try_from(NCOLS).unwrap()),
             "while the declared extent is still the whole table",
+        );
+    }
+
+    /// R1547 — the **section role** is windowed exactly as its label is: asked
+    /// once per painted header, over a 200-column table.
+    ///
+    /// Equality against the header cells actually in the tree, like the R1530
+    /// label peer; and equality with the label count too, because the two are
+    /// per-section questions about the same window and a divergence between
+    /// them would mean one of the axes had quietly stopped being windowed.
+    #[test]
+    fn r1547_section_marks_are_asked_per_painted_section() {
+        let (scene, asked) = run_view(WIN_W, 360, 6_000);
+        let painted = painted_sections(&scene).len();
+        assert!(
+            painted > 0 && painted * 10 < NCOLS,
+            "premise: the column axis windowed, {painted} of {NCOLS} painted",
+        );
+        assert_eq!(
+            asked.marks, painted,
+            "the mark is asked for exactly the sections painted",
+        );
+        assert_eq!(
+            asked.marks, asked.sections,
+            "and for the same sections the label is — one window, two roles",
+        );
+    }
+
+    /// R1547 — the mark count reaches `scene/snapshot` in its own readout, the
+    /// §2 #7 witness R1530 gave the label count.
+    #[test]
+    fn r1547_status_readout_publishes_the_mark_count() {
+        let (scene, asked) = run_view(WIN_W, 360, 0);
+        let text = readout(&scene, HEADER_DECO_STATUS_TAG).expect("mark readout present");
+        assert_eq!(
+            text,
+            format!("\u{00B7} asked {} marks", asked.marks),
+            "the readout states this frame's mark count",
         );
     }
 
