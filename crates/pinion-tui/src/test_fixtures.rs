@@ -28,7 +28,8 @@
 //! same time this impl compiles.
 
 use pinion_core::test_fixtures::{
-    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, ScrollbarMultiFixture,
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
+    ScrollbarMultiFixture,
 };
 use ratatui::backend::TestBackend;
 
@@ -87,5 +88,11 @@ impl WidgetViewTui for ContextMenuFixture {
 /// mirror is the class of defect where GUI and TUI end up with different
 /// focus — and different modal stacks — from identical input.
 impl WidgetViewTui for ModalTailFixture {
+    type Renderer = crate::TuiRenderer<TestBackend>;
+}
+
+/// R1549.2 §2 #6 — the repeating-button fixture's blank impl, so a TUI
+/// test can drive a held press through the same trait stack.
+impl WidgetViewTui for RepeatingButtonFixture {
     type Renderer = crate::TuiRenderer<TestBackend>;
 }

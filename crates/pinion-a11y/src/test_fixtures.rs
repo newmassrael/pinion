@@ -23,7 +23,8 @@
 //! [`ButtonFixture`]: pinion_core::test_fixtures::ButtonFixture
 
 use pinion_core::test_fixtures::{
-    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, ScrollbarMultiFixture,
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
+    ScrollbarMultiFixture,
 };
 
 use crate::widget_a11y::WidgetA11y;
@@ -57,3 +58,7 @@ impl WidgetA11y for ContextMenuFixture {}
 /// rationale applies identically (trait lives here, fixture lives in
 /// `pinion-core`).
 impl WidgetA11y for ModalTailFixture {}
+
+/// R1549.2 §2 #6 — the repeating-button fixture's blank impl, so a TUI
+/// test can drive a held press through the same trait stack.
+impl WidgetA11y for RepeatingButtonFixture {}

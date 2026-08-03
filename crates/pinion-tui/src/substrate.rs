@@ -183,6 +183,12 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// second paint measures the elapsed delta.
     last_paint_instant: Cell<Option<Instant>>,
 
+    /// R1549.2 §5.41 §5.35 — whether the last [`Self::tick_auto_repeat`]
+    /// left a press-and-hold armed. Read by [`Self::wants_next_frame`],
+    /// the run loop's single "keep painting" gate: a live hold has to keep
+    /// the loop off `IDLE_POLL_MS` exactly as an unsettled animation does.
+    auto_repeat_armed: Cell<bool>,
+
     /// R1460 §5.16 §5.41 §2 #6 — the frame this paint is building, held between
     /// [`Self::compute_paint_scene`] (which measures the build span and the
     /// work counts) and [`Self::update_paint_scene`] (the `&mut self`
@@ -293,6 +299,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             pending_frame: Cell::new(None),
             frame_timings: None,
             last_paint_instant: Cell::new(None),
+            auto_repeat_armed: Cell::new(false),
             layout_cache: RefCell::new(LayoutCache::new()),
             focus_work: pinion_runtime::FocusWorkCell::default(),
             produce_work: pinion_runtime::ProduceWork::default(),
@@ -472,6 +479,25 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// [`Cell`] interior mutability so the signature stays sync.
     #[must_use]
     pub fn compute_paint_scene(&self, cols: u16, rows: u16) -> Scene {
+        self.compute_paint_scene_with_dt(cols, rows, self.measure_frame_dt())
+    }
+
+    /// R1549.2 §5.41 §5.28 §2 #6 — measure (and consume) this frame's
+    /// delta against the previous paint's [`Instant`], clamped by
+    /// [`clamp_frame_dt`] exactly as the Vello sibling does.
+    ///
+    /// Split out of [`Self::compute_paint_scene`] because the frame has
+    /// work on BOTH sides of the view and they need the same delta: the
+    /// R1549 press-and-hold auto-repeat advance is an *input*, so it runs
+    /// before the view (and needs `&mut self`), while the animation tick
+    /// and the view itself run under `&self`. Measuring twice would
+    /// double-count the frame; handing the delta along explicitly keeps
+    /// the two halves on one clock with no hidden channel between them.
+    ///
+    /// `&self` — the timestamp lives in a [`Cell`], the same interior
+    /// mutability [`Self::compute_paint_scene`] already relies on.
+    #[must_use]
+    pub fn measure_frame_dt(&self) -> f32 {
         let now = Instant::now();
         let raw_dt = self
             .last_paint_instant
@@ -481,7 +507,18 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // R51.145 §5.28 — clamp before reaching the spring solver +
         // the view fn (see `pinion_runtime::clamp_frame_dt` for the
         // rationale; mirrors the Vello sibling exactly).
-        let dt = clamp_frame_dt(raw_dt);
+        clamp_frame_dt(raw_dt)
+    }
+
+    /// R1549.2 §5.41 §5.28 — [`Self::compute_paint_scene`] against a
+    /// delta the caller already measured with [`Self::measure_frame_dt`].
+    #[must_use]
+    pub fn compute_paint_scene_with_dt(&self, cols: u16, rows: u16, dt: f32) -> Scene {
+        // R1460 — the produce span's start. Taken here rather than carried
+        // from `measure_frame_dt` because `build_us` measures the WORK this
+        // fn does, and a caller may have spent time between the two (the
+        // R1549.2 auto-repeat advance does exactly that).
+        let now = Instant::now();
         self.core.tick_animations(dt);
         let frame = Frame::with_dt(dt);
         // R51.146 §5.22 — wrap the view fn in `root_owner().run(...)`
@@ -964,6 +1001,55 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// argument onto the `Key` / `CharacterKey` variants when the
     /// first AI-driver use-case (e.g. Shift+Arrow text-selection
     /// macro) lands.
+    /// R1549.2 §5.41 §5.35 §5.38 §2 #6 — advance press-and-hold
+    /// auto-repeat by `dt` seconds on the TUI, firing whatever repeats
+    /// that crosses. Returns whether a hold is still armed — the run
+    /// loop's "keep painting" cue, folded in beside
+    /// [`Self::any_animation_active`].
+    ///
+    /// R1549 landed the repeat on the Vello path only, which left a
+    /// widget that repeats in a window inert in a terminal — the §2 #6
+    /// dual invariant broken by omission, and the exact shape R1460
+    /// recorded when `scene/frame_timings` existed on the wire but every
+    /// TUI binding answered `Unavailable` forever: a mirror that was
+    /// MISSING, not declined. A terminal reports mouse press and release
+    /// edges (SGR mouse mode) just as a window does, so a hold is as
+    /// expressible here; nothing about the backend justified the gap.
+    ///
+    /// Called before the paint so the repeated value reaches THIS frame's
+    /// view, the ordering the Vello sibling uses.
+    pub fn tick_auto_repeat(&mut self, dt: f32) -> bool {
+        let (tail, armed) = self
+            .core
+            .tick_auto_repeat_for_window(pinion_runtime::DEFAULT_WINDOW, dt);
+        let _ = self.handle_tail(&tail);
+        self.auto_repeat_armed.set(armed);
+        armed
+    }
+
+    /// R1549.2 §5.35 §5.12 §2 #6 — the in-flight press census this
+    /// terminal would answer `scene/auto_repeat` with. The TUI peer of
+    /// `CoreShell::auto_repeat_holds_for_window`, single-window by
+    /// construction (a terminal is one alternate screen).
+    #[must_use]
+    pub fn auto_repeat_holds(&self) -> Vec<pinion_runtime::AutoRepeatHold> {
+        self.core
+            .auto_repeat_holds_for_window(pinion_runtime::DEFAULT_WINDOW)
+    }
+
+    /// R1549.2 §5.41 §5.28 §5.35 — the run loop's SINGLE "does this
+    /// binding still need frames?" gate: an animation that has not settled,
+    /// or a press-and-hold that is still repeating.
+    ///
+    /// One predicate rather than two `||`-ed at each of the loop's poll
+    /// sites, because the loop asks in two places and the two must not be
+    /// able to disagree about whether the terminal may go idle (the R873
+    /// one-gate discipline).
+    #[must_use]
+    pub fn wants_next_frame(&self, epsilon: f32) -> bool {
+        self.any_animation_active(epsilon) || self.auto_repeat_armed.get()
+    }
+
     pub fn drain_deferred_inputs(&mut self, inputs: &[pinion_rpc::DeferredInput]) -> bool {
         let mut state_changed = false;
         for input in inputs {
@@ -1718,6 +1804,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             self.core
                 .input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None, None);
         let frame_timings_snapshot = self.rpc_frame_timings();
+        // R1549.2 §5.35 §2 #6 — resolved before the borrow split, the
+        // `input_state_snapshot` pattern above.
+        let auto_repeat_holds = self.auto_repeat_holds();
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
@@ -1861,6 +1950,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             if let Some(snapshot) = frame_timings_snapshot {
                 ctx = ctx.with_frame_timings(snapshot);
             }
+            // R1549.2 §5.35 §5.38 §2 #6 — `scene/auto_repeat` answers on
+            // the TUI too, the same missing-mirror the comment above
+            // records for `scene/frame_timings`. Unconditional: an empty
+            // census IS the answer for a terminal with nothing held.
+            ctx = ctx.with_auto_repeat_holds(auto_repeat_holds);
             if let Some(exec_arc) = executor_for_rpc.as_ref() {
                 ctx = ctx.with_commands_executor(exec_arc.as_ref());
             }
@@ -2091,6 +2185,90 @@ mod tests {
 
         assert!(core.pointer_up());
         assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1549.2 §5.35 §5.38 §2 #6 — press-and-hold auto-repeat is a DUAL
+    // behaviour. R1549 landed it on the Vello path only, so a widget that
+    // repeated in a window was inert in a terminal — the §2 #6 mirror
+    // missing rather than declined, the shape R1460 recorded for
+    // `scene/frame_timings`.
+    // ─────────────────────────────────────────────────────────────
+
+    /// A held button with a declared cadence repeats in a TERMINAL, on the
+    /// terminal's own frame clock, and reports itself armed so the run
+    /// loop's one gate keeps painting.
+    #[test]
+    fn r1549_2_held_press_repeats_on_the_tui_too() {
+        use pinion_core::test_fixtures::RepeatingButtonFixture;
+        let mut core: ShellCoreTui<RepeatingButtonFixture> = ShellCoreTui::new();
+        let paint = core.compute_paint_scene(80, 24);
+        core.update_paint_scene(paint);
+        assert!(core.cursor_moved(8.0, 8.0));
+        assert!(core.pointer_down());
+        assert_eq!(*core.cached_state(), ButtonState::Pressed);
+
+        let policy = RepeatingButtonFixture::repeat();
+        assert!(
+            !core.wants_next_frame(pinion_core::DEFAULT_REST_EPSILON),
+            "nothing has ticked yet, so nothing is armed",
+        );
+
+        // Short of the delay: no repeat, but the hold IS armed — the
+        // terminal must not park on its idle poll mid-hold.
+        assert!(core.tick_auto_repeat(policy.delay_secs() * 0.5));
+        assert!(
+            core.wants_next_frame(pinion_core::DEFAULT_REST_EPSILON),
+            "a live hold keeps the loop awake, as an unsettled animation does",
+        );
+
+        // Past the delay: the press re-activates, and the state machine
+        // ends the frame back in `Pressed` (Up then Down, Qt's arc).
+        core.tick_auto_repeat(policy.delay_secs());
+        assert_eq!(
+            *core.cached_state(),
+            ButtonState::Pressed,
+            "the repeat is a full activation cycle, so the button is still down",
+        );
+
+        // The census answers here as it does on the Vello path.
+        let holds = core.auto_repeat_holds();
+        assert_eq!(holds.len(), 1, "the terminal knows its press is in flight");
+        assert_eq!(holds[0].target, "test_btn");
+        assert!(holds[0].repeating);
+        assert!(holds[0].fires >= 1, "at least one repeat fired");
+
+        // Release ends it, and the loop is free to idle again.
+        assert!(core.pointer_up());
+        assert!(core.auto_repeat_holds().is_empty());
+        assert!(!core.tick_auto_repeat(10.0), "nothing is held");
+        assert!(
+            !core.wants_next_frame(pinion_core::DEFAULT_REST_EPSILON),
+            "so the terminal may park on its idle poll",
+        );
+    }
+
+    /// The negative control: the ordinary fixture declares no cadence, so
+    /// a held press in a terminal still activates exactly once. Without
+    /// this the test above could pass on a backend that repeats
+    /// everything.
+    #[test]
+    fn r1549_2_an_undeclared_button_does_not_repeat_on_the_tui() {
+        let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+        let paint = core.compute_paint_scene(80, 24);
+        core.update_paint_scene(paint);
+        assert!(core.cursor_moved(8.0, 8.0));
+        assert!(core.pointer_down());
+        for _ in 0..20 {
+            assert!(
+                !core.tick_auto_repeat(0.5),
+                "an undeclared target arms nothing"
+            );
+        }
+        assert!(!core.wants_next_frame(pinion_core::DEFAULT_REST_EPSILON));
+        let holds = core.auto_repeat_holds();
+        assert_eq!(holds.len(), 1, "the press IS in flight");
+        assert!(!holds[0].repeating, "it just never repeats");
     }
 
     #[test]

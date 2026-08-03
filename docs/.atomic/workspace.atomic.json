@@ -79988,6 +79988,52 @@
         "Two axis-level gaps stand, unchanged from R1549: an AT hears one value-change per repeat (Qt is identical, so a stated limit at parity, not a divergence) and scrollbar arrows have no `Button` sub-regions to declare from, which is catalog work rather than seam work"
       ]
     },
+    "Round 1549.2": {
+      "decision_summary": "The held press repeats in a terminal too — §2 #6 closed by the round's own closing audit. R1549 landed press-and-hold auto-repeat on the Vello path only: the advance lived in `compute_paint_scene_internal` and the census in the pinion-shell dispatch context, so a widget that repeated in a window was inert in a terminal, and `scene/auto_repeat` there answered an empty list however many presses were in flight. §2 #6 (one scene, two render dispatch paths) is a HARD invariant, and this is the exact shape R1460 recorded when `scene/frame_timings` existed on the wire while every TUI binding replied `Unavailable` forever — a mirror that was MISSING, not declined. Nothing about the backend justified it: a terminal reports mouse press and release edges (SGR mouse mode) just as a window does, so a hold is as expressible there. The deeper finding is about the harness rather than the code: this could not have been caught by any existing test, because every test fixture's button declared NO cadence, so a backend that never ticks a hold and one that ticks it correctly are observationally identical. A capability landed as an opt-in declaration is invisible to a fixture set in which nothing opts in — so the fixture is part of the seam, and `RepeatingButtonFixture` is now the negative-control's positive twin.",
+      "changes_bullets": [
+        "`ShellCoreTui::tick_auto_repeat` + `auto_repeat_holds` (§5.41): the TUI drives the SAME `CoreShell::tick_auto_repeat_for_window` and answers the same census, so the two backends share one implementation rather than two that can drift",
+        "`measure_frame_dt` split out of `compute_paint_scene`, which gains a `_with_dt` form: the frame now has work on both sides of the view (the repeat advance is an input and needs `&mut`), and measuring in both halves would put one frame on two clocks. Handed along explicitly — no hidden Cell channel between the two",
+        "`wants_next_frame(epsilon)` replaces the run loop's two `any_animation_active` poll sites: a live hold must keep the terminal off `IDLE_POLL_MS` exactly as an unsettled animation does, and the loop asks in two places that must not disagree (the R873 one-gate discipline)",
+        "`RepeatingButtonFixture` (pinion-core test-fixtures + the pinion-tui / pinion-a11y blank impls): a button identical to `ButtonFixture` except that it DECLARES a cadence. Its absence is why nothing could catch R1549's gap — every fixture's button declared none, so a backend that never ticked a hold and one that ticked it correctly produced identical output"
+      ],
+      "verification_bullets": [
+        "pinion-tui 155 + 19 green, incl. two new ones: a held press with a declared cadence repeats in a terminal, ends the frame back in `Pressed` (the Up-then-Down arc), publishes its run, reports armed so the loop stays awake, and stops on release; plus a NEGATIVE CONTROL on the undeclared fixture, without which the first test would pass on a backend that repeats everything",
+        "Counterfactual (make `tick_auto_repeat` a no-op returning false, the R1549-only world) verified to FAIL the new test and leave the negative control passing",
+        "pinion-core 2945, pinion-a11y 253 + 17 green after the fixture addition; clippy clean on all three"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35",
+        "5.38",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "No carry. Two R1549 axis-level items stand unchanged, both stated limits at Qt parity: an AT hears one value-change per repeat, and scrollbar arrows have no `Button` sub-regions to declare from",
+        "Found while here and NOT fixed, because it is pre-existing and wider than this round: `pinion-tui` handles no `DeferredInput::Tick` arm at all, so `scene/tick` on a TUI binding advances nothing — not animations either. R1549.2 does not make that worse (the TUI hold rides the paint clock, which does run), but the RPC frame-step contract is GUI-only and that is its own round"
+      ],
+      "publishable_decision_summary": "The held press repeats in a terminal too — §2 #6 closed by the round's own closing audit. R1549 landed press-and-hold auto-repeat on the Vello path only: the advance lived in `compute_paint_scene_internal` and the census in the pinion-shell dispatch context, so a widget that repeated in a window was inert in a terminal, and `scene/auto_repeat` there answered an empty list however many presses were in flight. §2 #6 (one scene, two render dispatch paths) is a HARD invariant, and this is the exact shape R1460 recorded when `scene/frame_timings` existed on the wire while every TUI binding replied `Unavailable` forever — a mirror that was MISSING, not declined. Nothing about the backend justified it: a terminal reports mouse press and release edges (SGR mouse mode) just as a window does, so a hold is as expressible there. The deeper finding is about the harness rather than the code: this could not have been caught by any existing test, because every test fixture's button declared NO cadence, so a backend that never ticks a hold and one that ticks it correctly are observationally identical. A capability landed as an opt-in declaration is invisible to a fixture set in which nothing opts in — so the fixture is part of the seam, and `RepeatingButtonFixture` is now the negative-control's positive twin.",
+      "publishable_changes_bullets": [
+        "`ShellCoreTui::tick_auto_repeat` + `auto_repeat_holds` (§5.41): the TUI drives the SAME `CoreShell::tick_auto_repeat_for_window` and answers the same census, so the two backends share one implementation rather than two that can drift",
+        "`measure_frame_dt` split out of `compute_paint_scene`, which gains a `_with_dt` form: the frame now has work on both sides of the view (the repeat advance is an input and needs `&mut`), and measuring in both halves would put one frame on two clocks. Handed along explicitly — no hidden Cell channel between the two",
+        "`wants_next_frame(epsilon)` replaces the run loop's two `any_animation_active` poll sites: a live hold must keep the terminal off `IDLE_POLL_MS` exactly as an unsettled animation does, and the loop asks in two places that must not disagree (the R873 one-gate discipline)",
+        "`RepeatingButtonFixture` (pinion-core test-fixtures + the pinion-tui / pinion-a11y blank impls): a button identical to `ButtonFixture` except that it DECLARES a cadence. Its absence is why nothing could catch R1549's gap — every fixture's button declared none, so a backend that never ticked a hold and one that ticked it correctly produced identical output"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-tui 155 + 19 green, incl. two new ones: a held press with a declared cadence repeats in a terminal, ends the frame back in `Pressed` (the Up-then-Down arc), publishes its run, reports armed so the loop stays awake, and stops on release; plus a NEGATIVE CONTROL on the undeclared fixture, without which the first test would pass on a backend that repeats everything",
+        "Counterfactual (make `tick_auto_repeat` a no-op returning false, the R1549-only world) verified to FAIL the new test and leave the negative control passing",
+        "pinion-core 2945, pinion-a11y 253 + 17 green after the fixture addition; clippy clean on all three"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35",
+        "5.38",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "No carry. Two R1549 axis-level items stand unchanged, both stated limits at Qt parity: an AT hears one value-change per repeat, and scrollbar arrows have no `Button` sub-regions to declare from",
+        "Found while here and NOT fixed, because it is pre-existing and wider than this round: `pinion-tui` handles no `DeferredInput::Tick` arm at all, so `scene/tick` on a TUI binding advances nothing — not animations either. R1549.2 does not make that worse (the TUI hold rides the paint clock, which does run), but the RPC frame-step contract is GUI-only and that is its own round"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

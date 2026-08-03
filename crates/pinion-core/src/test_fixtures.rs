@@ -458,6 +458,61 @@ pub const MULTI_FIXTURE_SCROLL_KEY: &str = "sb_state";
 /// `ShellCoreTui::dispatch_intent` (pinion-tui) — the R884 bug class
 /// was exactly "framework send silently no-ops on a Container root",
 /// and a bare-External fixture cannot catch it.
+/// R1549.2 §5.35 §5.38 §2 #6 — [`ButtonFixture`] whose button DECLARES a
+/// press-and-hold repeat cadence (`AutoRepeat`, Qt
+/// `QAbstractButton::setAutoRepeat`). Identical in every other respect,
+/// so a test that swaps it in isolates exactly one variable: whether the
+/// backend under test advances a held press.
+///
+/// It exists because R1549 landed the repeat on the Vello path only,
+/// and nothing could catch that from the TUI side — every fixture's
+/// button declared no cadence, so a backend that never ticked a hold and
+/// one that ticked it correctly produced identical output.
+///
+/// The cadence is deliberately short (50 ms delay, 25 ms interval) so a
+/// test crosses several thresholds in one injected tick without pretending
+/// the DEFAULT is short; the default lives on `AutoRepeat::desktop`.
+pub struct RepeatingButtonFixture;
+
+impl RepeatingButtonFixture {
+    /// The declared cadence — read by a test so its expected fire count
+    /// comes from the same value the widget answers with, rather than a
+    /// second copy of the numbers that can drift from it.
+    #[must_use]
+    pub fn repeat() -> crate::input::AutoRepeat {
+        crate::input::AutoRepeat::new(0.050, 0.025)
+    }
+}
+
+impl WidgetCore for RepeatingButtonFixture {
+    type State = ButtonState;
+    type Event = ButtonEvent;
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(ButtonExternal::new().with_auto_repeat(Self::repeat()))
+    }
+
+    fn tag() -> &'static str {
+        <ButtonFixture as WidgetCore>::tag()
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        <ButtonFixture as WidgetCore>::read_state(scene)
+    }
+
+    fn view(state: Self::State, frame: &Frame) -> Scene {
+        <ButtonFixture as WidgetCore>::view(state, frame)
+    }
+
+    fn event_name(event: Self::Event) -> &'static str {
+        <ButtonFixture as WidgetCore>::event_name(event)
+    }
+
+    fn title() -> &'static str {
+        "repeating button fixture"
+    }
+}
+
 pub struct ScrollbarMultiFixture;
 
 impl WidgetCore for ScrollbarMultiFixture {
