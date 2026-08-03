@@ -1835,7 +1835,7 @@ impl<V: WidgetView> ShellCore<V> {
                 Some(self.modifiers),
                 Some(self.key_dispatch_focus_for_window(wid)),
             ),
-            auto_repeat_holds: self.core.auto_repeat_holds_for_window(wid),
+            auto_repeat_holds: self.auto_repeat_holds_for_window(wid),
             pacing_state: self.core.is_window_known(wid).then(|| {
                 match self.target_fps_for_window(wid) {
                     Some(fps) => pinion_rpc::PacingState::Override(fps),
@@ -1846,6 +1846,23 @@ impl<V: WidgetView> ShellCore<V> {
                 self.core.is_window_known(w)
             }),
         }
+    }
+
+    /// R1549.3 §5.35 §5.12 — the in-flight press census this window would
+    /// answer `scene/auto_repeat` with, and the ONE home the dispatch
+    /// resolver reads it from.
+    ///
+    /// The `pinion-tui` peer (`ShellCoreTui::auto_repeat_holds`) landed at
+    /// R1549.2 while this side kept resolving inline, which left the GUI
+    /// with no way for a test to observe a hold — and that is how the live
+    /// paint-clock arm came to have no coverage at all (see
+    /// `tests/auto_repeat_live_clock.rs`).
+    #[must_use]
+    pub fn auto_repeat_holds_for_window(
+        &self,
+        window_id: &str,
+    ) -> Vec<pinion_runtime::AutoRepeatHold> {
+        self.core.auto_repeat_holds_for_window(window_id)
     }
 
     /// R681 §2 #4 atomic 3 §5.16 §5.28 — read the per-window target

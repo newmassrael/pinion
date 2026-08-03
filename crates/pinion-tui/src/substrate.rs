@@ -397,6 +397,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         self.core.any_animation_active(epsilon)
     }
 
+    // R1549.3 — NOTE for anyone adding a frame-pacing site: this is the
+    // ANIMATION predicate, not the loop's gate. The gate is
+    // [`Self::wants_next_frame`], which folds in a live press-and-hold; a
+    // pacing site that asks this one instead would let the terminal park
+    // mid-hold, which is exactly the defect R1549.2 fixed. Kept public
+    // because "is anything animating?" is a legitimate question for a
+    // binding to ask about itself — it is simply not the same question.
+
     /// R1426 §5.41 §5.28 — the render-time terminal-cursor blink phase for this
     /// frame: `true` when a blinking cursor should paint (its visible half),
     /// `false` on the hidden half; steady / hidden cursors resolve to `true`.

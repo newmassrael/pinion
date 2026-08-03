@@ -80034,6 +80034,48 @@
         "Found while here and NOT fixed, because it is pre-existing and wider than this round: `pinion-tui` handles no `DeferredInput::Tick` arm at all, so `scene/tick` on a TUI binding advances nothing — not animations either. R1549.2 does not make that worse (the TUI hold rides the paint clock, which does run), but the RPC frame-step contract is GUI-only and that is its own round"
       ]
     },
+    "Round 1549.3": {
+      "decision_summary": "The GUI's live paint-clock arm had no coverage, and the round's own demo is why. Measured: with that arm DELETED OUTRIGHT — the wall-clock advance inside `compute_paint_scene_internal`, the path a real mouse in a real window takes — the entire pinion-shell suite passed AND `r1549_held_press_repeats.py` passed all 58 assertions. The demo calls `scene/set_fps 0` to make its fire counts exact, and a paused window is precisely the case where that arm contributes zero; so the demo exercises only the injected `scene/tick` arm, by construction. This is [[r1506-guard-renders-production]] in a new dress: not a guard drawing a copy of its target, but a guard whose own precondition for being deterministic is the thing that steers it away from the production path. Determinism and coverage pulled in opposite directions and I noticed only the first. It is also the SECOND time in one round that a capability landed on one arm and the guard landed on another — R1549.2 was Vello-vs-TUI, this is injected-vs-live — which says the failure is not carelessness about backends but a habit of testing where testing is easy. The fix asserts on `held_secs`, the accumulator every armed frame advances before any threshold applies, so the guard runs the real paint with a real clock and still needs no sleep and no tolerance.",
+      "changes_bullets": [
+        "`crates/pinion-shell/tests/auto_repeat_live_clock.rs`: three tests over the REAL `compute_paint_scene`, asserting on `held_secs` — the accumulator every armed frame advances before any threshold is involved, so the guard needs no sleep and no wall-clock tolerance",
+        "`ShellCore::auto_repeat_holds_for_window` (§5.35 §5.12): the GUI peer of the `ShellCoreTui` accessor R1549.2 added, and now the ONE home the dispatch resolver reads from. Its absence is why no GUI test could observe a hold",
+        "`impl WidgetView for RepeatingButtonFixture` (pinion-shell test-fixtures): R1549.2 added the fixture for the TUI and stopped, so the GUI had no fixture that declared a cadence at all",
+        "Note on `ShellCoreTui::any_animation_active`: kept public (a binding may legitimately ask it) with a comment recording that the LOOP's gate is `wants_next_frame`, since a pacing site that asked the narrower one would re-open R1549.2's defect"
+      ],
+      "verification_bullets": [
+        "The counterfactual that started this, run twice: with the live arm deleted, BEFORE this change the whole pinion-shell suite AND the 58-assertion demo passed; AFTER it, two of the three new tests FAIL and the negative control still passes",
+        "pinion-shell 17 suites green, pinion-tui green, clippy clean on both",
+        "The negative control uses `EchoButtonFixture` — the same `ButtonExternal::new()` the repeating fixture decorates, differing in exactly one thing (no declared cadence), so a shell that advanced every press would be caught"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "No carry. The two R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing R1549.2 finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all"
+      ],
+      "publishable_decision_summary": "The GUI's live paint-clock arm had no coverage, and the round's own demo is why. Measured: with that arm DELETED OUTRIGHT — the wall-clock advance inside `compute_paint_scene_internal`, the path a real mouse in a real window takes — the entire pinion-shell suite passed AND `r1549_held_press_repeats.py` passed all 58 assertions. The demo calls `scene/set_fps 0` to make its fire counts exact, and a paused window is precisely the case where that arm contributes zero; so the demo exercises only the injected `scene/tick` arm, by construction. This is [[r1506-guard-renders-production]] in a new dress: not a guard drawing a copy of its target, but a guard whose own precondition for being deterministic is the thing that steers it away from the production path. Determinism and coverage pulled in opposite directions and I noticed only the first. It is also the SECOND time in one round that a capability landed on one arm and the guard landed on another — R1549.2 was Vello-vs-TUI, this is injected-vs-live — which says the failure is not carelessness about backends but a habit of testing where testing is easy. The fix asserts on `held_secs`, the accumulator every armed frame advances before any threshold applies, so the guard runs the real paint with a real clock and still needs no sleep and no tolerance.",
+      "publishable_changes_bullets": [
+        "`crates/pinion-shell/tests/auto_repeat_live_clock.rs`: three tests over the REAL `compute_paint_scene`, asserting on `held_secs` — the accumulator every armed frame advances before any threshold is involved, so the guard needs no sleep and no wall-clock tolerance",
+        "`ShellCore::auto_repeat_holds_for_window` (§5.35 §5.12): the GUI peer of the `ShellCoreTui` accessor R1549.2 added, and now the ONE home the dispatch resolver reads from. Its absence is why no GUI test could observe a hold",
+        "`impl WidgetView for RepeatingButtonFixture` (pinion-shell test-fixtures): R1549.2 added the fixture for the TUI and stopped, so the GUI had no fixture that declared a cadence at all",
+        "Note on `ShellCoreTui::any_animation_active`: kept public (a binding may legitimately ask it) with a comment recording that the LOOP's gate is `wants_next_frame`, since a pacing site that asked the narrower one would re-open R1549.2's defect"
+      ],
+      "publishable_verification_bullets": [
+        "The counterfactual that started this, run twice: with the live arm deleted, BEFORE this change the whole pinion-shell suite AND the 58-assertion demo passed; AFTER it, two of the three new tests FAIL and the negative control still passes",
+        "pinion-shell 17 suites green, pinion-tui green, clippy clean on both",
+        "The negative control uses `EchoButtonFixture` — the same `ButtonExternal::new()` the repeating fixture decorates, differing in exactly one thing (no declared cadence), so a shell that advanced every press would be caught"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "No carry. The two R1549 axis-level items stand unchanged (AT hears one value-change per repeat, at Qt parity; scrollbar arrows have no `Button` sub-regions), as does the pre-existing R1549.2 finding that `pinion-tui` handles no `DeferredInput::Tick` arm at all"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

@@ -30,7 +30,8 @@
 use core::fmt;
 
 use pinion_core::test_fixtures::{
-    ContextMenuFixture, EchoButtonFixture, ModalTailFixture, ScrollbarMultiFixture,
+    ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
+    ScrollbarMultiFixture,
 };
 
 use crate::{VelloContext, VelloRenderer, WidgetRenderer, WidgetView};
@@ -242,6 +243,27 @@ impl WidgetView for ModalTailFixture {
         crate::SizeStrategy::Fixed {
             width: 8,
             height: 8,
+        }
+    }
+}
+
+/// R1549.3 §5.41 §5.35 §2 #6 — Vello-side `WidgetView` impl for the
+/// repeating-button fixture, the mirror of the `pinion-tui` one.
+///
+/// R1549.2 added the fixture for the TUI and stopped there, which left
+/// the GUI's own LIVE paint-clock arm with no fixture that could reach
+/// it — measured: deleting that arm outright kept every test AND the
+/// 58-assertion demo green, because the demo pauses the window
+/// (`set_fps 0`) for determinism and so exercises only the injected
+/// `scene/tick` arm. The path a real mouse takes was the one nothing
+/// covered.
+impl WidgetView for RepeatingButtonFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> crate::SizeStrategy {
+        crate::SizeStrategy::Fixed {
+            width: 200,
+            height: 200,
         }
     }
 }
