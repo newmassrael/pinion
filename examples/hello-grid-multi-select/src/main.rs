@@ -72,8 +72,8 @@ use pinion_core::widgets::virtual_select::{
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    no_decoration, no_edit, no_header_decoration, view_virtual_table,
+    CellIndex, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData, header_from_slice,
+    no_decoration, no_edit, no_row_header, view_virtual_table,
 };
 use std::collections::BTreeSet;
 
@@ -250,8 +250,8 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
         |id| selection.is_selected(id),
         GridModel {
             cell: cell_text,
-            header: header_from_slice(&HEADERS),
-            header_decoration: no_header_decoration,
+            columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),
+            rows: no_row_header(),
             decoration: no_decoration,
             edit: no_edit,
         },

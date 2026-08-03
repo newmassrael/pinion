@@ -62,7 +62,7 @@
 
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow, SortDirection,
-    WidgetA11y, grid_table_nodes,
+    WidgetA11y, attach_row_headers, grid_table_nodes,
 };
 // R816 §5.40 — `AriaRole` is now only referenced by the test asserts (the
 // lifted `grid_table_nodes` builder owns role + state tagging in prod).
@@ -77,17 +77,20 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::{
     TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
+use pinion_core::widgets::virtual_list::VisibleWindow;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_runtime::{DecodedImage, use_image_store};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, Decoration, TableData, TableSelection, TableStyle, view_table,
+    CellIndex, Decoration, HeaderAxis, TableData, TableSelection, TableStyle, view_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTableRenderer, HelloTableRendererError);
 
-const WIN_W: u32 = 540;
+// R1548 — widened by the vertical header band (56px): the eager table's
+// content is now `band + NCOLS x col_width + block padding`.
+const WIN_W: u32 = 600;
 const WIN_H: u32 = 360;
 /// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across
 /// the example gallery.
@@ -179,6 +182,38 @@ fn header_decoration(col: usize) -> Option<Decoration> {
         meaning: KEY_MEANING.to_string(),
     })
 }
+
+/// R1548 §5.27 — the **vertical** section axis's `Qt::DisplayRole`
+/// (`headerData(section, Qt::Vertical, Qt::DisplayRole)`): Qt's own default,
+/// the 1-based row number.
+///
+/// Asked with the row's DATA index, so a sort carries each number with its row.
+fn row_header_label(row: usize) -> String {
+    (row + 1).to_string()
+}
+
+/// R1548 §5.27 — the vertical axis's `Qt::DecorationRole`, the icon arm: a
+/// pin glyph on the one row that is pinned.
+///
+/// Present so the **eager** surface answers both section roles on both axes.
+/// A role one grid surface answers and its sibling does not is two contracts in
+/// one tree — R1547.1 paid for that lesson on the horizontal axis, where the
+/// eager table's half of the role sat dead for a whole round.
+fn row_header_decoration(row: usize) -> Option<Decoration> {
+    (row == PINNED_ROW).then(|| Decoration::Icon {
+        source: ICON_PIN.to_string(),
+        meaning: PIN_MEANING.to_string(),
+    })
+}
+
+/// R1548 — the `memory://` source of the pin glyph, what it means, and which
+/// row carries it. MEANINGFUL: nothing else in this table says a row is
+/// pinned, so the mark is the only thing that does — and in Qt it would be
+/// silent, because `QAccessibleTableHeaderCell::text` reads the display role
+/// alone on both orientations.
+const ICON_PIN: &str = "memory://row-pin";
+const PIN_MEANING: &str = "Pinned";
+const PINNED_ROW: usize = 5;
 
 /// Immutable demo dataset: one row per recently-landed catalog widget.
 /// The data is a `const` (the single source of truth) so [`TableState`]
@@ -380,6 +415,10 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
     );
     // R1547 — and the key glyph the identifying COLUMN's header carries.
     store.insert("column-key", &disc_icon(theme.resolve(ColorRole::Accent)));
+    // R1548 — and the pin glyph the pinned ROW's header carries. The vertical
+    // section axis reaches the same registry through the same role, which is
+    // what "one type, one painter, two axes" buys.
+    store.insert("row-pin", &disc_icon(theme.resolve(ColorRole::Accent)));
     // R1020 §5.39 — the grid is a single Tab stop; opt the table into the
     // scene-derived focus enumeration so its PRIMARY_TAG is collected.
     let style = TableStyle::m3();
@@ -402,6 +441,13 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
             // R1547 — the same role on the SECTION axis, Qt
             // `headerData(section, Qt::Horizontal, Qt::DecorationRole)`.
             header_decoration: Some(&header_decoration),
+            // R1548 — Qt `headerData(section, Qt::Vertical, …)`: the eager
+            // surface answers the SECOND section axis too, through the same
+            // `HeaderAxis` type the virtualized grid uses.
+            row_headers: Some(HeaderAxis {
+                label: &row_header_label,
+                decoration: &row_header_decoration,
+            }),
         },
         // Single-row selection only; the spreadsheet cell range selection is
         // the dedicated `hello-cell-select` grid's model (R953 — one selection
@@ -638,14 +684,28 @@ impl WidgetA11y for TableView {
                     .collect(),
             })
             .collect();
-        grid_table_nodes(
+        let mut nodes = grid_table_nodes(
             PRIMARY_TAG,
             "pinion widget catalog",
             false,
             &format!("{PRIMARY_TAG}_hrow"),
             &columns,
             &rows,
-        )
+        );
+        // R1548 — the vertical header axis. The same composing pass the
+        // virtualized grids use, on the eager table's own builder: the pass
+        // addresses rows through the `GridTag` SSOT, so what topology built
+        // them does not matter. An eager surface's "window" is every row.
+        attach_row_headers(
+            &mut nodes,
+            PRIMARY_TAG,
+            &VisibleWindow {
+                first: 0,
+                count: NROWS,
+            },
+            |visual| state.order.get(visual).copied().unwrap_or(visual),
+        );
+        nodes
     }
 
     /// R707 §5.40 — composite focus model (mirror of `hello-datepicker`).

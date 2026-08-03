@@ -98,7 +98,7 @@ pub use tree_view::{
     TreeGridSelection, tree_access_nodes, tree_row_tag, treegrid_nodes, windowed_tree_access_nodes,
 };
 pub use virtual_grid::{
-    mark_grid_editability, windowed_grid_nodes, windowed_grid_nodes_frozen,
+    attach_row_headers, mark_grid_editability, windowed_grid_nodes, windowed_grid_nodes_frozen,
     windowed_grid_nodes_multiselected, windowed_grid_nodes_selected, windowed_grid_nodes_sorted,
     windowed_grid_nodes_wide,
 };

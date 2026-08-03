@@ -35,7 +35,7 @@
 //! horizontal scroll), no sort / selection / scrollbar peer — those are
 //! follow-ups, mirroring the R744 → R746 list arc.
 
-use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes};
+use pinion_a11y::{AccessNode, WidgetA11y, attach_row_headers, windowed_grid_nodes};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -47,7 +47,7 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, CellPainter, CellRender, Decoration, GridModel, GridScroll, TableStyle,
+    CellIndex, CellPainter, CellRender, Decoration, GridModel, GridScroll, HeaderAxis, TableStyle,
     VirtualTableData, header_from_slice, no_edit, view_virtual_table,
 };
 
@@ -55,9 +55,10 @@ include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVirtualTableRenderer, HelloVirtualTableRendererError);
 
 /// Initial window size — freely resizable; the grid body re-windows on
-/// every `Resized` event. Wide enough that `NCOLS × COL_W` fits without
-/// horizontal scroll.
-const WIN_W: u32 = 400;
+/// every `Resized` event. Wide enough that the vertical header band plus
+/// `NCOLS × COL_W` fits without horizontal scroll (R1548 widened it by the
+/// band: 56 + 375 + the block padding).
+const WIN_W: u32 = 470;
 const WIN_H: u32 = 480;
 /// Shared [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key.
 const THEME_TAG: &str = "app";
@@ -87,6 +88,18 @@ const LOAD_COL: usize = 4;
 /// R1532 — the load bar's track height; the rest of the row is padding, so
 /// the bar reads as a gauge inside the cell rather than as a filled cell.
 const BAR_H: u32 = 10;
+/// R1548 — every `PIN_EVERY`-th row is **pinned**, and its row header carries
+/// a mark saying so.
+///
+/// Deliberately a fact no *cell* states. A row-header mark that restated a
+/// column would be decorative (the `Status` column's swatch is, and says so
+/// with an empty `meaning`); this one is the only place "pinned" appears, so
+/// it is exactly the case where a header whose distinguishing information is
+/// its glyph has to reach assistive technology or the information is lost.
+const PIN_EVERY: usize = 25;
+/// R1548 — what a pinned row's mark means, in words. The string an AT reads
+/// ahead of the row number.
+const PIN_MEANING: &str = "Pinned";
 /// Paint-root + a11y `grid` tag, and the [`StubExternal`] anchor tag.
 const TABLE_TAG: &str = "vtbl";
 /// Cache key for the body scroll container's reactive `ScrollState`.
@@ -172,6 +185,32 @@ fn header_decoration(col: usize, theme: &Theme) -> Option<Decoration> {
         }),
         _ => None,
     }
+}
+
+/// R1548 §5.27 — the **vertical** section axis's `Qt::DisplayRole`:
+/// `headerData(section, Qt::Vertical, Qt::DisplayRole)`, the 1-based row
+/// number Qt's own default `headerData` answers with.
+///
+/// Asked with the row's **data** index, so a pinned row keeps its number
+/// wherever a sort puts it.
+fn row_header_label(row: usize) -> String {
+    (row + 1).to_string()
+}
+
+/// R1548 §5.27 — the vertical axis's `Qt::DecorationRole`: a mark on the pinned
+/// rows, and `None` on every other.
+///
+/// The negative half is the point on this axis too — "pinned" must be able to
+/// be false, or the mark conveys nothing — and the `meaning` is **non-empty**,
+/// unlike the `Status` column's decorative swatch: nothing else in this grid
+/// says a row is pinned, so an AT that could not hear the mark would not hear
+/// the fact at all. Qt's `QAccessibleTableHeaderCell::text` answers from the
+/// display role alone on both orientations, which is exactly this case.
+fn row_header_decoration(row: usize, theme: &Theme) -> Option<Decoration> {
+    (row % PIN_EVERY == 0).then(|| Decoration::Swatch {
+        color: theme.resolve(ColorRole::Accent),
+        meaning: PIN_MEANING.to_string(),
+    })
 }
 
 /// R1535 §5.27 — the grid's `Qt::DecorationRole`: a colour swatch on every
@@ -327,11 +366,21 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         |_| false, // display-only grid: no selection
         GridModel {
             cell: cell_text,
-            header: header_from_slice(&HEADERS),
-            // R1547 — Qt `headerData(section, Qt::Horizontal,
-            // Qt::DecorationRole)`: the same role on the section axis, so the
-            // grid now answers a role on BOTH of its axes.
-            header_decoration: |col: usize| header_decoration(col, &theme),
+            columns: HeaderAxis {
+                label: header_from_slice(&HEADERS),
+                // R1547 — Qt `headerData(section, Qt::Horizontal,
+                // Qt::DecorationRole)`: the same role on the section axis, so the
+                // grid now answers a role on BOTH of its axes.
+                decoration: |col: usize| header_decoration(col, &theme),
+            },
+            // R1548 — Qt `headerData(section, Qt::Vertical, …)`: the SECOND
+            // section axis, answering the same two roles as the first through
+            // the same type, so the grid cannot end up with a decorated column
+            // header and a mute row header.
+            rows: Some(HeaderAxis {
+                label: row_header_label,
+                decoration: |row: usize| row_header_decoration(row, &theme),
+            }),
             // R1535 — Qt `data(index, Qt::DecorationRole)`: one column answers
             // with a mark whose colour varies by row, which is the axis a
             // per-column delegate cannot express.
@@ -403,13 +452,19 @@ impl WidgetA11y for VirtualTableView {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_H, OVERSCAN);
-        windowed_grid_nodes(
+        let mut nodes = windowed_grid_nodes(
             TABLE_TAG,
             "Virtual data grid",
             HEADERS.len(),
             u32::try_from(N).unwrap_or(u32::MAX),
             &window,
-        )
+        );
+        // R1548 — the vertical header axis. A composing pass rather than a
+        // seventh builder variant (the R1544 `mark_grid_editability` shape), so
+        // it reaches every grid topology. Identity permutation: this grid is
+        // unsorted, so a visual position IS its data row.
+        attach_row_headers(&mut nodes, TABLE_TAG, &window, |view_pos| view_pos);
+        nodes
     }
 }
 

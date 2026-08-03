@@ -75,7 +75,7 @@ from rpc_verify import (  # noqa: E402
 )
 
 VT = "vtbl"
-VT_WIN = (400, 480)
+VT_WIN = (470, 480)
 VT_HEADERS = ["Index", "Name", "Status", "Flag", "Load"]
 KEY_COL = 0
 STATUS_COL = 2

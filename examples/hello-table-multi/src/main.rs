@@ -252,6 +252,7 @@ fn view(state: &TableMultiState, _frame: &Frame) -> Scene {
             row_ids: &[],
             decoration: None,
             header_decoration: None,
+            row_headers: None,
         },
         // R952 — row-multi-select grid: per-row bitmap, no cell range selection.
         TableSelection {

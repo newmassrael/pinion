@@ -59,7 +59,7 @@ from rpc_verify import (  # noqa: E402
     wait_until,
 )
 
-WIN = (400, 480)
+WIN = (470, 480)
 TABLE_TAG = "vtbl"
 STATUS_TAG = "vtbl_status"
 EDIT_FIELD_TAG = "vtbl_editor"

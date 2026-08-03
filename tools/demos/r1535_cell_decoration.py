@@ -94,7 +94,7 @@ DECORATION_PX = 10
 STATUS_KINDS = 3
 #: The window the app boots with, so the paint snapshot is taken at the
 #: extent the runtime laid out.
-WIN = (400, 480)
+WIN = (470, 480)
 
 
 def snapshot(tf: RpcSubprocess) -> dict:

@@ -52,7 +52,7 @@ from rpc_verify import (  # noqa: E402
 )
 
 EXAMPLE = "hello-virtual-table"
-WIN = (400, 480)
+WIN = (470, 480)
 N = 10_000
 NCOLS = 3
 ROW_H = 36

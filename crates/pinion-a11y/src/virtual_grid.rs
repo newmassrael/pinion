@@ -575,6 +575,68 @@ pub fn mark_grid_editability(
     }
 }
 
+/// R1548 §5.40 §5.27 — give a virtualized grid's tree its **vertical header
+/// axis**: every windowed `row` gains a leading WAI-ARIA `rowheader` cell, and
+/// a node for it is appended.
+///
+/// The a11y half of Qt's `headerData(section, Qt::Vertical, …)` /
+/// `QTableView::verticalHeader()`, paired with
+/// [`GridModel::rows`](../../pinion_widget_paint/table/struct.GridModel.html)
+/// on the paint side. Call it when — and only when — the grid's model answers
+/// that axis, which is exactly when the band is painted: the two are one
+/// statement there, so they cannot disagree here either.
+///
+/// # Why a pass over the built nodes
+///
+/// The R1544 [`mark_grid_editability`] precedent, for the reason it gives: the
+/// builders above are at the argument ceiling, and threading a flag through all
+/// six would grow a family this module is trying not to grow. Composing instead
+/// means the axis reaches **every** topology at once — identity-order, sorted,
+/// frozen, column-windowed, single- and multi-select — rather than the one
+/// builder a new parameter would have been added to, which is how a sibling
+/// surface silently ends up without an axis its neighbour has.
+///
+/// Orphan-free by the same rule: rows are addressed only through the
+/// [`GridTag`] encode SSOT (never by decoding a tag back into an index), and a
+/// row absent from `nodes` — windowed out — is skipped rather than invented.
+///
+/// # Why the cell carries no name here
+///
+/// R1547's rule, on the second axis: the `rowheader`'s accessible name is
+/// derived from the painted band, so the announced string is the drawn one and
+/// a section's `Qt::DecorationRole` mark can join it. Qt derives a header
+/// cell's name from the model on a path independent of `paintSection`
+/// (`QAccessibleTableHeaderCell::text` reads `Qt::DisplayRole`), so a Qt view
+/// that elides or overrides its row header announces a string that is not on
+/// screen — and one whose distinguishing information is a glyph announces
+/// nothing.
+///
+/// - `rows` — the row window the tree was built from.
+/// - `source` — visual position → **data** row, the R778 sort permutation the
+///   paint asked its model with (`|v| v` for an unpermuted grid). One function
+///   rather than a slice so the identity case allocates nothing.
+pub fn attach_row_headers(
+    nodes: &mut Vec<AccessNode>,
+    grid_tag: &str,
+    rows: &VisibleWindow,
+    source: impl Fn(usize) -> usize,
+) {
+    let mut headers: Vec<AccessNode> = Vec::with_capacity(rows.count);
+    for view_pos in rows.indices() {
+        let id = source(view_pos);
+        let row_tag = GridTag::data_row(grid_tag, id);
+        let Some(row) = nodes.iter_mut().find(|n| n.tag == row_tag) else {
+            continue;
+        };
+        let header_tag = GridTag::row_header(grid_tag, id);
+        // Leading, because a `rowheader` labels the cells that follow it — the
+        // reading order an AT walks, and the order the band is painted in.
+        row.children.insert(0, header_tag.clone());
+        headers.push(AccessNode::new(header_tag, AriaRole::RowHeader));
+    }
+    nodes.extend(headers);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1146,5 +1208,105 @@ mod tests {
             .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
             .count();
         assert_eq!(data_rows, 0, "an empty window has no data-row nodes");
+    }
+
+    // ── R1548 §5.40 §5.27 — the vertical header axis ────────────────
+
+    /// The seam: every windowed row leads with a `rowheader`, and a node for it
+    /// exists.
+    #[test]
+    fn r1548_every_windowed_row_leads_with_a_rowheader() {
+        let rows = window(40, 3);
+        let mut nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &rows);
+        attach_row_headers(&mut nodes, "vtbl", &rows, |view_pos| view_pos);
+        for id in rows.indices() {
+            let header_tag = GridTag::row_header("vtbl", id);
+            let row = nodes
+                .iter()
+                .find(|n| n.tag == GridTag::data_row("vtbl", id))
+                .expect("the data row");
+            assert_eq!(
+                row.children.first().map(String::as_str),
+                Some(header_tag.as_str()),
+                "the rowheader is the row's FIRST child — it labels the cells \
+                 that follow it, which is the order an AT walks",
+            );
+            let header = nodes
+                .iter()
+                .find(|n| n.tag == header_tag)
+                .expect("the rowheader node");
+            assert_eq!(header.role, AriaRole::RowHeader);
+            assert!(
+                header.name.is_none(),
+                "and it carries NO name: R1547's rule on the second axis — the \
+                 announced string is derived from the band that was painted",
+            );
+        }
+    }
+
+    /// **Why a pass and not a seventh builder.** The axis reaches a topology
+    /// this function has never heard of — the permuted one, built by a
+    /// different implementation — with no flag threaded anywhere.
+    #[test]
+    fn r1548_the_axis_composes_with_the_sorted_topology() {
+        let order: Vec<usize> = (0..100).rev().collect();
+        let rows = window(0, 3);
+        let mut nodes = windowed_grid_nodes_sorted("g", "G", NCOLS, &order, None, None, &rows);
+        attach_row_headers(&mut nodes, "g", &rows, |view_pos| order[view_pos]);
+        // Visual position 0 is data row 99: the header is addressed by the
+        // row's identity, exactly as its strip and its cells are.
+        let row = nodes
+            .iter()
+            .find(|n| n.tag == GridTag::data_row("g", 99))
+            .expect("the top row is data row 99");
+        assert_eq!(
+            row.children.first().map(String::as_str),
+            Some(GridTag::row_header("g", 99).as_str()),
+        );
+        assert!(
+            !nodes.iter().any(|n| n.tag == GridTag::row_header("g", 0)),
+            "and data row 0, which is not in the window, has no header node",
+        );
+    }
+
+    /// Orphan-free: a row the tree does not hold gets no header node, rather
+    /// than a node pointing at nothing.
+    #[test]
+    fn r1548_a_row_outside_the_tree_is_skipped_not_invented() {
+        let painted = window(10, 2);
+        let mut nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &painted);
+        // A window WIDER than the one the tree was built from.
+        attach_row_headers(&mut nodes, "vtbl", &window(10, 5), |view_pos| view_pos);
+        let headers = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::RowHeader)
+            .count();
+        assert_eq!(
+            headers, painted.count,
+            "one header per row that EXISTS, not per row that was asked about",
+        );
+    }
+
+    /// The negative half: a grid whose model answers no vertical axis never
+    /// calls this, and its tree is byte-identical to the pre-R1548 one.
+    #[test]
+    fn r1548_an_unheaded_grid_has_no_rowheader_at_all() {
+        let rows = window(0, 4);
+        let nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &rows);
+        assert!(
+            !nodes.iter().any(|n| n.role == AriaRole::RowHeader),
+            "no rowheader node",
+        );
+        for id in rows.indices() {
+            let row = nodes
+                .iter()
+                .find(|n| n.tag == GridTag::data_row("vtbl", id))
+                .expect("the data row");
+            assert_eq!(
+                row.children.first().map(String::as_str),
+                Some(cell_tag("vtbl", id, 0).as_str()),
+                "and the row still leads with its first gridcell",
+            );
+        }
     }
 }

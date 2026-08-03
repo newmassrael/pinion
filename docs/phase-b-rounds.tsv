@@ -69,3 +69,4 @@
 1545	dataviz	a category is an axis kind, Qt QBarCategoryAxis + a resolved window
 1546	text	a text run states its background, Qt setBackground + published extent + WCAG contrast
 1547	modelview	a header section is asked for its role, Qt headerData DecorationRole + the columnheader named from paint
+1548	modelview	a row is asked for its header, Qt headerData Qt::Vertical as a typed axis + rowheader named from paint

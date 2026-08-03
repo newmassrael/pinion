@@ -320,7 +320,9 @@ impl GridSendKey {
 /// header band `"{tag}_fhrow"`, frozen data row `"{tag}_frow{id}"`,
 /// tree-grid metadata row `"{tag}_drow{id}"`. The R863 tree-grid `treegrid`
 /// a11y adds the metadata cell `"{tag}_dcell{id}_{col}"` and the tree-column
-/// header `"{tag}_chtree"`.
+/// header `"{tag}_chtree"`. R1548 adds the **vertical** section axis: row
+/// header `"{tag}_rh{row}"`, its mark `"{tag}_rhdeco{row}"`, and the corner
+/// where the two axes meet `"{tag}_hcorner"`.
 pub struct GridTag;
 
 impl GridTag {
@@ -413,6 +415,48 @@ impl GridTag {
     #[must_use]
     pub fn header_decoration(tag: &str, col: usize) -> String {
         format!("{tag}_hdeco{col}")
+    }
+
+    /// (R1548) One **row** header's cell — `"{tag}_rh{row}"`: the vertical
+    /// section axis's peer of [`Self::col_header`] (Qt `headerData(section,
+    /// Qt::Vertical, …)`, painted by `QTableView::verticalHeader()`).
+    ///
+    /// `row` is a `usize` where [`Self::data_row`] takes any
+    /// [`Display`](core::fmt::Display), and the narrowing is deliberate: the
+    /// string id space belongs to the tree-grid, and a `QTreeView` has no
+    /// vertical header at all. Typing it out also keeps this address
+    /// unambiguous against [`Self::row_header_decoration`] — with a free-form
+    /// id, `"t_rhdeco3"` would be a legal reading of both.
+    ///
+    /// Presentational (`'_'`, no `'#'`), like every other tag in this family:
+    /// tagging a painted thing is what makes it *askable*, and is independent
+    /// of whether it is a click target.
+    #[must_use]
+    pub fn row_header(tag: &str, row: usize) -> String {
+        format!("{tag}_rh{row}")
+    }
+
+    /// (R1548) One row header's **decoration** mark — `"{tag}_rhdeco{row}"`,
+    /// the `Qt::DecorationRole` answer painted ahead of row `row`'s label.
+    ///
+    /// The vertical-axis peer of [`Self::header_decoration`], and it needs its
+    /// own prefix for the reason that one did: a mark's address must not be
+    /// readable as some other node's.
+    #[must_use]
+    pub fn row_header_decoration(tag: &str, row: usize) -> String {
+        format!("{tag}_rhdeco{row}")
+    }
+
+    /// (R1548) The corner above the row-header band — `"{tag}_hcorner"`, the
+    /// cell where the two section axes meet (Qt's `QTableCornerButton`).
+    ///
+    /// Painted so the two bands align, and tagged so its extent can be read;
+    /// it names neither axis, so it carries no a11y node — Qt exposes it as an
+    /// unlabelled "select all" button, and without that behaviour such a node
+    /// would be noise in the tree rather than information.
+    #[must_use]
+    pub fn header_corner(tag: &str) -> String {
+        format!("{tag}_hcorner")
     }
 
     /// (R863) The tree-grid's **name**-column header cell — `"{tag}_chtree"`.
@@ -516,6 +560,23 @@ mod tests {
             GridTag::header_decoration("vtbl", 3),
             GridTag::cell_decoration("vtbl", 0, 3)
         );
+        // R1548 — the vertical section axis. Pinned against every address the
+        // family already had, because the whole value of a per-axis prefix is
+        // that no other node's address can be read as one of these.
+        assert_eq!(GridTag::row_header("vtbl", 3), "vtbl_rh3");
+        assert_eq!(GridTag::row_header_decoration("vtbl", 3), "vtbl_rhdeco3");
+        assert_eq!(GridTag::header_corner("vtbl"), "vtbl_hcorner");
+        for other in [
+            GridTag::col_header("vtbl", 3),
+            GridTag::header_decoration("vtbl", 3),
+            GridTag::data_row("vtbl", 3),
+            GridTag::cell_decoration("vtbl", 0, 3),
+            GridTag::header_row("vtbl"),
+        ] {
+            assert_ne!(GridTag::row_header("vtbl", 3), other);
+            assert_ne!(GridTag::row_header_decoration("vtbl", 3), other);
+            assert_ne!(GridTag::header_corner("vtbl"), other);
+        }
     }
 
     #[test]

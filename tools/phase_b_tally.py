@@ -308,9 +308,57 @@ AXES = [
         # all three still hold: the eager `view_table` still takes a header
         # slice, five of the six a11y grid builders still take every label, and
         # a binding still states its column window twice (paint + a11y).
-        "judged_at": 1536,
-        "completion": 87,
-        "evidence_snapshot": {"example-name": 37, "round-axis": 6},
+        # R1547 did NOT force a re-judgment (round ledger 6 -> 7, +17%, inside
+        # the band) and the number stayed at 87 with the gap statement updated:
+        # it OPENED the header axis's role dimension on the horizontal axis
+        # (`header_decoration`, Qt `headerData(section, Qt::Horizontal,
+        # Qt::DecorationRole)`) and named the axis's own largest remainder —
+        # there was no VERTICAL section axis at all.
+        #
+        # R1548 re-judgment, demanded by the tool: the round ledger took this
+        # axis 6 -> 8, past the 25% band. It closes that named item whole. Qt
+        # spells both axes with one virtual (`headerData(section, orientation,
+        # role)`) and a `QTableView` shows the vertical one by default; here a
+        # column could be asked what it was called and what mark it carried,
+        # and a ROW could be asked nothing — no row numbers, no pin, no lock,
+        # no breakpoint gutter, the whole left-hand band a professional table,
+        # editor or profiler has.
+        #
+        # It lands as a TYPE, not a second pair of accessors: `HeaderAxis<L,
+        # D>` holds the two roles a section answers, `GridModel::columns` and
+        # `GridModel::rows` are both one, so the axes answer the same role set
+        # by construction and one lifted painter (`section_content`) draws
+        # either. It reaches all three surfaces — unsplit grid, frozen split,
+        # eager `view_table` — from one composition point, and the a11y half is
+        # a PASS (`attach_row_headers`, the R1544 `mark_grid_editability`
+        # shape) rather than a seventh builder variant, so it lands on every
+        # topology including the permuted one.
+        #
+        # Two things past Qt 6.11, both read over the wire: an unanswered axis
+        # is a DECLARATION, not a blank strip (Qt's orientation is a runtime
+        # argument, so the commonest `QAbstractTableModel` bug there — handle
+        # `Qt::Horizontal`, fall through returning `QVariant()` — paints
+        # sections that still occupy their width and is reported by nothing;
+        # here `no_row_header()` is written down, the band is not painted, the
+        # model is asked ZERO times a frame, and painted-iff-answered is
+        # structural because there is no second "show the header" flag); and
+        # the mark's MEANING reaches assistive technology
+        # (`QAccessibleTableHeaderCell::text(Name)` answers from
+        # `Qt::DisplayRole` on both orientations, so a Qt row header whose
+        # distinguishing information is its glyph announces only the number).
+        #
+        # +4 and not more, audited at R1548: a section axis answers 2 of Qt's
+        # roles (`ToolTipRole` / `TextAlignmentRole` / `InitialSortOrderRole` /
+        # `SizeHintRole` all absent on a header); the row axis has NO
+        # interaction (Qt's `QHeaderView` section click selects the row, and
+        # its sections resize — row height here is one grid-wide pitch the
+        # windowing arithmetic is built on); the band's width is stated rather
+        # than `ResizeToContents`; and R1530's last small one now holds on both
+        # axes — a binding states its row window twice (paint + a11y) as it
+        # already did its column window.
+        "judged_at": 1548,
+        "completion": 91,
+        "evidence_snapshot": {"example-name": 37, "round-axis": 8},
     },
     {
         "key": "catalog",

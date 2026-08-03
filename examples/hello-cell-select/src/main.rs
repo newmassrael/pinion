@@ -260,6 +260,7 @@ fn view(state: &CellSelectState, _frame: &Frame) -> Scene {
             row_ids: &[],
             decoration: None,
             header_decoration: None,
+            row_headers: None,
         },
         TableSelection {
             rows: &no_rows_selected,

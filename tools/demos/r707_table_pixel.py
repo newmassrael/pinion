@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import RpcSubprocess, isolated_storage_dir  # noqa: E402
 
 T = "table"
-VIEWPORT = (540, 360)
+VIEWPORT = (600, 360)
 SHOT_A = "/tmp/r707_table_pixel_col0.png"
 SHOT_B = "/tmp/r707_table_pixel_col2.png"
 RING_BLUE = (26, 115, 232)  # Material focus blue #1A73E8 (shared R694 ring)

@@ -45,7 +45,7 @@ from rpc_verify import (  # noqa: E402
 )
 
 T = "table"
-VIEWPORT = (540, 360)
+VIEWPORT = (600, 360)
 
 
 def _q(d, slot: str):

@@ -44,8 +44,8 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    materialize_cells, no_decoration, no_edit, no_header_decoration, view_virtual_table,
+    CellIndex, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData, header_from_slice,
+    materialize_cells, no_decoration, no_edit, no_row_header, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -224,8 +224,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridModel {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| search.cell(c.row, c.col).to_string(),
-            header: header_from_slice(&HEADERS),
-            header_decoration: no_header_decoration,
+            columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),
+            rows: no_row_header(),
             decoration: no_decoration,
             edit: no_edit,
         },

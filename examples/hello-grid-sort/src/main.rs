@@ -44,7 +44,7 @@
 //! so — exactly as the 1-D `hello-virtual-sort` does — the tree is built
 //! inline (R776's view-order-permutation carve-out).
 
-use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_sorted};
+use pinion_a11y::{AccessNode, WidgetA11y, attach_row_headers, windowed_grid_nodes_sorted};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -62,8 +62,8 @@ use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected}
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, TableStyle, VirtualTableData, header_from_slice,
-    materialize_cells, no_decoration, no_edit, no_header_decoration, view_virtual_table,
+    CellIndex, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData, header_from_slice,
+    materialize_cells, no_decoration, no_edit, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -234,8 +234,14 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         GridModel {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| grid_sort.cell(c.row, c.col).to_string(),
-            header: header_from_slice(&HEADERS),
-            header_decoration: no_header_decoration,
+            columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),
+            // R1548 — Qt `headerData(section, Qt::Vertical, Qt::DisplayRole)`,
+            // answered with Qt's own default: the 1-based row NUMBER. It is
+            // asked with the row's data index, not its position on screen, so
+            // a re-sort carries each number with its row instead of renumbering
+            // the viewport — the same answer `QSortFilterProxyModel` produces
+            // by mapping the section back to the source model before asking.
+            rows: Some(HeaderAxis::row_numbers()),
             decoration: no_decoration,
             edit: no_edit,
         },
@@ -329,7 +335,7 @@ impl WidgetA11y for GridSortView {
         let (_, measured_h) = scroll.measured_viewport();
         let window =
             compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
-        windowed_grid_nodes_sorted(
+        let mut nodes = windowed_grid_nodes_sorted(
             GRID_TAG,
             "Sortable data grid",
             HEADERS.len(),
@@ -337,7 +343,15 @@ impl WidgetA11y for GridSortView {
             sort,
             *selected,
             &window,
-        )
+        );
+        // R1548 — the vertical header axis, composed onto the PERMUTED topology
+        // without the sorted builder learning about it. That is what makes a
+        // pass the right shape here: a flag would have had to be added to one
+        // builder, and the axis would be missing from the other five.
+        attach_row_headers(&mut nodes, GRID_TAG, &window, |view_pos| {
+            order.get(view_pos).copied().unwrap_or(view_pos)
+        });
+        nodes
     }
 }
 

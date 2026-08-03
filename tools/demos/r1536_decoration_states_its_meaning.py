@@ -91,7 +91,7 @@ FLAG_COL = 3
 LOAD_COL = 4
 STATUS_KINDS = 3
 DECORATION_PX = 10
-WIN = (400, 480)
+WIN = (470, 480)
 
 
 def decoration_tag(row: int, col: int) -> str:

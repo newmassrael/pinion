@@ -107,6 +107,20 @@ pub struct TableStyle {
     /// decoration, so an undecorated cell's label sits exactly where it did
     /// before R1535.
     pub decoration_gap_px: u32,
+    /// R1548 §5.27 — width of the **vertical header band** in logical pixels
+    /// (default 56), the row axis's peer of [`Self::col_width`].
+    ///
+    /// A dimension, held here with every other pixel, because the *presence* of
+    /// the band is stated on the model ([`GridModel::rows`]) and a second
+    /// statement of it beside this number could only ever contradict the first.
+    /// Unread by a grid whose model answers no vertical axis.
+    ///
+    /// Stated rather than derived from the widest painted label. Qt derives it
+    /// (`QHeaderView::ResizeToContents`) and pays with a header whose width
+    /// changes as you scroll into longer labels; deriving it here would
+    /// additionally need the measured text extent, which is known one frame
+    /// late. 56px is Qt's own ballpark for a numeric vertical header.
+    pub row_header_width: u32,
 }
 
 /// R786 §5.27 — visible divider line width inside the resize grabber, in
@@ -114,6 +128,17 @@ pub struct TableStyle {
 /// transparent hit zone with this thin [`ColorRole::Outline`] line hugging its
 /// right edge — the painted column boundary the user grabs.
 const RESIZE_DIVIDER_W: u32 = 1;
+
+/// R1548 §5.27 — gap between the parts of one header section (its
+/// `Qt::DecorationRole` mark, its `Qt::DisplayRole` label, and — on the column
+/// axis — its sort glyph), in logical pixels.
+///
+/// One constant for **both** section axes: a row header lettered or spaced
+/// differently from a column header would be a second style contract for one
+/// band pair, which is the divergence [`HeaderAxis`] exists to prevent one level
+/// up. Distinct from [`TableStyle::decoration_gap_px`], which is the *cell*
+/// axis's — a cell's mark sits in body type beside body text.
+const SECTION_GAP_PX: u32 = 4;
 
 /// R1535 §5.27 — corner radius of a [`Decoration::Swatch`], in logical
 /// pixels. A softened **square**, not a disc: Qt paints a `QColor` decoration
@@ -139,6 +164,7 @@ impl TableStyle {
             focusable: true,
             decoration_px: 10,
             decoration_gap_px: 8,
+            row_header_width: 56,
         }
     }
 
@@ -194,8 +220,8 @@ pub struct TableData<'a> {
     /// left two cell-paint contracts in one tree — the shape R1530 left on the
     /// header axis and R1532 on the delegate axis.
     pub decoration: Option<&'a dyn Fn(CellIndex) -> Option<Decoration>>,
-    /// R1547 §5.27 — the **section**-axis `Qt::DecorationRole` accessor, the
-    /// eager surface's peer of [`GridModel::header_decoration`]:
+    /// R1547 §5.27 — the **column** section axis's `Qt::DecorationRole`
+    /// accessor, the eager surface's peer of [`HeaderAxis::decoration`]:
     /// `header_decoration(section)` returns the mark ahead of that column's
     /// label, or `None`.
     ///
@@ -204,8 +230,36 @@ pub struct TableData<'a> {
     /// contracts in one tree, and the consumer that hits the silent one reads
     /// the role as absent from the framework. `None` (the field's `Default`) is
     /// every pre-R1547 caller, painting byte-identically.
+    ///
+    /// Not folded into an [`EagerHeaderAxis`] beside [`Self::row_headers`]:
+    /// this surface states its column labels as [`Self::headers`], a slice, so
+    /// its column axis is already only half an accessor pair. Unifying the two
+    /// is the open Model/View item R1530 named, and doing it here would be a
+    /// second axis's work paid for on the first axis's round.
     pub header_decoration: Option<&'a dyn Fn(usize) -> Option<Decoration>>,
+    /// R1548 §5.27 — the **vertical** section axis, the eager surface's peer of
+    /// [`GridModel::rows`]: `Some` for a table that paints row headers (Qt
+    /// `headerData(section, Qt::Vertical, …)`), `None` for one that does not.
+    ///
+    /// Present here by the rule R1547.1 paid for: a role one grid surface
+    /// answers and the other does not is two contracts in one tree, and the
+    /// consumer that lands on the silent one reads the whole axis as absent
+    /// from the framework. `None` is every pre-R1548 caller, painting a
+    /// byte-identical scene.
+    ///
+    /// The section index is the **data** row (`row_ids[v]`), not the visual
+    /// position, exactly as the virtualized grid asks with its source row.
+    pub row_headers: Option<EagerHeaderAxis<'a>>,
 }
+
+/// R1548 §5.27 — a [`HeaderAxis`] as the **eager** surface can hold one.
+///
+/// [`TableData`] is a `Copy` bundle of borrows, so it cannot carry the generic
+/// closures [`GridModel`] does; the accessors arrive as `&dyn Fn` instead. Same
+/// type, same role set, same painter — which is why one alias is enough here
+/// rather than a second axis type that would have to be kept in agreement.
+pub type EagerHeaderAxis<'a> =
+    HeaderAxis<&'a dyn Fn(usize) -> String, &'a dyn Fn(usize) -> Option<Decoration>>;
 
 impl core::fmt::Debug for TableData<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -215,6 +269,7 @@ impl core::fmt::Debug for TableData<'_> {
             .field("row_ids", &self.row_ids)
             .field("decoration", &self.decoration.map(|_| "<fn>"))
             .field("header_decoration", &self.header_decoration.map(|_| "<fn>"))
+            .field("row_headers", &self.row_headers.map(|_| "<axis>"))
             .finish()
     }
 }
@@ -468,7 +523,7 @@ fn header_cell(
     tag: &str,
     click_tag: &str,
     cell: ColCell,
-    section: &HeaderSection,
+    section: &SectionRoles,
     sort: Option<(usize, bool)>,
     theme: &Theme,
     style: &TableStyle,
@@ -478,7 +533,6 @@ fn header_cell(
         width,
         resizable,
     } = cell;
-    let label = section.label.as_str();
     let fg = theme.resolve(ColorRole::OnSurface);
     // R786 — reserve the trailing grabber width from the clickable / label area
     // so the cell's total width stays `width` (the data cells' width). A
@@ -488,29 +542,16 @@ fn header_cell(
     } else {
         width
     };
-    // R1536 — a column header's label is the header's CONTENT, not decoration,
-    // by the same rule the data cell's is. The sort glyph beside it IS
-    // decoration and keeps its presentational role, which is exactly the
-    // distinction `TextRole` was introduced (R51.81) to draw.
-    let label_node = Scene::Text(TextNode::styled(
-        label.to_string(),
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(style.header_size_px)
-            .with_fg(fg),
-    ));
     // R1547 — the section's `Qt::DecorationRole` mark, ahead of its label and
     // INSIDE the clickable inner container: a mark on a sortable column must
     // not carve a dead zone out of the sort target. `decoration_layout` keeps it
     // pointer-transparent, so the press lands on the header either way.
-    let mut inner_children = Vec::with_capacity(3);
-    let mut meaning = "";
-    if let Some(decoration) = section.decoration.as_ref() {
-        let deco_tag = GridTag::header_decoration(tag, col);
-        inner_children.push(decoration_node(decoration, style.decoration_px, &deco_tag));
-        meaning = decoration.meaning();
-    }
-    inner_children.push(label_node);
+    let (mut inner_children, aria_name) = section_content(
+        section,
+        &GridTag::header_decoration(tag, col),
+        section_label_style(style, fg),
+        style,
+    );
     // R886.1 — active-column decision + glyph through the two SSOTs
     // (`col_sort_dir` / `glyph::sort_glyph`); this site was one of the
     // five private copies of the pair.
@@ -521,9 +562,7 @@ fn header_cell(
             TextNode::styled(
                 glyph.to_string(),
                 Rect::default(),
-                TextStyle::new()
-                    .with_size_px(style.header_size_px)
-                    .with_fg(fg),
+                section_label_style(style, fg),
             )
             .with_role(TextRole::Presentational),
         ));
@@ -543,7 +582,7 @@ fn header_cell(
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Start)
                     .with_align_items(AlignItems::Center)
-                    .with_gap(4)
+                    .with_gap(SECTION_GAP_PX)
                     .with_size(Size::px(content_w, style.header_height))
                     .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
             ),
@@ -566,10 +605,71 @@ fn header_cell(
     // accessible name, ahead of the label, by exactly the rule R1536 gave the
     // cell. Set only when there is something to add, so a decorative (`alt=""`)
     // mark leaves the AT tree byte-identical.
-    if !meaning.is_empty() {
-        header = header.with_aria_label(compose_cell_name(meaning, label));
+    if let Some(name) = aria_name {
+        header = header.with_aria_label(name);
     }
     Scene::Container(header)
+}
+
+/// R1548 §5.27 — the text style a section's label paints in, on either axis.
+///
+/// One function because the header type scale is a property of the *grid*, not
+/// of an axis: a row header lettered differently from a column header would be
+/// a second style contract for one band pair, which is what
+/// [`HeaderAxis`] exists to prevent one level up.
+fn section_label_style(style: &TableStyle, fg: Color) -> TextStyle {
+    TextStyle::new()
+        .with_size_px(style.header_size_px)
+        .with_fg(fg)
+}
+
+/// R1548 §5.27 §5.40 — one section's painted content — its
+/// `Qt::DecorationRole` mark, then its `Qt::DisplayRole` label — plus the
+/// accessible name that content implies, on **either** axis.
+///
+/// The single painter [`HeaderAxis`]'s doc promises. Before R1548 this was
+/// inline in `header_cell`; the row band would have been a second copy, and the
+/// two would then have had to be kept agreeing about three separate things —
+/// that the mark precedes the label, that a decoration is `decoration_px`
+/// square and pointer-transparent, and that a mark carrying *meaning* joins the
+/// section's accessible name while a decorative one does not. Obligation 3b:
+/// mechanical, no per-axis opinion in it, so it lifts at the second consumer
+/// rather than after a third has drifted.
+///
+/// The label is the section's **content**, not decoration, by the rule R1536
+/// gave the data cell — which is why it is a plain [`TextNode`] and the sort
+/// glyph `header_cell` appends after it is
+/// [`Presentational`](TextRole::Presentational).
+///
+/// Returns `None` for the name when the section has no mark, or has one whose
+/// [`meaning`](Decoration::meaning) is empty (a decorative `alt=""` mark): the
+/// name is then left for §5.40 to derive from the painted label, and the AT
+/// tree is byte-identical to an undecorated section's.
+fn section_content(
+    section: &SectionRoles,
+    decoration_tag: &str,
+    label: TextStyle,
+    style: &TableStyle,
+) -> (Vec<Scene>, Option<String>) {
+    let mut children = Vec::with_capacity(3);
+    let mut name = None;
+    if let Some(decoration) = section.decoration.as_ref() {
+        children.push(decoration_node(
+            decoration,
+            style.decoration_px,
+            decoration_tag,
+        ));
+        let meaning = decoration.meaning();
+        if !meaning.is_empty() {
+            name = Some(compose_cell_name(meaning, section.label.as_str()));
+        }
+    }
+    children.push(Scene::Text(TextNode::styled(
+        section.label.clone(),
+        Rect::default(),
+        label,
+    )));
+    (children, name)
 }
 
 /// R1523 §5.27 §5.45 — the width of the columns **outside** a windowed pane,
@@ -661,9 +761,8 @@ fn pane_cells(
     .unzip()
 }
 
-/// R1547 §5.27 — one column header's role answers: what
-/// [`GridModel::header`] and [`GridModel::header_decoration`] said about one
-/// section, held together.
+/// R1547 §5.27 — one section's role answers: what a [`HeaderAxis`]'s two
+/// accessors said about one section, held together.
 ///
 /// A struct rather than the parallel-vector pair [`pane_cells`] returns,
 /// because the two shapes fail differently: a header band is built once per
@@ -671,32 +770,70 @@ fn pane_cells(
 /// different spans and paint a section with its neighbour's mark. Binding the
 /// answers at the point they are asked makes that unrepresentable rather than
 /// merely unlikely.
-struct HeaderSection {
+///
+/// R1548 renamed this from `HeaderSection` — it holds *roles*, and the crate
+/// already had a public
+/// [`HeaderSection`](crate::column_header::HeaderSection) meaning a section's
+/// painted appearance. It is also no longer column-specific: since R1548 the
+/// row axis answers the same two roles into the same struct.
+struct SectionRoles {
     /// `Qt::DisplayRole` — the label.
     label: String,
     /// `Qt::DecorationRole` — the mark ahead of the label, or `None`.
     decoration: Option<Decoration>,
 }
 
-/// R1530 / R1547 — one pane's header sections: **both** section roles asked
-/// once per column in `span`, in column order. The header-band peer of
+impl SectionRoles {
+    /// The answers of a section that has neither role — the contract's
+    /// "no label" (an empty `String`) and "no mark" (`None`) in one value.
+    const BLANK: Self = Self {
+        label: String::new(),
+        decoration: None,
+    };
+
+    /// R1548 — ask **one** section, at one address, for every role the axis
+    /// answers.
+    ///
+    /// The single statement of "one address, every role" — the call shape Qt's
+    /// `headerData(section, orientation, role)` has anyway. Both bands go
+    /// through it: the column band over a contiguous span
+    /// ([`ask_sections`]), the row band over the windowed rows in *sort* order,
+    /// which is not a range and so cannot share the span form. What they must
+    /// share is this — that a section's two answers come from one index — and
+    /// they now do.
+    fn ask<L, D>(axis: &mut HeaderAxis<L, D>, section: usize) -> Self
+    where
+        L: FnMut(usize) -> String,
+        D: FnMut(usize) -> Option<Decoration>,
+    {
+        Self {
+            label: (axis.label)(section),
+            decoration: (axis.decoration)(section),
+        }
+    }
+}
+
+/// R1530 / R1547 / R1548 — one pane's sections: **both** section roles asked
+/// once per section in `span`, in section order. The section-axis peer of
 /// [`pane_cells`], and the single place the per-section contract meets the
-/// slice [`header_row`] paints, so neither the unsplit grid nor either frozen
-/// pane can ask for a section it will not paint.
+/// slice a band paints, so no pane on either axis can ask for a section it
+/// will not paint.
 ///
 /// R1547 added the decoration role, and it is asked **here**, beside the
 /// display role, for the reason `pane_cells` asks both cell roles in one pass:
 /// one address, every role — the call shape `data(index, role)` has anyway.
-fn header_sections(
-    header: &mut impl FnMut(usize) -> String,
-    header_decoration: &mut impl FnMut(usize) -> Option<Decoration>,
-    span: Range<usize>,
-) -> Vec<HeaderSection> {
-    span.map(|col| HeaderSection {
-        label: header(col),
-        decoration: header_decoration(col),
-    })
-    .collect()
+///
+/// R1548 — `axis` replaced the two loose accessors, so this function is now
+/// axis-agnostic: the column band and the row band call it with `Qt::Horizontal`
+/// and `Qt::Vertical` respectively and there is no third shape either could
+/// drift into.
+fn ask_sections<L, D>(axis: &mut HeaderAxis<L, D>, span: Range<usize>) -> Vec<SectionRoles>
+where
+    L: FnMut(usize) -> String,
+    D: FnMut(usize) -> Option<Decoration>,
+{
+    span.map(|section| SectionRoles::ask(axis, section))
+        .collect()
 }
 
 /// The shared [`spacer`](crate::spacer::spacer), or **nothing** when `width` is
@@ -784,7 +921,7 @@ struct RowPane<'a> {
 fn header_row(
     tag: &str,
     click_tag: &str,
-    sections: &[HeaderSection],
+    sections: &[SectionRoles],
     sort: Option<(usize, bool)>,
     layout: ColumnLayout<'_>,
     theme: &Theme,
@@ -826,6 +963,179 @@ fn header_row(
             ))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
+}
+
+/// R1548 §5.27 — one **row** header cell: the vertical section axis's peer of
+/// [`header_cell`], tagged `"<tag>_rh<row>"`.
+///
+/// Differs from the column cell in exactly what the axes differ in, and in
+/// nothing else — the shared [`section_content`] draws the mark and the label:
+///
+/// - no sort glyph. Qt's vertical header can carry a sort indicator only
+///   because `QHeaderView` is orientation-generic; a *row* is not a sort key in
+///   any item view, so the glyph would be an indicator of nothing.
+/// - no resize grabber. Qt resizes rows through the vertical header, but a row
+///   here is `TableStyle::row_height` — one pitch for the whole grid, which the
+///   windowing arithmetic (`uniform_slots`, `content_height`) is built on. A
+///   per-row height is the variable-pitch axis, not this one.
+///
+/// `row` is the **data** row, not the visual position, so the tag and the mark
+/// stay with their row across a sort — the same rule `data_row` follows.
+fn row_header_cell(
+    tag: &str,
+    row: usize,
+    section: &SectionRoles,
+    width: u32,
+    theme: &Theme,
+    style: &TableStyle,
+) -> Scene {
+    let fg = theme.resolve(ColorRole::OnSurface);
+    let (children, aria_name) = section_content(
+        section,
+        &GridTag::row_header_decoration(tag, row),
+        section_label_style(style, fg),
+        style,
+    );
+    let mut cell = ContainerNode::new(children)
+        .with_tag(GridTag::row_header(tag, row))
+        .with_style(BoxStyle::filled(
+            theme.resolve(ColorRole::SurfaceContainerHigh),
+        ))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Start)
+                .with_align_items(AlignItems::Center)
+                .with_gap(SECTION_GAP_PX)
+                .with_size(Size::px(width, style.row_height))
+                .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
+        );
+    // §5.40 — a mark that carries meaning joins the `rowheader`'s accessible
+    // name, by the same rule `header_cell` applies on the other axis. Qt's
+    // `QAccessibleTableHeaderCell::text(Name)` answers from the
+    // `Qt::DisplayRole` alone on both orientations, so a Qt row header whose
+    // distinguishing information IS its glyph announces only the row's number.
+    if let Some(name) = aria_name {
+        cell = cell.with_aria_label(name);
+    }
+    Scene::Container(cell)
+}
+
+/// R1548 §5.27 §5.45 — the **vertical header band**: the corner cell, then one
+/// [`row_header_cell`] per windowed row, as a pane pinned to the grid's left
+/// edge (Qt `QTableView::verticalHeader()`).
+///
+/// # Why this is a wrapper and not a fourth pane inside the split
+///
+/// The band has to be pinned against the *horizontal* scroll and follow the
+/// *vertical* one, which is precisely what
+/// [`assemble_windowed_flex`]'s follower already is — so composing it as a
+/// sibling of the whole existing content, rather than threading it through
+/// `render_unsplit` and `render_frozen`, means the unsplit grid, the
+/// frozen-column split and the eager surface all gain the axis from one place
+/// and none of their assemblies changes. A grid with `row_header_width: None`
+/// never calls this and paints a byte-identical scene to the pre-R1548 one.
+///
+/// `sections` is asked for **exactly** the windowed rows, in view order, by the
+/// caller — the [`SectionRoles::ask`] discipline the column band follows — and
+/// each entry carries the **data** row its answers came from, so the band and
+/// the strip beside it cannot address different rows under a sort.
+fn row_header_pane(
+    tag: &str,
+    scroll: &Rc<ScrollState>,
+    window: &VisibleWindow,
+    band: RowHeaderBand<'_>,
+    theme: &Theme,
+    style: &TableStyle,
+) -> Scene {
+    let RowHeaderBand {
+        width,
+        total_h,
+        sections,
+    } = band;
+    let blank = SectionRoles::BLANK;
+    let slots = uniform_slots(window, width, style.row_height, |view_pos| {
+        let i = view_pos.saturating_sub(window.first);
+        // Unreachable while the caller asks over the same window it paints; a
+        // blank section at the view position's own index is the contract's
+        // answer for "no label", so a mismatch degrades to an empty header
+        // rather than panicking a paint pass.
+        let (row, section) = sections
+            .get(i)
+            .map_or((view_pos, &blank), |(row, s)| (*row, s));
+        row_header_cell(tag, row, section, width, theme, style)
+    });
+    row_header_column(
+        tag,
+        width,
+        assemble_windowed_flex(scroll, width, total_h, slots, true),
+        theme,
+        style,
+    )
+}
+
+/// R1548 §5.27 — the vertical band's shape: the corner cell above `body`, the
+/// whole column pinned at `width`.
+///
+/// One function for both surfaces — the virtualized grid's windowed
+/// [`ScrollNode`] body and the eager [`view_table`]'s plain column of cells —
+/// so the corner cannot end up on one and not the other, and the two bands
+/// cannot disagree about the width they occupy. The column-axis peer of
+/// [`header_row`] serving both surfaces.
+fn row_header_column(
+    tag: &str,
+    width: u32,
+    body: Scene,
+    theme: &Theme,
+    style: &TableStyle,
+) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![header_corner(tag, width, theme, style), body]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_size(Size::width_px(width)),
+        ),
+    )
+}
+
+/// R1548 §5.27 — the cell where the two section axes meet (Qt's
+/// `QTableCornerButton`): a blank header-styled block, `header_height` tall so
+/// the two bands' first rows line up.
+///
+/// Tagged but carrying no a11y node. It names neither axis, so there is nothing
+/// for it to announce; Qt exposes it as an unlabelled "select all" button, and
+/// without that behaviour such a node would be noise in the tree rather than
+/// information. Tagging it is still worth doing — a painted thing with no tag
+/// cannot be asked about, and the corner's extent is what tells a client where
+/// the two bands begin.
+fn header_corner(tag: &str, width: u32, theme: &Theme, style: &TableStyle) -> Scene {
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(GridTag::header_corner(tag))
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+            ))
+            .with_layout(LayoutStyle::new().with_size(Size::px(width, style.header_height))),
+    )
+}
+
+/// R1548 §5.27 — the inputs [`row_header_pane`] needs beyond the window and the
+/// palette, bundled to keep it under the argument budget (the [`ColumnLayout`] /
+/// [`RowPane`] precedent).
+#[derive(Clone, Copy)]
+struct RowHeaderBand<'a> {
+    /// The band's width in logical pixels — [`TableStyle::row_header_width`].
+    width: u32,
+    /// Total scrollable height, the same `content_height` the body pane sizes
+    /// against, so the two scroll in step.
+    total_h: u32,
+    /// The windowed rows, in view order: each visual position's **data** row
+    /// (the R778 sort permutation) paired with that row's role answers.
+    ///
+    /// One list rather than a row-resolver beside a list of answers, because
+    /// two statements of "which row is at this visual position" can only ever
+    /// disagree — the shape R1524 removed from the cell axis.
+    sections: &'a [(usize, SectionRoles)],
 }
 
 /// One data row: a horizontal strip tagged `"<tag>_row<row>"`, filled
@@ -979,15 +1289,17 @@ pub fn view_table(
     // column (there is no viewport to window against), so the span is the whole
     // header; `header_sections` is still the one place the accessors are asked,
     // so the two surfaces cannot diverge on what a section answers.
-    let mut eager_label = |col: usize| {
-        data.headers
-            .get(col)
-            .copied()
-            .unwrap_or_default()
-            .to_string()
+    let mut eager_columns = HeaderAxis {
+        label: |col: usize| {
+            data.headers
+                .get(col)
+                .copied()
+                .unwrap_or_default()
+                .to_string()
+        },
+        decoration: |col: usize| data.header_decoration.and_then(|answer| answer(col)),
     };
-    let mut eager_mark = |col: usize| data.header_decoration.and_then(|answer| answer(col));
-    let sections = header_sections(&mut eager_label, &mut eager_mark, 0..cols);
+    let sections = ask_sections(&mut eager_columns, 0..cols);
     let header = header_row(
         tag,
         tag,
@@ -1005,11 +1317,26 @@ pub fn view_table(
         theme,
         style,
     );
+    // R1548 — the vertical axis, asked once per painted row with that row's
+    // DATA index, through the same `SectionRoles::ask` the column band used.
+    // The eager surface paints every row, so its "window" is every row.
+    let mut row_sections: Vec<Scene> = Vec::with_capacity(data.rows.len());
     let mut children: Vec<Scene> = Vec::with_capacity(data.rows.len() + 1);
     children.push(header);
     for (visual, cells_text) in data.rows.iter().enumerate() {
         // Data-row id for this visual position (identity fallback).
         let data_id = data.row_ids.get(visual).copied().unwrap_or(visual);
+        if let Some(mut axis) = data.row_headers {
+            let section = SectionRoles::ask(&mut axis, data_id);
+            row_sections.push(row_header_cell(
+                tag,
+                data_id,
+                &section,
+                style.row_header_width,
+                theme,
+                style,
+            ));
+        }
         let state = row_states.get(data_id).copied().unwrap_or(RadioState::Idle);
         let selected = row_selected.get(data_id).copied().unwrap_or(false);
         // Zebra parity is **visual** so the stripe pattern stays stable
@@ -1067,8 +1394,48 @@ pub fn view_table(
             children.push(cell_selection_overlay(tag, bounds, &widths, theme, style));
         }
     }
+    eager_frame(tag, children, row_sections, theme, style)
+}
+
+/// R707 / R1548 §5.27 — the eager table's outer block: its `[header, rows…]`
+/// column, optionally beside the vertical band, inside the tagged rounded frame.
+///
+/// Extracted at R1548 because the band made [`view_table`] the one function in
+/// this file over the line budget, and because the choice it holds is one
+/// decision — whether this surface has a second section axis — rather than part
+/// of building the rows.
+///
+/// `row_sections` **empty** is the axis declined: the block then holds `children`
+/// directly, with no extra node in it, so a table whose model answers no
+/// vertical axis paints a scene byte-identical to the pre-R1548 one.
+fn eager_frame(
+    tag: &str,
+    children: Vec<Scene>,
+    row_sections: Vec<Scene>,
+    theme: &Theme,
+    style: &TableStyle,
+) -> Scene {
+    let column = |items| {
+        Scene::Container(
+            ContainerNode::new(items).with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+        )
+    };
+    // Through the same `row_header_column` the virtualized grid uses, so the
+    // corner and the band width are one statement across both surfaces.
+    let (direction, content) = if row_sections.is_empty() {
+        (FlexDirection::Column, children)
+    } else {
+        let band = row_header_column(
+            tag,
+            style.row_header_width,
+            column(row_sections),
+            theme,
+            style,
+        );
+        (FlexDirection::Row, vec![band, column(children)])
+    };
     Scene::Container(
-        ContainerNode::new(children)
+        ContainerNode::new(content)
             .with_tag(tag.to_string())
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
@@ -1076,7 +1443,7 @@ pub fn view_table(
             )
             .with_layout(
                 LayoutStyle::new()
-                    .flex(FlexDirection::Column)
+                    .flex(direction)
                     // (R1020 §5.39) Carry the binding's focus-stop opt-in onto
                     // the tag-carrying outer block so the scene-derived
                     // enumeration collects this table's tag as a Tab stop.
@@ -1110,7 +1477,7 @@ pub struct VirtualTableData<'a> {
     /// 200-column grid materialized 200 labels each frame to paint five. The
     /// row axis never had the defect — `item_count` has always been a number
     /// beside a windowed accessor — and the two axes now say the same thing the
-    /// same way. The labels come from [`GridModel::header`], asked per section.
+    /// same way. The labels come from [`HeaderAxis::label`], asked per section.
     pub column_count: usize,
     /// Total data-row count (decoupled from the rendered window count).
     pub item_count: usize,
@@ -1465,7 +1832,7 @@ struct CellEditorSlot<'a> {
 /// agree about what a mark *is*, and the pair R1536 established (ink **and**
 /// what the ink means) is exactly the kind of agreement that decays when it is
 /// stated twice. So [`GridModel::decoration`] and
-/// [`GridModel::header_decoration`] answer with this, and one painter draws it.
+/// [`HeaderAxis::decoration`] answer with this, and one painter draws it.
 ///
 /// The grid's second data role, and the reason it is one is that R1532's
 /// delegate could not express it. A delegate belongs to a **column** — Qt's
@@ -1686,6 +2053,124 @@ pub struct GridScroll<'a> {
 /// ([`GridModel`], [`CellRender`]) is stated in terms of it.
 pub use pinion_core::CellIndex;
 
+/// R1548 §5.27 — **one section axis** of a grid's model: the roles that are
+/// asked of a *section* rather than of a cell.
+///
+/// Qt spells both axes with one virtual, `headerData(int section,
+/// Qt::Orientation orientation, int role)`, and pays for it the way it pays for
+/// `QVariant`: the orientation is a **runtime argument**, so which roles a
+/// model answers may silently differ per axis. The failure has a shape everyone
+/// who has written a `QAbstractTableModel` has seen — override `headerData`,
+/// handle `Qt::Horizontal`, fall off the end returning `QVariant()`, and
+/// `QTableView` paints a vertical header of blank sections that still occupy
+/// their width. Nothing reports it: not the model, not the view, not the
+/// accessibility tree. The blank strip is indistinguishable from a table whose
+/// rows genuinely have no names.
+///
+/// Here the orientation is promoted from an argument to **the type of the field
+/// the axis is stored in** ([`GridModel::columns`] / [`GridModel::rows`]), so:
+///
+/// - a grid states which axes it answers, and [`no_row_header`] is a written
+///   decision rather than a fallthrough;
+/// - the two axes answer the **same role set** by construction — a role added
+///   here is added to both or to neither, where Qt's orientation branch lets
+///   one axis grow a role the other never learns about;
+/// - one painter draws either axis's answer, which is the property R1547
+///   established for the mark's *type* now holding for the section as a whole.
+///
+/// The roles are separate typed accessors rather than one `data(section, role)`
+/// for the reason [`GridModel`] gives: a role's answer type is then exact, and a
+/// model that cannot answer one is unrepresentable rather than returning an
+/// invalid variant.
+// `Clone` / `Copy` are conditional on the accessors', so the eager surface's
+// `&dyn Fn` axis rides inside a `Copy` [`TableData`] while the virtualized
+// grid's captured closures stay move-only.
+#[derive(Clone, Copy)]
+pub struct HeaderAxis<L, D> {
+    /// `Qt::DisplayRole` — invoked once per **painted section** with that
+    /// section's absolute index, returning its label. A section with no label
+    /// returns an empty `String`.
+    ///
+    /// Windowed: a section outside the painted band is never asked, so the cost
+    /// of a header scales with the window rather than with the extent.
+    pub label: L,
+    /// `Qt::DecorationRole` — invoked once per **painted section**, returning
+    /// the mark drawn ahead of that section's label, or `None`.
+    ///
+    /// Asked per section rather than per cell because that is the axis the
+    /// answer varies on: a column-type glyph, a funnel on a filtered column, a
+    /// lock on a pinned row — each is a property of the *section*, so asking
+    /// per cell would repeat one question once per crossing section and discard
+    /// every answer but the first.
+    pub decoration: D,
+}
+
+/// The type [`HeaderAxis::labelled`] and [`no_row_header`] name for "this
+/// axis answers no `Qt::DecorationRole`" — a plain `fn` pointer so the
+/// constructors have a nameable return type and monomorphize to a constant
+/// `None`.
+type NoSectionDecoration = fn(usize) -> Option<Decoration>;
+
+/// The type [`no_row_header`] names for "this axis answers no
+/// `Qt::DisplayRole`".
+type NoSectionLabel = fn(usize) -> String;
+
+impl HeaderAxis<NoSectionLabel, NoSectionDecoration> {
+    /// R1548 — Qt's own default `headerData` for a section that has no name of
+    /// its own: the 1-based section number.
+    ///
+    /// `QAbstractItemModel::headerData` returns `section + 1` for an
+    /// un-overridden model, which is why an untouched `QTableView` shows
+    /// `1, 2, 3…` down its left edge. Provided as a **named** adapter, so a
+    /// grid that wants row numbers says so, rather than inheriting them from a
+    /// base class it forgot to override.
+    ///
+    /// The number is the section's absolute index, so under a sort permutation
+    /// it numbers the *model's* rows and follows them as they move — the same
+    /// answer `QSortFilterProxyModel` produces by mapping the section back to
+    /// the source model before asking.
+    #[must_use]
+    pub fn row_numbers() -> Self {
+        Self {
+            label: section_number,
+            decoration: no_section_decoration,
+        }
+    }
+}
+
+impl<L: FnMut(usize) -> String> HeaderAxis<L, NoSectionDecoration> {
+    /// R1548 — an axis that answers `Qt::DisplayRole` and nothing else, which
+    /// is every header this framework painted before R1547.
+    pub fn labelled(label: L) -> Self {
+        Self {
+            label,
+            decoration: no_section_decoration,
+        }
+    }
+}
+
+/// R1548 §5.27 — the [`GridModel::rows`] of a grid with **no vertical header**:
+/// a `QTableView` whose `verticalHeader()` is hidden, or a `QListView`, which
+/// has no such axis at all.
+///
+/// A named function rather than a bare `None` because `None` does not typecheck
+/// here — the axis's two accessor types would be unconstrained — and because
+/// naming it is the point. This is the statement Qt cannot make: a Qt model that
+/// does not answer an orientation is byte-identical, at every observation point,
+/// to one that answers it with blanks, and the resulting strip of empty sections
+/// is reported by nothing. Here it is a written decision, greppable, and the
+/// view asks the axis **zero** times a frame.
+#[must_use]
+pub fn no_row_header() -> Option<HeaderAxis<NoSectionLabel, NoSectionDecoration>> {
+    None
+}
+
+/// The [`HeaderAxis::label`] accessor of [`HeaderAxis::row_numbers`]: Qt's
+/// default `headerData`, `section + 1`.
+fn section_number(section: usize) -> String {
+    (section + 1).to_string()
+}
+
 /// R1530 §5.27 — the two questions a virtualized grid asks its model, bundled
 /// as one parameter.
 ///
@@ -1712,54 +2197,58 @@ pub use pinion_core::CellIndex;
 /// accessor**, so a role's answer type is exact and a model that cannot answer
 /// one is unrepresentable rather than returning an invalid variant. That is the
 /// shape R1530 already chose when it split Qt's `headerData` out as
-/// [`Self::header`] instead of folding it into `cell`.
+/// [`HeaderAxis::label`] instead of folding it into `cell`.
 ///
 /// Five of Qt's roles are answered — `DisplayRole` ([`Self::cell`]),
-/// `DisplayRole` on the header axis ([`Self::header`]), `DecorationRole`
-/// ([`Self::decoration`]), `DecorationRole` on the header axis (R1547,
-/// [`Self::header_decoration`]) and, since R1544, `EditRole`
-/// ([`Self::edit`]). `ToolTipRole` is not: it needs a per-cell hover path.
+/// `DisplayRole` on a section axis ([`HeaderAxis::label`]), `DecorationRole`
+/// ([`Self::decoration`]), `DecorationRole` on a section axis (R1547,
+/// [`HeaderAxis::decoration`]) and, since R1544, `EditRole` ([`Self::edit`]).
+/// `ToolTipRole` is not: it needs a per-cell hover path.
 ///
-/// # The two axes (R1547)
+/// # The two axes (R1547, R1548)
 ///
 /// Qt's role enum is shared by `data(index, role)` and `headerData(section,
 /// orientation, role)`, so a role is a question that can be asked of a cell or
 /// of a section. Until R1547 only the cell axis here could be asked anything
 /// but its name: a column could say what it was **called** and nothing else.
-/// The two axes are not obliged to answer the same set — a section has no
-/// `EditRole` because a header is not edited in place — but a role either axis
-/// answers is answered with the same type ([`Decoration`]) and drawn by the
-/// same painter, so the two cannot drift into disagreeing about what a mark is.
-pub struct GridModel<C, H, HD, D, E> {
+/// R1548 then gave the *section* question its second axis — Qt's
+/// `Qt::Vertical`, the row headers — and did it by making an axis a **type**
+/// ([`HeaderAxis`]) rather than a second pair of loose accessors, so the two
+/// axes answer one role set instead of two that must be kept in agreement.
+///
+/// The cell axis and a section axis are not obliged to answer the same set — a
+/// section has no `EditRole`, because a header is not edited in place — but a
+/// role either answers is answered with the same type ([`Decoration`]) and
+/// drawn by the same painter, so they cannot drift into disagreeing about what
+/// a mark is.
+pub struct GridModel<C, CL, CD, RL, RD, D, E> {
     /// Invoked once per **painted cell** with that cell's [`CellIndex`],
     /// returning its text (Qt `data(QModelIndex)`, Flutter `cellBuilder`).
     pub cell: C,
-    /// R1530 — invoked once per **painted column header** with that column's
-    /// absolute section index, returning its label (Qt `headerData(section,
-    /// Qt::Horizontal, Qt::DisplayRole)`).
+    /// R1530 / R1548 — the **horizontal** section axis: the column headers (Qt
+    /// `headerData(section, Qt::Horizontal, …)`).
+    pub columns: HeaderAxis<CL, CD>,
+    /// R1548 — the **vertical** section axis: the row headers (Qt
+    /// `headerData(section, Qt::Vertical, …)`, painted by
+    /// `QTableView::verticalHeader()`).
     ///
-    /// A section outside the painted window is never asked, so the cost of the
-    /// header band scales with the column window rather than with the table —
-    /// the property the cell axis gained in R1524. A column with no label
-    /// returns an empty `String`.
-    pub header: H,
-    /// R1547 — invoked once per **painted column header** with that column's
-    /// absolute section index, returning the mark drawn ahead of its label (Qt
-    /// `headerData(section, Qt::Horizontal, Qt::DecorationRole)`), or `None` for
-    /// an unmarked column.
+    /// Asked once per **painted row**, with the row's absolute *data* index —
+    /// not its position on screen — so a mark stays with its row across a sort
+    /// or a filter, and [`HeaderAxis::row_numbers`] numbers the model rather
+    /// than the viewport.
     ///
-    /// The section-axis peer of [`Self::decoration`], and asked per **section**
-    /// for the same reason that one is asked per cell: that is the axis the
-    /// answer varies on. A column-type glyph, a funnel on a filtered column, a
-    /// lock on a frozen one, a unit swatch — each is a property of the column,
-    /// so asking per cell would ask the same question once per visible row and
-    /// discard every answer but the first.
+    /// `None` ([`no_row_header`]) is a grid with no vertical header, which is
+    /// every caller before R1548: the band is not painted and the axis is asked
+    /// zero times a frame.
     ///
-    /// Windowed like [`Self::header`]: a section outside the painted window is
-    /// never asked. A grid with no marked column passes
-    /// [`no_header_decoration`] and pays nothing — the closure monomorphizes to
-    /// a constant `None` and the header band emits the pre-R1547 node.
-    pub header_decoration: HD,
+    /// The presence of the axis is stated **here**, on the model, and nowhere
+    /// else — its width is a [`TableStyle::row_header_width`] dimension, beside
+    /// every other pixel. The pair could have been split the way Qt splits it
+    /// (`headerData` answers; `verticalHeader()->hide()` decides), but a
+    /// separately-stated "paint a band" flag would make a band of blank sections
+    /// over an unanswered axis representable — which is the exact Qt failure
+    /// this type exists to remove. Painted if and only if answered.
+    pub rows: Option<HeaderAxis<RL, RD>>,
     /// R1535 — invoked once per **painted cell** with that cell's
     /// [`CellIndex`], returning the mark drawn beside its text (Qt
     /// `data(index, Qt::DecorationRole)`), or `None` for an undecorated cell.
@@ -1801,16 +2290,21 @@ pub fn no_decoration(_: CellIndex) -> Option<Decoration> {
     None
 }
 
-/// R1547 §5.27 — the [`GridModel::header_decoration`] accessor for a grid where
-/// no **column** carries a mark: `headerData(section, Qt::Horizontal,
+/// R1547 §5.27 — the [`HeaderAxis::decoration`] accessor for an axis where no
+/// **section** carries a mark: `headerData(section, orientation,
 /// Qt::DecorationRole)` answered with an invalid `QVariant` on every section.
 ///
 /// The section-axis peer of [`no_decoration`], and separate from it because the
 /// two accessors take different addresses — a [`CellIndex`] and a section index
 /// — which is the distinction Qt draws with two entry points and pinion draws
 /// with two types. A single `|_| None` would unify them only by erasing that.
+///
+/// R1548 renamed it from `no_header_decoration`: one function now serves both
+/// section axes, which is the first evidence that grouping them into
+/// [`HeaderAxis`] was the right cut — a *column*-named answer for the row axis
+/// would have been the second contract [`HeaderAxis`] exists to prevent.
 #[must_use]
-pub fn no_header_decoration(_: usize) -> Option<Decoration> {
+pub fn no_section_decoration(_: usize) -> Option<Decoration> {
     None
 }
 
@@ -1828,7 +2322,7 @@ pub fn no_edit(_: CellIndex) -> Option<CellEdit> {
     None
 }
 
-/// R1530 §5.27 — the [`GridModel::header`] accessor for a grid whose labels
+/// R1530 §5.27 — the [`HeaderAxis::label`] accessor for a grid whose labels
 /// are a **fixed list**.
 ///
 /// The adapter from the per-section contract to the shape most grids have:
@@ -1931,9 +2425,10 @@ pub fn materialize_cells(
 ///   path serves all three (no parallel `_multi` body to diverge from the
 ///   windowed-sizer geometry). It is invoked only for the windowed rows.
 /// - `model` — the [`GridModel`]: `cell` (R1524, once per painted cell),
-///   `header` (R1530, once per painted column header) and `decoration` (R1535,
-///   once per painted cell — [`no_decoration`] when no column carries a mark).
-///   This is the Model/View
+///   `columns` (R1530 / R1548, once per painted column header), `rows` (R1548,
+///   once per painted row header — [`no_row_header`] for a grid with no
+///   vertical header) and `decoration` (R1535, once per painted cell —
+///   [`no_decoration`] when no column carries a mark). This is the Model/View
 ///   contract of a two-axis virtualized grid (Qt `data(index)` /
 ///   `headerData(section)`, Flutter `cellBuilder`): the grid asks for exactly
 ///   what it paints, so a 200-column grid showing five columns asks for five
@@ -1955,6 +2450,8 @@ pub fn view_virtual_table(
     is_selected: impl Fn(usize) -> bool,
     model: GridModel<
         impl FnMut(CellIndex) -> String,
+        impl FnMut(usize) -> String,
+        impl FnMut(usize) -> Option<Decoration>,
         impl FnMut(usize) -> String,
         impl FnMut(usize) -> Option<Decoration>,
         impl FnMut(CellIndex) -> Option<Decoration>,
@@ -2001,12 +2498,65 @@ pub fn view_virtual_table(
     // stay scrollable for the freeze to mean anything. `0` (every pre-R859
     // caller) renders the single-scroll R784 grid byte-identically.
     let frozen_cols = data.frozen_cols.min(cols.saturating_sub(1));
-    // `model` / `is_selected` are consumed by exactly one branch (an
+    let GridModel {
+        cell,
+        columns,
+        mut rows,
+        decoration,
+        // R1544 — the `EditRole` accessor is not a paint-time role: the open
+        // editor's seed reaches the painter already resolved, on
+        // `GridEditing::edit`. It rides the model bundle because it is a model
+        // role (the editing verbs and the a11y walk ask it), and a paint pass
+        // that also asked would invoke it once per painted cell for an answer
+        // only four events need.
+        edit: _,
+    } = model;
+    // The cell + column roles are consumed by exactly one branch (an
     // `if`/`else`), so each helper takes them by value without a re-move.
     let content = if frozen_cols == 0 {
-        render.render_unsplit(scroll, &is_selected, model)
+        render.render_unsplit(scroll, &is_selected, cell, columns, decoration)
     } else {
-        render.render_frozen(scroll, frozen_cols, &is_selected, model)
+        render.render_frozen(scroll, frozen_cols, &is_selected, cell, columns, decoration)
+    };
+    // R1548 — the vertical header band, pinned left of everything the panes
+    // built. Composed here rather than inside the two assemblies so both of
+    // them — and any future third — gain the axis from one place; a grid with
+    // no band skips this entirely and paints the pre-R1548 scene.
+    let content = match rows.as_mut() {
+        None => content,
+        Some(rows) => {
+            let width = style.row_header_width;
+            // Asked over the same window the band paints, with each visual
+            // position resolved to its DATA row, so a mark stays with its row
+            // across a sort — the discipline `ask_sections` enforces on the
+            // column axis and `data_row` follows on this one.
+            let sections = window
+                .indices()
+                .map(|view_pos| {
+                    let row = render.source_of(view_pos);
+                    (row, SectionRoles::ask(rows, row))
+                })
+                .collect::<Vec<_>>();
+            let pane = row_header_pane(
+                tag,
+                scroll.body,
+                &window,
+                RowHeaderBand {
+                    width,
+                    total_h,
+                    sections: &sections,
+                },
+                theme,
+                style,
+            );
+            Scene::Container(
+                ContainerNode::new(vec![pane, content]).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_flex_grow(1.0),
+                ),
+            )
+        }
     };
 
     Scene::Container(
@@ -2228,14 +2778,13 @@ impl<'d> GridRender<'_, 'd> {
     /// so a second statement of it could only ever disagree — the shape R1524
     /// removed from the cell axis when it made "row came back short"
     /// inexpressible.
-    fn header_band(
-        &self,
-        header: &mut impl FnMut(usize) -> String,
-        header_decoration: &mut impl FnMut(usize) -> Option<Decoration>,
-        layout: ColumnLayout<'_>,
-    ) -> Scene {
+    fn header_band<L, D>(&self, columns: &mut HeaderAxis<L, D>, layout: ColumnLayout<'_>) -> Scene
+    where
+        L: FnMut(usize) -> String,
+        D: FnMut(usize) -> Option<Decoration>,
+    {
         let span = layout.col_base..layout.col_base + layout.widths.len();
-        let sections = header_sections(header, header_decoration, span);
+        let sections = ask_sections(columns, span);
         header_row(
             self.tag,
             self.click_tag,
@@ -2323,27 +2872,13 @@ impl<'d> GridRender<'_, 'd> {
         &self,
         scroll: GridScroll<'_>,
         is_selected: &impl Fn(usize) -> bool,
-        model: GridModel<
-            impl FnMut(CellIndex) -> String,
+        mut cell: impl FnMut(CellIndex) -> String,
+        mut columns: HeaderAxis<
             impl FnMut(usize) -> String,
             impl FnMut(usize) -> Option<Decoration>,
-            impl FnMut(CellIndex) -> Option<Decoration>,
-            impl FnMut(CellIndex) -> Option<CellEdit>,
         >,
+        mut decoration: impl FnMut(CellIndex) -> Option<Decoration>,
     ) -> Scene {
-        let GridModel {
-            mut cell,
-            mut header,
-            mut header_decoration,
-            mut decoration,
-            // R1544 — the `EditRole` accessor is not a paint-time role: the
-            // open editor's seed reaches the painter already resolved, on
-            // `GridEditing::edit`. It rides the model bundle because it is a
-            // model role (the editing verbs and the a11y walk ask it), and a
-            // paint pass that also asked would invoke it once per painted
-            // cell for an answer only four events need.
-            edit: _,
-        } = model;
         let total_w: u32 = self.widths.iter().copied().sum();
         let cols = self.column_window(scroll.horizontal, self.widths);
         let span = cols.first..cols.first + cols.count;
@@ -2354,8 +2889,7 @@ impl<'d> GridRender<'_, 'd> {
         // surface fill here — the frame in `view_virtual_table` owns it so the
         // rounded block stays put while the content scrolls.
         let band = self.header_band(
-            &mut header,
-            &mut header_decoration,
+            &mut columns,
             ColumnLayout {
                 widths: &self.widths[span.clone()],
                 resizable: self.data.resizable,
@@ -2439,19 +2973,21 @@ impl<'d> GridRender<'_, 'd> {
     /// coordinates, so neither pane can be handed labels it will not paint.
     /// The frozen columns do not horizontally scroll, so a resize grabber
     /// (which grows the horizontal extent) is moot for them.
-    fn split_header_bands(
+    fn split_header_bands<L, D>(
         &self,
-        header: &mut impl FnMut(usize) -> String,
-        header_decoration: &mut impl FnMut(usize) -> Option<Decoration>,
+        columns: &mut HeaderAxis<L, D>,
         frozen_cols: usize,
         scrolled_window: &[u32],
         scrolled_base: usize,
         scroll_pad: ColumnPad,
-    ) -> (Scene, Scene) {
+    ) -> (Scene, Scene)
+    where
+        L: FnMut(usize) -> String,
+        D: FnMut(usize) -> Option<Decoration>,
+    {
         let fhrow_tag = GridTag::frozen_header_row(self.tag);
         let frozen = self.header_band(
-            header,
-            header_decoration,
+            columns,
             ColumnLayout {
                 widths: &self.widths[..frozen_cols],
                 resizable: false,
@@ -2462,8 +2998,7 @@ impl<'d> GridRender<'_, 'd> {
         );
         let hrow_tag = GridTag::header_row(self.tag);
         let scrolling = self.header_band(
-            header,
-            header_decoration,
+            columns,
             ColumnLayout {
                 widths: scrolled_window,
                 resizable: self.data.resizable,
@@ -2480,27 +3015,13 @@ impl<'d> GridRender<'_, 'd> {
         scroll: GridScroll<'_>,
         frozen_cols: usize,
         is_selected: &impl Fn(usize) -> bool,
-        model: GridModel<
-            impl FnMut(CellIndex) -> String,
+        mut cell: impl FnMut(CellIndex) -> String,
+        mut columns: HeaderAxis<
             impl FnMut(usize) -> String,
             impl FnMut(usize) -> Option<Decoration>,
-            impl FnMut(CellIndex) -> Option<Decoration>,
-            impl FnMut(CellIndex) -> Option<CellEdit>,
         >,
+        mut decoration: impl FnMut(CellIndex) -> Option<Decoration>,
     ) -> Scene {
-        let GridModel {
-            mut cell,
-            mut header,
-            mut header_decoration,
-            mut decoration,
-            // R1544 — the `EditRole` accessor is not a paint-time role: the
-            // open editor's seed reaches the painter already resolved, on
-            // `GridEditing::edit`. It rides the model bundle because it is a
-            // model role (the editing verbs and the a11y walk ask it), and a
-            // paint pass that also asked would invoke it once per painted
-            // cell for an answer only four events need.
-            edit: _,
-        } = model;
         let frozen_w: u32 = self.widths[..frozen_cols].iter().copied().sum();
         let scrolled = &self.widths[frozen_cols..];
         let scroll_w: u32 = scrolled.iter().copied().sum();
@@ -2575,8 +3096,7 @@ impl<'d> GridRender<'_, 'd> {
         });
 
         let (frozen_header, scroll_header) = self.split_header_bands(
-            &mut header,
-            &mut header_decoration,
+            &mut columns,
             frozen_cols,
             &scrolled[rel.clone()],
             abs.start,
@@ -2650,6 +3170,7 @@ mod tests {
                     row_ids: &[],
                     decoration: None,
                     header_decoration: None,
+                    row_headers: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2718,6 +3239,7 @@ mod tests {
                     row_ids: &[],
                     decoration: None,
                     header_decoration: None,
+                    row_headers: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2746,6 +3268,7 @@ mod tests {
                     row_ids: &[],
                     decoration: None,
                     header_decoration: None,
+                    row_headers: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2788,6 +3311,7 @@ mod tests {
                     row_ids: &[2, 0, 1],
                     decoration: None,
                     header_decoration: None,
+                    row_headers: None,
                 },
                 TableSelection {
                     rows: &[],
@@ -2974,8 +3498,8 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_cell,
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
@@ -3229,8 +3753,8 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_cell,
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration,
                     edit: no_edit,
                 },
@@ -3406,8 +3930,8 @@ mod tests {
             2,
             GridModel {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
-                header: wide_header,
-                header_decoration: no_header_decoration,
+                columns: HeaderAxis::labelled(wide_header),
+                rows: no_row_header(),
                 decoration: deco,
                 edit: no_edit,
             },
@@ -3441,8 +3965,8 @@ mod tests {
             0,
             GridModel {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
-                header: wide_header,
-                header_decoration: no_header_decoration,
+                columns: HeaderAxis::labelled(wide_header),
+                rows: no_row_header(),
                 decoration: |c: CellIndex| {
                     Some(test_swatch(u8::try_from(c.col % 256).unwrap_or(0)))
                 },
@@ -3522,8 +4046,8 @@ mod tests {
                             vt_cell(c)
                         }
                     },
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration: |c: CellIndex| {
                         (c.col == 1).then(|| Decoration::Swatch {
                             color: Color::rgb(0, 0, 0),
@@ -3632,6 +4156,7 @@ mod tests {
                         row_ids: &[],
                         decoration: deco,
                         header_decoration: None,
+                        row_headers: None,
                     },
                     TableSelection {
                         rows: &[],
@@ -3852,8 +4377,11 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_cell,
-                    header: vt_header,
-                    header_decoration,
+                    columns: HeaderAxis {
+                        label: vt_header,
+                        decoration: header_decoration,
+                    },
+                    rows: no_row_header(),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
@@ -4008,6 +4536,227 @@ mod tests {
         );
     }
 
+    // ── R1548 §5.27 — a row is asked for its header ─────────────────
+
+    /// R1548 — how many rows the vertical band shows at `VT_MEASURED_H`.
+    ///
+    /// Stated as the arithmetic rather than a literal, so the fixture and the
+    /// assertions cannot drift apart when the pitch or the overscan changes.
+    fn vt_row_window() -> VisibleWindow {
+        compute_visible_range(0, VT_MEASURED_H, VT_N, TableStyle::m3().row_height, 2)
+    }
+
+    /// R1548 — the measured body height every row-header fixture uses.
+    const VT_MEASURED_H: u32 = 200;
+
+    /// R1548 — render the virtual table with a **vertical header axis**,
+    /// counting how many times each of its two roles was asked.
+    ///
+    /// `marked` is the data row whose header carries a mark; `meaning` is what
+    /// that mark says (empty = the decorative arm). `order` is the R778 sort
+    /// permutation, so one fixture serves the unpermuted and the sorted case —
+    /// which is the whole question on this axis, because a row header names a
+    /// row's identity and not its place on screen.
+    fn run_vtable_row_headers(
+        marked: usize,
+        meaning: &str,
+        order: Option<&[usize]>,
+        asks: &(Cell<usize>, Cell<usize>),
+    ) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, VT_MEASURED_H);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
+        let h_state = vt_hscroll(0);
+        let theme = light();
+        let style = TableStyle::m3();
+        let meaning = meaning.to_string();
+        let label = |row: usize| {
+            asks.0.set(asks.0.get() + 1);
+            format!("R{row}")
+        };
+        let decoration = |row: usize| {
+            asks.1.set(asks.1.get() + 1);
+            (row == marked).then(|| Decoration::Swatch {
+                color: Color::rgb(0, 9, 0),
+                meaning: meaning.clone(),
+            })
+        };
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
+                VirtualTableData {
+                    column_count: VT_HEADERS.len(),
+                    item_count: VT_N,
+                    overscan: 2,
+                    sort: None,
+                    sort_tag: None,
+                    order,
+                    col_widths: None,
+                    resizable: false,
+                    frozen_cols: 0,
+                    row_style: None,
+                    delegate: None,
+                    editing: None,
+                },
+                &theme,
+                &style,
+                |_| false,
+                GridModel {
+                    cell: vt_cell,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: Some(HeaderAxis { label, decoration }),
+                    decoration: no_decoration,
+                    edit: no_edit,
+                },
+            )
+        })
+    }
+
+    /// The seam: the band exists, one section per **painted** row, and the
+    /// corner where the two axes meet is there to align them.
+    #[test]
+    fn r1548_a_row_header_is_painted_for_every_windowed_row() {
+        let asks = (Cell::new(0), Cell::new(0));
+        let scene = run_vtable_row_headers(usize::MAX, "", None, &asks);
+        let window = vt_row_window();
+        assert!(window.count > 0 && window.count < VT_N, "a real window");
+        for row in window.indices() {
+            assert!(
+                find_tagged(&scene, &GridTag::row_header("vtbl", row)).is_some(),
+                "row {row} is painted, so its header section is painted",
+            );
+        }
+        assert!(
+            find_tagged(&scene, &GridTag::row_header("vtbl", VT_N - 1)).is_none(),
+            "and a row outside the window has no header section — the band is \
+             windowed by the row window, exactly as the strip beside it is",
+        );
+        assert!(
+            find_tagged(&scene, &GridTag::header_corner("vtbl")).is_some(),
+            "the corner cell aligns the two bands",
+        );
+    }
+
+    /// The cost claim: the vertical axis is asked once per painted row, not
+    /// once per row in the table — and **both** its roles are, because a role
+    /// that quietly stopped being windowed would be the regression.
+    #[test]
+    fn r1548_the_vertical_axis_is_asked_once_per_painted_row() {
+        let asks = (Cell::new(0), Cell::new(0));
+        run_vtable_row_headers(usize::MAX, "", None, &asks);
+        let painted = vt_row_window().count;
+        assert_eq!(
+            asks.0.get(),
+            painted,
+            "one `Qt::DisplayRole` ask per painted row (table is {VT_N} rows)",
+        );
+        assert_eq!(
+            asks.1.get(),
+            painted,
+            "and one `Qt::DecorationRole` ask — an equality, not a bound: \
+             'asks for what it paints' is what the contract says",
+        );
+    }
+
+    /// **The statement Qt cannot make.** An axis the model does not answer is
+    /// not painted blank — it is not painted, and not asked.
+    ///
+    /// In Qt the two cases are indistinguishable at every observation point: a
+    /// model that falls through its `orientation` switch returns an invalid
+    /// `QVariant`, `QHeaderView` paints sections that still occupy their width,
+    /// and nothing reports it.
+    #[test]
+    fn r1548_an_unanswered_axis_paints_no_band_at_all() {
+        let scene = run_vtable(VT_MEASURED_H, 0);
+        assert!(
+            find_tagged(&scene, &GridTag::header_corner("vtbl")).is_none(),
+            "no corner",
+        );
+        for row in vt_row_window().indices() {
+            assert!(
+                find_tagged(&scene, &GridTag::row_header("vtbl", row)).is_none(),
+                "and no section for painted row {row} — `no_row_header()` is a \
+                 statement, not a band of empty cells",
+            );
+        }
+    }
+
+    /// The role reaches assistive technology on **this** axis: a mark that
+    /// carries meaning joins the section's name, ahead of its label.
+    #[test]
+    fn r1548_a_meaningful_row_mark_is_announced() {
+        let asks = (Cell::new(0), Cell::new(0));
+        let marked = vt_row_window().first + 1;
+        let scene = run_vtable_row_headers(marked, "Pinned", None, &asks);
+        assert_eq!(
+            cell_access_name(&scene, &GridTag::row_header("vtbl", marked)).as_deref(),
+            Some(format!("Pinned R{marked}").as_str()),
+            "the mark's meaning precedes the row's label — Qt answers a header \
+             cell's name from the display role alone, so this fact would be \
+             unhearable there",
+        );
+    }
+
+    /// And the negative half: a decorative mark (`alt=""`) leaves the name to
+    /// the painted label, so the AT tree is what an unmarked row's would be.
+    #[test]
+    fn r1548_a_decorative_row_mark_is_silent() {
+        let asks = (Cell::new(0), Cell::new(0));
+        let marked = vt_row_window().first + 1;
+        let scene = run_vtable_row_headers(marked, "", None, &asks);
+        let cell = find_tagged(&scene, &GridTag::row_header("vtbl", marked)).expect("section");
+        assert!(cell.aria_label.is_none(), "no override");
+        assert_eq!(
+            cell_access_name(&scene, &GridTag::row_header("vtbl", marked)).as_deref(),
+            Some(format!("R{marked}").as_str()),
+            "so the derivation names it from the label that was drawn",
+        );
+    }
+
+    /// A section's mark is addressable on this axis too, and its address
+    /// cannot be read as the other axis's.
+    #[test]
+    fn r1548_a_row_mark_has_its_own_address() {
+        let asks = (Cell::new(0), Cell::new(0));
+        let marked = vt_row_window().first + 1;
+        let scene = run_vtable_row_headers(marked, "Pinned", None, &asks);
+        assert!(
+            find_tagged(&scene, &GridTag::row_header_decoration("vtbl", marked)).is_some(),
+            "the mark is tagged, so it can be asked about",
+        );
+        assert!(
+            find_tagged(&scene, &GridTag::header_decoration("vtbl", marked)).is_none(),
+            "and the COLUMN axis's mark address is not it",
+        );
+    }
+
+    /// **The identity claim.** The vertical axis is asked with the row's data
+    /// index, not its position on screen, so a sort carries each header with
+    /// its row instead of renumbering the viewport.
+    #[test]
+    fn r1548_a_row_header_names_its_row_not_its_position() {
+        let asks = (Cell::new(0), Cell::new(0));
+        // Reverse the first rows: visual position 0 is now data row 3.
+        let order: Vec<usize> = (0..VT_N).rev().collect();
+        let scene = run_vtable_row_headers(usize::MAX, "", Some(&order), &asks);
+        let top = VT_N - 1;
+        assert_eq!(
+            cell_access_name(&scene, &GridTag::row_header("vtbl", top)).as_deref(),
+            Some(format!("R{top}").as_str()),
+            "the topmost band section is data row {top}'s, named as {top} — \
+             not as the first row of the view",
+        );
+        assert!(
+            find_tagged(&scene, &GridTag::data_row("vtbl", top)).is_some(),
+            "and it is the row whose strip sits beside it",
+        );
+    }
+
     /// R784 — render the virtual table with an explicit horizontal
     /// offset so the frozen-header / h-scroll tests can drive the outer
     /// horizontal scroll.
@@ -4046,8 +4795,8 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_cell,
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
@@ -4141,8 +4890,8 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_cell,
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
@@ -4402,8 +5151,8 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_marker_cell,
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
@@ -4474,8 +5223,8 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_marker_cell,
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
@@ -4634,8 +5383,8 @@ mod tests {
                 |_| false,
                 GridModel {
                     cell: vt_cell,
-                    header: vt_header,
-                    header_decoration: no_header_decoration,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: no_row_header(),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
@@ -4732,8 +5481,8 @@ mod tests {
             frozen_cols,
             GridModel {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
-                header: wide_header,
-                header_decoration: no_header_decoration,
+                columns: HeaderAxis::labelled(wide_header),
+                rows: no_row_header(),
                 decoration: no_decoration,
                 edit: no_edit,
             },
@@ -4749,6 +5498,8 @@ mod tests {
         frozen_cols: usize,
         model: GridModel<
             impl FnMut(CellIndex) -> String,
+            impl FnMut(usize) -> String,
+            impl FnMut(usize) -> Option<Decoration>,
             impl FnMut(usize) -> String,
             impl FnMut(usize) -> Option<Decoration>,
             impl FnMut(CellIndex) -> Option<Decoration>,
@@ -4866,8 +5617,8 @@ mod tests {
                     log.borrow_mut().push(c);
                     format!("r{}c{}", c.row, c.col)
                 },
-                header: wide_header,
-                header_decoration: no_header_decoration,
+                columns: HeaderAxis::labelled(wide_header),
+                rows: no_row_header(),
                 decoration: no_decoration,
                 edit: no_edit,
             },
@@ -4885,11 +5636,11 @@ mod tests {
             frozen_cols,
             GridModel {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
-                header: |col: usize| {
+                columns: HeaderAxis::labelled(|col: usize| {
                     log.borrow_mut().push(col);
                     wide_header(col)
-                },
-                header_decoration: no_header_decoration,
+                }),
+                rows: no_row_header(),
                 decoration: no_decoration,
                 edit: no_edit,
             },
@@ -5130,8 +5881,8 @@ mod tests {
             0,
             GridModel {
                 cell: |c: CellIndex| format!("r{}c{}", c.row, c.col),
-                header: |_: usize| String::new(),
-                header_decoration: no_header_decoration,
+                columns: HeaderAxis::labelled(|_: usize| String::new()),
+                rows: no_row_header(),
                 decoration: no_decoration,
                 edit: no_edit,
             },

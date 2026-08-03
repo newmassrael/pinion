@@ -79826,6 +79826,72 @@
         "none. `treegrid_nodes` (`tree_view.rs`) still names its columnheaders from the builder, and that is correct rather than deferred: its headers are painted by `pinion_widget_paint::tree_view`, not by `table.rs`'s `header_cell`, so no header there can carry a decoration and there is nothing for a stamp to hide. It becomes this round's problem on the day that painter gains the role"
       ]
     },
+    "Round 1548": {
+      "decision_summary": "A row is asked for its header. Qt spells both section axes with one virtual — headerData(section, orientation, role) — and a QTableView shows the vertical one by default; pinion had no vertical axis at all. A column could be asked what it was called and what mark it carried; a ROW could be asked nothing — no row numbers, no pin, no lock, no breakpoint gutter, the whole left-hand band a professional table, editor or profiler has. R1548 adds it as a TYPE rather than a second pair of accessors: HeaderAxis<L, D> holds the two roles a section answers, GridModel::columns and GridModel::rows are both one, so the two axes answer the same role set by construction and one lifted painter draws either. Two things past Qt 6.11, both read over the wire: an unanswered axis is a DECLARATION and not a blank strip (Qt's orientation is a runtime argument, so the commonest QAbstractTableModel bug there — handle Qt::Horizontal, fall through returning QVariant() — paints sections that still occupy their width and is reported by nothing; here no_row_header() is written down, the band is not painted, the model is asked ZERO times a frame, and painted-iff-answered is structural because there is no second show-the-header flag to disagree with the first), and the mark's MEANING reaches assistive technology (QAccessibleTableHeaderCell::text(Name) answers from Qt::DisplayRole on BOTH orientations, so a Qt row header whose distinguishing information is its glyph announces only the row's number). The rowheader's name is derived from the painted band, so this axis is born with no second source — R1547.1 had to migrate hand-stamped names on the other axis; this one never had them.",
+      "changes_bullets": [
+        "HeaderAxis<L, D> makes a section axis a TYPE: Qt's orientation promoted from a runtime argument to the field the axis is stored in, so a role added to sections is added to both axes or to neither",
+        "GridModel::rows (Qt headerData(section, Qt::Vertical, ...)) asked once per PAINTED row with the row's DATA index, so a mark and a number travel with their row across a sort",
+        "no_row_header() is the written statement that a grid has no vertical axis; painted-iff-answered is structural — the band's width is a TableStyle dimension, not a second presence flag that could contradict the model",
+        "GridTag::row_header / row_header_decoration / header_corner, each with its own prefix so no address can be read as another axis's; row is a usize because the string id space is the tree-grid's and a QTreeView has no vertical header",
+        "section_content lifts the mark-and-label composition out of header_cell (obligation 3b, at the second consumer) so both axes' bands share one painter, one gap constant and one accessible-name rule",
+        "SectionRoles::ask states one-address-every-role once; ask_sections is its contiguous-span form, and the row band uses the same function over the windowed rows in sort order",
+        "TableData::row_headers gives the EAGER view_table the same axis through the same type, so the tree does not hold two contracts — the R1547.1 lesson, applied inside the round that opens the axis",
+        "attach_row_headers is a composing PASS over built nodes (the R1544 mark_grid_editability shape), so the axis reaches every grid topology — identity, sorted, frozen, column-windowed, single- and multi-select — instead of the one builder a flag would have grown",
+        "consumers: hello-virtual-table (both roles + a pinned mark no cell states), hello-virtual-columns (per-frame ask count at vcol_rhstatus), hello-grid-sort (the number is the row's identity under a permutation), hello-table (the eager surface, icon arm)",
+        "hello-virtual-table WIN_W 400 to 470 and hello-table 540 to 600: the band is 56px of content, and r775's viewport-containment assertion caught the overflow the moment it appeared"
+      ],
+      "verification_bullets": [
+        "tools/demos/r1548_row_asked_for_its_header.py — 61 assertion statements over FIVE apps: the band and its corner painted one section per painted row, both roles reaching the AT tree, the axis asked once per painted row over 10,000 rows and tracking a scroll, a row header naming its ROW across a sort, the eager surface answering the same axis at the same addresses, and a negative control where a declined axis paints nothing at all",
+        "7 unit tests in pinion-widget-paint (band windowed to the row window, both roles asked once per painted row as an equality, an unanswered axis painting nothing, the announced / silent mark pair, the mark's own address, identity-not-position under a permutation) plus 4 in pinion-a11y (rowheader leads every row and carries no name, composes with the sorted topology, orphan-free, absent when declined)",
+        "3 counterfactuals, one at a time, every one caught: the band addressed by visual position instead of data row (1 test), a mark's meaning never joining the section name (2 tests, one of them R1547's — evidence the lifted painter is genuinely shared), and the rowheader appended instead of leading (2 tests)",
+        "gates: cargo test pinion-core 2922 / pinion-a11y 253+17 / pinion-widget-paint 778 and the 5 changed example crates green; cargo fmt --all --check; workspace clippy -D pedantic; validate-workspace",
+        "20 grid / table demos re-run locally green — every demo reading a changed scene, including the two whose hard-coded viewport had to follow the widened windows"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "a section axis answers 2 of Qt's roles: ToolTipRole, TextAlignmentRole, InitialSortOrderRole and SizeHintRole on a header are all absent on BOTH axes",
+        "the row axis has no interaction — Qt's QHeaderView section click selects the row, and its sections resize; row height here is one grid-wide pitch the windowing arithmetic (uniform_slots, content_height) is built on, so per-row heights are the variable-pitch axis and not this one",
+        "the band's width is stated, not QHeaderView::ResizeToContents — deriving it needs the measured text extent, which is known one frame late, and Qt pays for its own version with a header that changes width as you scroll",
+        "a binding now states its ROW window twice (paint plus a11y) as it already did its column window — R1530's last small item, unchanged and now on both axes",
+        "adoption is four bindings: hello-data-grid and the other grids that drive view_virtual_grid_body directly would each compose the band themselves"
+      ],
+      "publishable_decision_summary": "A row is asked for its header. Qt spells both section axes with one virtual — headerData(section, orientation, role) — and a QTableView shows the vertical one by default; pinion had no vertical axis at all. A column could be asked what it was called and what mark it carried; a ROW could be asked nothing — no row numbers, no pin, no lock, no breakpoint gutter, the whole left-hand band a professional table, editor or profiler has. R1548 adds it as a TYPE rather than a second pair of accessors: HeaderAxis<L, D> holds the two roles a section answers, GridModel::columns and GridModel::rows are both one, so the two axes answer the same role set by construction and one lifted painter draws either. Two things past Qt 6.11, both read over the wire: an unanswered axis is a DECLARATION and not a blank strip (Qt's orientation is a runtime argument, so the commonest QAbstractTableModel bug there — handle Qt::Horizontal, fall through returning QVariant() — paints sections that still occupy their width and is reported by nothing; here no_row_header() is written down, the band is not painted, the model is asked ZERO times a frame, and painted-iff-answered is structural because there is no second show-the-header flag to disagree with the first), and the mark's MEANING reaches assistive technology (QAccessibleTableHeaderCell::text(Name) answers from Qt::DisplayRole on BOTH orientations, so a Qt row header whose distinguishing information is its glyph announces only the row's number). The rowheader's name is derived from the painted band, so this axis is born with no second source — R1547.1 had to migrate hand-stamped names on the other axis; this one never had them.",
+      "publishable_changes_bullets": [
+        "HeaderAxis<L, D> makes a section axis a TYPE: Qt's orientation promoted from a runtime argument to the field the axis is stored in, so a role added to sections is added to both axes or to neither",
+        "GridModel::rows (Qt headerData(section, Qt::Vertical, ...)) asked once per PAINTED row with the row's DATA index, so a mark and a number travel with their row across a sort",
+        "no_row_header() is the written statement that a grid has no vertical axis; painted-iff-answered is structural — the band's width is a TableStyle dimension, not a second presence flag that could contradict the model",
+        "GridTag::row_header / row_header_decoration / header_corner, each with its own prefix so no address can be read as another axis's; row is a usize because the string id space is the tree-grid's and a QTreeView has no vertical header",
+        "section_content lifts the mark-and-label composition out of header_cell (obligation 3b, at the second consumer) so both axes' bands share one painter, one gap constant and one accessible-name rule",
+        "SectionRoles::ask states one-address-every-role once; ask_sections is its contiguous-span form, and the row band uses the same function over the windowed rows in sort order",
+        "TableData::row_headers gives the EAGER view_table the same axis through the same type, so the tree does not hold two contracts — the R1547.1 lesson, applied inside the round that opens the axis",
+        "attach_row_headers is a composing PASS over built nodes (the R1544 mark_grid_editability shape), so the axis reaches every grid topology — identity, sorted, frozen, column-windowed, single- and multi-select — instead of the one builder a flag would have grown",
+        "consumers: hello-virtual-table (both roles + a pinned mark no cell states), hello-virtual-columns (per-frame ask count at vcol_rhstatus), hello-grid-sort (the number is the row's identity under a permutation), hello-table (the eager surface, icon arm)",
+        "hello-virtual-table WIN_W 400 to 470 and hello-table 540 to 600: the band is 56px of content, and r775's viewport-containment assertion caught the overflow the moment it appeared"
+      ],
+      "publishable_verification_bullets": [
+        "tools/demos/r1548_row_asked_for_its_header.py — 61 assertion statements over FIVE apps: the band and its corner painted one section per painted row, both roles reaching the AT tree, the axis asked once per painted row over 10,000 rows and tracking a scroll, a row header naming its ROW across a sort, the eager surface answering the same axis at the same addresses, and a negative control where a declined axis paints nothing at all",
+        "7 unit tests in pinion-widget-paint (band windowed to the row window, both roles asked once per painted row as an equality, an unanswered axis painting nothing, the announced / silent mark pair, the mark's own address, identity-not-position under a permutation) plus 4 in pinion-a11y (rowheader leads every row and carries no name, composes with the sorted topology, orphan-free, absent when declined)",
+        "3 counterfactuals, one at a time, every one caught: the band addressed by visual position instead of data row (1 test), a mark's meaning never joining the section name (2 tests, one of them R1547's — evidence the lifted painter is genuinely shared), and the rowheader appended instead of leading (2 tests)",
+        "gates: cargo test pinion-core 2922 / pinion-a11y 253+17 / pinion-widget-paint 778 and the 5 changed example crates green; cargo fmt --all --check; workspace clippy -D pedantic; validate-workspace",
+        "20 grid / table demos re-run locally green — every demo reading a changed scene, including the two whose hard-coded viewport had to follow the widened windows"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a section axis answers 2 of Qt's roles: ToolTipRole, TextAlignmentRole, InitialSortOrderRole and SizeHintRole on a header are all absent on BOTH axes",
+        "the row axis has no interaction — Qt's QHeaderView section click selects the row, and its sections resize; row height here is one grid-wide pitch the windowing arithmetic (uniform_slots, content_height) is built on, so per-row heights are the variable-pitch axis and not this one",
+        "the band's width is stated, not QHeaderView::ResizeToContents — deriving it needs the measured text extent, which is known one frame late, and Qt pays for its own version with a header that changes width as you scroll",
+        "a binding now states its ROW window twice (paint plus a11y) as it already did its column window — R1530's last small item, unchanged and now on both axes",
+        "adoption is four bindings: hello-data-grid and the other grids that drive view_virtual_grid_body directly would each compose the band themselves"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

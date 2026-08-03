@@ -56,7 +56,7 @@
 //! not in the tree. Windowing an axis without its extent pair would make the
 //! grid *less* readable than before it scaled.
 
-use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_wide};
+use pinion_a11y::{AccessNode, WidgetA11y, attach_row_headers, windowed_grid_nodes_wide};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -69,8 +69,8 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, Decoration, GridModel, GridScroll, TableStyle, VirtualTableData, no_decoration,
-    no_edit, view_virtual_table,
+    CellIndex, Decoration, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData,
+    no_decoration, no_edit, view_virtual_table,
 };
 use std::cell::Cell;
 
@@ -121,6 +121,12 @@ const HEADER_STATUS_TAG: &str = "vcol_hstatus";
 /// would otherwise hide inside a neighbour's number.
 const HEADER_DECO_STATUS_TAG: &str = "vcol_hdstatus";
 
+/// R1548 — tag of the readout stating how many **row** headers the grid asked
+/// for this frame. Its own slot for the reason the mark count has its own: the
+/// two section axes are windowed by different windows, so one number cannot
+/// witness both.
+const ROW_HEADER_STATUS_TAG: &str = "vcol_rhstatus";
+
 /// Width of column `col`, in logical pixels.
 ///
 /// Five distinct widths on a cycle, so no uniform pitch describes this axis:
@@ -153,6 +159,18 @@ fn col_widths() -> Vec<u32> {
 fn header_text(col: usize) -> String {
     HEADER_REQUESTS.with(|n| n.set(n.get() + 1));
     format!("C{col:03}")
+}
+
+/// R1548 §5.27 — the **vertical** section axis's `Qt::DisplayRole`
+/// (`headerData(section, Qt::Vertical, Qt::DisplayRole)`), and the witness that
+/// this axis is windowed: it counts every ask.
+///
+/// `R` rather than a bare number so a `scene/snapshot` string cannot be
+/// confused with a cell's, and zero-padded to the extent's width so the band
+/// does not reflow as the scroll crosses a decade.
+fn row_header_text(row: usize) -> String {
+    ROW_HEADER_REQUESTS.with(|n| n.set(n.get() + 1));
+    format!("R{row:04}")
 }
 
 /// R1547 — how often a column carries a header mark: every tenth. Sparse on
@@ -214,6 +232,16 @@ thread_local! {
     /// both are per painted section — and the test asserts that rather than a
     /// bound, because "asks for what it paints" is an equality.
     static HEADER_DECO_REQUESTS: Cell<usize> = const { Cell::new(0) };
+
+    /// R1548 — how many **row** headers the grid asked for while building the
+    /// current frame (Qt `headerData(section, Qt::Vertical, …)`).
+    ///
+    /// Its own counter for the reason every other one is: this is the second
+    /// section axis, and it is windowed by the ROW window where its neighbour
+    /// is windowed by the column window. A single total could not tell the two
+    /// apart, which is precisely the question — "is the vertical axis windowed
+    /// at all, or does a 5,000-row grid ask 5,000 times to paint a dozen?"
+    static ROW_HEADER_REQUESTS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// The synthetic text of **one cell** — the R1524 per-cell contract
@@ -237,7 +265,7 @@ fn cell_text(c: CellIndex) -> String {
 /// test-only). The demo instead cross-checks `asked` against an independent
 /// observable: how many cells the snapshot actually holds. Equality of those
 /// two is exactly what "the grid asks for the cells it paints" means.
-fn status_bar(asked: usize, headers: usize, marks: usize, theme: &Theme) -> Scene {
+fn status_bar(asked: usize, headers: usize, marks: usize, rows: usize, theme: &Theme) -> Scene {
     let readout = |content: String, tag: &'static str| {
         Scene::Text(
             TextNode::styled(
@@ -265,8 +293,14 @@ fn status_bar(asked: usize, headers: usize, marks: usize, theme: &Theme) -> Scen
         format!("\u{00B7} asked {marks} marks"),
         HEADER_DECO_STATUS_TAG,
     );
+    // R1548 — the vertical axis's own readout. The number that makes "the row
+    // axis is windowed" observable rather than asserted.
+    let rtext = readout(
+        format!("\u{00B7} asked {rows} row headers"),
+        ROW_HEADER_STATUS_TAG,
+    );
     Scene::Container(
-        ContainerNode::new(vec![text, htext, dtext])
+        ContainerNode::new(vec![text, htext, dtext, rtext])
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHigh),
             ))
@@ -297,6 +331,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     CELL_REQUESTS.with(|n| n.set(0));
     HEADER_REQUESTS.with(|n| n.set(0));
     HEADER_DECO_REQUESTS.with(|n| n.set(0));
+    ROW_HEADER_REQUESTS.with(|n| n.set(0));
     let grid = view_virtual_table(
         TABLE_TAG,
         GridScroll {
@@ -322,10 +357,16 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         |_| false, // display-only grid: no selection
         GridModel {
             cell: cell_text,
-            header: header_text,
-            // R1547 — Qt `headerData(section, Qt::Horizontal,
-            // Qt::DecorationRole)`, windowed like the label beside it.
-            header_decoration: |col: usize| header_decoration(col, &theme),
+            columns: HeaderAxis {
+                label: header_text,
+                // R1547 — Qt `headerData(section, Qt::Horizontal,
+                // Qt::DecorationRole)`, windowed like the label beside it.
+                decoration: |col: usize| header_decoration(col, &theme),
+            },
+            // R1548 — Qt `headerData(section, Qt::Vertical, Qt::DisplayRole)`:
+            // the second section axis, windowed by the ROW window exactly as
+            // its neighbour is by the column window.
+            rows: Some(HeaderAxis::labelled(row_header_text)),
             decoration: no_decoration,
             edit: no_edit,
         },
@@ -336,10 +377,11 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let asked = CELL_REQUESTS.with(Cell::get);
     let asked_headers = HEADER_REQUESTS.with(Cell::get);
     let asked_marks = HEADER_DECO_REQUESTS.with(Cell::get);
+    let asked_rows = ROW_HEADER_REQUESTS.with(Cell::get);
 
     Scene::Container(
         ContainerNode::new(vec![
-            status_bar(asked, asked_headers, asked_marks, &theme),
+            status_bar(asked, asked_headers, asked_marks, asked_rows, &theme),
             grid,
         ])
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
@@ -409,7 +451,7 @@ impl WidgetA11y for VirtualColumnsView {
         // derived from the painted header band, so this pass states only which
         // sections exist and the label reaches the AT from the one place that
         // drew it. Asking twice was the remaining way for the two to disagree.
-        windowed_grid_nodes_wide(
+        let mut nodes = windowed_grid_nodes_wide(
             TABLE_TAG,
             "Wide data grid",
             cols.count,
@@ -417,7 +459,11 @@ impl WidgetA11y for VirtualColumnsView {
             u32::try_from(N).unwrap_or(u32::MAX),
             &rows,
             &cols,
-        )
+        );
+        // R1548 — the vertical header axis, composed onto the two-axis windowed
+        // topology. Unsorted, so a visual position is its own data row.
+        attach_row_headers(&mut nodes, TABLE_TAG, &rows, |view_pos| view_pos);
+        nodes
     }
 }
 

@@ -53,7 +53,7 @@ from rpc_verify import (  # noqa: E402
 
 EXAMPLE = "hello-table"
 T = "table"
-VIEWPORT = (540, 360)
+VIEWPORT = (600, 360)
 ASC = "▲"
 DESC = "▼"
 
