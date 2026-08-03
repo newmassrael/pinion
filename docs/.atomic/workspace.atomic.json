@@ -79950,6 +79950,44 @@
         "Scrollbar line/page arrows are the obvious fourth consumer and have no `Button` sub-regions to declare from — the widget has no arrow affordances at all, so that is catalog work, not seam work"
       ]
     },
+    "Round 1549.1": {
+      "decision_summary": "A carry that named an unverified Qt behaviour is withdrawn. R1549's carry list opened with \"keyboard auto-repeat on a focused widget (Qt `setAutoRepeat` also covers held Space/Enter)\" and deferred unifying it as a round of its own. The parenthesis is a claim about Qt's source I could not check from here, and it was doing the load-bearing work of justifying a deferral — exactly the shape [[never-record-unverified-outcomes]] forbids, and the shape R1532 and R1540 each caught in an INHERITED gap list. This one was written fresh, in the same round, which is the more uncomfortable finding: a gap list can be wrong on the day it is authored, so the closing audit has to check its own new entries and not only the carried ones. What replaces it is a fact about THIS tree, verified by census rather than by recollection: pinion's keyboard path already repeats at the OS rate, matching what `QAbstractSpinBox` does, and it did so before R1549 — so there was no gap to defer. The round's carry count is therefore not three items but two, and both of those are stated limits at parity rather than work owed.",
+      "changes_bullets": [
+        "No code change. The correction is to R1549's own carry list, which is the durable record an audit reads",
+        "Verified instead, by census: no production binding overrides `apply_key_repeat`, whose default drops the flag and forwards to `apply_key` — so a held ArrowUp on `hello-spinbutton` already steps at the OS key rate, which is what `QAbstractSpinBox::keyPressEvent` does. The keyboard axis is at parity and was already there before R1549",
+        "`apply_key_repeat` is additionally MORE than Qt offers on that axis: a widget opts OUT of repeats in one place (R1071's toggle case), where a Qt widget must test `e->isAutoRepeat()` by hand in every handler"
+      ],
+      "verification_bullets": [
+        "Census: `grep -rn apply_key_repeat crates/ examples/` — three hits, all in `dispatch_core.rs`'s `TestView`. Zero production overrides, so the default (which ignores `repeat`) is what every binding gets",
+        "`crates/pinion-core/src/widget_core.rs:512-521` — the default body is `let _ = repeat; Self::apply_key(...)`",
+        "`examples/hello-spinbutton/src/main.rs:294-298` — `apply_key` steps on every ArrowUp it is handed, repeat or not"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "Two axis-level gaps stand, unchanged from R1549: an AT hears one value-change per repeat (Qt is identical, so a stated limit at parity, not a divergence) and scrollbar arrows have no `Button` sub-regions to declare from, which is catalog work rather than seam work"
+      ],
+      "publishable_decision_summary": "A carry that named an unverified Qt behaviour is withdrawn. R1549's carry list opened with \"keyboard auto-repeat on a focused widget (Qt `setAutoRepeat` also covers held Space/Enter)\" and deferred unifying it as a round of its own. The parenthesis is a claim about Qt's source I could not check from here, and it was doing the load-bearing work of justifying a deferral — exactly the shape [[never-record-unverified-outcomes]] forbids, and the shape R1532 and R1540 each caught in an INHERITED gap list. This one was written fresh, in the same round, which is the more uncomfortable finding: a gap list can be wrong on the day it is authored, so the closing audit has to check its own new entries and not only the carried ones. What replaces it is a fact about THIS tree, verified by census rather than by recollection: pinion's keyboard path already repeats at the OS rate, matching what `QAbstractSpinBox` does, and it did so before R1549 — so there was no gap to defer. The round's carry count is therefore not three items but two, and both of those are stated limits at parity rather than work owed.",
+      "publishable_changes_bullets": [
+        "No code change. The correction is to R1549's own carry list, which is the durable record an audit reads",
+        "Verified instead, by census: no production binding overrides `apply_key_repeat`, whose default drops the flag and forwards to `apply_key` — so a held ArrowUp on `hello-spinbutton` already steps at the OS key rate, which is what `QAbstractSpinBox::keyPressEvent` does. The keyboard axis is at parity and was already there before R1549",
+        "`apply_key_repeat` is additionally MORE than Qt offers on that axis: a widget opts OUT of repeats in one place (R1071's toggle case), where a Qt widget must test `e->isAutoRepeat()` by hand in every handler"
+      ],
+      "publishable_verification_bullets": [
+        "Census: `grep -rn apply_key_repeat crates/ examples/` — three hits, all in `dispatch_core.rs`'s `TestView`. Zero production overrides, so the default (which ignores `repeat`) is what every binding gets",
+        "`crates/pinion-core/src/widget_core.rs:512-521` — the default body is `let _ = repeat; Self::apply_key(...)`",
+        "`examples/hello-spinbutton/src/main.rs:294-298` — `apply_key` steps on every ArrowUp it is handed, repeat or not"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Two axis-level gaps stand, unchanged from R1549: an AT hears one value-change per repeat (Qt is identical, so a stated limit at parity, not a divergence) and scrollbar arrows have no `Button` sub-regions to declare from, which is catalog work rather than seam work"
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [
