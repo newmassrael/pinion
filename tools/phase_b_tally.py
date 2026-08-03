@@ -729,9 +729,61 @@ AXES = [
         #
         # The R1542 name/evidence mismatch above still stands and is still
         # deliberately undecided here.
-        "judged_at": 1546,
-        "completion": 80,
-        "evidence_snapshot": {"example-name": 10, "round-axis": 3},
+        #
+        # R1551 re-judged 80 -> 84, demanded by the tool (round count 3 -> 4).
+        #
+        # It closes the item R1546's audit named as DOMINATING the axis, on the
+        # one sub-item that audit named with specifics: `QTextBlockFormat`'s
+        # per-paragraph indent and margins. Before it, a paragraph could say how
+        # its glyphs looked and nothing about how the paragraph itself sat — no
+        # indent, no space between paragraphs, no first-line indent, no way to
+        # mark one a heading. `BlockFormat` is now a scene declaration that
+        # lowers to the node's ordinary layout margin, so the flex pass indents
+        # a paragraph with no document-specific layout code and the result
+        # composes with the rest of the tree; Qt's block margins are known only
+        # to the private `QTextDocumentLayout`, which is a second layout engine
+        # that meets the widget layout at a viewport and nowhere else.
+        #
+        # Four things past Qt 6.11: the format is a **struct** where
+        # `QTextFormat` is a `QVariant` property bag whose unset properties
+        # silently return defaults, so a block's whole declaration can be
+        # enumerated; every length is **one unit** where Qt mixes `indent()`
+        # (indent-width multiples) with `leftMargin()` (pixels) in one class;
+        # `text-indent` carries CSS's **`hanging` and `each-line`** keywords,
+        # which Qt's bare `qreal textIndent` cannot express (a hanging indent
+        # in Qt needs a negative indent plus a compensating margin, i.e. two
+        # properties that must agree); and a **heading level reaches assistive
+        # technology** — `QTextBlockFormat::headingLevel()` has existed since
+        # Qt 5.15, but the interface a `QTextEdit` implements is
+        # `QAccessibleTextInterface`, whose vocabulary is character offsets,
+        # selections and text attributes with no method that reports block
+        # structure at all, so a Qt document's heading levels reach its layout
+        # and stop. `scene/text_blocks` then publishes the declaration BESIDE
+        # the shaped line boxes, which is the only form in which "did my indent
+        # reach the layout" is a question with an answer.
+        #
+        # It also closed a §2 #6 gap this axis had carried unnamed since R1344:
+        # `TextStyle::text_align` never reached the cell backend at all. The
+        # terminal now places every line by the same rule the pixel backend
+        # does — indent and alignment together, because both answer "which
+        # column does this line begin at" and splitting them would be two
+        # derivations of one CSS rule.
+        #
+        # +4 and not more, and the remainder is audited at R1551. The document
+        # model is OPENED, not complete, and what is left of it is larger than
+        # what was closed: **`QTextList`** (ordered / unordered, with automatic
+        # numbering across sibling blocks — the part that cannot be hand-
+        # composed), **`QTextTable`**, and **`setMarkdown` / `toHtml`**
+        # import-export. None has a scene primitive. `QTextBlockFormat` itself
+        # keeps four properties this round did not take: `marker`
+        # (Unchecked / Checked, which belongs with `QTextList`),
+        # `nonBreakableLines`, `pageBreakPolicy` (meaningful only against
+        # `pinion-pdf`'s paged output) and `tabPositions`. The CHARACTER half is
+        # unchanged from R1546: vertical alignment (super/subscript) and
+        # overline, both small.
+        "judged_at": 1551,
+        "completion": 84,
+        "evidence_snapshot": {"example-name": 11, "round-axis": 4},
     },
     {
         "key": "perf",
