@@ -233,6 +233,18 @@ pub fn self_hosted_text_eligible(
         // Declining is always safe: the leaf renders through parley, where
         // every leaf rendered before this arm existed.
         && style.bg_color.is_none()
+        // R1551 §5.36 — a declared CSS `text-indent` DECLINES to this arm for
+        // the same reason a background does. The indent is a *breaking* input:
+        // parley narrows the selected line's available width and offsets it,
+        // and this arm's `wrap_paragraph` knows neither. Serving such a leaf
+        // would paint a paragraph flush that the scene declares indented — and
+        // `scene/text_blocks` would publish the declaration beside line boxes
+        // that do not honour it, so the divergence would reach the wire too.
+        //
+        // Keyed on `is_none()` (the amount) rather than on the whole value: the
+        // two CSS keywords cannot move a line by themselves, so a zero-amount
+        // indent carrying `hanging` is nothing to reproduce and stays eligible.
+        && style.text_indent.is_none()
 }
 
 /// R1070.1 §5.37 — the vertical metrics of one `Normal` line box for `font` at
@@ -917,6 +929,71 @@ mod tests {
         assert!(
             self_hosted_text_eligible("Modified", &highlighted.without_bg_color(), &[], false),
             "clearing it restores eligibility",
+        );
+    }
+
+    /// R1551 §5.36 §5.37 — a leaf that declares a CSS `text-indent` is not this
+    /// arm's to paint.
+    ///
+    /// The indent is a BREAKING input, not a paint offset: parley narrows the
+    /// selected line's available width and shifts it, and this arm's own
+    /// wrapper does neither. Serving such a leaf would paint flush what the
+    /// scene declares indented, and `scene/text_blocks` would publish the
+    /// declaration beside line boxes that do not honour it — the same silent
+    /// divergence the background arm above exists to rule out, one round later
+    /// on a new paragraph-level field.
+    ///
+    /// Asserted on both arms, because eligibility is their shared SSOT.
+    #[test]
+    fn r1551_a_leaf_declaring_a_text_indent_is_not_this_arms_to_paint() {
+        use crate::layout::TextMeasure;
+        let engine = noto_engine();
+        let base = TextStyle::new().with_size_px(20);
+
+        // The baseline, so the assertions below single out the indent rather
+        // than some unrelated ineligibility.
+        assert!(
+            self_hosted_text_eligible("Indented", &base, &[], false),
+            "a plain leaf must be eligible, or this test proves nothing",
+        );
+
+        let indented = base
+            .clone()
+            .with_text_indent(pinion_core::style::TextIndent::first_line(24));
+        assert!(
+            !self_hosted_text_eligible("Indented", &indented, &[], false),
+            "a declared indent must not be eligible: this arm would paint the \
+             paragraph flush",
+        );
+        assert!(
+            !engine.serves("Indented", &indented, &[], false),
+            "nor served by the paint arm",
+        );
+        assert!(
+            engine
+                .measure_text("Indented", &indented, &[], None, false)
+                .is_none(),
+            "and the measure arm defers too — paint and measure must not split",
+        );
+
+        // A hanging indent is the same declaration selecting other lines, so it
+        // declines identically.
+        let hanging = base
+            .clone()
+            .with_text_indent(pinion_core::style::TextIndent::hanging(24));
+        assert!(
+            !self_hosted_text_eligible("Indented", &hanging, &[], false),
+            "and so does the hanging form",
+        );
+
+        // The keywords alone move nothing, so they do not cost eligibility —
+        // the predicate keys on the amount, which is what a reader can see.
+        let keywords_only = base
+            .clone()
+            .with_text_indent(pinion_core::style::TextIndent::hanging(0).with_each_line());
+        assert!(
+            self_hosted_text_eligible("Indented", &keywords_only, &[], false),
+            "a zero amount indents no line, whatever the keywords say",
         );
     }
 
