@@ -1327,12 +1327,33 @@ impl<V: WidgetView> AppShell<V> {
         // process total; see `ShellCore::dispatch_rpc_inner`.
         let window_arenas =
             (parsed_request.method == "scene/memory").then(|| self.arena_footprints());
+        // R1557 §5.16 §5.18 §5.7 — the frame's draw work attributed per subtree,
+        // which only AppShell can produce: the attribution re-encodes the
+        // retained paint scene through the vello walk, and that needs the
+        // window's decoded-image cache (a slot field here) alongside the shape
+        // cache and paint scene `ShellCore` owns. Method-gated for the same
+        // reason `window_arenas` above is, and a stronger one — this is a whole
+        // encode, not a traversal of what is already encoded.
+        let draw_profile = (parsed_request.method == "scene/draw_profile")
+            .then(|| {
+                let window_id = parsed_request
+                    .window_scope()
+                    .ok()
+                    .flatten()
+                    .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
+                    .to_owned();
+                let slot = self.windows.values_mut().find(|s| s.spec_id == window_id)?;
+                self.core
+                    .draw_profile_for_window(&window_id, &mut slot.image_cache)
+            })
+            .flatten();
         let resp = self.core.dispatch_rpc_scoped_from(
             parsed_request,
             &mut resize_req,
             screenshot,
             window_arenas,
             Some((conn, &egress)),
+            draw_profile,
         );
         // R-PR47 §5.7 — route the response (if any) back through the
         // frame's reply sink. A JSON-RPC notification produces `None`:

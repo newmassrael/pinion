@@ -517,6 +517,21 @@ pub struct DispatchContext<'a> {
     /// (which answers with rows of zeros).
     pub memory_census: Option<pinion_core::memory_census::MemoryCensus>,
 
+    /// R1557 §5.16 §5.18 §5.7 — the frame's draw work attributed to the
+    /// subtrees that drew it, produced by the embedder before dispatch.
+    /// Consumed by `scene/draw_profile`.
+    ///
+    /// Produced rather than read, and by the embedder for the same reason the
+    /// census above is: attributing a frame means re-encoding the retained paint
+    /// scene through the vello walk with the live shaper and image caches, and
+    /// only the embedder holds all three. Gated on the method there, so a
+    /// `scene/click` never pays for a walk nobody asked for.
+    ///
+    /// `None` surfaces `DrawProfileUnavailable` — a host with no live window, or
+    /// a window that has never painted. A window that painted a blank frame is
+    /// distinct: it answers with a root whose census is zeroes.
+    pub draw_profile: Option<pinion_runtime::DrawProfile>,
+
     /// R1552 §5.7 PINION-PR83 — the connection this frame arrived on and the
     /// registry its change streams live in. Consumed by `scene/subscribe`,
     /// `scene/unsubscribe` and `scene/subscriptions`.
@@ -1440,6 +1455,7 @@ impl<'a> DispatchContext<'a> {
             fragment_cache_stats: None,
             text_cache_stats: None,
             memory_census: None,
+            draw_profile: None,
             subscriber: None,
             text_backgrounds: None,
             text_blocks: None,
@@ -1653,6 +1669,16 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_memory_census(mut self, census: pinion_core::memory_census::MemoryCensus) -> Self {
         self.memory_census = Some(census);
+        self
+    }
+
+    /// R1557 §5.16 §5.18 §5.7 — builder: attach the per-subtree draw
+    /// attribution the embedder produced by re-encoding this window's last
+    /// painted scene. `scene/draw_profile` reads the slot; every other arm
+    /// ignores it. `None` (the default) surfaces `DrawProfileUnavailable`.
+    #[must_use]
+    pub fn with_draw_profile(mut self, profile: pinion_runtime::DrawProfile) -> Self {
+        self.draw_profile = Some(profile);
         self
     }
 
@@ -1966,6 +1992,12 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // R1550 — the per-arena memory census. Taken out for the dispatch lifetime
     // (owned, non-`Copy`); only `scene/memory` reads it.
     let memory_census = ctx.memory_census.take();
+    // R1557 — the per-subtree draw attribution. Same single-consumer take:
+    // owned, non-`Copy`, and only `scene/draw_profile` reads it. The scope id
+    // beside it is what turns each row's segment chain into the
+    // `/window[<id>]/…` address every other method accepts.
+    let draw_profile = ctx.draw_profile.take();
+    let draw_profile_window = ctx.window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
     let subscriber = ctx.subscriber.take();
     // R1546 §5.36 — the painted background bands the embedder collected. Taken
     // out for the dispatch lifetime (owned, non-`Copy`); only
@@ -2462,6 +2494,15 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 // R1550 — what every arena is holding, in bytes.
                 "scene/memory" => (
                     handle_scene_memory(memory_census.as_ref()),
+                    HandlerKind::Read,
+                ),
+                // R1557 — which subtree of the painted scene drew the frame.
+                "scene/draw_profile" => (
+                    handle_scene_draw_profile(
+                        draw_profile.as_ref(),
+                        draw_profile_window,
+                        request.params.as_ref(),
+                    ),
                     HandlerKind::Read,
                 ),
                 // R1552 §5.7 PINION-PR83 — the server speaking first: one
@@ -6333,6 +6374,33 @@ fn handle_scene_memory(
             "memory census unavailable for this embedder",
         )
         .with_data_string("MemoryCensusUnavailable")),
+    }
+}
+
+/// R1557 §5.16 §5.18 §5.7 — `scene/draw_profile`: attribute the frame's draw
+/// work to the subtrees that drew it. Reads the profile the embedder produced
+/// on [`DispatchContext::draw_profile`] and emits the wire
+/// [`DrawProfileOutcome`](crate::draw_profile::DrawProfileOutcome) shape.
+///
+/// `window` is the dispatch scope, which is what each row's `path` is rendered
+/// against — a profile row's address has to be the address that resolves in
+/// `scene/snapshot` for the same window.
+///
+/// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`] bump.
+fn handle_scene_draw_profile(
+    profile: Option<&pinion_runtime::DrawProfile>,
+    window: &str,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let parsed = crate::draw_profile::DrawProfileParams::parse(params)
+        .map_err(|e| RpcError::invalid_params(e.to_string()).with_data_string(e.wire_tag()))?;
+    match crate::draw_profile::draw_profile(profile, window, parsed) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!(
+                "scene/draw_profile: failed to serialize outcome: {e}"
+            ))
+        }),
+        Err(e) => Err(RpcError::invalid_params(e.to_string()).with_data_string(e.wire_tag())),
     }
 }
 

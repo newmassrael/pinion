@@ -39,6 +39,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::draw_profile::DrawProfiler;
 use crate::frame_timing::DrawWork;
 use crate::image_cache::ImageCache;
 use crate::paint_cache_stats::FragmentCacheStats;
@@ -1163,24 +1164,123 @@ pub fn to_vello_cached_with_text_engine<F>(
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
-    fragment_cache.begin_paint();
+    walk_cached(
+        scene,
+        &mut PaintSession {
+            fill_hook,
+            text_cache,
+            image_cache,
+            fragment_cache,
+            engine,
+            cursor: CursorPaintFlags {
+                blink_on: cursor_blink_on,
+                focused: cursor_focused,
+            },
+            profiler: None,
+        },
+        out,
+    );
+}
+
+/// (R1557 §5.16 §2 #2 §2 #7) [`to_vello_cached_with_text_engine`] with a
+/// [`DrawProfiler`] attached: the same walk, additionally attributing the
+/// frame's [`DrawWork`] to the subtree that drew it.
+///
+/// The profiler is handed a census of `out` on the way into every node and
+/// another on the way out, so a node's inclusive cost is the difference —
+/// including the cost of a subtree the [`FragmentCache`] **replayed**, which
+/// arrives as an `append` and is therefore in the difference exactly as a
+/// freshly-encoded one would be. See [`crate::draw_profile`] for why that is the
+/// only defensible way to attribute a retained-mode frame.
+///
+/// # Cost, and why this is a separate entry
+///
+/// Two [`draw_work_of`] reads and one `Vec` push per walked node. That is
+/// cheap, but it is not free, and a profiler that bills every frame for the
+/// measurement nobody asked for is the failure mode profilers are famous for.
+/// So it is an entry a caller opts into, and the unprofiled walk pays one
+/// `Option` discriminant test per node and nothing else.
+///
+/// # Errors that cannot happen
+///
+/// The profiler's `enter`/`leave` pairing is structural rather than
+/// remembered: `to_vello_cached_inner` opens the frame, delegates the ENTIRE
+/// node — every arm, the cache-hit early return included — to `encode_node`,
+/// and closes the frame on the one path back out.
+#[allow(clippy::too_many_arguments)]
+pub fn to_vello_cached_profiled<F>(
+    scene: &Scene,
+    fill_hook: &F,
+    text_cache: &mut LayoutCache,
+    image_cache: &mut ImageCache,
+    fragment_cache: &mut FragmentCache,
+    engine: Option<&SelfHostedTextEngine>,
+    out: &mut VelloScene,
+    cursor_blink_on: bool,
+    cursor_focused: bool,
+    profiler: &mut DrawProfiler,
+) where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
+    walk_cached(
+        scene,
+        &mut PaintSession {
+            fill_hook,
+            text_cache,
+            image_cache,
+            fragment_cache,
+            engine,
+            cursor: CursorPaintFlags {
+                blink_on: cursor_blink_on,
+                focused: cursor_focused,
+            },
+            profiler: Some(profiler),
+        },
+        out,
+    );
+}
+
+/// (R1557 §5.16) The state a cached paint walk carries **unchanged** from its
+/// root to every leaf, in one value.
+///
+/// Split out when the draw profiler became the seventh such item and the
+/// recursive walker's parameter list stopped being incidental: three of them
+/// were `&mut` references and two were `Option`s, which is precisely the
+/// signature shape where a transposed argument compiles. What varies per node —
+/// the node, the output scene, the two transforms, the clip, the child index —
+/// stays a parameter, because those are the walk's actual state.
+struct PaintSession<'a, F> {
+    fill_hook: &'a F,
+    text_cache: &'a mut LayoutCache,
+    image_cache: &'a mut ImageCache,
+    fragment_cache: &'a mut FragmentCache,
+    engine: Option<&'a SelfHostedTextEngine>,
+    cursor: CursorPaintFlags,
+    /// `None` on every production paint; `Some` only under
+    /// [`to_vello_cached_profiled`].
+    profiler: Option<&'a mut DrawProfiler>,
+}
+
+/// The shared body of both cached entries: bracket the walk in the fragment
+/// cache's paint generation and start it at the root.
+///
+/// `index: None` at the root — the root consumes no path segment, which is the
+/// `scene/locate` addressing rule the profiler mirrors.
+fn walk_cached<F>(scene: &Scene, session: &mut PaintSession<'_, F>, out: &mut VelloScene)
+where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
+    session.fragment_cache.begin_paint();
     to_vello_cached_inner(
         scene,
-        fill_hook,
-        text_cache,
-        image_cache,
-        fragment_cache,
-        engine,
+        session,
         out,
         Affine::IDENTITY,
         Affine::IDENTITY,
         None,
-        CursorPaintFlags {
-            blink_on: cursor_blink_on,
-            focused: cursor_focused,
-        },
+        None,
     );
-    fragment_cache.end_paint();
+    session.fragment_cache.end_paint();
 }
 
 /// Transform-carrying recursive walker for [`to_vello_cached`].
@@ -1228,26 +1328,60 @@ pub fn to_vello_cached_with_text_engine<F>(
 /// at its content coordinates — inside the fragment, correct; on the
 /// screen, off by the whole scroll offset. `placement` is what
 /// [`FragmentCache::insert_miss`] is given.
-#[allow(clippy::too_many_arguments)]
+///
+/// ## The profiler bracket (R1557)
+///
+/// This function is the enter/leave bracket and delegates the whole node to
+/// [`encode_node`]. Keeping the two apart is what makes the pairing structural:
+/// every arm of the node — the cache hit's early return included — is inside
+/// one call, so there is no path that opens a profile frame and does not close
+/// it. `index` is the node's position among its parent's children, `None` for a
+/// node that consumes no path segment (the root, a `Scroll`'s content); it is an
+/// index rather than a formatted segment so an unprofiled paint allocates no
+/// name.
 fn to_vello_cached_inner<F>(
     scene: &Scene,
-    fill_hook: &F,
-    text_cache: &mut LayoutCache,
-    image_cache: &mut ImageCache,
-    fragment_cache: &mut FragmentCache,
-    engine: Option<&SelfHostedTextEngine>,
+    session: &mut PaintSession<'_, F>,
     out: &mut VelloScene,
     transform: Affine,
     placement: Affine,
     clip: Option<pinion_core::scene::Rect>,
-    cursor: CursorPaintFlags,
+    index: Option<usize>,
+) where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
+    if session.profiler.is_none() {
+        encode_node(scene, session, out, transform, placement, clip);
+        return;
+    }
+    let before = draw_work_of(out);
+    if let Some(profiler) = session.profiler.as_deref_mut() {
+        profiler.enter(scene, index, before);
+    }
+    encode_node(scene, session, out, transform, placement, clip);
+    let after = draw_work_of(out);
+    if let Some(profiler) = session.profiler.as_deref_mut() {
+        profiler.leave(after);
+    }
+}
+
+/// One node of the cached walk: its own paint plus the recursion into whatever
+/// it contains. Split from [`to_vello_cached_inner`] at R1557 so the profiler
+/// bracket there wraps every arm without a per-arm hook.
+fn encode_node<F>(
+    scene: &Scene,
+    session: &mut PaintSession<'_, F>,
+    out: &mut VelloScene,
+    transform: Affine,
+    placement: Affine,
+    clip: Option<pinion_core::scene::Rect>,
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
     // R1538 §5.16 — census one entered node. Ahead of every arm, including
     // the cache probe below: this counts what the WALK touched, and a hit is
     // a node the walk touched and then declined to descend through.
-    fragment_cache.note_node();
+    session.fragment_cache.note_node();
     // Cacheable-container fast path — taken whenever the subtree
     // contains no immediate-mode / external descendants, at ANY
     // inherited transform (R1520; R682 required IDENTITY here). A hit
@@ -1266,7 +1400,7 @@ fn to_vello_cached_inner<F>(
         && scene.is_cacheable_for_paint()
     {
         let hash = c.paint_hash();
-        if fragment_cache.try_hit(hash, out, transform) {
+        if session.fragment_cache.try_hit(hash, out, transform) {
             return;
         }
         // Cache miss: encode the entire subtree into a fresh sub-scene
@@ -1276,26 +1410,24 @@ fn to_vello_cached_inner<F>(
         // fragments encoded below attribute to this container. Closed by
         // `insert_miss` at the bottom of this arm, which every path from
         // here reaches.
-        fragment_cache.enter_subtree();
+        session.fragment_cache.enter_subtree();
         let mut sub = VelloScene::new();
         paint_box_decoration(&mut sub, c.rect, &c.style, c.style.fill, Affine::IDENTITY);
-        for child in &c.children {
+        for (index, child) in c.children.iter().enumerate() {
             to_vello_cached_inner(
                 child,
-                fill_hook,
-                text_cache,
-                image_cache,
-                fragment_cache,
-                engine,
+                session,
                 &mut sub,
                 Affine::IDENTITY,
                 placement,
                 clip,
-                cursor,
+                Some(index),
             );
         }
         append_placed(out, &sub, transform);
-        fragment_cache.insert_miss(hash, sub, c.rect, placement, clip);
+        session
+            .fragment_cache
+            .insert_miss(hash, sub, c.rect, placement, clip);
         return;
     }
 
@@ -1324,27 +1456,23 @@ fn to_vello_cached_inner<F>(
     match scene {
         Scene::Container(c) => {
             paint_box_decoration(&mut sub, c.rect, &c.style, c.style.fill, transform);
-            for child in &c.children {
+            for (index, child) in c.children.iter().enumerate() {
                 to_vello_cached_inner(
                     child,
-                    fill_hook,
-                    text_cache,
-                    image_cache,
-                    fragment_cache,
-                    engine,
+                    session,
                     &mut sub,
                     transform,
                     placement,
                     clip,
-                    cursor,
+                    Some(index),
                 );
             }
         }
         Scene::Box(b) => {
-            let fill = fill_hook(b).unwrap_or(b.style.fill);
+            let fill = (session.fill_hook)(b).unwrap_or(b.style.fill);
             paint_box_decoration(&mut sub, b.rect, &b.style, fill, transform);
         }
-        Scene::Text(t) => paint_text(&mut sub, t, text_cache, engine, transform),
+        Scene::Text(t) => paint_text(&mut sub, t, session.text_cache, session.engine, transform),
         Scene::Scroll(s) => {
             let viewport_clip = KurboRect::new(
                 f64::from(s.viewport.x),
@@ -1366,18 +1494,18 @@ fn to_vello_cached_inner<F>(
                 Some(outer) => intersection(outer, viewport_clip_screen),
                 None => viewport_clip_screen,
             });
+            // R1557 §5.18 — `index: None`: a `Scroll` consumes no path segment
+            // (`Scene::hit_test` / `collect_intersections`), so its content is
+            // reached at the scroll's own address and the profile says so
+            // rather than inventing a segment no other method would resolve.
             to_vello_cached_inner(
                 &s.content,
-                fill_hook,
-                text_cache,
-                image_cache,
-                fragment_cache,
-                engine,
+                session,
                 &mut sub,
                 transform * shift,
                 placement * shift,
                 inner_clip,
-                cursor,
+                None,
             );
             sub.pop_layer();
         }
@@ -1388,11 +1516,13 @@ fn to_vello_cached_inner<F>(
         // R740 §5.16 — raster image paint into the fresh sub-scene (the
         // R682 cache key already folds `ImageNode::source`, so a cached
         // fragment re-uses the decoded image and a source change misses).
-        Scene::Image(i) => paint_image(&mut sub, i, image_cache, transform),
+        Scene::Image(i) => paint_image(&mut sub, i, session.image_cache, transform),
         // R991 §5.41 §2 #6 — TextGrid glyph paint into the fresh sub-scene
         // (uncacheable per `Scene::is_cacheable_for_paint`, so it is always
         // re-encoded; mirrors the External/ImmediateMode treatment).
-        Scene::TextGrid(n) => paint_text_grid(&mut sub, n, text_cache, transform, cursor),
+        Scene::TextGrid(n) => {
+            paint_text_grid(&mut sub, n, session.text_cache, transform, session.cursor);
+        }
         // External / Effect: no-op (matches to_vello_inner's `_ => {}` arm).
         _ => {}
     }
@@ -3797,7 +3927,8 @@ fn paint_decorations(out: &mut VelloScene, run: &PositionedRun, transform: Affin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+    use crate::draw_profile::DrawProfileNode;
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, SceneNodeKind, TextNode};
     use pinion_core::style::{BoxStyle, Color, TextStyle};
     use std::cell::Cell;
 
@@ -4568,6 +4699,249 @@ mod tests {
             draw_work_of(&second).glyphs > 0,
             "…and that work is not zero",
         );
+    }
+
+    /// The scene the R1557 profile tests attribute: a styled root holding two
+    /// text leaves and a filled box, so glyphs, paths and the container's own
+    /// decoration are all non-zero and all distinguishable.
+    fn profile_scene() -> Scene {
+        let mut root = ContainerNode::new(vec![
+            Scene::Text(
+                TextNode::styled(
+                    "first row",
+                    Rect::new(0, 0, 4000, 40),
+                    TextStyle::new().with_size_px(16),
+                )
+                .with_tag("first"),
+            ),
+            text_scene("second row"),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 40, 40, 40),
+                Color::rgb(0x20, 0x30, 0x40),
+            )),
+        ])
+        .with_style(BoxStyle::filled(Color::rgb(0xf0, 0xf0, 0xf0)));
+        // The rect is set explicitly because this fixture is never laid out,
+        // and a zero-area container paints no background — which would make
+        // "a container's own work is its decoration" vacuously true below.
+        root.rect = Rect::new(0, 0, 4000, 120);
+        Scene::Container(root)
+    }
+
+    /// Profile one paint of `scene` into a cold fragment cache — the shape
+    /// `ShellCore::draw_profile_for_window` uses — and hand back the profile
+    /// beside the census of the scene that was actually encoded.
+    fn profile_once(scene: &Scene) -> (DrawProfileNode, DrawWork) {
+        let mut text_cache = LayoutCache::new();
+        let mut image_cache = ImageCache::new();
+        let mut fragments = FragmentCache::new();
+        let mut out = VelloScene::new();
+        let mut profiler = DrawProfiler::new();
+        to_vello_cached_profiled(
+            scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut fragments,
+            None,
+            &mut out,
+            true,
+            true,
+            &mut profiler,
+        );
+        let root = profiler.finish().root.expect("a painted scene has a root");
+        (root, draw_work_of(&out))
+    }
+
+    #[test]
+    fn r1557_the_profile_partitions_the_frame_it_measured() {
+        let (root, encoded) = profile_once(&profile_scene());
+        // The root's inclusive total IS the frame's census — the profile is
+        // measuring the same artifact `scene/frame_timings` reports, not a
+        // parallel accounting that could drift from it.
+        assert_eq!(
+            root.total, encoded,
+            "the root's inclusive total is the whole encoded scene",
+        );
+        // …and the exclusive costs partition it. This is the identity that
+        // fails if a saturating subtraction ever clamps, if an arm opens a
+        // profile frame without closing it, or if work lands outside the span
+        // being measured.
+        assert_eq!(
+            root.own_sum(),
+            root.total,
+            "every node's own work sums to the root's total",
+        );
+        assert_eq!(root.node_count(), 4, "root + two text leaves + one box");
+        assert!(encoded.glyphs > 0 && encoded.paths > 0, "premise: real ink");
+    }
+
+    #[test]
+    fn r1557_text_is_attributed_to_the_leaf_that_drew_it() {
+        // The claim no Qt surface makes: which item the glyphs belong to. A
+        // `Text` leaf is one node whether it holds two glyphs or four thousand,
+        // so this is the term a node census cannot reach.
+        let (root, _) = profile_once(&profile_scene());
+        assert_eq!(
+            root.own.glyphs, 0,
+            "the container drew a background, not glyphs",
+        );
+        assert!(root.own.paths > 0, "…and the background is a path");
+        let leaf_glyphs: u32 = root
+            .children
+            .iter()
+            .filter(|c| c.kind == SceneNodeKind::Text)
+            .map(|c| c.own.glyphs)
+            .sum();
+        assert_eq!(
+            leaf_glyphs, root.total.glyphs,
+            "every glyph in the frame belongs to a text leaf",
+        );
+        for child in &root.children {
+            assert!(
+                child.children.is_empty(),
+                "a leaf has no children to attribute to",
+            );
+            assert_eq!(child.own, child.total, "a leaf's own work is all of it");
+        }
+        // Glyph outlines never reach `path_segments` (they are resolved
+        // downstream of the encoding), so the text leaves contribute geometry
+        // to neither field but their own.
+        let text_leaf = root
+            .children
+            .iter()
+            .find(|c| c.tag.as_deref() == Some("first"))
+            .expect("the tagged text leaf");
+        assert!(text_leaf.own.glyphs > 0);
+        assert_eq!(text_leaf.own.paths, 0, "text encodes no paths");
+    }
+
+    #[test]
+    fn r1557_a_row_is_addressed_the_way_every_other_method_addresses_it() {
+        let (root, _) = profile_once(&profile_scene());
+        assert_eq!(root.segment, None, "the root consumes no path segment");
+        assert_eq!(
+            root.children[0].segment.as_deref(),
+            Some("first"),
+            "a tagged child is addressed by its tag",
+        );
+        assert_eq!(
+            root.children[1].segment.as_deref(),
+            Some("1"),
+            "an untagged child by its index",
+        );
+        assert_eq!(root.children[2].segment.as_deref(), Some("2"));
+        // The rule is not re-implemented here: it is
+        // `Scene::path_segment_at`, which is also what `Scene::hit_test` puts
+        // in a `HitPath`. So a profile row's address resolves in
+        // `scene/snapshot`, `scene/query` and `scene/invoke`.
+        let Scene::Container(c) = profile_scene() else {
+            unreachable!("the fixture is a container")
+        };
+        for (index, child) in c.children.iter().enumerate() {
+            assert_eq!(
+                root.children[index].segment.as_deref(),
+                Some(child.path_segment_at(index).as_str()),
+            );
+        }
+    }
+
+    #[test]
+    fn r1557_a_replayed_subtree_is_attributed_like_an_encoded_one() {
+        // The central claim. The measurement is a difference of censuses of the
+        // ENCODED scene, so a subtree the fragment cache appended whole lands
+        // in it exactly as a freshly-walked one does. A tally kept by the
+        // walker would attribute the replay ZERO — the reading a profiler must
+        // never produce, because the GPU draws it either way.
+        let scene = profile_scene();
+        let mut text_cache = LayoutCache::new();
+        let mut image_cache = ImageCache::new();
+        let mut fragments = FragmentCache::new();
+
+        let mut cold_out = VelloScene::new();
+        let mut cold = DrawProfiler::new();
+        to_vello_cached_profiled(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut fragments,
+            None,
+            &mut cold_out,
+            true,
+            true,
+            &mut cold,
+        );
+        let walked_cold = fragments.nodes_walked_last_paint();
+
+        let mut warm_out = VelloScene::new();
+        let mut warm = DrawProfiler::new();
+        to_vello_cached_profiled(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut fragments,
+            None,
+            &mut warm_out,
+            true,
+            true,
+            &mut warm,
+        );
+        let walked_warm = fragments.nodes_walked_last_paint();
+
+        assert!(
+            walked_warm < walked_cold,
+            "premise: the second paint must be served by the cache \
+             ({walked_cold} -> {walked_warm})",
+        );
+        let cold_root = cold.finish().root.expect("root");
+        let warm_root = warm.finish().root.expect("root");
+        assert_eq!(
+            warm_root.total, cold_root.total,
+            "a replayed root draws exactly what it drew when encoded",
+        );
+        assert!(warm_root.total.glyphs > 0, "…and that is not zero");
+        // And the honest consequence, stated rather than hidden: the walk did
+        // not ENTER the replayed subtree, so it is attributed whole and not
+        // decomposed. That is why `ShellCore::draw_profile_for_window` profiles
+        // into a cold cache — a decomposed profile of the same draw work.
+        assert!(
+            warm_root.children.is_empty(),
+            "a cache hit is a node the walk declined to descend through",
+        );
+        assert_eq!(warm_root.own, warm_root.total);
+        assert_eq!(warm_root.own_sum(), warm_root.total);
+    }
+
+    #[test]
+    fn r1557_a_scroll_owns_its_clip_layer_and_lends_its_address() {
+        use pinion_core::scene::ScrollNode;
+        let content = Scene::Container(
+            ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 50, 50),
+                Color::rgb(0, 0xff, 0),
+            ))])
+            .with_style(BoxStyle::filled(Color::rgb(0x11, 0x22, 0x33))),
+        );
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 100, 100), content));
+        let (root, encoded) = profile_once(&scene);
+
+        assert_eq!(root.kind, SceneNodeKind::Scroll);
+        assert_eq!(root.total, encoded);
+        assert_eq!(root.own_sum(), root.total);
+        // The viewport clip is pushed by the scroll and belongs to the scroll.
+        assert_eq!(
+            root.own.layers, 1,
+            "the scroll owns the clip layer it pushes"
+        );
+        assert_eq!(root.children.len(), 1);
+        // A `Scroll` consumes no path segment, so its content reports the
+        // scroll's own address — the `scene/locate` rule, not an exception
+        // invented here.
+        assert_eq!(root.children[0].segment, None);
+        assert_eq!(root.children[0].own.layers, 0);
+        assert!(root.children[0].total.paths > 0, "the content drew boxes");
     }
 
     /// One tagless `Scene::Text` leaf, for the draw-census tests.

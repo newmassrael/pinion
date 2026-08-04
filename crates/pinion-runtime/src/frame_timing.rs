@@ -247,6 +247,59 @@ impl DrawWork {
             glyphs: self.glyphs.max(other.glyphs),
         }
     }
+
+    /// (R1557 §5.16) The per-field sum — how [`DrawProfile`](crate::DrawProfile)
+    /// accumulates a node's children before subtracting them from its total.
+    ///
+    /// Saturating for [`Self::draws`]' reason: a count this large is not worth
+    /// preserving exactly, and must not be reported as a small one.
+    #[must_use]
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            draws: self.draws.saturating_add(other.draws),
+            paths: self.paths.saturating_add(other.paths),
+            path_segments: self.path_segments.saturating_add(other.path_segments),
+            layers: self.layers.saturating_add(other.layers),
+            glyph_runs: self.glyph_runs.saturating_add(other.glyph_runs),
+            glyphs: self.glyphs.saturating_add(other.glyphs),
+        }
+    }
+
+    /// (R1557 §5.16) The per-field difference `self - earlier` — the draw work
+    /// that landed in an encoded scene BETWEEN two censuses of it.
+    ///
+    /// This is the whole measurement principle of
+    /// [`DrawProfile`](crate::DrawProfile): the encoded streams only ever grow
+    /// during a paint, so a census taken before a subtree is walked and one
+    /// taken after differ by exactly what that subtree contributed — whether it
+    /// was encoded node by node or replayed whole from the §5.16 fragment
+    /// cache.
+    ///
+    /// # Why the layer field subtracts exactly
+    ///
+    /// [`Self::layers`] is derived by `paint_adapter::draw_work_of` as
+    /// `(n_clips + n_open_clips) / 2`, an integer division, and in general
+    /// `⌊a/2⌋ - ⌊b/2⌋` is not `⌊(a-b)/2⌋`. Here it is, because the numerator is
+    /// always even: `b` begins and `e` ends give `(b + e) + (b - e) = 2b`. So
+    /// the difference of two derived layer counts is the exact layer count of
+    /// the span, with no rounding to carry.
+    ///
+    /// Saturating rather than wrapping, so a (stream-shrink-impossible)
+    /// negative difference reports `0` instead of four billion. Nothing relies
+    /// on that clamp being silent: `DrawProfile`'s own balance identity —
+    /// every node's `own` summing to the root's `total` — is what a clamp would
+    /// break, and it is asserted rather than assumed.
+    #[must_use]
+    pub fn since(self, earlier: Self) -> Self {
+        Self {
+            draws: self.draws.saturating_sub(earlier.draws),
+            paths: self.paths.saturating_sub(earlier.paths),
+            path_segments: self.path_segments.saturating_sub(earlier.path_segments),
+            layers: self.layers.saturating_sub(earlier.layers),
+            glyph_runs: self.glyph_runs.saturating_sub(earlier.glyph_runs),
+            glyphs: self.glyphs.saturating_sub(earlier.glyphs),
+        }
+    }
 }
 
 /// One painted frame's phase breakdown, in microseconds. `Copy` +

@@ -78,3 +78,4 @@
 1554	catalog	a container states that its subtree is inert, Qt QWidget::setEnabled inherited down the scene + QGroupBox as its first consumer
 1555	dcc	a cell editor is chosen by its datum kind, Qt QItemEditorFactory as five shipped forms + the commit outcome named
 1556	perf	the frame states the work it drew, the encoded draw census beside the node one
+1557	perf	the frame states which subtree drew it, per-subtree inclusive/exclusive draw attribution as scene/draw_profile

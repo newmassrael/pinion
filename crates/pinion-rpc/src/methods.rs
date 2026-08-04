@@ -113,6 +113,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/disabled", MethodOcc::Read),
     ("scene/double_click", MethodOcc::Mutate),
     ("scene/drag", MethodOcc::Mutate),
+    ("scene/draw_profile", MethodOcc::Read),
     ("scene/drop_file", MethodOcc::Mutate),
     ("scene/dry_run", MethodOcc::Read),
     ("scene/export_pdf", MethodOcc::Read),

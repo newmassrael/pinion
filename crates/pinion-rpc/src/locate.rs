@@ -211,14 +211,21 @@ where
 
 /// Build a fully-qualified path string. Empty `segments` yields
 /// `"/window[<name>]/"`; `["a", "b"]` yields `"/window[<name>]/a/b"`.
-fn format_path(window_name: &str, segments: &[String]) -> String {
+/// (R1557) `pub(crate)` — `scene/draw_profile` renders the same address for
+/// every attributed node, and a profile row's path resolving in
+/// `scene/snapshot` is the point of publishing it. Two formatters would be two
+/// chances to disagree about what an address looks like.
+pub(crate) fn format_path(window_name: &str, segments: &[impl AsRef<str>]) -> String {
     let mut out = String::with_capacity(window_name.len() + 16);
     out.push_str("/window[");
     out.push_str(window_name);
     out.push(']');
     out.push('/');
-    if !segments.is_empty() {
-        out.push_str(&segments.join("/"));
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(seg.as_ref());
     }
     out
 }

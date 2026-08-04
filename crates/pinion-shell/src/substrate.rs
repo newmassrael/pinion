@@ -2266,6 +2266,71 @@ impl<V: WidgetView> ShellCore<V> {
         (&mut self.text_cache, self.text_engine.as_ref())
     }
 
+    /// (R1557 §5.16 §5.18 §2 #2 §2 #7) Attribute this window's last painted
+    /// frame to the subtrees that drew it — the `scene/draw_profile` producer.
+    ///
+    /// Re-encodes the retained paint scene with a
+    /// [`DrawProfiler`](pinion_runtime::DrawProfiler) attached and answers the
+    /// resulting tree: every node's inclusive and exclusive
+    /// [`DrawWork`](pinion_runtime::DrawWork). `None` when the window has never
+    /// painted, which is the only state that has no answer.
+    ///
+    /// # Why it re-encodes instead of profiling the live paint
+    ///
+    /// Three reasons, and they are the same reason from different sides.
+    ///
+    /// 1. **The live paint must not pay for it.** Attribution costs two census
+    ///    reads and a `Vec` push per node. Small, and still the profiler failure
+    ///    mode worth avoiding: an always-on measurement billed to every frame.
+    ///    This runs only when the method is called.
+    /// 2. **The answer must be decomposed.** A cache HIT is a node the walk
+    ///    declines to descend through, so profiling a warm live paint attributes
+    ///    a replayed subtree *whole* — correct in total and useless as a flame
+    ///    graph. The scratch
+    ///    [`FragmentCache`](pinion_runtime::paint_adapter::FragmentCache) here
+    ///    is cold by construction, so
+    ///    every container is walked and every node gets a row.
+    /// 3. **It is checkable.** The re-encode draws what the live frame drew —
+    ///    that is the fragment cache's own correctness invariant — so the root's
+    ///    total must equal `scene/frame_timings`' `last.draw`. The demo asserts
+    ///    exactly that, which turns "these two agree" from an assumption into a
+    ///    guard, and incidentally makes the cache's invariant observable from
+    ///    outside the crate for the first time.
+    ///
+    /// The live `LayoutCache` and `ImageCache` are used rather than scratch
+    /// ones: shaping and image decode are what the caches exist to avoid
+    /// repeating, and a scratch image cache would re-resolve every source — with
+    /// a `memory://` producer image reachable only through the owner that
+    /// registered it. Only the fragment cache is scratch, and only for reason 2.
+    pub fn draw_profile_for_window(
+        &mut self,
+        window_id: &str,
+        image_cache: &mut pinion_runtime::image_cache::ImageCache,
+    ) -> Option<pinion_runtime::DrawProfile> {
+        // Disjoint fields: the scene comes from `core`, the shaper cache and the
+        // engine from this struct's own fields.
+        let scene = self.core.last_paint_scene_for_window(window_id)?;
+        let mut fragments = pinion_runtime::paint_adapter::FragmentCache::new();
+        let mut out = vello::Scene::new();
+        let mut profiler = pinion_runtime::DrawProfiler::new();
+        pinion_runtime::paint_adapter::to_vello_cached_profiled(
+            scene,
+            &|_b: &pinion_core::scene::BoxNode| None,
+            &mut self.text_cache,
+            image_cache,
+            &mut fragments,
+            self.text_engine.as_ref(),
+            &mut out,
+            // The steady / focused defaults every non-animating producer passes:
+            // a profile must not depend on which half of a cursor blink it was
+            // taken in (§5.41 R1426 / R1427).
+            true,
+            true,
+            &mut profiler,
+        );
+        Some(profiler.finish())
+    }
+
     /// R1072 §5.37 / R1072.1 — TEST-ONLY injection of a specific self-hosted text
     /// engine with a bundled font fixture (system font discovery is
     /// environment-dependent and would skip the §5.37 arms on a font-less CI box).
@@ -5579,7 +5644,19 @@ impl<V: WidgetView> ShellCore<V> {
         screenshot: Option<pinion_rpc::Screenshot>,
         window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
     ) -> Option<String> {
-        self.dispatch_rpc_scoped_from(request, resize_request, screenshot, window_arenas, None)
+        // R1557 §5.16 — and no draw profile: attributing a frame re-encodes it
+        // through the vello walk, which needs the per-window image cache the
+        // `AppShell` window slots own. This entry answers
+        // `scene/draw_profile` with `DrawProfileUnavailable`, the same shape
+        // `origin` takes below.
+        self.dispatch_rpc_scoped_from(
+            request,
+            resize_request,
+            screenshot,
+            window_arenas,
+            None,
+            None,
+        )
     }
 
     /// R1552 §5.7 PINION-PR83 — [`Self::dispatch_rpc_scoped`] with the
@@ -5591,6 +5668,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// bare entry above passes `None`, where the three subscription methods
     /// then answer `SubscriptionsUnavailable` by name rather than opening a
     /// stream nothing could deliver.
+    #[allow(clippy::too_many_arguments)]
     pub fn dispatch_rpc_scoped_from(
         &mut self,
         request: Request,
@@ -5598,6 +5676,7 @@ impl<V: WidgetView> ShellCore<V> {
         screenshot: Option<pinion_rpc::Screenshot>,
         window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
         origin: Option<pinion_rpc::FrameOrigin<'_>>,
+        draw_profile: Option<pinion_runtime::DrawProfile>,
     ) -> Option<String> {
         let scope: String = request
             .window_scope()
@@ -5612,6 +5691,7 @@ impl<V: WidgetView> ShellCore<V> {
             screenshot,
             window_arenas,
             origin,
+            draw_profile,
         )
     }
 
@@ -5650,13 +5730,32 @@ impl<V: WidgetView> ShellCore<V> {
         // `scene/memory` with the shell-wide rows alone (the shape cache and
         // the process total), which is exactly what a host with no windows
         // holds.
-        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request, None, None, None)
+        self.dispatch_rpc_inner(
+            parsed,
+            scope.as_deref(),
+            resize_request,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     // R1026 — rustfmt's reflow pushed this 4 lines over the workspace
     // too_many_lines (100) ceiling it was kept just under; the body is a flat
     // method-dispatch match, not bloat. Extraction is deferred to the owner.
-    #[allow(clippy::too_many_lines)]
+    //
+    // R1557 — and one over the argument ceiling, with the profile joining
+    // `screenshot` / `window_arenas` / `origin` as a fourth embedder-produced,
+    // method-gated input. The hazard that lint names — a transposed argument
+    // that still compiles — cannot occur here: all four are `Option`s of
+    // DISTINCT types (`Screenshot`, `Vec<ArenaFootprint>`, `FrameOrigin`,
+    // `DrawProfile`), so any swap is a type error. Bundling them is the shape a
+    // FIFTH wants; it would churn ~20 public call sites for no safety this
+    // signature does not already have, and R1557's own paint-walk bundle
+    // (`PaintSession`) shows where the argument really is dangerous — that one
+    // carried two positionally-interchangeable `Affine`s.
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     fn dispatch_rpc_inner(
         &mut self,
         request: Request,
@@ -5665,6 +5764,7 @@ impl<V: WidgetView> ShellCore<V> {
         screenshot: Option<pinion_rpc::Screenshot>,
         window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
         origin: Option<pinion_rpc::FrameOrigin<'_>>,
+        draw_profile: Option<pinion_runtime::DrawProfile>,
     ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
         // detect `focus/set` (or any other focus-mutating method)
@@ -6097,6 +6197,12 @@ impl<V: WidgetView> ShellCore<V> {
             // other method leaves the slot `None` and pays no walk.
             if let Some(census) = memory_census {
                 ctx = ctx.with_memory_census(census);
+            }
+            // R1557 §5.7 — likewise present only on a `scene/draw_profile`
+            // dispatch, and only from the windowed entry: the attribution is a
+            // re-encode, which needs the window's image cache.
+            if let Some(profile) = draw_profile {
+                ctx = ctx.with_draw_profile(profile);
             }
             // R1552 §5.7 PINION-PR83 — the connection this frame arrived on.
             // `None` for the single-window entry and any synthetic dispatch, so

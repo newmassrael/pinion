@@ -505,6 +505,58 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "DrawProfileOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("root", WireTy::Object, Some("DrawProfileRow")).nullable(),
+                WireField::new("nodes", WireTy::Integer, None),
+                WireField::new("nodes_total", WireTy::Integer, None),
+                WireField::new("depth", WireTy::Integer, None).nullable(),
+                WireField::new("heaviest_by", WireTy::String, None).nullable(),
+                WireField::new("heaviest", WireTy::Array, Some("DrawProfileRank")),
+            ],
+        },
+    },
+    WireType {
+        name: "DrawProfileRank",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("path", WireTy::String, None),
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("own", WireTy::Object, Some("DrawProfileWork")),
+            ],
+        },
+    },
+    WireType {
+        name: "DrawProfileRow",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("path", WireTy::String, None),
+                WireField::new("segment", WireTy::String, None).nullable(),
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("total", WireTy::Object, Some("DrawProfileWork")),
+                WireField::new("own", WireTy::Object, Some("DrawProfileWork")),
+                WireField::new("children", WireTy::Array, Some("DrawProfileRow")),
+                WireField::new("children_omitted", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "DrawProfileWork",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("draws", WireTy::Integer, None),
+                WireField::new("paths", WireTy::Integer, None),
+                WireField::new("path_segments", WireTy::Integer, None),
+                WireField::new("layers", WireTy::Integer, None),
+                WireField::new("glyph_runs", WireTy::Integer, None),
+                WireField::new("glyphs", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "ExportPdfOutcome",
         shape: WireShape::Object {
             fields: &[

@@ -284,6 +284,28 @@ impl Scene {
         }
     }
 
+    /// (R1557 §5.18 §5.32) The container-relative path segment that addresses
+    /// this node as the child at `index` — its [`tag`](Self::tag) when it has
+    /// one, else the index as a decimal string.
+    ///
+    /// The SSOT for that rule. It is the segment [`HitPath::segments`] carries,
+    /// which `scene/locate` joins into the `/window[main]/a/b` address
+    /// `scene/snapshot`, `scene/query` and `scene/invoke` accept — so anything
+    /// that names a node names it the same way, and an address produced by one
+    /// surface resolves on every other.
+    ///
+    /// Lifted at R1557 from three byte-identical copies in this file
+    /// ([`hit_test`](Self::hit_test) twice and `collect_intersections`) when
+    /// the draw profiler became the fourth site needing it. The copies were
+    /// mechanical, which is the immediate-lift case: an addressing rule with
+    /// four independent implementations is four chances for one of them to
+    /// answer a name the others do not resolve.
+    #[must_use]
+    pub fn path_segment_at(&self, index: usize) -> String {
+        self.tag()
+            .map_or_else(|| index.to_string(), std::string::ToString::to_string)
+    }
+
     /// (R1516 §5.2) Which [`SceneNodeKind`] this node is — link 1 of the
     /// census. The match is exhaustive and this crate owns [`Scene`], so a
     /// variant added above lands here as a compile error, where it must be
@@ -1152,14 +1174,14 @@ impl Scene {
                 // `continue` (the pointer-transparent arm above) would be the
                 // wrong shape here for exactly that reason.
                 if child.declares_disabled() && rect_contains(child.rect(), x, y) {
-                    let seg = child.tag().map_or_else(|| idx.to_string(), String::from);
+                    let seg = child.path_segment_at(idx);
                     return Some(HitPath {
                         segments: vec![seg],
                         bbox: child.rect(),
                     });
                 }
                 if let Some(mut child_hit) = child.hit_test(x, y) {
-                    let seg = child.tag().map_or_else(|| idx.to_string(), String::from);
+                    let seg = child.path_segment_at(idx);
                     child_hit.segments.insert(0, seg);
                     return Some(child_hit);
                 }
@@ -1585,7 +1607,7 @@ impl Scene {
         });
         if let Scene::Container(c) = self {
             for (idx, child) in c.children.iter().enumerate() {
-                let seg = child.tag().map_or_else(|| idx.to_string(), String::from);
+                let seg = child.path_segment_at(idx);
                 path.push(seg);
                 child.collect_intersections(query, path, out);
                 path.pop();

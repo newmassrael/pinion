@@ -20,6 +20,7 @@ pub mod commands;
 pub mod cross_window_drop;
 pub mod disabled;
 pub mod dispatch;
+pub mod draw_profile;
 pub mod dry_run;
 pub mod export_pdf;
 pub mod focus;
