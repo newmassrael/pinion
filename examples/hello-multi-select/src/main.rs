@@ -25,16 +25,18 @@
 //! materialized (`scroll_offset_to_reveal`, reached through
 //! `nav_select_key`).
 //!
-//! The coordinator holds the selection as a `BTreeSet` of **data indices**
-//! (no per-row state, decoupled from materialization). The view projects
-//! that into a Copy per-row bitmap purely as the paint snapshot the shell
-//! hands into the paint closure — the same shape `hello-table-multi` uses
-//! for its eager multi-select grid.
+//! The coordinator holds the selection as the **runs of data indices** it is
+//! made of (R1561 [`IndexRuns`] — no per-row state, decoupled from
+//! materialization). The view projects that into a Copy per-row bitmap purely
+//! as the paint snapshot the shell hands into the paint closure — the same
+//! shape `hello-table-multi` uses for its eager multi-select grid.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
 //! `scene/key` `End` then `Shift`+`Home` → `query("selection")` reports the
-//! full `[0, 1, …, 9999]` span, and `query("mode")` reports `"multi"`.
+//! full span as the one run it is, `[[0, 9999]]`, `query("selection_count")`
+//! reports `10000`, and `query("mode")` reports `"multi"`. Until R1561 that
+//! first answer was ten thousand integers — 58 890 bytes, 10.9 ms, per read.
 //! Pointer modifier-click is intentionally **not** wired here — the router
 //! pointer wire does not yet carry keyboard modifiers (a distinct R781
 //! cross-cutting axis); keyboard + RPC drive every multi-select operation.
@@ -57,6 +59,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::index_runs::IndexRuns;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
@@ -67,7 +70,6 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::virtual_list::view_flex_virtual_list;
-use std::collections::BTreeSet;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloMultiSelectRenderer, HelloMultiSelectRendererError);
@@ -95,17 +97,27 @@ const SCROLLBAR_TAG: &str = "vlist_scrollbar";
 const STATUS_TAG: &str = "vlist_status";
 
 /// Copy paint-snapshot of the coordinator's selection: a per-row bitmap
-/// indexed by data row, plus the running total. The coordinator itself
-/// holds the selection as a `BTreeSet` of indices (no per-row state); this
-/// projection exists only so the shell can hand a `Copy` snapshot into the
-/// paint closure without lifetime gymnastics — exactly the shape
-/// `hello-table-multi` projects for its eager multi-select grid.
+/// indexed by data row, plus the running total and (R1561) the number of
+/// **runs** those rows form. The coordinator itself holds the selection as
+/// [`IndexRuns`] (no per-row state); this projection exists only so the shell
+/// can hand a `Copy` snapshot into the paint closure without lifetime
+/// gymnastics — [`WidgetCore::State`] is `Copy`, and a run set owns a `Vec`.
+///
+/// So the bitmap is this **binding's** shape, not the model's: it is what a
+/// `Copy` paint projection over a 10 000-row demo can be. A binding that wants
+/// the model's own cost profile in its paint reads the run set from shared
+/// state inside its view fn instead — the composition `hello-column-reorder`
+/// uses for `ColumnLayout` and `hello-inspector` for this very model.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct MultiSelection {
     /// Per-row selection bit, indexed by absolute data row.
     selected: [bool; N],
     /// Total selected rows (the header readout).
     total: usize,
+    /// R1561 — how many runs those rows form: `1` after `Ctrl+A` or a
+    /// `Shift`-range, one per island after scattered `Ctrl`-clicks. On screen
+    /// beside the total, because it is the number the model's cost is in.
+    runs: usize,
 }
 
 impl MultiSelection {
@@ -113,19 +125,27 @@ impl MultiSelection {
         Self {
             selected: [false; N],
             total: 0,
+            runs: 0,
         }
     }
 
-    /// Build the bitmap from a list of selected data indices (out-of-range
-    /// dropped, duplicates idempotent).
-    fn from_indices(indices: &[usize]) -> Self {
+    /// R1561 — build the bitmap from the selection's **runs**.
+    ///
+    /// Was `from_indices(&[usize])`, which walked one index at a time because
+    /// that is all the wire carried. A run is written with one `fill`, and the
+    /// total comes from [`IndexRuns::len`] rather than from counting as it
+    /// goes — so the only per-row work left here is the memset the bitmap
+    /// itself is.
+    fn from_runs(selection: &IndexRuns) -> Self {
+        // Clamped once: the readout and the bitmap must agree about which rows
+        // exist, and asking twice is two chances to disagree.
+        let inside = selection.clamped_below(N);
         let mut s = Self::empty();
-        for &i in indices {
-            if i < N && !s.selected[i] {
-                s.selected[i] = true;
-                s.total += 1;
-            }
+        for run in inside.runs() {
+            s.selected[run.first..=run.last].fill(true);
         }
+        s.total = inside.len();
+        s.runs = inside.run_count();
         s
     }
 
@@ -182,20 +202,27 @@ fn row_label(index: usize) -> String {
     )
 }
 
-/// Header-bar status line: the selection cardinality + the measured
-/// viewport extent. A literal scene-as-data readout — `Shift`-extend a span
-/// and the text reports `selected 12 rows`, proving the set survives even
-/// though most of its members were never materialized.
+/// Header-bar status line: the selection cardinality, how many **runs** it is
+/// held as (R1561), and the measured viewport extent. A literal scene-as-data
+/// readout — `Shift`-extend a span and the text reports `selected 12 rows in 1
+/// run`, proving both that the set survives though most of its members were
+/// never materialized *and* that holding it costs one run rather than twelve
+/// rows. `Ctrl+A` reads `10000 rows in 1 run`; scattered `Ctrl`-clicks grow the
+/// second number, which is what makes it a measurement rather than a constant.
 fn header(
     scroll: &std::rc::Rc<pinion_core::widgets::scroll::ScrollState>,
     theme: &Theme,
-    total: usize,
+    selection: &MultiSelection,
 ) -> Scene {
     let (mw, mh) = scroll.measured_viewport();
+    let (total, runs) = (selection.total, selection.runs);
     let noun = if total == 1 { "row" } else { "rows" };
+    let run_noun = if runs == 1 { "run" } else { "runs" };
     let text = Scene::Text(
         TextNode::styled(
-            format!("selected {total} {noun} \u{00B7} viewport {mw}\u{00D7}{mh}"),
+            format!(
+                "selected {total} {noun} in {runs} {run_noun} \u{00B7} viewport {mw}\u{00D7}{mh}"
+            ),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(13)
@@ -258,7 +285,7 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![header(&scroll, &theme, selection.total), band])
+        ContainerNode::new(vec![header(&scroll, &theme, selection), band])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
@@ -290,17 +317,18 @@ impl WidgetCore for MultiSelectView {
         LIST_TAG
     }
 
-    /// Project the selection set off the primary coordinator's `selection`
-    /// JSON-array query into the Copy paint bitmap. A selection change
+    /// Project the selection off the primary coordinator's `selection` query
+    /// — an array of `[first, last]` runs since R1561 — into the Copy paint
+    /// bitmap. A selection change
     /// repaints; scroll offset + scrollbar phase repaint via their own
     /// reactive `Signal` subscriptions the view opens.
     fn read_state(scene: &Scene) -> MultiSelection {
-        let indices = scene
+        let selection = scene
             .find_external_with_tag(LIST_TAG)
             .and_then(|node| node.handle.introspect())
             .map(read_selection)
             .unwrap_or_default();
-        MultiSelection::from_indices(&indices)
+        MultiSelection::from_runs(&selection)
     }
 
     fn view(state: MultiSelection, frame: &Frame) -> Scene {
@@ -350,24 +378,22 @@ impl WidgetA11y for MultiSelectView {
     /// [`windowed_list_nodes_multiselected`]: `aria-setsize = N`, the
     /// container `aria-multiselectable`, each rendered row an
     /// `AriaRole::ListItem` with `aria-posinset` + `aria-selected =
-    /// selection.contains(index)`. Only the windowed rows are decorated, so
-    /// the membership set is built over the window (not all `N`); the window
-    /// is computed from the same measured viewport the view fn windows
-    /// against, so the a11y tree and the painted tree never diverge.
+    /// selection.is_selected(index)`. Only the windowed rows are decorated,
+    /// and the builder is handed the membership *question* rather than a set
+    /// built over the window (R1561) — so nothing here materializes a
+    /// selection at all. The window is computed from the same measured
+    /// viewport the view fn windows against, so the a11y tree and the painted
+    /// tree never diverge.
     fn access_node(selection: &MultiSelection, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_PITCH, OVERSCAN);
-        let windowed_set: BTreeSet<usize> = window
-            .indices()
-            .filter(|&i| selection.is_selected(i))
-            .collect();
         windowed_list_nodes_multiselected(
             LIST_TAG,
             "Multi-selectable item list",
             u32::try_from(N).unwrap_or(u32::MAX),
             &window,
-            &windowed_set,
+            &|i| selection.is_selected(i),
         )
     }
 }
@@ -403,7 +429,10 @@ mod tests {
             );
             scroll.set_measured_viewport(360, measured_h);
             scroll.scroll_to(0, offset_y);
-            view(&MultiSelection::from_indices(indices), &Frame::default())
+            view(
+                &MultiSelection::from_runs(&indices.iter().copied().collect()),
+                &Frame::default(),
+            )
         })
     }
 
@@ -444,7 +473,10 @@ mod tests {
         let nodes = Owner::new().run(|| {
             let scroll = use_scroll_state(SCROLL_KEY);
             scroll.set_measured_viewport(360, 384);
-            MultiSelectView::access_node(&MultiSelection::from_indices(&[0, 2]), None)
+            MultiSelectView::access_node(
+                &MultiSelection::from_runs(&[0usize, 2].into_iter().collect()),
+                None,
+            )
         });
         assert_eq!(nodes[0].role, AriaRole::List);
         assert!(

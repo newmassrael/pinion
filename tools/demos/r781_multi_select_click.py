@@ -48,6 +48,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    selection_rows,
     wait_until,
 )
 
@@ -58,7 +59,10 @@ LIST_TAG = "vlist"
 
 
 def selection(d) -> list[int]:
-    return list(d.query("/external/selection"))
+    """The coordinator's selected ROWS, ascending — decoded from the R1561 run
+    form (`[[first, last], …]`) the slot answers with, through the shared
+    decoder rather than a private one."""
+    return selection_rows(d.query("/external/selection"))
 
 
 def cursor(d):

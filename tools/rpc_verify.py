@@ -43,7 +43,7 @@ import tempfile
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, NoReturn, Optional
+from typing import Any, Iterable, Iterator, NoReturn, Optional
 
 from build_gate import BuildError, ensure_built
 
@@ -2071,6 +2071,57 @@ def indexed_tags(rects: dict, prefix: str) -> list[int]:
             if suffix.isdigit():
                 out.append(int(suffix))
     return sorted(out)
+
+
+def selection_rows(answer: Any) -> list[int]:
+    """The rows an R1561 `"selection"` answer names, ascending.
+
+    The slot carries the selection as the **runs** it is made of —
+    `[[first, last], …]`, inclusive — because "rows 0 through 999 999" is one
+    fact and spelling it as a million integers made `query("selection")` cost
+    the model (measured on `hello-multi-select`: 58 890 bytes and 10.9 ms for a
+    select-all, against 11 bytes and 0.3 ms after). This decodes runs back to
+    rows for the assertions that are about *which* rows.
+
+    It lives here, once, for the reason the Rust `read_selection` /
+    `selection_to_value` pair lives in one module: seven demos read this slot,
+    and seven private decodes would be seven chances to disagree with the
+    encoder about what the wire says. An assertion about the *representation*
+    (that a span is one run, that a hole makes two) reads the raw answer
+    instead — that is the property, not an encoding detail.
+
+    Raises on anything that is not a list of pairs, rather than skipping the
+    parts it does not understand: a decoder that silently drops what it cannot
+    read turns a wire-shape regression into a quieter, wrong assertion.
+    """
+    if not isinstance(answer, list):
+        raise AssertionError(f"selection answer is not a list of runs: {answer!r}")
+    rows: list[int] = []
+    for run in answer:
+        if not (isinstance(run, list) and len(run) == 2):
+            raise AssertionError(f"selection run is not a [first, last] pair: {run!r}")
+        first, last = run
+        rows.extend(range(first, last + 1))
+    return rows
+
+
+def runs_of(rows: Iterable[int]) -> list[list[int]]:
+    """The canonical R1561 run form of `rows` — the inverse of
+    `selection_rows`, for a demo that knows the rows it expects and wants to
+    assert the wire answer *exactly* (`wait_query` compares whole values).
+
+    Written here beside the decoder so the two cannot drift, and canonicalising
+    (sorted, deduplicated, abutting rows merged) so an expectation is a function
+    of the rows rather than of the order they were listed in — the same property
+    the Rust `IndexRuns` holds.
+    """
+    out: list[list[int]] = []
+    for row in sorted(set(rows)):
+        if out and out[-1][1] + 1 == row:
+            out[-1][1] = row
+        else:
+            out.append([row, row])
+    return out
 
 
 def cursor_to_source(tf, group_tag: str, source: int) -> None:

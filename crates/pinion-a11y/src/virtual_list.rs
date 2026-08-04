@@ -129,19 +129,28 @@ pub fn windowed_list_nodes_selected(
 /// Multiple windowed items can carry `aria-selected=true` at once; selected
 /// rows scrolled out of the window have no node this frame, exactly as the
 /// single-select peer (the set survives in the coordinator).
+///
+/// R1561 — `is_selected` answers membership for one **absolute** data-row
+/// index, asked once per **rendered** item. It was a `&BTreeSet<usize>` that
+/// every caller built over the window each frame, purely so this could ask
+/// `contains` about the ~20 rows in it. The question this axis asks is nothing
+/// but membership (Qt's `QItemSelectionModel::isSelected`), so it takes the
+/// question rather than a container that can answer it — the grid peer
+/// [`windowed_grid_nodes_multiselected`](crate::virtual_grid::windowed_grid_nodes_multiselected)
+/// took the same turn.
 #[must_use]
 pub fn windowed_list_nodes_multiselected(
     list_tag: &str,
     list_name: &str,
     set_size: u32,
     window: &VisibleWindow,
-    selection: &std::collections::BTreeSet<usize>,
+    is_selected: &dyn Fn(usize) -> bool,
 ) -> Vec<AccessNode> {
     let mut nodes = windowed_list_nodes(list_tag, list_name, set_size, window);
     nodes[0].multiselectable = true;
     for (offset, item) in nodes[1..].iter_mut().enumerate() {
         let index = window.first + offset;
-        item.selected = Some(selection.contains(&index));
+        item.selected = Some(is_selected(index));
     }
     nodes
 }
@@ -267,7 +276,9 @@ mod tests {
         // the container aria-multiselectable.
         let selection: std::collections::BTreeSet<usize> = [101, 103].into_iter().collect();
         let nodes =
-            windowed_list_nodes_multiselected("vlist", "List", 10_000, &window(100, 4), &selection);
+            windowed_list_nodes_multiselected("vlist", "List", 10_000, &window(100, 4), &|i| {
+                selection.contains(&i)
+            });
         assert!(
             nodes[0].multiselectable,
             "multi-select container is aria-multiselectable"
@@ -290,10 +301,12 @@ mod tests {
     fn multiselect_is_a_superset_of_the_display_only_topology() {
         // Identical container + posinset + child topology as display-only;
         // only aria-multiselectable + per-item aria-selected are added.
-        let selection = std::collections::BTreeSet::new();
+        let selection = std::collections::BTreeSet::<usize>::new();
         let plain = windowed_list_nodes("vlist", "List", 10_000, &window(0, 3));
         let decorated =
-            windowed_list_nodes_multiselected("vlist", "List", 10_000, &window(0, 3), &selection);
+            windowed_list_nodes_multiselected("vlist", "List", 10_000, &window(0, 3), &|i| {
+                selection.contains(&i)
+            });
         assert_eq!(plain.len(), decorated.len());
         for (p, d) in plain.iter().zip(&decorated) {
             assert_eq!(p.tag, d.tag);
@@ -319,7 +332,7 @@ mod tests {
             "List",
             10_000,
             &VisibleWindow::EMPTY,
-            &selection,
+            &|i| selection.contains(&i),
         );
         assert_eq!(nodes.len(), 1, "no items when the window is empty");
         assert!(nodes[0].multiselectable, "the container axis still applies");

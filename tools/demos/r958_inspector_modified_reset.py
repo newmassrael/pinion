@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    runs_of,
     wait_query,
     wait_snap,
     wait_until,
@@ -63,13 +64,14 @@ def body() -> None:
         wait_until(lambda: True if _q(tf, "object_count") == 3 else None, desc="inspector ready")
 
         # ── (A) boot: one object, nothing modified ──────────────────────
-        assert_eq(_q(tf, "selection"), [0], "boots with Player selected")
+        assert_eq(_q(tf, "selection"), runs_of([0]), "boots with Player selected")
         assert_eq(_q(tf, "any_modified"), False, "boot Player is all at default")
         assert_eq(_q(tf, "modified.1"), False, "Player property 1 at default")
 
         # ── select all three; common base = Visible / Layer / Locked ────
         tf.invoke("/external/select_all", None)
-        wait_query(tf, "/external/selection", [0, 1, 2], desc="all three selected")
+        wait_query(tf, "/external/selection", runs_of([0, 1, 2]),
+                   desc="all three selected")
         assert_eq(_q(tf, "row_count"), 3, "Visible / Layer / Locked are common")
         assert_eq(_q(tf, "name.1"), "Layer", "common property 1 is Layer")
 
@@ -129,7 +131,8 @@ def body() -> None:
 
         # ── (G) single-object selection: reset to that object's default ─
         tf.invoke("/external/select", 2)  # Light only
-        wait_query(tf, "/external/selection", [2], desc="Light selected alone")
+        wait_query(tf, "/external/selection", runs_of([2]),
+                   desc="Light selected alone")
         assert_eq(_q(tf, "name.1"), "Layer", "Light's common[1] is Layer")
         assert_eq(_q(tf, "modified.1"), False, "Light Layer at its default (2)")
         tf.intervene("/external/value.1", 9)

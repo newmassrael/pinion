@@ -75,7 +75,6 @@
 //! [[introspection-from-paint-not-screen]]).
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use pinion_a11y::{
@@ -100,6 +99,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::Theme;
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::index_runs::IndexRuns;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_extra};
@@ -456,8 +456,8 @@ fn same_property_shape(a: &CellValue, b: &CellValue) -> bool {
 /// For a single selection this is exactly that object's full property list
 /// (every value trivially uniform), so the cardinality-1 case is the
 /// pre-R922 fixed Details panel.
-fn common_properties(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Vec<CommonProperty> {
-    let mut indices = selection.iter().copied().filter(|&i| i < objects.len());
+fn common_properties(objects: &[ObjectData], selection: &IndexRuns) -> Vec<CommonProperty> {
+    let mut indices = selection.iter().filter(|&i| i < objects.len());
     let Some(first) = indices.next() else {
         return Vec::new();
     };
@@ -537,11 +537,11 @@ fn parse_step_spec(spec: &str) -> Option<(usize, i32)> {
 /// query, the reset gate, and the paint indicator all read (divergence-is-a-bug).
 fn property_modified_from_default(
     objects: &[ObjectData],
-    selection: &BTreeSet<usize>,
+    selection: &IndexRuns,
     defaults: &[ObjectData],
     name: &str,
 ) -> bool {
-    selection.iter().any(|&j| {
+    selection.iter().any(|j| {
         let cur = objects
             .get(j)
             .and_then(|o| o.properties.iter().find(|p| p.name == name));
@@ -559,11 +559,11 @@ fn property_modified_from_default(
 /// Values" yet "not modified".
 fn reset_names_to_default(
     next: &mut [ObjectData],
-    selection: &BTreeSet<usize>,
+    selection: &IndexRuns,
     defaults: &[ObjectData],
     names: &[String],
 ) {
-    for &j in selection {
+    for j in selection.iter() {
         for name in names {
             let def = defaults
                 .get(j)
@@ -583,12 +583,8 @@ fn reset_names_to_default(
 
 /// The Details header text for a selection: the lone object's name when one
 /// is selected, "N objects selected" for several, "No selection" for none.
-fn selection_summary(objects: &[ObjectData], selection: &BTreeSet<usize>) -> String {
-    let live: Vec<usize> = selection
-        .iter()
-        .copied()
-        .filter(|&i| i < objects.len())
-        .collect();
+fn selection_summary(objects: &[ObjectData], selection: &IndexRuns) -> String {
+    let live: Vec<usize> = selection.iter().filter(|&i| i < objects.len()).collect();
     match live.as_slice() {
         [] => "No selection".to_owned(),
         [only] => objects[*only].name.clone(),
@@ -766,8 +762,8 @@ impl InspectorExternal {
         self.objects.get().len()
     }
 
-    /// The selected object indices.
-    fn selection_set(&self) -> BTreeSet<usize> {
+    /// The selected object indices, as the runs they are made of (R1561).
+    fn selection_set(&self) -> IndexRuns {
         self.selection.get().selection().clone()
     }
 
@@ -891,7 +887,7 @@ impl InspectorExternal {
         });
     }
 
-    fn set_selection(&self, indices: BTreeSet<usize>) {
+    fn set_selection(&self, indices: IndexRuns) {
         self.mutate_selection(move |s| {
             s.set_selection(&indices);
         });
@@ -1034,7 +1030,7 @@ impl InspectorExternal {
         let selection = self.selection_set();
         self.objects.set_with(move |prev| {
             let mut next = prev.clone();
-            for &j in &selection {
+            for j in selection.iter() {
                 if let Some(p) = next
                     .get_mut(j)
                     .and_then(|o| o.properties.iter_mut().find(|p| p.name == name))
@@ -1232,7 +1228,7 @@ impl InspectorExternal {
             let objects = self.objects.get();
             let bases: Vec<(usize, CellValue)> = self
                 .selection_set()
-                .into_iter()
+                .iter()
                 .filter_map(|j| {
                     objects
                         .get(j)
@@ -1633,17 +1629,18 @@ impl ExternalIntrospect for InspectorExternal {
             // Admin / restore: replace the whole selection set (out-of-range
             // indices are dropped by the model); `Null` clears.
             "selection" => match value {
-                IntrospectValue::Json(serde_json::Value::Array(items)) => {
-                    let indices: BTreeSet<usize> = items
-                        .iter()
-                        .filter_map(serde_json::Value::as_u64)
-                        .filter_map(|v| usize::try_from(v).ok())
-                        .collect();
-                    self.set_selection(indices);
+                // R1561 — an array of `[first, last]` runs, decoded by the
+                // model's own serde impl (which canonicalises), not by a
+                // hand-rolled walk that would be a second decoder of the slot
+                // `selection_to_value` encodes.
+                IntrospectValue::Json(json @ serde_json::Value::Array(_)) => {
+                    let runs: IndexRuns =
+                        serde_json::from_value(json).map_err(|_| InterveneError::TypeMismatch)?;
+                    self.set_selection(runs);
                     Ok(())
                 }
                 IntrospectValue::Null => {
-                    self.set_selection(BTreeSet::new());
+                    self.set_selection(IndexRuns::new());
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -1914,12 +1911,13 @@ impl InspectorState {
     /// Build the bitmap state from the decoded selection set + cursor. The
     /// keyboard-focus axis defaults to [`FocusRegion::Objects`] with no property
     /// cursor; [`with_focus`](Self::with_focus) layers it on for `read_state`.
-    fn from_parts(selection: &[usize], cursor: Option<usize>) -> Self {
+    fn from_parts(selection: &IndexRuns, cursor: Option<usize>) -> Self {
         let mut selected = [false; N_OBJECTS];
-        for &i in selection {
-            if let Some(slot) = selected.get_mut(i) {
-                *slot = true;
-            }
+        // R1561 — filled per run rather than per index; the paint projection is
+        // still a bitmap because `WidgetCore::State` is `Copy`, but what it is
+        // built FROM is now the runs the model actually holds.
+        for run in selection.clamped_below(N_OBJECTS).runs() {
+            selected[run.first..=run.last].fill(true);
         }
         Self {
             selected,
@@ -1981,9 +1979,9 @@ impl InspectorState {
         self.selected.get(index).copied().unwrap_or(false)
     }
 
-    /// The selected object indices as a set — for the object-count-agnostic
+    /// The selected object indices as a run set — for the object-count-agnostic
     /// [`common_properties`] / [`selection_summary`] derivations.
-    fn selection_set(&self) -> BTreeSet<usize> {
+    fn selection_set(&self) -> IndexRuns {
         (0..N_OBJECTS).filter(|&i| self.selected[i]).collect()
     }
 }
@@ -2990,11 +2988,29 @@ mod tests {
         owner.run(make_inspector_external)
     }
 
-    fn json_indices(v: &IntrospectValue) -> Vec<u64> {
+    /// R1561 — loose indices as the run set the model now speaks in. The
+    /// assertions here are about *which* objects are selected, which is a
+    /// handful in an object inspector, so naming them one by one stays the
+    /// clearest thing to write; the conversion is the type's own
+    /// `FromIterator`.
+    fn runs_of(indices: &[usize]) -> IndexRuns {
+        indices.iter().copied().collect()
+    }
+
+    /// The rows a `"selection"` answer names.
+    ///
+    /// R1561 — the slot carries `[[first, last], …]`, decoded by the model's
+    /// own serde impl. It used to be a walk over bare integers written here,
+    /// which made this a **second decoder** of a slot whose encode/decode pair
+    /// lives in `virtual_select` precisely so there is only one (the R743.1
+    /// decode-of-encode rule). Going through the type means these assertions
+    /// cannot pass against a wire form the production decoder would reject.
+    fn json_indices(v: &IntrospectValue) -> Vec<usize> {
         match v {
-            IntrospectValue::Json(serde_json::Value::Array(items)) => {
-                items.iter().filter_map(serde_json::Value::as_u64).collect()
-            }
+            IntrospectValue::Json(json) => serde_json::from_value::<IndexRuns>(json.clone())
+                .unwrap_or_else(|e| panic!("expected an array of runs, got {v:?}: {e}"))
+                .iter()
+                .collect(),
             _ => panic!("expected a JSON array, got {v:?}"),
         }
     }
@@ -3157,7 +3173,7 @@ mod tests {
         // Player + Camera both have Layer=1 (common, NOT mixed).
         e.intervene(
             "selection",
-            IntrospectValue::Json(serde_json::json!([0, 1])),
+            IntrospectValue::Json(serde_json::json!([[0, 1]])),
         )
         .unwrap();
         assert_eq!(
@@ -3635,7 +3651,7 @@ mod tests {
             let mut e = make_inspector_external();
             e.invoke("select_all", IntrospectValue::Null).unwrap();
             let reset_tag = format!("{INSPECTOR_TAG}#{RESET_PREFIX}1"); // Layer (common idx 1)
-            let sel = InspectorState::from_parts(&[0, 1, 2], Some(0));
+            let sel = InspectorState::from_parts(&runs_of(&[0, 1, 2]), Some(0));
             assert!(
                 !view(&sel, &Frame::new()).contains_tag(&reset_tag),
                 "no reset arrow on an at-default Layer row",
@@ -3822,7 +3838,7 @@ mod tests {
         e.invoke("clear", IntrospectValue::Null).unwrap();
         assert_eq!(
             json_indices(&e.query("selection").unwrap()),
-            Vec::<u64>::new()
+            Vec::<usize>::new()
         );
         assert_eq!(e.query("selected"), Some(IntrospectValue::Null));
         assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(0)));
@@ -3835,9 +3851,11 @@ mod tests {
     #[test]
     fn r922_selection_intervene_restores_a_set() {
         let mut e = ext();
+        // R1561 — runs, out of order: the decode canonicalises, so what the
+        // model reaches does not depend on how the client ordered them.
         e.intervene(
             "selection",
-            IntrospectValue::Json(serde_json::json!([2, 0])),
+            IntrospectValue::Json(serde_json::json!([[2, 2], [0, 0]])),
         )
         .unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 2]);
@@ -3916,7 +3934,7 @@ mod tests {
         let owner = Owner::new();
         let scene = owner.run(|| {
             view(
-                &InspectorState::from_parts(&[0, 1, 2], Some(2)),
+                &InspectorState::from_parts(&runs_of(&[0, 1, 2]), Some(2)),
                 &Frame::new(),
             )
         });
@@ -3938,7 +3956,7 @@ mod tests {
     /// row for the `scene/access` wire the whole time.
     #[test]
     fn r1518_the_region_cursor_is_the_reported_active_descendant() {
-        let objects = InspectorState::from_parts(&[0], Some(2));
+        let objects = InspectorState::from_parts(&runs_of(&[0]), Some(2));
         let target = InspectorView::access_focus_target(&objects, Some(INSPECTOR_TAG))
             .expect("the inspector owns focus");
         assert_eq!(target.focus_tag, INSPECTOR_TAG, "AT focus is the stop");
@@ -3960,7 +3978,7 @@ mod tests {
 
     #[test]
     fn r1518_a_sibling_focus_and_no_focus_claim_no_descendant() {
-        let state = InspectorState::from_parts(&[0], Some(2));
+        let state = InspectorState::from_parts(&runs_of(&[0]), Some(2));
         let target = InspectorView::access_focus_target(&state, Some("some_button"))
             .expect("a sibling owns focus");
         assert_eq!(target.focus_tag, "some_button");
@@ -3978,7 +3996,7 @@ mod tests {
     fn a11y_object_list_is_multiselectable_with_aria_selected() {
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
-                &InspectorState::from_parts(&[0, 2], Some(2)),
+                &InspectorState::from_parts(&runs_of(&[0, 2]), Some(2)),
                 Some(INSPECTOR_TAG),
             )
         });
@@ -4012,7 +4030,7 @@ mod tests {
     #[test]
     fn r55_g20_view_carries_composite_paint_root_tag() {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<InspectorView>(
-            InspectorState::from_parts(&[0], Some(0)),
+            InspectorState::from_parts(&runs_of(&[0]), Some(0)),
             &Frame::new(),
         );
     }
@@ -4037,7 +4055,7 @@ mod tests {
                 )],
             )
         };
-        let sel: BTreeSet<usize> = [0, 1].into_iter().collect();
+        let sel: IndexRuns = [0usize, 1].into_iter().collect();
         // Equal option lists → the Choice IS a common property.
         let equal = vec![mode(&["A", "B", "C"]), mode(&["A", "B", "C"])];
         let common = common_properties(&equal, &sel);
@@ -4111,7 +4129,7 @@ mod tests {
         // value the paint shows ("Multiple Values" when mixed).
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
-                &InspectorState::from_parts(&[0, 1, 2], Some(2)),
+                &InspectorState::from_parts(&runs_of(&[0, 1, 2]), Some(2)),
                 Some(INSPECTOR_TAG),
             )
         });
@@ -4233,7 +4251,7 @@ mod tests {
         // (Visible, a Bool) with the Details pane focused.
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
-                &InspectorState::from_parts(&[0], Some(0))
+                &InspectorState::from_parts(&runs_of(&[0]), Some(0))
                     .with_focus(FocusRegion::Details, Some(0)),
                 Some(INSPECTOR_TAG),
             )
@@ -4279,7 +4297,7 @@ mod tests {
         // descendant; no Details row is.
         let objects = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
-                &InspectorState::from_parts(&[0, 1], Some(1))
+                &InspectorState::from_parts(&runs_of(&[0, 1]), Some(1))
                     .with_focus(FocusRegion::Objects, Some(0)),
                 Some(INSPECTOR_TAG),
             )
@@ -4294,7 +4312,7 @@ mod tests {
         // shows an active descendant at a time.
         let details = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
-                &InspectorState::from_parts(&[0, 1], Some(1))
+                &InspectorState::from_parts(&runs_of(&[0, 1]), Some(1))
                     .with_focus(FocusRegion::Details, Some(0)),
                 Some(INSPECTOR_TAG),
             )
@@ -4334,10 +4352,10 @@ mod tests {
             let scene = Owner::new().run(|| view(state, &Frame::new()));
             container_has_border(&scene, "prop_0").expect("prop_0 row present")
         };
-        let details_cursor =
-            InspectorState::from_parts(&[0], Some(0)).with_focus(FocusRegion::Details, Some(0));
-        let objects_cursor =
-            InspectorState::from_parts(&[0], Some(0)).with_focus(FocusRegion::Objects, Some(0));
+        let details_cursor = InspectorState::from_parts(&runs_of(&[0]), Some(0))
+            .with_focus(FocusRegion::Details, Some(0));
+        let objects_cursor = InspectorState::from_parts(&runs_of(&[0]), Some(0))
+            .with_focus(FocusRegion::Objects, Some(0));
         assert!(
             ringed(&details_cursor),
             "Details cursor row carries the focus ring"
@@ -4499,7 +4517,7 @@ mod tests {
     fn r1228_a11y_choice_is_spinbutton_with_selected_option() {
         let nodes = Owner::new().run(|| {
             <InspectorView as WidgetA11y>::access_node(
-                &InspectorState::from_parts(&[0], Some(0))
+                &InspectorState::from_parts(&runs_of(&[0]), Some(0))
                     .with_focus(FocusRegion::Details, Some(5)),
                 Some(INSPECTOR_TAG),
             )
@@ -4778,7 +4796,7 @@ mod tests {
         Owner::new().run(|| {
             let mut e = make_inspector_external();
             e.invoke("select_all", IntrospectValue::Null).unwrap();
-            let state = InspectorState::from_parts(&[0, 1, 2], Some(0));
+            let state = InspectorState::from_parts(&runs_of(&[0, 1, 2]), Some(0));
             // Idle: the numeric cell is the stepper row (a `typein1` double-click
             // target); no inline field.
             let idle = view(&state, &Frame::new());
@@ -4800,7 +4818,7 @@ mod tests {
         Owner::new().run(|| {
             let mut e = make_inspector_external();
             e.invoke("select_all", IntrospectValue::Null).unwrap();
-            let state = InspectorState::from_parts(&[0, 1, 2], Some(0));
+            let state = InspectorState::from_parts(&runs_of(&[0, 1, 2]), Some(0));
             e.begin_edit(1);
             let nodes = <InspectorView as WidgetA11y>::access_node(&state, None);
             // The edited row's AT node is the inline field's `textbox` (tagged
@@ -4893,7 +4911,7 @@ mod tests {
     fn r1251_colour_row_is_a_typein_target_and_paints_the_field_when_editing() {
         Owner::new().run(|| {
             let e = make_inspector_external(); // Player single-selected (boot)
-            let state = InspectorState::from_parts(&[0], Some(0));
+            let state = InspectorState::from_parts(&runs_of(&[0]), Some(0));
             let idle = view(&state, &Frame::new());
             assert!(
                 idle.contains_tag(&format!("{INSPECTOR_TAG}#{TYPEIN_PREFIX}6")),
@@ -5095,7 +5113,7 @@ mod tests {
     #[test]
     fn r1254_colour_row_a11y_is_a_textbox_not_a_listitem() {
         Owner::new().run(|| {
-            let state = InspectorState::from_parts(&[0], Some(0)); // Player
+            let state = InspectorState::from_parts(&runs_of(&[0]), Some(0)); // Player
             let nodes = <InspectorView as WidgetA11y>::access_node(&state, None);
             let tint = nodes
                 .iter()

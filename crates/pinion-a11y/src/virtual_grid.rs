@@ -116,9 +116,19 @@ enum GridSelection<'a> {
     Display,
     /// Single-select — `aria-selected = (id == _)` on each data row.
     Single(Option<usize>),
-    /// Multi-select — `aria-selected = set.contains(id)` on each data row,
-    /// and the grid container is `aria-multiselectable`.
-    Multi(&'a std::collections::BTreeSet<usize>),
+    /// Multi-select — `aria-selected = is_selected(id)` on each data row, and
+    /// the grid container is `aria-multiselectable`.
+    ///
+    /// R1561 — a **predicate**, not a set. It was a `&BTreeSet<usize>`, which
+    /// obliged every caller to build one per frame purely so this could ask
+    /// `contains` about the ~20 rows in the window; both bindings did exactly
+    /// that, and the set was a third representation of a fact the model
+    /// (`IndexRuns`) and the binding's own paint projection each already hold.
+    /// The question this axis asks is per rendered row and is nothing but
+    /// membership — Qt's `QItemSelectionModel::isSelected(index)` — so it takes
+    /// the question rather than a container that can answer it, and a caller
+    /// holding runs, a bitmap or a tree passes its own without converting.
+    Multi(&'a dyn Fn(usize) -> bool),
 }
 
 /// The cell paint tag for data row `id`, column `col` — the
@@ -277,7 +287,7 @@ fn grid_nodes(
         match selection {
             GridSelection::Display => {}
             GridSelection::Single(selected) => row = row.with_selected(selected == Some(id)),
-            GridSelection::Multi(set) => row = row.with_selected(set.contains(&id)),
+            GridSelection::Multi(is_selected) => row = row.with_selected(is_selected(id)),
         }
         nodes.push(row);
         for col in cols.indices() {
@@ -402,8 +412,15 @@ pub fn windowed_grid_nodes_selected(
 /// the set survives in the coordinator and re-paints when the row scrolls
 /// back.
 ///
-/// `selection` is the set of selected absolute data-row indices (built over
-/// the window by the caller, exactly as the list peer does).
+/// R1561 — `is_selected` answers membership for one **absolute** data-row
+/// index, and is asked once per **rendered** row. Was a `&BTreeSet<usize>` the
+/// caller built over the window each frame, purely so this could ask
+/// `contains` about the ~20 rows in it — a third representation of a fact the
+/// model and the binding's own paint projection each already hold. The
+/// question this axis asks is nothing but membership (Qt's
+/// `QItemSelectionModel::isSelected`), so it takes the question rather than a
+/// container that can answer it, and a caller holding runs, a bitmap or a tree
+/// passes its own without converting.
 #[must_use]
 pub fn windowed_grid_nodes_multiselected(
     grid_tag: &str,
@@ -411,7 +428,7 @@ pub fn windowed_grid_nodes_multiselected(
     columns: usize,
     set_size: u32,
     window: &VisibleWindow,
-    selection: &std::collections::BTreeSet<usize>,
+    is_selected: &dyn Fn(usize) -> bool,
 ) -> Vec<AccessNode> {
     grid_nodes(
         grid_tag,
@@ -419,7 +436,7 @@ pub fn windowed_grid_nodes_multiselected(
         GridColumns::all(columns),
         set_size,
         window,
-        GridSelection::Multi(selection),
+        GridSelection::Multi(is_selected),
         false,
     )
 }
@@ -1082,14 +1099,10 @@ mod tests {
         // Window 100..104; rows 101 and 103 selected → both rows
         // aria-selected, the grid container aria-multiselectable.
         let selection: std::collections::BTreeSet<usize> = [101, 103].into_iter().collect();
-        let nodes = windowed_grid_nodes_multiselected(
-            "vtbl",
-            "G",
-            NCOLS,
-            10_000,
-            &window(100, 4),
-            &selection,
-        );
+        let nodes =
+            windowed_grid_nodes_multiselected("vtbl", "G", NCOLS, 10_000, &window(100, 4), &|i| {
+                selection.contains(&i)
+            });
         assert!(
             nodes[0].multiselectable,
             "multi-select grid is aria-multiselectable"
@@ -1119,10 +1132,12 @@ mod tests {
         // row + cell topology as the display-only builder — only the
         // container `aria-multiselectable` + per-row `aria-selected` are
         // added.
-        let empty = std::collections::BTreeSet::new();
+        let empty = std::collections::BTreeSet::<usize>::new();
         let plain = windowed_grid_nodes("vtbl", "G", NCOLS, 10_000, &window(0, 2));
         let decorated =
-            windowed_grid_nodes_multiselected("vtbl", "G", NCOLS, 10_000, &window(0, 2), &empty);
+            windowed_grid_nodes_multiselected("vtbl", "G", NCOLS, 10_000, &window(0, 2), &|i| {
+                empty.contains(&i)
+            });
         assert_eq!(plain.len(), decorated.len());
         for (p, d) in plain.iter().zip(&decorated) {
             assert_eq!(p.tag, d.tag);
@@ -1353,7 +1368,7 @@ mod tests {
             NCOLS,
             10_000,
             &VisibleWindow::EMPTY,
-            &selection,
+            &|i| selection.contains(&i),
         );
         assert!(nodes[0].multiselectable, "the container axis still applies");
         let data_rows = nodes

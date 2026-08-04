@@ -54,6 +54,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    selection_rows,
     wait_until,
 )
 
@@ -66,7 +67,10 @@ TABLE_TAG = "vtbl"
 
 
 def selection(d) -> list[int]:
-    return list(d.query("/external/selection"))
+    """The coordinator's selected ROWS, ascending — decoded from the R1561 run
+    form (`[[first, last], …]`) the slot answers with, through the shared
+    decoder rather than a private one."""
+    return selection_rows(d.query("/external/selection"))
 
 
 def cursor(d):
@@ -202,8 +206,12 @@ def body() -> None:
 
         # ── (G) AI-first invoke paths over the open schema ──────────
         assert_eq(
-            len(tf.invoke("/external/select_all", None)), N,
-            "invoke select_all returns the full index array",
+            tf.invoke("/external/select_all", None), [[0, N - 1]],
+            "invoke select_all answers with the one run every row forms",
+        )
+        assert_eq(
+            tf.query("/external/selection_count"), N,
+            "and the row count is answerable without materialising the rows",
         )
         assert_eq(tf.invoke("/external/clear", None), None, "invoke clear returns null")
         assert_eq(selection(tf), [], "selection cleared")

@@ -47,7 +47,9 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     read_png_rgba8,
     run_demo,
+    runs_of,
     sample_png_points,
+    selection_rows,
     wait_query,
     wait_until,
 )
@@ -75,8 +77,14 @@ def scroll_offset(snap) -> int:
 
 
 def selection(d) -> list[int]:
-    """The coordinator's full selection set (sorted index list)."""
-    return list(d.query("/external/selection"))
+    """The coordinator's selected ROWS, ascending.
+
+    R1561 — the slot answers with the RUNS the selection is made of, so this
+    goes through the shared `selection_rows` decoder rather than a private one.
+    Assertions about the representation itself (a whole-model span is ONE run)
+    read the raw answer, because that is the property, not an encoding detail.
+    """
+    return selection_rows(d.query("/external/selection"))
 
 
 def cursor(d):
@@ -116,23 +124,26 @@ def body() -> None:
             desc="list focused for keyboard nav",
         )
         tf.key(path=LIST_TAG, name="ArrowDown")  # from nothing → row 0
-        wait_query(tf, "/external/selection", [0], desc="first ArrowDown selects just row 0")
+        wait_query(tf, "/external/selection", runs_of([0]),
+                   desc="first ArrowDown selects just row 0")
         tf.key(path=LIST_TAG, name="ArrowDown")
         tf.key(path=LIST_TAG, name="ArrowDown")
-        wait_query(tf, "/external/selection", [2], desc="plain nav replaces — never accumulates")
+        wait_query(tf, "/external/selection", runs_of([2]),
+                   desc="plain nav replaces — never accumulates")
         assert_eq(cursor(tf), 2, "active row is 2")
         assert_eq(tf.query("/external/anchor"), 2, "plain move sets the anchor to 2")
 
         # ── (C) Shift-range: extend the contiguous span from anchor ─
         mod_key(tf, "ArrowDown", shift=True)
-        wait_query(tf, "/external/selection", [2, 3],
+        wait_query(tf, "/external/selection", runs_of([2, 3]),
                    desc="Shift+Down extends the range from anchor 2")
         mod_key(tf, "ArrowDown", shift=True)
-        wait_query(tf, "/external/selection", [2, 3, 4], desc="Shift+Down grows the span")
+        wait_query(tf, "/external/selection", runs_of([2, 3, 4]),
+                   desc="Shift+Down grows the span")
         assert_eq(tf.query("/external/anchor"), 2, "the anchor stays put while extending")
         assert_eq(cursor(tf), 4, "the navigated end is the active row")
         mod_key(tf, "ArrowUp", shift=True)
-        wait_query(tf, "/external/selection", [2, 3],
+        wait_query(tf, "/external/selection", runs_of([2, 3]),
                    desc="Shift+Up shrinks the span back toward the anchor")
         # End the anchored span at the bottom: contiguous from 2 to last.
         mod_key(tf, "End", shift=True)
@@ -146,35 +157,45 @@ def body() -> None:
         sel = selection(tf)
         assert sel[0] == 0 and sel[-1] == N - 1, "the full span 0..9999 is selected"
         tf.key(path=LIST_TAG, name="Home")  # plain move
-        wait_query(tf, "/external/selection", [0],
+        wait_query(tf, "/external/selection", runs_of([0]),
                    desc="a plain move replaces the whole set with one row")
 
         # ── (E) Ctrl+Space toggles the active row's membership ──────
         mod_key(tf, " ", ctrl=True)
-        wait_query(tf, "/external/selection", [], desc="Ctrl+Space toggles the active row 0 OFF")
+        wait_query(tf, "/external/selection", [],
+                   desc="Ctrl+Space toggles the active row 0 OFF")
         mod_key(tf, " ", ctrl=True)
-        wait_query(tf, "/external/selection", [0], desc="Ctrl+Space toggles row 0 back ON")
+        wait_query(tf, "/external/selection", runs_of([0]),
+                   desc="Ctrl+Space toggles row 0 back ON")
 
         # ── (F) RPC funnel: invoke + intervene the set ──────────────
         assert_eq(tf.invoke("/external/clear", None), None, "clear empties the set")
         assert_eq(selection(tf), [], "cleared")
-        assert_eq(tf.invoke("/external/toggle", 5), [5], "invoke toggle 5 adds it")
-        assert_eq(tf.invoke("/external/toggle", 9), [5, 9], "invoke toggle 9 accumulates")
-        assert_eq(tf.invoke("/external/toggle", 5), [9], "invoke toggle 5 again removes it")
+        assert_eq(tf.invoke("/external/toggle", 5), [[5, 5]], "invoke toggle 5 adds it")
+        assert_eq(tf.invoke("/external/toggle", 9), [[5, 5], [9, 9]],
+                  "invoke toggle 9 accumulates — two apart rows are two runs")
+        assert_eq(tf.invoke("/external/toggle", 5), [[9, 9]],
+                  "invoke toggle 5 again removes it")
         # toggling 5 off reset the anchor to 5, so extend_to spans 5..11.
         assert_eq(
             tf.invoke("/external/extend_to", 11),
-            [5, 6, 7, 8, 9, 10, 11],
+            [[5, 11]],
             "extend_to replaces with the contiguous span from the anchor (5)",
         )
         # A fresh single toggle re-anchors for a clean range.
         tf.invoke("/external/clear", None)
-        assert_eq(tf.invoke("/external/toggle", 9), [9], "re-anchor at 9")
-        assert_eq(tf.invoke("/external/extend_to", 11), [9, 10, 11], "extend_to 11 spans 9..11")
+        assert_eq(tf.invoke("/external/toggle", 9), [[9, 9]], "re-anchor at 9")
+        assert_eq(tf.invoke("/external/extend_to", 11), [[9, 11]],
+                  "extend_to 11 spans 9..11, as the one run it is")
         assert_eq(tf.invoke("/external/select", 3), 3, "invoke select 3 (single move) returns 3")
         assert_eq(selection(tf), [3], "select replaced the set with one row")
-        assert_eq(len(tf.invoke("/external/select_all", None)), N, "invoke select_all picks all")
-        tf.intervene("/external/selection", [1, 4, 7, 99_999])
+        assert_eq(tf.query("/external/selection"), [[3, 3]],
+                  "one row is a run of one, not a bare index")
+        assert_eq(tf.invoke("/external/select_all", None), [[0, N - 1]],
+                  "invoke select_all picks all — and answers in one run")
+        assert_eq(tf.query("/external/selection_count"), N,
+                  "the row count is answerable without materialising the rows")
+        tf.intervene("/external/selection", [[1, 1], [4, 4], [7, 7], [99_999, 99_999]])
         assert_eq(selection(tf), [1, 4, 7], "intervene replaces the set, out-of-range dropped")
         assert_eq(tf.query("/external/anchor"), 7, "anchor follows the greatest restored index")
         tf.intervene("/external/selection", None)

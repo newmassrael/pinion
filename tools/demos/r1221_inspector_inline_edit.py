@@ -116,7 +116,7 @@ def body() -> None:
                    desc="stepper clicks netted +1 on the representative Layer")
 
         # ── (E) an AGREEING selection stays uniform after a step ─────
-        tf.intervene("/external/selection", [0, 1])  # Player + Camera, Layer both 1
+        tf.intervene("/external/selection", [[0, 1]])  # Player + Camera, Layer both 1
         assert_eq(q(tf, "mixed.1"), False, "agreeing Layer is not mixed")
         assert_eq(q(tf, "value.1"), 2, "both are 2 (from D's net +1)")
         assert_eq(tf.invoke("/external/step_property", "1,3"), True, "step +3")

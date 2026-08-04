@@ -46,6 +46,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     run_demo,
+    runs_of,
     wait_query,
     wait_until,
 )
@@ -66,7 +67,7 @@ def _assert_boot_multi_wire(tf: RpcSubprocess) -> None:
     """(A) the multi-select wire + the cardinality-1 panel."""
     assert _q(tf, "object_count") == 3
     assert _q(tf, "mode") == "multi", "the inspector list is a multi-select model"
-    assert _q(tf, "selection") == [0], "boots with the first object selected"
+    assert _q(tf, "selection") == runs_of([0]), "boots with the first object selected"
     assert _q(tf, "selection_count") == 1
     assert _q(tf, "selected") == 0, "the cursor is the lone selected object"
     assert _q(tf, "selection_summary") == "Player"
@@ -76,8 +77,8 @@ def _assert_boot_multi_wire(tf: RpcSubprocess) -> None:
 def _assert_funnel_builds_common_panel(tf: RpcSubprocess) -> None:
     """(B) toggle builds a multi-selection; the panel becomes the common
     properties; clear empties it."""
-    assert tf.invoke("/external/toggle", 1) == [0, 1], "toggle returns the new set"
-    wait_query(tf, "/external/selection", [0, 1], desc="Player + Camera selected")
+    assert tf.invoke("/external/toggle", 1) == runs_of([0, 1]), "toggle returns the new set"
+    wait_query(tf, "/external/selection", runs_of([0, 1]), desc="Player + Camera selected")
     assert _q(tf, "selection_count") == 2
     assert _q(tf, "selection_summary") == "2 objects selected"
     # The panel is now the common actor base only (the type-specific tails are
@@ -100,8 +101,8 @@ def _assert_funnel_builds_common_panel(tf: RpcSubprocess) -> None:
 
 def _assert_select_all_reports_mixed(tf: RpcSubprocess) -> None:
     """(C) select_all → the differing base properties report "Multiple Values"."""
-    assert tf.invoke("/external/select_all", None) == [0, 1, 2]
-    wait_query(tf, "/external/selection", [0, 1, 2], desc="every object selected")
+    assert tf.invoke("/external/select_all", None) == runs_of([0, 1, 2])
+    wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="every object selected")
     assert _q(tf, "selection_summary") == "3 objects selected"
     # Visible is (True, True, False); Layer is (1, 1, 2); Locked is
     # (False, False, True) — all three base properties differ across the trio.
@@ -114,8 +115,8 @@ def _assert_select_all_reports_mixed(tf: RpcSubprocess) -> None:
 
 def _assert_selection_restore_and_mixed(tf: RpcSubprocess) -> None:
     """(D) intervene 'selection' restores an arbitrary set; mixed flags follow."""
-    tf.intervene("/external/selection", [0, 2])  # Player + Sun Light.
-    wait_query(tf, "/external/selection", [0, 2], desc="restore the set {Player, Light}")
+    tf.intervene("/external/selection", [[0, 0], [2, 2]])  # Player + Sun Light.
+    wait_query(tf, "/external/selection", runs_of([0, 2]), desc="restore the set {Player, Light}")
     assert _q(tf, "selection_count") == 2
     assert _q(tf, "row_count") == 3
     # Player vs Light: Visible (True vs False), Layer (1 vs 2), Locked (False vs True).
@@ -128,7 +129,7 @@ def _assert_multi_object_edit(tf: RpcSubprocess) -> None:
     """(E) writing a common property hits every selected object and resolves
     the mixed state — the multi-object edit headline."""
     tf.invoke("/external/select_all", None)
-    wait_query(tf, "/external/selection", [0, 1, 2], desc="select every object to edit")
+    wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="select every object to edit")
     # Set the common Layer (index 1) to 5 across all three objects at once.
     tf.intervene("/external/value.1", 5)
     wait_query(tf, "/external/value.1", 5, desc="Layer written to 5")
@@ -141,7 +142,7 @@ def _assert_multi_object_edit(tf: RpcSubprocess) -> None:
 
     # Resolve a mixed bool too: set Visible True across all three.
     tf.invoke("/external/select_all", None)
-    wait_query(tf, "/external/selection", [0, 1, 2], desc="re-select all")
+    wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="re-select all")
     assert _q(tf, "mixed.0") is True, "Visible still mixed before the write"
     tf.intervene("/external/value.0", True)
     wait_query(tf, "/external/mixed.0", False, desc="Visible now agrees")
@@ -158,15 +159,15 @@ def _assert_modifier_clicks(tf: RpcSubprocess) -> None:
     (dispatch_send_mods → SelectionChord): plain replaces, Ctrl toggles,
     Shift extends from the anchor."""
     tf.click(path="inspector#0")
-    wait_query(tf, "/external/selection", [0], desc="plain click replaces + anchors at 0")
+    wait_query(tf, "/external/selection", runs_of([0]), desc="plain click replaces + anchors at 0")
     tf.modifiers(shift=True)
     tf.click(path="inspector#2")
     tf.modifiers()
-    wait_query(tf, "/external/selection", [0, 1, 2], desc="Shift-click extends 0->2")
+    wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="Shift-click extends 0->2")
     tf.modifiers(ctrl=True)
     tf.click(path="inspector#1")
     tf.modifiers()
-    wait_query(tf, "/external/selection", [0, 2], desc="Ctrl-click toggles 1 out")
+    wait_query(tf, "/external/selection", runs_of([0, 2]), desc="Ctrl-click toggles 1 out")
 
 
 def _assert_keyboard_chords(tf: RpcSubprocess) -> None:
@@ -174,37 +175,37 @@ def _assert_keyboard_chords(tf: RpcSubprocess) -> None:
     select / toggle / extend funnel the pointer + RPC drive."""
     tf.request("focus/set", {"tag": "inspector"})
     tf.invoke("/external/select", 0)
-    wait_query(tf, "/external/selection", [0], desc="reset to {0}, cursor 0")
+    wait_query(tf, "/external/selection", runs_of([0]), desc="reset to {0}, cursor 0")
 
     # Shift+ArrowDown extends the range from the anchor (0) to the next row.
     tf.modifiers(shift=True)
     tf.key(path="inspector", name="ArrowDown")
     tf.modifiers()
-    wait_query(tf, "/external/selection", [0, 1], desc="Shift+Down extends 0->1")
+    wait_query(tf, "/external/selection", runs_of([0, 1]), desc="Shift+Down extends 0->1")
 
     # Ctrl+A selects every row.
     tf.modifiers(ctrl=True)
     tf.key(path="inspector", name="a")
     tf.modifiers()
-    wait_query(tf, "/external/selection", [0, 1, 2], desc="Ctrl+A selects all")
+    wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="Ctrl+A selects all")
 
     # Ctrl+Space toggles the active (cursor) row out. The cursor is 1 (the
     # Shift+Down landing row), so row 1 leaves the set.
     tf.modifiers(ctrl=True)
     tf.key(path="inspector", name="Space")
     tf.modifiers()
-    wait_query(tf, "/external/selection", [0, 2], desc="Ctrl+Space toggles the cursor row off")
+    wait_query(tf, "/external/selection", runs_of([0, 2]), desc="Ctrl+Space toggles the cursor row off")
 
     # Plain ArrowDown replaces the whole set with the navigated row (the cursor
     # was 1, clamp_nav -> 2).
     tf.key(path="inspector", name="ArrowDown")
-    wait_query(tf, "/external/selection", [2], desc="plain nav replaces (selection-follows-focus)")
+    wait_query(tf, "/external/selection", runs_of([2]), desc="plain nav replaces (selection-follows-focus)")
 
 
 def _assert_errors(tf: RpcSubprocess) -> None:
     """(H) the derived axes are read-only; an out-of-range toggle is rejected."""
     tf.invoke("/external/select_all", None)
-    wait_query(tf, "/external/selection", [0, 1, 2], desc="select all for the read-only checks")
+    wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="select all for the read-only checks")
 
     for path, value in (("mixed.0", True), ("name.0", "x"), ("selection_summary", "x")):
         raised = False

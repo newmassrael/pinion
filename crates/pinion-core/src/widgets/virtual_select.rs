@@ -46,8 +46,8 @@ use crate::external::{
 use crate::input::Modifiers;
 use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
+use crate::widgets::index_runs::IndexRuns;
 use crate::widgets::scroll::ScrollState;
-use std::collections::BTreeSet;
 
 /// R780 §5.40 — selection cardinality policy for [`VirtualSelect`], the
 /// `QItemSelectionModel` `SelectionMode` analogue.
@@ -99,9 +99,15 @@ pub enum SelectionMode {
 /// does not need them, but they are harmless there.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VirtualSelect {
-    /// The selected data indices. In `Single` mode this is held at
-    /// cardinality ≤ 1.
-    selection: BTreeSet<usize>,
+    /// The selected data indices, held as the runs they are made of (R1561).
+    /// In `Single` mode this is kept at cardinality ≤ 1.
+    ///
+    /// Was a `BTreeSet<usize>` until R1561, which is one node per selected
+    /// **row**: `Ctrl+A` over the 10 000-row `hello-multi-select` binding
+    /// allocated ten thousand of them and answered `query("selection")` with
+    /// 58 890 bytes of JSON in 14.3 ms, for a fact whose statement is
+    /// `[[0, 9999]]`. See [`IndexRuns`] for the measurement and the invariant.
+    selection: IndexRuns,
     /// Range-extension origin — the row a `Shift`-extend grows from,
     /// unchanged while extending. Set by every plain move / toggle.
     anchor: Option<usize>,
@@ -124,7 +130,7 @@ impl VirtualSelect {
     #[must_use]
     pub fn new(item_count: usize, mode: SelectionMode) -> Self {
         Self {
-            selection: BTreeSet::new(),
+            selection: IndexRuns::new(),
             anchor: None,
             cursor: None,
             item_count,
@@ -132,11 +138,24 @@ impl VirtualSelect {
         }
     }
 
-    /// The selected data indices (ascending — a `BTreeSet`). Cardinality ≤ 1
-    /// in a `Single` model.
+    /// The selected data indices, as the runs they are made of (ascending,
+    /// canonical). Cardinality ≤ 1 in a `Single` model.
     #[must_use]
-    pub fn selection(&self) -> &BTreeSet<usize> {
+    pub fn selection(&self) -> &IndexRuns {
         &self.selection
+    }
+
+    /// R1561 — how many rows are selected: Qt's missing
+    /// `QItemSelectionModel::count()`.
+    ///
+    /// `QItemSelectionModel` offers `hasSelection()` and nothing between that
+    /// bool and `selectedRows().size()`, which builds one `QModelIndex` per
+    /// selected row purely to read the list's length. Here it is a sum over
+    /// [`IndexRuns::run_count`] runs, so a whole-model selection answers from
+    /// one addition.
+    #[must_use]
+    pub fn selected_count(&self) -> usize {
+        self.selection.len()
     }
 
     /// The active row (the `query("selected")` value, the WAI-ARIA active
@@ -150,7 +169,7 @@ impl VirtualSelect {
     /// Whether `index` is selected.
     #[must_use]
     pub fn is_selected(&self, index: usize) -> bool {
-        self.selection.contains(&index)
+        self.selection.contains(index)
     }
 
     /// Total dataset size — the validity bound for any selection.
@@ -167,14 +186,10 @@ impl VirtualSelect {
         if index >= self.item_count {
             return false;
         }
-        if self.cursor == Some(index)
-            && self.selection.len() == 1
-            && self.selection.contains(&index)
-        {
+        if self.cursor == Some(index) && self.selection == IndexRuns::run(index, index) {
             return false;
         }
-        self.selection.clear();
-        self.selection.insert(index);
+        self.selection = IndexRuns::run(index, index);
         self.anchor = Some(index);
         self.cursor = Some(index);
         true
@@ -192,9 +207,7 @@ impl VirtualSelect {
         if self.mode == SelectionMode::Single {
             return self.select(index);
         }
-        if self.selection.contains(&index) {
-            self.selection.remove(&index);
-        } else {
+        if !self.selection.remove(index) {
             self.selection.insert(index);
         }
         self.anchor = Some(index);
@@ -223,7 +236,12 @@ impl VirtualSelect {
         } else {
             (index, anchor)
         };
-        let next: BTreeSet<usize> = (lo..=hi).collect();
+        // R1561 — the range is the unit, so extending across a million rows
+        // writes one run rather than collecting a million indices. This is the
+        // gesture that made the old representation's cost visible: `Shift+End`
+        // on a large model is the *cheapest* thing a user can ask for and was
+        // the most expensive thing the model could do.
+        let next = IndexRuns::run(lo, hi);
         let changed = next != self.selection || self.cursor != Some(index);
         self.selection = next;
         self.cursor = Some(index);
@@ -233,14 +251,18 @@ impl VirtualSelect {
     /// Select every row (`Ctrl+A`). A no-op in `Single` mode or on an empty
     /// dataset. Leaves the active row and `anchor` put. Returns `true` if
     /// the selection grew.
+    ///
+    /// R1561 — O(1) in the model's size: "everything is selected" is one run,
+    /// whatever `item_count` is.
     pub fn select_all(&mut self) -> bool {
         if self.mode == SelectionMode::Single || self.item_count == 0 {
             return false;
         }
-        if self.selection.len() == self.item_count {
+        let all = IndexRuns::run(0, self.item_count - 1);
+        if self.selection == all {
             return false;
         }
-        self.selection = (0..self.item_count).collect();
+        self.selection = all;
         true
     }
 
@@ -259,35 +281,30 @@ impl VirtualSelect {
             Some(i) if i < self.item_count => Some(i),
             _ => None,
         };
-        if self.cursor == next
-            && self.selection.len() == usize::from(next.is_some())
-            && next.is_none_or(|i| self.selection.contains(&i))
-        {
+        let want = next.map_or_else(IndexRuns::new, |i| IndexRuns::run(i, i));
+        if self.cursor == next && self.selection == want {
             return false;
         }
-        self.selection.clear();
-        if let Some(i) = next {
-            self.selection.insert(i);
-        }
+        self.selection = want;
         self.anchor = next;
         self.cursor = next;
         true
     }
 
     /// Admin replace to an arbitrary set (the multi-select restore channel).
-    /// Out-of-range indices are dropped. The active row / anchor become the
-    /// greatest selected index (or `None` when empty). Returns `true` if the
-    /// set changed.
-    pub fn set_selection(&mut self, indices: &BTreeSet<usize>) -> bool {
-        let next: BTreeSet<usize> = indices
-            .iter()
-            .copied()
-            .filter(|&i| i < self.item_count)
-            .collect();
+    /// Indices at or beyond `item_count` are dropped. The active row / anchor
+    /// become the greatest selected index (or `None` when empty). Returns
+    /// `true` if the set changed.
+    ///
+    /// R1561 — the validity bound is applied per **run**
+    /// ([`IndexRuns::clamped_below`]) rather than per index, so restoring a
+    /// whole-model selection costs one comparison instead of one per row.
+    pub fn set_selection(&mut self, indices: &IndexRuns) -> bool {
+        let next = indices.clamped_below(self.item_count);
         if next == self.selection {
             return false;
         }
-        let last = next.iter().next_back().copied();
+        let last = next.last();
         self.selection = next;
         self.anchor = last;
         self.cursor = last;
@@ -419,17 +436,24 @@ impl VirtualSelectExternal {
         self.em.inner.cursor
     }
 
-    /// The full set of selected data indices (sorted). Cardinality ≤ 1 in a
+    /// The full selection, as the runs it is made of. Cardinality ≤ 1 in a
     /// single-select model.
     #[must_use]
-    pub fn selection(&self) -> Vec<usize> {
-        self.em.inner.selection.iter().copied().collect()
+    pub fn selection(&self) -> &IndexRuns {
+        &self.em.inner.selection
+    }
+
+    /// R1561 — how many rows are selected, without building the list Qt has to
+    /// build to count them. See [`VirtualSelect::selected_count`].
+    #[must_use]
+    pub fn selected_count(&self) -> usize {
+        self.em.inner.selected_count()
     }
 
     /// Whether `index` is selected.
     #[must_use]
     pub fn is_selected(&self, index: usize) -> bool {
-        self.em.inner.selection.contains(&index)
+        self.em.inner.selection.contains(index)
     }
 
     /// The range-extension origin (`anchor`), or `None`.
@@ -514,7 +538,7 @@ impl VirtualSelectExternal {
     /// multi-select admin / persisted-restore channel — not an
     /// interaction). Out-of-range indices are dropped. Returns `true` if it
     /// changed.
-    pub fn set_selection(&mut self, indices: &BTreeSet<usize>) -> bool {
+    pub fn set_selection(&mut self, indices: &IndexRuns) -> bool {
         self.em.inner.set_selection(indices)
     }
 
@@ -673,8 +697,11 @@ impl External for VirtualSelectExternal {
 impl ExternalIntrospect for VirtualSelectExternal {
     fn schema(&self) -> IntrospectSchema {
         // `selected` — settable active index (query + intervene).
-        // `selection` — settable full index set as a JSON array (R780
-        //   multi-select; query + intervene).
+        // `selection` — settable selection as a JSON array of `[first, last]`
+        //   runs (R780 multi-select, R1561 run form; query + intervene).
+        // `selection_count` — how many ROWS those runs cover (R1561, query
+        //   only). Derived, so it is not settable: writing it would be a
+        //   second way to say what `selection` already says.
         // `anchor` — the range-extension origin (query only).
         // `mode` — `"single"` / `"multi"` cardinality policy (query only).
         // `item_count` — construction-fixed dataset size (query only).
@@ -684,6 +711,7 @@ impl ExternalIntrospect for VirtualSelectExternal {
                 &[
                     SchemaField::new("selected", "int"),
                     SchemaField::new("selection", "json"),
+                    SchemaField::new("selection_count", "int"),
                     SchemaField::new("anchor", "int"),
                     SchemaField::new("mode", "string"),
                     SchemaField::new("item_count", "int"),
@@ -702,6 +730,13 @@ impl ExternalIntrospect for VirtualSelectExternal {
             // JSON array for the set.
             "selected" => Some(self.selected_value()),
             "selection" => Some(self.selection_value()),
+            // R1561 — the row count, answered from the runs. Qt has no such
+            // accessor: `QItemSelectionModel::selectedRows().size()` builds one
+            // `QModelIndex` per selected row to read the list's length.
+            "selection_count" => Some(
+                i64::try_from(self.selected_count())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
+            ),
             "anchor" => Some(
                 self.anchor()
                     .and_then(|i| i64::try_from(i).ok())
@@ -733,25 +768,31 @@ impl ExternalIntrospect for VirtualSelectExternal {
                 _ => Err(InterveneError::TypeMismatch),
             },
             // The full set is a writable axis (multi-select admin / restore):
-            // a JSON array of indices replaces the selection (out-of-range
-            // dropped); `Null` clears.
+            // a JSON array of `[first, last]` runs replaces the selection
+            // (rows at or beyond `item_count` dropped); `Null` clears.
+            //
+            // R1561 — the decode canonicalises
+            // ([`IndexRuns`]'s `From<Vec<(usize, usize)>>`), so a client may
+            // send its runs in any order, overlapping or abutting, and the
+            // model reaches exactly the state the constructors build. A
+            // malformed array is a type mismatch rather than a silently
+            // partial selection: the pre-R1561 decode filtered non-integers
+            // out one by one, so `[0, "x", 2]` selected two rows and said
+            // nothing about the third.
             "selection" => match value {
-                IntrospectValue::Json(serde_json::Value::Array(items)) => {
-                    let indices: BTreeSet<usize> = items
-                        .iter()
-                        .filter_map(serde_json::Value::as_u64)
-                        .filter_map(|i| usize::try_from(i).ok())
-                        .collect();
-                    self.set_selection(&indices);
+                IntrospectValue::Json(json @ serde_json::Value::Array(_)) => {
+                    let runs: IndexRuns =
+                        serde_json::from_value(json).map_err(|_| InterveneError::TypeMismatch)?;
+                    self.set_selection(&runs);
                     Ok(())
                 }
                 IntrospectValue::Null => {
-                    self.set_selection(&BTreeSet::new());
+                    self.set_selection(&IndexRuns::new());
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "anchor" | "mode" | "item_count" => Err(InterveneError::ReadOnly),
+            "selection_count" | "anchor" | "mode" | "item_count" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -834,20 +875,20 @@ impl ExternalIntrospect for VirtualSelectExternal {
 /// R922). The inverse of that encode, kept in the same module so a slot rename
 /// can't silently break a binding's hand-decode (the R743.1 `read_reorder`
 /// decode-of-encode rule; the `"selection"` array is read by `hello-multi-select`,
-/// `hello-grid-multi-select`, and `hello-inspector`). Returns the indices in
-/// the coordinator's order
-/// (ascending — a `BTreeSet`); the empty array decodes to an empty `Vec`, and
-/// an absent / mistyped slot likewise yields `Vec::new()`. Bindings map this
-/// into their own `Copy` paint projection (e.g. a per-row bitmap).
+/// `hello-grid-multi-select`, and `hello-inspector`).
+///
+/// R1561 — returns the [`IndexRuns`] the slot now carries, canonical and
+/// ascending; an empty array, an absent slot and a mistyped one all decode to
+/// the empty set. A binding paints from it with [`IndexRuns::contains`], asked
+/// once per **rendered** row — which is what the windowing already bounds.
+/// The pre-R1561 shape returned a `Vec` of every selected index and each
+/// binding then projected that into a per-row bitmap, so a select-all cost the
+/// model's size twice on every frame that read it.
 #[must_use]
-pub fn read_selection(intro: &dyn ExternalIntrospect) -> Vec<usize> {
+pub fn read_selection(intro: &dyn ExternalIntrospect) -> IndexRuns {
     match intro.query("selection") {
-        Some(IntrospectValue::Json(serde_json::Value::Array(items))) => items
-            .iter()
-            .filter_map(serde_json::Value::as_u64)
-            .filter_map(|v| usize::try_from(v).ok())
-            .collect(),
-        _ => Vec::new(),
+        Some(IntrospectValue::Json(json)) => serde_json::from_value(json).unwrap_or_default(),
+        _ => IndexRuns::new(),
     }
 }
 
@@ -877,14 +918,25 @@ pub fn read_selected(intro: &dyn ExternalIntrospect) -> Option<usize> {
 /// (the R743.1 decode-of-encode symmetry, now closed on the encode side too).
 /// Always an array (empty `[]` when nothing is selected), never `Null`, so an
 /// AI consumer treats the slot as a list unconditionally.
+///
+/// # R1561 — the array is of **runs**, not of indices
+///
+/// It was one integer per selected row until R1561, which made
+/// `query("selection")` on a select-all cost the model: 58 890 bytes and
+/// 10.9 ms for the 10 000-row `hello-multi-select` binding, ~5.9 MB and ~1.1 s
+/// for the million-row model this axis is named for — **per read**. The slot
+/// now carries `[[first, last], …]`, the same form
+/// [`IndexRuns`] holds and serializes, so the wire
+/// shape is not a projection of the model that could disagree with it.
+///
+/// A run pair is *more* informative than the indices it stands for, not less:
+/// `[[0, 9999]]` says "a contiguous span of ten thousand", which the flat array
+/// only implied and which an agent would have had to re-derive by scanning it.
 #[must_use]
-pub fn selection_to_value(selection: &BTreeSet<usize>) -> IntrospectValue {
-    IntrospectValue::Json(serde_json::Value::Array(
-        selection
-            .iter()
-            .map(|&i| serde_json::Value::from(i))
-            .collect(),
-    ))
+pub fn selection_to_value(selection: &IndexRuns) -> IntrospectValue {
+    IntrospectValue::Json(
+        serde_json::to_value(selection).unwrap_or(serde_json::Value::Array(Vec::new())),
+    )
 }
 
 /// R922 §5.40 — **serialize peer** of [`read_selected`]: encode the active-row
@@ -1386,21 +1438,25 @@ mod tests {
             })
     }
 
-    fn selection_of(scene: &Scene, tag: &str) -> Vec<usize> {
+    /// The selection an external in the scene reports.
+    ///
+    /// R1561 — routed through [`read_selection`], the production decoder, and
+    /// not through a second `query("selection")` match of its own. It *was* the
+    /// latter, so this module held two hand-decodes of one slot and the tests
+    /// were checking the wire against a copy of the thing under test — which is
+    /// how the run form landed with these five still asserting the index form.
+    fn selection_of(scene: &Scene, tag: &str) -> IndexRuns {
         scene
             .find_external_with_tag(tag)
             .and_then(|n| n.handle.introspect())
-            .and_then(|i| match i.query("selection") {
-                Some(IntrospectValue::Json(serde_json::Value::Array(items))) => Some(
-                    items
-                        .iter()
-                        .filter_map(serde_json::Value::as_u64)
-                        .filter_map(|v| usize::try_from(v).ok())
-                        .collect(),
-                ),
-                _ => None,
-            })
-            .unwrap_or_default()
+            .map_or_else(IndexRuns::new, read_selection)
+    }
+
+    /// The selected rows of an external in the scene, one per row — the
+    /// materialising sibling of [`selection_of`], for assertions that are about
+    /// *which* rows.
+    fn selection_rows_of(scene: &Scene, tag: &str) -> Vec<usize> {
+        selection_of(scene, tag).iter().collect()
     }
 
     #[test]
@@ -1484,20 +1540,29 @@ mod tests {
 
     // ── R780 multi-select model ─────────────────────────────────────
 
+    /// R1561 — the selected rows, one per row, for assertions that are about
+    /// **which** rows rather than about the representation. It goes through
+    /// [`IndexRuns::iter`], the materialising accessor, so a test that pays the
+    /// selection's size in indices says so at the call site exactly as a
+    /// binding would have to.
+    fn rows(s: &VirtualSelectExternal) -> Vec<usize> {
+        s.selection().iter().collect()
+    }
+
     #[test]
     fn single_mode_holds_at_most_one_and_keeps_the_old_wire() {
         let mut s = VirtualSelectExternal::new(100);
         assert_eq!(s.mode(), SelectionMode::Single);
         assert!(s.select(4));
         assert!(s.select(9));
-        assert_eq!(s.selection(), vec![9], "single replaces, never accumulates");
+        assert_eq!(rows(&s), vec![9], "single replaces, never accumulates");
         // toggle / extend / select_all all collapse to a plain move.
         assert!(s.toggle(3));
-        assert_eq!(s.selection(), vec![3]);
+        assert_eq!(rows(&s), vec![3]);
         assert!(s.extend_to(7));
-        assert_eq!(s.selection(), vec![7]);
+        assert_eq!(rows(&s), vec![7]);
         assert!(!s.select_all(), "select_all is a no-op in single mode");
-        assert_eq!(s.selection(), vec![7]);
+        assert_eq!(rows(&s), vec![7]);
     }
 
     #[test]
@@ -1507,10 +1572,10 @@ mod tests {
         assert!(s.toggle(2));
         assert!(s.toggle(5));
         assert!(s.toggle(9));
-        assert_eq!(s.selection(), vec![2, 5, 9], "toggles accumulate");
+        assert_eq!(rows(&s), vec![2, 5, 9], "toggles accumulate");
         assert!(s.is_selected(5));
         assert!(s.toggle(5), "toggling a selected row removes it");
-        assert_eq!(s.selection(), vec![2, 9]);
+        assert_eq!(rows(&s), vec![2, 9]);
         assert_eq!(
             s.selected(),
             Some(5),
@@ -1526,21 +1591,17 @@ mod tests {
         let mut s = VirtualSelectExternal::new_multi(100);
         // Plain click moves + replaces (anchor = 4).
         s.handle_send("4:PointerUp");
-        assert_eq!(s.selection(), vec![4]);
+        assert_eq!(rows(&s), vec![4]);
         // Ctrl-click toggles a second row in (Ctrl = "c").
         s.handle_send("9:PointerUp:c");
-        assert_eq!(s.selection(), vec![4, 9], "Ctrl-click accumulates");
+        assert_eq!(rows(&s), vec![4, 9], "Ctrl-click accumulates");
         // Ctrl-click an existing member removes it.
         s.handle_send("4:PointerUp:c");
-        assert_eq!(s.selection(), vec![9], "Ctrl-click toggles off");
+        assert_eq!(rows(&s), vec![9], "Ctrl-click toggles off");
         // Shift-click extends the range from the anchor (now 4, the last
         // toggled row) to the clicked row.
         s.handle_send("6:PointerUp:s");
-        assert_eq!(
-            s.selection(),
-            vec![4, 5, 6],
-            "Shift-click extends from anchor 4"
-        );
+        assert_eq!(rows(&s), vec![4, 5, 6], "Shift-click extends from anchor 4");
     }
 
     #[test]
@@ -1548,8 +1609,8 @@ mod tests {
         // R782 §5.40 — `read_selection` is the exact inverse of the
         // coordinator's `"selection"` query encode (the R743.1 decode-of-encode
         // contract): selecting a set and decoding through the introspect
-        // surface yields the same ascending index list, and an empty
-        // selection decodes to an empty `Vec`.
+        // surface yields the same canonical run set, and an empty selection
+        // decodes to the empty one.
         let mut s = VirtualSelectExternal::new_multi(10_000);
         s.toggle(9);
         s.toggle(2);
@@ -1557,15 +1618,60 @@ mod tests {
         let intro: &dyn ExternalIntrospect = &s;
         assert_eq!(
             read_selection(intro),
-            vec![2, 9, 5_000],
-            "decode is the inverse of the selection_value encode (ascending set)",
+            [2usize, 9, 5_000].into_iter().collect::<IndexRuns>(),
+            "decode is the inverse of the selection_value encode",
         );
+        // R1561 — three scattered rows really are three runs, so the decode is
+        // not accidentally right because everything collapses to one.
+        assert_eq!(read_selection(intro).run_count(), 3);
         let empty = VirtualSelectExternal::new_multi(10);
         let empty_intro: &dyn ExternalIntrospect = &empty;
         assert_eq!(
             read_selection(empty_intro),
-            Vec::<usize>::new(),
+            IndexRuns::new(),
             "empty selection decodes to []"
+        );
+    }
+
+    /// R1561 — the scale property the run representation exists for, asserted
+    /// on the model rather than on a clock: selecting a million rows is one
+    /// run, the count is exact, and the wire form is the runs.
+    ///
+    /// The negative control is the same assertions on a *scattered* selection,
+    /// where the run count really does grow — without it the test would pass
+    /// against an implementation that reported `1` unconditionally.
+    #[test]
+    fn r1561_whole_model_selection_costs_one_run_on_the_wire() {
+        let mut s = VirtualSelectExternal::new_multi(1_000_000);
+        assert!(s.select_all());
+        assert_eq!(s.selection().run_count(), 1, "a million rows, one run");
+        assert_eq!(s.selected_count(), 1_000_000, "and the count is exact");
+        assert_eq!(
+            s.query("selection"),
+            Some(IntrospectValue::Json(serde_json::json!([[0, 999_999]]))),
+            "the wire carries the run, not the rows",
+        );
+        assert_eq!(
+            s.query("selection_count"),
+            Some(IntrospectValue::Int(1_000_000)),
+            "the count is answerable without materialising the selection",
+        );
+        // Shift-extend across the whole model is likewise one run.
+        assert!(s.select(0));
+        assert!(s.extend_to(999_999));
+        assert_eq!(s.selection().run_count(), 1);
+        assert_eq!(s.selected_count(), 1_000_000);
+        // Negative control: punching a hole splits it, so `run_count` is
+        // reporting the representation rather than a constant.
+        assert!(s.toggle(500_000));
+        assert_eq!(s.selection().run_count(), 2, "a hole makes two runs");
+        assert_eq!(s.selected_count(), 999_999);
+        assert_eq!(
+            s.query("selection"),
+            Some(IntrospectValue::Json(serde_json::json!([
+                [0, 499_999],
+                [500_001, 999_999]
+            ]))),
         );
     }
 
@@ -1596,10 +1702,10 @@ mod tests {
         // pre-R781 behaviour is preserved for every existing consumer.
         let mut s = VirtualSelectExternal::new(100);
         s.handle_send("4:PointerUp:s");
-        assert_eq!(s.selection(), vec![4]);
+        assert_eq!(rows(&s), vec![4]);
         s.handle_send("9:PointerUp:c");
         assert_eq!(
-            s.selection(),
+            rows(&s),
             vec![9],
             "single-select replaces, never accumulates"
         );
@@ -1611,14 +1717,14 @@ mod tests {
         s.select(10); // anchor = 10
         assert!(s.extend_to(13));
         assert_eq!(
-            s.selection(),
+            rows(&s),
             vec![10, 11, 12, 13],
             "range grows down from anchor"
         );
         // Re-extend the other side: anchor unchanged, range replaced.
         assert!(s.extend_to(8));
         assert_eq!(
-            s.selection(),
+            rows(&s),
             vec![8, 9, 10],
             "range grows up, anchor stays at 10"
         );
@@ -1630,10 +1736,10 @@ mod tests {
     fn multi_select_all_and_clear() {
         let mut s = VirtualSelectExternal::new_multi(5);
         assert!(s.select_all());
-        assert_eq!(s.selection(), vec![0, 1, 2, 3, 4]);
+        assert_eq!(rows(&s), vec![0, 1, 2, 3, 4]);
         assert!(!s.select_all(), "already-all is a no-op");
         assert!(s.clear());
-        assert!(s.selection().is_empty());
+        assert!(rows(&s).is_empty());
         assert_eq!(s.anchor(), None);
     }
 
@@ -1648,15 +1754,15 @@ mod tests {
             intents[1],
             Intent::new_static(
                 "selection",
-                IntrospectValue::Json(serde_json::json!([2, 7])),
+                IntrospectValue::Json(serde_json::json!([[2, 2], [7, 7]])),
             ),
             "the intent carries the full set, not the single index",
         );
         // Admin restore is silent on §5.20.
-        let restore: BTreeSet<usize> = [1, 4].into_iter().collect();
+        let restore: IndexRuns = [1, 4].into_iter().collect();
         s.set_selection(&restore);
         assert!(drained(&mut s).is_empty(), "admin set_selection is silent");
-        assert_eq!(s.selection(), vec![1, 4]);
+        assert_eq!(rows(&s), vec![1, 4]);
     }
 
     #[test]
@@ -1668,21 +1774,47 @@ mod tests {
             Some(IntrospectValue::Json(serde_json::json!([]))),
             "empty selection is an empty array, never Null",
         );
+        // R1561 — runs in, canonical set out: the pairs arrive out of order and
+        // abutting, and the model reaches the value the constructors build.
         s.intervene(
             "selection",
-            IntrospectValue::Json(serde_json::json!([3, 8, 800])),
+            IntrospectValue::Json(serde_json::json!([[8, 8], [90, 800], [3, 3]])),
         )
-        .expect("array replaces selection");
+        .expect("array of runs replaces selection");
         assert_eq!(
-            s.selection(),
-            vec![3, 8],
-            "out-of-range index 800 is dropped"
+            s.query("selection"),
+            Some(IntrospectValue::Json(serde_json::json!([
+                [3, 3],
+                [8, 8],
+                [90, 99]
+            ]))),
+            "the run straddling item_count is trimmed, not dropped",
         );
-        assert_eq!(s.query("anchor"), Some(IntrospectValue::Int(8)));
+        assert_eq!(s.selected_count(), 12);
+        assert_eq!(s.query("anchor"), Some(IntrospectValue::Int(99)));
+        // A malformed payload is refused rather than partly applied.
+        assert_eq!(
+            s.intervene(
+                "selection",
+                IntrospectValue::Json(serde_json::json!([1, 2]))
+            ),
+            Err(InterveneError::TypeMismatch),
+            "an array of bare indices is not an array of runs",
+        );
+        assert_eq!(
+            s.selected_count(),
+            12,
+            "a refused write leaves the selection alone",
+        );
+        assert_eq!(
+            s.intervene("selection_count", IntrospectValue::Int(3)),
+            Err(InterveneError::ReadOnly),
+            "the count is derived, so it is not a second way to set the selection",
+        );
         // Null clears.
         s.intervene("selection", IntrospectValue::Null)
             .expect("null clears");
-        assert!(s.selection().is_empty());
+        assert!(rows(&s).is_empty());
         // mode / anchor / item_count are read-only.
         assert_eq!(
             s.intervene("mode", IntrospectValue::Text("single".into())),
@@ -1699,16 +1831,23 @@ mod tests {
         let mut s = VirtualSelectExternal::new_multi(100);
         assert_eq!(
             s.invoke("toggle", IntrospectValue::Int(4)),
-            Ok(IntrospectValue::Json(serde_json::json!([4]))),
+            Ok(IntrospectValue::Json(serde_json::json!([[4, 4]]))),
         );
         assert_eq!(
             s.invoke("toggle", IntrospectValue::Int(9)),
-            Ok(IntrospectValue::Json(serde_json::json!([4, 9]))),
+            Ok(IntrospectValue::Json(serde_json::json!([[4, 4], [9, 9]]))),
+            "two apart rows are two runs",
         );
-        // extend_to from anchor 9 (last toggle) up to 11.
+        // R1561 — closing the gap merges them: the returned value is a function
+        // of the selection, not of the toggles that built it.
+        assert_eq!(
+            s.invoke("toggle", IntrospectValue::Int(5)),
+            Ok(IntrospectValue::Json(serde_json::json!([[4, 5], [9, 9]]))),
+        );
+        // extend_to from anchor 5 (last toggle) up to 11.
         assert_eq!(
             s.invoke("extend_to", IntrospectValue::Int(11)),
-            Ok(IntrospectValue::Json(serde_json::json!([9, 10, 11]))),
+            Ok(IntrospectValue::Json(serde_json::json!([[5, 11]]))),
         );
     }
 
@@ -1731,7 +1870,7 @@ mod tests {
                 row_pitch: 32
             }
         ));
-        assert_eq!(selection_of(&scene, "vlist"), vec![0]);
+        assert_eq!(selection_rows_of(&scene, "vlist"), vec![0]);
         // Shift+End extends the range to the last row.
         assert!(nav_select_key(
             &mut scene,
@@ -1763,7 +1902,7 @@ mod tests {
             }
         ));
         assert_eq!(
-            selection_of(&scene, "vlist"),
+            selection_rows_of(&scene, "vlist"),
             vec![1, 2],
             "Shift extends from anchor 1"
         );
@@ -1779,7 +1918,7 @@ mod tests {
                 row_pitch: 32
             }
         ));
-        assert_eq!(selection_of(&scene, "vlist"), vec![1, 2, 3]);
+        assert_eq!(selection_rows_of(&scene, "vlist"), vec![1, 2, 3]);
     }
 
     #[test]
@@ -1831,11 +1970,13 @@ mod tests {
                 row_pitch: 32
             }
         ));
-        assert_eq!(
-            selection_of(&scene, "vlist").len(),
-            10_000,
-            "Ctrl+A selects all"
-        );
+        let all = selection_of(&scene, "vlist");
+        assert_eq!(all.len(), 10_000, "Ctrl+A selects all");
+        // R1561 — and says so in one run, over the wire. This is the assertion
+        // that would have caught the old representation's cost: the same
+        // `len()` held before, while the answer it was read out of was 58 890
+        // bytes of JSON.
+        assert_eq!(all.run_count(), 1, "and states it as a single run");
     }
 
     #[test]
@@ -1870,7 +2011,7 @@ mod tests {
             }
         ));
         assert_eq!(
-            selection_of(&scene, "vlist"),
+            selection_rows_of(&scene, "vlist"),
             vec![1],
             "single mode never accumulates"
         );
@@ -1887,6 +2028,6 @@ mod tests {
                 row_pitch: 32
             }
         ));
-        assert_eq!(selection_of(&scene, "vlist"), vec![1]);
+        assert_eq!(selection_rows_of(&scene, "vlist"), vec![1]);
     }
 }

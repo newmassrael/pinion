@@ -17,6 +17,7 @@ pub mod file_browser;
 pub mod grid_edit;
 pub mod grid_sort;
 pub mod group_order;
+pub mod index_runs;
 pub mod interaction;
 pub mod listbox;
 pub mod listbox_item;

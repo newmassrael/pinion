@@ -33,8 +33,9 @@
 //! generalization of `view_virtual_table`'s selection to a row predicate so
 //! one virtualized-grid paint path serves single + multi.
 //!
-//! The coordinator holds the selection as a `BTreeSet` of **data indices**
-//! (no per-row state, decoupled from materialization). The view projects
+//! The coordinator holds the selection as the **runs of data indices** it is
+//! made of (R1561 [`IndexRuns`] — no per-row state, decoupled from
+//! materialization). The view projects
 //! that into a Copy per-row bitmap purely as the paint snapshot the shell
 //! hands into the view fn — the same shape `hello-multi-select` /
 //! `hello-table-multi` use.
@@ -64,6 +65,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::widgets::index_runs::IndexRuns;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{
@@ -75,7 +77,6 @@ use pinion_widget_paint::table::{
     CellIndex, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData, header_from_slice,
     no_decoration, no_edit, no_row_header, view_virtual_table,
 };
-use std::collections::BTreeSet;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(
@@ -113,18 +114,22 @@ const H_SCROLL_KEY: &str = "vtbl_hscroll";
 const STATUS_TAG: &str = "vtbl_status";
 
 /// Copy paint-snapshot of the coordinator's selection: a per-row bitmap
-/// indexed by data row, plus the running total. The coordinator itself holds
-/// the selection as a `BTreeSet` of indices (no per-row state); this
-/// projection exists only so the shell can hand a `Copy` snapshot into the
-/// view fn without lifetime gymnastics — exactly the shape `hello-multi-select`
-/// projects for its virtualized list (and `hello-table-multi` for its eager
-/// grid).
+/// indexed by data row, the running total, and (R1561) how many **runs** those
+/// rows form. The coordinator itself holds the selection as [`IndexRuns`] (no
+/// per-row state); this projection exists only so the shell can hand a `Copy`
+/// snapshot into the view fn without lifetime gymnastics — [`WidgetCore::State`]
+/// is `Copy` and a run set owns a `Vec` — exactly the shape
+/// `hello-multi-select` projects for its virtualized list (and
+/// `hello-table-multi` for its eager grid).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct MultiSelection {
     /// Per-row selection bit, indexed by absolute data row.
     selected: [bool; N],
     /// Total selected rows (the status readout).
     total: usize,
+    /// R1561 — how many runs those rows form: `1` after `Ctrl+A` or a
+    /// `Shift`-range, one per island after scattered `Ctrl`-clicks.
+    runs: usize,
 }
 
 impl MultiSelection {
@@ -132,19 +137,24 @@ impl MultiSelection {
         Self {
             selected: [false; N],
             total: 0,
+            runs: 0,
         }
     }
 
-    /// Build the bitmap from a list of selected data indices (out-of-range
-    /// dropped, duplicates idempotent).
-    fn from_indices(indices: &[usize]) -> Self {
+    /// R1561 — build the bitmap from the selection's **runs**: one `fill` per
+    /// run, and the total straight off [`IndexRuns::len`] instead of counted as
+    /// it goes. Was `from_indices(&[usize])`, which walked one index at a time
+    /// because that is all the wire carried.
+    fn from_runs(selection: &IndexRuns) -> Self {
+        // Clamped once — the readout and the bitmap must agree about which
+        // rows exist, and asking twice is two chances to disagree.
+        let inside = selection.clamped_below(N);
         let mut s = Self::empty();
-        for &i in indices {
-            if i < N && !s.selected[i] {
-                s.selected[i] = true;
-                s.total += 1;
-            }
+        for run in inside.runs() {
+            s.selected[run.first..=run.last].fill(true);
         }
+        s.total = inside.len();
+        s.runs = inside.run_count();
         s
     }
 
@@ -183,13 +193,17 @@ fn cell_text(c: CellIndex) -> String {
 fn status_bar(
     scroll: &std::rc::Rc<pinion_core::widgets::scroll::ScrollState>,
     theme: &Theme,
-    total: usize,
+    selection: &MultiSelection,
 ) -> Scene {
     let (mw, mh) = scroll.measured_viewport();
+    let (total, runs) = (selection.total, selection.runs);
     let noun = if total == 1 { "row" } else { "rows" };
+    let run_noun = if runs == 1 { "run" } else { "runs" };
     let text = Scene::Text(
         TextNode::styled(
-            format!("selected {total} {noun} \u{00B7} viewport {mw}\u{00D7}{mh}"),
+            format!(
+                "selected {total} {noun} in {runs} {run_noun} \u{00B7} viewport {mw}\u{00D7}{mh}"
+            ),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(13)
@@ -258,7 +272,7 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![status_bar(&scroll, &theme, selection.total), grid])
+        ContainerNode::new(vec![status_bar(&scroll, &theme, selection), grid])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
@@ -289,12 +303,12 @@ impl WidgetCore for GridMultiSelectView {
     /// repaints; scroll offset repaints via its own reactive `Signal`
     /// subscription the view opens.
     fn read_state(scene: &Scene) -> MultiSelection {
-        let indices = scene
+        let selection = scene
             .find_external_with_tag(TABLE_TAG)
             .and_then(|node| node.handle.introspect())
             .map(read_selection)
             .unwrap_or_default();
-        MultiSelection::from_indices(&indices)
+        MultiSelection::from_runs(&selection)
     }
 
     fn view(state: MultiSelection, frame: &Frame) -> Scene {
@@ -348,7 +362,9 @@ impl WidgetA11y for GridMultiSelectView {
     /// truth): the grid container is `aria-multiselectable`; each windowed
     /// data row carries `aria-posinset` + `aria-selected =
     /// selection.contains(id)` (several visible rows at once); one `gridcell`
-    /// per column; a frozen header row of `columnheader`s. The window is the
+    /// per column; a frozen header row of `columnheader`s. R1561 — the builder
+    /// takes the membership *question*, not a set built over the window, so
+    /// nothing here materializes a selection. The window is the
     /// same `compute_visible_range` over the measured viewport the view fn
     /// uses, so the a11y tree and the painted tree never disagree on which
     /// rows exist.
@@ -356,17 +372,13 @@ impl WidgetA11y for GridMultiSelectView {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_H, OVERSCAN);
-        let windowed_set: BTreeSet<usize> = window
-            .indices()
-            .filter(|&i| selection.is_selected(i))
-            .collect();
         windowed_grid_nodes_multiselected(
             TABLE_TAG,
             "Multi-selectable data grid",
             HEADERS.len(),
             u32::try_from(N).unwrap_or(u32::MAX),
             &window,
-            &windowed_set,
+            &|i| selection.is_selected(i),
         )
     }
 }
@@ -404,7 +416,10 @@ mod tests {
             scroll.set_max(0, i32::try_from(N).unwrap() * i32::try_from(ROW_H).unwrap());
             scroll.set_measured_viewport(WIN_W, measured_h);
             scroll.scroll_to(0, offset_y);
-            view(&MultiSelection::from_indices(indices), &Frame::default())
+            view(
+                &MultiSelection::from_runs(&indices.iter().copied().collect()),
+                &Frame::default(),
+            )
         })
     }
 
@@ -449,7 +464,10 @@ mod tests {
         let nodes = Owner::new().run(|| {
             let scroll = use_scroll_state(SCROLL_KEY);
             scroll.set_measured_viewport(WIN_W, 384);
-            GridMultiSelectView::access_node(&MultiSelection::from_indices(&[0, 2]), None)
+            GridMultiSelectView::access_node(
+                &MultiSelection::from_runs(&[0usize, 2].into_iter().collect()),
+                None,
+            )
         });
         assert_eq!(nodes[0].role, AriaRole::Grid);
         assert_eq!(nodes[0].size_of_set, Some(u32::try_from(N).unwrap()));
