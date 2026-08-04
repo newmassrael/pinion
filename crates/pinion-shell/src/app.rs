@@ -1414,6 +1414,11 @@ impl<V: WidgetView> AppShell<V> {
     /// settle counts); its paint half is `encode_nodes`, which only the
     /// surface's own encode scope can know. This is the one place both are in
     /// scope, so it is the one place the sample can describe a whole frame.
+    ///
+    /// R1556 — `draw` joins them, and is the only one of the counts that is not
+    /// a size of a *tree*: it is the size of the drawing the frame submitted.
+    /// Like `encode_nodes` it can only be read inside the render scope, because
+    /// the scene it censuses is the one that scope hands to the renderer.
     fn record_frame_sample(
         &mut self,
         window: &str,
@@ -1421,6 +1426,7 @@ impl<V: WidgetView> AppShell<V> {
         gpu: GpuFrameReport,
         encode_nodes: u32,
         access_nodes: u32,
+        draw: pinion_runtime::DrawWork,
     ) {
         let work = self.core.last_frame_work_for_window(window);
         self.core.record_frame_timing(
@@ -1429,6 +1435,7 @@ impl<V: WidgetView> AppShell<V> {
                 .with_work(work.passes, work.settled, work.shape_misses)
                 .with_census(work.scene_nodes, work.layout_nodes, encode_nodes)
                 .with_access_census(access_nodes)
+                .with_draw_census(draw)
                 .with_gpu(gpu.us),
         );
         self.core
@@ -1703,7 +1710,12 @@ impl<V: WidgetView> AppShell<V> {
         // of the frame's node census, and it can only be read here: the
         // fragment cache that counts it is the window slot's, borrowed inside
         // the scope below.
-        let (encode_us, encode_nodes, acquire_us, render_us, gpu);
+        //
+        // R1556 §5.16 — `draw` (what the submitted scene will ask the renderer
+        // to draw) joins them under the same rule, and for `encode_nodes`'
+        // reason: the scene it censuses is the render target the scope below
+        // builds, so nowhere else can see it.
+        let (encode_us, encode_nodes, acquire_us, render_us, gpu, draw);
         // R1036 PR-17 — the `renderer.render` outcome for this frame, fed into
         // the per-window render-fidelity record so `scene/render_fidelity`
         // surfaces a failed present (the present-staleness signature).
@@ -1788,6 +1800,17 @@ impl<V: WidgetView> AppShell<V> {
             } else {
                 &slot.vello_scene
             };
+            // R1556 §5.16 — census what this frame will actually ask the
+            // renderer to DRAW, off the scene that is about to be submitted.
+            //
+            // Here, and not after the encode above, for two reasons that are
+            // really one: this is the scene that runs. The DPI append copies the
+            // streams verbatim so the counts are the same either way, and
+            // taking them from the submitted value is what makes "this is what
+            // ran" true by construction rather than by review — a future
+            // round that adds a step between the encode and the submit cannot
+            // silently leave its work out of the census.
+            draw = paint_adapter::draw_work_of(render_target);
             // R1060 §5.16 §5.12 — submit the frame: the normal present,
             // or — when an RPC `scene/screenshot` flagged this slot via
             // `capture_window_screenshot` — `capture_rgba8` reading back
@@ -1909,6 +1932,7 @@ impl<V: WidgetView> AppShell<V> {
                 gpu,
                 encode_nodes,
                 access_nodes,
+                draw,
                 has_immediate_subtree,
             },
         );
@@ -1941,6 +1965,8 @@ struct FrameClose {
     encode_nodes: u32,
     /// Nodes the accessibility walk produced (R1538).
     access_nodes: u32,
+    /// What the submitted scene will ask the renderer to draw (R1556).
+    draw: pinion_runtime::DrawWork,
     /// Whether the painted scene carried an immediate-mode subtree.
     has_immediate_subtree: bool,
 }
@@ -2009,6 +2035,7 @@ impl<V: WidgetView + 'static> AppShell<V> {
             close.gpu,
             close.encode_nodes,
             close.access_nodes,
+            close.draw,
         );
         // R1361 §5.16 §5.22 — hand the freshly-recorded history to any
         // in-app profiler HUD (`use_frame_timings`). Immediately after

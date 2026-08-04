@@ -692,6 +692,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                         // `access_nodes` stays at the constructor's `0` — the
                         // same "that work does not exist here" its all-zero
                         // `mirror` group reports.
+                        //
+                        // R1556 — and no `with_draw_census`: the draw census
+                        // counts paths, segments, clip layers and glyphs, none
+                        // of which a terminal frame has. A cell grid's own unit
+                        // of drawing is the cell, which is a different quantity
+                        // with a different meaning, so it is left ABSENT rather
+                        // than folded into fields that would then mean two
+                        // things depending on the backend.
                         .with_census(f.scene_nodes, f.layout_nodes, 0),
                 );
         }
@@ -2721,6 +2729,18 @@ mod tests {
                 snap.max_scene_nodes, snap.last.scene_nodes,
                 "the window fold covers the one sample there is",
             );
+            // R1556 — and the DRAW census is absent here for the same reason,
+            // one axis over: its units are paths, segments, clip layers and
+            // glyphs, and a cell grid has none of them. Asserted rather than
+            // left implicit, because "absent" and "measured as nothing" are the
+            // two readings this project keeps having to separate — a terminal
+            // frame draws plenty, it just does not draw any of THESE.
+            assert_eq!(
+                snap.last.draw,
+                pinion_runtime::DrawWork::default(),
+                "a terminal frame has no vector pipeline to census",
+            );
+            assert_eq!(snap.max_draw, pinion_runtime::DrawWork::default());
         }
 
         #[test]

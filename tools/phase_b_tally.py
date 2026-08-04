@@ -1022,6 +1022,14 @@ AXES = [
                 # `bytes`, which appears in `font/parse`'s input array and in
                 # every screenshot demo's pixel arithmetic.
                 "total_bytes",
+                # R1556 — the draw census. Same rule as the three above:
+                # `path_segments` is the frame's geometric cost, and a round
+                # that reduces per-frame drawing asserts against it. Measured
+                # at R1556, 1 of 509 demos mentions it and that one is the
+                # round that added the counter. Deliberately not `scene_nodes`,
+                # which is a count of the TREE — the very proxy this axis had
+                # to stop treating as a cost.
+                "path_segments",
             ]),
         ],
         # R1527 re-judgment, forced by this axis's round count going 2 -> 3.

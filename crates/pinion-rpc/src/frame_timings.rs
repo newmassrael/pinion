@@ -45,7 +45,11 @@
 //!       "settle_passes": 1, "settled": true, "shape_misses": 0,
 //!       "gpu_us": 640,
 //!       "scene_nodes": 412, "layout_nodes": 412, "encode_nodes": 9,
-//!       "access_nodes": 21
+//!       "access_nodes": 21,
+//!       "draw": {
+//!         "draws": 214, "paths": 190, "path_segments": 1040,
+//!         "layers": 3, "glyph_runs": 42, "glyphs": 318
+//!       }
 //!     },
 //!     "produce": {
 //!       "passes_total": 9, "shape_misses_total": 130, "nodes_total": 3708
@@ -63,7 +67,11 @@
 //!       "gpu_sample_count": 118, "gpu_timing_supported": true,
 //!       "gpu_dropped_total": 0,
 //!       "max_scene_nodes": 412, "max_layout_nodes": 824,
-//!       "max_encode_nodes": 412, "max_access_nodes": 21
+//!       "max_encode_nodes": 412, "max_access_nodes": 21,
+//!       "max_draw": {
+//!         "draws": 214, "paths": 190, "path_segments": 1040,
+//!         "layers": 3, "glyph_runs": 42, "glyphs": 318
+//!       }
 //!     },
 //!     "mean_fps": 116.3,
 //!     "budget_us": 8333,
@@ -155,6 +163,32 @@
 //!   `shape_misses` policy, for the same reason: the per-node cost moves with
 //!   the host, the scene and the CPU, so a consumer measures it on its own
 //!   machine and multiplies. `build_us / layout_nodes` is that measurement.
+//! - **The draw census** (R1556) — `last.draw`, with a `window.max_draw` peer —
+//!   is the half the node census cannot reach: **a node count is not a cost.**
+//!   A `Container` is one node; a `Text` leaf holding four thousand glyphs is
+//!   one node. So two frames can report an identical `scene_nodes` and hand the
+//!   GPU two orders of magnitude of different work, and the guard R1538 built
+//!   to bound per-frame work could not see the difference.
+//!
+//!   `draw` counts what was drawn, in the units a 2D vector renderer is charged
+//!   in: `draws` (draw commands), `paths` / `path_segments` (geometry),
+//!   `layers` (clip/blend layers, whose cost is per-layer and not per-item),
+//!   and `glyph_runs` / `glyphs` (text). `path_segments` and `glyphs` are
+//!   **disjoint** — a shaped run is encoded as positioned glyphs and its
+//!   outlines become paths downstream — so a frame's vector cost and its text
+//!   cost can be read apart instead of summed.
+//!
+//!   It is taken from the scene that was **submitted**, so a subtree the
+//!   fragment cache replayed counts exactly like one encoded this frame: there
+//!   is no path by which drawn work escapes it. That is what makes the pairing
+//!   with `encode_nodes` meaningful — that is what the CPU **walked**, this is
+//!   what the GPU **draws**. Nine nodes walked to draw four thousand glyphs is
+//!   a fragment cache doing its job; four thousand walked to draw the same
+//!   glyphs is not, and neither number alone says which.
+//!
+//!   All-zero on a backend with no vector pipeline, the statement `encode_us`
+//!   already makes there. Counts, with no cost shipped to multiply them by —
+//!   `gpu_us / path_segments` is the measurement, made on the reading host.
 //! - `budget_us` is the per-frame budget the window is judged against
 //!   (`1e6 / target_fps`, set via `scene/set_fps`). **Omitted entirely**
 //!   (`null`) for an unpaced window — an idle retained window has no
@@ -328,6 +362,92 @@ pub struct FrameTimingsLast {
     /// the AT layer — every scale claim the other counts support would hold
     /// while the frame did O(model) work. `0` on a window with no AT adapter.
     pub access_nodes: u32,
+    /// R1556 — what this frame asked the renderer to **draw**, as against the
+    /// four counts above, which are all sizes of a *tree*.
+    ///
+    /// The half a node census cannot reach: a `Container` is one node and a
+    /// `Text` leaf holding four thousand glyphs is one node, so two frames can
+    /// report identical `scene_nodes` and hand the GPU two orders of magnitude
+    /// of different work. All-zero on a backend with no vector pipeline.
+    pub draw: FrameTimingsDraw,
+}
+
+/// R1556 §5.16 — the frame's **draw** census: what the encoded scene asks the
+/// renderer to draw, counted in the units a 2D vector renderer is charged in.
+///
+/// Read from the scene that was **submitted**, so a subtree the §5.16 fragment
+/// cache replayed is counted exactly like one encoded this frame — there is no
+/// path by which drawn work escapes the count.
+///
+/// Read it against `encode_nodes`, which is the opposite half: that is what the
+/// CPU **walked**, this is what the GPU **draws**. Nine nodes walked to draw
+/// four thousand glyphs is a fragment cache doing its job; four thousand walked
+/// to draw the same glyphs is not, and neither number alone says which.
+///
+/// **Counts, with no cost shipped to multiply them by** — the `shape_misses`
+/// policy: what a glyph or a segment costs moves with the GPU, the driver and
+/// the resolution, so a consumer measures it on its own host. `gpu_us /
+/// path_segments` is that measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FrameTimingsDraw {
+    /// Draw commands encoded: every fill, stroke, image, blurred rect and clip
+    /// boundary. The peer of a 3D renderer's draw-call count
+    /// (`QQuick3DRenderStats::drawCallCount`, Unreal `stat rhi`), and the
+    /// coarsest number here — it says how many things were drawn without saying
+    /// how big any of them was.
+    pub draws: u32,
+    /// Paths encoded: one per filled or stroked shape, plus one per closed clip
+    /// layer. `0` on a frame that draws only text.
+    pub paths: u32,
+    /// Line and curve segments across those paths — the frame's **geometric**
+    /// size (the peer of a triangle count). A rounded rect and a
+    /// thousand-point polyline are both one path and one draw; only this
+    /// separates them.
+    ///
+    /// **Text is not in here**: a shaped run is encoded as positioned glyphs
+    /// and its outlines become paths downstream of the encoding. So this and
+    /// `glyphs` are disjoint, and a frame's vector cost and its text cost can
+    /// be read apart rather than summed into one number neither survives.
+    pub path_segments: u32,
+    /// Clip / blend layers pushed. Apart from `draws` because its cost is not
+    /// per-item: a layer is a separate render target in the coarse rasterizer,
+    /// so ten layers over the same pixels is not ten draws' worth of work. A
+    /// scroll viewport pushes one; a binding that pushes one per row has found
+    /// its superlinear term before it shows up as a duration.
+    pub layers: u32,
+    /// Glyph runs issued — one per shaped run, which is one text draw. The
+    /// denominator of `glyphs`: their ratio is the mean run length, and many
+    /// short runs pay per-run overhead few long ones do not.
+    pub glyph_runs: u32,
+    /// Positioned glyphs across those runs — the frame's **text** size, and the
+    /// dominant term in a professional 2D application. R1531 measured the
+    /// glyph-run walk at 37% of a warm-cache frame; this is that fraction's
+    /// size.
+    pub glyphs: u32,
+}
+
+impl FrameTimingsDraw {
+    /// Project the runtime census onto the wire shape. Destructures rather than
+    /// reading fields, so a field added to [`pinion_runtime::DrawWork`] fails to
+    /// compile here until someone decides whether the wire carries it.
+    fn of(w: pinion_runtime::DrawWork) -> Self {
+        let pinion_runtime::DrawWork {
+            draws,
+            paths,
+            path_segments,
+            layers,
+            glyph_runs,
+            glyphs,
+        } = w;
+        Self {
+            draws,
+            paths,
+            path_segments,
+            layers,
+            glyph_runs,
+            glyphs,
+        }
+    }
 }
 
 /// R1460 §5.16 §2 #2 — cumulative work the RPC **scene producer** has done
@@ -477,6 +597,14 @@ pub struct FrameTimingsWindow {
     /// R1538 — largest `access_nodes` in the window: the biggest AT tree any
     /// recent frame assembled.
     pub max_access_nodes: u32,
+    /// R1556 — per-field maximum `last.draw` over the window: the most drawing
+    /// work any recent frame asked for, in each unit.
+    ///
+    /// Maxima for `max_scene_nodes`' reason, and **not a frame**: each field is
+    /// maxed on its own, so no single sample need have drawn all six. The
+    /// pairing worth reading is this against `max_encode_nodes` — the worst the
+    /// CPU walked beside the worst the GPU was handed.
+    pub max_draw: FrameTimingsDraw,
 }
 
 /// Snapshot returned by [`frame_timings`]. Projects
@@ -556,6 +684,7 @@ pub fn frame_timings(
             layout_nodes: s.last.layout_nodes,
             encode_nodes: s.last.encode_nodes,
             access_nodes: s.last.access_nodes,
+            draw: FrameTimingsDraw::of(s.last.draw),
         },
         produce: FrameTimingsProduce {
             passes_total: s.produce.passes,
@@ -590,6 +719,7 @@ pub fn frame_timings(
             max_layout_nodes: s.max_layout_nodes,
             max_encode_nodes: s.max_encode_nodes,
             max_access_nodes: s.max_access_nodes,
+            max_draw: FrameTimingsDraw::of(s.max_draw),
         },
         mean_fps: s.mean_fps,
         budget_us: s.budget_us,

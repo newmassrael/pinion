@@ -39,6 +39,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::frame_timing::DrawWork;
 use crate::image_cache::ImageCache;
 use crate::paint_cache_stats::FragmentCacheStats;
 use pinion_core::Scene;
@@ -1005,6 +1006,67 @@ impl CursorPaintFlags {
         blink_on: true,
         focused: true,
     };
+}
+
+/// (R1556 §5.16) How many entries one `push_clip_layer` … `pop_layer` pair
+/// contributes to the encoder's clip counter.
+///
+/// `vello_encoding` bumps `n_clips` on the begin **and** on the end, so a
+/// balanced layer costs two. That is an implementation detail of a crate this
+/// project does not own — exactly the model-drift class R1550 recorded, where a
+/// number stays green while the crate underneath it changes shape — so it is
+/// named here and **pinned by a test** (`r1556_a_layer_costs_two_clip_entries`)
+/// rather than spelled inline as a `2`. If vello changes the accounting, that
+/// test fails; nothing else in this file would notice.
+const CLIP_ENTRIES_PER_LAYER: u32 = 2;
+
+/// (R1556 §5.16) The [`DrawWork`] census of an encoded scene: what this frame
+/// will actually ask the renderer to draw.
+///
+/// Read from the encoding rather than accumulated during the walk, and that is
+/// the whole point. The §5.16 fragment cache serves a hit by **appending** a
+/// stored fragment, and `vello`'s append extends the encoded streams and folds
+/// the appended counters in — so a replayed subtree lands in these numbers
+/// identically to a freshly-encoded one. A tally kept by the walker would count
+/// only what it walked, which is [`crate::FrameTiming::encode_nodes`]' job and the
+/// opposite question.
+///
+/// Call it on the scene that is **submitted**, not on the pre-scale one: the DPI
+/// append copies the streams verbatim, so the counts are scale-invariant either
+/// way, and measuring the submitted scene is what makes "this is what ran" true
+/// by construction rather than by review.
+///
+/// # Layers
+///
+/// Derived as `(n_clips + n_open_clips) / 2`, which is
+/// **exact** rather than approximate: a begin adds one to each counter and an
+/// end adds one to the first while taking one off the second, so for `b` begins
+/// and `e` ends the sum is `(b + e) + (b - e) = 2b`. A frame that left a layer
+/// open therefore still reports the layer it pushed, instead of truncating it
+/// away. The `2` is the one quantity here that MODELS a crate this project
+/// does not own; it is named and pinned by a test rather than spelled inline —
+/// see the private `CLIP_ENTRIES_PER_LAYER` in this module.
+#[must_use]
+pub fn draw_work_of(scene: &VelloScene) -> DrawWork {
+    let enc = scene.encoding();
+    DrawWork {
+        draws: saturating_count(enc.draw_tags.len()),
+        paths: enc.n_paths,
+        path_segments: enc.n_path_segments,
+        layers: enc
+            .n_clips
+            .saturating_add(enc.n_open_clips)
+            .saturating_div(CLIP_ENTRIES_PER_LAYER),
+        glyph_runs: saturating_count(enc.resources.glyph_runs.len()),
+        glyphs: saturating_count(enc.resources.glyphs.len()),
+    }
+}
+
+/// A stream length as a census field. Saturates rather than wrapping: a scene
+/// with more than four billion glyphs in one frame is not a number worth
+/// preserving exactly, but it must not be reported as a small one.
+fn saturating_count(len: usize) -> u32 {
+    u32::try_from(len).unwrap_or(u32::MAX)
 }
 
 /// `fill_hook` is honoured for [`Scene::Box`] leaves (matching
@@ -4309,14 +4371,27 @@ mod tests {
         // R47.6 — TextOverflow::Clip wraps paint_text in
         // push_clip_layer / pop_layer. The wrap must balance (every
         // push matched by a pop) so the Vello scene encoding stays
-        // valid; we cannot read the encoded layer stack from outside
-        // the crate, but the no-panic walk + Vello's own internal
-        // assertions (debug builds verify layer balance) cover this.
+        // valid.
+        //
+        // R1556 — the original body stopped at "the walk did not panic", under
+        // a comment stating we "cannot read the encoded layer stack from
+        // outside the crate". That was never true: `vello::Scene::encoding()`
+        // is public, and `draw_work_of` reads it. So the balance is now
+        // ASSERTED rather than inferred from the absence of a panic — and the
+        // clip is asserted to have been pushed at all, which no-panic could not
+        // distinguish from the arm silently not clipping.
+        //
+        // `Ellipsis` clips too, and that is the documented behaviour rather
+        // than an accident: parley exposes no line-truncation API, so the arm
+        // falls back to `Clip` (see `paint_text`). This test asserted `0` there
+        // on the first draft — a guess, corrected by running it, and now the
+        // only place that fallback is stated as a checkable fact instead of a
+        // sentence in a doc comment.
         use pinion_core::style::TextOverflow;
-        for overflow in [
-            TextOverflow::Visible,
-            TextOverflow::Clip,
-            TextOverflow::Ellipsis,
+        for (overflow, want_layers) in [
+            (TextOverflow::Visible, 0),
+            (TextOverflow::Clip, 1),
+            (TextOverflow::Ellipsis, 1),
         ] {
             let scene = Scene::Text(TextNode::styled(
                 "OverflowingContent",
@@ -4326,7 +4401,190 @@ mod tests {
             let mut vello = VelloScene::new();
             let mut cache = LayoutCache::new();
             to_vello(&scene, &|_| None, &mut cache, &mut vello);
+            assert_eq!(
+                draw_work_of(&vello).layers,
+                want_layers,
+                "{overflow:?} pushed the wrong number of clip layers",
+            );
+            assert_eq!(
+                vello.encoding().n_open_clips,
+                0,
+                "{overflow:?} left a clip layer open",
+            );
         }
+    }
+
+    // ----- R1556 §5.16 — the frame's DRAW census -----
+
+    #[test]
+    fn r1556_a_layer_costs_two_clip_entries() {
+        // Pins the one quantity `draw_work_of` MODELS rather than reads: the
+        // encoder's `n_clips` counts a begin and an end separately, so a
+        // balanced layer costs `CLIP_ENTRIES_PER_LAYER`. That is a fact about a
+        // crate this project does not own, and R1550 recorded exactly this
+        // shape as the class that goes wrong SILENTLY — the arithmetic keeps
+        // compiling and the number keeps looking plausible. This is what makes
+        // it loud.
+        for pushes in 0_u32..4 {
+            let mut vello = VelloScene::new();
+            for _ in 0..pushes {
+                vello.push_clip_layer(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    &vello::kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+                );
+            }
+            for _ in 0..pushes {
+                vello.pop_layer();
+            }
+            assert_eq!(
+                vello.encoding().n_clips,
+                pushes * CLIP_ENTRIES_PER_LAYER,
+                "vello changed how a balanced clip layer is counted",
+            );
+            assert_eq!(draw_work_of(&vello).layers, pushes);
+        }
+
+        // …and the derivation is exact for an UNBALANCED encode too, which is
+        // the case a bare `n_clips / 2` truncates away. Three pushed, two
+        // popped: the frame pushed three layers and must report three.
+        let mut open = VelloScene::new();
+        for _ in 0..3 {
+            open.push_clip_layer(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                &vello::kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+            );
+        }
+        open.pop_layer();
+        open.pop_layer();
+        assert_eq!(open.encoding().n_open_clips, 1, "one layer left open");
+        assert_eq!(
+            draw_work_of(&open).layers,
+            3,
+            "an open layer is still a layer the frame pushed",
+        );
+    }
+
+    #[test]
+    fn r1556_two_scenes_of_equal_node_count_draw_unequal_work() {
+        // The whole reason this census exists, at the smallest scale that can
+        // state it. Two scenes with the SAME number of nodes — one Text leaf
+        // each — hand the renderer two orders of magnitude of different work.
+        // R1538's node census reports both as identical, which is correct and
+        // is precisely its limit.
+        let short = text_scene("ok");
+        let long = text_scene(&"lorem ipsum dolor sit amet ".repeat(20));
+
+        let (a, b) = (encode_uncached(&short), encode_uncached(&long));
+        assert_eq!(
+            scene_nodes_of(&short),
+            scene_nodes_of(&long),
+            "the premise: the node census cannot tell these apart",
+        );
+        assert_eq!((a.glyphs, b.glyphs), (2, 540));
+        assert!(
+            b.glyphs > a.glyphs * 50,
+            "the draw census must: {} vs {} glyphs",
+            a.glyphs,
+            b.glyphs,
+        );
+
+        // …and the text lands in the glyph fields and NOWHERE else. Pinned
+        // because it is the meaning of `path_segments`, and it was not the
+        // meaning this test first assumed: `vello` encodes a run as positioned
+        // glyphs and resolves their outlines to paths downstream of the
+        // encoding, so a pure-text frame encodes ZERO paths. The two axes are
+        // disjoint, which is what lets a frame's text cost and its vector cost
+        // be read apart instead of summed into one uninterpretable number.
+        assert_eq!(
+            (a.paths, a.path_segments, b.paths, b.path_segments),
+            (0, 0, 0, 0),
+            "text is not encoded geometry",
+        );
+        assert_eq!(
+            (a.draws, b.draws),
+            (a.glyph_runs, b.glyph_runs),
+            "one draw command per shaped run, and nothing else drawn here",
+        );
+    }
+
+    #[test]
+    fn r1556_a_replayed_fragment_is_counted_like_an_encoded_one() {
+        // The property that makes this a census of the FRAME rather than of the
+        // walk: paint the same scene twice through one FragmentCache. The
+        // second paint is served by the cache — it walks far less — and the GPU
+        // is handed exactly the same drawing either way, so the two censuses
+        // must be equal. A tally kept by the walker would report the second
+        // frame as drawing almost nothing, which is the reading a profiler must
+        // never produce.
+        let scene = Scene::Container(
+            ContainerNode::new(vec![
+                text_scene("first row"),
+                text_scene("second row"),
+                Scene::Box(BoxNode::filled(
+                    Rect::new(0, 0, 40, 40),
+                    Color::rgb(0x20, 0x30, 0x40),
+                )),
+            ])
+            .with_style(BoxStyle::filled(Color::rgb(0xf0, 0xf0, 0xf0))),
+        );
+        let mut text_cache = LayoutCache::new();
+        let mut image_cache = ImageCache::new();
+        let mut fragments = FragmentCache::new();
+
+        let mut first = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut fragments,
+            &mut first,
+        );
+        let walked_first = fragments.nodes_walked_last_paint();
+
+        let mut second = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut fragments,
+            &mut second,
+        );
+        let walked_second = fragments.nodes_walked_last_paint();
+
+        assert!(
+            walked_second < walked_first,
+            "premise: the second paint must hit the cache ({walked_first} -> {walked_second})",
+        );
+        assert_eq!(
+            draw_work_of(&first),
+            draw_work_of(&second),
+            "a replayed fragment draws the same work it drew when encoded",
+        );
+        assert!(
+            draw_work_of(&second).glyphs > 0,
+            "…and that work is not zero",
+        );
+    }
+
+    /// One tagless `Scene::Text` leaf, for the draw-census tests.
+    fn text_scene(label: &str) -> Scene {
+        Scene::Text(TextNode::styled(
+            label,
+            Rect::new(0, 0, 4000, 40),
+            TextStyle::new().with_size_px(16),
+        ))
+    }
+
+    /// Encode a scene with no fragment cache in play and census the result.
+    fn encode_uncached(scene: &Scene) -> DrawWork {
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(scene, &|_| None, &mut cache, &mut vello);
+        draw_work_of(&vello)
     }
 
     // R705 §5.39 — the focus-ring tests moved with the implementation

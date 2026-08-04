@@ -121,6 +121,134 @@ pub fn instant_delta_us(start: Instant, end: Instant) -> u64 {
     u64::try_from(end.saturating_duration_since(start).as_micros()).unwrap_or(u64::MAX)
 }
 
+/// (R1556 §5.16) What one frame asked the renderer to **draw** — the cost of
+/// the picture, as against [`FrameTiming::scene_nodes`]'s count of it.
+///
+/// # Why a node count is not a cost
+///
+/// R1538 made the frame's node census readable and stated the scale claim this
+/// axis is named for with it: per-frame work is bounded by what is *visible*,
+/// not by how big the model is. A count is the right shape for that claim —
+/// unlike a duration it does not move with the host — but it prices every node
+/// at one. A `Container` is one node; a `Text` leaf holding four thousand
+/// glyphs is one node. So two frames can report an **identical** census and
+/// differ by two orders of magnitude in what they hand the GPU, and R1538's own
+/// guard could not see the difference it was built to bound.
+///
+/// This is the other half: what was drawn, counted in the units a 2D vector
+/// renderer is actually charged in — paths and their segments, clip layers,
+/// glyph runs and glyphs, and the draw commands that carry them. Same property
+/// as the node census (a count, not a duration; the same number on every host),
+/// applied to the artifact instead of to the tree that produced it.
+///
+/// # Taken from the scene that was submitted
+///
+/// Every field is read off the encoded scene the frame handed to the renderer —
+/// after the walk, after the DPI scale — so a subtree the §5.16 fragment cache
+/// **replayed** is counted exactly like one encoded this frame. There is no path
+/// by which drawn work escapes the count, because the count is the size of the
+/// thing that runs.
+///
+/// That is also the reason to read it beside [`FrameTiming::encode_nodes`],
+/// which is the opposite half: that is what the CPU **walked**, this is what the
+/// GPU **draws**. A frame that walked nine nodes and draws four thousand glyphs
+/// is a fragment cache doing its job; one that walked four thousand nodes to
+/// draw the same glyphs is not, and neither number alone says which.
+///
+/// # What pinion does not ship
+///
+/// A cost to multiply these by — the [`FrameTiming::shape_misses`] policy, for
+/// the same reason. What a glyph or a path segment costs moves with the GPU,
+/// the driver and the resolution, so a consumer measures it on its own host and
+/// multiplies. `gpu_us / path_segments` is that measurement, and nothing in-tree
+/// does it on a consumer's behalf.
+///
+/// All-zero on a backend with no vector pipeline, which is the statement
+/// [`FrameTiming::encode_us`] already makes on a terminal frame: that frame
+/// really is build plus commit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DrawWork {
+    /// Draw commands the frame encoded: every fill, stroke, image, blurred rect
+    /// and clip boundary, in the order the rasterizer consumes them.
+    ///
+    /// The closest peer of a 3D renderer's draw-call count (Unreal `stat rhi`,
+    /// `QQuick3DRenderStats::drawCallCount`), and the coarsest number here — it
+    /// says how many things were drawn without saying how big any of them was,
+    /// which is exactly the limit [`Self::path_segments`] and [`Self::glyphs`]
+    /// exist to lift.
+    pub draws: u32,
+    /// Paths the frame encoded. One per filled or stroked shape, plus one per
+    /// closed clip layer.
+    ///
+    /// Roughly "how many shapes", where [`Self::draws`] is "how many commands":
+    /// the two move together on ordinary content and separate on a frame whose
+    /// commands are mostly images or gradients.
+    pub paths: u32,
+    /// Line and curve segments across those paths — the frame's **geometric**
+    /// size, and the number a vector renderer's per-frame cost tracks most
+    /// closely (the peer of a 3D renderer's triangle count).
+    ///
+    /// A rounded rect and a thousand-point polyline are both one path and one
+    /// draw; only this separates them. A frame that keeps [`Self::paths`] flat
+    /// while this climbs is drawing the same *number* of increasingly expensive
+    /// shapes — the chart / node-graph case, and the one a shape count hides.
+    ///
+    /// **Text is not in here.** A shaped run is encoded as positioned glyphs and
+    /// its outlines are turned into paths downstream of the encoding, so a
+    /// frame that draws nothing but text reports zero paths and zero segments.
+    /// That makes this and [`Self::glyphs`] **disjoint** rather than overlapping
+    /// — the frame's vector cost and its text cost can be read apart, instead of
+    /// summed into one number from which neither can be recovered.
+    pub path_segments: u32,
+    /// Clip / blend layers the frame pushed.
+    ///
+    /// Counted apart from [`Self::draws`] because it is the one field here whose
+    /// cost is not per-item: a layer is a separate render target in the coarse
+    /// rasterizer, so ten layers over the same pixels is not ten draws' worth of
+    /// work. A scroll viewport pushes one, and a binding that pushes one per row
+    /// has found the superlinear term before it shows up as a duration.
+    pub layers: u32,
+    /// Glyph runs the frame issued — one per shaped run handed to the
+    /// rasterizer, which is one text draw.
+    ///
+    /// The denominator of [`Self::glyphs`]: `glyphs / glyph_runs` is the mean
+    /// run length, and a frame with many short runs pays per-run overhead a
+    /// frame with few long ones does not.
+    pub glyph_runs: u32,
+    /// Positioned glyphs across those runs — the frame's **text** size.
+    ///
+    /// The dominant term in a professional 2D application and the one no scene
+    /// count can reach: a `Text` leaf is one node whether it holds two glyphs or
+    /// four thousand. R1531 measured the glyph-run walk at 37% of a warm-cache
+    /// frame, which is the fraction of the frame this number is about.
+    ///
+    /// The whole of the frame's text cost, because glyph outlines never reach
+    /// [`Self::path_segments`] — see that field.
+    pub glyphs: u32,
+}
+
+impl DrawWork {
+    /// The per-field maximum of two censuses — the fold
+    /// [`FrameTimingsSnapshot::max_draw`] is built with.
+    ///
+    /// **The result is not a frame.** Each field is maxed independently, so no
+    /// single frame need have drawn all of them; it is six upper bounds carried
+    /// in one value, for the reason `max_scene_nodes` and `max_encode_nodes` are
+    /// separate maxima rather than one representative sample. A mean cannot
+    /// state an upper bound, and the property being guarded is one.
+    #[must_use]
+    pub fn max_of(self, other: Self) -> Self {
+        Self {
+            draws: self.draws.max(other.draws),
+            paths: self.paths.max(other.paths),
+            path_segments: self.path_segments.max(other.path_segments),
+            layers: self.layers.max(other.layers),
+            glyph_runs: self.glyph_runs.max(other.glyph_runs),
+            glyphs: self.glyphs.max(other.glyphs),
+        }
+    }
+}
+
 /// One painted frame's phase breakdown, in microseconds. `Copy` +
 /// no wall-clock references — the surface measures with
 /// [`std::time::Instant`] and lowers to this GUI-agnostic sample
@@ -304,6 +432,14 @@ pub struct FrameTiming {
     /// that assembles no tree per paint, which is the same "that work does not
     /// exist here" the `mirror` group reports on a backend with no mirror.
     pub access_nodes: u32,
+    /// (R1556 §5.16) What the frame asked the renderer to **draw** — see
+    /// [`DrawWork`].
+    ///
+    /// The four counts above are all sizes of a *tree*; this is the size of the
+    /// *drawing*, and the two are independent. A frame can hold its node census
+    /// flat while its glyph count grows without bound, which is the case those
+    /// counts were built to bound and could not see.
+    pub draw: DrawWork,
 }
 
 impl FrameTiming {
@@ -331,7 +467,23 @@ impl FrameTiming {
             layout_nodes: 0,
             encode_nodes: 0,
             access_nodes: 0,
+            draw: DrawWork::default(),
         }
+    }
+
+    /// (R1556 §5.16) Attach the frame's **draw** census — what the encoded
+    /// scene will ask the renderer to draw.
+    ///
+    /// Its own builder rather than six more `u32`s on [`Self::with_census`], and
+    /// the argument that made that one a builder applies twice over here: those
+    /// three were same-typed and transposable, these six are same-typed *and*
+    /// plausibly-valued in each other's slots. Taking one [`DrawWork`] means the
+    /// only way to build the argument is by naming every field, at the one call
+    /// site that reads them off the submitted scene.
+    #[must_use]
+    pub fn with_draw_census(mut self, draw: DrawWork) -> Self {
+        self.draw = draw;
+        self
     }
 
     /// (R1538 §5.16 §5.40) Attach the frame's **accessibility** census.
@@ -554,7 +706,11 @@ impl FrameTimingStats {
         // upper bound, and a mean cannot state one.
         let (mut max_scene_nodes, mut max_layout_nodes, mut max_encode_nodes) = (0u32, 0u32, 0u32);
         let mut max_access_nodes = 0u32;
+        // R1556 — the same max-not-mean rule, six fields at once. See
+        // `DrawWork::max_of`: the result is six upper bounds, not a frame.
+        let mut max_draw = DrawWork::default();
         for s in &self.samples {
+            max_draw = max_draw.max_of(s.draw);
             max_scene_nodes = max_scene_nodes.max(s.scene_nodes);
             max_layout_nodes = max_layout_nodes.max(s.layout_nodes);
             max_encode_nodes = max_encode_nodes.max(s.encode_nodes);
@@ -607,6 +763,7 @@ impl FrameTimingStats {
             max_layout_nodes,
             max_encode_nodes,
             max_access_nodes,
+            max_draw,
             gpu_sample_count,
             // Filled by the backend after projection — see the field doc.
             gpu_timing_supported: false,
@@ -946,6 +1103,15 @@ pub struct FrameTimingsSnapshot {
     /// (R1538 §5.16 §5.40) Largest [`FrameTiming::access_nodes`] in this
     /// window — the biggest AT tree any recent frame assembled.
     pub max_access_nodes: u32,
+    /// (R1556 §5.16) Per-field maximum [`FrameTiming::draw`] over this window —
+    /// the most drawing work any recent frame asked for, in each unit.
+    ///
+    /// Maxima for [`Self::max_scene_nodes`]' reason, and **not a frame**: each
+    /// field is maxed on its own, so no single sample need have drawn all six
+    /// (see [`DrawWork::max_of`]). The pairing that matters is this against
+    /// [`Self::max_encode_nodes`] — the worst the CPU walked beside the worst
+    /// the GPU was handed.
+    pub max_draw: DrawWork,
     /// (R1537 §5.16) How many samples in this window carry a GPU timing.
     ///
     /// Published rather than implied because it is the *denominator* of
@@ -1370,7 +1536,7 @@ mod seam_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{FRAME_TIMING_WINDOW, FrameTiming, FrameTimingStats};
+    use super::{DrawWork, FRAME_TIMING_WINDOW, FrameTiming, FrameTimingStats};
 
     #[test]
     fn r1537_gpu_mean_is_over_timed_samples_not_over_frames() {
@@ -1717,6 +1883,85 @@ mod tests {
         assert_eq!(snap.window_len, 4);
         assert_eq!(snap.worst_overrun_us, 200, "300 - 100");
         assert!((snap.jank_ratio - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r1556_max_draw_is_per_field_and_is_not_any_one_frame() {
+        // SIX frames, each the worst in exactly one unit, so the fold's answer
+        // is pinned in every field it has. The first draft used three and
+        // asserted three, and a counterfactual that folded `draws` with `min`
+        // passed it — the fold can be wrong in half its fields while every
+        // assertion holds, because the OTHER fields still make the composite
+        // differ from any one sample.
+        //
+        // The expectation is a whole-struct literal rather than field
+        // assertions, which is what makes the coverage structural: a field
+        // added to `DrawWork` stops this compiling until it is folded here too.
+        let samples = [
+            DrawWork {
+                draws: 700,
+                ..DrawWork::default()
+            },
+            DrawWork {
+                paths: 610,
+                ..DrawWork::default()
+            },
+            DrawWork {
+                path_segments: 40_000,
+                ..DrawWork::default()
+            },
+            DrawWork {
+                layers: 12,
+                ..DrawWork::default()
+            },
+            DrawWork {
+                glyph_runs: 88,
+                ..DrawWork::default()
+            },
+            DrawWork {
+                glyphs: 9_000,
+                ..DrawWork::default()
+            },
+        ];
+        let mut stats = FrameTimingStats::new();
+        for draw in samples {
+            stats.record(FrameTiming::new(1, 1, 0, 1, 10).with_draw_census(draw));
+        }
+        let snap = stats.snapshot(None).expect("six samples");
+        assert_eq!(
+            snap.max_draw,
+            DrawWork {
+                draws: 700,
+                paths: 610,
+                path_segments: 40_000,
+                layers: 12,
+                glyph_runs: 88,
+                glyphs: 9_000,
+            },
+            "every field carries its own worst",
+        );
+        assert_eq!(
+            snap.last.draw, samples[5],
+            "`last` stays one real frame — only `max_draw` is the composite",
+        );
+        assert!(
+            !samples.contains(&snap.max_draw),
+            "and the composite is no frame that was painted, which is the point",
+        );
+    }
+
+    #[test]
+    fn r1556_a_bare_sample_draws_nothing_and_says_so() {
+        // `FrameTiming::new` without `with_draw_census` — a hand-built fixture
+        // and every non-vector backend. All-zero, and distinguishable from a
+        // real vector frame, which has a root fill and therefore draws at least
+        // one path. The `encode_nodes == 0` statement, one axis over.
+        let bare = FrameTiming::new(1, 2, 3, 4, 20);
+        assert_eq!(bare.draw, DrawWork::default());
+        assert_eq!(bare.draw.glyphs, 0);
+        let mut stats = FrameTimingStats::new();
+        stats.record(bare);
+        assert_eq!(stats.snapshot(None).unwrap().max_draw, DrawWork::default());
     }
 
     #[test]

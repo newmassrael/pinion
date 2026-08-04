@@ -554,6 +554,19 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "FrameTimingsDraw",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("draws", WireTy::Integer, None),
+                WireField::new("paths", WireTy::Integer, None),
+                WireField::new("path_segments", WireTy::Integer, None),
+                WireField::new("layers", WireTy::Integer, None),
+                WireField::new("glyph_runs", WireTy::Integer, None),
+                WireField::new("glyphs", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "FrameTimingsFocus",
         shape: WireShape::Object {
             fields: &[
@@ -581,6 +594,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("layout_nodes", WireTy::Integer, None),
                 WireField::new("encode_nodes", WireTy::Integer, None),
                 WireField::new("access_nodes", WireTy::Integer, None),
+                WireField::new("draw", WireTy::Object, Some("FrameTimingsDraw")),
             ],
         },
     },
@@ -645,6 +659,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("max_layout_nodes", WireTy::Integer, None),
                 WireField::new("max_encode_nodes", WireTy::Integer, None),
                 WireField::new("max_access_nodes", WireTy::Integer, None),
+                WireField::new("max_draw", WireTy::Object, Some("FrameTimingsDraw")),
             ],
         },
     },

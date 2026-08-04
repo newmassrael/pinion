@@ -40,6 +40,28 @@
 //! arrive. The cap is enforced by rejecting the write, not by silently
 //! clamping — a guard that reads a clamped value learns nothing.
 //!
+//! ## The second axis: a node count is not a cost (R1556)
+//!
+//! Everything above moves the *number* of things drawn, which is what a node
+//! census measures. It leaves the harness unable to state the one thing that
+//! census cannot see: **a `Container` is one node and a `Text` leaf holding four
+//! thousand glyphs is one node.** A binding can window its rows perfectly,
+//! satisfy every assertion the R1538 guard makes, and hand the GPU unbounded
+//! work — so the guard did not bound what it claimed to bound.
+//!
+//! [`LABEL_LADDER`] is that axis. It sets how many characters each row's label
+//! carries, with `rows` and the arm held fixed:
+//!
+//! | axis | what moves | `scene_nodes` | `last.draw.glyphs` |
+//! |---|---|---|---|
+//! | [`LADDER`], virtual | model size, 1e2 → 1e6 | **flat** | **flat** |
+//! | [`LADDER`], eager | model size, 1e2 → 1e3 | ×10 | ×10 |
+//! | [`LABEL_LADDER`] | per-row cost, 24 → 1,536 | **identical** | **×64** |
+//!
+//! The third row is the case R1556 exists for, and it is not a defect being
+//! demonstrated — it is a size the framework has no business bounding. What was
+//! a defect is that no number on any surface reported it.
+//!
 //! ## The AI-first witness (§2 #2, §2 #7)
 //!
 //! Drive it entirely over RPC, no pixels:
@@ -48,15 +70,18 @@
 //! ui/invoke  {path: "/scale/external", method: "intervene",
 //!             args: {path: "rows", value: 1000000}}
 //! scene/frame_timings                      -> last.scene_nodes unchanged
+//!                                          -> last.draw.glyphs unchanged
+//! ui/invoke  {... "label_chars" = 1536}    -> same nodes, 64x the glyphs
 //! ui/invoke  {... "eager" = true}          -> rejected while rows > cap
 //! ```
 //!
-//! See `tools/demos/r1538_scene_scale.py`.
+//! See `tools/demos/r1538_scene_scale.py` and
+//! `tools/demos/r1556_frame_states_what_it_drew.py`.
 //!
 //! ## a11y
 //!
 //! WAI-ARIA virtualized `list`: `aria-setsize = rows` on the container, one
-//! `listitem` per row in the *visible window*, plus the two header buttons.
+//! `listitem` per row in the *visible window*, plus the three header buttons.
 //! **Both arms report the same shape** — the eager arm's defect is that it
 //! BUILDS every row, not that it announces them, and what an AT should hear is
 //! the same either way. That is a stated scope, not an oversight: this round
@@ -94,6 +119,8 @@ const LIST_TAG: &str = "scale";
 const GROW_REGION: &str = "grow";
 /// Composite-tag region: clicking it flips virtual ↔ eager.
 const MODE_REGION: &str = "mode";
+/// (R1556) Composite-tag region: clicking it steps [`LABEL_LADDER`].
+const WIDTH_REGION: &str = "width";
 /// Cache key for the scroll container's reactive `ScrollState`.
 const SCROLL_KEY: &str = "scale_scroll";
 /// Paint + state tag for the interactive scrollbar peer.
@@ -111,6 +138,23 @@ const LADDER: [usize; 5] = [100, 1_000, 10_000, 100_000, 1_000_000];
 /// enforced by *rejecting* the write, because a silently clamped value would
 /// let a guard read `rows: 1000000` back from a binding holding a thousand.
 const MAX_EAGER_ROWS: usize = 1_000;
+/// (R1556) The per-row label widths the header steps through — the **other**
+/// axis of a frame's size, and the one [`LADDER`] cannot move.
+///
+/// Growing `rows` grows the *number* of things drawn, and the R1538 node census
+/// sees that. Growing this grows the *size* of each thing while the number is
+/// held exactly fixed, so every count on `scene/frame_timings` is byte-identical
+/// across the whole ladder and the frame hands the GPU sixty times the work.
+/// That is the case the node census was built to bound and cannot see, and this
+/// axis is what drives a guard at it.
+const LABEL_LADDER: [usize; 4] = [24, 96, 384, 1_536];
+/// The longest per-row label the binding will accept. A bound on shaping work,
+/// enforced by refusing the write for [`MAX_EAGER_ROWS`]' reason.
+const MAX_LABEL_CHARS: usize = 4_096;
+/// Filler appended to a row's natural label to reach the declared width. A
+/// repeating word rather than one character so the shaper does the ordinary
+/// thing (word-shaped runs, ordinary kerning) instead of a degenerate one.
+const LABEL_FILLER: &str = "lod bounds uv normal tangent ";
 /// Uniform per-row vertical slot in logical pixels; the windowing math is
 /// exact integer division on it.
 const ROW_PITCH: u32 = 28;
@@ -133,6 +177,10 @@ struct ScaleState {
     /// `true` = build one scene node per row (the negative control);
     /// `false` = build only the visible window.
     eager: bool,
+    /// (R1556) Characters in each row's label — the size of a node, as against
+    /// [`Self::rows`]' count of them. Moving this leaves every node census
+    /// exactly where it was and moves the draw census by the same factor.
+    label_chars: usize,
 }
 
 impl Default for ScaleState {
@@ -140,7 +188,26 @@ impl Default for ScaleState {
         Self {
             rows: LADDER[1],
             eager: false,
+            label_chars: LABEL_LADDER[0],
         }
+    }
+}
+
+/// One step along a ladder, wrapping at the top; a value that is not on the
+/// ladder (an `intervene` set an arbitrary one) restarts the walk.
+///
+/// (R1556) Shared by the two ladders rather than written twice, because it is
+/// the WRAP RULE and nothing else — a second copy is free to disagree about
+/// whether the top clamps or wraps, and the click path has no way to report a
+/// disagreement to the person who clicked. What differs between the two is
+/// which rungs are on offer, and that stays with the caller.
+///
+/// `rungs` is never empty at either call site: [`LADDER`]'s smallest entry is
+/// below [`MAX_EAGER_ROWS`], so the filtered slice always keeps at least one.
+fn next_on_ladder(rungs: &[usize], at: usize) -> usize {
+    match rungs.iter().position(|&n| n == at) {
+        Some(i) => rungs[(i + 1) % rungs.len()],
+        None => rungs[0],
     }
 }
 
@@ -150,32 +217,46 @@ impl Default for ScaleState {
 fn next_rung(rows: usize, eager: bool) -> usize {
     let ceiling = if eager { MAX_EAGER_ROWS } else { usize::MAX };
     let allowed: Vec<usize> = LADDER.into_iter().filter(|&n| n <= ceiling).collect();
-    let at = allowed.iter().position(|&n| n == rows);
-    match at {
-        Some(i) => allowed[(i + 1) % allowed.len()],
-        // Not on a rung (an `intervene` set an arbitrary size): start over.
-        None => allowed[0],
-    }
+    next_on_ladder(&allowed, rows)
 }
 
-/// Synthetic row content. The seven-digit zero-pad keeps every row the same
-/// width up to the top rung and makes the index unambiguous in a snapshot.
-fn row_label(index: usize) -> String {
+/// (R1556) Next rung of [`LABEL_LADDER`] at or above `chars`, wrapping at the
+/// top. Unlike [`next_rung`] no rung is ever unavailable: a wider label costs
+/// shaping, which both arms pay identically, so there is nothing for an arm to
+/// refuse.
+fn next_label_rung(chars: usize) -> usize {
+    next_on_ladder(&LABEL_LADDER, chars)
+}
+
+/// Synthetic row content, exactly `chars` characters wide. The seven-digit
+/// zero-pad keeps every row the same width up to the top rung and makes the
+/// index unambiguous in a snapshot.
+///
+/// (R1556) The width is *exact* — padded with [`LABEL_FILLER`] or truncated —
+/// so the frame's glyph count is a known function of `rows_built * chars` and a
+/// guard can assert the ratio rather than a threshold. Truncation is on
+/// `char` boundaries, so a multi-byte filler could never split one.
+fn row_label(index: usize, chars: usize) -> String {
     const KINDS: [&str; 4] = ["mesh", "texture", "clip", "material"];
-    format!("asset {index:07} \u{00B7} {}", KINDS[index % KINDS.len()])
+    let mut s = format!("asset {index:07} \u{00B7} {}", KINDS[index % KINDS.len()]);
+    while s.chars().count() < chars {
+        s.push(' ');
+        s.push_str(LABEL_FILLER);
+    }
+    s.chars().take(chars).collect()
 }
 
 /// One row: a zebra-striped strip carrying its index label, tagged
 /// `scale#<i>` so the a11y `listitem` bounds resolve and a snapshot can name
 /// exactly which indices the frame built.
-fn build_row(index: usize, theme: &Theme) -> Scene {
+fn build_row(index: usize, chars: usize, theme: &Theme) -> Scene {
     let fill = if index % 2 == 0 {
         theme.resolve(ColorRole::SurfaceContainerLow)
     } else {
         theme.resolve(ColorRole::SurfaceContainer)
     };
     let label = Scene::Text(TextNode::styled(
-        row_label(index),
+        row_label(index, chars),
         Rect::default(),
         TextStyle::new()
             .with_size_px(ROW_FONT_PX)
@@ -216,7 +297,7 @@ fn header_button(region: &str, label: String, theme: &Theme) -> Scene {
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Center)
-                    .with_size(Size::px(VIEWPORT_W / 2 - 4, 30)),
+                    .with_size(Size::px(VIEWPORT_W / 3 - 4, 30)),
             ),
     )
 }
@@ -240,7 +321,9 @@ fn view(state: ScaleState, _frame: &Frame) -> Scene {
         // scroll node still clips it, so what is on screen looks identical to
         // the virtual arm — which is the point. Only the census can tell them
         // apart, and telling them apart is the whole capability.
-        let rows: Vec<Scene> = (0..state.rows).map(|i| build_row(i, &theme)).collect();
+        let rows: Vec<Scene> = (0..state.rows)
+            .map(|i| build_row(i, state.label_chars, &theme))
+            .collect();
         Scene::Scroll(ScrollNode::new(
             Rect::new(0, 0, VIEWPORT_W, VIEWPORT_H),
             Scene::Container(
@@ -255,7 +338,7 @@ fn view(state: ScaleState, _frame: &Frame) -> Scene {
             state.rows,
             ROW_PITCH,
             OVERSCAN,
-            |index| build_row(index, &theme),
+            |index| build_row(index, state.label_chars, &theme),
         )
     };
 
@@ -271,6 +354,13 @@ fn view(state: ScaleState, _frame: &Frame) -> Scene {
     let controls = Scene::Container(
         ContainerNode::new(vec![
             header_button(GROW_REGION, format!("rows: {}", state.rows), &theme),
+            // (R1556) The second size axis, beside the first: this one moves
+            // what each row COSTS with how many of them there are held fixed.
+            header_button(
+                WIDTH_REGION,
+                format!("chars: {}", state.label_chars),
+                &theme,
+            ),
             header_button(
                 MODE_REGION,
                 if state.eager { "eager" } else { "virtual" }.to_string(),
@@ -316,7 +406,15 @@ fn read_state(scene: &Scene) -> ScaleState {
         _ => LADDER[1],
     };
     let eager = matches!(intro.query("eager"), Some(IntrospectValue::Bool(true)));
-    ScaleState { rows, eager }
+    let label_chars = match intro.query("label_chars") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(LABEL_LADDER[0]),
+        _ => LABEL_LADDER[0],
+    };
+    ScaleState {
+        rows,
+        eager,
+        label_chars,
+    }
 }
 
 // --- The scale external (primary) ------------------------------------------
@@ -351,6 +449,18 @@ impl SceneScaleExternal {
         Ok(())
     }
 
+    /// (R1556) Apply a per-row label width, refusing one past
+    /// [`MAX_LABEL_CHARS`]. Refused rather than clamped for
+    /// [`Self::set_rows`]' reason, and `0` is refused because a row with no
+    /// label is not a narrower row, it is a different scene.
+    fn set_label_chars(&mut self, chars: usize) -> Result<(), InterveneError> {
+        if chars == 0 || chars > MAX_LABEL_CHARS {
+            return Err(InterveneError::OutOfRange);
+        }
+        self.state.label_chars = chars;
+        Ok(())
+    }
+
     /// Switch arms. Entering the eager arm with a dataset it cannot hold is
     /// refused for [`Self::set_rows`]'s reason — the caller shrinks first, so
     /// the two facts are never changed by one write and a rejection always
@@ -373,6 +483,7 @@ impl SceneScaleExternal {
         }
         match region {
             GROW_REGION => self.state.rows = next_rung(self.state.rows, self.state.eager),
+            WIDTH_REGION => self.state.label_chars = next_label_rung(self.state.label_chars),
             MODE_REGION => {
                 // Leaving `eager` always succeeds; entering it shrinks the
                 // dataset to the cap first, because a click has no way to
@@ -421,6 +532,11 @@ impl ExternalIntrospect for SceneScaleExternal {
                     SchemaField::new("rows", "int"),
                     // Which arm builds the list. Writable.
                     SchemaField::new("eager", "bool"),
+                    // (R1556) Per-row label width — the axis that moves the
+                    // draw census with every node count held fixed. Writable.
+                    SchemaField::new("label_chars", "int"),
+                    // Its ceiling, published for `max_eager_rows`' reason.
+                    SchemaField::new("max_label_chars", "int"),
                     // The eager arm's ceiling, so a client reads the bound
                     // rather than discovering it by being refused.
                     SchemaField::new("max_eager_rows", "int"),
@@ -437,6 +553,12 @@ impl ExternalIntrospect for SceneScaleExternal {
                 i64::try_from(self.state.rows).unwrap_or(i64::MAX),
             )),
             "eager" => Some(IntrospectValue::Bool(self.state.eager)),
+            "label_chars" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.label_chars).unwrap_or(i64::MAX),
+            )),
+            "max_label_chars" => Some(IntrospectValue::Int(
+                i64::try_from(MAX_LABEL_CHARS).unwrap_or(i64::MAX),
+            )),
             "max_eager_rows" => Some(IntrospectValue::Int(
                 i64::try_from(MAX_EAGER_ROWS).unwrap_or(i64::MAX),
             )),
@@ -457,7 +579,14 @@ impl ExternalIntrospect for SceneScaleExternal {
                 IntrospectValue::Bool(b) => self.set_eager(b),
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "max_eager_rows" => Err(InterveneError::ReadOnly),
+            "label_chars" => match value {
+                IntrospectValue::Int(i) => {
+                    let chars = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
+                    self.set_label_chars(chars)
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            "max_eager_rows" | "max_label_chars" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -523,8 +652,9 @@ impl WidgetCore for SceneScaleView {
 
     fn fmt_state_log(state: &ScaleState) -> String {
         format!(
-            "rows={} arm={}",
+            "rows={} chars={} arm={}",
             state.rows,
+            state.label_chars,
             if state.eager { "eager" } else { "virtual" }
         )
     }
@@ -564,6 +694,10 @@ impl WidgetA11y for SceneScaleView {
                 .with_name(format!("Dataset size {}", state.rows)),
         );
         nodes.push(
+            AccessNode::new(format!("{LIST_TAG}#{WIDTH_REGION}"), AriaRole::Button)
+                .with_name(format!("Label width {} characters", state.label_chars)),
+        );
+        nodes.push(
             AccessNode::new(format!("{LIST_TAG}#{MODE_REGION}"), AriaRole::Button).with_name(
                 if state.eager {
                     "Eager arm"
@@ -600,30 +734,41 @@ mod tests {
         Owner::new().run(|| view(state, &Frame::default()))
     }
 
+    /// (R1556) The one traversal these tests observe a scene through.
+    ///
+    /// Three of them appeared in this module — count the rows, sum the text,
+    /// find a tag — each with its own `match Container / Scroll / _` recursion,
+    /// which is the mechanical duplication the 3rd-consumer rule names. The
+    /// question each asks is a fold; only the walk was shared, and it was
+    /// copied instead.
+    fn visit(scene: &Scene, f: &mut impl FnMut(&Scene)) {
+        f(scene);
+        match scene {
+            Scene::Container(c) => {
+                for ch in &c.children {
+                    visit(ch, f);
+                }
+            }
+            Scene::Scroll(s) => visit(s.content.as_ref(), f),
+            _ => {}
+        }
+    }
+
     /// Count row containers `scale#<i>` present in a scene — an independent
     /// observation of what the view built, so the arm assertions below do not
     /// read a number the view handed them.
     fn row_nodes(scene: &Scene) -> usize {
-        fn walk(scene: &Scene, out: &mut usize) {
-            match scene {
-                Scene::Container(c) => {
-                    if c.tag
-                        .as_deref()
-                        .and_then(|t| t.strip_prefix(&format!("{LIST_TAG}#")))
-                        .is_some_and(|rest| rest.parse::<usize>().is_ok())
-                    {
-                        *out += 1;
-                    }
-                    for ch in &c.children {
-                        walk(ch, out);
-                    }
-                }
-                Scene::Scroll(s) => walk(s.content.as_ref(), out),
-                _ => {}
-            }
-        }
         let mut n = 0;
-        walk(scene, &mut n);
+        visit(scene, &mut |node| {
+            if let Scene::Container(c) = node
+                && c.tag
+                    .as_deref()
+                    .and_then(|t| t.strip_prefix(&format!("{LIST_TAG}#")))
+                    .is_some_and(|rest| rest.parse::<usize>().is_ok())
+            {
+                n += 1;
+            }
+        });
         n
     }
 
@@ -633,7 +778,12 @@ mod tests {
         // view itself: four orders of magnitude of model, one window of rows.
         let counts: Vec<usize> = LADDER
             .into_iter()
-            .map(|rows| row_nodes(&render(ScaleState { rows, eager: false })))
+            .map(|rows| {
+                row_nodes(&render(ScaleState {
+                    rows,
+                    ..ScaleState::default()
+                }))
+            })
             .collect();
         assert!(
             counts.windows(2).all(|w| w[0] == w[1]),
@@ -650,14 +800,16 @@ mod tests {
         assert_eq!(
             row_nodes(&render(ScaleState {
                 rows: 100,
-                eager: true
+                eager: true,
+                ..ScaleState::default()
             })),
             100,
         );
         assert_eq!(
             row_nodes(&render(ScaleState {
                 rows: MAX_EAGER_ROWS,
-                eager: true
+                eager: true,
+                ..ScaleState::default()
             })),
             MAX_EAGER_ROWS,
         );
@@ -671,13 +823,15 @@ mod tests {
         let virt = render(ScaleState {
             rows: MAX_EAGER_ROWS,
             eager: false,
+            ..ScaleState::default()
         });
         let eager = render(ScaleState {
             rows: MAX_EAGER_ROWS,
             eager: true,
+            ..ScaleState::default()
         });
         assert!(row_nodes(&virt) < row_nodes(&eager));
-        for region in [GROW_REGION, MODE_REGION] {
+        for region in [GROW_REGION, WIDTH_REGION, MODE_REGION] {
             let tag = format!("{LIST_TAG}#{region}");
             assert!(
                 find_tag(&virt, &tag) && find_tag(&eager, &tag),
@@ -686,14 +840,115 @@ mod tests {
         }
     }
 
-    fn find_tag(scene: &Scene, want: &str) -> bool {
-        match scene {
-            Scene::Container(c) => {
-                c.tag.as_deref() == Some(want) || c.children.iter().any(|ch| find_tag(ch, want))
+    /// (R1556) Characters across every row label the view built — an
+    /// independent observation of the frame's TEXT size, derived by walking the
+    /// painted tree rather than by multiplying the state back out.
+    fn label_chars_built(scene: &Scene) -> usize {
+        let mut n = 0;
+        visit(scene, &mut |node| {
+            if let Scene::Text(t) = node {
+                n += t.content.chars().count();
             }
-            Scene::Scroll(s) => find_tag(s.content.as_ref(), want),
-            _ => false,
+        });
+        n
+    }
+
+    #[test]
+    fn r1556_the_width_ladder_moves_the_text_with_the_node_count_held_fixed() {
+        // The case R1538's census cannot see, at the view level. Same rung,
+        // same arm, same everything — only the per-row label width moves. The
+        // node count must be EQUAL (not merely close), and the text must grow
+        // with the ladder, or the harness cannot drive a guard at the
+        // distinction the draw census exists to make.
+        let scenes: Vec<Scene> = LABEL_LADDER
+            .into_iter()
+            .map(|label_chars| {
+                render(ScaleState {
+                    label_chars,
+                    ..ScaleState::default()
+                })
+            })
+            .collect();
+        let nodes: Vec<usize> = scenes.iter().map(row_nodes).collect();
+        let chars: Vec<usize> = scenes.iter().map(label_chars_built).collect();
+        assert!(
+            nodes.windows(2).all(|w| w[0] == w[1]),
+            "the node count must not move across the width ladder, got {nodes:?}",
+        );
+        assert!(
+            chars.windows(2).all(|w| w[1] > w[0] * 3),
+            "…while the text grows with it (4x rungs), got {chars:?}",
+        );
+    }
+
+    #[test]
+    fn r1556_a_row_label_is_exactly_as_wide_as_it_was_asked_for() {
+        // The guard multiplies rows by width to predict a glyph count, so the
+        // width has to be exact rather than approximate — including at widths
+        // BELOW the natural label, where the padding branch never runs and the
+        // truncation one must.
+        for chars in [1_usize, 8, 24, 96, 384, 1_536, MAX_LABEL_CHARS] {
+            let label = row_label(7, chars);
+            assert_eq!(
+                label.chars().count(),
+                chars,
+                "row_label(7, {chars}) was {label:?}",
+            );
         }
+    }
+
+    #[test]
+    fn r1556_the_width_ceiling_refuses_rather_than_clamps() {
+        // `set_rows`' discipline on the second axis: a caller that reads back a
+        // width it did not ask for cannot tell a cap from a lie.
+        let mut ext = SceneScaleExternal::new();
+        assert!(ext.set_label_chars(MAX_LABEL_CHARS).is_ok());
+        assert_eq!(
+            ext.set_label_chars(MAX_LABEL_CHARS + 1),
+            Err(InterveneError::OutOfRange),
+        );
+        assert_eq!(ext.set_label_chars(0), Err(InterveneError::OutOfRange));
+        assert_eq!(
+            ext.state.label_chars, MAX_LABEL_CHARS,
+            "a refused write leaves the value alone",
+        );
+    }
+
+    #[test]
+    fn r1556_the_width_button_walks_its_ladder_and_wraps() {
+        // The click path, which unlike the RPC path cannot report a refusal —
+        // so it must only ever propose rungs that are accepted.
+        let mut seen = vec![LABEL_LADDER[0]];
+        for _ in 0..LABEL_LADDER.len() {
+            let next = next_label_rung(*seen.last().unwrap());
+            assert!(
+                LABEL_LADDER.contains(&next),
+                "the button proposed {next}, which is not a rung",
+            );
+            seen.push(next);
+        }
+        assert_eq!(
+            seen,
+            [24, 96, 384, 1_536, 24],
+            "one lap visits every rung in order and wraps",
+        );
+        assert_eq!(
+            next_label_rung(37),
+            LABEL_LADDER[0],
+            "an off-ladder width set over RPC restarts the walk",
+        );
+    }
+
+    fn find_tag(scene: &Scene, want: &str) -> bool {
+        let mut found = false;
+        visit(scene, &mut |node| {
+            if let Scene::Container(c) = node
+                && c.tag.as_deref() == Some(want)
+            {
+                found = true;
+            }
+        });
+        found
     }
 
     #[test]
