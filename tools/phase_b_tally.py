@@ -979,9 +979,71 @@ AXES = [
         # `pinion-pdf`'s paged output) and `tabPositions`. The CHARACTER half is
         # unchanged from R1546: vertical alignment (super/subscript) and
         # overline, both small.
-        "judged_at": 1551,
-        "completion": 84,
-        "evidence_snapshot": {"example-name": 11, "round-axis": 4},
+        # R1560 re-judged 84 -> 90, demanded by the tool (round count 4 -> 6).
+        #
+        # It absorbs TWO rounds, because R1559 landed at the band edge exactly
+        # (+25%) and did not force a look — the sticky behaviour R1547/R1548
+        # already showed. Both of them close an item R1551's own audit named,
+        # and between them they close TWO OF THE THREE things that audit listed
+        # as the whole of what was left of the document model.
+        #
+        # R1559 — `QTextList`. What a list cannot have written by hand is the
+        # NUMBER, because a number is not a property of the item: it is a
+        # property of its place among its siblings, so inserting one renumbers
+        # every item after it and nesting one restarts the inner sequence while
+        # the outer carries on underneath. `ListSpec` declares membership and
+        # never a number; `number_blocks` derives it. Past Qt: the counter
+        # styles have RANGES and fall back through CSS Counter Styles Level 3
+        # where `itemText()` answers "?" and loses the value; a BULLET IS TEXT
+        # (Qt draws `ListDisc` as an ellipse, so no accessor can say what an
+        # unordered marker looks like and it is not in the text at all); the
+        # structure is enumerable; it reaches assistive technology; and a
+        # suffix's default belongs to the style rather than hiding in a null
+        # `QString`.
+        #
+        # R1560 — `QTextTable`, and the same argument one dimension up. A
+        # cell's ADDRESS is not a property of the cell: it is where the cell
+        # lands once every earlier cell's spans have taken their slots.
+        # `place_cells` derives it by HTML's own slot allocation and
+        # `view_document` lowers it onto a REAL CSS GRID — the layout kind the
+        # framework did not have, added here with its forcing consumer, because
+        # a column of flex rows measures each row alone (so columns cannot
+        # agree without being told a width) and cannot express a rowspan at
+        # all. Past Qt: the address is derived rather than maintained; a span
+        # that does not fit is clamped to the FREE RUN and NAMED, where
+        # `mergeCells` returns `void` and a refused merge leaves no trace; a
+        # table may be RAGGED and its unfilled slots are published, a state
+        # `QTextTable` cannot be in; header COLUMNS exist and header-ness is
+        # derived FROM THE ADDRESS; the structure reaches assistive technology,
+        # where a `QTextTable` reaches no accessibility interface at all; and
+        # it is enumerable over the wire.
+        #
+        # +6 and not more. What remains is audited at R1560, and the largest
+        # item is the third one R1551 named:
+        #
+        #  - **`setMarkdown` / `toHtml`** — the import/export half of the
+        #    document model. Untouched, and now the only one of R1551's three
+        #    still open.
+        #  - **Nested tables.** Qt has them. The honest way in is the general
+        #    `QTextFrame` containment axis, not a second ad-hoc level counter
+        #    beside the list's — two nesting mechanisms that would have to
+        #    agree.
+        #  - `QTextBlockFormat`'s four untaken properties are now three:
+        #    R1559 landed the list `marker` belongs with, leaving
+        #    `nonBreakableLines`, `pageBreakPolicy` and `tabPositions`.
+        #  - the CHARACTER half is unchanged since R1546: vertical alignment
+        #    (super/subscript) and overline, both small.
+        #  - the grid vocabulary R1560 added stops short of `minmax()` /
+        #    `fit-content()` and `grid-auto-flow` (every cell is placed
+        #    explicitly, by design, so auto-flow never runs).
+        #
+        # The R1542 name/evidence mismatch above STILL stands and is still
+        # deliberately undecided here — and it has now grown, because
+        # `hello-richtext-cells` and `hello-richtext-list` are rich-text
+        # DOCUMENT work while `textgrid` / `app-font` / `completer` are not.
+        "judged_at": 1560,
+        "completion": 90,
+        "evidence_snapshot": {"example-name": 13, "round-axis": 6},
     },
     {
         "key": "perf",
