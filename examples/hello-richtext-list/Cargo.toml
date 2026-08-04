@@ -1,0 +1,52 @@
+[package]
+name = "hello-richtext-list"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1559 §5.36 list consumer — a document whose items are numbered by their place among their siblings (Qt QTextList): automatic renumbering on insertion, nesting that restarts without interrupting its parent, CSS counter-style range fallback, markers painted as real text on both backends, published by scene/text_lists and announced as a WAI-ARIA list"
+publish = false
+
+[[bin]]
+name = "hello-richtext-list"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle reused as the "is the extra step present" bit, so an item can be
+# inserted into the middle of a list and the markers after it renumber.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R1559 §5.36 — `view_document`, the one place a declared list membership
+# becomes a numbered marker beside a paragraph.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R1559 §2#6 — the SAME view scene is painted through the terminal backend in
+# this crate's own tests. A marker is ordinary text here, so the cell backend
+# needs no list code at all; that claim is the consumer's to make.
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
+# R1559 — the layout pass, so the terminal assertion paints a MEASURED tree
+# rather than hand-placed rects.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# R1559 §5.12 — the `scene/text_lists` census, asserted against the same scene
+# the binding paints.
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
+ratatui = { workspace = true }
+
+[build-dependencies]
+# R1559 §5.16: build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

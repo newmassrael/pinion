@@ -25,6 +25,17 @@
 //! reports block structure**, so those heading levels reach `QTextDocumentLayout`
 //! (which draws them larger) and stop. The information exists in the document
 //! and never reaches the user who most needs it.
+//!
+//! ## The walk is [`Scene::for_each_text_leaf`]
+//!
+//! R1551 wrote this pass its own recursive walk and R1559 replaced it with the
+//! shared one, which had gained a third caller by then. They were the same
+//! traversal — container children, transparent `Scroll`, text leaves — and the
+//! `Scroll` arm is the load-bearing one: R1536 measured what its absence cost
+//! (nothing painted inside a scroll could be named at all, while the bounds
+//! walker descended fine and left the tree looking correct), and a document
+//! long enough to have headings is exactly a document inside a scroll. One
+//! copy of that arm is one place for it to be right.
 
 use pinion_core::Scene;
 use pinion_core::scene::TextNode;
@@ -65,7 +76,11 @@ use crate::{AccessNode, AriaRole};
 /// what that object *is*.
 pub fn attach_block_headings(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usize {
     let mut found: Vec<(&str, u8, &str)> = Vec::new();
-    collect(scene, &mut found);
+    scene.for_each_text_leaf(|t, _, _| {
+        if let Some((tag, level)) = heading_of(t) {
+            found.push((tag, level, t.content.as_str()));
+        }
+    });
     let mut touched = 0usize;
     for (tag, level, content) in found {
         let level = u32::from(level);
@@ -85,30 +100,6 @@ pub fn attach_block_headings(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usiz
         touched += 1;
     }
     touched
-}
-
-/// Every painted heading paragraph, in DFS pre-order: `(tag, level, content)`.
-///
-/// A [`Scene::Scroll`] is **transparent**, matching every other tag walk in the
-/// tree. R1536 measured what the absence of that arm costs: nothing painted
-/// inside a scroll could be named at all, while the bounds walker descended
-/// fine and left the tree looking correct. A document long enough to have
-/// headings is exactly a document inside a scroll.
-fn collect<'s>(scene: &'s Scene, out: &mut Vec<(&'s str, u8, &'s str)>) {
-    match scene {
-        Scene::Container(c) => {
-            for child in &c.children {
-                collect(child, out);
-            }
-        }
-        Scene::Scroll(s) => collect(&s.content, out),
-        Scene::Text(t) => {
-            if let Some((tag, level)) = heading_of(t) {
-                out.push((tag, level, t.content.as_str()));
-            }
-        }
-        _ => {}
-    }
 }
 
 /// The `(tag, aria level)` of a text node that is an addressable heading.

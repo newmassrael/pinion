@@ -1306,6 +1306,56 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "TextListItemWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                // Absent when the item's marker was painted by some other
+                // composition than `view_document`'s.
+                WireField::new("marker_tag", WireTy::String, None).nullable(),
+                WireField::new("position", WireTy::Integer, None),
+                WireField::new("ordinal", WireTy::Integer, None),
+                WireField::new("marker", WireTy::String, None),
+                WireField::new("rendered_as", WireTy::String, None),
+                WireField::new("fell_back", WireTy::Boolean, None),
+                WireField::new("marker_x", WireTy::Integer, None).nullable(),
+                WireField::new("marker_y", WireTy::Integer, None).nullable(),
+                WireField::new("marker_width", WireTy::Integer, None).nullable(),
+                WireField::new("marker_height", WireTy::Integer, None).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "TextListWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                // Absent for a top-level list.
+                WireField::new("parent_tag", WireTy::String, None).nullable(),
+                WireField::new("level", WireTy::Integer, None),
+                WireField::new("style", WireTy::String, None),
+                WireField::new("start", WireTy::Integer, None),
+                WireField::new("number_prefix", WireTy::String, None),
+                WireField::new("number_suffix", WireTy::String, None),
+                WireField::new("suffix_is_default", WireTy::Boolean, None),
+                WireField::new("indent_px", WireTy::Integer, None),
+                WireField::new("count", WireTy::Integer, None),
+                // Absent until the paint has laid the container out.
+                WireField::new("x", WireTy::Integer, None).nullable(),
+                WireField::new("y", WireTy::Integer, None).nullable(),
+                WireField::new("width", WireTy::Integer, None).nullable(),
+                WireField::new("height", WireTy::Integer, None).nullable(),
+                WireField::new("items", WireTy::Array, Some("TextListItemWire")),
+            ],
+        },
+    },
+    WireType {
+        name: "TextListsOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new("lists", WireTy::Array, Some("TextListWire"))],
+        },
+    },
+    WireType {
         name: "TextSelectionView",
         shape: WireShape::Object {
             fields: &[

@@ -58,6 +58,7 @@ pub mod style;
 pub mod syntax;
 pub mod term_grid;
 pub mod text_cache_stats;
+pub mod text_list;
 pub mod text_scale;
 pub mod theme;
 pub mod topology;

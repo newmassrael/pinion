@@ -53,6 +53,7 @@ pub mod focus;
 pub mod grid;
 pub mod grouped;
 pub mod heading;
+pub mod list;
 pub mod listbox;
 pub mod menu;
 pub mod navigation;
@@ -85,6 +86,7 @@ pub use grouped::{
     grouped_grid_access_nodes, grouped_tree_access_nodes,
 };
 pub use heading::attach_block_headings;
+pub use list::attach_block_lists;
 pub use listbox::{ListOption, listbox_option_nodes};
 pub use menu::{MenuItemCell, SubmenuCell, menu_item_nodes};
 pub use navigation::{NavLink, navigation_link_nodes};

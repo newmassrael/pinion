@@ -52,6 +52,12 @@ pub fn build_access_tree(
         // R1551 §5.40 §5.36 — the document outline, BEFORE the name pass so a
         // heading appended here is named by the same rule every other node is.
         crate::attach_block_headings(&mut nodes, paint);
+        // R1559 §5.40 §5.36 — the document's list structure, from the same
+        // painted tree by the same kind of pass, and AFTER the heading pass so
+        // a heading that is also an item keeps the stronger role. Also before
+        // the name pass, so an item appended here is named by the rule every
+        // other node is named by.
+        crate::attach_block_lists(&mut nodes, paint);
         enrich_names_from_scene(&mut nodes, paint);
         // R1543 §5.40 §5.39 — the mnemonic announcement, derived from the same
         // painted tree by the same kind of pass. It rides the assembler for the

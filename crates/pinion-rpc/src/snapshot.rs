@@ -134,6 +134,17 @@ pub struct TextSnapshot {
     /// same box). Where the shaped lines LANDED is `scene/text_blocks`, which
     /// needs the layout this surface deliberately does not carry.
     pub block: Option<pinion_core::style::BlockFormat>,
+    /// R1559 §5.36 — where this paragraph sits in the document's LIST
+    /// structure (Qt `QTextList`), `None` for text that is not a list item.
+    ///
+    /// The mirror image of [`Self::block`]: that is a declaration whose
+    /// lowering is unrecoverable, this is a DERIVATION whose input is
+    /// unrecoverable. A marker reading `3.` says nothing about which list it
+    /// belongs to, how long that list is, or whether the notation that wrote
+    /// it was the one the list declared. Carrying the placement puts all of
+    /// that in the same scene dump as the marker glyph, and `scene/text_lists`
+    /// folds the same field into one row per list.
+    pub list: Option<pinion_core::text_list::ListPlacement>,
 }
 
 /// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry,
@@ -562,6 +573,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             style: node.style.clone(),
             runs: node.runs.clone(),
             block: node.block,
+            list: node.list.clone(),
         }),
         Scene::Path(node) => SnapshotNode::Path(PathSnapshot {
             rect: node.rect,

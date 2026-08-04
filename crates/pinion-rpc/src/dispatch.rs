@@ -2437,6 +2437,13 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::mnemonics::handle_scene_mnemonics(last_paint_scene),
                     HandlerKind::Read,
                 ),
+                // R1559 §5.36 — the document's list structure and the
+                // numbering it produced, read off the same painted scene the
+                // markers were drawn from.
+                "scene/text_lists" => (
+                    crate::text_lists::handle_scene_text_lists(last_paint_scene),
+                    HandlerKind::Read,
+                ),
                 // R1555 §5.27 — which editor each datum kind opens: the
                 // factory census Qt's `QItemEditorFactory` cannot be asked for.
                 // Framework knowledge, so it reads no scene and takes no params.
@@ -4868,6 +4875,48 @@ fn snapshot_error_to_rpc(err: SnapshotError) -> RpcError {
     }
 }
 
+/// The `Text` node's own keys, lifted out of [`snapshot_node_to_json`]'s match.
+///
+/// R1559 — extracted when the text arm's growth pushed the writer past the
+/// crate's function-length bound. A node kind whose payload is this rich earns
+/// its own function; the alternative was an `allow` on the whole writer, which
+/// would raise the bound for every other arm too.
+fn text_snapshot_into_json(
+    snap: crate::snapshot::TextSnapshot,
+    obj: &mut serde_json::Map<String, Value>,
+) {
+    obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
+    obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+    obj.insert("content".to_string(), Value::String(snap.content));
+    obj.insert("style".to_string(), text_style_to_json(&snap.style));
+    // R713 §5.36 — styled-run spans (empty for single-style text). Each run
+    // reports its byte range + resolved style so AI clients read `RichText`
+    // structure as data.
+    let runs: Vec<Value> = snap.runs.iter().map(style_run_to_json).collect();
+    obj.insert("runs".to_string(), Value::Array(runs));
+    // R1551 §5.36 — the declared block format (Qt `QTextBlockFormat`), `null`
+    // for an ordinary label. The DECLARATION, not its lowering: the indents it
+    // states also become this node's layout margin, and a margin cannot be read
+    // back as a block format. Where the shaped lines landed is
+    // `scene/text_blocks`.
+    obj.insert(
+        "block".to_string(),
+        snap.block.map_or(Value::Null, block_format_to_json),
+    );
+    // R1559 §5.36 — where this paragraph sits in the document's list
+    // structure, `null` for text that is not an item. Serialized from the type
+    // rather than key by key: the placement is a DERIVATION with nine fields,
+    // and a hand-written writer here would be a second place for their names
+    // to live.
+    obj.insert(
+        "list".to_string(),
+        snap.list
+            .as_ref()
+            .and_then(|p| serde_json::to_value(p).ok())
+            .unwrap_or(Value::Null),
+    );
+}
+
 fn snapshot_node_to_json(node: SnapshotNode) -> Value {
     let mut obj = serde_json::Map::new();
     let type_tag = match &node {
@@ -4895,26 +4944,7 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
             obj.insert("style".to_string(), box_style_to_json(&snap.style));
         }
-        SnapshotNode::Text(snap) => {
-            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
-            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
-            obj.insert("content".to_string(), Value::String(snap.content));
-            obj.insert("style".to_string(), text_style_to_json(&snap.style));
-            // R713 §5.36 — styled-run spans (empty for single-style
-            // text). Each run reports its byte range + resolved style
-            // so AI clients read `RichText` structure as data.
-            let runs: Vec<Value> = snap.runs.iter().map(style_run_to_json).collect();
-            obj.insert("runs".to_string(), Value::Array(runs));
-            // R1551 §5.36 — the declared block format (Qt `QTextBlockFormat`),
-            // `null` for an ordinary label. The DECLARATION, not its lowering:
-            // the indents it states also become this node's layout margin, and
-            // a margin cannot be read back as a block format. Where the shaped
-            // lines landed is `scene/text_blocks`.
-            obj.insert(
-                "block".to_string(),
-                snap.block.map_or(Value::Null, block_format_to_json),
-            );
-        }
+        SnapshotNode::Text(snap) => text_snapshot_into_json(snap, &mut obj),
         SnapshotNode::Path(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));

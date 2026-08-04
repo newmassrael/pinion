@@ -574,6 +574,41 @@ impl DocumentTag {
     pub fn block(tag: &str, i: usize) -> String {
         format!("{tag}_blk{i}")
     }
+
+    /// R1559 — the `k`-th **list** the document's numbering derived, in
+    /// document order — `"{tag}_lst{k}"`.
+    ///
+    /// A list is an object in its own right (Qt's `QTextList`), so it is
+    /// addressable in its own right: it is the node whose box encloses its
+    /// items, the WAI-ARIA `list` the items are `listitem`s of, and the row
+    /// `scene/text_lists` reports. `k` counts lists, not blocks — a document
+    /// whose first list starts at block 4 still names it `_lst0`.
+    #[must_use]
+    pub fn list(tag: &str, k: usize) -> String {
+        format!("{tag}_lst{k}")
+    }
+
+    /// R1559 — the `i`-th paragraph's **item row**, when it is a list item —
+    /// `"{tag}_itm{i}"`.
+    ///
+    /// The row is the marker and the paragraph side by side, so it is what a
+    /// caller measures to ask how far an item reaches; the paragraph inside it
+    /// keeps [`Self::block`] and stays the addressable text.
+    #[must_use]
+    pub fn item(tag: &str, i: usize) -> String {
+        format!("{tag}_itm{i}")
+    }
+
+    /// R1559 — the `i`-th paragraph's painted **marker** — `"{tag}_mrk{i}"`.
+    ///
+    /// Addressable because it is real text: Qt draws its unordered markers as
+    /// geometry with no accessor at all, so "where is this item's bullet, and
+    /// what does it say" is a question only one of the two toolkits can
+    /// answer.
+    #[must_use]
+    pub fn marker(tag: &str, i: usize) -> String {
+        format!("{tag}_mrk{i}")
+    }
 }
 
 /// R742.4 §5.16 §5.35 — split a (possibly composite) paint tag at the

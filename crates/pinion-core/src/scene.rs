@@ -35,6 +35,7 @@ use crate::style::{
     TextStyle, UnderlineStyle,
 };
 use crate::term_grid::{GridBuffer, Palette};
+use crate::text_list::ListPlacement;
 use crate::widgets::measured_rows::MeasuredRowState;
 use crate::widgets::scroll::ScrollState;
 
@@ -2299,6 +2300,24 @@ pub struct TextNode {
     /// where the lines landed, which is the check that the one reached the
     /// other.
     pub block: Option<BlockFormat>,
+    /// R1559 §5.36 — where this paragraph sits in the document's **list**
+    /// structure (Qt `QTextList`): which list, at what depth, numbered what.
+    ///
+    /// `None` (the default) is a paragraph that is not a list item — every
+    /// ordinary label and every ordinary block.
+    ///
+    /// Unlike [`Self::block`], this is a **derivation** and not a declaration.
+    /// An author states membership ([`ListSpec`](crate::text_list::ListSpec));
+    /// the number is computed from the item's place among its siblings
+    /// ([`number_blocks`](crate::text_list::number_blocks)) because that is
+    /// what a number IS — insert an item and every item after it renumbers.
+    /// It rides the painted node for the same reason `block` does: the marker
+    /// is painted as a sibling text node, and a string on screen cannot be
+    /// read back as the sequence that produced it. Both the a11y list pass
+    /// (`pinion_a11y::attach_block_lists`) and `scene/text_lists` read this
+    /// one field, so the announced structure and the published one are one
+    /// derivation.
+    pub list: Option<ListPlacement>,
 }
 
 /// R51.81 §5.40 — accessibility role hint attached to a [`TextNode`].
@@ -2344,6 +2363,7 @@ impl TextNode {
             caret_bearing: false,
             mnemonic: None,
             block: None,
+            list: None,
         }
     }
 
@@ -2408,6 +2428,21 @@ impl TextNode {
     pub fn with_block(mut self, block: BlockFormat) -> Self {
         self.block = Some(block);
         self.apply_block_margin();
+        self
+    }
+
+    /// R1559 §5.36 — attach the [`ListPlacement`] a numbering derivation
+    /// produced for this paragraph (builder form).
+    ///
+    /// It lowers to nothing, which is why there is no `apply_*` peer: a
+    /// placement decides what the *marker node beside this one* says, and the
+    /// composing view paints that. What this field does is keep the derivation
+    /// addressable from the painted scene, so the a11y outline and the §7
+    /// census read the numbering rather than each recomputing it from the
+    /// document's source order — which neither of them has.
+    #[must_use]
+    pub fn with_list_placement(mut self, placement: ListPlacement) -> Self {
+        self.list = Some(placement);
         self
     }
 
