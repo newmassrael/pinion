@@ -67,6 +67,55 @@ pub enum SelectionMode {
     Multi,
 }
 
+/// R1562 §5.40 — how much of the model a selection covers: the tri-state a
+/// select-all control shows, and the value Qt's corner button does not have.
+///
+/// The three states of an HTML `<input type=checkbox>` — unchecked,
+/// `indeterminate`, checked — and of WAI-ARIA `aria-checked` (`false` /
+/// `"mixed"` / `true`). Qt's `QTableCornerButton` has **none** of them: it is a
+/// `QAbstractButton` that always runs `selectAll()`, so it cannot report what
+/// is selected and cannot take a full selection back.
+///
+/// Answered in O(1) from [`VirtualSelect::selected_count`] (a sum over runs
+/// since R1561) against the item count. The same question of a
+/// `QItemSelectionModel` is `selectedRows().size() == model->rowCount()`, which
+/// builds one `QModelIndex` per selected row to compare two integers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SelectionExtent {
+    /// Nothing is selected — and the answer for an **empty model** too, which
+    /// is the reading that keeps "pressing select-all selects something" true:
+    /// a model with no rows has nothing to select, so calling it `All` would
+    /// name a control that can only be a no-op.
+    Empty,
+    /// Some rows are selected and some are not (`aria-checked="mixed"`).
+    Partial,
+    /// Every row of a non-empty model is selected.
+    All,
+}
+
+impl SelectionExtent {
+    /// The rule, in one place: how `selected` of `total` rows reads as an
+    /// extent.
+    ///
+    /// `pub` because the paint side has to answer the same question from a
+    /// **projection** rather than from the model — a `WidgetCore::State` is
+    /// `Copy`, so a binding hands its view fn a snapshot and cannot call
+    /// [`VirtualSelect::extent`] from inside it. Restating `0 -> Empty,
+    /// total -> All, else Partial` there would be a second implementation of an
+    /// opinion-free rule, and the two could then disagree about the edge that
+    /// matters (an empty model).
+    #[must_use]
+    pub fn of(selected: usize, total: usize) -> Self {
+        if selected == 0 {
+            Self::Empty
+        } else if selected >= total {
+            Self::All
+        } else {
+            Self::Partial
+        }
+    }
+}
+
 /// R746 §5.27 §5.38 / R780 §5.40 — the pure index-set selection model.
 ///
 /// Pure selection-by-index state, no interaction statechart and no §5.20
@@ -272,6 +321,42 @@ impl VirtualSelect {
         self.anchor = None;
         self.cursor = None;
         had
+    }
+
+    /// R1562 §5.40 — how much of the model the selection covers, in O(1).
+    ///
+    /// See [`SelectionExtent`] for why the empty model answers
+    /// [`Empty`](SelectionExtent::Empty) rather than
+    /// [`All`](SelectionExtent::All) (`0 == 0` is the reading this rejects).
+    #[must_use]
+    pub fn extent(&self) -> SelectionExtent {
+        SelectionExtent::of(self.selected_count(), self.item_count)
+    }
+
+    /// R1562 §5.40 — the corner control's action: select every row, or clear
+    /// when every row is already selected. Returns `true` if it changed
+    /// anything.
+    ///
+    /// Qt's corner button is one-way — `QTableView`'s documented behaviour is
+    /// that clicking it "selects all cells in the view", with no second press
+    /// that takes it back — so a Qt user who select-alls by mistake clears by
+    /// clicking a cell, which also *selects that cell*. The toggle is what every
+    /// modern table's header checkbox does, and it is expressible here for one
+    /// reason: [`extent`](Self::extent) is O(1), so "is everything selected"
+    /// is a question the control can afford to ask on every press.
+    ///
+    /// In a `Single` model [`select_all`](Self::select_all) refuses, and the
+    /// extent can only reach [`All`](SelectionExtent::All) on a one-row model,
+    /// so this is a no-op — the same nothing `QAbstractItemView::selectAll`
+    /// does under `SingleSelection`. A grid states whether it offers the
+    /// control at all when it declares its band, so an inert one is a decision
+    /// rather than a press that quietly achieves nothing.
+    pub fn toggle_all(&mut self) -> bool {
+        if self.extent() == SelectionExtent::All {
+            self.clear()
+        } else {
+            self.select_all()
+        }
     }
 
     /// Admin replace to a single selection (or clear) — the persisted /
@@ -527,6 +612,29 @@ impl VirtualSelectExternal {
         self.em.inner.clear()
     }
 
+    /// R1562 §5.40 — how much of the model the selection covers
+    /// ([`VirtualSelect::extent`]): what the corner control shows and what its
+    /// next press will do.
+    #[must_use]
+    pub fn extent(&self) -> SelectionExtent {
+        self.em.inner.extent()
+    }
+
+    /// R1562 §5.40 — the corner control's press ([`VirtualSelect::toggle_all`]):
+    /// select every row, or clear when every row is already selected.
+    ///
+    /// An **interaction**, so it queues the §5.20 selection intent on both
+    /// legs — unlike [`clear`](Self::clear), which is the silent admin /
+    /// restore channel [`set_selection`](Self::set_selection) belongs to.
+    /// Returns `true` if it changed anything.
+    pub fn toggle_all(&mut self) -> bool {
+        if !self.em.inner.toggle_all() {
+            return false;
+        }
+        self.push_selection_intent();
+        true
+    }
+
     /// Replace the selection directly with a single index (the admin /
     /// persisted-restore / form-default channel — not an interaction).
     /// `None` or an out-of-range index clears. Returns `true` if it changed.
@@ -577,6 +685,18 @@ impl VirtualSelectExternal {
     ///   irrelevant to a single-row selection). A grid column-header click
     ///   arrives as `"h<col>"`, which has no leading row index and is
     ///   ignored here (sort is a separate axis, not this coordinator's).
+    /// - **row header** `"r<row>"` (R1562) — the vertical band's section, Qt
+    ///   `QHeaderView` with `sectionsClickable`. It reaches the transition
+    ///   above by *answering with its row*, so the chord vocabulary is one
+    ///   implementation rather than the two Qt keeps
+    ///   (`QHeaderView::mousePressEvent` → `selectRow` beside
+    ///   `QAbstractItemView::selectionCommand`). This is the only part of a row
+    ///   that is always on screen — the band is pinned against the horizontal
+    ///   scroll (R1548) — so on a wide grid it is the address a row *has* when
+    ///   none of its cells is painted.
+    /// - **corner** `"c"` (R1562) — Qt's `QTableCornerButton`: addresses the
+    ///   whole model, so it toggles the selection's extent instead of moving
+    ///   to a row.
     ///
     /// The grid grammar is decoded by the shared
     /// [`GridSendKey`] SSOT (R777.1) — a
@@ -596,6 +716,17 @@ impl VirtualSelectExternal {
         // matches the one it handles.
         if let (Some(observe), Some(grid_key)) = (self.grid_gesture.as_ref(), parsed) {
             observe(grid_key, event_name, modifiers);
+        }
+        // R1562 — the corner addresses the whole model, so it has no row to
+        // fall through to. Handled on the same activation edge every other
+        // address is, through the same modifier-blind path: Qt's corner button
+        // ignores modifiers too, and a chorded select-all has no meaning
+        // (`Ctrl`-toggling *every* row is `toggle_all` already).
+        if parsed == Some(crate::composite_tag::GridSendKey::Corner) {
+            if crate::input::is_activation_event(event_name) {
+                self.toggle_all();
+            }
+            return;
         }
         let row = match parsed {
             Some(grid_key) => grid_key.row(),
@@ -842,6 +973,16 @@ impl ExternalIntrospect for VirtualSelectExternal {
             },
             "select_all" => {
                 self.select_all();
+                Ok(self.selection_value())
+            }
+            // R1562 — the corner control's verb, so the select-all affordance
+            // is drivable headlessly and not only by a click on its pixels
+            // (§2 #2: the RPC path is the primary one, not a mirror of the
+            // pointer path). Qt has no such verb — `selectAll()` is one-way,
+            // and taking a full selection back means calling `clearSelection()`
+            // after asking `selectedRows().size()` whether it is full.
+            "toggle_all" => {
+                self.toggle_all();
                 Ok(self.selection_value())
             }
             "clear" => {
@@ -1723,6 +1864,135 @@ mod tests {
                 [0, 499_999],
                 [500_001, 999_999]
             ]))),
+        );
+    }
+
+    /// R1562 — a row-header press reaches the SAME transition a cell press
+    /// reaches. The assertion is byte-equality of the resulting model state
+    /// across the two addresses, chord for chord: if the band ever grew its own
+    /// selection code, one of these three pairs would drift.
+    #[test]
+    fn r1562_a_band_press_and_a_cell_press_are_one_derivation() {
+        let arcs: [(&str, &str); 3] = [
+            // (band address, body address) — the same three chords each.
+            ("r7:PointerUp", "7_0:PointerUp"),
+            ("r7:PointerUp:c", "7_0:PointerUp:c"),
+            ("r7:PointerUp:s", "7_0:PointerUp:s"),
+        ];
+        for (band, body) in arcs {
+            let mut from_band = VirtualSelectExternal::new_multi(1_000);
+            let mut from_body = VirtualSelectExternal::new_multi(1_000);
+            for s in [&mut from_band, &mut from_body] {
+                // A common prior selection, so `Ctrl` has something to toggle
+                // against and `Shift` has an anchor to extend from.
+                s.select(3);
+                s.toggle(5);
+            }
+            from_band.handle_send(band);
+            from_body.handle_send(body);
+            assert_eq!(
+                from_band.selection(),
+                from_body.selection(),
+                "the band and the body must agree for {band}",
+            );
+            assert_eq!(
+                from_band.selected(),
+                from_body.selected(),
+                "and on the cursor"
+            );
+            assert_eq!(from_band.anchor(), from_body.anchor(), "and on the anchor");
+        }
+    }
+
+    /// R1562 — the band's `Shift`-chord spans a run whose cost is the run's,
+    /// not the span's: 897 rows selected from two presses, one run, and the
+    /// wire form is the two endpoints. The gesture R1561's representation was
+    /// built for, now reachable from the header.
+    #[test]
+    fn r1562_a_shift_press_in_the_band_is_one_run() {
+        let mut s = VirtualSelectExternal::new_multi(10_000);
+        s.handle_send("r4:PointerUp");
+        assert_eq!(s.selection(), &IndexRuns::run(4, 4));
+        s.handle_send("r900:PointerUp:s");
+        assert_eq!(s.selection().run_count(), 1, "one run for 897 rows");
+        assert_eq!(s.selected_count(), 897);
+        assert_eq!(
+            s.query("selection"),
+            Some(IntrospectValue::Json(serde_json::json!([[4, 900]]))),
+        );
+    }
+
+    /// R1562 — the corner control: what it shows, what it does, and that the
+    /// two are the same fact. Qt's corner button has neither.
+    #[test]
+    fn r1562_the_corner_shows_what_it_will_do() {
+        let mut s = VirtualSelectExternal::new_multi(10_000);
+        assert_eq!(s.extent(), SelectionExtent::Empty);
+        // Empty -> a press selects everything.
+        s.handle_send("c:PointerUp");
+        assert_eq!(s.extent(), SelectionExtent::All);
+        assert_eq!(s.selection(), &IndexRuns::run(0, 9_999));
+        assert_eq!(s.selection().run_count(), 1, "select-all is ONE run");
+        // All -> a press takes it back. This is the leg Qt does not have:
+        // `selectAll()` is one-way.
+        s.handle_send("c:PointerUp");
+        assert_eq!(s.extent(), SelectionExtent::Empty);
+        assert!(s.selection().is_empty());
+        // Partial -> a press completes it (not "toggles each row").
+        s.select(7);
+        assert_eq!(s.extent(), SelectionExtent::Partial);
+        s.handle_send("c:PointerUp");
+        assert_eq!(s.extent(), SelectionExtent::All);
+        // Non-activation phases of the same arc are inert, exactly as they are
+        // for a cell.
+        s.handle_send("c:PointerEnter");
+        s.handle_send("c:PointerDown");
+        assert_eq!(
+            s.extent(),
+            SelectionExtent::All,
+            "only the activate edge acts"
+        );
+    }
+
+    /// R1562 — the corner is an interaction, so it reaches the §5.20 intent
+    /// channel on BOTH legs. The clear leg is the one that could have been
+    /// silent: `clear()` is the admin path and does not emit.
+    #[test]
+    fn r1562_the_corner_emits_its_intent_on_both_legs() {
+        let mut s = VirtualSelectExternal::new_multi(100);
+        let mut names = Vec::new();
+        s.handle_send("c:PointerUp");
+        s.drain_intents(&mut |i| names.push(i.tag.to_string()));
+        assert_eq!(names, ["selection"], "select-all announced");
+        names.clear();
+        s.handle_send("c:PointerUp");
+        s.drain_intents(&mut |i| names.push(i.tag.to_string()));
+        assert_eq!(names, ["selection"], "and so is taking it back");
+        // A press that changes nothing announces nothing.
+        let mut single = VirtualSelectExternal::new(100);
+        single.handle_send("c:PointerUp");
+        let mut none = Vec::new();
+        single.drain_intents(&mut |i| none.push(i.tag.to_string()));
+        assert!(
+            none.is_empty(),
+            "a single-select model cannot select all, and says nothing",
+        );
+    }
+
+    /// R1562 — the extent's edges. An empty model is `Empty`, not `All`: a
+    /// control that reads "everything is selected" over nothing would then
+    /// offer a press that clears nothing.
+    #[test]
+    fn r1562_an_empty_model_has_an_empty_extent() {
+        let empty = VirtualSelect::new(0, SelectionMode::Multi);
+        assert_eq!(empty.extent(), SelectionExtent::Empty);
+        let mut one = VirtualSelect::new(1, SelectionMode::Multi);
+        assert_eq!(one.extent(), SelectionExtent::Empty);
+        assert!(one.select(0));
+        assert_eq!(
+            one.extent(),
+            SelectionExtent::All,
+            "one of one is all of it"
         );
     }
 

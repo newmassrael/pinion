@@ -592,7 +592,13 @@ impl WidgetCore for CellEditorsView {
                         return;
                     }
                     GridSendKey::Cell { row, col } => CellIndex::new(row, col),
-                    GridSendKey::Header { .. } | GridSendKey::Group { .. } => return,
+                    // R1562 — a section press names a whole line, so it opens no
+                    // cell editor. The selection it drives happens in the
+                    // coordinator this hook is observed from.
+                    GridSendKey::Header { .. }
+                    | GridSendKey::Group { .. }
+                    | GridSendKey::RowHeader { .. }
+                    | GridSendKey::Corner => return,
                 };
                 {
                     let was_current = current.get() == Some(index);

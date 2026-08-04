@@ -2042,6 +2042,28 @@ def count_indexed_tags(snap: Any, prefix: str, suffix: str = "") -> int:
     return k
 
 
+def chord_click(tf, tag: str, *, shift: bool = False, ctrl: bool = False) -> None:
+    """A `scene/click` on `tag` with held modifiers, released after — the R763
+    `scene/modifiers` press/release pair the shell reads at the activate edge.
+
+    R1562 obligation-3b lift: three demos carried a byte-identical body,
+    differing only in how they built the tag (measured — r781 `click_row`, r782
+    `click_cell`, and this round's band press would have been the third).
+    Mechanical, no per-demo opinion, so it is shared and each caller keeps its
+    own tag construction — following `indexed_tags` (R1523) and
+    `access_node_by_tag` (R1517).
+
+    The press/release pair is what makes it worth sharing: a demo that forgets
+    the release leaves the chord held into the NEXT click, which reads as a
+    passing test for the wrong reason.
+    """
+    if shift or ctrl:
+        tf.modifiers(shift=shift, ctrl=ctrl)
+    tf.click(path=tag)
+    if shift or ctrl:
+        tf.modifiers()  # release
+
+
 def indexed_tags(rects: dict, prefix: str) -> list[int]:
     """Sorted indices `k` of the `{prefix}{k}` tags present in a `abs_rects_of`
     mapping.

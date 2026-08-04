@@ -212,7 +212,9 @@ pub fn parse_pair<A: FromStr, B: FromStr>(payload: &str, sep: char) -> Option<(A
 /// `'#'`-split sub-tag a data-grid header or cell routes to its
 /// [`External`](crate::external::External) through the R51.42 funnel. A
 /// column-header click is `"h<col>"`; a data cell is `"<row>_<col>"`
-/// (always an underscore, so the `h` prefix is unambiguous).
+/// (always an underscore, so the `h` prefix is unambiguous). R1562 adds the
+/// vertical section axis's two addresses: a **row**-header press is `"r<row>"`
+/// and the corner where the two axes meet is `"c"`.
 ///
 /// One codec so the paint **producer**
 /// (`pinion_widget_paint::table::header_cell` / `…::data_row`), the
@@ -231,6 +233,33 @@ pub enum GridSendKey {
         /// Zero-based column index.
         col: usize,
     },
+    /// R1562 — a **row**-header click (`"r<row>"`): the vertical section axis's
+    /// press address, Qt `QHeaderView::sectionPressed` on a
+    /// `Qt::Vertical` header.
+    ///
+    /// The peer of [`Header`](Self::Header) on the other axis, and the one that
+    /// carries a row — which is the whole point. Qt reaches the same behaviour
+    /// through a *second implementation*: a header press runs
+    /// `QHeaderView::mousePressEvent` -> `QAbstractItemView::selectRow`, while a
+    /// cell press runs `QAbstractItemView::mousePressEvent` ->
+    /// `selectionCommand(index, event)`. Here a row header **is** an address of
+    /// its row ([`row`](Self::row) answers with it), so the press reaches the
+    /// selection transition a cell press reaches, by the same call, and the band
+    /// cannot disagree with the body about what a chorded click means.
+    RowHeader {
+        /// Zero-based **data**-row index (the R778 sort permutation already
+        /// applied, exactly as a [`Cell`](Self::Cell)'s row is).
+        row: usize,
+    },
+    /// R1562 — the cell where the two section axes meet (`"c"`): Qt's
+    /// `QTableCornerButton`, the control `QTableView::setCornerButtonEnabled`
+    /// enables.
+    ///
+    /// Addresses no row and no column — it addresses the **whole model**, which
+    /// is why it is its own arm rather than a section index. [`row`](Self::row)
+    /// answers `None`: a selection coordinator that read a row out of this would
+    /// be selecting one line for a press that means every line.
+    Corner,
     /// A data-cell click (`"<row>_<col>"`).
     Cell {
         /// Zero-based data-row index.
@@ -279,6 +308,17 @@ impl GridSendKey {
         if let Some(col) = key.strip_prefix('h') {
             return col.parse().ok().map(|col| Self::Header { col });
         }
+        // R1562 — the corner is a whole key, not a prefix: it addresses the
+        // model rather than a section, so there is no index to follow it.
+        // Tried before the `'r'` prefix for no ordering reason (they cannot
+        // collide) but with the other prefix-free arms, ahead of anything that
+        // parses a number.
+        if key == "c" {
+            return Some(Self::Corner);
+        }
+        if let Some(row) = key.strip_prefix('r') {
+            return row.parse().ok().map(|row| Self::RowHeader { row });
+        }
         if let Some(group) = key.strip_prefix('g') {
             return group.parse().ok().map(|group| Self::Group { group });
         }
@@ -314,10 +354,20 @@ impl GridSendKey {
     /// cell of that row, so a press on it is a press in the row, and a selection
     /// coordinator that answered `None` here would leave the selection behind
     /// whenever the user reached for an arrow instead of the cell body.
+    /// R1562 — a [`RowHeader`](Self::RowHeader) answers with **its** row. That
+    /// one line is what makes the vertical band's selection a *derivation*
+    /// rather than a second implementation of it: the band press and the cell
+    /// press reach `select` / `toggle` / `extend_to` through the same call, so
+    /// no chord can mean one thing in the band and another in the body.
+    ///
+    /// [`Corner`](Self::Corner) answers `None` for the opposite reason — it
+    /// addresses every row, which is not a row.
     pub fn row(self) -> Option<usize> {
         match self {
-            Self::Cell { row, .. } | Self::EditorStep { row, .. } => Some(row),
-            Self::Header { .. } | Self::Group { .. } => None,
+            Self::Cell { row, .. } | Self::EditorStep { row, .. } | Self::RowHeader { row } => {
+                Some(row)
+            }
+            Self::Header { .. } | Self::Group { .. } | Self::Corner => None,
         }
     }
 
@@ -329,6 +379,8 @@ impl GridSendKey {
     pub fn encode(self) -> String {
         match self {
             Self::Header { col } => format!("h{col}"),
+            Self::RowHeader { row } => format!("r{row}"),
+            Self::Corner => "c".to_string(),
             Self::Cell { row, col } => format!("{row}_{col}"),
             Self::Group { group } => format!("g{group}"),
             Self::EditorStep { row, col, up } => {
@@ -773,6 +825,9 @@ mod tests {
                 col: 3,
                 up: false,
             },
+            GridSendKey::RowHeader { row: 0 },
+            GridSendKey::RowHeader { row: 9_999 },
+            GridSendKey::Corner,
         ] {
             assert_eq!(
                 GridSendKey::parse(&key.encode()),
@@ -783,6 +838,8 @@ mod tests {
         assert_eq!(GridSendKey::Cell { row: 4, col: 2 }.encode(), "4_2");
         assert_eq!(GridSendKey::Header { col: 1 }.encode(), "h1");
         assert_eq!(GridSendKey::Group { group: 3 }.encode(), "g3");
+        assert_eq!(GridSendKey::RowHeader { row: 4 }.encode(), "r4");
+        assert_eq!(GridSendKey::Corner.encode(), "c");
         assert_eq!(
             GridSendKey::EditorStep {
                 row: 4,
@@ -834,6 +891,47 @@ mod tests {
         assert_eq!(GridSendKey::parse("su4"), None);
         assert_eq!(GridSendKey::parse("sux_2"), None);
         assert_eq!(GridSendKey::parse("sq4_2"), None, "an unknown direction");
+    }
+
+    /// R1562 — the vertical axis's two addresses decode to themselves, and the
+    /// **row header answers with its row** while the corner answers with none.
+    /// That asymmetry is the round's whole selection behaviour: a band press
+    /// travels the cell press's transition, a corner press cannot be mistaken
+    /// for one line.
+    #[test]
+    fn r1562_a_row_header_addresses_its_row_and_the_corner_addresses_none() {
+        assert_eq!(
+            GridSendKey::parse("r4"),
+            Some(GridSendKey::RowHeader { row: 4 })
+        );
+        assert_eq!(
+            GridSendKey::parse("r4").and_then(GridSendKey::row),
+            Some(4),
+            "a row header IS an address of its row"
+        );
+        assert_eq!(GridSendKey::parse("c"), Some(GridSendKey::Corner));
+        assert_eq!(
+            GridSendKey::parse("c").and_then(GridSendKey::row),
+            None,
+            "the corner addresses every row, which is not a row"
+        );
+        // The new prefix does not swallow the neighbouring grammars, and a
+        // malformed row-header key decodes to None rather than to a cell.
+        assert_eq!(GridSendKey::parse("rx"), None);
+        assert_eq!(GridSendKey::parse("r"), None);
+        assert_eq!(
+            GridSendKey::parse("c1"),
+            None,
+            "the corner is a whole key, not a prefix"
+        );
+        assert_eq!(
+            GridSendKey::parse("4_2"),
+            Some(GridSendKey::Cell { row: 4, col: 2 })
+        );
+        assert_eq!(
+            GridSendKey::parse("h1"),
+            Some(GridSendKey::Header { col: 1 })
+        );
     }
 
     #[test]

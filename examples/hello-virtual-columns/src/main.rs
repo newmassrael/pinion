@@ -69,8 +69,8 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, Decoration, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData,
-    no_decoration, no_edit, view_virtual_table,
+    CellIndex, Decoration, GridModel, GridScroll, HeaderAxis, RowHeaderAxis, TableStyle,
+    VirtualTableData, no_decoration, no_edit, view_virtual_table,
 };
 use std::cell::Cell;
 
@@ -366,7 +366,9 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // R1548 — Qt `headerData(section, Qt::Vertical, Qt::DisplayRole)`:
             // the second section axis, windowed by the ROW window exactly as
             // its neighbour is by the column window.
-            rows: Some(HeaderAxis::labelled(row_header_text)),
+            // R1562 — `setCornerButtonEnabled(false)`: a column-windowing
+            // demo with a stub External has no selection to act on.
+            rows: Some(RowHeaderAxis::inert(HeaderAxis::labelled(row_header_text))),
             decoration: no_decoration,
             edit: no_edit,
         },

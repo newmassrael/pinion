@@ -2571,13 +2571,20 @@ impl DataGridExternal {
                 }
                 Ok(IntrospectValue::Null)
             }
+            // Addresses this grid paints nothing for, rejected rather than
+            // ignored so a client that sends one learns it went nowhere.
+            //
             // R1555 — the step affordances of an `EditorForm::Stepper` editor
             // painted by the grid's own cell path. This grid hand-rolls its edit
             // latch and paints its own inline editor (the R1544 audit's "six
-            // bindings that do not use the cell path"), so it paints no such
-            // affordance and has none to address. Rejected rather than ignored,
-            // so a client that sends one learns it went nowhere.
-            GridSendKey::EditorStep { .. } => Err(InvokeError::Rejected),
+            // bindings that do not use the cell path"), so it has none.
+            //
+            // R1562 — the vertical section axis. This grid's model answers no
+            // `headerData(section, Qt::Vertical, …)`, so it paints no row-header
+            // band and no corner.
+            GridSendKey::EditorStep { .. }
+            | GridSendKey::RowHeader { .. }
+            | GridSendKey::Corner => Err(InvokeError::Rejected),
         }
     }
 

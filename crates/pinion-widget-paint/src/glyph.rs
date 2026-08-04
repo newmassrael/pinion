@@ -51,6 +51,21 @@ pub const WINDOW_MAXIMIZE: &str = "\u{25A1}";
 /// Close control — `U+00D7` MULTIPLICATION SIGN.
 pub const WINDOW_CLOSE: &str = "\u{00D7}";
 
+// (R1562 §5.27 §5.40) The grid corner's tri-state select-all marks. Both glyphs
+// are already painted elsewhere in this crate — the R668 checkbox's check and
+// the window-control minus above — so the corner adds no font obligation, and
+// the two controls that mean "checked" cannot come out looking like different
+// ideas. The EMPTY extent draws no glyph at all: an unchecked box is the
+// absence of a mark, which is how `crate::checkbox` paints it too.
+
+/// Select-all in its **indeterminate** leg — `U+2212` MINUS SIGN, the dash an
+/// HTML `<input type=checkbox>.indeterminate` draws.
+pub const SELECT_ALL_PARTIAL: &str = "\u{2212}";
+
+/// Select-all with **everything** selected — `U+2713` CHECK MARK, the same
+/// glyph `crate::checkbox` paints when checked.
+pub const SELECT_ALL_COMPLETE: &str = "\u{2713}";
+
 /// R886.1 §5.50 — the sort-direction → glyph mapping every column header
 /// paints: `Some(true)` → [`SORT_ASCENDING`], `Some(false)` →
 /// [`SORT_DESCENDING`], `None` (not the active sort column) → `None` so

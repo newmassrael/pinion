@@ -49,6 +49,7 @@ from rpc_verify import (  # noqa: E402
     WORKSPACE_ROOT,
     abs_rects_of,
     assert_eq,
+    chord_click,
     find_by_tag,
     indexed_tags,
     read_png_rgba8,
@@ -59,7 +60,7 @@ from rpc_verify import (  # noqa: E402
 )
 
 EXAMPLE = "hello-grid-multi-select"
-WIN = (400, 480)
+WIN = (460, 480)  # R1562 widened by the 56px vertical header band
 N = 10_000
 ROW_H = 36
 SCROLL_TAG = "vtbl_scroll"
@@ -93,14 +94,10 @@ def present_rows(snap) -> set[int]:
 
 
 def click_cell(tf, row: int, col: int, *, shift: bool = False, ctrl: bool = False) -> None:
-    """A `scene/click` on a windowed grid cell with held modifiers, released
-    after — the R763 `scene/modifiers` press/release pair the shell reads at
-    the activate edge. The column is irrelevant to row selection."""
-    if shift or ctrl:
-        tf.modifiers(shift=shift, ctrl=ctrl)
-    tf.click(path=f"{TABLE_TAG}#{row}_{col}")
-    if shift or ctrl:
-        tf.modifiers()  # release
+    """A `scene/click` on a windowed grid cell with held modifiers, through the
+    shared `chord_click` (R1562 lift). The column is irrelevant to row
+    selection."""
+    chord_click(tf, f"{TABLE_TAG}#{row}_{col}", shift=shift, ctrl=ctrl)
 
 
 def wait_selection(tf, expected: list[int], desc: str) -> None:

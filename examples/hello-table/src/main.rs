@@ -82,7 +82,8 @@ use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_runtime::{DecodedImage, use_image_store};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, Decoration, HeaderAxis, TableData, TableSelection, TableStyle, view_table,
+    CellIndex, Decoration, HeaderAxis, RowHeaderAxis, TableData, TableSelection, TableStyle,
+    view_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -444,10 +445,14 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
             // R1548 — Qt `headerData(section, Qt::Vertical, …)`: the eager
             // surface answers the SECOND section axis too, through the same
             // `HeaderAxis` type the virtualized grid uses.
-            row_headers: Some(HeaderAxis {
+            // R1562 — the eager surface's band, its sections pressable
+            // through the same `send_cell` arc a cell press drives. The corner
+            // is `setCornerButtonEnabled(false)`: this table is single-select
+            // (R953 — one selection model per example).
+            row_headers: Some(RowHeaderAxis::inert(HeaderAxis {
                 label: &row_header_label,
                 decoration: &row_header_decoration,
-            }),
+            })),
         },
         // Single-row selection only; the spreadsheet cell range selection is
         // the dedicated `hello-cell-select` grid's model (R953 — one selection

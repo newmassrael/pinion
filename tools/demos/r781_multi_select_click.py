@@ -45,6 +45,7 @@ from rpc_verify import (  # noqa: E402
     WORKSPACE_ROOT,
     abs_rects_of,
     assert_eq,
+    chord_click,
     read_png_rgba8,
     run_demo,
     sample_png_points,
@@ -74,14 +75,9 @@ def anchor(d):
 
 
 def click_row(tf, row: int, *, shift: bool = False, ctrl: bool = False) -> None:
-    """A `scene/click` on a windowed row with held modifiers, released
-    after — the R763 `scene/modifiers` press/release pair the shell reads
-    at the activate edge."""
-    if shift or ctrl:
-        tf.modifiers(shift=shift, ctrl=ctrl)
-    tf.click(path=f"{LIST_TAG}#{row}")
-    if shift or ctrl:
-        tf.modifiers()  # release
+    """A `scene/click` on a windowed row with held modifiers, through the
+    shared `chord_click` (R1562 lift)."""
+    chord_click(tf, f"{LIST_TAG}#{row}", shift=shift, ctrl=ctrl)
 
 
 def body() -> None:

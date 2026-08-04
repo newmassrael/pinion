@@ -27,6 +27,7 @@ use crate::node::AccessNode;
 use crate::role::{AriaRole, SortDirection};
 use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::widgets::virtual_list::VisibleWindow;
+use pinion_core::widgets::virtual_select::SelectionExtent;
 use pinion_core::{CellIndex, EditorForm};
 
 /// Build the virtualized `grid` container + frozen header row + one data
@@ -740,6 +741,59 @@ pub fn attach_row_headers(
     nodes.extend(headers);
 }
 
+/// R1562 §5.40 §5.27 — give a grid's tree the **corner control**: the
+/// select-all where the two section axes meet (Qt's `QTableCornerButton`).
+///
+/// Two nodes, in HTML's own shape — a `columnheader` (the `<th>` above the row
+/// header band) holding a `checkbox` (the `<input type=checkbox>` inside it) —
+/// because that is what the corner *is*, and because a bare `checkbox` under a
+/// `row` would be a cell that is not a cell. The checkbox carries the tri-state
+/// on WAI-ARIA's own axes: [`AccessState::checked`](crate::node::AccessState)
+/// for the definite legs, `mixed` for `aria-checked="mixed"`.
+///
+/// # What Qt does not have here
+///
+/// `QTableCornerButton` is a private `QAbstractButton` built inside
+/// `qtableview.cpp` with **no text and no accessible name**, and `QTableView`
+/// exposes only `setCornerButtonEnabled(bool)` / `isCornerButtonEnabled()` —
+/// no accessor for the button — so there is no supported way to name it. A
+/// screen-reader user meets an unnamed button whose state is not reported
+/// because the button has no state: pressing it always runs `selectAll()`.
+/// Here it is named, and it reports **and** takes back what it did.
+///
+/// A pass over the built nodes, by the [`attach_row_headers`] precedent and for
+/// its reason: the corner then reaches every grid topology from one call rather
+/// than the one builder a parameter would have been threaded into.
+///
+/// - `header_tag` — the header row the corner leads, the same
+///   [`GridTag::header_row`] the builders used.
+/// - `extent` — what the control shows, and therefore what its press will do.
+pub fn attach_corner_button(
+    nodes: &mut Vec<AccessNode>,
+    grid_tag: &str,
+    header_tag: &str,
+    extent: SelectionExtent,
+) {
+    let Some(header_row) = nodes.iter_mut().find(|n| n.tag == header_tag) else {
+        return;
+    };
+    let corner_tag = GridTag::header_corner(grid_tag);
+    let toggle_tag = format!("{grid_tag}#{}", GridSendKey::Corner.encode());
+    // Leading, because the corner sits left of the first column header — the
+    // order the band is painted in and the order an AT reads.
+    header_row.children.insert(0, corner_tag.clone());
+    let mut corner = AccessNode::new(corner_tag, AriaRole::ColumnHeader);
+    corner.children.push(toggle_tag.clone());
+    let mut toggle = AccessNode::new(toggle_tag, AriaRole::CheckBox).with_name("Select all");
+    // `checked` and `mixed` are separate axes, exactly as in the DOM: the mixed
+    // leg is not a third value of `checked`, so an AT that understands only
+    // `checked` still hears something true rather than a guess.
+    toggle.state.checked = Some(extent == SelectionExtent::All);
+    toggle.state.mixed = extent == SelectionExtent::Partial;
+    nodes.push(corner);
+    nodes.push(toggle);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1379,6 +1433,66 @@ mod tests {
     }
 
     // ── R1548 §5.40 §5.27 — the vertical header axis ────────────────
+
+    /// R1562 — the corner reaches the tree as HTML's own shape: a
+    /// `columnheader` leading the header row, holding a **named** tri-state
+    /// `checkbox`. Every extent maps to the `aria-checked` value table.
+    #[test]
+    fn r1562_the_corner_is_a_named_tri_state_control() {
+        for (extent, checked, mixed) in [
+            (SelectionExtent::Empty, Some(false), false),
+            (SelectionExtent::Partial, Some(false), true),
+            (SelectionExtent::All, Some(true), false),
+        ] {
+            let mut nodes = windowed_grid_nodes("g", "Grid", NCOLS, 100, &window(0, 3));
+            let header = GridTag::header_row("g");
+            attach_corner_button(&mut nodes, "g", &header, extent);
+            let corner_tag = GridTag::header_corner("g");
+            let toggle_tag = format!("g#{}", GridSendKey::Corner.encode());
+            let row = nodes
+                .iter()
+                .find(|n| n.tag == header)
+                .expect("the header row");
+            assert_eq!(
+                row.children.first().map(String::as_str),
+                Some(corner_tag.as_str()),
+                "the corner leads the header row, as it is painted",
+            );
+            let corner = nodes
+                .iter()
+                .find(|n| n.tag == corner_tag)
+                .expect("the corner node");
+            assert_eq!(corner.role, AriaRole::ColumnHeader);
+            assert_eq!(corner.children, vec![toggle_tag.clone()]);
+            let toggle = nodes
+                .iter()
+                .find(|n| n.tag == toggle_tag)
+                .expect("the toggle node");
+            assert_eq!(toggle.role, AriaRole::CheckBox);
+            assert_eq!(
+                toggle.name.as_deref(),
+                Some("Select all"),
+                "Qt's `QTableCornerButton` has no text and no accessor to give \
+                 it one, so it announces as an unnamed button",
+            );
+            assert_eq!(toggle.state.checked, checked, "{extent:?}");
+            assert_eq!(toggle.state.mixed, mixed, "{extent:?}");
+        }
+    }
+
+    /// R1562 — a grid whose band was never attached gains no corner: the
+    /// negative control that keeps the assertions above from passing on a
+    /// builder that always emits one.
+    #[test]
+    fn r1562_a_grid_with_no_band_has_no_corner() {
+        let nodes = windowed_grid_nodes("g", "Grid", NCOLS, 100, &window(0, 3));
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| n.tag == GridTag::header_corner("g") || n.role == AriaRole::CheckBox),
+            "no corner and no checkbox",
+        );
+    }
 
     /// The seam: every windowed row leads with a `rowheader`, and a node for it
     /// exists.

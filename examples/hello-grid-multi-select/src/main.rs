@@ -22,6 +22,13 @@
 //! * **`Ctrl`-click** — toggle the clicked row's membership.
 //! * **`Shift`-click** — extend the range from the `anchor` to the clicked
 //!   row.
+//! * **click a ROW HEADER** (R1562) — the same three chords, addressed from
+//!   the vertical band (Qt `QHeaderView` with `sectionsClickable`). The band is
+//!   pinned against the horizontal scroll, so it is the part of a row that is
+//!   on screen when the row's cells are not.
+//! * **click the CORNER** (R1562) — Qt's `QTableCornerButton`, here a
+//!   tri-state: it shows how much of the model is selected and toggles between
+//!   all and none.
 //!
 //! The round adds **no** coordinator code: [`VirtualSelectExternal`] already
 //! handles grid-cell sends (`vtbl#<row>_<col>` → the row, R777) and is
@@ -43,10 +50,15 @@
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
 //! `scene/key` `End` then `Shift`+`Home` → `query("selection")` reports the
-//! full `[0, 1, …, 9999]` span, and `query("mode")` reports `"multi"`. A
+//! full `[[0, 9999]]` span, and `query("mode")` reports `"multi"`. A
 //! `scene/modifiers` (`ctrl`) + `scene/click` on a cell toggles that row into
 //! the set without disturbing the rest. Pure data, no pixels (see
 //! `tools/r782_grid_multi_select.py`).
+//!
+//! R1562 adds the band's two addresses to that witness: `scene/click` on
+//! `vtbl#r4` selects row 4, `Shift`-clicking `vtbl#r900` reports `[[4, 900]]` —
+//! 897 rows in ELEVEN bytes — and `vtbl#c` toggles the whole model
+//! (`tools/r1562_section_selects_its_line.py`).
 //!
 //! ## a11y
 //!
@@ -56,9 +68,17 @@
 //! `AriaRole::Row` with `aria-posinset` + `aria-selected =
 //! selection.contains(id)` (so several visible rows can be `aria-selected` at
 //! once) and a `gridcell` per column, under a frozen header row of
-//! `columnheader`s. The grid is the focusable tab stop.
+//! `columnheader`s. The grid is the focusable tab stop. R1548 leads each row
+//! with its `rowheader`; R1562 leads the header row with the corner — a
+//! `columnheader` holding a named tri-state `checkbox`, which is the shape an
+//! HTML select-all has and which Qt's nameless private corner button cannot
+//! reach.
 
-use pinion_a11y::{AccessNode, WidgetA11y, windowed_grid_nodes_multiselected};
+use pinion_a11y::{
+    AccessNode, WidgetA11y, attach_corner_button, attach_row_headers,
+    windowed_grid_nodes_multiselected,
+};
+use pinion_core::composite_tag::GridTag;
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -74,8 +94,8 @@ use pinion_core::widgets::virtual_select::{
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData, header_from_slice,
-    no_decoration, no_edit, no_row_header, view_virtual_table,
+    CellIndex, CornerExtent, GridModel, GridScroll, HeaderAxis, RowHeaderAxis, TableStyle,
+    VirtualTableData, header_from_slice, no_decoration, no_edit, view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -86,7 +106,8 @@ vello_renderer_impl!(
 
 /// Initial window size — freely resizable; the grid body re-windows on every
 /// `Resized` event (R774 `AutoSizer`). Wide enough that `NCOLS × COL_W` fits.
-const WIN_W: u32 = 400;
+/// R1562 — widened by the vertical header band (56px).
+const WIN_W: u32 = 460;
 const WIN_H: u32 = 480;
 const THEME_TAG: &str = "app";
 /// Total data-row count — large while the rendered node count stays small.
@@ -160,6 +181,18 @@ impl MultiSelection {
 
     fn is_selected(&self, index: usize) -> bool {
         index < N && self.selected[index]
+    }
+
+    /// R1562 — the extent the corner control shows, off the projected total.
+    ///
+    /// Derived from the same clamped count the status bar reads, so the corner
+    /// and the readout cannot describe different selections. The coordinator
+    /// answers the same question in O(1)
+    /// ([`VirtualSelect::extent`](pinion_core::widgets::virtual_select::VirtualSelect::extent));
+    /// this is the paint snapshot's copy of it, and both are functions of the
+    /// one selection.
+    fn extent(&self) -> CornerExtent {
+        CornerExtent::of(self.total, N)
     }
 }
 
@@ -265,7 +298,16 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
         GridModel {
             cell: cell_text,
             columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),
-            rows: no_row_header(),
+            // R1562 — the vertical band, with a LIVE corner. Two things this
+            // adds that a cell click cannot: a row is selectable from the one
+            // part of it that is pinned against the horizontal scroll, and the
+            // whole model is selectable from a control that says how much of it
+            // already is (Qt's `QTableCornerButton` is nameless, stateless and
+            // one-way).
+            rows: Some(RowHeaderAxis::select_all(
+                HeaderAxis::row_numbers(),
+                selection.extent(),
+            )),
             decoration: no_decoration,
             edit: no_edit,
         },
@@ -372,14 +414,28 @@ impl WidgetA11y for GridMultiSelectView {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_H, OVERSCAN);
-        windowed_grid_nodes_multiselected(
+        let mut nodes = windowed_grid_nodes_multiselected(
             TABLE_TAG,
             "Multi-selectable data grid",
             HEADERS.len(),
             u32::try_from(N).unwrap_or(u32::MAX),
             &window,
             &|i| selection.is_selected(i),
-        )
+        );
+        // R1548 — the vertical section axis reaches the tree as a `rowheader`
+        // leading each windowed row. Identity source: this grid does not sort.
+        attach_row_headers(&mut nodes, TABLE_TAG, &window, |view_pos| view_pos);
+        // R1562 — the corner control, named and carrying the tri-state. Qt's
+        // `QTableCornerButton` is a private nameless `QAbstractButton` with no
+        // state and no accessor on `QTableView`, so there is no supported way
+        // to announce either what it is or what it would do.
+        attach_corner_button(
+            &mut nodes,
+            TABLE_TAG,
+            &GridTag::header_row(TABLE_TAG),
+            selection.extent(),
+        );
+        nodes
     }
 }
 

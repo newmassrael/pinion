@@ -963,6 +963,107 @@ impl TableExternal {
         Ok(IntrospectValue::Bool(true))
     }
 
+    /// R1562 §5.27 §5.40 — a **row-header** press: Qt `QHeaderView`'s
+    /// `sectionPressed` on a `Qt::Vertical` header, which selects the line the
+    /// section names.
+    ///
+    /// Whichever [`SelectionBehavior`] is in force, it reaches the *same model
+    /// verbs* a press in the row's body reaches — the row [`Radio`] arc under
+    /// `SelectRows`, the cell rectangle under `SelectItems` — rather than a
+    /// second selection implementation beside them. Qt keeps two
+    /// (`QHeaderView::mousePressEvent` → `QAbstractItemView::selectRow`, next to
+    /// `QAbstractItemView::mousePressEvent` → `selectionCommand`), which is why
+    /// a Qt header press and a Qt cell press can be made to disagree.
+    ///
+    /// Under `SelectItems` the line is the row's **whole rectangle** — anchor at
+    /// its first column, cursor at its last — because a header names a row and
+    /// not a cell of it. Under `SelectRows` the arc is forwarded to column 0, so
+    /// the row's statechart sees the press exactly as it would from a cell (in
+    /// multi-select that means the same toggle, which is that surface's
+    /// documented cell behaviour and therefore the band's too).
+    fn send_row_header(
+        &mut self,
+        row: usize,
+        event_name: &str,
+    ) -> Result<IntrospectValue, InvokeError> {
+        if self.selection_behavior() == SelectionBehavior::SelectItems {
+            if event_name == PointerWireEvent::Up.as_wire_name() {
+                let last = self.col_count().saturating_sub(1);
+                self.em.inner.select_cell(row, 0);
+                self.em.inner.extend_cell(row, last);
+                return Ok(self
+                    .query("cell_selection")
+                    .unwrap_or(IntrospectValue::Null));
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        let ev = RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
+        self.send_cell(row, 0, ev);
+        Ok(self.selection_outcome())
+    }
+
+    /// R1562 §5.27 §5.40 — the corner control's action (Qt's
+    /// `QTableCornerButton`): select every row, or clear when every row is
+    /// already selected.
+    ///
+    /// Driven through the ordinary activate edge per row rather than through
+    /// [`set_selected_rows`](Self::set_selected_rows), which is the **silent**
+    /// admin / restore channel: a control the user pressed must reach the §5.20
+    /// intent channel, so AI and automation observe a select-all the same way
+    /// they observe every other selection change. That costs one dispatch per
+    /// row it flips, which this surface can afford by construction — the eager
+    /// table builds every row anyway (the virtualized grid's corner goes through
+    /// [`VirtualSelect::toggle_all`](crate::widgets::virtual_select::VirtualSelect::toggle_all),
+    /// which is O(1) because R1561 holds the selection as runs).
+    ///
+    /// A single-select `SelectRows` table cannot hold every row, so this is the
+    /// no-op `QAbstractItemView::selectAll` is under `SingleSelection`.
+    fn toggle_all_rows(&mut self) {
+        let rows = self.row_count();
+        if self.selection_behavior() == SelectionBehavior::SelectItems {
+            let full = self.cell_selection_bounds()
+                == Some((
+                    0,
+                    0,
+                    rows.saturating_sub(1),
+                    self.col_count().saturating_sub(1),
+                ));
+            if full || rows == 0 {
+                self.em.inner.clear_cell_selection();
+            } else {
+                self.em.inner.select_cell(0, 0);
+                self.em
+                    .inner
+                    .extend_cell(rows - 1, self.col_count().saturating_sub(1));
+            }
+            return;
+        }
+        if !self.is_multiselect() {
+            return;
+        }
+        let want = self.selected_rows().len() < rows;
+        for row in 0..rows {
+            if self.em.inner.is_selected(row) != want {
+                self.send_cell(row, 0, RadioEvent::KeyboardActivate);
+            }
+        }
+    }
+
+    /// R1562 — the outcome a row-addressed `send` echoes: the new
+    /// `selected_row` in a single-select table, `Null` in a multi-select one
+    /// (where no single row is the answer). The rule the cell arm already
+    /// applies, named so the band's two arms cannot state it differently.
+    fn selection_outcome(&self) -> IntrospectValue {
+        if self.is_multiselect() {
+            IntrospectValue::Null
+        } else {
+            match self.selected_row() {
+                Some(r) => IntrospectValue::Int(int_of(r)),
+                None => IntrospectValue::Null,
+            }
+        }
+    }
+
     /// Validate an intervene `row` index against the row count.
     fn resolve_row_intervene(&self, i: i64) -> Result<usize, InterveneError> {
         let row = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
@@ -1384,6 +1485,24 @@ impl ExternalIntrospect for TableExternal {
                                     None => IntrospectValue::Null,
                                 }
                             })
+                        }
+                        // R1562 — a row-header press (`"r<row>"`) selects the
+                        // whole line, on the surface that paints a vertical band
+                        // as much as on the virtualized one. Reaching the SAME
+                        // model verbs a cell press reaches is the point: one
+                        // behaviour, addressed two ways.
+                        crate::composite_tag::GridSendKey::RowHeader { row } => {
+                            if row >= self.row_count() {
+                                return Err(InvokeError::Rejected);
+                            }
+                            self.send_row_header(row, event_name)
+                        }
+                        // R1562 — the corner (`"c"`) addresses the whole model.
+                        crate::composite_tag::GridSendKey::Corner => {
+                            if event_name == PointerWireEvent::Up.as_wire_name() {
+                                self.toggle_all_rows();
+                            }
+                            Ok(self.selection_outcome())
                         }
                         // R892 — the eager `Table` has no group axis; a
                         // group-header key is not addressable here.
@@ -2283,6 +2402,111 @@ mod tests {
                 vec!["Table".to_string(), "R707".to_string()],
             ],
         )
+    }
+
+    /// R1562 §5.27 — a **row-header** press on the eager surface selects the
+    /// line, through the same `send_cell` arc a press in the row's body drives.
+    /// The band and the body are compared state-for-state, so a second
+    /// selection implementation behind the band would show up here.
+    #[test]
+    fn r1562_an_eager_band_press_selects_the_line() {
+        use crate::composite_tag::compose_send_payload;
+        use crate::input::Modifiers;
+        let arc = |ext: &mut TableExternal, key: &str| {
+            for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+                let wire = compose_send_payload(Some(key), ev, Modifiers::default());
+                let _ = ext.invoke("send", IntrospectValue::Text(wire));
+            }
+        };
+        let mut from_band = cell_sample_ext();
+        let mut from_body = cell_sample_ext();
+        arc(&mut from_band, "r1");
+        arc(&mut from_body, "1_0");
+        assert_eq!(
+            from_band.query("selected_row"),
+            Some(IntrospectValue::Int(1)),
+            "the band press washed row 1",
+        );
+        assert_eq!(
+            from_band.query("selected_row"),
+            from_body.query("selected_row"),
+        );
+        assert_eq!(
+            from_band.query("focused_row"),
+            from_body.query("focused_row")
+        );
+        assert_eq!(
+            from_band.query("focused_col"),
+            from_body.query("focused_col")
+        );
+        // Out of range is refused rather than silently ignored.
+        let bad = compose_send_payload(Some("r99"), "PointerUp", Modifiers::default());
+        assert_eq!(
+            from_band.invoke("send", IntrospectValue::Text(bad)),
+            Err(InvokeError::Rejected),
+        );
+    }
+
+    /// R1562 §5.27 — under `SelectItems` a header names a ROW, so the press
+    /// selects that row's whole rectangle rather than one cell of it. Qt's
+    /// `selectRow` does the same; the point is that it happens here through the
+    /// cell-rectangle verbs this surface already had.
+    #[test]
+    fn r1562_an_eager_band_press_selects_the_whole_row_rectangle() {
+        use crate::composite_tag::compose_send_payload;
+        use crate::input::Modifiers;
+        let mut ext = cell_select_items_ext();
+        let wire = compose_send_payload(Some("r1"), "PointerUp", Modifiers::default());
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Text(wire)),
+            Ok(IntrospectValue::Text("1,0,1,1".to_string())),
+            "the rectangle spans the row's every column",
+        );
+        assert_eq!(
+            ext.query("cell_selection_count"),
+            Some(IntrospectValue::Int(2)),
+        );
+    }
+
+    /// R1562 §5.27 §5.40 — the eager corner toggles the whole model, on both
+    /// selection behaviours, and announces every change it makes.
+    #[test]
+    fn r1562_the_eager_corner_toggles_the_whole_model() {
+        use crate::composite_tag::compose_send_payload;
+        use crate::input::Modifiers;
+        let press = || compose_send_payload(Some("c"), "PointerUp", Modifiers::default());
+        let mut multi = TableExternal::with_multiselect(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![
+                vec!["Tabs".to_string(), "R690".to_string()],
+                vec!["Menu".to_string(), "R691".to_string()],
+                vec!["Table".to_string(), "R707".to_string()],
+            ],
+        );
+        let _ = multi.invoke("send", IntrospectValue::Text(press()));
+        assert_eq!(multi.selected_rows(), vec![0, 1, 2], "every row selected");
+        let mut announced = 0;
+        multi.drain_intents(&mut |_| announced += 1);
+        assert_eq!(announced, 3, "one intent per row it flipped");
+        let _ = multi.invoke("send", IntrospectValue::Text(press()));
+        assert!(
+            multi.selected_rows().is_empty(),
+            "and a second press clears"
+        );
+        // A single-select table cannot hold every row: the no-op `selectAll`
+        // is under `SingleSelection`.
+        let mut single = cell_sample_ext();
+        let _ = single.invoke("send", IntrospectValue::Text(press()));
+        assert_eq!(single.query("selected_row"), Some(IntrospectValue::Int(-1)));
+        // `SelectItems` spans the whole grid, then clears.
+        let mut items = cell_select_items_ext();
+        let _ = items.invoke("send", IntrospectValue::Text(press()));
+        assert_eq!(
+            items.query("cell_selection"),
+            Some(IntrospectValue::Text("0,0,2,1".to_string())),
+        );
+        let _ = items.invoke("send", IntrospectValue::Text(press()));
+        assert_eq!(items.query("cell_selection"), Some(IntrospectValue::Null));
     }
 
     /// R954 §5.38 — a plain pointer click on a `SelectItems` grid selects the

@@ -47,8 +47,8 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, CellPainter, CellRender, Decoration, GridModel, GridScroll, HeaderAxis, TableStyle,
-    VirtualTableData, header_from_slice, no_edit, view_virtual_table,
+    CellIndex, CellPainter, CellRender, Decoration, GridModel, GridScroll, HeaderAxis,
+    RowHeaderAxis, TableStyle, VirtualTableData, header_from_slice, no_edit, view_virtual_table,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -377,10 +377,13 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // section axis, answering the same two roles as the first through
             // the same type, so the grid cannot end up with a decorated column
             // header and a mute row header.
-            rows: Some(HeaderAxis {
+            // R1562 — `setCornerButtonEnabled(false)`: this grid is
+            // display-only (its External is a stub), so a select-all control
+            // would have nothing to select. A written decision, not an absence.
+            rows: Some(RowHeaderAxis::inert(HeaderAxis {
                 label: row_header_label,
                 decoration: |row: usize| row_header_decoration(row, &theme),
-            }),
+            })),
             // R1535 — Qt `data(index, Qt::DecorationRole)`: one column answers
             // with a mark whose colour varies by row, which is the axis a
             // per-column delegate cannot express.

@@ -62,8 +62,8 @@ use pinion_core::widgets::virtual_select::{VirtualSelectExternal, read_selected}
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::table::{
-    CellIndex, GridModel, GridScroll, HeaderAxis, TableStyle, VirtualTableData, header_from_slice,
-    materialize_cells, no_decoration, no_edit, view_virtual_table,
+    CellIndex, GridModel, GridScroll, HeaderAxis, RowHeaderAxis, TableStyle, VirtualTableData,
+    header_from_slice, materialize_cells, no_decoration, no_edit, view_virtual_table,
 };
 use std::rc::Rc;
 
@@ -241,7 +241,12 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             // a re-sort carries each number with its row instead of renumbering
             // the viewport — the same answer `QSortFilterProxyModel` produces
             // by mapping the section back to the source model before asking.
-            rows: Some(HeaderAxis::row_numbers()),
+            // R1562 — the band's sections are pressable (a press selects the
+            // row, through the same transition a cell press drives), but the
+            // corner is `setCornerButtonEnabled(false)`: this grid's
+            // coordinator is SINGLE-select, where select-all is the no-op
+            // `QAbstractItemView::selectAll` is under `SingleSelection`.
+            rows: Some(RowHeaderAxis::inert(HeaderAxis::row_numbers())),
             decoration: no_decoration,
             edit: no_edit,
         },

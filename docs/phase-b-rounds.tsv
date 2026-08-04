@@ -83,3 +83,4 @@
 1559	text	an item is numbered by its place among its siblings, QTextList as a derivation with CSS counter-style fallback, published and announced
 1560	text	a cell is addressed by its place in the flow, Qt QTextTable as a derived slot allocation on a real CSS Grid, clamped to the free run and announced
 1561	modelview	a selection is a set of runs, not a set of rows, QItemSelectionModel as canonical merged ranges with an O(runs) count on the wire
+1562	modelview	a section selects the line through it, Qt QHeaderView section press + QTableCornerButton as one derivation with the cell press, tri-state and named

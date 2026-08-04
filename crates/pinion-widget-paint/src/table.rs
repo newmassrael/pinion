@@ -47,6 +47,7 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range, content_height};
+use pinion_core::widgets::virtual_select::SelectionExtent;
 
 use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
 
@@ -231,7 +232,7 @@ pub struct TableData<'a> {
     /// the role as absent from the framework. `None` (the field's `Default`) is
     /// every pre-R1547 caller, painting byte-identically.
     ///
-    /// Not folded into an [`EagerHeaderAxis`] beside [`Self::row_headers`]:
+    /// Not folded into an [`EagerRowHeader`] beside [`Self::row_headers`]:
     /// this surface states its column labels as [`Self::headers`], a slice, so
     /// its column axis is already only half an accessor pair. Unifying the two
     /// is the open Model/View item R1530 named, and doing it here would be a
@@ -249,17 +250,19 @@ pub struct TableData<'a> {
     ///
     /// The section index is the **data** row (`row_ids[v]`), not the visual
     /// position, exactly as the virtualized grid asks with its source row.
-    pub row_headers: Option<EagerHeaderAxis<'a>>,
+    pub row_headers: Option<EagerRowHeader<'a>>,
 }
 
-/// R1548 §5.27 — a [`HeaderAxis`] as the **eager** surface can hold one.
+/// R1548 / R1562 §5.27 — a [`RowHeaderAxis`] as the **eager** surface can hold
+/// one.
 ///
 /// [`TableData`] is a `Copy` bundle of borrows, so it cannot carry the generic
 /// closures [`GridModel`] does; the accessors arrive as `&dyn Fn` instead. Same
-/// type, same role set, same painter — which is why one alias is enough here
-/// rather than a second axis type that would have to be kept in agreement.
-pub type EagerHeaderAxis<'a> =
-    HeaderAxis<&'a dyn Fn(usize) -> String, &'a dyn Fn(usize) -> Option<Decoration>>;
+/// type, same role set, same corner, same painter — which is why one alias is
+/// enough here rather than a second band type that would have to be kept in
+/// agreement.
+pub type EagerRowHeader<'a> =
+    RowHeaderAxis<&'a dyn Fn(usize) -> String, &'a dyn Fn(usize) -> Option<Decoration>>;
 
 impl core::fmt::Debug for TableData<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -984,31 +987,66 @@ fn header_row(
 fn row_header_cell(
     tag: &str,
     row: usize,
-    section: &SectionRoles,
+    section: &RowSection<'_>,
     width: u32,
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
+    let RowSection {
+        roles,
+        selected,
+        click_tag,
+    } = *section;
     let fg = theme.resolve(ColorRole::OnSurface);
     let (children, aria_name) = section_content(
-        section,
+        roles,
         &GridTag::row_header_decoration(tag, row),
         section_label_style(style, fg),
         style,
     );
-    let mut cell = ContainerNode::new(children)
+    // R1562 — the pressable region, by [`header_cell`]'s outer/inner split: the
+    // outer keeps the presentational `"<tag>_rh<row>"` tag the a11y walker
+    // resolves the `rowheader`'s bounds from, the inner carries the composite
+    // `"<click_tag>#r<row>"` so the press routes through the R51.42 funnel.
+    // Unconditional — a band is pressable wherever a coordinator owns the tag,
+    // and where none does the send reaches nothing, which is the same nothing
+    // Qt's `sectionsClickable(false)` produces without a second flag to keep in
+    // agreement with the first.
+    let inner = Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(format!(
+                "{click_tag}#{}",
+                GridSendKey::RowHeader { row }.encode()
+            ))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Start)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(SECTION_GAP_PX)
+                    .with_size(Size::px(width, style.row_height))
+                    .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
+            ),
+    );
+    // R1562 — the section's fill is DERIVED from whether its row is selected,
+    // through the same `row_fill` the body strip beside it uses, so the band
+    // cannot say one thing while the row says another. Qt makes this a view
+    // flag, `QHeaderView::highlightSections`, which **defaults to false** — so a
+    // Qt row header is silent about the selection unless someone turns it on,
+    // and once on it is a second statement that can be turned back off while the
+    // rows stay washed.
+    let fill = if selected {
+        row_fill(theme, RadioState::Idle, true, row)
+    } else {
+        theme.resolve(ColorRole::SurfaceContainerHigh)
+    };
+    let mut cell = ContainerNode::new(vec![inner])
         .with_tag(GridTag::row_header(tag, row))
-        .with_style(BoxStyle::filled(
-            theme.resolve(ColorRole::SurfaceContainerHigh),
-        ))
+        .with_style(BoxStyle::filled(fill))
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
-                .with_justify(JustifyContent::Start)
-                .with_align_items(AlignItems::Center)
-                .with_gap(SECTION_GAP_PX)
-                .with_size(Size::px(width, style.row_height))
-                .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
+                .with_size(Size::px(width, style.row_height)),
         );
     // §5.40 — a mark that carries meaning joins the `rowheader`'s accessible
     // name, by the same rule `header_cell` applies on the other axis. Qt's
@@ -1052,26 +1090,59 @@ fn row_header_pane(
         width,
         total_h,
         sections,
+        corner,
+        click_tag,
     } = band;
     let blank = SectionRoles::BLANK;
     let slots = uniform_slots(window, width, style.row_height, |view_pos| {
         let i = view_pos.saturating_sub(window.first);
         // Unreachable while the caller asks over the same window it paints; a
-        // blank section at the view position's own index is the contract's
-        // answer for "no label", so a mismatch degrades to an empty header
-        // rather than panicking a paint pass.
-        let (row, section) = sections
+        // blank, unselected section at the view position's own index is the
+        // contract's answer for "no label", so a mismatch degrades to an empty
+        // header rather than panicking a paint pass.
+        let (row, roles, selected) = sections
             .get(i)
-            .map_or((view_pos, &blank), |(row, s)| (*row, s));
-        row_header_cell(tag, row, section, width, theme, style)
+            .map_or((view_pos, &blank, false), |(row, s, sel)| (*row, s, *sel));
+        row_header_cell(
+            tag,
+            row,
+            &RowSection {
+                roles,
+                selected,
+                click_tag,
+            },
+            width,
+            theme,
+            style,
+        )
     });
     row_header_column(
         tag,
-        width,
+        BandCorner {
+            width,
+            corner,
+            click_tag,
+        },
         assemble_windowed_flex(scroll, width, total_h, slots, true),
         theme,
         style,
     )
+}
+
+/// R1562 §5.27 — one row-header section's inputs beyond its index and the
+/// palette: what it answers, whether its row is selected, and where its press
+/// goes. Bundled to keep [`row_header_cell`] under the argument budget (the
+/// [`ColCell`] precedent on the other axis).
+#[derive(Clone, Copy)]
+struct RowSection<'a> {
+    /// The `Qt::DisplayRole` / `Qt::DecorationRole` answers for this section.
+    roles: &'a SectionRoles,
+    /// Whether this section's **row** is selected — the same predicate the
+    /// body strip beside it is filled from.
+    selected: bool,
+    /// The anchor the section routes its pointer arc to
+    /// (`"<click_tag>#r<row>"`).
+    click_tag: &'a str,
 }
 
 /// R1548 §5.27 — the vertical band's shape: the corner cell above `body`, the
@@ -1084,13 +1155,22 @@ fn row_header_pane(
 /// [`header_row`] serving both surfaces.
 fn row_header_column(
     tag: &str,
-    width: u32,
+    band: BandCorner<'_>,
     body: Scene,
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
+    let BandCorner {
+        width,
+        corner,
+        click_tag,
+    } = band;
     Scene::Container(
-        ContainerNode::new(vec![header_corner(tag, width, theme, style), body]).with_layout(
+        ContainerNode::new(vec![
+            header_corner(tag, click_tag, width, corner, theme, style),
+            body,
+        ])
+        .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Column)
                 .with_size(Size::width_px(width)),
@@ -1098,25 +1178,91 @@ fn row_header_column(
     )
 }
 
-/// R1548 §5.27 — the cell where the two section axes meet (Qt's
-/// `QTableCornerButton`): a blank header-styled block, `header_height` tall so
-/// the two bands' first rows line up.
+/// R1562 §5.27 — what [`row_header_column`] needs to build the corner, bundled
+/// so both surfaces pass one value and neither can supply the width without the
+/// action (the [`ColumnLayout`] / [`RowHeaderBand`] precedent).
+#[derive(Clone, Copy)]
+struct BandCorner<'a> {
+    /// The band's width in logical pixels — [`TableStyle::row_header_width`].
+    width: u32,
+    /// What a press on the corner does.
+    corner: CornerAction,
+    /// The anchor the corner routes its pointer arc to (`"<click_tag>#c"`) —
+    /// the grid's selection coordinator, which is the paint root for every
+    /// current caller.
+    click_tag: &'a str,
+}
+
+/// R1548 / R1562 §5.27 §5.40 — the cell where the two section axes meet (Qt's
+/// `QTableCornerButton`): `header_height` tall so the two bands' first rows
+/// line up.
 ///
-/// Tagged but carrying no a11y node. It names neither axis, so there is nothing
-/// for it to announce; Qt exposes it as an unlabelled "select all" button, and
-/// without that behaviour such a node would be noise in the tree rather than
-/// information. Tagging it is still worth doing — a painted thing with no tag
-/// cannot be asked about, and the corner's extent is what tells a client where
-/// the two bands begin.
-fn header_corner(tag: &str, width: u32, theme: &Theme, style: &TableStyle) -> Scene {
+/// [`CornerAction::Inert`] paints the pre-R1562 blank block — tagged, because a
+/// painted thing with no tag cannot be asked about and the corner's extent is
+/// what tells a client where the two bands begin, but carrying nothing to press
+/// and no a11y node, since a control that does nothing is noise in an AT tree
+/// rather than information.
+///
+/// [`CornerAction::SelectAll`] paints the tri-state select-all mark inside an
+/// inner container tagged `"<click_tag>#c"`, so the press routes through the
+/// R51.42 `'#'`-split to the selection coordinator. The outer / inner split is
+/// [`header_cell`]'s exactly: the outer tag is the presentational one the a11y
+/// walker resolves the `columnheader`'s bounds from, the inner one is the
+/// control — which is also the HTML shape a select-all has (`<th>` around an
+/// `<input type=checkbox>`), so the AT tree comes out right by construction.
+fn header_corner(
+    tag: &str,
+    click_tag: &str,
+    width: u32,
+    corner: CornerAction,
+    theme: &Theme,
+    style: &TableStyle,
+) -> Scene {
+    let children = match corner {
+        CornerAction::Inert => Vec::new(),
+        CornerAction::SelectAll(extent) => vec![Scene::Container(
+            ContainerNode::new(corner_mark(extent, theme, style))
+                .with_tag(format!("{click_tag}#{}", GridSendKey::Corner.encode()))
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_justify(JustifyContent::Center)
+                        .with_align_items(AlignItems::Center)
+                        .with_size(Size::px(width, style.header_height)),
+                ),
+        )],
+    };
     Scene::Container(
-        ContainerNode::new(Vec::new())
+        ContainerNode::new(children)
             .with_tag(GridTag::header_corner(tag))
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHigh),
             ))
             .with_layout(LayoutStyle::new().with_size(Size::px(width, style.header_height))),
     )
+}
+
+/// R1562 §5.27 — the corner control's mark for each extent.
+///
+/// Nothing / `\u{2212}` / `\u{2713}` — the three marks an HTML checkbox draws
+/// for unchecked / `indeterminate` / checked, and the two glyphs this framework
+/// already paints (the R668 checkbox's check, the window-control minus), so no
+/// font acquires a new obligation. An empty box is the *absence* of a mark
+/// rather than a third glyph, exactly as [`crate::checkbox`] paints it.
+fn corner_mark(extent: SelectionExtent, theme: &Theme, style: &TableStyle) -> Vec<Scene> {
+    let glyph = match extent {
+        SelectionExtent::Empty => return Vec::new(),
+        SelectionExtent::Partial => crate::glyph::SELECT_ALL_PARTIAL,
+        SelectionExtent::All => crate::glyph::SELECT_ALL_COMPLETE,
+    };
+    vec![Scene::Text(
+        TextNode::styled(
+            glyph.to_string(),
+            Rect::default(),
+            section_label_style(style, theme.resolve(ColorRole::Accent)),
+        )
+        .with_role(TextRole::Presentational),
+    )]
 }
 
 /// R1548 §5.27 — the inputs [`row_header_pane`] needs beyond the window and the
@@ -1130,12 +1276,17 @@ struct RowHeaderBand<'a> {
     /// against, so the two scroll in step.
     total_h: u32,
     /// The windowed rows, in view order: each visual position's **data** row
-    /// (the R778 sort permutation) paired with that row's role answers.
+    /// (the R778 sort permutation) paired with that row's role answers and
+    /// whether it is selected (R1562).
     ///
     /// One list rather than a row-resolver beside a list of answers, because
     /// two statements of "which row is at this visual position" can only ever
     /// disagree — the shape R1524 removed from the cell axis.
-    sections: &'a [(usize, SectionRoles)],
+    sections: &'a [(usize, SectionRoles, bool)],
+    /// R1562 — what a press on the corner does.
+    corner: CornerAction,
+    /// R1562 — the anchor every pressable part of the band routes to.
+    click_tag: &'a str,
 }
 
 /// One data row: a horizontal strip tagged `"<tag>_row<row>"`, filled
@@ -1327,19 +1478,23 @@ pub fn view_table(
     for (visual, cells_text) in data.rows.iter().enumerate() {
         // Data-row id for this visual position (identity fallback).
         let data_id = data.row_ids.get(visual).copied().unwrap_or(visual);
-        if let Some(mut axis) = data.row_headers {
-            let section = SectionRoles::ask(&mut axis, data_id);
+        let state = row_states.get(data_id).copied().unwrap_or(RadioState::Idle);
+        let selected = row_selected.get(data_id).copied().unwrap_or(false);
+        if let Some(mut band) = data.row_headers {
+            let roles = SectionRoles::ask(&mut band.sections, data_id);
             row_sections.push(row_header_cell(
                 tag,
                 data_id,
-                &section,
+                &RowSection {
+                    roles: &roles,
+                    selected,
+                    click_tag: tag,
+                },
                 style.row_header_width,
                 theme,
                 style,
             ));
         }
-        let state = row_states.get(data_id).copied().unwrap_or(RadioState::Idle);
-        let selected = row_selected.get(data_id).copied().unwrap_or(false);
         // Zebra parity is **visual** so the stripe pattern stays stable
         // across re-sorts; selection / state are **data-indexed**.
         let fill = row_fill(theme, state, selected, visual);
@@ -1395,7 +1550,15 @@ pub fn view_table(
             children.push(cell_selection_overlay(tag, bounds, &widths, theme, style));
         }
     }
-    eager_frame(tag, children, row_sections, theme, style)
+    eager_frame(
+        tag,
+        children,
+        row_sections,
+        data.row_headers
+            .map_or(CornerAction::Inert, |band| band.corner),
+        theme,
+        style,
+    )
 }
 
 /// R707 / R1548 §5.27 — the eager table's outer block: its `[header, rows…]`
@@ -1413,6 +1576,7 @@ fn eager_frame(
     tag: &str,
     children: Vec<Scene>,
     row_sections: Vec<Scene>,
+    corner: CornerAction,
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
@@ -1428,7 +1592,11 @@ fn eager_frame(
     } else {
         let band = row_header_column(
             tag,
-            style.row_header_width,
+            BandCorner {
+                width: style.row_header_width,
+                corner,
+                click_tag: tag,
+            },
             column(row_sections),
             theme,
             style,
@@ -2465,6 +2633,79 @@ pub struct HeaderAxis<L, D> {
     pub decoration: D,
 }
 
+/// R1562 §5.27 §5.40 — what a press on the **corner** — the cell where the two
+/// section axes meet — does. Qt's `QTableView::setCornerButtonEnabled`.
+///
+/// Qt's is a `bool` over a private `QTableCornerButton`, and its documented
+/// behaviour is one-way: pressing it "selects all cells in the view", with no
+/// state to show and no second press that takes the selection back. Here the
+/// two arms are the two decisions, and the acting one **carries what it will
+/// show** — the tri-state of an HTML header checkbox, which is the shape every
+/// modern table's select-all has and which Qt's button cannot express because it
+/// has no value at all.
+/// R1562 — re-exported where the corner names it, by the rule
+/// [`CellIndex`] is re-exported here: this is where every consumer of the band
+/// declaration meets the type, and the grid's own contract is stated in terms
+/// of it. Defined in `pinion-core` beside
+/// [`VirtualSelect`](pinion_core::widgets::virtual_select::VirtualSelect),
+/// because the extent is a fact about a **selection model** that a control
+/// happens to show.
+pub use pinion_core::widgets::virtual_select::SelectionExtent as CornerExtent;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CornerAction {
+    /// `setCornerButtonEnabled(false)`: a blank block that closes the two
+    /// bands' corner and does nothing. The pre-R1562 corner, and a **written**
+    /// decision in the sense [`no_row_header`] is one.
+    Inert,
+    /// `setCornerButtonEnabled(true)`, with the extent the control shows:
+    /// pressing it selects every row, or clears when every row is already
+    /// selected ([`VirtualSelect::toggle_all`](pinion_core::widgets::virtual_select::VirtualSelect::toggle_all)).
+    SelectAll(SelectionExtent),
+}
+
+/// R1562 §5.27 — the **vertical header band**: its section axis, plus the
+/// corner where that band meets the horizontal one.
+///
+/// A type rather than a third field on [`HeaderAxis`], because a corner is not
+/// a role: the horizontal axis has no corner of its own, and a field that means
+/// nothing on one of the two axes is exactly the drift [`HeaderAxis`] exists to
+/// prevent one level up. It is also where Qt puts it — `cornerButtonEnabled` is
+/// a `QTableView` property that can only matter when the vertical header is
+/// there to make a corner.
+///
+/// Naming the band as a whole is what lets the corner reach both paint surfaces
+/// (the virtualized [`view_virtual_table`] and the eager [`view_table`]) from
+/// the one place they already share, `row_header_column`.
+#[derive(Clone, Copy)]
+pub struct RowHeaderAxis<L, D> {
+    /// The roles each **section** of the band answers (Qt `headerData(section,
+    /// Qt::Vertical, role)`).
+    pub sections: HeaderAxis<L, D>,
+    /// What a press on the corner does.
+    pub corner: CornerAction,
+}
+
+impl<L, D> RowHeaderAxis<L, D> {
+    /// A band whose corner does nothing — Qt's `setCornerButtonEnabled(false)`,
+    /// and every band painted before R1562.
+    pub fn inert(sections: HeaderAxis<L, D>) -> Self {
+        Self {
+            sections,
+            corner: CornerAction::Inert,
+        }
+    }
+
+    /// A band whose corner is the tri-state select-all control, showing
+    /// `extent`.
+    pub fn select_all(sections: HeaderAxis<L, D>, extent: SelectionExtent) -> Self {
+        Self {
+            sections,
+            corner: CornerAction::SelectAll(extent),
+        }
+    }
+}
+
 /// The type [`HeaderAxis::labelled`] and [`no_row_header`] name for "this
 /// axis answers no `Qt::DecorationRole`" — a plain `fn` pointer so the
 /// constructors have a nameable return type and monomorphize to a constant
@@ -2521,7 +2762,7 @@ impl<L: FnMut(usize) -> String> HeaderAxis<L, NoSectionDecoration> {
 /// is reported by nothing. Here it is a written decision, greppable, and the
 /// view asks the axis **zero** times a frame.
 #[must_use]
-pub fn no_row_header() -> Option<HeaderAxis<NoSectionLabel, NoSectionDecoration>> {
+pub fn no_row_header() -> Option<RowHeaderAxis<NoSectionLabel, NoSectionDecoration>> {
     None
 }
 
@@ -2608,7 +2849,7 @@ pub struct GridModel<C, CL, CD, RL, RD, D, E> {
     /// separately-stated "paint a band" flag would make a band of blank sections
     /// over an unanswered axis representable — which is the exact Qt failure
     /// this type exists to remove. Painted if and only if answered.
-    pub rows: Option<HeaderAxis<RL, RD>>,
+    pub rows: Option<RowHeaderAxis<RL, RD>>,
     /// R1535 — invoked once per **painted cell** with that cell's
     /// [`CellIndex`], returning the mark drawn beside its text (Qt
     /// `data(index, Qt::DecorationRole)`), or `None` for an undecorated cell.
@@ -2889,12 +3130,19 @@ pub fn view_virtual_table(
             // Asked over the same window the band paints, with each visual
             // position resolved to its DATA row, so a mark stays with its row
             // across a sort — the discipline `ask_sections` enforces on the
-            // column axis and `data_row` follows on this one.
+            // column axis and `data_row` follows on this one. R1562 asks the
+            // selection predicate here too, over the same rows, so the band's
+            // fill and the strip's fill are one answer read twice rather than
+            // two derivations that must agree.
             let sections = window
                 .indices()
                 .map(|view_pos| {
                     let row = render.source_of(view_pos);
-                    (row, SectionRoles::ask(rows, row))
+                    (
+                        row,
+                        SectionRoles::ask(&mut rows.sections, row),
+                        is_selected(row),
+                    )
                 })
                 .collect::<Vec<_>>();
             let pane = row_header_pane(
@@ -2905,6 +3153,8 @@ pub fn view_virtual_table(
                     width,
                     total_h,
                     sections: &sections,
+                    corner: rows.corner,
+                    click_tag: tag,
                 },
                 theme,
                 style,
@@ -4970,12 +5220,146 @@ mod tests {
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
-                    rows: Some(HeaderAxis { label, decoration }),
+                    rows: Some(RowHeaderAxis::inert(HeaderAxis { label, decoration })),
                     decoration: no_decoration,
                     edit: no_edit,
                 },
             )
         })
+    }
+
+    /// R1562 — the band with a stated corner and a stated selection, the two
+    /// inputs the sections and the corner are derived from.
+    fn run_vtable_band(corner: CornerAction, selected: &dyn Fn(usize) -> bool) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, VT_MEASURED_H);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
+        let h_state = vt_hscroll(0);
+        let theme = light();
+        let style = TableStyle::m3();
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll {
+                    body: &state,
+                    horizontal: &h_state,
+                },
+                VirtualTableData {
+                    column_count: VT_HEADERS.len(),
+                    item_count: VT_N,
+                    overscan: 2,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: None,
+                    resizable: false,
+                    frozen_cols: 0,
+                    row_style: None,
+                    delegate: None,
+                    editing: None,
+                },
+                &theme,
+                &style,
+                selected,
+                GridModel {
+                    cell: vt_cell,
+                    columns: HeaderAxis::labelled(vt_header),
+                    rows: Some(RowHeaderAxis {
+                        sections: HeaderAxis::row_numbers(),
+                        corner,
+                    }),
+                    decoration: no_decoration,
+                    edit: no_edit,
+                },
+            )
+        })
+    }
+
+    /// R1562 — every windowed section carries the press address that routes to
+    /// the selection coordinator, and the address encodes the **data** row.
+    #[test]
+    fn r1562_every_section_carries_its_press_address() {
+        let scene = run_vtable_band(CornerAction::Inert, &|_| false);
+        for row in vt_row_window().indices() {
+            let key = format!("vtbl#{}", GridSendKey::RowHeader { row }.encode());
+            assert!(
+                find_tagged(&scene, &key).is_some(),
+                "section {row} is pressable at {key}",
+            );
+        }
+        // Windowed: a row that is not painted has no address, so the band
+        // cannot be pressed into a row it never drew.
+        let key = format!("vtbl#{}", GridSendKey::RowHeader { row: VT_N - 1 }.encode());
+        assert!(find_tagged(&scene, &key).is_none());
+    }
+
+    /// R1562 — the section's fill is DERIVED from the row predicate: the same
+    /// answer the strip beside it is filled from. Qt makes this a view flag
+    /// (`QHeaderView::highlightSections`) that defaults to **false** and can
+    /// therefore disagree with the rows.
+    #[test]
+    fn r1562_a_selected_rows_section_is_washed_with_it() {
+        let window = vt_row_window();
+        let chosen = window.first + 1;
+        let scene = run_vtable_band(CornerAction::Inert, &|row| row == chosen);
+        let fill = |row: usize| {
+            find_tagged(&scene, &GridTag::row_header("vtbl", row))
+                .expect("the section is painted")
+                .style
+                .fill
+        };
+        let other = window.first;
+        assert_ne!(
+            fill(chosen),
+            fill(other),
+            "the selected row's section is not filled like an unselected one",
+        );
+        assert_eq!(
+            fill(chosen),
+            row_fill(&light(), RadioState::Idle, true, chosen),
+            "and it is filled by the SAME derivation the row strip uses",
+        );
+    }
+
+    /// R1562 — an `Inert` corner is the pre-R1562 blank block: no mark, and
+    /// nothing to press. The negative control for the tri-state below.
+    #[test]
+    fn r1562_an_inert_corner_has_nothing_to_press() {
+        let scene = run_vtable_band(CornerAction::Inert, &|_| false);
+        assert!(
+            find_tagged(&scene, &GridTag::header_corner("vtbl")).is_some(),
+            "the corner still closes the two bands",
+        );
+        assert!(
+            find_tagged(&scene, "vtbl#c").is_none(),
+            "but `setCornerButtonEnabled(false)` gives it no address",
+        );
+    }
+
+    /// R1562 — the corner's three marks. Empty draws none, which is how an
+    /// unchecked checkbox is painted; the other two are distinct glyphs, so
+    /// "partial" and "all" cannot be read off the same pixels.
+    #[test]
+    fn r1562_the_corner_paints_the_extent_it_was_given() {
+        let mark = |extent| {
+            let scene = run_vtable_band(CornerAction::SelectAll(extent), &|_| false);
+            let node = find_tagged(&scene, "vtbl#c").expect("the corner is pressable");
+            let mut out = Vec::new();
+            for child in &node.children {
+                collect_text(child, &mut out);
+            }
+            out
+        };
+        assert!(mark(CornerExtent::Empty).is_empty(), "no mark is unchecked");
+        assert_eq!(
+            mark(CornerExtent::Partial),
+            vec![crate::glyph::SELECT_ALL_PARTIAL]
+        );
+        assert_eq!(
+            mark(CornerExtent::All),
+            vec![crate::glyph::SELECT_ALL_COMPLETE]
+        );
     }
 
     /// The seam: the band exists, one section per **painted** row, and the
