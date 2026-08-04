@@ -3769,6 +3769,92 @@ mod tests {
         assert_eq!(s.corner_radius, 12);
     }
 
+    /// R1562 — the EAGER surface's band, which had no paint test in this crate
+    /// at all: its sections carry the same press address the virtualized band's
+    /// do, and its corner is whatever `row_headers` declared.
+    ///
+    /// Written because the round made `CornerAction::SelectAll` representable on
+    /// a surface no shipped consumer declares it on — a state with no coverage
+    /// is a state that drifts, and `eager_frame` reads the corner off
+    /// `TableData::row_headers` through its own `map_or`.
+    #[test]
+    fn r1562_the_eager_band_presses_and_carries_its_corner() {
+        let (headers, rows) = data();
+        let label = |row: usize| format!("R{row}");
+        let deco: fn(usize) -> Option<Decoration> = |_| None;
+        let eager = |corner| {
+            let label = &label as &dyn Fn(usize) -> String;
+            let deco = &deco as &dyn Fn(usize) -> Option<Decoration>;
+            Owner::new().run(|| {
+                view_table(
+                    "table",
+                    TableData {
+                        headers: &headers,
+                        rows: &rows,
+                        row_ids: &[],
+                        decoration: None,
+                        header_decoration: None,
+                        row_headers: Some(RowHeaderAxis {
+                            sections: HeaderAxis {
+                                label,
+                                decoration: deco,
+                            },
+                            corner,
+                        }),
+                    },
+                    TableSelection {
+                        rows: &[false, true, false],
+                        cells: None,
+                    },
+                    &all_idle(),
+                    None,
+                    &light(),
+                    &TableStyle::m3(),
+                )
+            })
+        };
+        let inert = eager(CornerAction::Inert);
+        for row in 0..rows.len() {
+            let key = format!("table#{}", GridSendKey::RowHeader { row }.encode());
+            assert!(
+                inert.contains_tag(&key),
+                "eager section {row} is pressable at {key}",
+            );
+        }
+        assert!(
+            !inert.contains_tag("table#c"),
+            "an inert corner has no address on this surface either",
+        );
+        // The selected row's section is washed here too — one derivation, both
+        // surfaces, so the eager band cannot be the one that stays silent.
+        let fill = |scene: &Scene, row: usize| {
+            find_tagged(scene, &GridTag::row_header("table", row))
+                .expect("the section is painted")
+                .style
+                .fill
+        };
+        assert_ne!(
+            fill(&inert, 1),
+            fill(&inert, 0),
+            "row 1 is the selected one"
+        );
+        let live = eager(CornerAction::SelectAll(CornerExtent::Partial));
+        assert!(
+            live.contains_tag("table#c"),
+            "a declared corner is pressable on the eager surface",
+        );
+        let node = find_tagged(&live, "table#c").expect("the corner");
+        let mut marks = Vec::new();
+        for child in &node.children {
+            collect_text(child, &mut marks);
+        }
+        assert_eq!(
+            marks,
+            vec![crate::glyph::SELECT_ALL_PARTIAL],
+            "and it paints the extent it was given, by the same painter",
+        );
+    }
+
     #[test]
     fn r707_scene_carries_root_header_and_cell_tags() {
         let (headers, rows) = data();
