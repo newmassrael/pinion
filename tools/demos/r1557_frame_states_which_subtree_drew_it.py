@@ -105,7 +105,15 @@ ROW_KEYS = (
     "children",
     "children_omitted",
 )
-OUTCOME_KEYS = ("root", "nodes", "nodes_total", "depth", "heaviest_by", "heaviest")
+OUTCOME_KEYS = (
+    "root",
+    "path",  # R1558 — the scope this reply was rooted at, or null
+    "nodes",
+    "nodes_total",
+    "depth",
+    "heaviest_by",
+    "heaviest",
+)
 RANK_KEYS = ("path", "kind", "tag", "own")
 
 

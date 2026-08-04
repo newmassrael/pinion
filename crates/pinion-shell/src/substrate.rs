@@ -2302,19 +2302,52 @@ impl<V: WidgetView> ShellCore<V> {
     /// repeating, and a scratch image cache would re-resolve every source — with
     /// a `memory://` producer image reachable only through the owner that
     /// registered it. Only the fragment cache is scratch, and only for reason 2.
+    ///
+    /// # Scoping (R1558)
+    ///
+    /// `scope` names the subtree to profile, `None` the whole window. It scopes
+    /// the **measurement**: the re-encode above starts at the addressed node,
+    /// so nothing outside it is encoded, walked or attributed and the cost of
+    /// asking falls with the subtree. That is the axis `depth` cannot reach —
+    /// `depth` shortens a reply after a full window has been re-encoded.
+    ///
+    /// The address is resolved through
+    /// [`resolve::lookup_addressed_chain`](pinion_rpc::resolve::lookup_addressed_chain),
+    /// the one resolver `scene/query` and `scene/invoke` use, so a scope is
+    /// exactly the vocabulary a profile row already publishes. The chain it
+    /// answers with — not the chain that was asked for — is what the profile
+    /// records, because the resolver accepts a scene root named by its own tag
+    /// and such a root sits at the empty chain.
+    ///
+    /// An address that reaches no node is an `Err`, resolved HERE and carried,
+    /// rather than a `None` the dispatcher would report as "this window has no
+    /// profile". This is the only place the painted scene and the address are
+    /// both in hand, so it is the only place that can tell the two apart.
     pub fn draw_profile_for_window(
         &mut self,
         window_id: &str,
         image_cache: &mut pinion_runtime::image_cache::ImageCache,
-    ) -> Option<pinion_runtime::DrawProfile> {
+        scope: Option<&pinion_rpc::draw_profile::ProfileScope>,
+    ) -> Option<Result<pinion_runtime::DrawProfile, pinion_rpc::draw_profile::DrawProfileError>>
+    {
         // Disjoint fields: the scene comes from `core`, the shaper cache and the
         // engine from this struct's own fields.
         let scene = self.core.last_paint_scene_for_window(window_id)?;
+        let segments = scope.map_or(&[][..], |s| &s.segments[..]);
+        let Some((target, chain)) = pinion_rpc::resolve::lookup_addressed_chain(scene, segments)
+        else {
+            return Some(Err(
+                pinion_rpc::draw_profile::DrawProfileError::UnknownPath {
+                    requested: scope.map(|s| s.requested.clone()).unwrap_or_default(),
+                },
+            ));
+        };
+        let chain = chain.to_vec();
         let mut fragments = pinion_runtime::paint_adapter::FragmentCache::new();
         let mut out = vello::Scene::new();
         let mut profiler = pinion_runtime::DrawProfiler::new();
         pinion_runtime::paint_adapter::to_vello_cached_profiled(
-            scene,
+            target,
             &|_b: &pinion_core::scene::BoxNode| None,
             &mut self.text_cache,
             image_cache,
@@ -2328,7 +2361,7 @@ impl<V: WidgetView> ShellCore<V> {
             true,
             &mut profiler,
         );
-        Some(profiler.finish())
+        Some(Ok(profiler.finish(chain)))
     }
 
     /// R1072 §5.37 / R1072.1 — TEST-ONLY injection of a specific self-hosted text
@@ -5676,7 +5709,9 @@ impl<V: WidgetView> ShellCore<V> {
         screenshot: Option<pinion_rpc::Screenshot>,
         window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
         origin: Option<pinion_rpc::FrameOrigin<'_>>,
-        draw_profile: Option<pinion_runtime::DrawProfile>,
+        draw_profile: Option<
+            Result<pinion_runtime::DrawProfile, pinion_rpc::draw_profile::DrawProfileError>,
+        >,
     ) -> Option<String> {
         let scope: String = request
             .window_scope()
@@ -5764,7 +5799,9 @@ impl<V: WidgetView> ShellCore<V> {
         screenshot: Option<pinion_rpc::Screenshot>,
         window_arenas: Option<Vec<pinion_core::memory_census::ArenaFootprint>>,
         origin: Option<pinion_rpc::FrameOrigin<'_>>,
-        draw_profile: Option<pinion_runtime::DrawProfile>,
+        draw_profile: Option<
+            Result<pinion_runtime::DrawProfile, pinion_rpc::draw_profile::DrawProfileError>,
+        >,
     ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
         // detect `focus/set` (or any other focus-mutating method)

@@ -4728,6 +4728,80 @@ mod tests {
         Scene::Container(root)
     }
 
+    /// (R1558) A root holding a leaf and a nested panel, the panel itself
+    /// holding a leaf and a second container — the shallowest scene in which
+    /// "profile that subtree alone" is a different walk from "profile
+    /// everything", at three levels so a scoped profile has descendants of its
+    /// own to get wrong.
+    ///
+    /// Every leaf carries text so the comparison covers the term a node census
+    /// cannot reach, and the containers are styled so their `own` is non-zero
+    /// (an all-zero subtree compares equal to any other all-zero subtree).
+    fn nested_profile_scene() -> Scene {
+        let mut inner = ContainerNode::new(vec![
+            text_scene("inner row"),
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 90, 30, 20),
+                Color::rgb(0x80, 0x10, 0x10),
+            )),
+        ])
+        .with_style(BoxStyle::filled(Color::rgb(0xcc, 0xcc, 0xcc)));
+        inner.rect = Rect::new(0, 80, 400, 40);
+        inner.tag = Some("inner".into());
+
+        let mut panel = ContainerNode::new(vec![text_scene("panel row"), Scene::Container(inner)])
+            .with_style(BoxStyle::filled(Color::rgb(0xdd, 0xdd, 0xdd)));
+        panel.rect = Rect::new(0, 40, 400, 120);
+        panel.tag = Some("panel".into());
+
+        let mut root = ContainerNode::new(vec![text_scene("root row"), Scene::Container(panel)])
+            .with_style(BoxStyle::filled(Color::rgb(0xf0, 0xf0, 0xf0)));
+        root.rect = Rect::new(0, 0, 400, 200);
+        Scene::Container(root)
+    }
+
+    /// (R1558) The panel subtree of [`nested_profile_scene`], on its own.
+    fn nested_panel() -> Scene {
+        let Scene::Container(root) = nested_profile_scene() else {
+            unreachable!("the fixture's root is a Container")
+        };
+        root.children
+            .into_iter()
+            .nth(1)
+            .expect("the fixture's root has a second child")
+    }
+
+    /// (R1558) Assert two profile subtrees are the same attribution — every
+    /// node, every field, recursively.
+    ///
+    /// The root's own `segment` is exempt and only the root's: a segment says
+    /// where a node sits among its PARENT's children, so it is precisely what
+    /// must differ between a node profiled in place and the same node profiled
+    /// as a root of its own. Every descendant's segment is compared, because
+    /// a scoped profile whose interior addressing shifted would still satisfy
+    /// a comparison of the counts alone.
+    fn assert_same_attribution(alone: &DrawProfileNode, in_place: &DrawProfileNode, at: &str) {
+        assert_eq!(alone.kind, in_place.kind, "kind at {at}");
+        assert_eq!(alone.tag, in_place.tag, "tag at {at}");
+        assert_eq!(alone.total, in_place.total, "total at {at}");
+        assert_eq!(alone.own, in_place.own, "own at {at}");
+        assert_eq!(
+            alone.children.len(),
+            in_place.children.len(),
+            "child count at {at}"
+        );
+        for (i, (a, b)) in alone
+            .children
+            .iter()
+            .zip(in_place.children.iter())
+            .enumerate()
+        {
+            let at = format!("{at}/{i}");
+            assert_eq!(a.segment, b.segment, "segment at {at}");
+            assert_same_attribution(a, b, &at);
+        }
+    }
+
     /// Profile one paint of `scene` into a cold fragment cache — the shape
     /// `ShellCore::draw_profile_for_window` uses — and hand back the profile
     /// beside the census of the scene that was actually encoded.
@@ -4749,7 +4823,10 @@ mod tests {
             true,
             &mut profiler,
         );
-        let root = profiler.finish().root.expect("a painted scene has a root");
+        let root = profiler
+            .finish(Vec::new())
+            .root
+            .expect("a painted scene has a root");
         (root, draw_work_of(&out))
     }
 
@@ -4895,8 +4972,8 @@ mod tests {
             "premise: the second paint must be served by the cache \
              ({walked_cold} -> {walked_warm})",
         );
-        let cold_root = cold.finish().root.expect("root");
-        let warm_root = warm.finish().root.expect("root");
+        let cold_root = cold.finish(Vec::new()).root.expect("root");
+        let warm_root = warm.finish(Vec::new()).root.expect("root");
         assert_eq!(
             warm_root.total, cold_root.total,
             "a replayed root draws exactly what it drew when encoded",
@@ -4942,6 +5019,73 @@ mod tests {
         assert_eq!(root.children[0].segment, None);
         assert_eq!(root.children[0].own.layers, 0);
         assert!(root.children[0].total.paths > 0, "the content drew boxes");
+    }
+
+    #[test]
+    fn r1558_a_scoped_profile_equals_the_subtree_of_the_whole_one() {
+        // The property `scene/draw_profile`'s `path` scope rests on. Profiling
+        // a subtree ALONE has to produce exactly the tree a whole-scene profile
+        // holds for it — otherwise scoping is a different measurement wearing
+        // the same name, and an agent that drilled down would be comparing two
+        // numbers that were never comparable.
+        let (whole, _) = profile_once(&nested_profile_scene());
+        let in_place = &whole.children[1];
+        assert_eq!(
+            in_place.tag.as_deref(),
+            Some("panel"),
+            "premise: child 1 is the panel this test scopes to",
+        );
+        let (alone, _) = profile_once(&nested_panel());
+
+        // The one field that MUST differ, asserted rather than skipped: in
+        // place the panel is its parent's child, alone it is a root and
+        // consumes no path segment.
+        assert_eq!(in_place.segment.as_deref(), Some("panel"));
+        assert_eq!(alone.segment, None);
+        assert_same_attribution(&alone, in_place, "panel");
+
+        // …and the premise that makes the equality worth asserting: the panel
+        // is a real part of a strictly larger measurement, in every unit.
+        assert!(alone.node_count() >= 4, "{}", alone.node_count());
+        assert!(whole.node_count() > alone.node_count());
+        assert!(alone.total.glyphs > 0 && alone.total.paths > 0);
+        assert!(whole.total.glyphs > alone.total.glyphs);
+        assert_eq!(alone.own_sum(), alone.total, "and still a partition");
+    }
+
+    #[test]
+    fn r1558_a_subtrees_cost_does_not_depend_on_its_ancestors() {
+        // The reason the equality above holds is a property of the ENCODER,
+        // not a convention: an inherited transform moves coordinates and
+        // changes no count, and an ancestor's clip is an input to damage
+        // reporting rather than a cull. So the same subtree nested under a
+        // scrolled, offset, clipping ancestor draws exactly what it draws at
+        // the root — which is the case that would break first if either
+        // assumption were wrong.
+        use pinion_core::scene::ScrollNode;
+        let scrolled = Scene::Scroll(
+            ScrollNode::new(
+                Rect::new(5, 7, 200, 60),
+                Scene::Container(ContainerNode::new(vec![nested_panel()])),
+            )
+            .with_offset(0, 25),
+        );
+        let (outer, _) = profile_once(&scrolled);
+        // Scroll -> content Container (no segment) -> the panel.
+        let in_place = &outer.children[0].children[0];
+        assert_eq!(in_place.tag.as_deref(), Some("panel"));
+        assert!(
+            outer.own.layers > 0,
+            "premise: the ancestor really did push a clip layer",
+        );
+
+        let (alone, _) = profile_once(&nested_panel());
+        assert_same_attribution(&alone, in_place, "panel-under-scroll");
+        assert_eq!(
+            alone.total.layers, in_place.total.layers,
+            "the ancestor's clip layer is charged to the ancestor, not folded \
+             into the subtree it clips",
+        );
     }
 
     /// One tagless `Scene::Text` leaf, for the draw-census tests.

@@ -134,7 +134,7 @@ pub fn locate(scene: &Scene, x: u32, y: u32) -> Result<LocateOutcome, LocateErro
 pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
     let resolved = crate::path::resolve(raw_path)?;
     let _ = resolved.window; // multi-window dispatch lands later
-    let segments = parse_segments(resolved.scene_path);
+    let segments = crate::path::segments(resolved.scene_path);
     // R1484 §5.32 §2 #2 — the same addressing rule `scene/query` uses. A
     // client that reached a node by name must be able to ask this method
     // about that name; `Scene::lookup_path` returns a rect rather than a
@@ -142,17 +142,6 @@ pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
     lookup_addressed(scene, &segments)
         .map(Scene::rect)
         .ok_or(BboxError::UnknownPath)
-}
-
-/// Split a scene-path string into segments. `""`, `"/"`, and `"//"`
-/// all yield an empty segment list (root). Otherwise, splits on `/`
-/// and drops empty fragments.
-fn parse_segments(scene_path: &str) -> Vec<String> {
-    scene_path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 
 /// Resolve a region select against `scene`. Unlike [`locate`], a region

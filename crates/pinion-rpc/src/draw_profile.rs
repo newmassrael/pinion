@@ -1,7 +1,8 @@
-//! `scene/draw_profile` RPC method — R1557 §5.16 §5.18 §5.7 §2 #2 §2 #7.
+//! `scene/draw_profile` RPC method — R1557 R1558 §5.16 §5.18 §5.7 §2 #2 §2 #7.
 //!
 //! Publishes [`pinion_runtime::DrawProfile`]: which subtree of the painted
-//! scene drew the frame, in the units a 2D vector renderer is charged in.
+//! scene drew the frame, in the units a 2D vector renderer is charged in —
+//! for the whole window, or for the one subtree the caller named.
 //!
 //! # Why a method of its own
 //!
@@ -16,13 +17,34 @@
 //! costs nothing; this cannot be, and a separate method is billed only when
 //! asked. The same split `scene/memory` made for the same reason.
 //!
+//! # `path` scopes the measurement; `depth` scopes the reply (R1558)
+//!
+//! They are opposite axes and the reply states which one acted. `depth` trims a
+//! measurement that was taken in full: the whole window is re-encoded, the
+//! ranking still reads every row, and `nodes_total` keeps the profile's real
+//! size while `children_omitted` says where the tree was cut. `path` does not
+//! trim anything — it re-encodes **only** the addressed subtree, so
+//! `nodes_total` itself shrinks and the cost of asking falls with it.
+//!
+//! That is what makes the profiler usable as a bisection tool on a scene worth
+//! profiling. Reading the root, then drilling into the heaviest child, then
+//! into its heaviest child, costs three profiles of rapidly shrinking subtrees
+//! rather than three re-encodes of the window — and the address to drill with
+//! is the one the previous reply already handed back.
+//!
+//! Scoping is only trustworthy because a subtree's draw work is **independent
+//! of the context it is drawn in** — see [`pinion_runtime::draw_profile`] for
+//! why that holds of the encoder, and `paint_adapter`'s tests plus this
+//! method's demo for the two places it is asserted rather than assumed.
+//!
 //! # Wire form
 //!
 //! ```json
 //! {
 //!   "jsonrpc": "2.0",
 //!   "method": "scene/draw_profile",
-//!   "params": {"window": "main", "depth": 2, "heaviest_by": "glyphs"},
+//!   "params": {"path": "/window[main]/grid", "depth": 2,
+//!              "heaviest_by": "glyphs"},
 //!   "id": 1
 //! }
 //! ```
@@ -32,10 +54,10 @@
 //! ```json
 //! {
 //!   "root": {
-//!     "path": "/window[main]/",
-//!     "segment": null,
+//!     "path": "/window[main]/grid",
+//!     "segment": "grid",
 //!     "kind": "Container",
-//!     "tag": "app-root",
+//!     "tag": "grid",
 //!     "total": {"draws": 812, "paths": 400, "path_segments": 2100,
 //!               "layers": 3, "glyph_runs": 120, "glyphs": 4210},
 //!     "own": {"draws": 1, "paths": 1, "path_segments": 4,
@@ -43,6 +65,7 @@
 //!     "children": [ ... ],
 //!     "children_omitted": 0
 //!   },
+//!   "path": "/window[main]/grid",
 //!   "nodes": 37,
 //!   "nodes_total": 1204,
 //!   "depth": 2,
@@ -60,19 +83,23 @@
 //!   **exclusive** (the node alone). Summing `own` over every node gives the
 //!   root's `total` exactly — the attribution is a partition, not a set of
 //!   overlapping estimates.
-//! - `path` is the address `scene/locate` produces and `scene/query` /
-//!   `scene/invoke` resolve (both go through `Scene::lookup_path_ref`, which
+//! - A row's `path` is the address `scene/locate` produces and `scene/query` /
+//!   `scene/invoke` resolve (all go through `Scene::lookup_path_ref`, which
 //!   takes the same tag-or-index segments and is likewise transparent to a
-//!   `Scroll`). "Which subtree is expensive" and "act on that subtree" are the
-//!   same string. Note the limit this states rather than hides: those two
-//!   methods resolve a path in order to reach an `External` on it, so an
-//!   arbitrary leaf's address is in the right vocabulary and has no reader yet
-//!   — `scene/snapshot` takes a window selector with no scene tail, and
-//!   `scene/layout` addresses its own nodes by bare index (its `path` filter is
-//!   an accepted-and-ignored R47.7.x carry, predating this round).
-//! - `nodes` counts the rows in this reply; `nodes_total` counts the profile.
-//!   They differ exactly when `depth` pruned something, and every pruned node's
-//!   parent says so in `children_omitted` — truncation is never silent.
+//!   `Scroll`). "Which subtree is expensive", "profile just that subtree" and
+//!   "act on it" are the same string. Since R1558 this method is itself a
+//!   reader of that address; the limit that remains is that a row's address
+//!   still has no *general* reader — `scene/query` and `scene/invoke` resolve
+//!   one in order to reach an `External` on it, `scene/snapshot` takes a window
+//!   selector with no scene tail, and `scene/layout` addresses its own nodes by
+//!   bare index (its `path` filter is an accepted-and-ignored R47.7.x carry).
+//! - The reply's top-level `path` echoes the scope that was asked for, verbatim
+//!   and `null` when none was, so a caller can tell a scoped answer from a
+//!   whole-window one without comparing addresses.
+//! - `nodes` counts the rows in this reply; `nodes_total` counts what was
+//!   **measured**. `depth` moves the first and not the second; `path` moves
+//!   both. Every pruned node's parent says so in `children_omitted` —
+//!   truncation is never silent, and neither is scoping.
 //! - `heaviest` ranks by `own` in the **named** unit `heaviest_by`, never by a
 //!   weight this crate invented. What a glyph or a path segment costs moves
 //!   with the GPU, the driver and the resolution, so a single "heaviest" scalar
@@ -117,6 +144,52 @@ pub enum DrawProfileError {
         /// Which parameter.
         param: &'static str,
     },
+    /// (R1558) `path`'s `/window[id]/` prefix was malformed or empty.
+    ///
+    /// The two SYNTAX failures only — whether the name is a window is
+    /// [`Self::UnknownWindow`], judged against a registry this crate does not
+    /// hold. Forwarded rather than collapsed into one blanket tag, the
+    /// concrete-reason discipline every path-taking method here follows.
+    Path(crate::path::PathError),
+    /// (R1558) `path` parsed cleanly and reached no node in the painted
+    /// scene: an out-of-range index, an unknown tag, or a descent through a
+    /// leaf.
+    ///
+    /// Carries what was asked for, because a profile scope is typically a
+    /// string the caller copied out of an earlier reply and the useful
+    /// question is *which* address stopped resolving.
+    UnknownPath {
+        /// The address the caller sent, verbatim.
+        requested: String,
+    },
+    /// (R1558) `path`'s prefix named no window this host has open.
+    ///
+    /// Judged by the embedder against its **live** window slots — the registry
+    /// `{window: "<id>"}` is judged against and the one a profile actually
+    /// comes from — rather than by [`crate::path::resolve`] against the SCE
+    /// topology, which a binding can differ from by opening a second
+    /// `WindowSpec` without a second `AppState`. Under the older rule
+    /// `scene/draw_profile` published `/window[inspector]/…` rows that no
+    /// path-taking method could read back.
+    UnknownWindow {
+        /// The window id the address named.
+        requested: String,
+        /// Every window this host has open, in slot order.
+        valid: Vec<String>,
+    },
+    /// (R1558) `path` named one window and the frame's `window` scope named
+    /// another.
+    ///
+    /// The two are not merged and neither silently wins. A request that says
+    /// two different things about which window it means is a caller bug, and
+    /// answering it with a profile of *either* window is how that bug survives
+    /// into a dashboard.
+    WindowMismatch {
+        /// The window the address's prefix named.
+        path_window: String,
+        /// The window `params.window` named.
+        scope_window: String,
+    },
 }
 
 impl DrawProfileError {
@@ -132,7 +205,27 @@ impl DrawProfileError {
             Self::MalformedParam { param } => {
                 std::borrow::Cow::Owned(format!("MalformedParam: {param:?}"))
             }
+            Self::Path(err) => err.wire_tag(),
+            Self::UnknownWindow { requested, valid } => std::borrow::Cow::Owned(format!(
+                "UnknownWindow: {requested:?} (valid: {})",
+                valid.join(", ")
+            )),
+            Self::UnknownPath { requested } => {
+                std::borrow::Cow::Owned(format!("UnknownPath: {requested:?}"))
+            }
+            Self::WindowMismatch {
+                path_window,
+                scope_window,
+            } => std::borrow::Cow::Owned(format!(
+                "WindowMismatch: path names {path_window:?}, window names {scope_window:?}"
+            )),
         }
+    }
+}
+
+impl From<crate::path::PathError> for DrawProfileError {
+    fn from(err: crate::path::PathError) -> Self {
+        Self::Path(err)
     }
 }
 
@@ -148,6 +241,25 @@ impl std::fmt::Display for DrawProfileError {
             Self::MalformedParam { param } => {
                 write!(f, "{param} must be a non-negative integer")
             }
+            // `PathError` has no `Display`; `wire_tag` is this codebase's SSOT
+            // for naming its three reasons, so the prose and the machine tag
+            // cannot drift apart into two descriptions of one failure.
+            Self::Path(err) => write!(f, "path prefix: {}", err.wire_tag()),
+            Self::UnknownWindow { requested, valid } => write!(
+                f,
+                "path names window {requested:?}, which is not open (open: {})",
+                valid.join(", ")
+            ),
+            Self::UnknownPath { requested } => {
+                write!(f, "path {requested:?} reaches no node in the painted scene")
+            }
+            Self::WindowMismatch {
+                path_window,
+                scope_window,
+            } => write!(
+                f,
+                "path names window {path_window:?} but params.window names {scope_window:?}"
+            ),
         }
     }
 }
@@ -325,9 +437,18 @@ pub struct DrawProfileRank {
 pub struct DrawProfileOutcome {
     /// The attributed tree, or `null` for a window that has never painted.
     pub root: Option<DrawProfileRow>,
+    /// (R1558) The address the profile was rooted at, echoed verbatim, or
+    /// `null` for a whole-window profile.
+    pub path: Option<String>,
     /// Rows in this reply.
     pub nodes: u32,
-    /// Rows in the profile. Equal to `nodes` unless `depth` pruned.
+    /// Rows in the **profile** — what was measured, which is why it shrinks
+    /// under `path` and does not shrink under `depth`. Equal to `nodes` unless
+    /// `depth` pruned.
+    ///
+    /// The pair is what tells the two axes apart from the outside: `path`
+    /// scoped the measurement, so a smaller profile was taken; `depth` scoped
+    /// the reply, so the same profile was taken and reported shorter.
     pub nodes_total: u32,
     /// The depth limit that was applied, or `null` for the whole tree.
     pub depth: Option<u32>,
@@ -338,8 +459,33 @@ pub struct DrawProfileOutcome {
     pub heaviest: Vec<DrawProfileRank>,
 }
 
+/// (R1558) The subtree a request asked to be profiled — an address, already
+/// parsed into the pieces the embedder and the projection each need.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileScope {
+    /// The address exactly as the caller wrote it. Echoed by the reply and
+    /// quoted by [`DrawProfileError::UnknownPath`], so a rejection names the
+    /// string that was rejected rather than a normalisation of it.
+    pub requested: String,
+    /// The window an explicit `/window[id]/` prefix named, `None` when the
+    /// address carried none. Never invented: an absent prefix stays absent
+    /// here so [`DrawProfileParams::window`] can tell "the caller said main"
+    /// from "the caller said nothing".
+    ///
+    /// A **name**, not a resolved window, and deliberately unvalidated at parse
+    /// time — see [`crate::path::split_window_prefix`] for why. Whether it
+    /// names a window is judged by the embedder against its live slots, which
+    /// is the registry this method's answer actually comes from.
+    pub window: Option<String>,
+    /// The scene segments below the prefix — what
+    /// [`Scene::lookup_path_ref`](pinion_core::Scene::lookup_path_ref) walks.
+    /// Empty addresses the scene root, which is the whole-window profile
+    /// spelled out.
+    pub segments: Vec<String>,
+}
+
 /// Parameters [`draw_profile`] accepts, already parsed and validated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DrawProfileParams {
     /// Levels of tree to emit below the root, or `None` for all of them.
     /// `Some(0)` is the root alone.
@@ -348,16 +494,52 @@ pub struct DrawProfileParams {
     pub heaviest_by: Option<Unit>,
     /// How many rows the ranking holds.
     pub limit: usize,
+    /// (R1558) The subtree to profile, or `None` for the whole window.
+    ///
+    /// This scopes the **measurement**, not the reply: only the named subtree
+    /// is re-encoded and only its nodes are attributed. `depth` is the other
+    /// axis and does the opposite — it trims what a full measurement reports.
+    pub scope: Option<ProfileScope>,
 }
 
 impl DrawProfileParams {
+    /// (R1558) The window this request names, given the frame's `window`
+    /// scope: the address's explicit `/window[id]/` prefix when it has one,
+    /// else that scope, else the primary window.
+    ///
+    /// ONE rule with two callers that must agree — the embedder picks which
+    /// window's paint scene to re-encode, and the projection formats every
+    /// row's `/window[id]/…` address. Two copies of this expression would be
+    /// two answers to "which window is this?", and a profile of one window
+    /// whose rows address another is worse than no profile: every address in
+    /// it resolves, somewhere else.
+    #[must_use]
+    pub fn window<'a>(&'a self, scope: Option<&'a str>) -> &'a str {
+        self.scope
+            .as_ref()
+            .and_then(|s| s.window.as_deref())
+            .or(scope)
+            .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
+    }
+
+    /// (R1558) The segment chain to root the profile at — empty for the whole
+    /// window, which is also what an address of `"/"` means.
+    #[must_use]
+    pub fn scope_segments(&self) -> &[String] {
+        self.scope.as_ref().map_or(&[], |s| &s.segments)
+    }
+
     /// Parse the method's `params` object.
     ///
     /// # Errors
     ///
     /// - [`DrawProfileError::UnknownUnit`] — `heaviest_by` is not a unit.
-    /// - [`DrawProfileError::MalformedParam`] — `depth` or `limit` is present
-    ///   and is not a non-negative integer.
+    /// - [`DrawProfileError::MalformedParam`] — `depth`, `limit` or `path` is
+    ///   present and is not of the right JSON type.
+    /// - [`DrawProfileError::Path`] — `path`'s window prefix is malformed or
+    ///   names no declared window.
+    /// - [`DrawProfileError::WindowMismatch`] — `path` and `window` name
+    ///   different windows.
     pub fn parse(params: Option<&serde_json::Value>) -> Result<Self, DrawProfileError> {
         let mut out = Self {
             limit: DEFAULT_HEAVIEST_LIMIT,
@@ -391,6 +573,34 @@ impl DrawProfileParams {
                     })?,
                 );
         }
+        if let Some(path) = obj.get("path").filter(|v| !v.is_null()) {
+            let requested = path
+                .as_str()
+                .ok_or(DrawProfileError::MalformedParam { param: "path" })?;
+            // Syntax only. Whether the name is a window is the embedder's
+            // question, because the set that decides is its live window slots
+            // and not the SCE topology `crate::path::resolve` consults — sets
+            // that a binding opening a second `WindowSpec` makes differ.
+            let (window, tail) = crate::path::split_window_prefix(requested)?;
+            // An absent prefix must stay absent: folding in a default would
+            // turn "the caller said nothing about the window" into "the caller
+            // said main", which the check below would then reject for a
+            // request that named one window exactly once.
+            if let Some(from_path) = window
+                && let Some(from_scope) = obj.get("window").and_then(serde_json::Value::as_str)
+                && from_path != from_scope
+            {
+                return Err(DrawProfileError::WindowMismatch {
+                    path_window: from_path.to_owned(),
+                    scope_window: from_scope.to_owned(),
+                });
+            }
+            out.scope = Some(ProfileScope {
+                requested: requested.to_owned(),
+                window: window.map(ToOwned::to_owned),
+                segments: crate::path::segments(tail),
+            });
+        }
         Ok(out)
     }
 }
@@ -400,22 +610,32 @@ impl DrawProfileParams {
 /// `window` names the dispatch scope, and is what turns each row's segment
 /// chain into the `/window[<id>]/…` address every other method accepts.
 ///
+/// `profile` is the embedder's answer to the scope this request named: `None`
+/// for a host with no live window, `Some(Err(_))` for a scope the painted
+/// scene could not resolve, `Some(Ok(_))` for the subtree that was measured.
+///
 /// # Errors
 ///
 /// - [`DrawProfileError::DrawProfileUnavailable`] — the embedder registered no
 ///   profile, which is a host with no live window or a window that has never
 ///   painted.
+/// - Whatever the embedder's scope resolution rejected —
+///   [`DrawProfileError::UnknownPath`] for an address that reached no node.
 pub fn draw_profile(
-    profile: Option<&DrawProfile>,
+    profile: Option<&Result<DrawProfile, DrawProfileError>>,
     window: &str,
-    params: DrawProfileParams,
+    params: &DrawProfileParams,
 ) -> Result<DrawProfileOutcome, DrawProfileError> {
-    let Some(profile) = profile else {
-        return Err(DrawProfileError::DrawProfileUnavailable);
+    let path = params.scope.as_ref().map(|s| s.requested.clone());
+    let profile = match profile {
+        None => return Err(DrawProfileError::DrawProfileUnavailable),
+        Some(Err(err)) => return Err(err.clone()),
+        Some(Ok(profile)) => profile,
     };
     let Some(root) = profile.root.as_ref() else {
         return Ok(DrawProfileOutcome {
             root: None,
+            path,
             nodes: 0,
             nodes_total: 0,
             depth: params.depth,
@@ -428,7 +648,14 @@ pub fn draw_profile(
     // addresses already are. Deriving them twice (once per output) would be two
     // implementations of the same addressing rule, free to disagree about a
     // `Scroll`'s transparency in one of them and not the other.
-    let mut segments: Vec<&str> = Vec::new();
+    //
+    // R1558 — seeded with the chain the profile was ROOTED at, so a scoped
+    // profile's rows carry the same absolute addresses an unscoped profile's
+    // rows do and can be fed straight back in to drill further. The seed comes
+    // from the profile rather than from `params`, because the resolver accepts
+    // a scene root named by its own tag and a profile rooted that way sits at
+    // the empty chain — see `DrawProfile::scope`.
+    let mut segments: Vec<&str> = profile.scope.iter().map(String::as_str).collect();
     let full = project(root, window, &mut segments);
     // `nodes_total` is counted on the PROFILE and `nodes` on the reply, so the
     // two are answers to two different questions rather than one number
@@ -446,6 +673,7 @@ pub fn draw_profile(
         nodes: row.node_count(),
         nodes_total,
         root: Some(row),
+        path,
         depth: params.depth,
         heaviest_by: params.heaviest_by.map(Unit::name),
         heaviest,
@@ -576,8 +804,14 @@ mod tests {
     }
 
     /// A root Container with a box child and a text child, the text carrying
-    /// every glyph.
+    /// every glyph — profiled whole, so its scope is the empty chain.
     fn profile() -> DrawProfile {
+        scoped(Vec::new())
+    }
+
+    /// The same tree, profiled as the subtree `scope` addresses — which is
+    /// what every row's address is then built on top of.
+    fn scoped(scope: Vec<String>) -> DrawProfile {
         let a = leaf("0", SceneNodeKind::Box, work(0, 3));
         let b = leaf("label", SceneNodeKind::Text, work(40, 0));
         DrawProfile {
@@ -589,20 +823,22 @@ mod tests {
                 own: work(0, 2),
                 children: vec![a, b],
             }),
+            scope,
         }
     }
 
     #[test]
     fn r1557_missing_profile_errors() {
         assert_eq!(
-            draw_profile(None, "main", DrawProfileParams::default()).unwrap_err(),
+            draw_profile(None, "main", &DrawProfileParams::default()).unwrap_err(),
             DrawProfileError::DrawProfileUnavailable,
         );
     }
 
     #[test]
     fn r1557_rows_carry_the_address_every_other_method_accepts() {
-        let out = draw_profile(Some(&profile()), "main", DrawProfileParams::default()).unwrap();
+        let out =
+            draw_profile(Some(&Ok(profile())), "main", &DrawProfileParams::default()).unwrap();
         let root = out.root.expect("root");
         assert_eq!(root.path, "/window[main]/");
         assert_eq!(root.segment, None);
@@ -618,7 +854,8 @@ mod tests {
 
     #[test]
     fn r1557_inclusive_and_exclusive_are_both_published() {
-        let out = draw_profile(Some(&profile()), "main", DrawProfileParams::default()).unwrap();
+        let out =
+            draw_profile(Some(&Ok(profile())), "main", &DrawProfileParams::default()).unwrap();
         let root = out.root.expect("root");
         assert_eq!(
             root.total,
@@ -641,7 +878,7 @@ mod tests {
             depth: Some(0),
             ..DrawProfileParams::default()
         };
-        let out = draw_profile(Some(&profile()), "main", params).unwrap();
+        let out = draw_profile(Some(&Ok(profile())), "main", &params).unwrap();
         let root = out.root.expect("root");
         assert!(root.children.is_empty());
         // The pruning is stated three ways rather than left to be inferred from
@@ -659,8 +896,9 @@ mod tests {
             depth: Some(0),
             heaviest_by: Some(Unit::Glyphs),
             limit: 2,
+            scope: None,
         };
-        let out = draw_profile(Some(&profile()), "main", params).unwrap();
+        let out = draw_profile(Some(&Ok(profile())), "main", &params).unwrap();
         assert_eq!(out.heaviest_by, Some("glyphs"));
         assert_eq!(out.heaviest.len(), 2);
         // The depth limit cut the reply's tree to one row; the ranking still
@@ -674,13 +912,14 @@ mod tests {
             limit: 1,
             ..DrawProfileParams::default()
         };
-        let out = draw_profile(Some(&profile()), "main", by_paths).unwrap();
+        let out = draw_profile(Some(&Ok(profile())), "main", &by_paths).unwrap();
         assert_eq!(out.heaviest[0].path, "/window[main]/0");
     }
 
     #[test]
     fn r1557_no_unit_named_means_no_ranking() {
-        let out = draw_profile(Some(&profile()), "main", DrawProfileParams::default()).unwrap();
+        let out =
+            draw_profile(Some(&Ok(profile())), "main", &DrawProfileParams::default()).unwrap();
         assert_eq!(out.heaviest_by, None);
         assert!(out.heaviest.is_empty());
     }
@@ -757,13 +996,229 @@ mod tests {
         // A host that painted nothing answers "nothing", not a failure — the
         // `MemoryOutcome` shape, where an arena holding nothing is still a row.
         let out = draw_profile(
-            Some(&DrawProfile { root: None }),
+            Some(&Ok(DrawProfile {
+                root: None,
+                scope: Vec::new(),
+            })),
             "main",
-            DrawProfileParams::default(),
+            &DrawProfileParams::default(),
         )
         .unwrap();
         assert_eq!(out.root, None);
         assert_eq!(out.nodes, 0);
         assert_eq!(out.nodes_total, 0);
+        assert_eq!(out.path, None);
+    }
+
+    // ----- R1558: the profile is rooted where the caller asks -----
+
+    #[test]
+    fn r1558_a_scoped_profiles_rows_carry_absolute_addresses() {
+        // The scoped profile is a subtree, but its rows must address the same
+        // nodes an unscoped profile's rows do — otherwise drilling down hands
+        // back a string that no longer resolves anywhere.
+        let params = DrawProfileParams::parse(Some(&serde_json::json!({
+            "path": "/window[main]/grid/panel"
+        })))
+        .unwrap();
+        let scope = Ok(scoped(vec!["grid".to_owned(), "panel".to_owned()]));
+        let out = draw_profile(Some(&scope), "main", &params).unwrap();
+        let root = out.root.expect("root");
+        assert_eq!(root.path, "/window[main]/grid/panel");
+        assert_eq!(root.children[0].path, "/window[main]/grid/panel/0");
+        assert_eq!(root.children[1].path, "/window[main]/grid/panel/label");
+        // The requested scope is echoed verbatim, so a caller reads which
+        // answer it got without comparing addresses.
+        assert_eq!(out.path.as_deref(), Some("/window[main]/grid/panel"));
+    }
+
+    #[test]
+    fn r1558_the_prefix_comes_from_what_was_profiled_not_what_was_asked() {
+        // The addressing vocabulary lets a scene root be named by its own tag,
+        // and such a root sits at the EMPTY chain — so the resolver's answer
+        // and the caller's question are different chains. Seeding the
+        // projection from the question would address every row one segment too
+        // deep, and each of those addresses would then fail to resolve.
+        let params =
+            DrawProfileParams::parse(Some(&serde_json::json!({"path": "/app-root"}))).unwrap();
+        assert_eq!(params.scope_segments(), ["app-root"]);
+        // The embedder resolved that to the root, whose chain is empty.
+        let out = draw_profile(Some(&Ok(scoped(Vec::new()))), "main", &params).unwrap();
+        let root = out.root.expect("root");
+        assert_eq!(root.path, "/window[main]/");
+        assert_eq!(root.children[1].path, "/window[main]/label");
+        assert_eq!(
+            out.path.as_deref(),
+            Some("/app-root"),
+            "still echoed as sent"
+        );
+    }
+
+    #[test]
+    fn r1558_path_scopes_the_measurement_and_depth_scopes_the_reply() {
+        // The two axes, told apart from the outside by the pair `nodes` /
+        // `nodes_total`. A `depth` limit leaves `nodes_total` at the profile's
+        // real size, because the whole window was still measured…
+        let pruned = DrawProfileParams {
+            depth: Some(0),
+            ..DrawProfileParams::default()
+        };
+        let out = draw_profile(Some(&Ok(profile())), "main", &pruned).unwrap();
+        assert_eq!((out.nodes, out.nodes_total), (1, 3));
+        assert_eq!(out.path, None);
+
+        // …while a `path` scope shrinks `nodes_total` itself, because a
+        // smaller profile was taken. The embedder hands back the subtree it
+        // measured, which is what makes this a different number rather than a
+        // different view of the same one.
+        let scoped_params =
+            DrawProfileParams::parse(Some(&serde_json::json!({"path": "/panel"}))).unwrap();
+        let one_leaf = Ok(DrawProfile {
+            root: Some(leaf("label", SceneNodeKind::Text, work(40, 0))),
+            scope: vec!["panel".to_owned()],
+        });
+        let out = draw_profile(Some(&one_leaf), "main", &scoped_params).unwrap();
+        assert_eq!((out.nodes, out.nodes_total), (1, 1));
+        assert_eq!(out.depth, None, "nothing was pruned to get there");
+    }
+
+    #[test]
+    fn r1558_an_unresolvable_scope_is_named_not_reported_as_no_profile() {
+        // The embedder resolved the address against the painted scene and
+        // found nothing. That is a different fact from "this window has no
+        // profile", and collapsing the two would have a typo read as a host
+        // with no window.
+        let err = draw_profile(
+            Some(&Err(DrawProfileError::UnknownPath {
+                requested: "/window[main]/nope".to_owned(),
+            })),
+            "main",
+            &DrawProfileParams::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            DrawProfileError::UnknownPath {
+                requested: "/window[main]/nope".to_owned()
+            }
+        );
+        assert_eq!(err.wire_tag(), "UnknownPath: \"/window[main]/nope\"");
+        assert!(err.to_string().contains("reaches no node"), "{err}");
+        assert_ne!(err, DrawProfileError::DrawProfileUnavailable);
+    }
+
+    #[test]
+    fn r1558_a_malformed_or_unknown_window_prefix_keeps_its_own_reason() {
+        let malformed = serde_json::json!({"path": "/window[main/x"});
+        assert_eq!(
+            DrawProfileParams::parse(Some(&malformed)).unwrap_err(),
+            DrawProfileError::Path(crate::path::PathError::MalformedPrefix),
+        );
+        // Forwarded, not collapsed into one blanket `Path` tag — an agent
+        // switches on the concrete reason.
+        assert_eq!(
+            DrawProfileParams::parse(Some(&malformed))
+                .unwrap_err()
+                .wire_tag(),
+            "MalformedPrefix"
+        );
+        let empty = serde_json::json!({"path": "/window[]/x"});
+        assert_eq!(
+            DrawProfileParams::parse(Some(&empty)).unwrap_err(),
+            DrawProfileError::Path(crate::path::PathError::EmptyWindowId),
+        );
+        let not_a_string = serde_json::json!({"path": 7});
+        assert_eq!(
+            DrawProfileParams::parse(Some(&not_a_string)).unwrap_err(),
+            DrawProfileError::MalformedParam { param: "path" },
+        );
+    }
+
+    #[test]
+    fn r1558_a_window_name_is_not_judged_at_parse_time() {
+        // Whether a name is a window is not a syntax question, and the set
+        // that answers it is the embedder's live window slots — NOT the SCE
+        // topology `crate::path::resolve` consults. The two differ whenever a
+        // binding opens a second `WindowSpec` without a second `AppState`, and
+        // under the older rule this method published `/window[inspector]/…`
+        // rows that it then refused to read back.
+        let p = DrawProfileParams::parse(Some(&serde_json::json!({
+            "path": "/window[inspector]/panel"
+        })))
+        .expect("an unopened name parses; it is judged where the registry is");
+        assert_eq!(
+            p.scope.as_ref().unwrap().window.as_deref(),
+            Some("inspector")
+        );
+        assert_eq!(p.window(Some("main")), "inspector");
+        assert_eq!(p.scope_segments(), ["panel"]);
+
+        // …and the embedder's judgment, when it goes against the caller, names
+        // the registry that decided.
+        let err = DrawProfileError::UnknownWindow {
+            requested: "inspector".to_owned(),
+            valid: vec!["main".to_owned()],
+        };
+        assert_eq!(err.wire_tag(), "UnknownWindow: \"inspector\" (valid: main)");
+        assert!(err.to_string().contains("not open"), "{err}");
+    }
+
+    #[test]
+    fn r1558_two_windows_named_in_one_request_is_refused() {
+        // Neither silently wins. A request that says two different things
+        // about which window it means is a caller bug, and a profile of either
+        // one would carry that bug into whatever reads it.
+        let conflict = serde_json::json!({"path": "/window[main]/a", "window": "other"});
+        let err = DrawProfileParams::parse(Some(&conflict)).unwrap_err();
+        assert_eq!(
+            err,
+            DrawProfileError::WindowMismatch {
+                path_window: "main".to_owned(),
+                scope_window: "other".to_owned(),
+            }
+        );
+        assert!(err.wire_tag().starts_with("WindowMismatch:"), "{err:?}");
+        // Agreement is not a conflict, and neither is naming the window once.
+        let agrees = serde_json::json!({"path": "/window[main]/a", "window": "main"});
+        assert!(DrawProfileParams::parse(Some(&agrees)).is_ok());
+    }
+
+    #[test]
+    fn r1558_the_window_is_decided_by_one_rule() {
+        // One expression with two callers — the embedder picking which window
+        // to re-encode, and the projection formatting every row's address.
+        let bare = DrawProfileParams::default();
+        assert_eq!(bare.window(None), pinion_runtime::DEFAULT_WINDOW);
+        assert_eq!(bare.window(Some("sidecar")), "sidecar");
+
+        // An address with no prefix leaves the frame's scope in charge: an
+        // absent prefix must not be folded into `Some(initial window)`, or a
+        // request that named a window ONCE would look like two.
+        let implicit =
+            DrawProfileParams::parse(Some(&serde_json::json!({"path": "/a/b"}))).unwrap();
+        assert_eq!(implicit.scope.as_ref().unwrap().window, None);
+        assert_eq!(implicit.window(Some("sidecar")), "sidecar");
+        assert_eq!(implicit.scope_segments(), ["a", "b"]);
+
+        // An explicit prefix is the answer, and it is where the rows get
+        // rendered against too.
+        let explicit =
+            DrawProfileParams::parse(Some(&serde_json::json!({"path": "/window[main]/a"})))
+                .unwrap();
+        assert_eq!(explicit.window(None), "main");
+    }
+
+    #[test]
+    fn r1558_an_empty_address_is_the_whole_window_spelled_out() {
+        for path in ["/", "", "/window[main]/"] {
+            let p = DrawProfileParams::parse(Some(&serde_json::json!({"path": path}))).unwrap();
+            assert!(
+                p.scope_segments().is_empty(),
+                "{path:?} addresses the scene root",
+            );
+        }
+        // …and no scope at all is the same measurement, which is why the
+        // absent case is not a special arm anywhere below this.
+        assert!(DrawProfileParams::default().scope_segments().is_empty());
     }
 }

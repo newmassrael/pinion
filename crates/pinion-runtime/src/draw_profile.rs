@@ -49,6 +49,27 @@
 //! that opened a frame without closing it, or a node whose work landed outside
 //! the span being measured would each break it.
 //!
+//! # Rooting the walk somewhere else (R1558)
+//!
+//! Nothing here needs to know whether the [`Scene`] it is handed is a window's
+//! root or a subtree of one: the walk starts where it is started, and the
+//! census difference measures whatever it encodes. That is what lets
+//! `scene/draw_profile` scope the **measurement** to an address instead of
+//! merely trimming the reply — the caller resolves the address, hands the
+//! resulting node to the profiled walk, and states the chain it resolved as
+//! [`DrawProfile::scope`].
+//!
+//! The reason the two agree — a scoped profile equalling the corresponding
+//! subtree of the whole one — is a property of the encoder, not a convention
+//! of this module. A subtree's [`DrawWork`] is **independent of the context it
+//! is drawn in**: the inherited transform is applied to coordinates and changes
+//! no count (R1520 already relies on this, encoding every cached fragment at
+//! `IDENTITY` and re-placing it), an ancestor's clip is an input to *damage*
+//! reporting rather than a cull, and the clip layer a [`Scene::Scroll`] pushes
+//! is charged to the scroll's own row. So the counts compose, and the
+//! equality is asserted rather than assumed — over a real encode in
+//! `paint_adapter`'s tests, and again over the wire.
+//!
 //! # Against Qt 6.11
 //!
 //! Qt's floor for per-item render cost is **`QSG_RENDERER_DEBUG=render`**: an
@@ -165,6 +186,20 @@ pub struct DrawProfile {
     /// called on a profiler no walk ever entered — a host with no window, not a
     /// blank frame (a painted scene has a root, so a real profile has one too).
     pub root: Option<DrawProfileNode>,
+    /// (R1558) The segment chain from the window's scene root to the node this
+    /// profile was **rooted at** — empty for a whole-window profile.
+    ///
+    /// It is what turns every row's segment chain back into the absolute
+    /// `/window[id]/…` address the rest of the API speaks, so a scoped
+    /// profile's rows address the same nodes an unscoped profile's rows do.
+    ///
+    /// Recorded here rather than taken from the request, because the two are
+    /// not always the same chain: the addressing vocabulary lets a scene root
+    /// be named by its own tag (`resolve::lookup_addressed`'s root alias), and
+    /// a profile rooted that way sits at the **empty** chain. Seeding the
+    /// projection from what was asked for would then address every row one
+    /// segment too deep.
+    pub scope: Vec<String>,
 }
 
 /// (R1557 §5.16) Builder the paint walk drives to produce a [`DrawProfile`].
@@ -260,11 +295,22 @@ impl DrawProfiler {
         }
     }
 
-    /// The finished profile. Any frame still open is dropped unclosed — see the
-    /// type's contract.
+    /// The finished profile, rooted at `scope` — the segment chain from the
+    /// window's scene root to the node this walk started at, empty when it
+    /// started at the root itself. Any frame still open is dropped unclosed —
+    /// see the type's contract.
+    ///
+    /// The scope is a **parameter** rather than a field the producer sets
+    /// afterwards: a profile whose rows cannot be addressed is not a profile,
+    /// and the one caller who knows which subtree was walked is the one who
+    /// chose it. Passing it here means there is no order of calls in which it
+    /// is forgotten.
     #[must_use]
-    pub fn finish(self) -> DrawProfile {
-        DrawProfile { root: self.root }
+    pub fn finish(self, scope: Vec<String>) -> DrawProfile {
+        DrawProfile {
+            root: self.root,
+            scope,
+        }
     }
 }
 
@@ -310,7 +356,7 @@ mod tests {
         p.leave(work(100));
 
         let node = p
-            .finish()
+            .finish(Vec::new())
             .root
             .expect("a closed outermost frame is the root");
         assert_eq!(node.total, work(100));
@@ -337,7 +383,7 @@ mod tests {
         p.leave(work(25));
         p.leave(work(31));
 
-        let node = p.finish().root.expect("root");
+        let node = p.finish(Vec::new()).root.expect("root");
         assert_eq!(node.total, work(31));
         // The identity the module header names: the attribution is a partition.
         assert_eq!(node.own_sum(), node.total);
@@ -355,7 +401,7 @@ mod tests {
         p.leave(work(2));
         p.leave(work(2));
 
-        let node = p.finish().root.expect("root");
+        let node = p.finish(Vec::new()).root.expect("root");
         // The root consumes no segment, and neither does it invent one.
         assert_eq!(node.segment, None);
         assert_eq!(node.kind, SceneNodeKind::Container);
@@ -377,7 +423,7 @@ mod tests {
         p.leave(work(4));
         p.leave(work(5));
 
-        let node = p.finish().root.expect("root");
+        let node = p.finish(Vec::new()).root.expect("root");
         assert_eq!(node.children[0].segment, None);
         assert_eq!(node.children[0].total, work(3));
         assert_eq!(node.own, work(2));
@@ -385,7 +431,13 @@ mod tests {
 
     #[test]
     fn r1557_unentered_profiler_has_no_root() {
-        assert_eq!(DrawProfiler::new().finish(), DrawProfile { root: None });
+        assert_eq!(
+            DrawProfiler::new().finish(Vec::new()),
+            DrawProfile {
+                root: None,
+                scope: Vec::new()
+            }
+        );
     }
 
     #[test]
@@ -395,7 +447,7 @@ mod tests {
         // handed. Instrumentation may under-report; it may not abort a paint.
         let mut p = DrawProfiler::new();
         p.leave(work(7));
-        assert_eq!(p.finish().root, None);
+        assert_eq!(p.finish(Vec::new()).root, None);
     }
 
     #[test]
@@ -412,7 +464,7 @@ mod tests {
         p.leave(work(6));
         p.leave(work(6));
 
-        let node = p.finish().root.expect("root");
+        let node = p.finish(Vec::new()).root.expect("root");
         assert_eq!(node.total, work(2));
         assert_eq!(node.children.len(), 1);
         assert_eq!(node.children[0].total, DrawWork::default());
@@ -457,7 +509,7 @@ mod tests {
         p.leave(child_end);
         p.leave(root_end);
 
-        let node: DrawProfileNode = p.finish().root.expect("root");
+        let node: DrawProfileNode = p.finish(Vec::new()).root.expect("root");
         assert_eq!(
             node.total,
             DrawWork {

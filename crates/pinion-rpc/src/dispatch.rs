@@ -42,6 +42,7 @@ use crate::auto_repeat::{AutoRepeatOutcome, auto_repeat};
 use crate::cache_stats::{CacheStatsError, CacheStatsOutcome, cache_stats};
 use crate::caret_state::{CaretStateOutcome, caret_state};
 use crate::commands::{CommandsError, list_pending_commands};
+use crate::draw_profile::DrawProfileError;
 use crate::dry_run::{DryRunError, dry_run};
 use crate::export_pdf::{ExportPdfError, ExportPdfParams, export_pdf};
 use crate::font::{self, FontError, FontRegistry};
@@ -530,7 +531,13 @@ pub struct DispatchContext<'a> {
     /// `None` surfaces `DrawProfileUnavailable` — a host with no live window, or
     /// a window that has never painted. A window that painted a blank frame is
     /// distinct: it answers with a root whose census is zeroes.
-    pub draw_profile: Option<pinion_runtime::DrawProfile>,
+    ///
+    /// R1558 — the slot carries the embedder's answer to the SCOPE the request
+    /// named, so `Err` is the address that reached no node. That resolution
+    /// happens once, where the painted scene is, and travels; re-resolving it
+    /// here against this context's scene would be a second walk of the same
+    /// address, free to disagree with the one that decided what was measured.
+    pub draw_profile: Option<Result<pinion_runtime::DrawProfile, DrawProfileError>>,
 
     /// R1552 §5.7 PINION-PR83 — the connection this frame arrived on and the
     /// registry its change streams live in. Consumed by `scene/subscribe`,
@@ -1677,7 +1684,10 @@ impl<'a> DispatchContext<'a> {
     /// painted scene. `scene/draw_profile` reads the slot; every other arm
     /// ignores it. `None` (the default) surfaces `DrawProfileUnavailable`.
     #[must_use]
-    pub fn with_draw_profile(mut self, profile: pinion_runtime::DrawProfile) -> Self {
+    pub fn with_draw_profile(
+        mut self,
+        profile: Result<pinion_runtime::DrawProfile, DrawProfileError>,
+    ) -> Self {
         self.draw_profile = Some(profile);
         self
     }
@@ -1997,7 +2007,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // beside it is what turns each row's segment chain into the
     // `/window[<id>]/…` address every other method accepts.
     let draw_profile = ctx.draw_profile.take();
-    let draw_profile_window = ctx.window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+    let draw_profile_scope = ctx.window_id;
     let subscriber = ctx.subscriber.take();
     // R1546 §5.36 — the painted background bands the embedder collected. Taken
     // out for the dispatch lifetime (owned, non-`Copy`); only
@@ -2500,7 +2510,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 "scene/draw_profile" => (
                     handle_scene_draw_profile(
                         draw_profile.as_ref(),
-                        draw_profile_window,
+                        draw_profile_scope,
                         request.params.as_ref(),
                     ),
                     HandlerKind::Read,
@@ -6382,19 +6392,23 @@ fn handle_scene_memory(
 /// on [`DispatchContext::draw_profile`] and emits the wire
 /// [`DrawProfileOutcome`](crate::draw_profile::DrawProfileOutcome) shape.
 ///
-/// `window` is the dispatch scope, which is what each row's `path` is rendered
-/// against — a profile row's address has to be the address that resolves in
-/// `scene/snapshot` for the same window.
+/// `scope` is the frame's `{window: "<id>"}` hint. Which window a row's `path`
+/// is rendered against is decided by
+/// [`DrawProfileParams::window`](crate::draw_profile::DrawProfileParams::window),
+/// the same one call the embedder used to pick which window to re-encode — a
+/// profile row's address has to be the address that resolves in
+/// `scene/snapshot` for the window that was actually profiled.
 ///
 /// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`] bump.
 fn handle_scene_draw_profile(
-    profile: Option<&pinion_runtime::DrawProfile>,
-    window: &str,
+    profile: Option<&Result<pinion_runtime::DrawProfile, DrawProfileError>>,
+    scope: Option<&str>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let parsed = crate::draw_profile::DrawProfileParams::parse(params)
         .map_err(|e| RpcError::invalid_params(e.to_string()).with_data_string(e.wire_tag()))?;
-    match crate::draw_profile::draw_profile(profile, window, parsed) {
+    let window = parsed.window(scope).to_owned();
+    match crate::draw_profile::draw_profile(profile, &window, &parsed) {
         Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
             RpcError::internal_error(format!(
                 "scene/draw_profile: failed to serialize outcome: {e}"

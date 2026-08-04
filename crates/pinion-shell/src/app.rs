@@ -1336,15 +1336,50 @@ impl<V: WidgetView> AppShell<V> {
         // encode, not a traversal of what is already encoded.
         let draw_profile = (parsed_request.method == "scene/draw_profile")
             .then(|| {
-                let window_id = parsed_request
-                    .window_scope()
-                    .ok()
-                    .flatten()
-                    .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
+                // R1558 — the request's params decide BOTH which window is
+                // re-encoded and which subtree of it, so they are parsed once,
+                // here, and `DrawProfileParams::window` answers the first
+                // question with the same call the dispatcher uses to render
+                // every row's address. A malformed `path` yields `None`; the
+                // dispatcher parses the same params and answers with the typed
+                // reason, so the failure is named in one place rather than
+                // guessed at in two.
+                let params = pinion_rpc::draw_profile::DrawProfileParams::parse(
+                    parsed_request.params.as_ref(),
+                )
+                .ok()?;
+                let window_id = params
+                    .window(parsed_request.window_scope().ok().flatten())
                     .to_owned();
-                let slot = self.windows.values_mut().find(|s| s.spec_id == window_id)?;
-                self.core
-                    .draw_profile_for_window(&window_id, &mut slot.image_cache)
+                let Some(slot) = self.windows.values_mut().find(|s| s.spec_id == window_id) else {
+                    // R1558 — a window named by the ADDRESS and not open is
+                    // judged here, because this is where the live registry is.
+                    // `crate::path::resolve` would have judged it against the
+                    // SCE topology, which a binding that opens a second
+                    // `WindowSpec` without a second `AppState` differs from —
+                    // and under that rule this method published
+                    // `/window[inspector]/…` rows it then refused to read back.
+                    // A window named by `{window: …}` instead is already
+                    // refused upstream by `unknown_window_verdict`, so this
+                    // arm answers only for the address.
+                    return params.scope.as_ref().and_then(|s| s.window.as_ref()).map(
+                        |requested| {
+                            Err(pinion_rpc::draw_profile::DrawProfileError::UnknownWindow {
+                                requested: requested.clone(),
+                                valid: self
+                                    .windows
+                                    .values()
+                                    .map(|s| s.spec_id.to_string())
+                                    .collect(),
+                            })
+                        },
+                    );
+                };
+                self.core.draw_profile_for_window(
+                    &window_id,
+                    &mut slot.image_cache,
+                    params.scope.as_ref(),
+                )
             })
             .flatten();
         let resp = self.core.dispatch_rpc_scoped_from(

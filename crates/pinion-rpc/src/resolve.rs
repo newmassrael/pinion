@@ -144,9 +144,33 @@ fn names_the_root(scene: &Scene, segments: &[String]) -> bool {
 /// five is how the read and write channels come to disagree about what exists.
 #[must_use]
 pub fn lookup_addressed<'s>(scene: &'s Scene, segments: &[String]) -> Option<&'s Scene> {
-    scene
-        .lookup_path_ref(segments)
-        .or_else(|| names_the_root(scene, segments).then_some(scene))
+    lookup_addressed_chain(scene, segments).map(|(node, _)| node)
+}
+
+/// R1558 §5.34 — [`lookup_addressed`], plus the segment chain that actually
+/// addresses what it found.
+///
+/// The two are the same chain except under the root alias, where they differ in
+/// a way that matters to anyone building addresses **below** the node they
+/// resolved: `["model"]` reaches the scene root, and a root's address is the
+/// EMPTY chain, because its tag was never a segment (see `names_the_root`). A
+/// caller that echoed back what it asked for would emit every descendant's
+/// address one segment too deep — and each of those addresses would then fail
+/// to resolve, through this very function.
+///
+/// `scene/draw_profile` is the caller: it roots a profile at an address and
+/// every row it emits is that chain extended. Returned as a borrowed slice of
+/// the query rather than an owned `Vec` so [`lookup_addressed`] — five call
+/// sites on the §5.12 external path — keeps allocating nothing.
+#[must_use]
+pub fn lookup_addressed_chain<'s, 'q>(
+    scene: &'s Scene,
+    segments: &'q [String],
+) -> Option<(&'s Scene, &'q [String])> {
+    if let Some(node) = scene.lookup_path_ref(segments) {
+        return Some((node, segments));
+    }
+    names_the_root(scene, segments).then(|| (scene, &segments[..0]))
 }
 
 /// Mutable sibling of [`lookup_addressed`].
@@ -293,6 +317,42 @@ mod tests {
         let mut c = ContainerNode::new(vec![ext]);
         c.rect = Rect::new(0, 0, 100, 100);
         Scene::Container(c)
+    }
+
+    #[test]
+    fn r1558_the_chain_that_addresses_a_node_is_not_always_the_query() {
+        // A descendant is addressed by exactly the chain that reached it…
+        let scene = container_with_tagged_counted("counter", 7);
+        let query = vec!["counter".to_owned()];
+        let (node, chain) = lookup_addressed_chain(&scene, &query).expect("descendant resolves");
+        assert!(matches!(node, Scene::External(_)));
+        assert_eq!(chain, ["counter"]);
+
+        // …but the root alias reaches the ROOT, whose address is the empty
+        // chain, because a root's tag was never a segment. A caller building
+        // descendant addresses on top of what it ASKED for would emit
+        // `/model/0` for a node whose address is `/0` — and that string then
+        // fails to resolve, through this very function.
+        let mut root = ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 10, 10),
+            Color::default(),
+        ))])
+        .with_tag("model");
+        root.rect = Rect::new(0, 0, 100, 100);
+        let aliased = Scene::Container(root);
+        let query = vec!["model".to_owned()];
+        let (node, chain) = lookup_addressed_chain(&aliased, &query).expect("root alias resolves");
+        assert_eq!(node.tag(), Some("model"));
+        assert!(chain.is_empty(), "the root sits at the empty chain");
+
+        // The precedence is the one `lookup_addressed` states, and there is
+        // only one copy of it: a descendant that matches still wins.
+        assert!(lookup_addressed(&aliased, &["nope".to_owned()]).is_none());
+        assert_eq!(
+            lookup_addressed_chain(&aliased, &[]).map(|(_, c)| c.len()),
+            Some(0),
+            "an empty query is the root, with no alias needed",
+        );
     }
 
     #[test]

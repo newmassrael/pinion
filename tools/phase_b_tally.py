@@ -1145,9 +1145,46 @@ AXES = [
         # always been gated on OPTIMISATIONS as much as on measurement: R1550
         # made nothing faster. What it did is make the resource visible, which
         # is the precondition for the round that shrinks it.
-        "judged_at": 1550,
-        "completion": 83,
-        "evidence_snapshot": {"example-name": 5, "demo-body": 12, "round-axis": 8},
+        #
+        # R1558 re-judgment, demanded by the tool (the ledger took this axis
+        # 8 -> 11, past the band). 83 -> 90, and it absorbs THREE rounds at
+        # once: R1556 and R1557 each closed a named gap and each landed inside
+        # the band, so neither forced a look. Taken together they are the
+        # profiler:
+        #
+        #  - R1556 closed the SECOND of the three gaps the 83% named — "the
+        #    census counts nodes, not their cost". `last.draw` counts what was
+        #    DRAWN in the units a 2D vector renderer is charged in (draw
+        #    commands / paths / path segments / clip layers / glyph runs /
+        #    glyphs), read off the submitted scene, so a replayed subtree
+        #    counts like an encoded one.
+        #  - R1557 attributed that census PER SUBTREE, as a difference of
+        #    censuses across each node's walk, with `own = total - children`
+        #    an arithmetic identity and the whole tree a partition.
+        #  - R1558 scoped the MEASUREMENT to an address, which is what turns a
+        #    profiler from a thing that exists into a thing that is used: a
+        #    drill-down costs less at each step instead of re-encoding the
+        #    window three times. It rests on a property of the encoder — a
+        #    subtree's draw work is independent of its context — asserted
+        #    against a real encode and again on the wire.
+        #
+        # Reaching for the address also found the vocabulary bound to the
+        # wrong window registry (`path::resolve` judges a prefix against the
+        # SCE topology; live windows are the shell's `WindowSpec` slots), so
+        # R1557's own rows were unreadable on any multi-window binding.
+        #
+        # +7 and not more, and the remainder is audited at R1558 rather than
+        # carried: PRESENT LATENCY is still external (wgpu exposes no
+        # presentation-timestamp extension), the footprint is what the
+        # allocator was ASKED for rather than what is resident, per-node
+        # REPLAY status is absent by construction (the profile re-encodes into
+        # a cold cache so that it can decompose), a profile row's address
+        # still has no GENERAL reader, and R1550's two modelled arenas
+        # (`hash_table_bytes` / `lru_table_bytes`) are still unpinned against
+        # the crates whose layouts they model.
+        "judged_at": 1558,
+        "completion": 90,
+        "evidence_snapshot": {"example-name": 5, "demo-body": 15, "round-axis": 11},
     },
     {
         "key": "osnative",

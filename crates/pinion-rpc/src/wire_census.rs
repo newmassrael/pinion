@@ -509,6 +509,7 @@ pub const WIRE_TYPES: &[WireType] = &[
         shape: WireShape::Object {
             fields: &[
                 WireField::new("root", WireTy::Object, Some("DrawProfileRow")).nullable(),
+                WireField::new("path", WireTy::String, None).nullable(),
                 WireField::new("nodes", WireTy::Integer, None),
                 WireField::new("nodes_total", WireTy::Integer, None),
                 WireField::new("depth", WireTy::Integer, None).nullable(),

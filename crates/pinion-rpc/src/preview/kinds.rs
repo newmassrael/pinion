@@ -201,23 +201,26 @@ fn apply_set_style(scene: &mut Scene, target_path: &str, style: BoxStyle) -> Res
 }
 
 /// Split a `target_path` into segments, stripping any leading
-/// `/window[<id>]/` prefix. Mirrors the helper in
-/// [`crate::path::resolve`] but without window-topology resolution —
-/// the caller already trusts the path is in-window; only the segment
+/// `/window[<id>]/` prefix — without window-topology resolution, because
+/// the caller already trusts the path is in-window and only the segment
 /// list is needed for `lookup_path_mut`.
+///
+/// R1558 — the prefix split and the segment split were both hand-rolled here,
+/// under a doc conceding they mirrored [`crate::path::resolve`]'s. They are now
+/// the shared primitives, which is what "syntax only, registry-free" was always
+/// asking for: [`crate::path::split_window_prefix`] answers exactly that
+/// question and this was its third copy.
+///
+/// The tolerance is preserved and now stated rather than nested: a MALFORMED
+/// prefix (`/window[main/x`) falls back to addressing the whole input, so it
+/// resolves as the literal segments `["window[main", "x"]` and fails at
+/// `lookup_path_mut` instead of here. A preview target is a path this crate
+/// itself minted, so the case does not arise; erroring on it belongs to the
+/// round that gives this function an error channel.
 fn scene_segments(target_path: &str) -> Vec<String> {
-    let scene_path = match target_path.strip_prefix("/window[") {
-        Some(rest) => match rest.find(']') {
-            Some(close) => &rest[close + 1..],
-            None => target_path,
-        },
-        None => target_path,
-    };
-    scene_path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .collect()
+    let tail =
+        crate::path::split_window_prefix(target_path).map_or(target_path, |(_window, tail)| tail);
+    crate::path::segments(tail)
 }
 
 fn apply_set_signal(
