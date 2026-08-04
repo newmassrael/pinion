@@ -1976,15 +1976,9 @@ pub fn swatch_cell_editor(c: &CellEditRender<'_>) -> Scene {
         &field_style,
         "",
     );
-    editor_shell(cell, vec![chip, spacer_px(cell.style.cell_pad_x), field])
-}
-
-/// A fixed horizontal gap, as a sized empty container — the same shape the
-/// catalog's paint helpers use for editor-internal spacing.
-fn spacer_px(width: u32) -> Scene {
-    Scene::Container(
-        ContainerNode::new(Vec::new())
-            .with_layout(LayoutStyle::new().with_size(Size::px(width, 1))),
+    editor_shell(
+        cell,
+        vec![chip, crate::spacer::spacer(cell.style.cell_pad_x, 1), field],
     )
 }
 
@@ -2091,7 +2085,11 @@ pub fn toggle_cell_editor(c: &CellEditRender<'_>) -> Scene {
     ));
     editor_shell(
         cell,
-        vec![box_visual, spacer_px(cell.style.cell_pad_x), label],
+        vec![
+            box_visual,
+            crate::spacer::spacer(cell.style.cell_pad_x, 1),
+            label,
+        ],
     )
 }
 
