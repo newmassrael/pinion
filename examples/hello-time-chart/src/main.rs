@@ -899,7 +899,7 @@ mod tests {
         let target = find(&scene, PLOT_TAG).expect("the zoom target is in the tree");
         let axis = plot_area(CHART_RECT, chart_style(&Theme::default()).margin);
         let layout = match target {
-            Scene::Box(b) => b.layout,
+            Scene::Box(b) => &b.layout,
             _ => panic!("the target is the shared capture_surface (a Box)"),
         };
         assert_eq!(

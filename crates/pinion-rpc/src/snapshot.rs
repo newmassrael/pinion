@@ -145,6 +145,19 @@ pub struct TextSnapshot {
     /// that in the same scene dump as the marker glyph, and `scene/text_lists`
     /// folds the same field into one row per list.
     pub list: Option<pinion_core::text_list::ListPlacement>,
+    /// R1560 §5.36 — where this paragraph sits in the document's TABLE
+    /// structure (Qt `QTextTable`), `None` for text outside a table.
+    ///
+    /// [`Self::list`]'s argument one dimension up: a paragraph painted in a
+    /// grid area says nothing about which table it is in, which slot it got,
+    /// how far that slot reaches, or whether the reach it was given is the one
+    /// that was asked for. Carrying the placement puts all of that in the same
+    /// scene dump as the text, and `scene/text_tables` folds the same field
+    /// into one row per table.
+    /// Boxed for [`pinion_core::scene::TextNode::cell`]'s reason: almost no
+    /// text node in a scene is in a table, and this dump holds one struct per
+    /// painted node.
+    pub cell: Option<Box<pinion_core::text_table::CellPlacement>>,
 }
 
 /// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry,
@@ -574,6 +587,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             runs: node.runs.clone(),
             block: node.block,
             list: node.list.clone(),
+            cell: node.cell.clone(),
         }),
         Scene::Path(node) => SnapshotNode::Path(PathSnapshot {
             rect: node.rect,

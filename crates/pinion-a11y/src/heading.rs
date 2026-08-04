@@ -40,7 +40,7 @@
 use pinion_core::Scene;
 use pinion_core::scene::TextNode;
 
-use crate::{AccessNode, AriaRole};
+use crate::{AccessNode, AriaRole, NodeIndex};
 
 /// Emit a WAI-ARIA `heading` node for every painted paragraph that declares a
 /// heading level, and return how many nodes the pass added or upgraded.
@@ -82,20 +82,14 @@ pub fn attach_block_headings(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usiz
         }
     });
     let mut touched = 0usize;
+    let mut index = NodeIndex::new(nodes);
     for (tag, level, content) in found {
         let level = u32::from(level);
-        if let Some(existing) = nodes.iter_mut().find(|n| n.tag == tag) {
-            existing.role = AriaRole::Heading;
-            existing.level = Some(level);
-            if existing.name.is_none() {
-                existing.name = Some(first_line(content).to_string());
-            }
-        } else {
-            nodes.push(
-                AccessNode::new(tag, AriaRole::Heading)
-                    .with_level(level)
-                    .with_name(first_line(content)),
-            );
+        let node = index.upsert(nodes, tag, AriaRole::Heading);
+        node.role = AriaRole::Heading;
+        node.level = Some(level);
+        if node.name.is_none() {
+            node.name = Some(first_line(content).to_string());
         }
         touched += 1;
     }

@@ -323,7 +323,14 @@ AXES = [
             ("example-name", [
                 "virtual-", "lazy-", "million-row", "paged-stream",
                 "async-data", "measured-list", "variable-list", "grouped-",
-                "table", "grid-", "streaming-log", "tail-reveal", "live-data",
+                # `-table` rather than `table`: R1560 found `hello-combobox-editable`
+                # counted here, because "editable" CONTAINS "table". A substring
+                # census with no word boundary credits an axis with work that is
+                # not its own, silently and forever — the axis had been carrying
+                # a combobox as Model/View evidence since the pattern was
+                # written. The leading hyphen is the boundary the names already
+                # have.
+                "-table", "grid-", "streaming-log", "tail-reveal", "live-data",
                 "multi-select", "listbox", "flex-virtual",
             ]),
         ],

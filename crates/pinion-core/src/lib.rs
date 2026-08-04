@@ -60,6 +60,7 @@ pub mod term_grid;
 pub mod text_cache_stats;
 pub mod text_list;
 pub mod text_scale;
+pub mod text_table;
 pub mod theme;
 pub mod topology;
 pub mod tray;

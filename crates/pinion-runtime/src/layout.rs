@@ -38,17 +38,22 @@ use pinion_core::scene::{
     BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, ScrollAxis, StyleRun, TextNode,
 };
 use pinion_core::style::{
-    AlignItems, Display, FlexDirection, JustifyContent, LayoutStyle, SizeValue, TextStyle,
+    AlignItems, Display, FlexDirection, GridPlacement, GridTrack, JustifyContent, LayoutStyle,
+    SizeValue, TextStyle,
 };
+use taffy::geometry::MinMax;
+
 use pinion_text::LayoutCache;
 use std::collections::HashMap;
 use taffy::prelude::{
-    AvailableSpace, FromLength, LengthPercentage, LengthPercentageAuto, NodeId, Rect as TaffyRect,
-    Size as TaffySize, TaffyTree, auto, length, percent,
+    AvailableSpace, FromLength, FromPercent, LengthPercentage, LengthPercentageAuto,
+    Line as TaffyLine, NodeId, Rect as TaffyRect, Size as TaffySize, TaffyGridLine, TaffyTree,
+    auto, length, percent,
 };
 use taffy::style::{
     AlignItems as TaffyAlign, Dimension, Display as TaffyDisplay, FlexDirection as TaffyFlexDir,
-    JustifyContent as TaffyJustify, Position as TaffyPosition, Style as TaffyStyle,
+    GridPlacement as TaffyGridPlacement, JustifyContent as TaffyJustify, MaxTrackSizingFunction,
+    MinTrackSizingFunction, Position as TaffyPosition, Style as TaffyStyle, TrackSizingFunction,
 };
 
 /// R47.4 §5.36 — taffy `NodeContext` for leaves that need an intrinsic
@@ -1097,6 +1102,80 @@ fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
     }
 }
 
+/// (R1560 §5.21) Lower one [`GridTrack`] to taffy's `minmax(min, max)` pair.
+///
+/// The pairs are CSS's own definitions rather than a choice made here: a
+/// `<length>` track is `minmax(len, len)`, an `<flex>` track is
+/// `minmax(auto, Nfr)` (which is why a `1fr` column still refuses to shrink
+/// below its content), and the intrinsic keywords are the same function on
+/// both sides.
+#[allow(clippy::cast_precision_loss)]
+fn to_taffy_track(track: GridTrack) -> TrackSizingFunction {
+    let (min, max) = match track {
+        GridTrack::Px(px) => {
+            let len = LengthPercentage::from_length(px as f32);
+            (
+                MinTrackSizingFunction::Fixed(len),
+                MaxTrackSizingFunction::Fixed(len),
+            )
+        }
+        GridTrack::Percent(fraction) => {
+            let len = LengthPercentage::from_percent(fraction);
+            (
+                MinTrackSizingFunction::Fixed(len),
+                MaxTrackSizingFunction::Fixed(len),
+            )
+        }
+        GridTrack::Fr(units) => (
+            MinTrackSizingFunction::Auto,
+            MaxTrackSizingFunction::Fraction(units),
+        ),
+        GridTrack::MinContent => (
+            MinTrackSizingFunction::MinContent,
+            MaxTrackSizingFunction::MinContent,
+        ),
+        GridTrack::MaxContent => (
+            MinTrackSizingFunction::MaxContent,
+            MaxTrackSizingFunction::MaxContent,
+        ),
+        // `Auto` and any future arm: taffy's `auto` on both sides, which is
+        // the sizing every implicit track already gets.
+        _ => (MinTrackSizingFunction::Auto, MaxTrackSizingFunction::Auto),
+    };
+    TrackSizingFunction::Single(MinMax { min, max })
+}
+
+/// (R1560 §5.21) Lower a [`GridPlacement`] to taffy's `(start, end)` line pair.
+///
+/// CSS states one axis of a grid item's placement as a start plus a span, and
+/// taffy models that as two independent line values, so the translation is
+/// where the two spellings meet: a placed item is `Line(n) / span k`, an
+/// unplaced one that still knows its size is `span k / auto`, and no
+/// declaration at all is `auto / auto` — taffy's default, so an item that
+/// declares nothing lowers exactly as it did before this round.
+fn to_taffy_placement(placement: Option<GridPlacement>) -> TaffyLine<TaffyGridPlacement> {
+    let Some(placement) = placement else {
+        return TaffyLine {
+            start: TaffyGridPlacement::Auto,
+            end: TaffyGridPlacement::Auto,
+        };
+    };
+    // A zero-track item is not expressible in CSS and dropping it would be a
+    // silent hole in the grid, so it covers one track. `text_table` never
+    // emits one — this is the lowering refusing to have an undefined case.
+    let span = placement.span.max(1);
+    match placement.start_line {
+        Some(line) => TaffyLine {
+            start: TaffyGridPlacement::from_line_index(i16::try_from(line).unwrap_or(i16::MAX)),
+            end: TaffyGridPlacement::Span(span),
+        },
+        None => TaffyLine {
+            start: TaffyGridPlacement::Span(span),
+            end: TaffyGridPlacement::Auto,
+        },
+    }
+}
+
 #[allow(
     clippy::cast_precision_loss,
     clippy::field_reassign_with_default,
@@ -1107,8 +1186,33 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
     s.display = match layout.display {
         Display::Block => TaffyDisplay::Block,
         Display::Flex => TaffyDisplay::Flex,
+        // (R1560 §5.21) CSS Grid. The tracks below are only read in this mode;
+        // taffy ignores them for a flex or block container exactly as CSS
+        // does, so a stray declaration cannot change a non-grid layout.
+        Display::Grid => TaffyDisplay::Grid,
         _ => TaffyDisplay::Block,
     };
+    // (R1560 §5.21) Explicit grid tracks. Empty vectors — every non-grid node
+    // in the tree — lower to taffy's own empty default, so the layout graph is
+    // bit-identical for every pre-R1560 binding.
+    if !layout.grid_template_columns.is_empty() {
+        s.grid_template_columns = layout
+            .grid_template_columns
+            .iter()
+            .copied()
+            .map(to_taffy_track)
+            .collect();
+    }
+    if !layout.grid_template_rows.is_empty() {
+        s.grid_template_rows = layout
+            .grid_template_rows
+            .iter()
+            .copied()
+            .map(to_taffy_track)
+            .collect();
+    }
+    s.grid_row = to_taffy_placement(layout.grid_row);
+    s.grid_column = to_taffy_placement(layout.grid_column);
     s.flex_direction = match layout.flex_direction {
         FlexDirection::Row => TaffyFlexDir::Row,
         FlexDirection::Column => TaffyFlexDir::Column,
@@ -1697,7 +1801,8 @@ mod tests {
         // jitter on mouse-drag resize.
         for w in 300_u32..=320 {
             let text = Scene::Text(TextNode::styled(label, Rect::default(), style.clone()));
-            let mut scene = Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
+            let mut scene =
+                Scene::Container(ContainerNode::new(vec![text]).with_layout(layout.clone()));
             compute_layout(&mut scene, &mut cache, w, 200);
             let Scene::Container(container) = &scene else {
                 panic!("container");
@@ -3121,8 +3226,9 @@ mod tests {
             Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_layout(ls))
         };
 
-        let mut none_scene =
-            Scene::Container(ContainerNode::new(vec![intrinsic_child(None)]).with_layout(layout));
+        let mut none_scene = Scene::Container(
+            ContainerNode::new(vec![intrinsic_child(None)]).with_layout(layout.clone()),
+        );
         let mut some_auto_scene = Scene::Container(
             ContainerNode::new(vec![intrinsic_child(Some(SizeValue::Auto))]).with_layout(layout),
         );

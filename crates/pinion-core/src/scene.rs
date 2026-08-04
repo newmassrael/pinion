@@ -36,6 +36,7 @@ use crate::style::{
 };
 use crate::term_grid::{GridBuffer, Palette};
 use crate::text_list::ListPlacement;
+use crate::text_table::CellPlacement;
 use crate::widgets::measured_rows::MeasuredRowState;
 use crate::widgets::scroll::ScrollState;
 
@@ -2014,7 +2015,7 @@ impl BoxNode {
 
     /// Attach a §5.21 layout style (builder form).
     #[must_use]
-    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
         self
     }
@@ -2318,6 +2319,28 @@ pub struct TextNode {
     /// one field, so the announced structure and the published one are one
     /// derivation.
     pub list: Option<ListPlacement>,
+    /// R1560 §5.36 — where this paragraph sits in the document's **table**
+    /// structure (Qt `QTextTable`): which table, which cell, at what address.
+    ///
+    /// `None` (the default) is a paragraph outside any table.
+    ///
+    /// A **derivation**, for [`Self::list`]'s reason and one dimension up. An
+    /// author states membership and reach
+    /// ([`CellSpec`](crate::text_table::CellSpec)); the address is computed
+    /// from the cell's place in the flow
+    /// ([`place_cells`](crate::text_table::place_cells)), because that is what
+    /// an address IS — put a wider cell in front and everything after it
+    /// moves. Both the a11y table pass (`pinion_a11y::attach_block_tables`)
+    /// and `scene/text_tables` read this one field, so the announced structure
+    /// and the published one are one derivation.
+    ///
+    /// **Boxed**, unlike [`Self::list`]: a `CellPlacement` carries three tags
+    /// and the table's whole format, and every text leaf in every binding
+    /// carries this field whether or not it is in a table. Inline it made
+    /// `Scene`'s largest variant grow past the point where the enum's own size
+    /// is dominated by a field almost nothing sets — measured by clippy's
+    /// `large_enum_variant`, which is the check that caught it.
+    pub cell: Option<Box<CellPlacement>>,
 }
 
 /// R51.81 §5.40 — accessibility role hint attached to a [`TextNode`].
@@ -2364,6 +2387,7 @@ impl TextNode {
             mnemonic: None,
             block: None,
             list: None,
+            cell: None,
         }
     }
 
@@ -2443,6 +2467,23 @@ impl TextNode {
     #[must_use]
     pub fn with_list_placement(mut self, placement: ListPlacement) -> Self {
         self.list = Some(placement);
+        self
+    }
+
+    /// R1560 §5.36 — attach the [`CellPlacement`] a table's addressing
+    /// produced for this paragraph (builder form).
+    ///
+    /// Lowers to nothing here, exactly as [`Self::with_list_placement`] does:
+    /// what an address decides is which grid area the *cell box around this
+    /// paragraph* occupies, and the composing view lowers that onto
+    /// [`LayoutStyle::grid_row`](crate::style::LayoutStyle::grid_row). What
+    /// this field does is keep the derivation addressable from the painted
+    /// scene, so the assistive-technology tree and the §7 census read the
+    /// address rather than each re-deriving it from a document order neither
+    /// of them has.
+    #[must_use]
+    pub fn with_cell_placement(mut self, placement: CellPlacement) -> Self {
+        self.cell = Some(Box::new(placement));
         self
     }
 
@@ -2956,7 +2997,7 @@ impl ContainerNode {
 
     /// Attach a §5.21 layout style (builder form).
     #[must_use]
-    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
         self
     }
@@ -3413,7 +3454,7 @@ impl ScrollNode {
     /// [`Self::map_layout`] (R55.G.6) which preserves the seeded
     /// default and chains a single modification on top.
     #[must_use]
-    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
         self
     }
@@ -3889,7 +3930,7 @@ impl ImmediateModeNode {
 
     /// Attach a §5.21 layout style (builder form).
     #[must_use]
-    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
         self
     }
@@ -4048,7 +4089,7 @@ impl TextGridNode {
     /// participates in the parent layout that resolves its pixel
     /// [`Rect`].
     #[must_use]
-    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
         self
     }

@@ -171,6 +171,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/text_cache_stats", MethodOcc::Read),
     ("scene/text_lists", MethodOcc::Read),
     ("scene/text_state", MethodOcc::Read),
+    ("scene/text_tables", MethodOcc::Read),
     ("scene/theme_tokens", MethodOcc::Read),
     ("scene/tick", MethodOcc::Mutate),
     ("scene/type", MethodOcc::Read),

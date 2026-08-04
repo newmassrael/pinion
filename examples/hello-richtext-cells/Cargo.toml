@@ -1,0 +1,53 @@
+[package]
+name = "hello-richtext-cells"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1560 §5.36 table consumer — a document whose cells are addressed by their place in the flow (Qt QTextTable): automatic re-addressing when a cell is inserted, a span clamped to the free run and named, a ragged table's slack published, header bands derived from the address, laid out on a real CSS Grid, published by scene/text_tables and announced as a WAI-ARIA table"
+publish = false
+
+[[bin]]
+name = "hello-richtext-cells"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle reused as the "is the note row present" bit, so a cell can be
+# inserted into the middle of a table and every cell after it re-addresses.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R1560 §5.36 — `view_document`, the one place a declared cell membership
+# becomes a box at a derived grid address.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R1560 §2#6 — the SAME view scene is laid out and painted through the terminal
+# backend in this crate's own tests. A table is an ordinary grid container, so
+# the cell backend needs no table code at all; that claim is the consumer's to
+# make.
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
+# R1560 — the layout pass, so every assertion about a cell's box is about a box
+# taffy's CSS Grid produced rather than a hand-placed rect.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# R1560 §5.12 — the `scene/text_tables` census, asserted against the same scene
+# the binding paints.
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
+ratatui = { workspace = true }
+
+[build-dependencies]
+# R1560 §5.16: build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

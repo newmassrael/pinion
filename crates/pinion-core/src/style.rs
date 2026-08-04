@@ -3014,6 +3014,103 @@ pub enum Display {
     #[default]
     Block,
     Flex,
+    /// (R1560 §5.21) CSS Grid — children are placed on a two-dimensional set
+    /// of tracks whose sizes are resolved **across** the whole container.
+    ///
+    /// That last word is the whole reason this arm exists and flex could not
+    /// stand in for it. A column of flex rows measures each row on its own, so
+    /// two rows agree about a column's width only by being told the same
+    /// number; a grid sizes each track once against every item in it, which is
+    /// what makes a table's columns line up when nothing states their width.
+    /// The other half is [`LayoutStyle::grid_row`]: an item can cover several
+    /// tracks on either axis, so a cell spanning two rows is expressible at
+    /// all — in a nest of flex rows it is not.
+    Grid,
+}
+
+/// (R1560 §5.21) How one grid track is sized — CSS
+/// [`<track-size>`](https://www.w3.org/TR/css-grid-1/#typedef-track-size), and
+/// the vocabulary Qt spells as `QTextLength` on a text table's columns.
+///
+/// The four Qt has (`VariableLength` / `FixedLength` / `PercentageLength`, plus
+/// the implicit share-what-is-left) are [`Self::Auto`], [`Self::Px`],
+/// [`Self::Percent`] and [`Self::Fr`]; [`Self::MinContent`] /
+/// [`Self::MaxContent`] are CSS's intrinsic keywords, which Qt's table layout
+/// computes internally and offers no way to ask for.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum GridTrack {
+    /// CSS `auto` — sized to its items, then given a share of any space left
+    /// over. Qt `QTextLength::VariableLength`, and what a table column takes
+    /// when nothing says otherwise.
+    #[default]
+    Auto,
+    /// CSS `<length>` — a fixed px extent. Qt `QTextLength::FixedLength`.
+    Px(u32),
+    /// CSS `<percentage>` of the grid container's content box. Qt
+    /// `QTextLength::PercentageLength`.
+    Percent(f32),
+    /// CSS `<flex>` (`1fr`) — a share of the space remaining once the fixed
+    /// and intrinsic tracks are sized. Qt has no per-column equivalent; its
+    /// variable columns share equally.
+    Fr(f32),
+    /// CSS `min-content` — the narrowest the track's items can be without
+    /// overflowing.
+    MinContent,
+    /// CSS `max-content` — as wide as the track's items would like to be.
+    MaxContent,
+}
+
+/// (R1560 §5.21) Where a grid item sits on one axis — CSS `grid-row` /
+/// `grid-column` in their `<line> / span <n>` form.
+///
+/// Both halves are optional in CSS and both are represented: an item with no
+/// [`start_line`](Self::start_line) is auto-placed by the layout engine, and
+/// one that names its line is placed there. `pinion_core::text_table` always
+/// names the line, deliberately — the address is derived once, in the view, so
+/// that the same number reaches the painter, the assistive-technology tree and
+/// the wire. Letting the layout engine auto-place would compute the address a
+/// second time, somewhere only the painter can see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GridPlacement {
+    /// The **1-based** grid line the item starts at, following CSS's own
+    /// numbering (`grid-row: 1` is the first row), or `None` to auto-place.
+    pub start_line: Option<u16>,
+    /// How many tracks the item covers (CSS `span <n>`). Lowered as
+    /// `span.max(1)`, because a zero-track item is not a thing CSS or taffy
+    /// can express and silently dropping the item would be worse than
+    /// covering one track.
+    pub span: u16,
+}
+
+impl GridPlacement {
+    /// One track, at 1-based `line`.
+    #[must_use]
+    pub const fn at(line: u16) -> Self {
+        Self {
+            start_line: Some(line),
+            span: 1,
+        }
+    }
+
+    /// `span` tracks, starting at 1-based `line`.
+    #[must_use]
+    pub const fn spanning(line: u16, span: u16) -> Self {
+        Self {
+            start_line: Some(line),
+            span,
+        }
+    }
+
+    /// `span` tracks, wherever the layout engine finds room (CSS
+    /// `grid-column: span 2` with no line).
+    #[must_use]
+    pub const fn auto_spanning(span: u16) -> Self {
+        Self {
+            start_line: None,
+            span,
+        }
+    }
 }
 
 /// Main-axis direction for flex children per §5.21.
@@ -3192,7 +3289,7 @@ impl Size {
 /// Modifier struct directly into `LayoutStyle` so there is exactly one
 /// sidecar driving the taffy pass.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 // R1554 — five independent flags, and clippy's suggested remedies do not fit
 // either of them. They are not a state machine: `pointer_transparent`,
 // `focusable`, `drop_target` and the disabled pair are orthogonal CSS-shaped
@@ -3455,6 +3552,34 @@ pub struct LayoutStyle {
     /// `scene/cursor_hint` RPC method), the same posture R1189's chrome-resize
     /// cursor takes.
     pub cursor: Option<CursorHint>,
+    /// (R1560 §5.21) CSS `grid-template-columns` — this container's explicit
+    /// column tracks, in order. Empty (the default) leaves every column
+    /// implicit and [`GridTrack::Auto`], which is CSS's own behaviour and Qt's
+    /// default for a text table.
+    ///
+    /// This is the field that cost [`LayoutStyle`] its `Copy`. A track list is
+    /// a list — CSS's grammar is `<track-size>+` — and the alternatives were
+    /// each a way of not saying that: a fixed inline capacity puts an
+    /// arbitrary column limit in the layout engine, and `repeat(n, track)`
+    /// alone cannot express the per-column widths Qt's
+    /// `setColumnWidthConstraints` already has. The cost was measured before
+    /// it was paid: removing `Copy` broke exactly one call site in the
+    /// workspace, and an empty `Vec` neither allocates nor makes a clone do
+    /// any work, so a node that declares no grid is unchanged.
+    pub grid_template_columns: Vec<GridTrack>,
+    /// (R1560 §5.21) CSS `grid-template-rows` — the row peer of
+    /// [`Self::grid_template_columns`], same default and same meaning.
+    ///
+    /// Present because the two axes are the same axis twice and a grid with
+    /// only one of them would be a hole a reader has to remember. A text table
+    /// leaves it empty: rows size to their content, which is Qt's rule too
+    /// (`QTextTableFormat` has no row-height constraint).
+    pub grid_template_rows: Vec<GridTrack>,
+    /// (R1560 §5.21) CSS `grid-row` — which row track(s) this item covers.
+    /// `None` (the default) leaves the item to the container's auto-placement.
+    pub grid_row: Option<GridPlacement>,
+    /// (R1560 §5.21) CSS `grid-column` — the column peer of [`Self::grid_row`].
+    pub grid_column: Option<GridPlacement>,
 }
 
 /// (R1196 §5.16 §5.39) A shell-neutral mouse-cursor request a scene node
@@ -3524,6 +3649,14 @@ impl LayoutStyle {
             resolved_disabled: false,
             // (R1196 §5.16 §5.39) `None` = the OS default arrow cursor.
             cursor: None,
+            // (R1560 §5.21) Empty = no explicit tracks; every track a grid
+            // needs is implicit and `auto`, which is CSS's own default and
+            // costs an empty `Vec` (no allocation) on every non-grid node.
+            grid_template_columns: Vec::new(),
+            grid_template_rows: Vec::new(),
+            // (R1560 §5.21) `None` = auto-placed, CSS's default.
+            grid_row: None,
+            grid_column: None,
         }
     }
 
@@ -3602,6 +3735,46 @@ impl LayoutStyle {
     #[must_use]
     pub const fn with_cursor(mut self, hint: CursorHint) -> Self {
         self.cursor = Some(hint);
+        self
+    }
+
+    /// (R1560 §5.21) Builder: make this container a CSS **grid** whose columns
+    /// are `tracks` (`display: grid; grid-template-columns: …`).
+    ///
+    /// One builder for both halves because they are one declaration: a
+    /// container that names column tracks and is not a grid is a statement
+    /// with no meaning, and splitting them lets a caller write half of it.
+    #[must_use]
+    pub fn grid_columns(mut self, tracks: Vec<GridTrack>) -> Self {
+        self.display = Display::Grid;
+        self.grid_template_columns = tracks;
+        self
+    }
+
+    /// (R1560 §5.21) Builder: this grid's explicit **row** tracks
+    /// (`grid-template-rows`). Rows left unstated are implicit and
+    /// [`GridTrack::Auto`] — sized to their content, which is what a table's
+    /// rows do.
+    #[must_use]
+    pub fn with_grid_rows(mut self, tracks: Vec<GridTrack>) -> Self {
+        self.display = Display::Grid;
+        self.grid_template_rows = tracks;
+        self
+    }
+
+    /// (R1560 §5.21) Builder: which row track(s) this **item** covers — CSS
+    /// `grid-row`.
+    #[must_use]
+    pub const fn with_grid_row(mut self, row: GridPlacement) -> Self {
+        self.grid_row = Some(row);
+        self
+    }
+
+    /// (R1560 §5.21) Builder: which column track(s) this **item** covers — CSS
+    /// `grid-column`.
+    #[must_use]
+    pub const fn with_grid_column(mut self, column: GridPlacement) -> Self {
+        self.grid_column = Some(column);
         self
     }
 

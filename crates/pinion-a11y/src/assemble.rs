@@ -58,6 +58,12 @@ pub fn build_access_tree(
         // the name pass, so an item appended here is named by the rule every
         // other node is named by.
         crate::attach_block_lists(&mut nodes, paint);
+        // R1560 §5.40 §5.36 — the document's table structure, from the same
+        // painted tree by the same kind of pass. After the list pass so a cell
+        // that is also a list item keeps both facts, and before the name pass
+        // so a cell appended here is named from its painted contents by the
+        // rule every other node is named by.
+        crate::attach_block_tables(&mut nodes, paint);
         enrich_names_from_scene(&mut nodes, paint);
         // R1543 §5.40 §5.39 — the mnemonic announcement, derived from the same
         // painted tree by the same kind of pass. It rides the assembler for the

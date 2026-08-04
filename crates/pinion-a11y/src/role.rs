@@ -313,8 +313,28 @@ pub enum AriaRole {
     /// distinguishes `grid` (interactive widget) from `table` (static
     /// data); AccessKit carries both
     /// ([`accesskit::Role::Grid`] vs `Role::Table`), so the split is
-    /// preserved end to end.
+    /// preserved end to end. R1560 landed that axis: see [`Self::Table`].
     Grid,
+    /// R1560 §5.40 §5.36 — WAI-ARIA 1.2 §3.3 `table` role. **Static**
+    /// tabular content: a document's table
+    /// ([`pinion_core::text_table`]), where the cells
+    /// are read rather than operated.
+    ///
+    /// The axis [`Self::Grid`]'s doc predicted, landed additively and kept
+    /// separate for the reason that doc gives: a `grid` is an interactive
+    /// widget with a two-dimensional keyboard model and a single Tab stop,
+    /// while a `table` owns no keyboard model at all. Announcing a document
+    /// table as a `grid` would promise a navigation the reader does not have.
+    /// Its rows are [`Self::Row`] and its cells [`Self::Cell`], and it carries
+    /// `aria-rowcount` / `aria-colcount`.
+    Table,
+    /// R1560 §5.40 §5.36 — WAI-ARIA 1.2 §3.3 `cell` role. A single cell of a
+    /// [`Self::Table`], carrying `aria-rowindex` / `aria-colindex` and, when
+    /// it covers more than one slot, `aria-rowspan` / `aria-colspan`.
+    ///
+    /// Distinct from [`Self::GridCell`] exactly as `table` is from `grid`: a
+    /// `gridcell` is activatable and selectable, a `cell` is content.
+    Cell,
     /// R704 §5.40 — WAI-ARIA 1.2 §3.3 `gridcell` role. A single cell of
     /// a [`Self::Grid`] (one selectable day in the date picker).
     /// Commit-class atomic at the AT-action surface (Click activates,
@@ -510,6 +530,12 @@ impl AriaRole {
             // split is preserved end to end.
             Self::Grid => Role::Grid,
             Self::GridCell => Role::GridCell,
+            // R1560 §5.40 — AccessKit carries the static table roles as their
+            // own arms, so the `table` / `cell` vs `grid` / `gridcell` split
+            // survives to the platform adapter rather than being flattened
+            // here.
+            Self::Table => Role::Table,
+            Self::Cell => Role::Cell,
             Self::ColumnHeader => Role::ColumnHeader,
             // R863 §5.40 §5.27 — AccessKit carries `rowheader` / `treegrid`
             // one-to-one, completing the columned-tree role set.
@@ -577,6 +603,8 @@ impl AriaRole {
             Self::Tooltip => "tooltip",
             Self::Grid => "grid",
             Self::GridCell => "gridcell",
+            Self::Table => "table",
+            Self::Cell => "cell",
             Self::ColumnHeader => "columnheader",
             Self::RowHeader => "rowheader",
             Self::Row => "row",

@@ -135,6 +135,7 @@ members = [
     "examples/hello-richtext-background",
     "examples/hello-richtext-blocks",
     "examples/hello-richtext-list",
+    "examples/hello-richtext-cells",
     "examples/hello-color-picker",
     "examples/hello-elevation",
     "examples/hello-commands",

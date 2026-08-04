@@ -15,6 +15,7 @@
 
 use pinion_core::scene::Rect;
 use pinion_core::widgets::interaction::InteractionState;
+use std::collections::HashMap;
 
 use crate::role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};
 
@@ -183,6 +184,33 @@ pub struct AccessNode {
     /// One-based to match the ARIA vocabulary this whole struct is named
     /// after ([`Self::position_in_set`] is one-based for the same reason).
     pub column_index: Option<u32>,
+    /// R1560 §5.40 §5.36 — WAI-ARIA `aria-rowcount` per WAI-ARIA 1.2 §6.6.5:
+    /// how many rows the table has. The row-axis peer of
+    /// [`Self::column_count`], set on the `table` / `grid` container.
+    ///
+    /// Distinct from [`Self::size_of_set`], which the windowed grid uses to
+    /// say how many rows a *set of announced rows* is drawn from. Both exist
+    /// because ARIA has both, and a table that is not windowed still has a row
+    /// count.
+    pub row_count: Option<u32>,
+    /// R1560 §5.40 §5.36 — WAI-ARIA `aria-rowindex` per WAI-ARIA 1.2 §6.6.5.
+    /// **One-based** absolute row position of this cell or row, the row-axis
+    /// mirror of [`Self::column_index`].
+    pub row_index: Option<u32>,
+    /// R1560 §5.40 §5.36 — WAI-ARIA `aria-rowspan` per WAI-ARIA 1.2 §6.6.5:
+    /// how many rows this cell covers. `None` (the default) means one, which
+    /// is what the attribute's absence means in ARIA too.
+    ///
+    /// A cell's span is the half of a table's geometry that a position alone
+    /// cannot carry: without it an assistive technology reads a merged cell as
+    /// occupying one slot and every cell after it as being in the wrong place.
+    /// Qt's document tables reach no accessibility interface at all
+    /// (`QAccessibleTextInterface` has no method that reports block
+    /// structure), so this is not a smaller amount of the same thing.
+    pub row_span: Option<u32>,
+    /// R1560 §5.40 §5.36 — WAI-ARIA `aria-colspan`: how many columns this cell
+    /// covers. The column-axis peer of [`Self::row_span`].
+    pub column_span: Option<u32>,
     /// R693 §5.40 — WAI-ARIA `aria-modal` per WAI-ARIA 1.2 §6.6.1.
     /// `true` lowers to `accesskit::Node::set_modal` so AT announces the
     /// node as a modal boundary and confines its virtual cursor to the
@@ -365,6 +393,10 @@ impl AccessNode {
             size_of_set: None,
             column_count: None,
             column_index: None,
+            row_count: None,
+            row_index: None,
+            row_span: None,
+            column_span: None,
             modal: false,
             described_by: None,
             expanded: None,
@@ -530,6 +562,37 @@ impl AccessNode {
     #[must_use]
     pub fn with_column(mut self, col: usize) -> Self {
         self.column_index = Some(u32::try_from(col + 1).unwrap_or(u32::MAX));
+        self
+    }
+
+    /// R1560 §5.40 — set the WAI-ARIA `aria-rowcount` attribute. See
+    /// [`Self::row_count`] for the semantic axis.
+    #[must_use]
+    pub fn with_row_count(mut self, rows: u32) -> Self {
+        self.row_count = Some(rows);
+        self
+    }
+
+    /// R1560 §5.40 — set `aria-rowindex` from a **zero-based** row index: the
+    /// stored value is the one-based `row + 1`, exactly as
+    /// [`Self::with_column`] handles the other axis, so no caller has to
+    /// remember which of the two is off by one.
+    #[must_use]
+    pub fn with_row(mut self, row: usize) -> Self {
+        self.row_index = Some(u32::try_from(row + 1).unwrap_or(u32::MAX));
+        self
+    }
+
+    /// R1560 §5.40 — set `aria-rowspan` / `aria-colspan` from the extent a
+    /// cell covers.
+    ///
+    /// One builder for the pair because they are one fact — the rectangle the
+    /// cell occupies — and a caller that could state half of it would produce
+    /// a cell whose announced shape is not the one it was allocated.
+    #[must_use]
+    pub fn with_span(mut self, rows: u32, columns: u32) -> Self {
+        self.row_span = Some(rows);
+        self.column_span = Some(columns);
         self
     }
 
@@ -761,6 +824,56 @@ pub fn attach_child_button(
     };
     parent.children.push(button_tag.clone());
     nodes.push(AccessNode::new(button_tag, AriaRole::Button).with_name(name));
+}
+
+/// R1560 §5.40 — an index of `nodes` by tag, so a pass that describes many
+/// objects can find each one without scanning.
+///
+/// The lifted half of the find-or-create every scene-derived pass does
+/// ([`attach_block_headings`](crate::attach_block_headings), the two halves of
+/// [`attach_block_lists`](crate::attach_block_lists), and
+/// [`attach_block_tables`](crate::attach_block_tables) — four sites, so this
+/// is a lift rather than a speculation). Each of them found its node with a
+/// linear `find` per object, which is quadratic in the objects a pass
+/// describes: tolerable for a document's headings, which are few, and not for
+/// a table's cells, which are not.
+#[derive(Debug, Default)]
+pub struct NodeIndex {
+    by_tag: HashMap<String, usize>,
+}
+
+impl NodeIndex {
+    /// Index the nodes a binding has already described.
+    #[must_use]
+    pub fn new(nodes: &[AccessNode]) -> Self {
+        Self {
+            by_tag: nodes
+                .iter()
+                .enumerate()
+                .map(|(at, node)| (node.tag.clone(), at))
+                .collect(),
+        }
+    }
+
+    /// The node for `tag`, appending one with `role` if the binding did not
+    /// already describe it.
+    ///
+    /// The caller keeps its own merge policy — which fields survive an
+    /// existing description is a decision per pass (a heading outranks a list
+    /// item), and folding that in here would make one rule serve four
+    /// questions.
+    pub fn upsert<'n>(
+        &mut self,
+        nodes: &'n mut Vec<AccessNode>,
+        tag: &str,
+        role: AriaRole,
+    ) -> &'n mut AccessNode {
+        let at = *self.by_tag.entry(tag.to_owned()).or_insert_with(|| {
+            nodes.push(AccessNode::new(tag.to_owned(), role));
+            nodes.len() - 1
+        });
+        &mut nodes[at]
+    }
 }
 
 #[cfg(test)]

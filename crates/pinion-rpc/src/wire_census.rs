@@ -823,6 +823,15 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "GridSlotWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("row", WireTy::Integer, None),
+                WireField::new("column", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "LayoutKind",
         shape: WireShape::Enum {
             values: &[
@@ -1282,6 +1291,30 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "TextCellWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("row_tag", WireTy::String, None),
+                WireField::new("row", WireTy::Integer, None),
+                WireField::new("column", WireTy::Integer, None),
+                WireField::new("row_span", WireTy::Integer, None),
+                WireField::new("column_span", WireTy::Integer, None),
+                WireField::new("declared_row_span", WireTy::Integer, None),
+                WireField::new("declared_column_span", WireTy::Integer, None),
+                WireField::new("clamped", WireTy::Boolean, None),
+                WireField::new("header", WireTy::String, None),
+                WireField::new("index", WireTy::Integer, None),
+                WireField::new("blocks", WireTy::Array, None),
+                // Absent until the paint has laid the cell box out.
+                WireField::new("x", WireTy::Integer, None).nullable(),
+                WireField::new("y", WireTy::Integer, None).nullable(),
+                WireField::new("width", WireTy::Integer, None).nullable(),
+                WireField::new("height", WireTy::Integer, None).nullable(),
+            ],
+        },
+    },
+    WireType {
         name: "TextIndentWire",
         shape: WireShape::Object {
             fields: &[
@@ -1377,6 +1410,40 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("is_composing", WireTy::Boolean, None),
                 WireField::new("preedit", WireTy::String, None).nullable(),
             ],
+        },
+    },
+    WireType {
+        name: "TextTableWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("rows", WireTy::Integer, None),
+                WireField::new("columns", WireTy::Integer, None),
+                WireField::new("cell_count", WireTy::Integer, None),
+                WireField::new("header_rows", WireTy::Integer, None),
+                WireField::new("header_columns", WireTy::Integer, None),
+                WireField::new("column_widths", WireTy::Array, None),
+                WireField::new("cell_padding_px", WireTy::Integer, None),
+                WireField::new("cell_spacing_px", WireTy::Integer, None),
+                WireField::new("border_px", WireTy::Integer, None),
+                // Absent until the paint has laid the container out.
+                WireField::new("x", WireTy::Integer, None).nullable(),
+                WireField::new("y", WireTy::Integer, None).nullable(),
+                WireField::new("width", WireTy::Integer, None).nullable(),
+                WireField::new("height", WireTy::Integer, None).nullable(),
+                WireField::new("slack", WireTy::Array, Some("GridSlotWire")),
+                WireField::new("cells", WireTy::Array, Some("TextCellWire")),
+            ],
+        },
+    },
+    WireType {
+        name: "TextTablesOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "tables",
+                WireTy::Array,
+                Some("TextTableWire"),
+            )],
         },
     },
     WireType {

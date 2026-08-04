@@ -609,6 +609,41 @@ impl DocumentTag {
     pub fn marker(tag: &str, i: usize) -> String {
         format!("{tag}_mrk{i}")
     }
+
+    /// R1560 — the `k`-th **table** the document's addressing derived, in
+    /// document order — `"{tag}_tbl{k}"`.
+    ///
+    /// A table is an object in its own right (Qt's `QTextTable`): the node
+    /// whose box encloses its cells, the WAI-ARIA `table` its rows belong to,
+    /// and the row `scene/text_tables` reports. `k` counts tables, not blocks.
+    #[must_use]
+    pub fn table(tag: &str, k: usize) -> String {
+        format!("{tag}_tbl{k}")
+    }
+
+    /// R1560 — row `r` (0-based) of the `k`-th table — `"{tag}_tbl{k}r{r}"`.
+    ///
+    /// A row exists as a painted node even though a grid places cells
+    /// directly: it is the band a header or a stripe is drawn on, the box a
+    /// caller measures to ask how tall a row is, and the WAI-ARIA `row` that
+    /// owns the cells. Its tag is derived from the table's, so a row cannot be
+    /// addressed as belonging to a table it is not in.
+    #[must_use]
+    pub fn table_row(tag: &str, k: usize, r: u32) -> String {
+        format!("{tag}_tbl{k}r{r}")
+    }
+
+    /// R1560 — the **cell** opened by the `i`-th paragraph — `"{tag}_cel{i}"`.
+    ///
+    /// Keyed by the block that opens the cell rather than by its address, for
+    /// the reason the address exists at all: an address moves when an earlier
+    /// cell's span changes, so a tag built from one would rename cells that
+    /// nothing was done to. Every block of a multi-block cell carries this one
+    /// tag, which is what makes them one cell.
+    #[must_use]
+    pub fn cell(tag: &str, i: usize) -> String {
+        format!("{tag}_cel{i}")
+    }
 }
 
 /// R742.4 §5.16 §5.35 — split a (possibly composite) paint tag at the

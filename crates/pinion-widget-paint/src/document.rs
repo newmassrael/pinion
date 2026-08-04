@@ -56,12 +56,14 @@
 //! rectangle, so in Qt a bullet is not text and none of that follows.
 
 use pinion_core::composite_tag::DocumentTag;
-use pinion_core::scene::{ContainerNode, Rect, Scene, StyleRun, TextNode, TextRole};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, StyleRun, TextNode, TextRole};
 use pinion_core::style::{
-    AlignItems, BlockFormat, FlexDirection, LayoutStyle, Size, SizeValue, TextAlign, TextIndent,
-    TextStyle,
+    AlignItems, BlockFormat, Border, BoxStyle, FlexDirection, GridPlacement, LayoutStyle, Size,
+    SizeValue, TextAlign, TextIndent, TextStyle,
 };
 use pinion_core::text_list::{ListNumbering, ListPlacement, ListSpec, number_blocks};
+use pinion_core::text_table::{CellPlacement, CellSpec, TableAddressing, TablePart, place_cells};
+use std::ops::Range;
 
 /// One paragraph of a document: its text, its block format, and its inline
 /// styling.
@@ -90,6 +92,19 @@ pub struct TextBlock {
     /// not something an item has — see
     /// [`pinion_core::text_list::number_blocks`].
     pub list: Option<ListSpec>,
+    /// R1560 — this paragraph is in a **table cell**: under what format, how
+    /// far the cell reaches, and whether it opens a cell or continues the
+    /// previous one.
+    ///
+    /// `None` (the default) is a paragraph outside any table. Membership and
+    /// reach only — the author never states an address, because an address is
+    /// not something a cell has; see
+    /// [`pinion_core::text_table::place_cells`].
+    ///
+    /// Composes with [`Self::list`] rather than excluding it: a list inside a
+    /// table cell is an ordinary document, and the numbering runs *per cell*
+    /// so an item in one cell is not item 2 of a list that started in another.
+    pub cell: Option<CellSpec>,
 }
 
 impl TextBlock {
@@ -103,6 +118,7 @@ impl TextBlock {
             style: None,
             runs: Vec::new(),
             list: None,
+            cell: None,
         }
     }
 
@@ -134,6 +150,14 @@ impl TextBlock {
         self.list = Some(spec);
         self
     }
+
+    /// R1560 builder: this paragraph is in a table cell (Qt
+    /// `QTextTable::cellAt(...).firstCursorPosition()`).
+    #[must_use]
+    pub fn in_cell(mut self, spec: CellSpec) -> Self {
+        self.cell = Some(spec);
+        self
+    }
 }
 
 /// Lay `blocks` out as a document: a column of paragraphs, each carrying its own
@@ -162,38 +186,47 @@ impl TextBlock {
 /// before this changed shape.
 #[must_use]
 pub fn view_document(tag: &str, base: &TextStyle, blocks: &[TextBlock]) -> ContainerNode {
-    let specs: Vec<Option<ListSpec>> = blocks.iter().map(|b| b.list.clone()).collect();
-    let numbering = number_blocks(&specs, |k| DocumentTag::list(tag, k));
+    let cell_specs: Vec<Option<CellSpec>> = blocks.iter().map(|b| b.cell.clone()).collect();
+    let addressing = place_cells(&cell_specs, |part| match part {
+        TablePart::Table(k) => DocumentTag::table(tag, k),
+        TablePart::Row(k, r) => DocumentTag::table_row(tag, k, r),
+        TablePart::Cell(i) => DocumentTag::cell(tag, i),
+    });
 
     let mut root: Vec<Scene> = Vec::new();
-    let mut stack: Vec<OpenList> = Vec::new();
-
-    for (i, block) in blocks.iter().enumerate() {
-        let style = block.style.clone().unwrap_or_else(|| base.clone());
-        let placement = numbering.placements.get(i).and_then(Option::as_ref);
-        let mut text = TextNode::styled(block.text.clone(), Rect::new(0, 0, 0, 0), style.clone())
-            .with_runs(block.runs.clone())
-            .with_block(block.format)
-            .with_tag(DocumentTag::block(tag, i));
-        let Some(placement) = placement else {
-            // An ordinary paragraph ends every open list, which is what
-            // `number_blocks` already decided; closing here keeps the painted
-            // nesting and the derived numbering one structure.
-            close_lists_to(&mut stack, &mut root, 0);
-            root.push(Scene::Text(text));
+    // Lists are numbered per SEGMENT — see `fold_lists`. The counter runs
+    // across segments so two lists in one document never share a tag, however
+    // deeply the tables between them nest.
+    let mut next_list = 0usize;
+    let mut i = 0usize;
+    while i < blocks.len() {
+        let Some(first) = addressing.placements[i].as_ref() else {
+            let end = run_end(&addressing, i, |p| p.is_none());
+            root.extend(fold_lists(
+                tag,
+                base,
+                blocks,
+                i..end,
+                &addressing,
+                &mut next_list,
+            ));
+            i = end;
             continue;
         };
-        open_lists_for(&mut stack, &mut root, &numbering, &placement.list_tag);
-        text = text
-            .with_list_placement(placement.clone())
-            // The paragraph takes what the marker gutter leaves. Stated on the
-            // paragraph rather than as a width on the marker, so a wide marker
-            // (`MMMCMXCIX.`) narrows the text instead of overflowing the row.
-            .map_layout(|l| l.with_flex_grow(1.0));
-        let row = item_row(tag, i, placement, &style, Scene::Text(text));
-        push_into(&mut stack, &mut root, row);
+        let table_tag = first.table_tag.clone();
+        let end = run_end(&addressing, i, |p| {
+            p.is_some_and(|p| p.table_tag == table_tag)
+        });
+        root.push(table_node(
+            tag,
+            base,
+            blocks,
+            i..end,
+            &addressing,
+            &mut next_list,
+        ));
+        i = end;
     }
-    close_lists_to(&mut stack, &mut root, 0);
 
     ContainerNode::new(root)
         .with_tag(DocumentTag::document(tag))
@@ -202,6 +235,230 @@ pub fn view_document(tag: &str, base: &TextStyle, blocks: &[TextBlock]) -> Conta
                 .flex(FlexDirection::Column)
                 .with_align_items(AlignItems::Stretch),
         )
+}
+
+/// The end of the maximal run starting at `start` whose placements all satisfy
+/// `keep` — the one place the block sequence is cut into segments.
+fn run_end(
+    addressing: &TableAddressing,
+    start: usize,
+    keep: impl Fn(Option<&CellPlacement>) -> bool,
+) -> usize {
+    let mut end = start;
+    while end < addressing.placements.len() && keep(addressing.placements[end].as_ref()) {
+        end += 1;
+    }
+    end
+}
+
+/// Fold one **segment** of blocks — a stretch outside any table, or the blocks
+/// of one cell — into paint nodes, resolving its list structure.
+///
+/// The numbering runs per segment rather than once over the document, and that
+/// is a correctness property rather than an optimisation: a cell boundary ends
+/// a list, so two items in different cells are two lists that each start at 1.
+/// Numbering the document as one sequence would make the second cell's first
+/// item read `2.`, which is exactly the class of error the derivation exists to
+/// rule out. `next_list` carries the tag counter across segments so the lists
+/// still have document-unique tags.
+///
+/// A document with no tables is one segment, so this produces the pre-R1560
+/// tree unchanged.
+fn fold_lists(
+    tag: &str,
+    base: &TextStyle,
+    blocks: &[TextBlock],
+    range: Range<usize>,
+    addressing: &TableAddressing,
+    next_list: &mut usize,
+) -> Vec<Scene> {
+    let start = range.start;
+    let specs: Vec<Option<ListSpec>> = blocks[range.clone()]
+        .iter()
+        .map(|b| b.list.clone())
+        .collect();
+    let base_index = *next_list;
+    let numbering = number_blocks(&specs, |k| DocumentTag::list(tag, base_index + k));
+    *next_list += numbering.runs.len();
+
+    let mut out: Vec<Scene> = Vec::new();
+    let mut stack: Vec<OpenList> = Vec::new();
+    for (offset, block) in blocks[range].iter().enumerate() {
+        let i = start + offset;
+        let style = block.style.clone().unwrap_or_else(|| base.clone());
+        let placement = numbering.placements.get(offset).and_then(Option::as_ref);
+        let mut text = TextNode::styled(block.text.clone(), Rect::new(0, 0, 0, 0), style.clone())
+            .with_runs(block.runs.clone())
+            .with_block(block.format)
+            .with_tag(DocumentTag::block(tag, i));
+        if let Some(cell) = addressing.placements[i].as_ref() {
+            // The paragraph carries its cell's address for the reason it
+            // carries its list placement: the a11y pass and the §7 census read
+            // the painted scene, and a grid area cannot be read back as the
+            // allocation that produced it.
+            text = text.with_cell_placement(cell.clone());
+        }
+        let Some(placement) = placement else {
+            // An ordinary paragraph ends every open list, which is what
+            // `number_blocks` already decided; closing here keeps the painted
+            // nesting and the derived numbering one structure.
+            close_lists_to(&mut stack, &mut out, 0);
+            out.push(Scene::Text(text));
+            continue;
+        };
+        open_lists_for(&mut stack, &mut out, &numbering, &placement.list_tag);
+        text = text
+            .with_list_placement(placement.clone())
+            // The paragraph takes what the marker gutter leaves. Stated on the
+            // paragraph rather than as a width on the marker, so a wide marker
+            // (`MMMCMXCIX.`) narrows the text instead of overflowing the row.
+            .map_layout(|l| l.with_flex_grow(1.0));
+        let row = item_row(tag, i, placement, &style, Scene::Text(text));
+        push_into(&mut stack, &mut out, row);
+    }
+    close_lists_to(&mut stack, &mut out, 0);
+    out
+}
+
+/// One table: a CSS Grid whose column tracks are the format's, holding a band
+/// per row and a box per cell.
+///
+/// # Why the grid, and why the rows are boxes rather than parents
+///
+/// A column of flex rows measures each row on its own, so the columns of two
+/// rows line up only if something states their width; a grid sizes each track
+/// once against every cell in it, which is what makes a table's columns agree
+/// when nothing declares them. It is also the only shape in which a `rowspan`
+/// is expressible: a cell that covers two rows cannot be a child of one of
+/// them.
+///
+/// So the rows cannot own the cells, and they are emitted as full-width bands
+/// *behind* them — the CSS-Grid-table idiom that HTML spells `tr { display:
+/// contents }`, minus the indirection. A band is what carries the WAI-ARIA
+/// `row`'s bounds, what a caller measures to ask how tall a row is, and what a
+/// future stripe or header tint is painted on. It states no fill of its own and
+/// is pointer-transparent, so it changes neither the pixels nor the hit test.
+fn table_node(
+    tag: &str,
+    base: &TextStyle,
+    blocks: &[TextBlock],
+    range: Range<usize>,
+    addressing: &TableAddressing,
+    next_list: &mut usize,
+) -> Scene {
+    let Some(first) = addressing.placements[range.start].as_ref() else {
+        // Unreachable: the caller cut this range on `Some`. Emitting the
+        // blocks loose rather than panicking keeps a malformed addressing a
+        // rendering fault instead of a crash.
+        return Scene::Container(ContainerNode::new(fold_lists(
+            tag, base, blocks, range, addressing, next_list,
+        )));
+    };
+    let format = first.format.clone();
+    let table_tag = first.table_tag.clone();
+    let rows = first.row_count;
+    let columns = format.column_count();
+
+    let mut children: Vec<Scene> = Vec::new();
+    for row in 0..rows {
+        let row_tag = addressing.run(&table_tag).map_or_else(
+            || first.row_tag.clone(),
+            |run| DocumentTag::table_row(tag, run.index, row),
+        );
+        children.push(Scene::Box(
+            BoxNode::new(Rect::new(0, 0, 0, 0), BoxStyle::default())
+                .with_tag(row_tag)
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_grid_row(GridPlacement::at(line(row)))
+                        .with_grid_column(GridPlacement::spanning(1, columns))
+                        .with_pointer_transparent(true),
+                ),
+        ));
+    }
+
+    let mut i = range.start;
+    while i < range.end {
+        let Some(placement) = addressing.placements[i].as_ref() else {
+            break;
+        };
+        // A cell is its opening block plus every continuation after it.
+        let mut end = i + 1;
+        while end < range.end
+            && addressing.placements[end]
+                .as_ref()
+                .is_some_and(|p| !p.opens_cell)
+        {
+            end += 1;
+        }
+        children.push(cell_node(
+            tag,
+            base,
+            blocks,
+            i..end,
+            placement,
+            addressing,
+            next_list,
+        ));
+        i = end;
+    }
+
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(table_tag)
+            .with_layout(
+                LayoutStyle::new()
+                    .grid_columns(format.tracks())
+                    .with_gap(format.cell_spacing_px),
+            ),
+    )
+}
+
+/// One cell: its blocks, in a box placed at the address the allocation gave it.
+fn cell_node(
+    tag: &str,
+    base: &TextStyle,
+    blocks: &[TextBlock],
+    range: Range<usize>,
+    placement: &CellPlacement,
+    addressing: &TableAddressing,
+    next_list: &mut usize,
+) -> Scene {
+    let format = &placement.format;
+    let mut style = BoxStyle::default();
+    if format.border_px > 0 {
+        style = style.with_border(Border::new(format.border_color, format.border_px));
+    }
+    let padding = format.cell_padding_px;
+    Scene::Container(
+        ContainerNode::new(fold_lists(tag, base, blocks, range, addressing, next_list))
+            .with_tag(placement.cell_tag.clone())
+            .with_style(style)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_grid_row(GridPlacement::spanning(
+                        line(placement.row),
+                        placement.row_span,
+                    ))
+                    .with_grid_column(GridPlacement::spanning(
+                        line(placement.column),
+                        placement.column_span,
+                    ))
+                    .with_padding(Rect::new(padding, padding, padding, padding)),
+            ),
+    )
+}
+
+/// The CSS grid **line** a 0-based track index starts at.
+///
+/// One function because the off-by-one is the seam between two numbering
+/// conventions — a table's addresses are 0-based (Qt `QTextTableCell::row()`)
+/// and CSS's grid lines are 1-based — and a conversion spelled at each of the
+/// four call sites is a conversion that can be forgotten at one of them.
+fn line(track: u32) -> u16 {
+    u16::try_from(track.saturating_add(1)).unwrap_or(u16::MAX)
 }
 
 /// The gap between a marker's gutter and its paragraph, in px.
@@ -341,9 +598,13 @@ fn item_row(
 mod tests {
     use super::{MARKER_GAP_PX, TextBlock, view_document};
     use pinion_core::composite_tag::DocumentTag;
-    use pinion_core::scene::{ContainerNode, Scene, TextNode, TextRole};
-    use pinion_core::style::{BlockFormat, SizeValue, TextAlign, TextIndent, TextStyle};
+    use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode, TextRole};
+    use pinion_core::style::{
+        BlockFormat, Color, Display, GridPlacement, GridTrack, SizeValue, TextAlign, TextIndent,
+        TextStyle,
+    };
     use pinion_core::text_list::{ListFormat, ListSpec, ListStyle};
+    use pinion_core::text_table::{CellSpec, TableFormat};
 
     fn doc() -> Vec<TextBlock> {
         vec![
@@ -395,7 +656,7 @@ mod tests {
     /// declaration bound with its derived ink missing.
     #[test]
     fn the_block_and_layout_builders_are_order_independent() {
-        use pinion_core::scene::{Rect, TextNode};
+        use pinion_core::scene::TextNode;
         use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle};
         let fmt = BlockFormat::new().with_indent(32).with_spacing(4, 6);
         let extra = LayoutStyle::new()
@@ -403,7 +664,7 @@ mod tests {
             .with_align_items(AlignItems::Stretch);
         let a = TextNode::new("q", Rect::new(0, 0, 0, 0))
             .with_block(fmt)
-            .with_layout(extra);
+            .with_layout(extra.clone());
         let b = TextNode::new("q", Rect::new(0, 0, 0, 0))
             .with_layout(extra)
             .with_block(fmt);
@@ -438,6 +699,15 @@ mod tests {
             }
             Scene::Text(t) => {
                 if let Some(tag) = t.tag.as_deref() {
+                    out.push(tag.to_owned());
+                }
+            }
+            // R1560 — a table's row bands are `Scene::Box`. Reporting only
+            // containers and text made the first draft of
+            // `r1560_a_table_is_a_grid_of_row_bands_and_cell_boxes` pass
+            // against a tree that had no bands at all.
+            Scene::Box(b) => {
+                if let Some(tag) = b.tag.as_deref() {
                     out.push(tag.to_owned());
                 }
             }
@@ -654,6 +924,219 @@ mod tests {
                 .all(|t| !t.contains("_lst") && !t.contains("_mrk")),
             "{found:?}",
         );
+    }
+
+    // ── R1560: tables ─────────────────────────────────────────────────────
+
+    fn cell(text: &str, format: &TableFormat) -> TextBlock {
+        TextBlock::new(text).in_cell(CellSpec::new(format.clone()))
+    }
+
+    /// A table becomes a real subtree: a grid container holding one band per
+    /// row and one box per cell, each box placed at the address the allocation
+    /// derived. That structure is what gives a table a box, a cell a tag, and
+    /// the columns somewhere to agree.
+    #[test]
+    fn r1560_a_table_is_a_grid_of_row_bands_and_cell_boxes() {
+        let format = TableFormat::new(2);
+        let blocks = vec![
+            TextBlock::new("Intro."),
+            cell("a", &format),
+            cell("b", &format),
+            cell("c", &format),
+        ];
+        let scene = Scene::Container(view_document("doc", &TextStyle::new(), &blocks));
+        let mut found = Vec::new();
+        tags(&scene, &mut found);
+        assert_eq!(
+            found,
+            [
+                "doc_doc",
+                "doc_blk0",
+                "doc_tbl0",
+                "doc_tbl0r0",
+                "doc_tbl0r1",
+                "doc_cel1",
+                "doc_blk1",
+                "doc_cel2",
+                "doc_blk2",
+                "doc_cel3",
+                "doc_blk3",
+            ],
+            "the bands come first, so the cells paint over them",
+        );
+        let table = find_container(&scene, "doc_tbl0").expect("the table");
+        assert_eq!(table.layout.display, Display::Grid);
+        assert_eq!(
+            table.layout.grid_template_columns,
+            [GridTrack::Auto, GridTrack::Auto]
+        );
+    }
+
+    /// The derived address IS the grid placement — one derivation reaching the
+    /// layout engine, with CSS's 1-based lines converted in exactly one place.
+    #[test]
+    fn r1560_the_derived_address_is_the_grid_placement() {
+        let format = TableFormat::new(2);
+        let blocks = vec![cell("a", &format), cell("b", &format), cell("c", &format)];
+        let scene = Scene::Container(view_document("doc", &TextStyle::new(), &blocks));
+        let third = find_container(&scene, "doc_cel2").expect("the third cell");
+        assert_eq!(third.layout.grid_row, Some(GridPlacement::spanning(2, 1)));
+        assert_eq!(
+            third.layout.grid_column,
+            Some(GridPlacement::spanning(1, 1))
+        );
+        let placement = find_text(&scene, "doc_blk2")
+            .expect("the paragraph")
+            .cell
+            .clone()
+            .expect("addressed");
+        assert_eq!((placement.row, placement.column), (1, 0));
+        assert_eq!(
+            placement.cell_tag, "doc_cel2",
+            "the painted box and the published address are one object",
+        );
+    }
+
+    /// A spanning cell covers the tracks it was given, and a span that did not
+    /// fit reaches the layout engine already clamped — so the painted box and
+    /// the published span cannot disagree.
+    #[test]
+    fn r1560_a_span_reaches_the_layout_as_the_clamped_one() {
+        let format = TableFormat::new(3);
+        let blocks = vec![
+            TextBlock::new("wide").in_cell(CellSpec::new(format.clone()).spanning_columns(2)),
+            TextBlock::new("tall").in_cell(CellSpec::new(format.clone()).spanning_rows(2)),
+            TextBlock::new("over").in_cell(CellSpec::new(format).spanning_columns(9)),
+        ];
+        let scene = Scene::Container(view_document("doc", &TextStyle::new(), &blocks));
+        let wide = find_container(&scene, "doc_cel0").expect("the wide cell");
+        assert_eq!(wide.layout.grid_column, Some(GridPlacement::spanning(1, 2)));
+        let tall = find_container(&scene, "doc_cel1").expect("the tall cell");
+        assert_eq!(tall.layout.grid_row, Some(GridPlacement::spanning(1, 2)));
+        let over = find_container(&scene, "doc_cel2").expect("the third cell");
+        assert_eq!(
+            over.layout.grid_column,
+            Some(GridPlacement::spanning(1, 2)),
+            "row 1 starts at column 0 and the tall cell holds column 2",
+        );
+        let published = find_text(&scene, "doc_blk2")
+            .expect("the paragraph")
+            .cell
+            .clone()
+            .expect("addressed");
+        assert_eq!(published.column_span, 2);
+        assert_eq!(published.declared_column_span, 9);
+        assert!(published.clamped());
+    }
+
+    /// A multi-block cell is one box holding both paragraphs — Qt's cell is a
+    /// frame of blocks, and this is the flat-sequence spelling of that.
+    #[test]
+    fn r1560_a_continuation_block_joins_the_same_cell_box() {
+        let format = TableFormat::new(2);
+        let blocks = vec![
+            cell("first para", &format),
+            TextBlock::new("second para").in_cell(CellSpec::new(format.clone()).continued()),
+            cell("next cell", &format),
+        ];
+        let scene = Scene::Container(view_document("doc", &TextStyle::new(), &blocks));
+        let box_ = find_container(&scene, "doc_cel0").expect("the first cell");
+        assert_eq!(box_.children.len(), 2, "one box, two paragraphs");
+        assert!(
+            find_container(&scene, "doc_cel1").is_none(),
+            "no second box"
+        );
+        assert_eq!(
+            find_container(&scene, "doc_cel2")
+                .expect("the next cell")
+                .layout
+                .grid_column,
+            Some(GridPlacement::spanning(2, 1)),
+        );
+    }
+
+    /// A list inside a cell is its own list: the numbering restarts per cell,
+    /// which is the property a document-wide numbering would get wrong.
+    #[test]
+    fn r1560_a_list_in_a_cell_is_numbered_within_that_cell() {
+        let format = TableFormat::new(2);
+        let numbered = |text: &str| {
+            TextBlock::new(text)
+                .in_cell(CellSpec::new(format.clone()))
+                .in_list(ListSpec::new(ListFormat::new(ListStyle::Decimal)))
+        };
+        let follow = |text: &str| {
+            TextBlock::new(text)
+                .in_cell(CellSpec::new(format.clone()).continued())
+                .in_list(ListSpec::new(ListFormat::new(ListStyle::Decimal)))
+        };
+        let blocks = vec![
+            numbered("left one"),
+            follow("left two"),
+            numbered("right one"),
+        ];
+        let scene = Scene::Container(view_document("doc", &TextStyle::new(), &blocks));
+        assert_eq!(find_text(&scene, "doc_mrk0").expect("marker").content, "1.");
+        assert_eq!(find_text(&scene, "doc_mrk1").expect("marker").content, "2.");
+        assert_eq!(
+            find_text(&scene, "doc_mrk2").expect("marker").content,
+            "1.",
+            "the next cell's list starts again",
+        );
+        let left = find_text(&scene, "doc_blk1")
+            .expect("paragraph")
+            .list
+            .clone()
+            .expect("an item");
+        let right = find_text(&scene, "doc_blk2")
+            .expect("paragraph")
+            .list
+            .clone()
+            .expect("an item");
+        assert_ne!(left.list_tag, right.list_tag, "two lists, two tags");
+        assert_eq!(left.count, 2);
+        assert_eq!(right.count, 1);
+    }
+
+    /// The cell's declared metrics reach its box: the padding is the box's
+    /// padding and the border is the box's border.
+    #[test]
+    fn r1560_the_format_metrics_reach_the_cell_box() {
+        let format = TableFormat::new(1)
+            .with_metrics(7, 3)
+            .with_border(2, Color::rgb(0x11, 0x22, 0x33));
+        let scene = Scene::Container(view_document(
+            "doc",
+            &TextStyle::new(),
+            &[cell("only", &format)],
+        ));
+        let cell_box = find_container(&scene, "doc_cel0").expect("the cell");
+        assert_eq!(cell_box.layout.padding, Rect::new(7, 7, 7, 7));
+        let border = cell_box.style.border.expect("a rule");
+        assert_eq!(border.width, 2);
+        assert_eq!(border.color, Color::rgb(0x11, 0x22, 0x33));
+        assert_eq!(
+            find_container(&scene, "doc_tbl0")
+                .expect("the table")
+                .layout
+                .gap,
+            3,
+            "cell spacing is the grid gap",
+        );
+    }
+
+    /// The negative control: a document with no cell membership paints exactly
+    /// what it did before this round — no grid, no bands, no cell boxes.
+    #[test]
+    fn r1560_a_document_with_no_cells_paints_no_table_machinery() {
+        let scene = Scene::Container(view_document("doc", &TextStyle::new(), &doc()));
+        let mut found = Vec::new();
+        tags(&scene, &mut found);
+        assert_eq!(found, ["doc_doc", "doc_blk0", "doc_blk1", "doc_blk2"]);
+        let root = find_container(&scene, "doc_doc").expect("the document");
+        assert_eq!(root.layout.display, Display::Flex);
+        assert!(root.layout.grid_template_columns.is_empty());
     }
 
     /// A paragraph with no style of its own inherits the document's, and one

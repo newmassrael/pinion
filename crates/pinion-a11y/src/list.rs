@@ -30,7 +30,7 @@
 
 use pinion_core::Scene;
 
-use crate::{AccessNode, AriaRole};
+use crate::{AccessNode, AriaRole, NodeIndex};
 
 /// Emit a WAI-ARIA `list` node per painted list and a `listitem` per item, and
 /// return how many nodes the pass added or upgraded.
@@ -98,38 +98,28 @@ pub fn attach_block_lists(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usize {
     });
 
     let mut touched = 0usize;
+    // R1560 — indexed rather than scanned. This pass merged with a linear
+    // `find` per item, which R1559 recorded as debt when the table pass
+    // inherited the shape and a table's cells made it matter.
+    let mut index = NodeIndex::new(nodes);
     for (tag, position, count, level) in items {
-        if let Some(existing) = nodes.iter_mut().find(|n| n.tag == tag) {
-            // A heading is the stronger claim and survives; anything else this
-            // pass owns, because being an item of a list is what the object IS
-            // and the derivation is the authority for that.
-            if existing.role != AriaRole::Heading {
-                existing.role = AriaRole::ListItem;
-            }
-            existing.position_in_set = Some(position);
-            existing.size_of_set = Some(count);
-            existing.level = Some(level);
-        } else {
-            nodes.push(
-                AccessNode::new(tag, AriaRole::ListItem)
-                    .with_position_in_set(position)
-                    .with_size_of_set(count)
-                    .with_level(level),
-            );
+        let node = index.upsert(nodes, &tag, AriaRole::ListItem);
+        // A heading is the stronger claim and survives; anything else this
+        // pass owns, because being an item of a list is what the object IS
+        // and the derivation is the authority for that.
+        if node.role != AriaRole::Heading {
+            node.role = AriaRole::ListItem;
         }
+        node.position_in_set = Some(position);
+        node.size_of_set = Some(count);
+        node.level = Some(level);
         touched += 1;
     }
     for run in runs {
-        if let Some(existing) = nodes.iter_mut().find(|n| n.tag == run.tag) {
-            existing.role = AriaRole::List;
-            existing.size_of_set = Some(run.count);
-            existing.children = run.items;
-        } else {
-            nodes.push(run.items.iter().fold(
-                AccessNode::new(run.tag, AriaRole::List).with_size_of_set(run.count),
-                |node, item| node.with_child(item.clone()),
-            ));
-        }
+        let node = index.upsert(nodes, &run.tag, AriaRole::List);
+        node.role = AriaRole::List;
+        node.size_of_set = Some(run.count);
+        node.children = run.items;
         touched += 1;
     }
     touched

@@ -502,25 +502,7 @@ fn lower_access_node(access: &AccessNode) -> Node {
     if let Some(size) = access.size_of_set {
         node.set_size_of_set(usize::try_from(size).unwrap_or(usize::MAX));
     }
-    // R1523 §5.40 §5.27 — the column axis' extent pair (`aria-colcount` /
-    // `aria-colindex`), which a column-windowed grid needs for the same reason
-    // the row axis needs setsize/posinset: the tree holds a slice, so the slice
-    // has to say what it is a slice of.
-    //
-    // Carried through as the one-based ARIA value pinion stores. AccessKit
-    // documents no base for `ColumnIndex`, and **no platform adapter in the
-    // pinned generation reads it** — accesskit 0.24 / accesskit_winit 0.33 map
-    // only `ColumnIndexText` (Windows), so there is nothing to calibrate the
-    // base against yet. If a future adapter bump surfaces `ColumnIndex` and
-    // announces it off by one, this is the single line that changes; pinion's
-    // own tree (and the RPC introspection over it — invariant #2's primary
-    // path) is where the value is verified today.
-    if let Some(columns) = access.column_count {
-        node.set_column_count(usize::try_from(columns).unwrap_or(usize::MAX));
-    }
-    if let Some(col) = access.column_index {
-        node.set_column_index(usize::try_from(col).unwrap_or(usize::MAX));
-    }
+    lower_table_axes(&mut node, access);
 
     for child_tag in &access.children {
         node.push_child(tag_to_node_id(child_tag));
@@ -571,6 +553,50 @@ fn lower_access_node(access: &AccessNode) -> Node {
 
     add_actions_for_role(&mut node, access.role);
     node
+}
+
+/// R1560 §5.40 — the two tabular axes and the two spans, lifted out of
+/// [`lower_access_node`]'s body.
+///
+/// R1559's `text_snapshot_into_json` precedent: an axis whose lowering is this
+/// many independent properties earns its own function, and the alternative was
+/// an `allow` on the whole writer, which would raise the length bound for every
+/// other property it holds too.
+fn lower_table_axes(node: &mut Node, access: &AccessNode) {
+    // R1523 §5.40 §5.27 — the column axis' extent pair (`aria-colcount` /
+    // `aria-colindex`), which a column-windowed grid needs for the same reason
+    // the row axis needs setsize/posinset: the tree holds a slice, so the slice
+    // has to say what it is a slice of.
+    //
+    // Carried through as the one-based ARIA value pinion stores. AccessKit
+    // documents no base for `ColumnIndex`, and **no platform adapter in the
+    // pinned generation reads it** — accesskit 0.24 / accesskit_winit 0.33 map
+    // only `ColumnIndexText` (Windows), so there is nothing to calibrate the
+    // base against yet. If a future adapter bump surfaces `ColumnIndex` and
+    // announces it off by one, this is the single line that changes; pinion's
+    // own tree (and the RPC introspection over it — invariant #2's primary
+    // path) is where the value is verified today.
+    if let Some(columns) = access.column_count {
+        node.set_column_count(usize::try_from(columns).unwrap_or(usize::MAX));
+    }
+    if let Some(col) = access.column_index {
+        node.set_column_index(usize::try_from(col).unwrap_or(usize::MAX));
+    }
+    // R1560 §5.40 §5.36 — the row axis and the two spans. Same caveat as the
+    // column axis above: the value stored here is what pinion's own tree and
+    // the §7 introspection over it are verified against.
+    if let Some(rows) = access.row_count {
+        node.set_row_count(usize::try_from(rows).unwrap_or(usize::MAX));
+    }
+    if let Some(row) = access.row_index {
+        node.set_row_index(usize::try_from(row).unwrap_or(usize::MAX));
+    }
+    if let Some(span) = access.row_span {
+        node.set_row_span(usize::try_from(span).unwrap_or(usize::MAX));
+    }
+    if let Some(span) = access.column_span {
+        node.set_column_span(usize::try_from(span).unwrap_or(usize::MAX));
+    }
 }
 
 fn add_actions_for_role(node: &mut Node, role: AriaRole) {
@@ -766,7 +792,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // navigates by, and it owns no AT action (a heading is not activatable).
         // The level itself is carried by the shared `set_level` call above,
         // which the `TreeItem` depth axis already drives.
+        // R1560 §5.40 — a document `table` and its `cell`s are content, not a
+        // widget: they own no AT action, which is precisely the difference
+        // from `grid` / `gridcell` above and the reason the two role pairs
+        // were kept separate rather than reused.
         AriaRole::Tooltip
+        | AriaRole::Table
+        | AriaRole::Cell
         | AriaRole::ColumnHeader
         | AriaRole::RowHeader
         | AriaRole::Row

@@ -2444,6 +2444,13 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::text_lists::handle_scene_text_lists(last_paint_scene),
                     HandlerKind::Read,
                 ),
+                // R1560 §5.36 — the document's table structure and the
+                // addressing it produced, read off the same painted scene the
+                // cells were laid out in.
+                "scene/text_tables" => (
+                    crate::text_tables::handle_scene_text_tables(last_paint_scene),
+                    HandlerKind::Read,
+                ),
                 // R1555 §5.27 — which editor each datum kind opens: the
                 // factory census Qt's `QItemEditorFactory` cannot be asked for.
                 // Framework knowledge, so it reads no scene and takes no params.
@@ -4911,6 +4918,15 @@ fn text_snapshot_into_json(
     obj.insert(
         "list".to_string(),
         snap.list
+            .as_ref()
+            .and_then(|p| serde_json::to_value(p).ok())
+            .unwrap_or(Value::Null),
+    );
+    // R1560 §5.36 — and where it sits in the document's table structure,
+    // `null` for text outside a table. Same argument as `list` above.
+    obj.insert(
+        "cell".to_string(),
+        snap.cell
             .as_ref()
             .and_then(|p| serde_json::to_value(p).ok())
             .unwrap_or(Value::Null),

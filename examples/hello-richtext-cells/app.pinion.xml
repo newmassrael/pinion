@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1560 §5.36 list consumer: pinion-forge renderer manifest for
+  hello-richtext-cells. Emits `HelloRichTextCellsRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper). Same emit template as
+  hello-richtext-list; only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloRichTextCellsRenderer"
+        backend="vello"/>

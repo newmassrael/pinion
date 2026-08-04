@@ -99,18 +99,7 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if let Some(size) = node.size_of_set {
         obj.insert("size_of_set".to_string(), Value::from(size));
     }
-    // R1523 §5.40 §5.27 — the column axis' extent pair. It reaches the wire for
-    // the same reason `size_of_set` does, and more urgently: the RPC access
-    // surface is the primary path an AI agent reads the tree through
-    // (invariant #2), so a windowed column axis whose extent stopped at the
-    // AccessKit lowering would be unobservable from the side pinion is built to
-    // be observed from.
-    if let Some(columns) = node.column_count {
-        obj.insert("column_count".to_string(), Value::from(columns));
-    }
-    if let Some(col) = node.column_index {
-        obj.insert("column_index".to_string(), Value::from(col));
-    }
+    table_axes_to_json(node, &mut obj);
     if node.modal {
         obj.insert("modal".to_string(), Value::Bool(true));
     }
@@ -244,6 +233,41 @@ fn rect_to_json(rect: Rect) -> Value {
 /// `null` is a defensive floor, not an expected value.
 fn finite(f: f32) -> Value {
     serde_json::Number::from_f64(f64::from(f)).map_or(Value::Null, Value::Number)
+}
+
+/// R1560 §5.40 — the two tabular axes and the two spans, lifted out of
+/// [`access_node_to_json`]'s body for the reason `lower_table_axes` was lifted
+/// out of the AccessKit writer: six independent properties on one axis, and an
+/// `allow` would raise this writer's length bound for every other property.
+fn table_axes_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {
+    // R1523 §5.40 §5.27 — the column axis' extent pair. It reaches the wire for
+    // the same reason `size_of_set` does, and more urgently: the RPC access
+    // surface is the primary path an AI agent reads the tree through
+    // (invariant #2), so a windowed column axis whose extent stopped at the
+    // AccessKit lowering would be unobservable from the side pinion is built to
+    // be observed from.
+    if let Some(columns) = node.column_count {
+        obj.insert("column_count".to_string(), Value::from(columns));
+    }
+    if let Some(col) = node.column_index {
+        obj.insert("column_index".to_string(), Value::from(col));
+    }
+    // R1560 §5.40 §5.36 — the row axis and the two spans, for the same reason
+    // and by the same argument. A cell that covers more than one slot and
+    // reports only its origin puts every following cell at an apparent address
+    // that is not the one it has, so the span is not decoration.
+    if let Some(rows) = node.row_count {
+        obj.insert("row_count".to_string(), Value::from(rows));
+    }
+    if let Some(row) = node.row_index {
+        obj.insert("row_index".to_string(), Value::from(row));
+    }
+    if let Some(span) = node.row_span {
+        obj.insert("row_span".to_string(), Value::from(span));
+    }
+    if let Some(span) = node.column_span {
+        obj.insert("column_span".to_string(), Value::from(span));
+    }
 }
 
 #[cfg(test)]
