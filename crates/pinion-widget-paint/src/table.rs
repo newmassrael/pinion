@@ -32,7 +32,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use pinion_core::Scene;
-use pinion_core::cell_value::CellEdit;
+use pinion_core::cell_value::{CellEdit, CellValue, EditorForm};
 use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::scene::{
     ContainerNode, ImageNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole,
@@ -1195,10 +1195,11 @@ fn data_row(
                     edit: slot.edit,
                     field_tag: slot.field_tag,
                     field: slot.field,
+                    pending: slot.pending,
                 };
                 return slot
                     .paint
-                    .map_or_else(|| text_cell_editor(&render), |paint| paint(&render));
+                    .map_or_else(|| cell_editor(&render), |paint| paint(&render));
             }
             pane.painters
                 .get(j)
@@ -1689,6 +1690,31 @@ pub struct CellEditRender<'a> {
     /// grid that invented a plausible-looking state here would paint a caret
     /// the input path does not agree with.
     pub field: (TextFieldState, u32),
+    /// R1555 — the **in-flight** value of a latch-buffered form
+    /// ([`EditorForm::Toggle`] / [`EditorForm::Selector`]), from
+    /// [`OpenEditor::pending`](pinion_core::widgets::grid_edit::OpenEditor::pending).
+    ///
+    /// `None` for the text-buffered forms, whose in-flight value is the inline
+    /// field's buffer and is therefore already on screen through
+    /// [`Self::field_tag`]. Carried separately from [`Self::edit`] because that
+    /// is the **seed** — what the editor opened with — and a toggle that has
+    /// been flipped but not committed must paint the flip, not the seed.
+    pub pending: Option<&'a CellValue>,
+}
+
+impl CellEditRender<'_> {
+    /// R1555 — the datum an editor should **paint**: the in-flight value when
+    /// the latch holds one, else the seed.
+    ///
+    /// One accessor rather than each form deciding, because the fallback is not
+    /// a form's choice: a latch-buffered form always has a pending value (its
+    /// `begin` put one there), and a text-buffered form never does, so the
+    /// `unwrap_or` is the same answer in both cases and stating it twice is what
+    /// would let one form paint a stale seed after a gesture.
+    #[must_use]
+    pub fn in_flight(&self) -> &CellValue {
+        self.pending.unwrap_or_else(|| self.edit.value())
+    }
 }
 
 /// R1544 §5.27 — the open editor, and everything needed to paint it.
@@ -1709,6 +1735,10 @@ pub struct GridEditing<'a> {
     pub field_tag: &'static str,
     /// The inline field widget's statechart snapshot and caret byte.
     pub field: (TextFieldState, u32),
+    /// R1555 — the in-flight value of a latch-buffered form, from
+    /// [`OpenEditor::pending`](pinion_core::widgets::grid_edit::OpenEditor::pending).
+    /// `None` for the text-buffered forms — see [`CellEditRender::pending`].
+    pub pending: Option<&'a CellValue>,
     /// Per-**column** editor delegates (Qt
     /// `QAbstractItemView::setItemDelegateForColumn`, editing half):
     /// `editor(col)` returns the [`CellEditorPainter`] for that column, or
@@ -1729,6 +1759,7 @@ impl core::fmt::Debug for GridEditing<'_> {
             .field("edit", self.edit)
             .field("field_tag", &self.field_tag)
             .field("field", &self.field)
+            .field("pending", &self.pending)
             .field("editor", &self.editor.map(|_| "<fn>"))
             .finish()
     }
@@ -1795,6 +1826,335 @@ pub fn text_cell_editor(c: &CellEditRender<'_>) -> Scene {
 /// replacing it.
 const EDITOR_INSET_PX: u32 = 3;
 
+/// Width of a [`EditorForm::Stepper`]'s arrow column, in logical px — both
+/// arrows stack inside it, Qt `QSpinBox`'s `SC_SpinBoxUp` / `SC_SpinBoxDown`
+/// sub-controls.
+const STEP_COLUMN_W: u32 = 16;
+
+/// Side of a [`EditorForm::Swatch`]'s colour chip, in logical px.
+const SWATCH_CHIP_PX: u32 = 18;
+
+// R1555 — the step arrows are **local**, not lifted into [`crate::glyph`].
+// That module's own discipline decides it: `U+25B2` / `U+25BC` recurring here
+// and in `SORT_ASCENDING` / `SORT_DESCENDING` is a glyph coincidence, not a
+// shared gesture, and its doc records the same call for the datepicker's
+// month-nav arrows — "deliberately un-lifted for the same semantics reason".
+// A third same-gesture consumer (a standalone spin-button paint helper) is what
+// would lift them.
+
+/// Increment affordance of a stepper editor — `U+25B2` BLACK UP-POINTING
+/// TRIANGLE.
+const STEP_UP_GLYPH: &str = "\u{25B2}";
+
+/// Decrement affordance of a stepper editor — `U+25BC` BLACK DOWN-POINTING
+/// TRIANGLE.
+const STEP_DOWN_GLYPH: &str = "\u{25BC}";
+
+/// R1555 §5.27 — **the built-in editor factory**: which editor a cell opens,
+/// chosen by its datum's kind. Qt `QItemEditorFactory`.
+///
+/// The other half of Qt's editing decomposition from R1544's per-column
+/// delegate. A column delegate ([`GridEditing::editor`]) *overrides* this, which
+/// is exactly how `setItemDelegateForColumn` relates to the factory in Qt; with
+/// no delegate the cell's own datum decides, through
+/// [`CellKind::editor_form`](pinion_core::CellKind::editor_form).
+///
+/// # What it replaces
+///
+/// [`text_cell_editor`] was the built-in for **every** kind, and for two of the
+/// six it is an editor that cannot work: `Bool` and `Choice` refuse every
+/// keystroke and parse to nothing, so the seam opened a text field that could
+/// not be typed into and whose commit could never produce a value.
+///
+/// # Where the forms are past Qt's default factory
+///
+/// See [`EditorForm`] — Qt's bool creator is a
+/// two-item combo box, its double creator silently rounds to two decimals, its
+/// factory cannot produce a populated combo for an enumerated cell at all, and
+/// it has no colour creator, so a colour cell in a plain `QTableView` is not
+/// editable.
+///
+/// Each form is public on its own so a delegate that only *extends* one
+/// composes with it instead of re-deriving the cell's padding, size and tag
+/// placement — the reason [`text_cell_painter`] is public.
+#[must_use]
+pub fn cell_editor(c: &CellEditRender<'_>) -> Scene {
+    match c.edit.form() {
+        EditorForm::Field => text_cell_editor(c),
+        EditorForm::Stepper => stepper_cell_editor(c),
+        EditorForm::Toggle => toggle_cell_editor(c),
+        EditorForm::Selector => selector_cell_editor(c),
+        EditorForm::Swatch => swatch_cell_editor(c),
+    }
+}
+
+/// The editor's outer box: the cell's geometry and padding, and — the contract
+/// every cell painter follows — the cell's own hit-test tag.
+fn editor_shell(cell: &CellRender<'_>, children: Vec<Scene>) -> Scene {
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(cell.tag.to_string())
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Start)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(cell.width, cell.height))
+                    .with_padding(Rect::new(
+                        cell.style.cell_pad_x,
+                        0,
+                        cell.style.cell_pad_x,
+                        0,
+                    )),
+            ),
+    )
+}
+
+/// The width left for an editor's content inside [`editor_shell`], after the
+/// cell's horizontal padding and `reserved` px of affordances.
+fn editor_content_w(cell: &CellRender<'_>, reserved: u32) -> u32 {
+    cell.width
+        .saturating_sub(cell.style.cell_pad_x * 2)
+        .saturating_sub(reserved)
+}
+
+/// R1555 §5.27 — the [`EditorForm::Swatch`] editor: a colour chip beside a hex
+/// field.
+///
+/// Qt's default factory has **no** `QColor` creator, so `createEditor` answers
+/// `nullptr`, `QStyledItemDelegate` passes it through, and
+/// `QAbstractItemView::edit` then silently does nothing — a colour cell in a
+/// plain `QTableView` is simply not editable.
+///
+/// The hex half is the in-flight buffer ([`EditorForm::buffer_is_text`] is true
+/// for this form), so the commit path is the same
+/// [`CellKind::parse`](pinion_core::CellKind::parse) every text-buffered form
+/// uses. A full picker is a popup the binding owns; what the factory ships is
+/// the always-visible chip and an editable hex.
+#[must_use]
+pub fn swatch_cell_editor(c: &CellEditRender<'_>) -> Scene {
+    let cell = c.cell;
+    // The chip previews the colour the hex buffer currently spells, read from
+    // the same `TextEditState` `view_field` below paints — so the preview cannot
+    // lag the text the user is typing.
+    let live = pinion_core::widgets::text_edit::use_text_edit_state(c.field_tag).text();
+    let parsed = Color::from_hex(live.trim());
+    let seed = match c.edit.value() {
+        CellValue::Color(color) => *color,
+        // A swatch editor is only opened for a `Color` datum; a non-colour seed
+        // here would be a factory that dispatched on one kind and was handed
+        // another. Painting the palette's outline rather than inventing a colour
+        // keeps that case visible instead of plausible.
+        _ => cell.theme.resolve(ColorRole::Outline),
+    };
+    let chip = Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_style(
+                BoxStyle::filled(parsed.unwrap_or(seed)).with_border(Border::new(
+                    // A malformed buffer is not hidden behind a stale swatch:
+                    // the chip keeps the last valid colour and says so.
+                    if parsed.is_some() {
+                        cell.theme.resolve(ColorRole::Outline)
+                    } else {
+                        cell.theme.resolve(ColorRole::Error)
+                    },
+                    2,
+                )),
+            )
+            .with_layout(LayoutStyle::new().with_size(Size::px(SWATCH_CHIP_PX, SWATCH_CHIP_PX))),
+    );
+    let field_style = crate::text_field::TextFieldStyle {
+        field_w: editor_content_w(cell, SWATCH_CHIP_PX + cell.style.cell_pad_x),
+        field_h: cell.height.saturating_sub(EDITOR_INSET_PX * 2),
+        ..crate::text_field::TextFieldStyle::m3_filled()
+    };
+    let field = crate::text_field::view_field(
+        c.field_tag,
+        c.field.0,
+        c.field.1,
+        cell.theme,
+        &field_style,
+        "",
+    );
+    editor_shell(cell, vec![chip, spacer_px(cell.style.cell_pad_x), field])
+}
+
+/// A fixed horizontal gap, as a sized empty container — the same shape the
+/// catalog's paint helpers use for editor-internal spacing.
+fn spacer_px(width: u32) -> Scene {
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_layout(LayoutStyle::new().with_size(Size::px(width, 1))),
+    )
+}
+
+/// R1555 §5.27 — the [`EditorForm::Stepper`] editor: the inline field with two
+/// step affordances beside it. Qt `QSpinBox` / `QDoubleSpinBox`.
+///
+/// The arrows are the **only** editor sub-parts with their own addresses
+/// ([`GridSendKey::EditorStep`]) — see that variant's doc for why the other
+/// forms need none. A press on one routes to the grid's send wire exactly as a
+/// cell click does, so a binding steps through
+/// [`GridEditState::step`](pinion_core::widgets::grid_edit::GridEditState::step)
+/// and the value an arrow produces is the value a keystroke would have.
+#[must_use]
+pub fn stepper_cell_editor(c: &CellEditRender<'_>) -> Scene {
+    let cell = c.cell;
+    let field_style = crate::text_field::TextFieldStyle {
+        field_w: editor_content_w(cell, STEP_COLUMN_W),
+        field_h: cell.height.saturating_sub(EDITOR_INSET_PX * 2),
+        ..crate::text_field::TextFieldStyle::m3_filled()
+    };
+    let field = crate::text_field::view_field(
+        c.field_tag,
+        c.field.0,
+        c.field.1,
+        cell.theme,
+        &field_style,
+        "",
+    );
+    let arrows = Scene::Container(
+        ContainerNode::new(vec![
+            step_arrow(c, true, cell.height),
+            step_arrow(c, false, cell.height),
+        ])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(STEP_COLUMN_W, cell.height)),
+        ),
+    );
+    editor_shell(cell, vec![field, arrows])
+}
+
+/// One step affordance, tagged through the [`GridSendKey`] encode SSOT so the
+/// press the paint invites is the press the decoder understands.
+fn step_arrow(c: &CellEditRender<'_>, up: bool, cell_h: u32) -> Scene {
+    let cell = c.cell;
+    let key = GridSendKey::EditorStep {
+        row: cell.index.row,
+        col: cell.index.col,
+        up,
+    };
+    let glyph = if up { STEP_UP_GLYPH } else { STEP_DOWN_GLYPH };
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            glyph,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(STEP_GLYPH_PX)
+                .with_fg(cell.theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_tag(format!("{}#{}", cell.root, key.encode()))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Center)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(STEP_COLUMN_W, cell_h / 2)),
+        ),
+    )
+}
+
+/// Step-arrow glyph size in logical px — half a cell's height holds two of
+/// these plus the row's own breathing room.
+const STEP_GLYPH_PX: u32 = 9;
+
+/// R1555 §5.27 — the [`EditorForm::Toggle`] editor: an inline checkbox.
+///
+/// Qt's default factory hands a two-item `QComboBox` reading "False" / "True"
+/// for a bool, which is why a Qt application that wants a checkbox writes a
+/// delegate. The box is the cell's own hit target (it fills the cell through
+/// the shared editor shell), so a click or <kbd>Space</kbd> reaching the cell is the
+/// toggle gesture and needs no sub-address.
+#[must_use]
+pub fn toggle_cell_editor(c: &CellEditRender<'_>) -> Scene {
+    let cell = c.cell;
+    let checked = matches!(c.in_flight(), CellValue::Bool(true));
+    let style = crate::checkbox::CheckboxStyle {
+        box_size: cell.height.saturating_sub(EDITOR_INSET_PX * 2).min(20),
+        ..crate::checkbox::CheckboxStyle::m3_filled()
+    };
+    let box_visual = crate::checkbox::view_checkbox_box(
+        checked,
+        pinion_core::widgets::checkbox::CheckboxState::Idle,
+        cell.theme,
+        &style,
+    );
+    let label = Scene::Text(TextNode::styled(
+        if checked { "On" } else { "Off" },
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(cell.style.label_size_px)
+            .with_fg(cell.fg),
+    ));
+    editor_shell(
+        cell,
+        vec![box_visual, spacer_px(cell.style.cell_pad_x), label],
+    )
+}
+
+/// R1555 §5.27 — the [`EditorForm::Selector`] editor: the closed selector, Qt
+/// `QComboBox`.
+///
+/// Qt's factory is keyed by `QVariant` type and an enumerated value **is an
+/// int** to `QVariant`, so no registration there can produce a combo populated
+/// with this cell's options. [`CellValue::Choice`] carries its own domain, so
+/// the shipped form can.
+///
+/// The list itself is a popup, which is an overlay the binding owns — the same
+/// division every popup in this tree has. What the factory ships is the closed
+/// state: the selected option and the chevron that says it opens.
+#[must_use]
+pub fn selector_cell_editor(c: &CellEditRender<'_>) -> Scene {
+    let cell = c.cell;
+    let selected_label = c.in_flight().display();
+    let label = Scene::Text(TextNode::styled(
+        &selected_label,
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(cell.style.label_size_px)
+            .with_fg(cell.fg),
+    ));
+    let chevron = Scene::Text(TextNode::styled(
+        crate::glyph::DISCLOSURE_EXPANDED,
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(STEP_GLYPH_PX)
+            .with_fg(cell.theme.resolve(ColorRole::OnSurfaceMuted)),
+    ));
+    let content_w = editor_content_w(cell, 0);
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Container(
+            ContainerNode::new(vec![label, chevron]).with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::SpaceBetween)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(content_w, cell.height)),
+            ),
+        )])
+        .with_tag(cell.tag.to_string())
+        .with_style(
+            BoxStyle::filled(cell.theme.resolve(ColorRole::SurfaceContainerHigh))
+                .with_border(Border::new(cell.theme.resolve(ColorRole::Outline), 1)),
+        )
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(cell.width, cell.height))
+                .with_padding(Rect::new(
+                    cell.style.cell_pad_x,
+                    0,
+                    cell.style.cell_pad_x,
+                    0,
+                )),
+        ),
+    )
+}
+
 /// R1544 §5.27 — a [`GridEditing`] with its column's editor delegate already
 /// **resolved**, as a pane's rows receive it.
 ///
@@ -1815,7 +2175,9 @@ struct CellEditorSlot<'a> {
     field_tag: &'static str,
     /// The inline field widget's statechart snapshot and caret byte.
     field: (TextFieldState, u32),
-    /// The column's editor painter, or `None` for [`text_cell_editor`].
+    /// R1555 — the in-flight value of a latch-buffered form.
+    pending: Option<&'a CellValue>,
+    /// The column's editor painter, or `None` for the [`cell_editor`] factory.
     paint: Option<CellEditorPainter<'a>>,
 }
 
@@ -2860,6 +3222,7 @@ impl<'d> GridRender<'_, 'd> {
             edit: editing.edit,
             field_tag: editing.field_tag,
             field: editing.field,
+            pending: editing.pending,
             // Qt calls `createEditor` when the edit opens, not on every
             // paint; resolving here means the column's editor delegate is
             // asked once per painted row of the editing row — which is once,

@@ -38,13 +38,13 @@
 //! R744/R745 lists already use for `aria-setsize` / `aria-posinset`.
 
 use crate::Scene;
+use crate::composite_tag::GridSendKey;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::input::Modifiers;
 use crate::intent::Intent;
-use crate::model_index::CellIndex;
 use crate::widgets::IntentEmitter;
 use crate::widgets::scroll::ScrollState;
 use std::collections::BTreeSet;
@@ -295,10 +295,20 @@ impl VirtualSelect {
     }
 }
 
-/// R1544 §5.27 — the [`VirtualSelectExternal::on_cell_gesture`] observer's
-/// signature: `(cell, event name, modifiers)`, named so the boxed field reads
-/// as one concept rather than as a nested type.
-type CellGestureFn = dyn Fn(CellIndex, &str, Modifiers);
+/// R1544 §5.27 — the [`VirtualSelectExternal::on_grid_gesture`] observer's
+/// signature: `(decoded sub-key, event name, modifiers)`, named so the boxed
+/// field reads as one concept rather than as a nested type.
+///
+/// R1555 — the first argument is the decoded
+/// [`GridSendKey`] rather than a
+/// [`CellIndex`](crate::model_index::CellIndex). It was a `CellIndex` while a
+/// cell was the only sub-key with a
+/// view-level behaviour behind it, and that shape is not extensible by
+/// construction: R1555's step affordance addresses `EditorStep { row, col, up }`,
+/// which no `CellIndex` can carry, so the alternative was a sibling hook per arm
+/// of a grammar that already has a type. Taking the grammar's own type means a
+/// later arm needs no hook at all.
+type GridGestureFn = dyn Fn(GridSendKey, &str, Modifiers);
 
 /// R746 §5.27 §5.38 — single-select-by-index coordinator for a virtualized
 /// list.
@@ -329,10 +339,10 @@ type CellGestureFn = dyn Fn(CellIndex, &str, Modifiers);
 /// auto-dispatch — it pushes the intent explicitly on the interaction edge.
 pub struct VirtualSelectExternal {
     em: IntentEmitter<VirtualSelect>,
-    /// R1544 §5.27 — an optional observer of decoded **cell** gestures, for
-    /// the view-level behaviours a click on a cell drives beyond selection.
-    /// `None` for every consumer that only selects.
-    cell_gesture: Option<Box<CellGestureFn>>,
+    /// R1544 §5.27 — an optional observer of decoded grid gestures, for the
+    /// view-level behaviours a press drives beyond selection. `None` for every
+    /// consumer that only selects.
+    grid_gesture: Option<Box<GridGestureFn>>,
 }
 
 impl core::fmt::Debug for VirtualSelectExternal {
@@ -352,13 +362,13 @@ impl VirtualSelectExternal {
     pub fn new(item_count: usize) -> Self {
         Self {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Single)),
-            cell_gesture: None,
+            grid_gesture: None,
         }
     }
 
-    /// R1544 §5.27 — observe every decoded **cell** gesture
-    /// (`"<row>_<col>:<Event>"`) with its event name and modifiers, *before*
-    /// this coordinator applies its own selection transition.
+    /// R1544 §5.27 — observe every decoded grid gesture with its event name and
+    /// modifiers, *before* this coordinator applies its own selection
+    /// transition.
     ///
     /// # Why the selection coordinator carries it
     ///
@@ -377,12 +387,14 @@ impl VirtualSelectExternal {
     /// the transition would make every plain click look "already selected",
     /// which is the difference between a rename gesture and an unusable one.
     ///
-    /// Header (`h<col>`) and group (`g<n>`) gestures are **not** offered: they
-    /// address a column or a group, not a cell, so there is no [`CellIndex`] to
-    /// hand over. A bare list-item key is not a cell either.
+    /// R1555 — **every** decoded sub-key is offered, not only a cell: a header
+    /// (`h<col>`), a group (`g<n>`) and a step affordance
+    /// (`su<row>_<col>` / `sd<row>_<col>`) all reach the observer, which matches
+    /// the arm it cares about. A bare list-item key has no grid structure and is
+    /// not decodable into one, so it is not offered.
     #[must_use]
-    pub fn on_cell_gesture(mut self, f: impl Fn(CellIndex, &str, Modifiers) + 'static) -> Self {
-        self.cell_gesture = Some(Box::new(f));
+    pub fn on_grid_gesture(mut self, f: impl Fn(GridSendKey, &str, Modifiers) + 'static) -> Self {
+        self.grid_gesture = Some(Box::new(f));
         self
     }
 
@@ -394,7 +406,7 @@ impl VirtualSelectExternal {
     pub fn new_multi(item_count: usize) -> Self {
         Self {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Multi)),
-            cell_gesture: None,
+            grid_gesture: None,
         }
     }
 
@@ -543,7 +555,7 @@ impl VirtualSelectExternal {
     ///   ignored here (sort is a separate axis, not this coordinator's).
     ///
     /// The grid grammar is decoded by the shared
-    /// [`GridSendKey`](crate::composite_tag::GridSendKey) SSOT (R777.1) — a
+    /// [`GridSendKey`] SSOT (R777.1) — a
     /// cell `"<row>_<col>"` yields its row, a header `"h<col>"` yields
     /// `None` (ignored). A bare list-item key `"<row>"` has no grid
     /// structure, so it falls back to a plain integer parse: one
@@ -556,11 +568,10 @@ impl VirtualSelectExternal {
         let parsed = crate::composite_tag::GridSendKey::parse(key);
         // R1544 — the view-level hook, offered before the selection moves so
         // "was this cell already selected" is still answerable (Qt's
-        // `SelectedClicked`). Only a cell has a `CellIndex` to report.
-        if let (Some(observe), Some(crate::composite_tag::GridSendKey::Cell { row, col })) =
-            (self.cell_gesture.as_ref(), parsed)
-        {
-            observe(CellIndex { row, col }, event_name, modifiers);
+        // `SelectedClicked`). R1555 — every decoded arm is offered; the observer
+        // matches the one it handles.
+        if let (Some(observe), Some(grid_key)) = (self.grid_gesture.as_ref(), parsed) {
+            observe(grid_key, event_name, modifiers);
         }
         let row = match parsed {
             Some(grid_key) => grid_key.row(),

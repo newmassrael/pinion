@@ -81,7 +81,7 @@ pub use animation::{
     SpringConfig, SpringState, Tickable, Tween,
 };
 pub use cell_metric::CellMetric;
-pub use cell_value::{CellEdit, CellKind, CellValue};
+pub use cell_value::{CellEdit, CellKind, CellValue, EditorForm};
 pub use clipboard::{Clipboard, ClipboardSelection, InMemoryClipboard};
 pub use command::Command;
 pub use contrast::{contrast_ratio, readable_ink, relative_luminance};

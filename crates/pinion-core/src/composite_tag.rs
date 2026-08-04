@@ -245,6 +245,27 @@ pub enum GridSendKey {
         /// Group id (an index into the consumer's label table).
         group: usize,
     },
+    /// R1555 — a step affordance of an open
+    /// [`EditorForm::Stepper`](crate::cell_value::EditorForm::Stepper) editor
+    /// (`"su<row>_<col>"` up / `"sd<row>_<col>"` down): Qt `QSpinBox`'s two
+    /// arrow sub-controls.
+    ///
+    /// The **only** editor form that needs its own address. A toggle's checkbox,
+    /// a selector's chevron and a swatch's colour chip each fill their cell, so
+    /// a pointer landing on one already resolves to the cell's own tag; a
+    /// swatch's hex half is a real
+    /// [`TextField`](crate::widgets::text_field::TextField) carrying its own.
+    /// Up and down are two targets inside one cell with nothing else to tell
+    /// them apart, so they are the case that needs a sub-key rather than the
+    /// case a sub-key family was invented for.
+    EditorStep {
+        /// Zero-based data-row index.
+        row: usize,
+        /// Zero-based column index.
+        col: usize,
+        /// Whether this is the increment affordance.
+        up: bool,
+    },
 }
 
 impl GridSendKey {
@@ -261,6 +282,20 @@ impl GridSendKey {
         if let Some(group) = key.strip_prefix('g') {
             return group.parse().ok().map(|group| Self::Group { group });
         }
+        // R1555 — the two-letter step prefixes are tried before the bare
+        // `<row>_<col>` split, which they would otherwise fall into and fail
+        // (`"su3".parse::<usize>()` is an error, so a pre-R1555 decoder
+        // answered `None` for these keys rather than mis-routing them).
+        for (prefix, up) in [("su", true), ("sd", false)] {
+            if let Some(rest) = key.strip_prefix(prefix) {
+                let (row, col) = rest.split_once('_')?;
+                return Some(Self::EditorStep {
+                    row: row.parse().ok()?,
+                    col: col.parse().ok()?,
+                    up,
+                });
+            }
+        }
         let (row, col) = key.split_once('_')?;
         Some(Self::Cell {
             row: row.parse().ok()?,
@@ -274,9 +309,14 @@ impl GridSendKey {
     /// (WAI-ARIA / Qt `QItemSelectionModel` `SelectRows`: the column is
     /// irrelevant to a row selection).
     #[must_use]
+    /// R1555 — an [`EditorStep`](Self::EditorStep) answers with its row for the
+    /// same reason a [`Cell`](Self::Cell) does: the affordance is *inside* a
+    /// cell of that row, so a press on it is a press in the row, and a selection
+    /// coordinator that answered `None` here would leave the selection behind
+    /// whenever the user reached for an arrow instead of the cell body.
     pub fn row(self) -> Option<usize> {
         match self {
-            Self::Cell { row, .. } => Some(row),
+            Self::Cell { row, .. } | Self::EditorStep { row, .. } => Some(row),
             Self::Header { .. } | Self::Group { .. } => None,
         }
     }
@@ -291,6 +331,10 @@ impl GridSendKey {
             Self::Header { col } => format!("h{col}"),
             Self::Cell { row, col } => format!("{row}_{col}"),
             Self::Group { group } => format!("g{group}"),
+            Self::EditorStep { row, col, up } => {
+                let dir = if up { "su" } else { "sd" };
+                format!("{dir}{row}_{col}")
+            }
         }
     }
 }
@@ -649,6 +693,16 @@ mod tests {
             GridSendKey::Cell { row: 9_999, col: 2 },
             GridSendKey::Header { col: 1 },
             GridSendKey::Group { group: 3 },
+            GridSendKey::EditorStep {
+                row: 0,
+                col: 0,
+                up: true,
+            },
+            GridSendKey::EditorStep {
+                row: 7_000,
+                col: 3,
+                up: false,
+            },
         ] {
             assert_eq!(
                 GridSendKey::parse(&key.encode()),
@@ -659,6 +713,57 @@ mod tests {
         assert_eq!(GridSendKey::Cell { row: 4, col: 2 }.encode(), "4_2");
         assert_eq!(GridSendKey::Header { col: 1 }.encode(), "h1");
         assert_eq!(GridSendKey::Group { group: 3 }.encode(), "g3");
+        assert_eq!(
+            GridSendKey::EditorStep {
+                row: 4,
+                col: 2,
+                up: true
+            }
+            .encode(),
+            "su4_2"
+        );
+        assert_eq!(
+            GridSendKey::EditorStep {
+                row: 4,
+                col: 2,
+                up: false
+            }
+            .encode(),
+            "sd4_2"
+        );
+    }
+
+    #[test]
+    fn r1555_a_step_key_is_not_confused_with_a_cell_key() {
+        // The two prefixes are tried before the bare `<row>_<col>` split, and
+        // the directions do not collapse into each other.
+        assert_eq!(
+            GridSendKey::parse("su4_2"),
+            Some(GridSendKey::EditorStep {
+                row: 4,
+                col: 2,
+                up: true
+            })
+        );
+        assert_eq!(
+            GridSendKey::parse("sd4_2"),
+            Some(GridSendKey::EditorStep {
+                row: 4,
+                col: 2,
+                up: false
+            })
+        );
+        // A step affordance is inside a cell of its row, so a press on it is a
+        // press in the row — a coordinator must not lose the selection when the
+        // user reaches for an arrow.
+        assert_eq!(
+            GridSendKey::parse("su4_2").and_then(GridSendKey::row),
+            Some(4)
+        );
+        // Malformed step keys decode to None rather than to a cell.
+        assert_eq!(GridSendKey::parse("su4"), None);
+        assert_eq!(GridSendKey::parse("sux_2"), None);
+        assert_eq!(GridSendKey::parse("sq4_2"), None, "an unknown direction");
     }
 
     #[test]

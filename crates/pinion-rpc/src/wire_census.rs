@@ -318,6 +318,29 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "CellEditorEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("form", WireTy::String, None),
+                WireField::new("buffer_is_text", WireTy::Boolean, None),
+                WireField::new("inline_text", WireTy::Boolean, None),
+                WireField::new("accepts_keystrokes", WireTy::Boolean, None),
+                WireField::new("role", WireTy::String, None),
+            ],
+        },
+    },
+    WireType {
+        name: "CellEditorsOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "editors",
+                WireTy::Array,
+                Some("CellEditorEntry"),
+            )],
+        },
+    },
+    WireType {
         name: "CmapSubtableInfo",
         shape: WireShape::Object {
             fields: &[

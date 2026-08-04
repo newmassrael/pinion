@@ -76,3 +76,4 @@
 1552	api	the server speaks first, RpcEgress + scene/subscribe as JSON-RPC notifications on both backends
 1553	dataviz	a datum can be a distribution, Qt QBoxPlotSeries with the quartiles DERIVED by a named definition + Tukey outliers + the notch
 1554	catalog	a container states that its subtree is inert, Qt QWidget::setEnabled inherited down the scene + QGroupBox as its first consumer
+1555	dcc	a cell editor is chosen by its datum kind, Qt QItemEditorFactory as five shipped forms + the commit outcome named

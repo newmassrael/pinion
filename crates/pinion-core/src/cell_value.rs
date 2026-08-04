@@ -52,6 +52,130 @@ pub enum CellValue {
     Color(Color),
 }
 
+/// R1555 §5.27 — which editor a [`CellKind`] opens: Qt's
+/// `QItemEditorFactory`, as a pure function of the datum's type.
+///
+/// # The axis this is
+///
+/// Qt reaches this decision through
+/// `QItemEditorFactory::createEditor(QMetaType::Type, parent)` — a registry
+/// from a value's type to an editor widget, which `QStyledItemDelegate`
+/// consults and `setItemDelegateForColumn` overrides. pinion had the
+/// **override** (R1532's per-column paint delegate, R1544's editor delegate)
+/// and not the registry, so one inline text field was the built-in editor for
+/// every kind. For two of the six that editor cannot work at all:
+/// [`CellKind::Bool`] and [`CellKind::Choice`] refuse every keystroke
+/// ([`CellKind::accepts_keystroke`]) and parse to nothing
+/// ([`CellKind::parse`]), so the seam opened a field that could not be typed
+/// into and whose commit could never produce a value. The tree already *knew*
+/// this — [`CellKind::is_text_editable`] has said so since R837 — and the
+/// factory that would have acted on it did not exist.
+///
+/// # Why a form and not a widget
+///
+/// `createEditor` **instantiates a `QWidget`**, so "what editor would this
+/// cell get" is a question Qt cannot answer without constructing one, and the
+/// registry cannot be enumerated at all (`creatorMap` is private and there is
+/// no accessor for which types are registered). A form is a *value*, which is
+/// what lets `scene/cell_editors` publish the whole mapping, an a11y pass
+/// derive the editor's role, and a test assert the census — none of which
+/// requires painting anything.
+///
+/// # Where each form is past Qt's default factory
+///
+/// - [`Toggle`](Self::Toggle) — Qt's `QMetaType::Bool` creator is a two-item
+///   `QComboBox` reading "False" / "True", which is why a Qt application that
+///   wants a checkbox writes a delegate. A checkbox is the shipped form here.
+/// - [`Stepper`](Self::Stepper) — Qt's `QMetaType::Double` creator is a
+///   `QDoubleSpinBox` left at its default `decimals() == 2`, so opening the
+///   default editor on a cell holding `1.234` and committing writes `1.23`.
+///   The seed here is [`CellValue::edit_text`] and the commit is
+///   [`CellKind::parse`], documented inverses, so an untouched open-and-commit
+///   cannot change the datum.
+/// - [`Selector`](Self::Selector) — Qt's factory is keyed by `QVariant` type,
+///   and an enumerated value **is an int** to `QVariant`, so no registration
+///   can produce a combo box populated with that cell's options.
+///   [`CellValue::Choice`] carries its own domain, so the form can.
+/// - [`Swatch`](Self::Swatch) — Qt's default factory has **no** `QColor`
+///   creator; `createEditor` answers `nullptr`, `QStyledItemDelegate` passes
+///   it through, and `QAbstractItemView::edit` then silently does nothing. A
+///   colour cell in a plain `QTableView` is simply not editable.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EditorForm {
+    /// An inline text field (Qt `QLineEdit` / `QExpandingLineEdit`).
+    Field,
+    /// An inline text field with step affordances (Qt `QSpinBox` /
+    /// `QDoubleSpinBox`).
+    Stepper,
+    /// An inline checkbox.
+    Toggle,
+    /// A closed selector showing the current option (Qt `QComboBox`), which
+    /// the binding opens into a list.
+    Selector,
+    /// A colour chip beside a hex field.
+    Swatch,
+}
+
+impl EditorForm {
+    /// Every form, in wire order — the census a round-trip test and the
+    /// `scene/cell_editors` enumeration both walk, so a form added without a
+    /// token fails here rather than serializing as a missing member.
+    pub const ALL: [EditorForm; 5] = [
+        EditorForm::Field,
+        EditorForm::Stepper,
+        EditorForm::Toggle,
+        EditorForm::Selector,
+        EditorForm::Swatch,
+    ];
+
+    /// The wire token.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            EditorForm::Field => "field",
+            EditorForm::Stepper => "stepper",
+            EditorForm::Toggle => "toggle",
+            EditorForm::Selector => "selector",
+            EditorForm::Swatch => "swatch",
+        }
+    }
+
+    /// Parse a [`name`](Self::name). `None` for an unknown token.
+    #[must_use]
+    pub fn from_wire(token: &str) -> Option<Self> {
+        EditorForm::ALL.into_iter().find(|f| f.name() == token)
+    }
+
+    /// Whether the **cell's own box** is a text field the keystroke gate
+    /// feeds — the begin-edit guard for an inline type-in.
+    ///
+    /// [`Swatch`](Self::Swatch) answers `false` even though it contains a hex
+    /// field: that field is a *part* of the editor the binding focuses, not
+    /// the cell's box, so a printable key arriving at the cell must not be
+    /// treated as the start of a hex edit.
+    #[must_use]
+    pub fn inline_text(self) -> bool {
+        matches!(self, EditorForm::Field | EditorForm::Stepper)
+    }
+
+    /// Whether the in-flight value is read back out of a **text buffer**
+    /// (through [`CellKind::parse`]) rather than held as a typed value by the
+    /// editing latch.
+    ///
+    /// This is the axis Qt has too and states nowhere: a `QLineEdit` editor's
+    /// in-flight value is its text and a `QComboBox` editor's is its current
+    /// index, and `setModelData` reaches each by a `qobject_cast` the delegate
+    /// author has to get right. Here it is one exhaustive answer per form, so
+    /// the latch cannot look for a value in the half that does not hold it.
+    #[must_use]
+    pub fn buffer_is_text(self) -> bool {
+        match self {
+            EditorForm::Field | EditorForm::Stepper | EditorForm::Swatch => true,
+            EditorForm::Toggle | EditorForm::Selector => false,
+        }
+    }
+}
+
 /// The static descriptor of a [`CellValue`] — drives editor behaviour
 /// (toggle vs text-edit vs popup), the keystroke gate, and parse / format.
 /// `Copy` (per-column kind arrays live in `[CellKind; N]`); the option list a
@@ -328,6 +452,19 @@ impl CellValue {
 }
 
 impl CellKind {
+    /// R1555 — every kind, in wire order: the census
+    /// [`editor_form`](Self::editor_form)'s coverage test and the
+    /// `scene/cell_editors` enumeration both walk, so a kind added without a
+    /// form is a compile error in the `match` and a missing row here.
+    pub const ALL: [CellKind; 6] = [
+        CellKind::Bool,
+        CellKind::Int,
+        CellKind::Float,
+        CellKind::Text,
+        CellKind::Choice,
+        CellKind::Color,
+    ];
+
     /// The wire vocab token (`"bool"` / `"int"` / `"float"` / `"text"`) —
     /// the `kind` introspect slot's value.
     #[must_use]
@@ -342,12 +479,80 @@ impl CellKind {
         }
     }
 
+    /// R1555 §5.27 — which editor this kind opens: Qt's
+    /// `QItemEditorFactory::createEditor(QMetaType::Type, parent)`, as a pure
+    /// function. See [`EditorForm`] for what each form is and where it is past
+    /// Qt's default factory.
+    ///
+    /// Total by construction — the `match` is exhaustive over
+    /// [`CellKind::ALL`], so a seventh kind cannot be added without stating
+    /// the editor it opens. Qt's registry is a `QHash` with a `nullptr`
+    /// fallthrough, which is why a `QColor` cell there silently opens nothing.
+    #[must_use]
+    pub fn editor_form(self) -> EditorForm {
+        match self {
+            CellKind::Bool => EditorForm::Toggle,
+            CellKind::Int | CellKind::Float => EditorForm::Stepper,
+            CellKind::Text => EditorForm::Field,
+            CellKind::Choice => EditorForm::Selector,
+            CellKind::Color => EditorForm::Swatch,
+        }
+    }
+
     /// Whether the kind is edited as text (text / int / float) rather than
     /// toggled (bool) or popup-edited (choice / colour). The begin-edit guard
     /// for the inline text field.
+    ///
+    /// R1555 — **derived** from [`editor_form`](Self::editor_form) rather than
+    /// matched again. The two answers are the same classification, and the
+    /// pre-R1555 duplicate is exactly the shape that decays: this predicate
+    /// already said Bool and Choice are not text-edited while the seam opened a
+    /// text field for them anyway.
     #[must_use]
     pub fn is_text_editable(self) -> bool {
-        matches!(self, CellKind::Int | CellKind::Float | CellKind::Text)
+        self.editor_form().inline_text()
+    }
+
+    /// R1555 §5.27 — step an editor buffer by `delta` steps, for the kinds
+    /// whose form is a [`EditorForm::Stepper`]: Qt
+    /// `QAbstractSpinBox::stepBy(int steps)`.
+    ///
+    /// Text in, text out, because the buffer is what the step acts on — the
+    /// same buffer the keystroke gate feeds and [`parse`](Self::parse) reads
+    /// back, so a stepped value and a typed one are the same state.
+    ///
+    /// `None` when the kind has no stepper, and also when the buffer does not
+    /// currently hold a value of this kind. That second case is a divergence
+    /// worth stating: a `QSpinBox` always holds a validated value, so Qt's
+    /// `stepBy` on a half-typed field silently steps from whatever its
+    /// validator last accepted. Here a step from a malformed buffer is refused
+    /// and the user's text is left alone.
+    ///
+    /// A single step is `1` for both numeric kinds, which is Qt's default for
+    /// `QSpinBox` and for `QDoubleSpinBox`. A per-column step is a property of
+    /// the column, so it belongs to a delegate — in Qt too: the default factory
+    /// sets no `singleStep`.
+    #[must_use]
+    pub fn step_text(self, text: &str, delta: i64) -> Option<String> {
+        match self {
+            CellKind::Int => text
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .map(|n| n.saturating_add(delta).to_string()),
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a step count past 2^53 cannot arrive from a step \
+                          gesture, and the alternative — refusing the step — \
+                          would be a worse answer than a rounded one"
+            )]
+            CellKind::Float => text
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .map(|f| format_float(f + delta as f64)),
+            CellKind::Bool | CellKind::Text | CellKind::Choice | CellKind::Color => None,
+        }
     }
 
     /// Whether a single printable keystroke is allowed into this kind's
@@ -437,47 +642,86 @@ fn selected_label(selected: usize, options: &[String]) -> String {
 /// editor on a cell the model cannot edit" is a state the type system rejects
 /// rather than one the view must remember to check.
 ///
-/// The seed is deliberately the [`CellValue::edit_text`] form, **not** the
-/// display form: `1234.5` is edited as `1234.5` and displayed as whatever the
-/// model's display role formats it to. That is exactly Qt's Edit/Display
-/// distinction, and it is the reason a currency or unit column can be edited
-/// at all.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The seed's text form is deliberately the [`CellValue::edit_text`] one,
+/// **not** the display form: `1234.5` is edited as `1234.5` and displayed as
+/// whatever the model's display role formats it to. That is exactly Qt's
+/// Edit/Display distinction, and it is the reason a currency or unit column can
+/// be edited at all.
+///
+/// # Why it holds the datum and not `(kind, String)` (R1555)
+///
+/// It held a [`CellKind`] and a seed string until R1555, and that shape could
+/// not describe the one kind whose editor most needs its datum: a
+/// [`CellValue::Choice`]'s **options are part of the value's identity, not
+/// derivable from the kind** (this module has said so since R867), so a
+/// `(Choice, "Bravo")` edit role could not tell a selector what to select
+/// between — or even which index `"Bravo"` is, since two options may share a
+/// label. It also made `(CellKind::Int, "not a number")` a representable
+/// edit-role answer that nothing rejected.
+///
+/// One field fixes both, and it is Qt's own shape: `Qt::EditRole` answers with
+/// a `QVariant`, not with a type tag beside a string. [`kind`](Self::kind) and
+/// [`text`](Self::text) are now derivations of the datum, so they cannot
+/// disagree with it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct CellEdit {
-    /// Which editor to open, and — through
-    /// [`CellKind::accepts_keystroke`] / [`CellKind::parse`] — the keystroke
-    /// gate and the commit parser. Qt reaches the same decision through
-    /// `QItemEditorFactory::createEditor(QVariant::Type, parent)`.
-    pub kind: CellKind,
-    /// The `Qt::EditRole` value in text form — what the editor opens
-    /// containing.
-    pub text: String,
+    /// The datum. Private so every construction goes through
+    /// [`From<CellValue>`](CellEdit::from) and the kind / seed pair stays a
+    /// derivation rather than two things a caller states separately.
+    value: CellValue,
 }
 
 impl CellEdit {
-    /// The edit-role answer for a value of `kind` seeded with `text`.
+    /// The `Qt::EditRole` datum itself — what a [`EditorForm::Selector`] or
+    /// [`EditorForm::Toggle`] editor needs, and what a commit compares against.
     #[must_use]
-    pub fn new(kind: CellKind, text: impl Into<String>) -> Self {
-        Self {
-            kind,
-            text: text.into(),
-        }
+    pub fn value(&self) -> &CellValue {
+        &self.value
+    }
+
+    /// Which editor to open, and — through
+    /// [`CellKind::accepts_keystroke`] / [`CellKind::parse`] — the keystroke
+    /// gate and the commit parser. Qt reaches the same decision through
+    /// `QItemEditorFactory::createEditor(QMetaType::Type, parent)`; here it is
+    /// [`CellKind::editor_form`].
+    #[must_use]
+    pub fn kind(&self) -> CellKind {
+        self.value.kind()
+    }
+
+    /// R1555 — which editor form this cell opens, from its own datum.
+    #[must_use]
+    pub fn form(&self) -> EditorForm {
+        self.value.kind().editor_form()
+    }
+
+    /// The `Qt::EditRole` value in text form — what a text-buffered editor
+    /// opens containing ([`CellValue::edit_text`]).
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.value.edit_text()
+    }
+}
+
+impl From<CellValue> for CellEdit {
+    /// The edit-role answer a [`CellValue`]-backed model gives: the datum.
+    ///
+    /// Every editable grid in this tree holds `CellValue`s, so a model states
+    /// its edit role by handing over the value — and cannot seed an editor from
+    /// a formula that has drifted from the one its commit parses back through
+    /// ([`CellKind::parse`] is documented as [`CellValue::edit_text`]'s
+    /// inverse).
+    fn from(value: CellValue) -> Self {
+        Self { value }
     }
 }
 
 impl From<&CellValue> for CellEdit {
-    /// The edit-role answer a [`CellValue`]-backed model gives: its own kind,
-    /// seeded from [`CellValue::edit_text`].
-    ///
-    /// Every editable grid in the tree holds `CellValue`s, so this is the
-    /// derivation each of them would otherwise spell — and spelling it here
-    /// means a model cannot seed an editor from a formula that has drifted
-    /// from the one its commit parses back through ([`CellKind::parse`] is
-    /// documented as `edit_text`'s inverse).
+    /// [`From<CellValue>`](CellEdit::from) for a borrowed datum — the shape a
+    /// model that computes its cells reaches for.
     fn from(value: &CellValue) -> Self {
         Self {
-            kind: value.kind(),
-            text: value.edit_text(),
+            value: value.clone(),
         }
     }
 }
@@ -981,5 +1225,141 @@ mod tests {
         // Contains is a substring over the display label (the one textual op).
         assert!(CellValue::Text("mesh_lod0".into()).matches_facet(FilterOp::Contains, "lod"));
         assert!(!CellValue::Text("mesh".into()).matches_facet(FilterOp::Contains, "xyz"));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1555 §5.27 — the editor factory: Qt QItemEditorFactory
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1555_every_kind_has_an_editor_and_the_census_is_complete() {
+        // The census drives the loop, so a seventh kind cannot be added
+        // without a form (the `match` is exhaustive) AND without a row here.
+        assert_eq!(
+            CellKind::ALL.len(),
+            6,
+            "the census enumerates every kind the factory answers for"
+        );
+        for kind in CellKind::ALL {
+            let form = kind.editor_form();
+            assert!(
+                EditorForm::ALL.contains(&form),
+                "{kind:?} answers with a censused form, not an ad-hoc one"
+            );
+            assert_eq!(
+                EditorForm::from_wire(form.name()),
+                Some(form),
+                "{form:?} round-trips its wire token"
+            );
+        }
+        // Distinct kinds may share a form (Int / Float are both steppers, as
+        // in Qt), but every form must be reachable — an unreachable form would
+        // be a paint path nothing can open.
+        for form in EditorForm::ALL {
+            assert!(
+                CellKind::ALL.iter().any(|k| k.editor_form() == form),
+                "{form:?} is reachable from some kind"
+            );
+        }
+    }
+
+    #[test]
+    fn r1555_the_two_kinds_that_refuse_text_do_not_get_a_text_editor() {
+        // The defect this round closes: `text_cell_editor` was the built-in
+        // for every kind, and for these two it is an editor that accepts no
+        // keystroke and whose commit can never produce a value.
+        for kind in [CellKind::Bool, CellKind::Choice] {
+            assert!(!kind.accepts_keystroke("a"), "{kind:?} refuses keystrokes");
+            assert!(kind.parse("anything").is_none(), "{kind:?} never parses");
+            assert!(
+                !kind.editor_form().buffer_is_text(),
+                "{kind:?} therefore cannot have a text-buffered editor"
+            );
+        }
+    }
+
+    #[test]
+    fn r1555_is_text_editable_is_derived_from_the_form() {
+        // One classification, one place. The pre-R1555 duplicate said Bool and
+        // Choice were not text-edited while the seam opened a text field for
+        // them anyway.
+        for kind in CellKind::ALL {
+            assert_eq!(
+                kind.is_text_editable(),
+                kind.editor_form().inline_text(),
+                "{kind:?}"
+            );
+        }
+        assert!(
+            !CellKind::Color.is_text_editable(),
+            "a swatch's hex field is a part of the editor, not the cell's box"
+        );
+        assert!(
+            CellKind::Color.editor_form().buffer_is_text(),
+            "but its in-flight value IS read back out of that field"
+        );
+    }
+
+    #[test]
+    fn r1555_a_stepper_steps_its_buffer_and_refuses_a_malformed_one() {
+        assert_eq!(CellKind::Int.step_text("41", 1).as_deref(), Some("42"));
+        assert_eq!(CellKind::Int.step_text("0", -1).as_deref(), Some("-1"));
+        assert_eq!(CellKind::Float.step_text("1.5", 1).as_deref(), Some("2.5"));
+        // Past Qt: a `QSpinBox` always holds a validated value, so `stepBy` on
+        // a half-typed field steps from whatever its validator last accepted.
+        // Here the user's text is left alone.
+        assert_eq!(CellKind::Int.step_text("12a", 1), None);
+        assert_eq!(CellKind::Int.step_text("", 1), None);
+        // Saturating, so a held arrow at the type's bound cannot wrap.
+        assert_eq!(
+            CellKind::Int.step_text(&i64::MAX.to_string(), 1).as_deref(),
+            Some(i64::MAX.to_string().as_str())
+        );
+        for kind in [CellKind::Bool, CellKind::Text, CellKind::Choice] {
+            assert_eq!(kind.step_text("1", 1), None, "{kind:?} has no stepper");
+        }
+    }
+
+    #[test]
+    fn r1555_a_float_survives_an_untouched_open_and_commit() {
+        // Qt's default factory hands a `QDoubleSpinBox` left at
+        // `decimals() == 2`, so opening the default editor on this cell and
+        // pressing Enter writes 1.23. The seed and the commit here are
+        // documented inverses.
+        let value = CellValue::Float(1.234);
+        let edit = CellEdit::from(&value);
+        assert_eq!(edit.form(), EditorForm::Stepper);
+        assert_eq!(CellKind::Float.parse(&edit.text()), Some(value));
+    }
+
+    #[test]
+    fn r1555_the_edit_role_carries_the_choice_domain() {
+        // The reason `CellEdit` holds the datum: a `(Choice, "Bravo")` pair
+        // cannot tell a selector what to select between, nor which index
+        // "Bravo" is when two options share a label.
+        let value = CellValue::Choice {
+            selected: 1,
+            options: vec!["Alpha".into(), "Bravo".into(), "Bravo".into()],
+        };
+        let edit = CellEdit::from(&value);
+        assert_eq!(edit.form(), EditorForm::Selector);
+        assert_eq!(edit.kind(), CellKind::Choice);
+        assert_eq!(edit.text(), "Bravo", "the seed is still the label");
+        let CellValue::Choice { selected, options } = edit.value() else {
+            panic!("the datum is carried whole");
+        };
+        assert_eq!(*selected, 1, "and it says WHICH Bravo");
+        assert_eq!(options.len(), 3);
+    }
+
+    #[test]
+    fn r1555_an_edit_role_cannot_state_a_kind_its_datum_contradicts() {
+        // `CellEdit::new(CellKind::Int, "not a number")` used to be a
+        // representable edit-role answer. Construction now requires a datum,
+        // so the kind is a derivation of it.
+        let edit = CellEdit::from(CellValue::Int(7));
+        assert_eq!(edit.kind(), CellKind::Int);
+        assert_eq!(edit.text(), "7");
+        assert_eq!(CellKind::Int.parse(&edit.text()), Some(CellValue::Int(7)));
     }
 }

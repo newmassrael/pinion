@@ -1978,6 +1978,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-cell-editors"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-cell-select"
 version = "0.0.1"
 dependencies = [

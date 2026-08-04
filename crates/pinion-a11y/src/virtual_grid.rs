@@ -25,9 +25,9 @@
 
 use crate::node::AccessNode;
 use crate::role::{AriaRole, SortDirection};
-use pinion_core::CellIndex;
 use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::widgets::virtual_list::VisibleWindow;
+use pinion_core::{CellIndex, EditorForm};
 
 /// Build the virtualized `grid` container + frozen header row + one data
 /// `row` (with its `gridcell`s) per windowed index.
@@ -589,6 +589,75 @@ pub fn mark_grid_editability(
                 cell.state.read_only = true;
             }
         }
+    }
+}
+
+/// R1555 §5.40 §5.27 — announce the **open editor** under the cell hosting it,
+/// with the role its [`EditorForm`] actually has.
+///
+/// The a11y half of Qt's `QItemEditorFactory`. Called with the latch's
+/// `(index, form)` when — and only when — an editor is painted, which is one
+/// statement on the paint side ([`cell_editor`](../../pinion_widget_paint/table/fn.cell_editor.html)
+/// dispatches on the same `form`), so the announced control and the drawn one
+/// cannot be different kinds.
+///
+/// # Why a child node and not a role on the cell
+///
+/// A `gridcell` stays a `gridcell` while it hosts an editor — that is what keeps
+/// the row / column geometry intact for AT table navigation. WAI-ARIA puts the
+/// input *inside* the cell, and so does Qt: the editor is a real child `QWidget`
+/// with its own `QAccessibleInterface`. The [`attach_child_button`](crate::node::attach_child_button)
+/// precedent gives the same orphan-free rule — a cell absent from `nodes`
+/// (windowed out on either axis) emits **nothing**, neither the link nor the
+/// node, so an editor node with no host cannot exist.
+///
+/// # Against Qt 6.11
+///
+/// Qt reaches the right role by accident of construction: because the editor is
+/// a widget, `QAccessible` reports whatever that widget is. The consequence is
+/// that Qt's *default* factory decides the announced role too — a bool cell
+/// announces as a **combo box** there, because that is what
+/// `QItemEditorFactory` hands back for `QMetaType::Bool`, and a colour cell
+/// announces nothing at all because no editor is created. Here the role follows
+/// from the datum, so the announcement is a property of the cell's type rather
+/// than of which widget the factory happened to construct.
+///
+/// - `index` — the editing cell, from
+///   [`GridEditState::editing`](../../pinion_core/widgets/grid_edit/struct.GridEditState.html#method.editing).
+/// - `form` — its [`EditorForm`].
+/// - `name` — the editor's accessible name. The cell's own name is its
+///   *content*; an editor needs to say what is being edited, which only the
+///   binding knows (Qt has the same gap and fills it from the column header).
+pub fn attach_cell_editor(
+    nodes: &mut Vec<AccessNode>,
+    grid_tag: &str,
+    index: CellIndex,
+    form: EditorForm,
+    name: impl Into<String>,
+) {
+    let cell = cell_tag(grid_tag, index.row, index.col);
+    let Some(host) = nodes.iter_mut().find(|n| n.tag == cell) else {
+        return;
+    };
+    let editor_tag = format!("{cell}#editor");
+    host.children.push(editor_tag.clone());
+    nodes.push(AccessNode::new(editor_tag, editor_role(form)).with_name(name));
+}
+
+/// R1555 — the WAI-ARIA role of each editor form.
+///
+/// Exhaustive over [`EditorForm`], so a sixth form cannot be added without
+/// deciding what assistive technology should call it — the failure mode a
+/// `_ => AriaRole::TextInput` fallback would hide.
+#[must_use]
+pub fn editor_role(form: EditorForm) -> AriaRole {
+    match form {
+        // A swatch's editable half is its hex field; the chip is painted
+        // geometry beside it. `textbox` is what a user can act on.
+        EditorForm::Field | EditorForm::Swatch => AriaRole::TextInput,
+        EditorForm::Stepper => AriaRole::SpinButton,
+        EditorForm::Toggle => AriaRole::CheckBox,
+        EditorForm::Selector => AriaRole::ComboBox,
     }
 }
 
@@ -1205,6 +1274,73 @@ mod tests {
                 .state
                 .read_only,
             "the cells that DO exist are still marked"
+        );
+    }
+
+    #[test]
+    fn r1555_the_open_editor_is_announced_with_its_form_s_role() {
+        // Every form's role is decided by the datum's kind, not by which widget
+        // a factory happened to construct — which is why a Qt bool cell
+        // announces as a combo box and a Qt colour cell announces nothing.
+        let expected = [
+            (EditorForm::Field, AriaRole::TextInput),
+            (EditorForm::Stepper, AriaRole::SpinButton),
+            (EditorForm::Toggle, AriaRole::CheckBox),
+            (EditorForm::Selector, AriaRole::ComboBox),
+            (EditorForm::Swatch, AriaRole::TextInput),
+        ];
+        assert_eq!(
+            expected.len(),
+            EditorForm::ALL.len(),
+            "the census drives the table, so a sixth form fails here rather \
+             than announcing as whatever the fallback was"
+        );
+        for (form, role) in expected {
+            assert_eq!(editor_role(form), role, "{form:?}");
+            let window = VisibleWindow { first: 0, count: 2 };
+            let mut nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10, &window);
+            let before = nodes.len();
+            let at = CellIndex { row: 1, col: 2 };
+            attach_cell_editor(&mut nodes, "vtbl", at, form, "Score");
+            assert_eq!(nodes.len(), before + 1, "exactly one editor node");
+            let editor_tag = format!("{}#editor", cell_tag("vtbl", 1, 2));
+            let editor = nodes
+                .iter()
+                .find(|n| n.tag == editor_tag)
+                .expect("the editor node");
+            assert_eq!(editor.role, role);
+            assert_eq!(editor.name.as_deref(), Some("Score"));
+            // The host stays a gridcell — that is what keeps row / column
+            // geometry intact for AT table navigation — and claims the editor.
+            let host = nodes
+                .iter()
+                .find(|n| n.tag == cell_tag("vtbl", 1, 2))
+                .expect("host cell");
+            assert_eq!(host.role, AriaRole::GridCell);
+            assert!(host.children.contains(&editor_tag));
+        }
+    }
+
+    #[test]
+    fn r1555_an_editor_on_a_windowed_out_cell_emits_nothing() {
+        // The `attach_child_button` orphan-free rule: no link, and no node, so
+        // an editor node with no host cannot exist.
+        let built = VisibleWindow { first: 0, count: 1 };
+        let mut nodes = windowed_grid_nodes("vtbl", "G", NCOLS, 10, &built);
+        let before = nodes.len();
+        attach_cell_editor(
+            &mut nodes,
+            "vtbl",
+            CellIndex { row: 40, col: 0 },
+            EditorForm::Field,
+            "Name",
+        );
+        assert_eq!(nodes.len(), before, "scrolled away: nothing is emitted");
+        assert!(
+            nodes
+                .iter()
+                .all(|n| !n.children.iter().any(|c| c.ends_with("#editor"))),
+            "and no host claims an editor that does not exist"
         );
     }
 

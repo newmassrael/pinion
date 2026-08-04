@@ -106,6 +106,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/cache_stats", MethodOcc::Read),
     ("scene/cancel_preview", MethodOcc::Read),
     ("scene/caret_state", MethodOcc::Read),
+    ("scene/cell_editors", MethodOcc::Read),
     ("scene/click", MethodOcc::Mutate),
     ("scene/commands", MethodOcc::Read),
     ("scene/cross_window_drop", MethodOcc::Read),

@@ -54,6 +54,26 @@
 //!   persistent kind), and the in-flight text lives inside an opaque
 //!   `QWidget`. Here the latch is a signal and the editor is scene nodes, so
 //!   `scene/snapshot` and an `ExternalIntrospect` slot both see them (§2 #7).
+//! - **Every commit outcome is named** (R1555, [`CommitOutcome`]). Qt's
+//!   `commitData` discards `setData`'s verdict, and its editors' validators mean
+//!   a malformed value never reaches the commit at all — so "that is not a
+//!   number" and "the model will not take 500" are the same event there, and
+//!   neither is reported.
+//!
+//! ## R1555 — the editor a cell opens follows from its datum
+//!
+//! The delegate above is the **override** half of Qt's editing decomposition
+//! (`setItemDelegateForColumn`). The other half is
+//! `QItemEditorFactory`: a registry from the datum's type to an editor, which
+//! `QStyledItemDelegate` consults when no delegate overrides it. That half did
+//! not exist, so one inline text field was the built-in editor for all six
+//! [`CellKind`]s — including the two that refuse every keystroke and parse to
+//! nothing. [`CellKind::editor_form`] is the registry, [`EditorForm`] its
+//! answer, and this module's job is what follows from that answer: which buffer
+//! holds the in-flight value ([`EditBuffer`]), which gesture verbs the form
+//! accepts ([`toggle`](GridEditState::toggle) /
+//! [`select`](GridEditState::select) / [`step`](GridEditState::step)), and one
+//! commit arc that serves all five forms.
 //!
 //! ## Scope (honest boundaries)
 //!
@@ -67,9 +87,7 @@
 
 use std::rc::Rc;
 
-#[cfg(test)]
-use crate::cell_value::CellValue;
-use crate::cell_value::{CellEdit, CellKind};
+use crate::cell_value::{CellEdit, CellKind, CellValue, EditorForm};
 use crate::model_index::{CellIndex, GridExtent};
 use crate::reactive::{Owner, Signal};
 use crate::widgets::text_edit::use_text_edit_state;
@@ -283,6 +301,31 @@ pub enum EndEditHint {
     EditPreviousItem,
 }
 
+/// R1555 §5.27 — **where** an open editor's in-flight value lives.
+///
+/// A function of the editor's [`EditorForm`], and the reason it has to be
+/// stated: the forms whose buffer is text ([`EditorForm::buffer_is_text`]) put
+/// the value the user is producing in the inline field's
+/// [`TextEditState`](crate::widgets::text_edit::TextEditState), because that is
+/// the state the caret, the selection, the IME preedit and the clipboard
+/// already act on. A toggle and a selector have no text at all, so for them the
+/// latch holds the value.
+///
+/// Qt has the same split and states it nowhere: a `QLineEdit` editor's in-flight
+/// value is its text and a `QComboBox` editor's is its current index, and
+/// `setModelData` reaches each through a `qobject_cast` the delegate author has
+/// to get right. Here it is one exhaustive answer per form, so the latch cannot
+/// look for the value in the half that does not hold it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum EditBuffer {
+    /// The inline field's buffer is the authority — [`EditorForm::Field`],
+    /// [`EditorForm::Stepper`], and the hex half of [`EditorForm::Swatch`].
+    Text,
+    /// The latch holds the in-flight value — [`EditorForm::Toggle`] and
+    /// [`EditorForm::Selector`].
+    Value(CellValue),
+}
+
 /// R1544 §5.27 — the editor currently open: which cell, what it was seeded
 /// with, and which editor kind is hosting it.
 ///
@@ -290,18 +333,127 @@ pub enum EndEditHint {
 /// single transitions. Three signals could hold a latched index whose kind
 /// belongs to the previously edited column — a state with no meaning that
 /// nothing would reject.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// R1555 — the seed is the **datum**, not its text, for the reason
+/// [`CellEdit`] carries one: a [`EditorForm::Selector`]'s editor needs the
+/// option domain, which no string carries. [`kind`](Self::kind) and
+/// [`form`](Self::form) are derivations of it, and its private `buffer` field is
+/// built only by [`GridEditState::begin`] — so a latch whose buffer does not
+/// match its form is not a state a caller can reach.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OpenEditor {
     /// The cell the editor is open on (Qt: the view's editing `QModelIndex`).
     pub index: CellIndex,
-    /// The editor kind, from the model's [`CellEdit::kind`]: the keystroke
-    /// gate ([`CellKind::accepts_keystroke`]) and the commit parser
-    /// ([`CellKind::parse`]) both read it.
-    pub kind: CellKind,
-    /// The `Qt::EditRole` text the editor was opened with — kept so a commit
+    /// The `Qt::EditRole` datum the editor was opened with — kept so a commit
     /// can tell an untouched editor from an edited one, and so a delegate's
     /// editor can render the original beside the in-flight value.
-    pub seed: String,
+    seed: CellValue,
+    /// Where the in-flight value lives, from [`EditorForm::buffer_is_text`].
+    buffer: EditBuffer,
+}
+
+impl OpenEditor {
+    /// The datum the editor opened with.
+    #[must_use]
+    pub fn seed(&self) -> &CellValue {
+        &self.seed
+    }
+
+    /// The editor kind: the keystroke gate
+    /// ([`CellKind::accepts_keystroke`]) and the commit parser
+    /// ([`CellKind::parse`]) both read it.
+    #[must_use]
+    pub fn kind(&self) -> CellKind {
+        self.seed.kind()
+    }
+
+    /// R1555 — which editor form is hosting this edit (Qt
+    /// `QItemEditorFactory`'s answer for the cell's datum).
+    #[must_use]
+    pub fn form(&self) -> EditorForm {
+        self.seed.kind().editor_form()
+    }
+
+    /// R1555 — the latch-held in-flight value, for the forms whose buffer is
+    /// not text. `None` for the text-buffered forms, whose in-flight value is
+    /// the inline field's — read it through [`GridEditState::state`].
+    #[must_use]
+    pub fn pending(&self) -> Option<&CellValue> {
+        match &self.buffer {
+            EditBuffer::Text => None,
+            EditBuffer::Value(value) => Some(value),
+        }
+    }
+}
+
+/// R1555 §5.27 — the in-flight state of a grid's editor: whether one is open
+/// and, if so, whether its buffer currently holds a value of the cell's kind.
+///
+/// One answer rather than an `Option<CellValue>`, because "no value" has two
+/// causes that a caller must treat differently — nothing is being edited, and
+/// something is being edited but is not yet a number — and a single `None`
+/// would make a half-typed `-` indistinguishable from a closed editor.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditState {
+    /// No editor is open.
+    Closed,
+    /// An editor is open and its buffer does not hold a value of the cell's
+    /// kind: a half-typed number, a malformed `#RRGGBB`. The model is never
+    /// asked to store one of these.
+    Malformed,
+    /// An editor is open holding this value.
+    Value(CellValue),
+}
+
+/// R1555 §5.27 — what happened to a commit: Qt's `commitData` /
+/// `setModelData` pair, with the outcomes named.
+///
+/// Qt's path answers nothing. `setModelData` returns `void`, `commitData`
+/// ignores what `setData` did, and the editor closes either way — so a rejected
+/// value and an accepted one are indistinguishable to the caller and the user's
+/// typing is gone in the rejected case. R1544 kept the editor open on a refusal;
+/// this names *why* a commit did not land, which is what lets a binding put a
+/// different message on screen for "that is not a number" than for "the model
+/// will not take 500".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitOutcome {
+    /// No editor was open — nothing was written and nothing closed.
+    NotEditing,
+    /// The buffer does not hold a value of the cell's kind, so **the model was
+    /// never asked**. The editor stays open holding the text.
+    ///
+    /// Qt cannot reach this state and pays for it: the editor's own validator
+    /// keeps a malformed value from ever reaching `commitData`, which means the
+    /// committed value is silently not the one the user typed.
+    Malformed,
+    /// The model refused a well-formed value. The editor stays open holding it,
+    /// which is the only state the user can correct it from.
+    Refused,
+    /// Written through, and the editor closed.
+    Committed(CellIndex),
+}
+
+impl CommitOutcome {
+    /// The committed cell, or `None` for every non-landing outcome — the narrow
+    /// question a caller that only needs "did it land" asks.
+    #[must_use]
+    pub fn committed(self) -> Option<CellIndex> {
+        match self {
+            CommitOutcome::Committed(index) => Some(index),
+            CommitOutcome::NotEditing | CommitOutcome::Malformed | CommitOutcome::Refused => None,
+        }
+    }
+
+    /// The wire token, for the introspection surface a binding publishes.
+    #[must_use]
+    pub fn wire_token(self) -> &'static str {
+        match self {
+            CommitOutcome::NotEditing => "not_editing",
+            CommitOutcome::Malformed => "malformed",
+            CommitOutcome::Refused => "refused",
+            CommitOutcome::Committed(_) => "committed",
+        }
+    }
 }
 
 /// R1544 §5.27 — the grid's editing latch and trigger gate: the half of Qt's
@@ -407,7 +559,14 @@ impl GridEditState {
     /// keystroke gate's argument. `None` when not editing.
     #[must_use]
     pub fn kind(&self) -> Option<CellKind> {
-        self.open.get().map(|e| e.kind)
+        self.open.get().map(|e| e.kind())
+    }
+
+    /// R1555 — the open editor's form (Qt `QItemEditorFactory`'s answer for the
+    /// cell's datum). `None` when not editing.
+    #[must_use]
+    pub fn form(&self) -> Option<EditorForm> {
+        self.open.get().map(|e| e.form())
     }
 
     /// The in-flight editor text: the inline field's live buffer, **not** the
@@ -420,16 +579,49 @@ impl GridEditState {
         self.field.text()
     }
 
-    /// Whether the in-flight text differs from what the editor opened with.
+    /// R1555 §5.27 — the in-flight state: whether an editor is open and whether
+    /// its buffer holds a value of the cell's kind.
+    ///
+    /// The one place the two buffer halves are read, so a caller never has to
+    /// know which half a form uses: a text-buffered form is parsed back out of
+    /// the inline field through [`CellKind::parse`], and a
+    /// latch-buffered one answers with the value it holds.
+    #[must_use]
+    pub fn state(&self) -> EditState {
+        let Some(editor) = self.open.get() else {
+            return EditState::Closed;
+        };
+        match editor.pending() {
+            Some(value) => EditState::Value(value.clone()),
+            None => match editor.kind().parse(&self.field.text()) {
+                Some(value) => EditState::Value(value),
+                None => EditState::Malformed,
+            },
+        }
+    }
+
+    /// Whether the in-flight value differs from what the editor opened with.
     /// `false` when nothing is open.
     ///
     /// The question a close-without-commit path asks and Qt answers only by
     /// re-reading the editor widget: `QAbstractItemView` keeps no record of
     /// what `setEditorData` seeded, so a Qt view cannot distinguish an
     /// untouched editor from one edited back to its original value.
+    ///
+    /// R1555 — a [`EditState::Malformed`] buffer counts as dirty. The user typed
+    /// something that is not the seed, which is exactly the state a "discard
+    /// your changes?" prompt exists for; treating it as clean would drop work
+    /// silently.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
-        self.open.get().is_some_and(|e| self.text() != e.seed)
+        let Some(editor) = self.open.get() else {
+            return false;
+        };
+        match self.state() {
+            EditState::Closed => false,
+            EditState::Malformed => true,
+            EditState::Value(value) => &value != editor.seed(),
+        }
     }
 
     /// The active trigger set.
@@ -451,18 +643,118 @@ impl GridEditState {
     /// editor open on a cell the model will not edit" unrepresentable: only
     /// the model can produce one, and it produces `None` for a read-only cell.
     ///
-    /// The field's buffer is seeded and fully selected, so the first printable
-    /// keystroke replaces it — the type-to-replace behaviour Qt gets from
-    /// `QLineEdit::selectAll` on editor focus, and the reason
-    /// [`EditTrigger::AnyKeyPressed`] needs no special seeding path.
+    /// For a text-buffered form the field's buffer is seeded and fully selected,
+    /// so the first printable keystroke replaces it — the type-to-replace
+    /// behaviour Qt gets from `QLineEdit::selectAll` on editor focus, and the
+    /// reason [`EditTrigger::AnyKeyPressed`] needs no special seeding path.
+    ///
+    /// R1555 — which buffer is seeded follows from the datum's
+    /// [`EditorForm`]. A toggle or a selector holds its in-flight value in the
+    /// latch, and its field buffer is **cleared**, so nothing can read a
+    /// previous edit's text as this editor's value.
     pub fn begin(&self, index: CellIndex, edit: &CellEdit) {
-        self.field.set_text(edit.text.clone());
-        self.field.set_selection(0, edit.text.chars().count());
+        let buffer = if edit.form().buffer_is_text() {
+            let text = edit.text();
+            let chars = text.chars().count();
+            // `set_text` clears the selection, so the whole-buffer select has
+            // to follow it — the ordering is load-bearing and a test pins it.
+            self.field.set_text(text);
+            self.field.set_selection(0, chars);
+            EditBuffer::Text
+        } else {
+            self.field.set_text(String::new());
+            EditBuffer::Value(edit.value().clone())
+        };
         self.open.set(Some(OpenEditor {
             index,
-            kind: edit.kind,
-            seed: edit.text.clone(),
+            seed: edit.value().clone(),
+            buffer,
         }));
+    }
+
+    /// R1555 §5.27 — flip an open [`EditorForm::Toggle`] editor's in-flight
+    /// bool: the checkbox gesture, <kbd>Space</kbd> or a click.
+    ///
+    /// Returns whether it flipped — `false` when no editor is open and when the
+    /// open editor is not a toggle, so a Space arriving while a text field is
+    /// open cannot silently rewrite the cell.
+    ///
+    /// # Why the toggle is in-flight and not a write-through
+    ///
+    /// Qt's `QStyledItemDelegate::editorEvent` handles a check-state click by
+    /// calling `setModelData` **immediately**, so there is nothing to escape: a
+    /// mis-click on a Qt check column is already committed. Here the toggle
+    /// edits the latch, so <kbd>Escape</kbd> reverts it and <kbd>Enter</kbd>
+    /// commits it — the same arc every other form has.
+    #[must_use]
+    pub fn toggle(&self) -> bool {
+        let Some(editor) = self.open.get() else {
+            return false;
+        };
+        let Some(CellValue::Bool(current)) = editor.pending() else {
+            return false;
+        };
+        self.open.set(Some(OpenEditor {
+            buffer: EditBuffer::Value(CellValue::Bool(!current)),
+            ..editor
+        }));
+        true
+    }
+
+    /// R1555 §5.27 — set an open [`EditorForm::Selector`] editor's in-flight
+    /// option index: the combo-box gesture.
+    ///
+    /// Returns whether it selected — `false` when no editor is open, when the
+    /// open editor is not a selector, and when `selected` is past the datum's
+    /// own option list. That last check is the past-Qt half:
+    /// `QComboBox::setCurrentIndex` accepts an out-of-range index by silently
+    /// clearing the selection, so a stale index there produces an empty combo
+    /// rather than a rejected write.
+    #[must_use]
+    pub fn select(&self, selected: usize) -> bool {
+        let Some(editor) = self.open.get() else {
+            return false;
+        };
+        let Some(CellValue::Choice { options, .. }) = editor.pending() else {
+            return false;
+        };
+        if selected >= options.len() {
+            return false;
+        }
+        let buffer = EditBuffer::Value(CellValue::Choice {
+            selected,
+            options: options.clone(),
+        });
+        self.open.set(Some(OpenEditor { buffer, ..editor }));
+        true
+    }
+
+    /// R1555 §5.27 — step an open [`EditorForm::Stepper`] editor's buffer by
+    /// `delta` steps: Qt `QAbstractSpinBox::stepBy`, reached from the editor's
+    /// up / down affordances.
+    ///
+    /// Returns whether it stepped — `false` when no editor is open, when the
+    /// open editor has no stepper, and when the buffer does not currently hold a
+    /// value of the cell's kind ([`CellKind::step_text`]).
+    ///
+    /// The stepped text lands in the same buffer a keystroke would, and the
+    /// caret is put at its end, so stepping and typing compose instead of
+    /// fighting over the selection.
+    #[must_use]
+    pub fn step(&self, delta: i64) -> bool {
+        let Some(editor) = self.open.get() else {
+            return false;
+        };
+        if editor.form() != EditorForm::Stepper {
+            return false;
+        }
+        let Some(stepped) = editor.kind().step_text(&self.field.text(), delta) else {
+            return false;
+        };
+        // `seed` is the R878 "replace the buffer and park the caret at the end"
+        // pair; `set_text` alone would clamp the caret to its previous offset.
+        self.field.seed(stepped);
+        true
     }
 
     /// Open an editor on `index` **if** `trigger` is in the active set — Qt's
@@ -483,29 +775,35 @@ impl GridEditState {
         self.close();
     }
 
-    /// Write the in-flight text back through `set` and, **if the model
-    /// accepts it**, close the editor. Qt's `commitData` +
-    /// `setModelData`.
+    /// Write the in-flight **value** back through `set` and, **if the model
+    /// accepts it**, close the editor. Qt's `commitData` + `setModelData`.
     ///
-    /// Returns the committed [`CellIndex`] on success, and `None` both when
-    /// no editor is open and when the model refused the write. The refusal
-    /// case is the divergence from Qt this seam exists for: `setModelData`
-    /// returns `void` there, so a rejected value closes the editor anyway and
-    /// the typing is lost. Here the editor stays open holding the text the
-    /// user typed, which is the only state from which they can correct it.
+    /// Every outcome is named — see [`CommitOutcome`]. Qt's path answers
+    /// nothing: `setModelData` returns `void`, `commitData` ignores what
+    /// `setData` did, and the editor closes either way.
     ///
-    /// `set` receives the raw buffer; parsing is its job, through the same
-    /// [`CellKind::parse`] the seed's [`CellValue::edit_text`](crate::cell_value::CellValue::edit_text)
-    /// is the inverse of. Returning `false` from an unparseable commit is
-    /// what keeps a malformed number from silently reverting.
-    pub fn commit_with(&self, set: impl FnOnce(CellIndex, &str) -> bool) -> Option<CellIndex> {
-        let editor = self.open.get()?;
-        let text = self.field.text();
-        if !set(editor.index, &text) {
-            return None;
+    /// R1555 — `set` receives the **datum**, not the raw buffer. The framework
+    /// parses once, through [`CellKind::parse`], which is the documented inverse
+    /// of the [`CellValue::edit_text`](crate::cell_value::CellValue::edit_text)
+    /// the editor was seeded from — so every model no longer re-derives that
+    /// parse, and a malformed buffer is [`CommitOutcome::Malformed`] rather than
+    /// a `false` the model has to return for a reason it cannot distinguish from
+    /// its own validation. A toggle and a selector reach this path with the same
+    /// shape, which is what lets one commit arc serve all five forms.
+    pub fn commit_with(&self, set: impl FnOnce(CellIndex, &CellValue) -> bool) -> CommitOutcome {
+        let Some(editor) = self.open.get() else {
+            return CommitOutcome::NotEditing;
+        };
+        let value = match self.state() {
+            EditState::Closed => return CommitOutcome::NotEditing,
+            EditState::Malformed => return CommitOutcome::Malformed,
+            EditState::Value(value) => value,
+        };
+        if !set(editor.index, &value) {
+            return CommitOutcome::Refused;
         }
         self.close();
-        Some(editor.index)
+        CommitOutcome::Committed(editor.index)
     }
 
     /// Honour an [`EndEditHint`] by opening an editor on the next / previous
@@ -603,7 +901,10 @@ mod tests {
     use crate::reactive::Owner;
 
     fn text(kind: CellKind, s: &str) -> CellEdit {
-        CellEdit::new(kind, s)
+        // R1555 — an edit role is a datum, so a test fixture states one. The
+        // scalar kinds parse their own seed text, which is the same round trip
+        // `CellValue::edit_text` / `CellKind::parse` are documented as.
+        CellEdit::from(kind.parse(s).expect("a seed of this kind"))
     }
 
     fn with_owner<R>(f: impl FnOnce() -> R) -> R {
@@ -679,8 +980,10 @@ mod tests {
             state.begin(CellIndex::new(3, 1), &text(CellKind::Text, "Bravo"));
             let open = state.open().expect("open");
             assert_eq!(open.index, CellIndex::new(3, 1));
-            assert_eq!(open.kind, CellKind::Text);
-            assert_eq!(open.seed, "Bravo");
+            assert_eq!(open.kind(), CellKind::Text);
+            assert_eq!(open.seed(), &CellValue::Text("Bravo".into()));
+            assert_eq!(open.form(), EditorForm::Field);
+            assert_eq!(open.pending(), None, "a field's buffer is its text");
             let field = use_text_edit_state("t.begin");
             assert_eq!(field.text(), "Bravo", "the field carries the seed");
             assert_eq!(
@@ -751,8 +1054,8 @@ mod tests {
             // there a rejected value closes the editor and the typing is gone.
             assert_eq!(
                 state.commit_with(|_, _| false),
-                None,
-                "a refused write reports no committed index"
+                CommitOutcome::Refused,
+                "a refused write names its refusal"
             );
             assert_eq!(state.open().map(|e| e.index), Some(at), "still editing");
             assert_eq!(
@@ -760,15 +1063,19 @@ mod tests {
                 "999",
                 "the user's text survives so they can correct it"
             );
-            let mut seen = String::new();
+            let mut seen = None;
             assert_eq!(
-                state.commit_with(|_, t| {
-                    seen = t.to_string();
+                state.commit_with(|_, v| {
+                    seen = Some(v.clone());
                     true
                 }),
-                Some(at)
+                CommitOutcome::Committed(at)
             );
-            assert_eq!(seen, "999", "the model is handed the live buffer");
+            assert_eq!(
+                seen,
+                Some(CellValue::Int(999)),
+                "R1555 — the model is handed the parsed DATUM, not the buffer"
+            );
             assert_eq!(state.open(), None, "an accepted write closes the editor");
         });
     }
@@ -783,7 +1090,7 @@ mod tests {
                     called = true;
                     true
                 }),
-                None
+                CommitOutcome::NotEditing
             );
             assert!(!called, "no open editor means no write");
         });
@@ -936,12 +1243,233 @@ mod tests {
         // — the property that makes a committed value round-trip.
         let value = CellValue::Float(1234.5);
         let edit = CellEdit::from(&value);
-        assert_eq!(edit.kind, CellKind::Float);
-        assert_eq!(edit.text, value.edit_text());
+        assert_eq!(edit.kind(), CellKind::Float);
+        assert_eq!(edit.text(), value.edit_text());
         assert_eq!(
-            CellKind::Float.parse(&edit.text),
+            CellKind::Float.parse(&edit.text()),
             Some(CellValue::Float(1234.5)),
             "the seed parses back to the value it came from"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1555 §5.27 — the five forms the factory opens
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1555_a_toggle_holds_its_value_in_the_latch_not_in_the_field() {
+        with_owner(|| {
+            let state = GridEditState::new("t.toggle");
+            let at = CellIndex::new(1, 1);
+            state.begin(at, &CellEdit::from(CellValue::Bool(false)));
+            let open = state.open().expect("open");
+            assert_eq!(open.form(), EditorForm::Toggle);
+            assert_eq!(open.pending(), Some(&CellValue::Bool(false)));
+            assert_eq!(
+                use_text_edit_state("t.toggle").text(),
+                "",
+                "a toggle's field buffer is cleared, so nothing can read a \
+                 previous edit's text as this editor's value"
+            );
+            assert_eq!(state.state(), EditState::Value(CellValue::Bool(false)));
+            assert!(!state.is_dirty());
+
+            assert!(state.toggle(), "the checkbox gesture flips the latch");
+            assert_eq!(state.state(), EditState::Value(CellValue::Bool(true)));
+            assert!(state.is_dirty(), "flipped away from the seed");
+
+            // Past Qt: `editorEvent` calls `setModelData` on the click, so a
+            // mis-click on a Qt check column is already committed. Escape
+            // reverts here.
+            state.cancel();
+            assert_eq!(state.open(), None);
+            assert_eq!(state.state(), EditState::Closed);
+        });
+    }
+
+    #[test]
+    fn r1555_a_gesture_verb_is_refused_by_a_form_that_does_not_have_it() {
+        with_owner(|| {
+            let state = GridEditState::new("t.wrongform");
+            // Nothing open: every verb refuses rather than inventing a latch.
+            assert!(!state.toggle());
+            assert!(!state.select(0));
+            assert!(!state.step(1));
+
+            state.begin(CellIndex::new(0, 0), &text(CellKind::Text, "abc"));
+            assert!(
+                !state.toggle(),
+                "a Space arriving while a text field is open must not rewrite \
+                 the cell"
+            );
+            assert!(!state.select(0), "a field has no options");
+            assert!(!state.step(1), "a field has no stepper");
+            assert_eq!(
+                state.state(),
+                EditState::Value(CellValue::Text("abc".into()))
+            );
+        });
+    }
+
+    #[test]
+    fn r1555_a_selector_bounds_checks_against_its_own_option_list() {
+        with_owner(|| {
+            let state = GridEditState::new("t.select");
+            let value = CellValue::Choice {
+                selected: 0,
+                options: vec!["Alpha".into(), "Bravo".into()],
+            };
+            state.begin(CellIndex::new(4, 2), &CellEdit::from(value));
+            assert_eq!(state.form(), Some(EditorForm::Selector));
+            assert!(state.select(1));
+            assert_eq!(
+                state.state(),
+                EditState::Value(CellValue::Choice {
+                    selected: 1,
+                    options: vec!["Alpha".into(), "Bravo".into()],
+                }),
+                "selecting preserves the domain — an option list is part of \
+                 the value's identity"
+            );
+            // Past Qt: `QComboBox::setCurrentIndex` accepts an out-of-range
+            // index by silently clearing the selection.
+            assert!(!state.select(2), "past the end is refused, not cleared");
+            assert!(!state.select(usize::MAX));
+            assert_eq!(
+                state.state(),
+                EditState::Value(CellValue::Choice {
+                    selected: 1,
+                    options: vec!["Alpha".into(), "Bravo".into()],
+                }),
+                "a refused selection leaves the in-flight value alone"
+            );
+        });
+    }
+
+    #[test]
+    fn r1555_a_stepper_steps_the_same_buffer_a_keystroke_feeds() {
+        with_owner(|| {
+            let state = GridEditState::new("t.step");
+            state.begin(CellIndex::new(0, 3), &CellEdit::from(CellValue::Int(41)));
+            assert_eq!(state.form(), Some(EditorForm::Stepper));
+            assert!(state.step(1));
+            assert_eq!(state.text(), "42");
+            assert_eq!(state.state(), EditState::Value(CellValue::Int(42)));
+            let field = use_text_edit_state("t.step");
+            assert_eq!(
+                field.caret(),
+                2,
+                "the caret lands at the end, so stepping and typing compose"
+            );
+            assert_eq!(
+                field.selection_range(),
+                None,
+                "and nothing is selected, so the next keystroke appends rather \
+                 than replacing what the step just produced"
+            );
+            assert!(state.step(-2));
+            assert_eq!(state.state(), EditState::Value(CellValue::Int(40)));
+
+            // A half-typed buffer is not stepped from: Qt's spin box would step
+            // from whatever its validator last accepted.
+            use_text_edit_state("t.step").set_text("4-".to_string());
+            assert!(!state.step(1));
+            assert_eq!(state.text(), "4-", "the user's text is left alone");
+            assert_eq!(state.state(), EditState::Malformed);
+        });
+    }
+
+    #[test]
+    fn r1555_a_malformed_buffer_never_reaches_the_model() {
+        with_owner(|| {
+            let state = GridEditState::new("t.malformed");
+            let at = CellIndex::new(2, 1);
+            state.begin(at, &CellEdit::from(CellValue::Int(7)));
+            use_text_edit_state("t.malformed").set_text("12a".to_string());
+            let mut asked = false;
+            assert_eq!(
+                state.commit_with(|_, _| {
+                    asked = true;
+                    true
+                }),
+                CommitOutcome::Malformed,
+            );
+            assert!(
+                !asked,
+                "the model is not asked to store something that is not a value \
+                 of its cell's kind — and the outcome says WHICH failure it was, \
+                 where Qt's validator makes this state unreachable at the price \
+                 of committing a value the user did not type"
+            );
+            assert!(state.is_dirty(), "a malformed buffer is unsaved work");
+            assert_eq!(state.open().map(|e| e.index), Some(at), "still editing");
+            assert_eq!(CommitOutcome::Malformed.committed(), None);
+            assert_eq!(CommitOutcome::Committed(at).committed(), Some(at));
+        });
+    }
+
+    #[test]
+    fn r1555_a_swatch_reads_its_value_back_out_of_the_hex_field() {
+        with_owner(|| {
+            let state = GridEditState::new("t.swatch");
+            let red = crate::style::Color::from_hex("#ff0000").expect("hex");
+            state.begin(CellIndex::new(0, 0), &CellEdit::from(CellValue::Color(red)));
+            let open = state.open().expect("open");
+            assert_eq!(open.form(), EditorForm::Swatch);
+            assert_eq!(
+                open.pending(),
+                None,
+                "a swatch's in-flight value is its hex field's text"
+            );
+            assert_eq!(state.text(), red.to_hex(), "seeded with the hex form");
+            assert_eq!(state.state(), EditState::Value(CellValue::Color(red)));
+            let blue = crate::style::Color::from_hex("#0000ff").expect("hex");
+            use_text_edit_state("t.swatch").set_text(blue.to_hex());
+            assert_eq!(state.state(), EditState::Value(CellValue::Color(blue)));
+            use_text_edit_state("t.swatch").set_text("#zz".to_string());
+            assert_eq!(state.state(), EditState::Malformed);
+        });
+    }
+
+    #[test]
+    fn r1555_one_commit_arc_serves_every_form() {
+        // The property that makes the factory a seam rather than five paths:
+        // whatever form the datum's kind opened, the commit is the same call.
+        with_owner(|| {
+            let state = GridEditState::new("t.allforms");
+            let seeds = [
+                CellValue::Text("t".into()),
+                CellValue::Int(1),
+                CellValue::Float(1.5),
+                CellValue::Bool(false),
+                CellValue::Choice {
+                    selected: 0,
+                    options: vec!["a".into()],
+                },
+                CellValue::Color(crate::style::Color::from_hex("#010203").expect("hex")),
+            ];
+            assert_eq!(seeds.len(), CellKind::ALL.len(), "one seed per kind");
+            for (i, seed) in seeds.into_iter().enumerate() {
+                let at = CellIndex::new(i, 0);
+                let kind = seed.kind();
+                state.begin(at, &CellEdit::from(seed.clone()));
+                let mut written = None;
+                assert_eq!(
+                    state.commit_with(|_, v| {
+                        written = Some(v.clone());
+                        true
+                    }),
+                    CommitOutcome::Committed(at),
+                    "{kind:?} commits through the same arc"
+                );
+                assert_eq!(
+                    written,
+                    Some(seed),
+                    "{kind:?} — an untouched open-and-commit does not change \
+                     the datum (Qt's default double editor rounds to 2 decimals)"
+                );
+                assert_eq!(state.open(), None);
+            }
+        });
     }
 }

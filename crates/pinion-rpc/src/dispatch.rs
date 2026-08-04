@@ -2395,6 +2395,13 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::mnemonics::handle_scene_mnemonics(last_paint_scene),
                     HandlerKind::Read,
                 ),
+                // R1555 §5.27 — which editor each datum kind opens: the
+                // factory census Qt's `QItemEditorFactory` cannot be asked for.
+                // Framework knowledge, so it reads no scene and takes no params.
+                "scene/cell_editors" => (
+                    crate::cell_editors::handle_scene_cell_editors(),
+                    HandlerKind::Read,
+                ),
                 // R1554 §5.39 — which controls are inert, and which ancestor
                 // made them so. Read from the same painted scene the pointer
                 // router and the Tab enumeration refuse against.

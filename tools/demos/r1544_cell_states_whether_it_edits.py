@@ -93,11 +93,35 @@ def status(snap: Any) -> str:
 
 
 def editing_field(snap: Any) -> Optional[str]:
-    """The `editing <cell> "<text>"` clause of the status line, or None."""
+    """The `editing <cell> "<text>"` clause of the status line, or None.
+
+    R1555 added the editor's FORM to the readout (`<cell> <form> "<text>"`),
+    because which editor a datum's kind opened is the fact that round publishes.
+    This demo is about the cell and the buffer, so the form token is dropped
+    here and asserted on its own below — one clause, read two ways, rather than
+    every pre-R1555 assertion restated.
+    """
     text = status(snap)
     marker = "editing "
     at = text.find(marker)
-    return None if at < 0 else text[at + len(marker) :].strip()
+    if at < 0:
+        return None
+    clause = text[at + len(marker) :].strip()
+    if clause == "none":
+        return clause
+    cell, _form, rest = clause.split(" ", 2)
+    return f"{cell} {rest}"
+
+
+def editing_form(snap: Any) -> Optional[str]:
+    """The R1555 form token of the open editor, or None when nothing is open."""
+    text = status(snap)
+    marker = "editing "
+    at = text.find(marker)
+    if at < 0:
+        return None
+    clause = text[at + len(marker) :].strip()
+    return None if clause == "none" else clause.split(" ", 2)[1]
 
 
 def read_only_tags(access: Any, row: int) -> set[int]:
@@ -170,6 +194,12 @@ def body() -> None:
             '0_1 "Alpha"',
             "the latch names the cell and the editor is seeded from the model",
         )
+        assert_eq(
+            editing_form(snap),
+            "field",
+            "R1555 — and it names the FORM the datum's kind opened; a free-text "
+            "column opens the plain field",
+        )
 
         # ── (C) an editor replaces exactly ONE cell ─────────────────
         assert has_editor(snap, 0, NAME_COL), "the editing cell hosts the field"
@@ -228,6 +258,12 @@ def body() -> None:
         opened = editing_field(snap)
         assert opened is not None and opened.startswith("2_2 "), (
             f"the latch names the double-clicked cell, got {opened!r}"
+        )
+        assert_eq(
+            editing_form(snap),
+            "stepper",
+            "R1555 — an Int column's datum opens the stepper form, even though "
+            "this column's own DELEGATE overrides how it is painted",
         )
 
         # ── (D) the editor DELEGATE paints the column's bound ───────

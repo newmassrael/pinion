@@ -59,6 +59,8 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
+#[cfg(test)]
+use pinion_core::widgets::grid_edit::CommitOutcome;
 use pinion_core::widgets::grid_edit::{
     EditTrigger, EditTriggers, EndEditHint, GridEditState, use_grid_edit,
 };
@@ -234,7 +236,13 @@ fn column_kind(col: usize) -> Option<CellKind> {
 /// editable columns; a currency or unit column would differ — see
 /// [`CellValue::edit_text`], the canonical source of the seed.
 fn edit_role(c: CellIndex, overlay: &BTreeMap<usize, String>) -> Option<CellEdit> {
-    column_kind(c.col).map(|kind| CellEdit::new(kind, cell_text(c, overlay)))
+    // R1555 — an edit role is a `CellValue`, so the model parses its own stored
+    // text into one. `parse` is documented as `edit_text`'s inverse and
+    // [`commit_cell`] refuses anything malformed, so the overlay only ever holds
+    // text of its column's kind; a `None` here would mean the invariant broke,
+    // and answering "not editable" is the safe reading of that.
+    let kind = column_kind(c.col)?;
+    kind.parse(&cell_text(c, overlay)).map(CellEdit::from)
 }
 
 /// R1544 §5.27 — the model's `setData(index, value, Qt::EditRole)`: parse the
@@ -245,18 +253,22 @@ fn edit_role(c: CellIndex, overlay: &BTreeMap<usize, String>) -> Option<CellEdit
 /// typed ([`GridEditState::commit_with`]), which is the only state they can
 /// correct it from — Qt's `setModelData` returns `void`, so there the editor
 /// closes and the typing is discarded.
-fn commit_cell(index: CellIndex, text: &str) -> bool {
+fn commit_cell(index: CellIndex, value: &CellValue) -> bool {
     let Some(kind) = column_kind(index.col) else {
         return false;
     };
-    let Some(value) = kind.parse(text) else {
+    // R1555 — the framework parsed the buffer through the column's own
+    // `CellKind`, so a malformed commit never arrives here (it is
+    // `CommitOutcome::Malformed`). What remains is the model's own rule, which
+    // is the only thing `setData` should be deciding.
+    if value.kind() != kind {
         return false;
-    };
+    }
     if index.col == SCORE_COL {
         let CellValue::Int(n) = value else {
             return false;
         };
-        if !(0..=SCORE_MAX).contains(&n) {
+        if !(0..=SCORE_MAX).contains(n) {
             return false;
         }
     }
@@ -344,7 +356,17 @@ fn status_bar(
     let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
     let editing = edit.open().map_or_else(
         || "none".to_string(),
-        |e| format!("{}_{} \"{}\"", e.index.row, e.index.col, edit.text()),
+        // R1555 — the FORM is in the readout too, so `scene/snapshot` alone
+        // answers "which editor did this cell's datum open".
+        |e| {
+            format!(
+                "{}_{} {} \"{}\"",
+                e.index.row,
+                e.index.col,
+                e.form().name(),
+                edit.text()
+            )
+        },
     );
     let text = Scene::Text(
         TextNode::styled(
@@ -389,10 +411,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let overlay = use_overlay().get();
     let edit_state = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
     let open = edit_state.open();
-    // The latch holds the seed as a `String`; the paint contract wants the
-    // model's `CellEdit`. Rebuilt here rather than stored twice, and bound to
-    // a local so the borrow the painter takes outlives the call.
-    let open_edit = open.as_ref().map(|e| CellEdit::new(e.kind, e.seed.clone()));
+    // The latch holds the seed as a datum; the paint contract wants a
+    // `CellEdit`. Rebuilt here rather than stored twice, and bound to a local so
+    // the borrow the painter takes outlives the call.
+    let open_edit = open.as_ref().map(|e| CellEdit::from(e.seed()));
     // Qt `setItemDelegateForColumn`, editing half: the bounded column opens an
     // editor that states its bound; every other column takes the built-in
     // field.
@@ -406,6 +428,11 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             edit,
             field_tag: EDIT_FIELD_TAG,
             field,
+            // R1555 — `None` for every column here: `Text` and `Int` are both
+            // text-buffered forms, so their in-flight value is the inline
+            // field's own buffer. `hello-cell-editors` is the consumer that
+            // exercises the latch-buffered half.
+            pending: e.pending(),
             editor: Some(&pick_editor),
         });
 
@@ -549,9 +576,9 @@ fn editing_key(
         } else {
             EndEditHint::EditNextItem
         };
-        // A refused commit returns `None` and leaves the editor open holding
-        // the typed text — so Tab does not silently discard it either.
-        if let Some(from) = edit.commit_with(commit_cell) {
+        // A refused or malformed commit leaves the editor open holding the
+        // typed text — so Tab does not silently discard it either.
+        if let Some(from) = edit.commit_with(commit_cell).committed() {
             let overlay = use_overlay().get();
             edit.advance(from, hint, GridExtent::new(N, NCOLS), |i| {
                 edit_role(i, &overlay)
@@ -572,7 +599,7 @@ fn editing_key(
         modifiers,
         kind,
         || {
-            if edit.commit_with(commit_cell).is_some() {
+            if edit.commit_with(commit_cell).committed().is_some() {
                 pinion_core::focus_request::request(TABLE_TAG);
             }
         },
@@ -607,7 +634,14 @@ impl WidgetCore for GridNavView {
         let current = use_current();
         let overlay = use_overlay();
         Box::new(
-            VirtualSelectExternal::new(N).on_cell_gesture(move |index, event, _modifiers| {
+            VirtualSelectExternal::new(N).on_grid_gesture(move |key, event, _modifiers| {
+                // R1555 — the observer receives the decoded sub-key; this
+                // binding acts on cells only, so a header or a step key falls
+                // through rather than being filtered out upstream.
+                let pinion_core::composite_tag::GridSendKey::Cell { row, col } = key else {
+                    return;
+                };
+                let index = CellIndex::new(row, col);
                 // Qt's `SelectedClicked`: a plain click on the cell that was
                 // ALREADY current. The observer runs before the coordinator
                 // moves the selection, so `current` still holds the pre-click
@@ -693,7 +727,7 @@ impl WidgetCore for GridNavView {
         // the same focused tag every other multi-stop binding does.
         if let Some(open) = edit.open() {
             if focused == Some(EDIT_FIELD_TAG) {
-                return editing_key(scene, &edit, open.kind, key, modifiers);
+                return editing_key(scene, &edit, open.kind(), key, modifiers);
             }
         }
         if focused == Some(TABLE_TAG) {
@@ -794,6 +828,18 @@ impl WidgetA11y for GridNavView {
         mark_grid_editability(&mut nodes, TABLE_TAG, &window, 0..NCOLS, |c| {
             edit_role(c, &overlay).is_some()
         });
+        // R1555 §5.40 — the open editor is announced with the role its form
+        // has, from the same latch the paint dispatches on. Qt reaches a role
+        // by accident of which widget its factory constructed.
+        if let Some(open) = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG).open() {
+            pinion_a11y::attach_cell_editor(
+                &mut nodes,
+                TABLE_TAG,
+                open.index,
+                open.form(),
+                HEADERS[open.index.col.min(NCOLS - 1)],
+            );
+        }
         nodes
     }
 }
@@ -1030,7 +1076,12 @@ mod tests {
             let before = cell_text(at, &use_overlay().get());
             edit.begin(at, &edit_role(at, &use_overlay().get()).unwrap());
             use_text_edit_state(EDIT_FIELD_TAG).set_text("500".to_string());
-            assert_eq!(edit.commit_with(commit_cell), None, "500 is past the bound");
+            assert_eq!(
+                edit.commit_with(commit_cell),
+                CommitOutcome::Refused,
+                "500 is past the bound — and R1555 distinguishes the model's \
+                 refusal from a value that was never a number at all"
+            );
             assert_eq!(edit.editing(), Some(at), "the editor stays open");
             assert_eq!(edit.text(), "500", "holding what was typed");
             assert_eq!(
@@ -1040,9 +1091,16 @@ mod tests {
             );
             // Correcting it in place commits.
             use_text_edit_state(EDIT_FIELD_TAG).set_text("50".to_string());
-            assert_eq!(edit.commit_with(commit_cell), Some(at));
+            assert_eq!(edit.commit_with(commit_cell), CommitOutcome::Committed(at));
             assert_eq!(edit.open(), None);
             assert_eq!(cell_text(at, &use_overlay().get()), "50");
+            // R1555 — a malformed buffer never reaches the model at all, so the
+            // two failures a binding must tell apart are told apart.
+            edit.begin(at, &edit_role(at, &use_overlay().get()).unwrap());
+            use_text_edit_state(EDIT_FIELD_TAG).set_text("5x".to_string());
+            assert_eq!(edit.commit_with(commit_cell), CommitOutcome::Malformed);
+            assert_eq!(edit.editing(), Some(at), "and the editor stays open");
+            edit.cancel();
         });
     }
 
@@ -1053,7 +1111,7 @@ mod tests {
             let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
             edit.begin(at, &edit_role(at, &use_overlay().get()).unwrap());
             use_text_edit_state(EDIT_FIELD_TAG).set_text("Renamed".to_string());
-            assert_eq!(edit.commit_with(commit_cell), Some(at));
+            assert_eq!(edit.commit_with(commit_cell), CommitOutcome::Committed(at));
         });
         assert!(
             texts(cell(&scene, 2, NAME_COL))

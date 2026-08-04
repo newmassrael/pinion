@@ -15,6 +15,7 @@ pub mod animation_state;
 pub mod auto_repeat;
 pub mod cache_stats;
 pub mod caret_state;
+pub mod cell_editors;
 pub mod commands;
 pub mod cross_window_drop;
 pub mod disabled;

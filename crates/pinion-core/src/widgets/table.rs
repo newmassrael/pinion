@@ -1387,7 +1387,14 @@ impl ExternalIntrospect for TableExternal {
                         }
                         // R892 — the eager `Table` has no group axis; a
                         // group-header key is not addressable here.
-                        crate::composite_tag::GridSendKey::Group { .. } => {
+                        //
+                        // R1555 — nor an editing axis. `GridEditState` is wired
+                        // by the virtualized grid path, so the eager table paints
+                        // no editor and therefore has no step affordance to
+                        // address. Rejected rather than ignored, so a binding
+                        // that sends one learns it went nowhere.
+                        crate::composite_tag::GridSendKey::Group { .. }
+                        | crate::composite_tag::GridSendKey::EditorStep { .. } => {
                             Err(InvokeError::Rejected)
                         }
                     }

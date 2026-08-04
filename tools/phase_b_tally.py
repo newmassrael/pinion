@@ -110,6 +110,18 @@ STALE_AT = 0.25
 #: the round it served and EVERY round has one whatever axis it advanced, so
 #: "which axis owns this demo" is frequently unanswerable — 29% of demo names
 #: match no axis even after separator normalisation.
+#: A census kind therefore costs one hand-written pattern per new artifact, and
+#: R1545 / R1553 / R1554 / R1555 each paid it. That cost is the mechanism
+#: working, not friction to engineer away: which axis an example belongs to is a
+#: *judgment* — `hello-cell-editors` is arguably DCC (an editor delegate) or
+#: Model/View (a grid's data path), and R1555 chose DCC — and the one derivation
+#: available is worse than asking. Attributing an example to the axis of the
+#: round that first added it (`git log --diff-filter=A`) is right when the round
+#: created the example for its own axis and SILENTLY wrong otherwise: a perf
+#: round that leaves a probe example behind, or a round that declared `none`,
+#: would file evidence under an axis that did not advance. A loud UNCLASSIFIED
+#: line is the better failure, for the same reason R1522 made this kind a census
+#: in the first place.
 CENSUS, PROBE = "census", "probe"
 
 KINDS = {
@@ -154,6 +166,7 @@ AXES = [
             ("example-name", [
                 "property-grid", "data-grid", "node-editor", "inspector",
                 "dock-", "tree-", "tree-view", "column-", "cell-select",
+                "cell-editor",
                 "asset-browser", "file-manager", "undo", "grid-header-menu",
                 "grid-frozen-col", "row-dissect", "hex-dump", "code-fold",
                 "command-palette", "selection-toolbar", "tab-reorder",
@@ -228,9 +241,78 @@ AXES = [
         #     `CellKind::Color` reach an editor only through a delegate. Qt
         #     has the same split (`QItemEditorFactory`); what is missing here
         #     is a *shipped* combo / palette editor.
-        "judged_at": 1544,
-        "completion": 92,
-        "evidence_snapshot": {"example-name": 26, "round-axis": 2},
+        #
+        # R1555 re-judgment, demanded by the tool: the round ledger took this
+        # axis 2 -> 3, past the 25% band. It closes the third of the items
+        # R1544 left, and closes it WIDER than that item was stated. R1544 read
+        # the gap as two missing widgets; it was a missing **axis**. Qt's
+        # editing decomposition has two halves — `setItemDelegateForColumn`
+        # (the per-column override, which R1532 and R1544 built) and
+        # `QItemEditorFactory` (a registry from the DATUM'S TYPE to an editor,
+        # which `QStyledItemDelegate` consults when nothing overrides it). The
+        # second did not exist, so `text_cell_editor` was the built-in for all
+        # six kinds, and for two of them it is an editor that CANNOT WORK:
+        # `Bool` and `Choice` refuse every keystroke (`accepts_keystroke`) and
+        # parse to nothing (`parse`), so the seam opened a field that could not
+        # be typed into and whose commit could never produce a value. Two more
+        # were simply below Qt: `Int` / `Float` got a bare field where Qt's
+        # factory ships a `QSpinBox` / `QDoubleSpinBox`.
+        #
+        # `CellKind::editor_form` is the registry and `EditorForm` its answer,
+        # a pure function — where `createEditor` *instantiates a QWidget*, so
+        # Qt cannot be asked what an `int` cell would get without building one,
+        # and `creatorMap` is private so the registry cannot be enumerated at
+        # all. Five forms ship (field / stepper / toggle / selector / swatch),
+        # `scene/cell_editors` publishes the whole mapping, and the a11y role
+        # is derived from the form rather than from whichever widget a factory
+        # happened to construct — which is how a Qt bool cell ends up
+        # announcing as a COMBO BOX and a Qt colour cell announcing nothing.
+        #
+        # Reaching for it forced the model half too: `CellEdit` now carries the
+        # DATUM (Qt's `EditRole` is a `QVariant`), because a `Choice`'s options
+        # are part of its value's identity and a `(kind, String)` pair cannot
+        # tell a selector what to select between. That also retired a
+        # representable-but-meaningless edit role, `(Int, "not a number")`.
+        #
+        # Four things past Qt 6.11, all read over the wire: the factory is
+        # ENUMERABLE; a bool gets a checkbox rather than Qt's two-item combo;
+        # a colour cell is editable at all (Qt's factory has no `QColor`
+        # creator, so `createEditor` answers nullptr and
+        # `QAbstractItemView::edit` silently does nothing); and every commit
+        # outcome is NAMED — `malformed` (the model was never asked) apart from
+        # `refused` (it was), where Qt's `commitData` discards `setData`'s
+        # verdict and its validators make the malformed case unreachable at the
+        # price of committing a value the user did not type.
+        #
+        # +3 and not more, and the remainder is audited at R1555 rather than
+        # inherited:
+        #   * ADOPTION is now two bindings (`hello-grid-nav` +
+        #     `hello-cell-editors`) against the same six hand-rollers. R1544's
+        #     reading stands: migrating them is per-binding domain work.
+        #   * `openPersistentEditor` is still absent — and R1544's stated
+        #     BLOCKER was wrong. `Owner::cache` has taken
+        #     `impl Into<Cow<'static, str>>` since R685.C, precisely so runtime
+        #     ids allocate without `Box::leak`, so a runtime-keyed text-edit
+        #     state was always possible; only `use_text_edit_state`'s own
+        #     signature is `&'static str`. What the feature actually needs is
+        #     that signature widened, the open latch becoming a map, and the
+        #     binding threading a `TextFieldState` per open editor.
+        #   * two of Qt's factory creators have no form because they have no
+        #     KIND: `QDate` / `QTime` / `QDateTime` (there is no date arm on
+        #     `CellKind` at all) and `QMetaType::UInt`.
+        #   * the step arrows do not AUTO-REPEAT. R1549 made a cadence a
+        #     per-widget declaration (`External::auto_repeat`, level-read from
+        #     the widget's own state), and a grid's step arrow is a sub-region
+        #     of one External that covers every cell — so repeating it needs a
+        #     per-sub-region cadence, or the External tracking which sub-key is
+        #     held, which duplicates the router press record R1549 put the run
+        #     inside on purpose. Qt's `setAccelerated` has it; the same shape
+        #     R1549 recorded for scrollbar arrows.
+        #   * a selector's open list and a swatch's HSV picker are the
+        #     binding's overlays; the factory ships the closed states.
+        "judged_at": 1555,
+        "completion": 95,
+        "evidence_snapshot": {"example-name": 27, "round-axis": 3},
     },
     {
         "key": "modelview",
