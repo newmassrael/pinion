@@ -81562,6 +81562,74 @@
         "axis with a combobox for as long as the pattern has existed."
       ]
     },
+    "Round 1560.1": {
+      "decision_summary": "R1560.1 §5.12 §5.16 — the census resolves its boxes from one traversal. R1560 asked whether it had registered all of its own debt, and the census it had just written answered no: collect_tables resolved each cell's painted box with Scene::rect_for_tag_absolute, which walks the whole scene per call, so a table's census was O(cells x scene). MEASURED before anything was changed — one 5,000-cell table took 1.17s to answer, on a per-request read path. The first fix was the wrong one, and measuring is the only reason that is known: the obvious defect was the linear per-cell lookup into the rows already collected (the shape R1559 recorded and R1560 had itself lifted to NodeIndex an hour earlier, then repeated here), and indexing it moved 1.17s to 0.84s. An isolating probe then showed the rect resolution alone accounted for 0.92s of a 0.92s census — the whole cost was the term that had not been suspected. Scene::absolute_rects_by_tag collects every tagged node's window-absolute rect in one walk, folding scroll offsets and clips arm for arm with the single lookup, and an equivalence test asserts the two agree tag for tag over a scrolled, clipped scene — including on the tags neither answers for — so the index cannot drift into being a second implementation. It is R1536's finding on the accessible-name pass, one surface over: making a lookup SUCCEED is what makes its quadratic term real. scene/text_lists carried the identical shape from R1559 and is fixed by the same helper rather than left as a measured, known defect next to its own repair.",
+      "changes_bullets": [
+        "`pinion-core` `Scene::absolute_rects_by_tag`: every tagged node's",
+        "window-absolute rect from ONE traversal — the indexed peer of",
+        "`rect_for_tag_absolute`, folding scroll offsets and clips arm for arm.",
+        "`r1560_the_index_answers_what_the_lookup_answers` asserts the two agree tag",
+        "for tag over a scrolled, clipped scene, so the index is not a second",
+        "implementation free to drift.",
+        "`pinion-rpc` `text_tables` / `text_lists` resolve their boxes through it.",
+        "The table census also indexes its own rows by tag, the `NodeIndex` shape."
+      ],
+      "verification_bullets": [
+        "Measured on one 5,000-cell table, same box, same probe: 1.17s -> 11.7ms,",
+        "about 100x. The probe was written before the fix and deleted after.",
+        "The first hypothesis was WRONG and measuring is what said so: indexing the",
+        "per-cell row lookup alone took 1.17s to 0.84s, so an isolating probe was",
+        "written and the rect resolution answered for 0.92s of a 0.92s census.",
+        "`cargo test` on `pinion-core`, `pinion-rpc`, `pinion-widget-paint`,",
+        "`pinion-runtime`, `pinion-shell` and both example crates: 28 suites, 0",
+        "failures. clippy / fmt / doc clean. `r1560_table_addressing.py`,",
+        "`r1559_list_numbering.py` and `r1551_block_format.py` all PASS."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "`scene/text_blocks` and every other single-tag caller keep the single",
+        "lookup, which is right for one tag and wrong only in a loop.",
+        "No guard pins the complexity: the equivalence test pins correctness, and a",
+        "wall-clock assertion would read the host. The shape a guard would take is a",
+        "traversal counter, which `Scene` does not carry."
+      ],
+      "publishable_decision_summary": "R1560.1 §5.12 §5.16 — the census resolves its boxes from one traversal. R1560 asked whether it had registered all of its own debt, and the census it had just written answered no: collect_tables resolved each cell's painted box with Scene::rect_for_tag_absolute, which walks the whole scene per call, so a table's census was O(cells x scene). MEASURED before anything was changed — one 5,000-cell table took 1.17s to answer, on a per-request read path. The first fix was the wrong one, and measuring is the only reason that is known: the obvious defect was the linear per-cell lookup into the rows already collected (the shape R1559 recorded and R1560 had itself lifted to NodeIndex an hour earlier, then repeated here), and indexing it moved 1.17s to 0.84s. An isolating probe then showed the rect resolution alone accounted for 0.92s of a 0.92s census — the whole cost was the term that had not been suspected. Scene::absolute_rects_by_tag collects every tagged node's window-absolute rect in one walk, folding scroll offsets and clips arm for arm with the single lookup, and an equivalence test asserts the two agree tag for tag over a scrolled, clipped scene — including on the tags neither answers for — so the index cannot drift into being a second implementation. It is R1536's finding on the accessible-name pass, one surface over: making a lookup SUCCEED is what makes its quadratic term real. scene/text_lists carried the identical shape from R1559 and is fixed by the same helper rather than left as a measured, known defect next to its own repair.",
+      "publishable_changes_bullets": [
+        "`pinion-core` `Scene::absolute_rects_by_tag`: every tagged node's",
+        "window-absolute rect from ONE traversal — the indexed peer of",
+        "`rect_for_tag_absolute`, folding scroll offsets and clips arm for arm.",
+        "`r1560_the_index_answers_what_the_lookup_answers` asserts the two agree tag",
+        "for tag over a scrolled, clipped scene, so the index is not a second",
+        "implementation free to drift.",
+        "`pinion-rpc` `text_tables` / `text_lists` resolve their boxes through it.",
+        "The table census also indexes its own rows by tag, the `NodeIndex` shape."
+      ],
+      "publishable_verification_bullets": [
+        "Measured on one 5,000-cell table, same box, same probe: 1.17s -> 11.7ms,",
+        "about 100x. The probe was written before the fix and deleted after.",
+        "The first hypothesis was WRONG and measuring is what said so: indexing the",
+        "per-cell row lookup alone took 1.17s to 0.84s, so an isolating probe was",
+        "written and the rect resolution answered for 0.92s of a 0.92s census.",
+        "`cargo test` on `pinion-core`, `pinion-rpc`, `pinion-widget-paint`,",
+        "`pinion-runtime`, `pinion-shell` and both example crates: 28 suites, 0",
+        "failures. clippy / fmt / doc clean. `r1560_table_addressing.py`,",
+        "`r1559_list_numbering.py` and `r1551_block_format.py` all PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "`scene/text_blocks` and every other single-tag caller keep the single",
+        "lookup, which is right for one tag and wrong only in a loop.",
+        "No guard pins the complexity: the equivalence test pins correctness, and a",
+        "wall-clock assertion would read the host. The shape a guard would take is a",
+        "traversal counter, which `Scene` does not carry."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

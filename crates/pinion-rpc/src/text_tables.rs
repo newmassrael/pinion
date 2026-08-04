@@ -84,7 +84,10 @@
 //! but not measured, rather than a zero rect a caller would read as "at the
 //! origin, empty".
 
+use std::collections::HashMap;
+
 use pinion_core::Scene;
+use pinion_core::scene::Rect;
 use pinion_core::style::GridTrack;
 use pinion_core::text_table::CellPlacement;
 use serde::Serialize;
@@ -222,27 +225,43 @@ pub fn handle_scene_text_tables(last_paint_scene: Option<&Scene>) -> Result<Valu
 /// that only the view has.
 #[must_use]
 pub fn collect_tables(scene: &Scene) -> Vec<TextTableWire> {
+    // Indexed, not scanned — twice over, and the second one is what mattered.
+    //
+    // Resolving each cell's box by tag walks the whole scene per cell, and
+    // MEASURED on a 5,000-cell table that was 0.92s of a 0.92s census: the
+    // whole cost. (The per-cell lookup into the rows already collected is
+    // quadratic too — the shape R1559 recorded and this round lifted to
+    // `NodeIndex` — but measuring first showed it was the smaller term by an
+    // order of magnitude. Both are indexed here; only one of them was worth
+    // guessing about.)
+    let rects = scene.absolute_rects_by_tag();
     let mut tables: Vec<TextTableWire> = Vec::new();
+    let mut table_at: HashMap<String, usize> = HashMap::new();
+    let mut cell_at: HashMap<String, (usize, usize)> = HashMap::new();
     scene.for_each_text_leaf(|node, _, _| {
         let (Some(placement), Some(tag)) = (node.cell.as_deref(), node.tag.as_deref()) else {
             return;
         };
-        let table = if let Some(at) = tables.iter().position(|t| t.tag == placement.table_tag) {
-            at
-        } else {
-            tables.push(table_row(placement, scene));
-            tables.len() - 1
-        };
-        let Some(table) = tables.get_mut(table) else {
+        let table = *table_at
+            .entry(placement.table_tag.clone())
+            .or_insert_with(|| {
+                tables.push(table_row(placement, &rects));
+                tables.len() - 1
+            });
+        let Some(row) = tables.get_mut(table) else {
             return;
         };
         // A continuation paragraph joins the cell its opener created, which is
         // how a multi-block cell is one row here and one node in the AT tree.
-        if let Some(cell) = table.cells.iter_mut().find(|c| c.tag == placement.cell_tag) {
+        if let Some((_, at)) = cell_at.get(&placement.cell_tag).copied()
+            && let Some(cell) = row.cells.get_mut(at)
+        {
             cell.blocks.push(tag.to_owned());
             return;
         }
-        let rect = scene.rect_for_tag_absolute(&placement.cell_tag);
+        cell_at.insert(placement.cell_tag.clone(), (table, row.cells.len()));
+        let table = row;
+        let rect = rects.get(&placement.cell_tag).copied();
         table.cells.push(TextCellWire {
             tag: placement.cell_tag.clone(),
             row_tag: placement.row_tag.clone(),
@@ -271,9 +290,9 @@ pub fn collect_tables(scene: &Scene) -> Vec<TextTableWire> {
 
 /// The declared half of a table's row, plus the box its container was laid out
 /// in.
-fn table_row(placement: &CellPlacement, scene: &Scene) -> TextTableWire {
+fn table_row(placement: &CellPlacement, rects: &HashMap<String, Rect>) -> TextTableWire {
     let format = &placement.format;
-    let rect = scene.rect_for_tag_absolute(&placement.table_tag);
+    let rect = rects.get(&placement.table_tag).copied();
     TextTableWire {
         tag: placement.table_tag.clone(),
         rows: placement.row_count,

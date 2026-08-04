@@ -1400,6 +1400,63 @@ impl Scene {
             .unwrap_or_else(|| self.rect())
     }
 
+    /// (R1560 §5.12 §5.16) Every tagged node's window-absolute rect, from ONE
+    /// traversal.
+    ///
+    /// The indexed peer of [`rect_for_tag_absolute`](Self::rect_for_tag_absolute),
+    /// for the callers that want the box of *many* tags rather than one: a
+    /// census that resolves each of its rows by tag walks the whole scene per
+    /// row, which is `O(rows x scene)`. Measured on `scene/text_tables` before
+    /// this existed — one 5,000-cell table took **0.92s** to answer, and
+    /// essentially all of it was this lookup. It is R1536's finding on the
+    /// accessible-name pass, one surface over.
+    ///
+    /// Same folding as the single lookup, arm for arm: a `Scroll` tightens the
+    /// clip to its window-absolute viewport and folds its offset into the
+    /// descent, a node clipped entirely away is absent rather than present with
+    /// a zero rect, and the FIRST node with a tag wins (pre-order, matching the
+    /// single lookup's `find_map`). `r1560_the_index_answers_what_the_lookup_answers`
+    /// asserts the two agree tag for tag over a scrolled, clipped scene, which
+    /// is what keeps this from being a second implementation free to drift.
+    #[must_use]
+    pub fn absolute_rects_by_tag(&self) -> std::collections::HashMap<String, Rect> {
+        let mut out = std::collections::HashMap::new();
+        self.collect_absolute_rects(&mut out, 0, 0, None);
+        out
+    }
+
+    fn collect_absolute_rects(
+        &self,
+        out: &mut std::collections::HashMap<String, Rect>,
+        x_off: i64,
+        y_off: i64,
+        clip: Option<Rect>,
+    ) {
+        if let Some(tag) = self.tag()
+            && let Some(rect) = translate_rect_into_clip(self.rect(), x_off, y_off, clip)
+        {
+            out.entry(tag.to_owned()).or_insert(rect);
+        }
+        match self {
+            Scene::Container(c) => {
+                for child in &c.children {
+                    child.collect_absolute_rects(out, x_off, y_off, clip);
+                }
+            }
+            Scene::Scroll(n) => {
+                let Some(new_clip) = translate_rect_into_clip(n.viewport, x_off, y_off, clip)
+                else {
+                    return;
+                };
+                let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
+                let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
+                n.content
+                    .collect_absolute_rects(out, x_off + dx, y_off + dy, Some(new_clip));
+            }
+            _ => {}
+        }
+    }
+
     fn rect_for_tag_with_offset(
         &self,
         target: &str,
@@ -4350,6 +4407,88 @@ mod tests {
 
     fn stub_handle() -> Box<dyn External> {
         Box::new(StubExternal::new())
+    }
+
+    // ─── R1560 §5.12: the indexed rect walk answers what the lookup does ────
+
+    /// The equivalence that keeps `absolute_rects_by_tag` from being a second
+    /// implementation: over a scene with nested scrolls, a scrolled offset and
+    /// a subtree clipped away, the index and the single lookup agree tag for
+    /// tag — including on the tags neither of them answers for.
+    #[test]
+    fn r1560_the_index_answers_what_the_lookup_answers() {
+        let deep = Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Box(
+                    BoxNode::new(Rect::new(0, 0, 40, 20), BoxStyle::default())
+                        .with_tag("inner_visible"),
+                ),
+                // Far below the inner viewport, so the clip drops it.
+                Scene::Box(
+                    BoxNode::new(Rect::new(0, 900, 40, 20), BoxStyle::default())
+                        .with_tag("inner_clipped"),
+                ),
+            ])
+            .with_tag("inner_content"),
+        );
+        let mut inner = ScrollNode::new(Rect::new(10, 10, 100, 50), deep);
+        inner.offset_y = 15;
+        let outer = Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Box(
+                    BoxNode::new(Rect::new(0, 0, 30, 30), BoxStyle::default()).with_tag("outside"),
+                ),
+                Scene::Scroll(inner),
+            ])
+            .with_tag("root"),
+        );
+
+        let index = outer.absolute_rects_by_tag();
+        for tag in [
+            "root",
+            "outside",
+            "inner_content",
+            "inner_visible",
+            "inner_clipped",
+            "absent",
+        ] {
+            assert_eq!(
+                index.get(tag).copied(),
+                outer.rect_for_tag_absolute(tag),
+                "the index and the lookup disagree about {tag}",
+            );
+        }
+        assert!(
+            index.contains_key("inner_visible"),
+            "premise: something inside the scroll IS visible",
+        );
+        assert!(
+            !index.contains_key("inner_clipped"),
+            "premise: something inside the scroll is clipped away",
+        );
+        assert_ne!(
+            index["inner_visible"].y, 0,
+            "premise: the scroll's offset was folded in",
+        );
+    }
+
+    /// A tagged node inside a tagged node is indexed too — the single lookup
+    /// stops at its answer, so the walk that collects every tag has to keep
+    /// going where the lookup returns.
+    #[test]
+    fn r1560_the_index_descends_past_a_tag_it_matched() {
+        let mut parent = ContainerNode::new(vec![Scene::Box(
+            BoxNode::new(Rect::new(5, 5, 10, 10), BoxStyle::default()).with_tag("child"),
+        )])
+        .with_tag("parent");
+        // A rect the parent actually occupies: a zero-area node is absent from
+        // both the index and the lookup (they agree — the first test pins
+        // that), and this test is about DESCENT, not about empty boxes.
+        parent.rect = Rect::new(0, 0, 100, 100);
+        let scene = Scene::Container(parent);
+        let index = scene.absolute_rects_by_tag();
+        assert!(index.contains_key("parent"));
+        assert_eq!(index.get("child").copied(), Some(Rect::new(5, 5, 10, 10)));
     }
 
     // ─── R1542 §5.41: rect is the paint extent, winsize is the grid ─────────

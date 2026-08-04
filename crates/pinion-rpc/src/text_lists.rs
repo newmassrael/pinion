@@ -82,7 +82,10 @@
 //! the honest answer for a frame that has been built but not measured, rather
 //! than a zero rect a caller would read as "at the origin, empty".
 
+use std::collections::HashMap;
+
 use pinion_core::Scene;
+use pinion_core::scene::Rect;
 use pinion_core::text_list::ListPlacement;
 use serde::Serialize;
 use serde_json::Value;
@@ -196,6 +199,11 @@ pub fn handle_scene_text_lists(last_paint_scene: Option<&Scene>) -> Result<Value
 /// only the view has.
 #[must_use]
 pub fn collect_lists(scene: &Scene) -> Vec<TextListWire> {
+    // R1560 — indexed, not scanned. Resolving each marker's box by tag walks
+    // the whole scene per item, which is `O(items x scene)`; measured on the
+    // sibling `scene/text_tables` census, that lookup was the WHOLE cost of a
+    // 5,000-row answer. Same derivation, so the same one traversal.
+    let rects = scene.absolute_rects_by_tag();
     let mut lists: Vec<TextListWire> = Vec::new();
     scene.for_each_text_leaf(|node, _, _| {
         let (Some(placement), Some(tag)) = (node.list.as_ref(), node.tag.as_deref()) else {
@@ -204,7 +212,7 @@ pub fn collect_lists(scene: &Scene) -> Vec<TextListWire> {
         let index = if let Some(index) = lists.iter().position(|l| l.tag == placement.list_tag) {
             index
         } else {
-            lists.push(list_row(placement, scene));
+            lists.push(list_row(placement, &rects));
             lists.len() - 1
         };
         // The marker is painted by `DocumentTag::marker` beside this
@@ -212,9 +220,7 @@ pub fn collect_lists(scene: &Scene) -> Vec<TextListWire> {
         // needing a second walk, and an absent rect answers `null` rather than
         // inventing a box.
         let marker_tag = marker_tag_for(tag);
-        let marker_rect = marker_tag
-            .as_deref()
-            .and_then(|t| scene.rect_for_tag_absolute(t));
+        let marker_rect = marker_tag.as_deref().and_then(|t| rects.get(t).copied());
         if let Some(list) = lists.get_mut(index) {
             list.items.push(TextListItemWire {
                 tag: tag.to_owned(),
@@ -236,9 +242,9 @@ pub fn collect_lists(scene: &Scene) -> Vec<TextListWire> {
 
 /// The declared half of a list's row, plus the box its container was laid out
 /// in.
-fn list_row(placement: &ListPlacement, scene: &Scene) -> TextListWire {
+fn list_row(placement: &ListPlacement, rects: &HashMap<String, Rect>) -> TextListWire {
     let format = &placement.format;
-    let rect = scene.rect_for_tag_absolute(&placement.list_tag);
+    let rect = rects.get(&placement.list_tag).copied();
     TextListWire {
         tag: placement.list_tag.clone(),
         parent_tag: placement.parent_list_tag.clone(),
