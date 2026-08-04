@@ -1248,6 +1248,57 @@ mod tests {
         );
     }
 
+    /// R1561 — the declared surface, pinned as an EXACT set, and every readable
+    /// slot in it actually answering.
+    ///
+    /// This coordinator had no such test while a dozen sibling externals do
+    /// (`external_schema_declares_three_slots` and peers), and R1561 added a
+    /// field to it. `IntrospectSchema.fields` is a hand-written literal —
+    /// R1501 measured ~104 of them and disproved the type's own claim that
+    /// "mismatches surface as test failures" — and the workspace-wide dynamic
+    /// audit (`r1353_declared_domains_hold_on_real_widgets`) names its widgets
+    /// by hand and does not name this one. So nothing tied this declaration to
+    /// its implementation: a slot could be declared and unreachable, or
+    /// reachable and undeclared, in either direction and silently.
+    ///
+    /// `send` is the one declared path that does not read: it is the R51.42
+    /// composite pointer **write** channel, the same carve-out the R1353 audit
+    /// makes for action slots. Stated here rather than left as an exception the
+    /// reader has to infer from a `None`.
+    #[test]
+    fn r1561_schema_is_exactly_what_query_answers() {
+        let s = VirtualSelectExternal::new_multi(50);
+        let declared: Vec<&str> = s.schema().fields.iter().map(|f| f.path).collect();
+        assert_eq!(
+            declared,
+            [
+                "selected",
+                "selection",
+                "selection_count",
+                "anchor",
+                "mode",
+                "item_count",
+                "send",
+            ],
+            "the declared surface is exact — a field added or dropped lands here",
+        );
+        for path in &declared {
+            if *path == "send" {
+                assert_eq!(
+                    s.query(path),
+                    None,
+                    "`send` is a write channel and reads as absent",
+                );
+                continue;
+            }
+            assert!(
+                s.query(path).is_some(),
+                "declared slot {path:?} must answer — a declaration nothing \
+                 implements is a surface an agent cannot follow",
+            );
+        }
+    }
+
     #[test]
     fn intervene_selected_sets_clears_and_guards() {
         let mut s = VirtualSelectExternal::new(50);
