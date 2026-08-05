@@ -56,7 +56,6 @@ Against Qt 6.11:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -71,7 +70,9 @@ from rpc_verify import (  # noqa: E402
     indexed_tags,
     run_demo,
     selection_rows,
+    text_of_tag,
     texts_of,
+    wire_bytes,
     wait_until,
 )
 
@@ -108,8 +109,6 @@ def rows(tf) -> list[int]:
     return selection_rows(tf.query("/external/selection"))
 
 
-def wire_bytes(value) -> int:
-    return len(json.dumps(value, separators=(",", ":")))
 
 
 def corner_marks(tf) -> list[str]:
@@ -120,11 +119,6 @@ def corner_marks(tf) -> list[str]:
     return texts_of(node)
 
 
-def status_text(tf) -> str:
-    snap = tf.snapshot(source="paint", viewport=WIN)
-    node = find_by_tag(snap, STATUS_TAG)
-    assert node is not None, "the status bar must be in the paint tree"
-    return texts_of(node)[0]
 
 
 def painted_sections(tf) -> list[int]:
@@ -207,7 +201,7 @@ def body() -> None:
         # ── (F) the section shows the selection, windowed ────────────
         tf.intervene("/external/selection", [[0, N - 1]])
         wait_until(
-            lambda: "10000 rows in 1 run" in status_text(tf) or None,
+            lambda: "10000 rows in 1 run" in text_of_tag(tf, STATUS_TAG, viewport=WIN) or None,
             desc="the whole model is selected",
         )
         drawn = painted_sections(tf)

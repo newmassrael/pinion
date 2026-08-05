@@ -354,7 +354,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         },
         &theme,
         &style,
-        |_| false, // display-only grid: no selection
+        &|_| false, // display-only grid: no selection
         GridModel {
             cell: cell_text,
             columns: HeaderAxis {

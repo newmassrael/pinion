@@ -212,6 +212,7 @@ members = [
     "examples/hello-combobox-editable",
     "examples/hello-completer",
     "examples/hello-column-reorder",
+    "examples/hello-column-select",
     "examples/hello-number-input",
     "examples/hello-property-grid",
     "examples/hello-data-grid",

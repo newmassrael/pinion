@@ -356,7 +356,7 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
         },
         &theme,
         &tstyle,
-        |_id| false,
+        &|_id| false,
         GridModel {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| grid_sort.cell(c.row, c.col).to_string(),

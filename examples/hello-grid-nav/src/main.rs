@@ -458,7 +458,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         },
         &theme,
         &style,
-        |id| selected == Some(id),
+        &|id| selected == Some(id),
         GridModel {
             cell: |c: CellIndex| cell_text(c, &overlay),
             columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),

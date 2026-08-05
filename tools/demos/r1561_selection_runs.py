@@ -49,7 +49,6 @@ wire.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -64,7 +63,8 @@ from rpc_verify import (  # noqa: E402
     run_demo,
     runs_of,
     selection_rows,
-    texts_of,
+    text_of_tag,
+    wire_bytes,
     wait_query,
     wait_until,
 )
@@ -104,17 +104,8 @@ def raw(tf) -> list:
     return tf.query("/external/selection")
 
 
-def wire_bytes(value) -> int:
-    """How many bytes the answer occupies as JSON — the cost an agent pays to
-    ask, and the number this round exists to bound."""
-    return len(json.dumps(value, separators=(",", ":")))
 
 
-def status_text(tf) -> str:
-    snap = tf.snapshot(source="paint", viewport=WIN)
-    node = find_by_tag(snap, STATUS_TAG)
-    assert node is not None, "the status bar must be in the paint tree"
-    return texts_of(node)[0]
 
 
 def refused(fn) -> bool:
@@ -249,13 +240,13 @@ def body() -> None:
         # ── (J) the screen says it ──────────────────────────────────
         tf.invoke("/external/select_all", None)
         wait_until(
-            lambda: "10000 rows in 1 run" in status_text(tf) or None,
+            lambda: "10000 rows in 1 run" in text_of_tag(tf, STATUS_TAG, viewport=WIN) or None,
             desc="the status bar reads the row count AND the run count",
         )
-        assert "in 1 run" in status_text(tf), "one run on the glass"
+        assert "in 1 run" in text_of_tag(tf, STATUS_TAG, viewport=WIN), "one run on the glass"
         tf.invoke("/external/toggle", 5_000)
         wait_until(
-            lambda: "9999 rows in 2 runs" in status_text(tf) or None,
+            lambda: "9999 rows in 2 runs" in text_of_tag(tf, STATUS_TAG, viewport=WIN) or None,
             desc="punching a hole shows two runs on the glass",
         )
         # And the windowing still holds while 9 999 rows are selected: the

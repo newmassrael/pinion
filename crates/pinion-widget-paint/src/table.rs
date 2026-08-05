@@ -42,6 +42,7 @@ use pinion_core::style::{
     LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widgets::cell_selection::GridSelection;
 use pinion_core::widgets::column_widths::{columns_width_before, visible_columns};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
@@ -484,6 +485,10 @@ struct ColCell {
     col: usize,
     width: u32,
     resizable: bool,
+    /// R1563 — how much of this column is selected, from the
+    /// [`GridSelection`] question. [`SelectionExtent::Empty`] for every
+    /// row-select grid, whose horizontal band is the sort control.
+    selected: SelectionExtent,
 }
 
 /// R786 §5.27 — the resize grabber painted at a header cell's trailing edge: a
@@ -535,6 +540,7 @@ fn header_cell(
         col,
         width,
         resizable,
+        selected,
     } = cell;
     let fg = theme.resolve(ColorRole::OnSurface);
     // R786 — reserve the trailing grabber width from the clickable / label area
@@ -604,6 +610,14 @@ fn header_cell(
     let mut header = ContainerNode::new(cell_children)
         .with_tag(GridTag::col_header(tag, col))
         .with_layout(LayoutStyle::new().flex(FlexDirection::Row));
+    // R1563 — the section shows the selection through it, by the same
+    // `section_fill` derivation the vertical band uses. Set only when the
+    // column is involved: an unselected section keeps the band's own
+    // `SurfaceContainerHigh`, and stating that colour a second time here would
+    // be two declarations of one fill that a later theme change could split.
+    if selected != SelectionExtent::Empty {
+        header = header.with_style(BoxStyle::filled(section_fill(theme, selected, col)));
+    }
     // R1547 §5.40 — a mark that carries meaning joins the `columnheader`'s
     // accessible name, ahead of the label, by exactly the rule R1536 gave the
     // cell. Set only when there is something to add, so a decorative (`alt=""`)
@@ -865,6 +879,14 @@ struct ColumnLayout<'a> {
     /// the two split panes never emit a duplicate container tag into the
     /// paint scene (hit-routing / introspection stay tag-unique).
     container_tag: &'a str,
+    /// R1563 — the [`GridSelection`] question, asked once per **painted**
+    /// section for the column's extent.
+    ///
+    /// It rides here rather than as an eighth argument because that is what
+    /// this bundle is for, and because it belongs with `col_base`: a section's
+    /// extent is asked about its **absolute** column, and the two pieces that
+    /// make an absolute column are already here.
+    selection: &'a dyn GridSelection,
 }
 
 /// R859 §5.27 — the per-pane column descriptor a [`data_row`] needs when a
@@ -900,6 +922,17 @@ struct RowPane<'a> {
     /// decorated" — the eager [`view_table`], which exposes no decoration
     /// model, passes it.
     decorations: &'a [Option<Decoration>],
+    /// R1563 — which of this row's painted cells are selected **and not
+    /// already covered by the row strip's own fill**, aligned with
+    /// [`Self::widths`].
+    ///
+    /// An **empty** slice means "nothing here needs cell-level ink", which is
+    /// every row-select grid: their selected rows are washed by the strip, so
+    /// asking per cell would add a node to every cell of every grid to paint a
+    /// colour that is already there. The caller narrows it because only the
+    /// caller knows the row's extent — the same reason [`Self::editing`] is
+    /// narrowed there.
+    selected_cells: &'a [bool],
     /// R1532 — the palette, for a delegate that resolves its own roles. It
     /// travels with [`Self::painters`] rather than as its own argument
     /// because it exists here *for* them: the built-in painter takes its
@@ -946,6 +979,10 @@ fn header_row(
                     col,
                     width,
                     resizable: layout.resizable,
+                    // Asked once per **painted** section, over the same window
+                    // the band lays out — the discipline `ask_sections`
+                    // enforces on the role axis.
+                    selected: layout.selection.column(col),
                 },
                 section,
                 sort,
@@ -984,6 +1021,60 @@ fn header_row(
 ///
 /// `row` is the **data** row, not the visual position, so the tag and the mark
 /// stay with their row across a sort — the same rule `data_row` follows.
+/// R1562 / R1563 §5.27 — a header section's fill, **derived** from how much of
+/// the line through it is selected.
+///
+/// Shared by both bands, so the vertical and the horizontal one cannot show the
+/// same fact two ways — and derived from the selection rather than set by a
+/// flag, so the band cannot say one thing while the body says another. Qt makes
+/// this a view flag (`QHeaderView::highlightSections`) that **defaults to
+/// false**: a Qt header is silent about the selection unless someone turns it
+/// on, and once on it is a second statement that can be turned back off while
+/// the rows stay washed.
+///
+/// [`SelectionExtent::Partial`] — R1563, unreachable before the column axis
+/// existed — takes the highest surface tone rather than the accent: the line is
+/// *involved* in the selection without being in it, and painting it with the
+/// accent would make a row with one selected cell indistinguishable from a
+/// selected record.
+fn section_fill(theme: &Theme, extent: SelectionExtent, index: usize) -> Color {
+    match extent {
+        SelectionExtent::All => row_fill(theme, RadioState::Idle, true, index),
+        SelectionExtent::Partial => theme.resolve(ColorRole::SurfaceContainerHighest),
+        SelectionExtent::Empty => theme.resolve(ColorRole::SurfaceContainerHigh),
+    }
+}
+
+/// R1563 §5.27 — which of a row's painted cells need selection ink of their
+/// own: the ones that are selected while the row is **not** selected whole.
+///
+/// A fully selected row is already washed by its strip, so painting each of its
+/// cells again would be the same colour twice and a wrapper node per cell. An
+/// empty vector — the answer for every row-select grid, where a row is either
+/// whole or untouched — costs the `data_row` loop one `get` per cell and adds
+/// no nodes at all.
+/// R1563 §5.27 — a per-row bool as the band's tri-state.
+///
+/// The eager [`view_table`] selects whole rows (`row_selected`), so its band
+/// can only ever be at one end or the other. Stated by this conversion rather
+/// than by [`RowSection`] keeping a bool for one caller's sake: the tri-state
+/// is the band's contract, and a surface that cannot say
+/// [`SelectionExtent::Partial`] says so here, once.
+const fn whole_or_nothing(selected: bool) -> SelectionExtent {
+    if selected {
+        SelectionExtent::All
+    } else {
+        SelectionExtent::Empty
+    }
+}
+
+fn cell_ink(selection: &dyn GridSelection, row: usize, span: std::ops::Range<usize>) -> Vec<bool> {
+    if selection.row(row) != SelectionExtent::Partial {
+        return Vec::new();
+    }
+    span.map(|col| selection.cell(row, col)).collect()
+}
+
 fn row_header_cell(
     tag: &str,
     row: usize,
@@ -1035,11 +1126,7 @@ fn row_header_cell(
     // Qt row header is silent about the selection unless someone turns it on,
     // and once on it is a second statement that can be turned back off while the
     // rows stay washed.
-    let fill = if selected {
-        row_fill(theme, RadioState::Idle, true, row)
-    } else {
-        theme.resolve(ColorRole::SurfaceContainerHigh)
-    };
+    let fill = section_fill(theme, selected, row);
     let mut cell = ContainerNode::new(vec![inner])
         .with_tag(GridTag::row_header(tag, row))
         .with_style(BoxStyle::filled(fill))
@@ -1100,9 +1187,10 @@ fn row_header_pane(
         // blank, unselected section at the view position's own index is the
         // contract's answer for "no label", so a mismatch degrades to an empty
         // header rather than panicking a paint pass.
-        let (row, roles, selected) = sections
-            .get(i)
-            .map_or((view_pos, &blank, false), |(row, s, sel)| (*row, s, *sel));
+        let (row, roles, selected) = sections.get(i).map_or(
+            (view_pos, &blank, SelectionExtent::Empty),
+            |(row, s, sel)| (*row, s, *sel),
+        );
         row_header_cell(
             tag,
             row,
@@ -1137,9 +1225,15 @@ fn row_header_pane(
 struct RowSection<'a> {
     /// The `Qt::DisplayRole` / `Qt::DecorationRole` answers for this section.
     roles: &'a SectionRoles,
-    /// Whether this section's **row** is selected — the same predicate the
-    /// body strip beside it is filled from.
-    selected: bool,
+    /// R1563 — **how much** of this section's row is selected, from the same
+    /// [`GridSelection`] question the body strip beside it is filled from.
+    ///
+    /// A tri-state rather than R1562's bool, because with a column axis a row
+    /// can be partly selected and a bool has to round that to one of its
+    /// neighbours. Qt cannot show it at all: `highlightSections` is a bool per
+    /// section, so a row with two of two hundred columns selected paints
+    /// identically to a fully selected one.
+    selected: SelectionExtent,
     /// The anchor the section routes its pointer arc to
     /// (`"<click_tag>#r<row>"`).
     click_tag: &'a str,
@@ -1282,7 +1376,7 @@ struct RowHeaderBand<'a> {
     /// One list rather than a row-resolver beside a list of answers, because
     /// two statements of "which row is at this visual position" can only ever
     /// disagree — the shape R1524 removed from the cell axis.
-    sections: &'a [(usize, SectionRoles, bool)],
+    sections: &'a [(usize, SectionRoles, SelectionExtent)],
     /// R1562 — what a press on the corner does.
     corner: CornerAction,
     /// R1562 — the anchor every pressable part of the band routes to.
@@ -1340,23 +1434,46 @@ fn data_row(
             // the editor widget in its rect. The column's editor delegate is
             // consulted only here, so a grid that is not editing never asks
             // for one (Qt calls `createEditor` at open time, not per paint).
-            if let Some(slot) = pane.editing.filter(|e| e.col == col) {
-                let render = CellEditRender {
+            let painted = if let Some(slot) = pane.editing.filter(|e| e.col == col) {
+                let edit_render = CellEditRender {
                     cell: &render,
                     edit: slot.edit,
                     field_tag: slot.field_tag,
                     field: slot.field,
                     pending: slot.pending,
                 };
-                return slot
-                    .paint
-                    .map_or_else(|| cell_editor(&render), |paint| paint(&render));
+                slot.paint
+                    .map_or_else(|| cell_editor(&edit_render), |paint| paint(&edit_render))
+            } else {
+                pane.painters
+                    .get(j)
+                    .copied()
+                    .flatten()
+                    .map_or_else(|| text_cell_painter(&render), |paint| paint(&render))
+            };
+            // R1563 — the selection ink for a cell the row strip does not
+            // cover. It wraps whatever the column's delegate produced rather
+            // than being that painter's job, which is both Qt's order
+            // (`QStyledItemDelegate::paint` draws `PE_PanelItemViewItem`
+            // first, then the content) and the only shape that works for a
+            // delegate this framework did not write.
+            if pane.selected_cells.get(j).copied().unwrap_or(false) {
+                return Scene::Container(
+                    ContainerNode::new(vec![painted])
+                        .with_style(BoxStyle::filled(row_fill(
+                            pane.theme,
+                            RadioState::Idle,
+                            true,
+                            data_id,
+                        )))
+                        .with_layout(
+                            LayoutStyle::new()
+                                .flex(FlexDirection::Row)
+                                .with_size(Size::px(render.width, style.row_height)),
+                        ),
+                );
             }
-            pane.painters
-                .get(j)
-                .copied()
-                .flatten()
-                .map_or_else(|| text_cell_painter(&render), |paint| paint(&render))
+            painted
         })
         .collect();
     Scene::Container(
@@ -1452,6 +1569,7 @@ pub fn view_table(
         decoration: |col: usize| data.header_decoration.and_then(|answer| answer(col)),
     };
     let sections = ask_sections(&mut eager_columns, 0..cols);
+    let row_selection = |row: usize| row_selected.get(row).copied().unwrap_or(false);
     let header = header_row(
         tag,
         tag,
@@ -1465,6 +1583,7 @@ pub fn view_table(
             pad: ColumnPad::NONE,
             col_base: 0,
             container_tag: &hrow_tag,
+            selection: &row_selection,
         },
         theme,
         style,
@@ -1487,7 +1606,7 @@ pub fn view_table(
                 data_id,
                 &RowSection {
                     roles: &roles,
-                    selected,
+                    selected: whole_or_nothing(selected),
                     click_tag: tag,
                 },
                 style.row_header_width,
@@ -1525,6 +1644,10 @@ pub fn view_table(
                 // Recorded as carry: this leaves two cell-paint surfaces in
                 // one tree, the shape R1530 left on the header axis.
                 painters: &[],
+                // R1563 — the eager surface selects whole rows, so the strip's
+                // own fill covers every selected cell and there is nothing
+                // left for cell ink to add.
+                selected_cells: &[],
                 // R1536 — the eager surface answers the decoration role too,
                 // through `TableData::decoration`. Asked once per painted cell
                 // of this row, the same rule the virtualized grid follows, so
@@ -3017,7 +3140,9 @@ pub fn materialize_cells(
 ///   with `scene/set_scroll_offset` on its tag, or wheel / arrow input.
 /// - `data` — the [`VirtualTableData`] (both axes' extents + overscan).
 /// - `theme` / `style` — palette + [`TableStyle`] dimensions.
-/// - `is_selected` — a predicate over the **data-row** index: a `true` row's
+/// - `selection` — the R1563 [`GridSelection`] question. A `Fn(usize) -> bool`
+///   satisfies it (a row predicate is a selection of whole records), which is
+///   what every row-select caller passes. A `true` row's
 ///   strip is washed with the accent tint (the same `row_fill` selection
 ///   path the eager [`view_table`] uses). This is the data-indexed
 ///   generalization of a single selected index — single-select passes
@@ -3048,7 +3173,7 @@ pub fn view_virtual_table(
     data: VirtualTableData<'_>,
     theme: &Theme,
     style: &TableStyle,
-    is_selected: impl Fn(usize) -> bool,
+    selection: &impl GridSelection,
     model: GridModel<
         impl FnMut(CellIndex) -> String,
         impl FnMut(usize) -> String,
@@ -3115,9 +3240,9 @@ pub fn view_virtual_table(
     // The cell + column roles are consumed by exactly one branch (an
     // `if`/`else`), so each helper takes them by value without a re-move.
     let content = if frozen_cols == 0 {
-        render.render_unsplit(scroll, &is_selected, cell, columns, decoration)
+        render.render_unsplit(scroll, selection, cell, columns, decoration)
     } else {
-        render.render_frozen(scroll, frozen_cols, &is_selected, cell, columns, decoration)
+        render.render_frozen(scroll, frozen_cols, selection, cell, columns, decoration)
     };
     // R1548 — the vertical header band, pinned left of everything the panes
     // built. Composed here rather than inside the two assemblies so both of
@@ -3141,7 +3266,7 @@ pub fn view_virtual_table(
                     (
                         row,
                         SectionRoles::ask(&mut rows.sections, row),
-                        is_selected(row),
+                        selection.row(row),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -3354,13 +3479,9 @@ impl<'d> GridRender<'_, 'd> {
     /// **visual** (`view_pos`, so the stripe pattern is stable across
     /// re-sorts — the eager `view_table` convention). Lifted here so the
     /// three slot closures cannot disagree on the fill / fg derivation.
-    fn row_inputs(
-        &self,
-        view_pos: usize,
-        is_selected: &impl Fn(usize) -> bool,
-    ) -> (usize, Color, Color) {
+    fn row_inputs(&self, view_pos: usize, selection: &dyn GridSelection) -> (usize, Color, Color) {
         let source = self.source_of(view_pos);
-        let selected = is_selected(source);
+        let selected = selection.row(source) == SelectionExtent::All;
         // R998 — precedence: selection highlight > matched coloring rule >
         // zebra stripe. A selected row keeps the accent fill so the selection
         // stays visible over any rule tint; otherwise a row-style rule (per
@@ -3482,7 +3603,7 @@ impl<'d> GridRender<'_, 'd> {
     fn render_unsplit(
         &self,
         scroll: GridScroll<'_>,
-        is_selected: &impl Fn(usize) -> bool,
+        selection: &dyn GridSelection,
         mut cell: impl FnMut(CellIndex) -> String,
         mut columns: HeaderAxis<
             impl FnMut(usize) -> String,
@@ -3507,6 +3628,7 @@ impl<'d> GridRender<'_, 'd> {
                 pad,
                 col_base: cols.first,
                 container_tag: &hrow_tag,
+                selection,
             },
         );
         let painters = self.painters(span.clone());
@@ -3523,9 +3645,10 @@ impl<'d> GridRender<'_, 'd> {
             self.style.row_height,
             band,
             |view_pos| {
-                let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
+                let (source, fill, fg) = self.row_inputs(view_pos, selection);
                 let (cells_text, decos) =
                     pane_cells(&mut cell, &mut decoration, source, span.clone());
+                let selected_cells = cell_ink(selection, source, span.clone());
                 let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
                 let row_tag = GridTag::data_row(self.tag, source);
                 data_row(
@@ -3541,6 +3664,7 @@ impl<'d> GridRender<'_, 'd> {
                         pad,
                         painters: &painters,
                         decorations: &decos,
+                        selected_cells: &selected_cells,
                         theme: self.theme,
                         editing: self.editing_in_row(source),
                     },
@@ -3591,6 +3715,7 @@ impl<'d> GridRender<'_, 'd> {
         scrolled_window: &[u32],
         scrolled_base: usize,
         scroll_pad: ColumnPad,
+        selection: &dyn GridSelection,
     ) -> (Scene, Scene)
     where
         L: FnMut(usize) -> String,
@@ -3605,6 +3730,7 @@ impl<'d> GridRender<'_, 'd> {
                 pad: ColumnPad::NONE,
                 col_base: 0,
                 container_tag: &fhrow_tag,
+                selection,
             },
         );
         let hrow_tag = GridTag::header_row(self.tag);
@@ -3616,6 +3742,7 @@ impl<'d> GridRender<'_, 'd> {
                 pad: scroll_pad,
                 col_base: scrolled_base,
                 container_tag: &hrow_tag,
+                selection,
             },
         );
         (frozen, scrolling)
@@ -3625,7 +3752,7 @@ impl<'d> GridRender<'_, 'd> {
         &self,
         scroll: GridScroll<'_>,
         frozen_cols: usize,
-        is_selected: &impl Fn(usize) -> bool,
+        selection: &dyn GridSelection,
         mut cell: impl FnMut(CellIndex) -> String,
         mut columns: HeaderAxis<
             impl FnMut(usize) -> String,
@@ -3649,11 +3776,12 @@ impl<'d> GridRender<'_, 'd> {
         let scroll_painters = self.painters(abs.clone());
 
         let frozen_slots = uniform_slots(self.window, frozen_w, row_pitch, |view_pos| {
-            let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
+            let (source, fill, fg) = self.row_inputs(view_pos, selection);
             // R1524 — the pinned pane asks for the pinned columns only.
             let (cells_text, decos) =
                 pane_cells(&mut cell, &mut decoration, source, 0..frozen_cols);
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
+            let selected_cells = cell_ink(selection, source, 0..frozen_cols);
             // R859 — distinct `_frow{id}` container tag so the split panes
             // never emit a duplicate strip tag (per-cell `_{col}` tags stay
             // unique by absolute column).
@@ -3672,6 +3800,7 @@ impl<'d> GridRender<'_, 'd> {
                     pad: ColumnPad::NONE,
                     painters: &frozen_painters,
                     decorations: &decos,
+                    selected_cells: &selected_cells,
                     theme: self.theme,
                     editing: self.editing_in_row(source),
                 },
@@ -3679,12 +3808,13 @@ impl<'d> GridRender<'_, 'd> {
             )
         });
         let scroll_slots = uniform_slots(self.window, scroll_w, row_pitch, |view_pos| {
-            let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
+            let (source, fill, fg) = self.row_inputs(view_pos, selection);
             // R1524 — the scrolling pane asks for its column window, in
             // absolute coordinates (`abs`), so the consumer never learns that
             // this pane's own column space starts at `frozen_cols`.
             let (cells_text, decos) = pane_cells(&mut cell, &mut decoration, source, abs.clone());
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
+            let selected_cells = cell_ink(selection, source, abs.clone());
             let row_tag = GridTag::data_row(self.tag, source);
             data_row(
                 self.tag,
@@ -3699,6 +3829,7 @@ impl<'d> GridRender<'_, 'd> {
                     pad: scroll_pad,
                     painters: &scroll_painters,
                     decorations: &decos,
+                    selected_cells: &selected_cells,
                     theme: self.theme,
                     editing: self.editing_in_row(source),
                 },
@@ -3712,6 +3843,7 @@ impl<'d> GridRender<'_, 'd> {
             &scrolled[rel.clone()],
             abs.start,
             scroll_pad,
+            selection,
         );
         // R859 — the shared frozen-split assembler (also the tree-grid's,
         // R860): frozen pane (follower V-body) beside the scrolling pane
@@ -4192,7 +4324,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -4447,7 +4579,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -4734,7 +4866,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: |c: CellIndex| {
                         if c.col == 1 {
@@ -5071,7 +5203,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis {
@@ -5302,7 +5434,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -5347,7 +5479,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                selected,
+                &selected,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -5623,7 +5755,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -5718,7 +5850,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -5979,7 +6111,7 @@ mod tests {
                 },
                 &light(),
                 &TableStyle::m3(),
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_marker_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -6051,7 +6183,7 @@ mod tests {
                 },
                 &light(),
                 &TableStyle::m3(),
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_marker_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -6211,7 +6343,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                |_| false,
+                &|_| false,
                 GridModel {
                     cell: vt_cell,
                     columns: HeaderAxis::labelled(vt_header),
@@ -6368,7 +6500,7 @@ mod tests {
                 },
                 &light(),
                 &TableStyle::m3(),
-                |_| false,
+                &|_| false,
                 model,
             )
         })

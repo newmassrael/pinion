@@ -64,13 +64,20 @@
 //!   so a call site that pays the model's size is greppable. `indexes()` is how
 //!   a Qt consumer reads a selection at all.
 //!
-//! Deliberately **not** adopted: Qt's two-dimensional range
-//! (`QItemSelectionRange` spans rows *and* columns, because `QItemSelectionModel`
-//! selects `QModelIndex`es). The selection this framework windows is the **row**
-//! axis — [`VirtualSelect`](super::virtual_select::VirtualSelect) is keyed by
-//! data index — and a second dimension nothing selects on would be a field every
-//! consumer had to fill in with "all columns". The *capability* is Qt's floor;
-//! the *shape* is chosen each time.
+//! # The second axis
+//!
+//! R1561 deferred Qt's two-dimensional range (`QItemSelectionRange` spans rows
+//! *and* columns, because `QItemSelectionModel` selects `QModelIndex`es) on the
+//! grounds that a second dimension nothing selects on would be a field every
+//! consumer had to fill in with "all columns". **R1563 adopted it**, and the
+//! deferral's own reasoning is what shaped it: the column axis is
+//! [`ColumnSpan`](super::cell_selection::ColumnSpan), whose
+//! [`All`](super::cell_selection::ColumnSpan::All) needs no column count to
+//! spell, so no consumer fills anything in and every pre-R1563 selection is
+//! that value. This type is the **row** axis of
+//! [`CellSelection`](super::cell_selection::CellSelection) and the runs inside
+//! a [`ColumnSpan::Runs`](super::cell_selection::ColumnSpan::Runs) — one
+//! canonical run set, used on both.
 
 use core::fmt;
 
@@ -306,6 +313,118 @@ impl IndexRuns {
         let mut runs = self.runs[..keep].to_vec();
         if let Some(tail) = runs.last_mut() {
             tail.last = tail.last.min(bound - 1);
+        }
+        Self { runs }
+    }
+
+    /// R1563 — every index in either set, in one merge walk: **O(runs)**, not
+    /// O(indices).
+    ///
+    /// The three set operations arrive together because the second selection
+    /// axis needs all three run-wise
+    /// ([`CellSelection`](super::cell_selection::CellSelection) splits a band
+    /// against an incoming rectangle), and doing any of them through
+    /// [`iter`](Self::iter) would pay the model's size for a statement whose
+    /// size is its runs — the exact cost this type was built to end.
+    #[must_use]
+    pub fn union(&self, other: &Self) -> Self {
+        let mut runs: Vec<Run> = Vec::with_capacity(self.runs.len() + other.runs.len());
+        let (mut i, mut j) = (0, 0);
+        loop {
+            let next = match (self.runs.get(i), other.runs.get(j)) {
+                (Some(a), Some(b)) => {
+                    if a.first <= b.first {
+                        i += 1;
+                        *a
+                    } else {
+                        j += 1;
+                        *b
+                    }
+                }
+                (Some(a), None) => {
+                    i += 1;
+                    *a
+                }
+                (None, Some(b)) => {
+                    j += 1;
+                    *b
+                }
+                (None, None) => break,
+            };
+            // Abutment merges, exactly as `insert_run` merges it — the
+            // canonical form is restored here rather than by a second pass, so
+            // there is no window in which a non-canonical value exists.
+            match runs.last_mut() {
+                Some(last) if next.first <= last.last.saturating_add(1) => {
+                    last.last = last.last.max(next.last);
+                }
+                _ => runs.push(next),
+            }
+        }
+        Self { runs }
+    }
+
+    /// R1563 — the indices in **both** sets. O(runs).
+    ///
+    /// The result is canonical without a coalescing pass: two output runs could
+    /// only abut if some index and its successor were both in both inputs, and
+    /// a canonical input holds those in one run.
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
+        let mut runs = Vec::new();
+        let (mut i, mut j) = (0, 0);
+        while let (Some(a), Some(b)) = (self.runs.get(i), other.runs.get(j)) {
+            let first = a.first.max(b.first);
+            let last = a.last.min(b.last);
+            if first <= last {
+                runs.push(Run { first, last });
+            }
+            if a.last < b.last {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+        Self { runs }
+    }
+
+    /// R1563 — the indices in `self` but not in `other`. O(runs).
+    #[must_use]
+    pub fn difference(&self, other: &Self) -> Self {
+        let mut runs = Vec::new();
+        for &a in &self.runs {
+            // The cursor is the lowest index of `a` not yet accounted for;
+            // `None` means `other` has covered `a` to its end. It is an
+            // `Option` rather than a `usize` because `b.last + 1` is not a
+            // number when `b.last` is `usize::MAX`, and a saturating add there
+            // would silently re-emit that index.
+            let mut cur = Some(a.first);
+            let start = other.runs.partition_point(|r| r.last < a.first);
+            for &b in &other.runs[start..] {
+                let Some(c) = cur else { break };
+                if b.first > a.last {
+                    break;
+                }
+                if b.first > c {
+                    runs.push(Run {
+                        first: c,
+                        last: b.first - 1,
+                    });
+                }
+                cur = if b.last >= a.last {
+                    None
+                } else {
+                    Some(b.last + 1)
+                };
+            }
+            if let Some(c) = cur
+                && c <= a.last
+            {
+                runs.push(Run {
+                    first: c,
+                    last: a.last,
+                });
+            }
         }
         Self { runs }
     }

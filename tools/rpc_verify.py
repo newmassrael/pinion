@@ -1899,6 +1899,43 @@ def wait_stderr(
     )
 
 
+def wire_bytes(value: Any) -> int:
+    """The compact-JSON size of a wire value, in bytes.
+
+    What a claim about a representation's cost is stated in: `[[0, 9999]]` is
+    eleven bytes whatever the model behind it holds.
+
+    R1563 obligation-3b lift: r1561, r1562 and r1563 each carried a
+    byte-identical private copy (measured — one md5 across all three), which is
+    unsurprising since all three are about the size of a selection's statement.
+    No per-demo opinion in it — the separators are what "compact" means — so it
+    is shared, and each demo keeps its own budget constant, which IS an opinion.
+    """
+    return len(json.dumps(value, separators=(",", ":")))
+
+
+def text_of_tag(tf, tag: str, *, viewport: Optional[tuple] = None) -> str:
+    """The first text the painted node at `tag` carries.
+
+    `find_by_tag` + `texts_of(...)[0]`, with the assertion that makes the
+    failure legible: a missing node otherwise surfaces as an `IndexError`
+    inside a helper rather than as "this tag is not in the paint tree".
+
+    R1563 obligation-3b lift. R1478 declined this one at two copies, and
+    recorded why — each demo picks its own "which text counts" rule. Three
+    demos now carry the *same* rule byte for byte (r1561, r1562, r1563: the
+    first text of a status bar), which is the threshold that rule was waiting
+    for. A demo whose rule differs still writes its own; this is the one that
+    repeated.
+    """
+    snap = tf.snapshot(source="paint", viewport=viewport)
+    node = find_by_tag(snap, tag)
+    assert node is not None, f"{tag!r} must be in the paint tree"
+    texts = texts_of(node)
+    assert texts, f"{tag!r} is in the paint tree but carries no text"
+    return texts[0]
+
+
 def texts_of(node: Any) -> list[str]:
     """Every `Text.content` string under `node`, depth-first.
 

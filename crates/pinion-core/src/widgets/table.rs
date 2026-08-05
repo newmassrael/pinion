@@ -57,23 +57,16 @@ use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
-/// R954 §5.38 §5.40 — what a pointer click selects in a [`Table`], the
-/// pinion analog of Qt `QAbstractItemView::SelectionBehavior`. Orthogonal
-/// to the `SelectRows` cardinality ([`Table::with_multiselect`]); it picks
-/// *what* a click selects (rows vs cells), not *how many*.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SelectionBehavior {
-    /// Activating a cell selects (washes) its whole **row** — the R707
-    /// single-row / R735 multi-row model (`hello-table`). The default.
-    #[default]
-    SelectRows,
-    /// Activating a cell selects that single **cell**, and `Shift`+click
-    /// grows the rectangle from the pinned anchor — the spreadsheet / Qt
-    /// `SelectItems` model (`hello-cell-select`). The row [`Radio`] state
-    /// is untouched: pointer selection drives the cell rectangle
-    /// ([`Table::select_cell`] / [`Table::extend_cell`]), not row washing.
-    SelectItems,
-}
+/// R954 §5.38 §5.40 — re-exported where the eager [`Table`] names it.
+///
+/// R1563 moved the definition to
+/// [`cell_selection`](crate::widgets::cell_selection), because a second
+/// coordinator ([`VirtualSelect`](crate::widgets::virtual_select::VirtualSelect))
+/// acquired the same axis and "what does a press select" is **one** concept —
+/// Qt spells it with one enum on `QAbstractItemView`, and two types here would
+/// be two vocabularies for one question that could then disagree about what
+/// `SelectItems` means. The re-export keeps every R954 consumer's spelling.
+pub use crate::widgets::cell_selection::SelectionBehavior;
 
 /// Logical data grid with framework-owned single-row selection. See
 /// module docs for the design rationale.
@@ -1237,6 +1230,12 @@ impl ExternalIntrospect for TableExternal {
                 match self.selection_behavior() {
                     SelectionBehavior::SelectRows => "rows",
                     SelectionBehavior::SelectItems => "items",
+                    // R1563 — unreachable for an eager `Table`: its only
+                    // setter is `with_select_items`, so the column arm is a
+                    // value this coordinator's constructors cannot produce.
+                    // Answered rather than `unreachable!` because a wire slot
+                    // that panics is worse than one that tells the truth.
+                    SelectionBehavior::SelectColumns => "columns",
                 }
                 .to_string(),
             )),

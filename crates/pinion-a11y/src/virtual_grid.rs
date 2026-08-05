@@ -26,6 +26,7 @@
 use crate::node::AccessNode;
 use crate::role::{AriaRole, SortDirection};
 use pinion_core::composite_tag::{GridSendKey, GridTag};
+use pinion_core::widgets::cell_selection::GridSelection as CoreGridSelection;
 use pinion_core::widgets::virtual_list::VisibleWindow;
 use pinion_core::widgets::virtual_select::SelectionExtent;
 use pinion_core::{CellIndex, EditorForm};
@@ -130,6 +131,24 @@ enum GridSelection<'a> {
     /// the question rather than a container that can answer it, and a caller
     /// holding runs, a bitmap or a tree passes its own without converting.
     Multi(&'a dyn Fn(usize) -> bool),
+    /// R1563 — a **two-axis** selection: `aria-selected` on the rendered
+    /// `gridcell`s as well as on their `row`s, and on the `columnheader` of a
+    /// fully selected column.
+    ///
+    /// The row arms above can only say that a whole record is selected, which
+    /// is what they were built for. Under
+    /// [`SelectionBehavior::SelectItems`](pinion_core::widgets::cell_selection::SelectionBehavior::SelectItems)
+    /// the selected thing is a cell, and a row-level flag would announce a row
+    /// as selected because one of its two hundred cells is — or, if it
+    /// demanded all of them, announce nothing at all for the selection the user
+    /// just made.
+    ///
+    /// **Past Qt 6.11 by being connected at all.** Qt has the accessor —
+    /// `QAccessibleTableCell::isSelected()` — but it reads
+    /// `QItemSelectionModel::isSelected` on the *view's* model, and
+    /// `QAccessibleTableHeaderCell` has no selection state of any kind, so a
+    /// fully selected column announces exactly as an unselected one.
+    Cells(&'a dyn CoreGridSelection),
 }
 
 /// The cell paint tag for data row `id`, column `col` — the
@@ -234,7 +253,7 @@ fn grid_nodes(
         .with_column_count(cols.colcount());
     // Multi-select: selection is an arbitrary row **set**, so the grid
     // container is `aria-multiselectable` (Display / Single are not).
-    if matches!(selection, GridSelection::Multi(_)) {
+    if matches!(selection, GridSelection::Multi(_) | GridSelection::Cells(_)) {
         grid.multiselectable = true;
     }
     grid = grid.with_child(GridTag::header_row(grid_tag));
@@ -261,10 +280,17 @@ fn grid_nodes(
         // header (`enrich_names_from_scene` skips any node that already has
         // one), which is what lets a section's `Qt::DecorationRole` mark join
         // it and what keeps the announced string identical to the drawn one.
-        nodes.push(
+        let mut header =
             AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
-                .with_column(col),
-        );
+                .with_column(col);
+        // R1563 — a column selected in every row is `aria-selected`, the
+        // column-axis peer of the row's flag. Only the `Cells` arm can answer
+        // it: a row predicate carries no row extent, so it cannot know whether
+        // a column is covered.
+        if let GridSelection::Cells(sel) = selection {
+            header = header.with_selected(sel.column(col) == SelectionExtent::All);
+        }
+        nodes.push(header);
     }
 
     // Windowed data rows + their gridcells.
@@ -289,15 +315,28 @@ fn grid_nodes(
             GridSelection::Display => {}
             GridSelection::Single(selected) => row = row.with_selected(selected == Some(id)),
             GridSelection::Multi(is_selected) => row = row.with_selected(is_selected(id)),
+            // R1563 — a row is `aria-selected` when it is selected AS A RECORD.
+            // A partly selected row is not: its selected cells carry the flag,
+            // which is the only reading that does not announce two hundred
+            // unselected cells as selected.
+            GridSelection::Cells(sel) => {
+                row = row.with_selected(sel.row(id) == SelectionExtent::All);
+            }
         }
         nodes.push(row);
         for col in cols.indices() {
-            nodes.push(
-                AccessNode::new(cell_tag(grid_tag, id, col), AriaRole::GridCell)
-                    // R1523 — a windowed cell states its absolute column, so it
-                    // stays locatable with its predecessors absent from the tree.
-                    .with_column(col),
-            );
+            let mut cell = AccessNode::new(cell_tag(grid_tag, id, col), AriaRole::GridCell)
+                // R1523 — a windowed cell states its absolute column, so it
+                // stays locatable with its predecessors absent from the tree.
+                .with_column(col);
+            // R1563 — Qt `QAccessibleTableCell::isSelected()`. Set only on the
+            // two-axis arm, so every row-select grid's tree is byte-identical:
+            // there `aria-selected` on the row is the whole fact, and a
+            // per-cell flag would restate it once per column.
+            if let GridSelection::Cells(sel) = selection {
+                cell = cell.with_selected(sel.cell(id, col));
+            }
+            nodes.push(cell);
         }
     }
     nodes
@@ -438,6 +477,41 @@ pub fn windowed_grid_nodes_multiselected(
         set_size,
         window,
         GridSelection::Multi(is_selected),
+        false,
+    )
+}
+
+/// R1563 §5.40 §5.27 — build a virtualized `grid` whose selection has **two
+/// axes**: `aria-selected` on the rendered `gridcell`s, on the `row`s selected
+/// as whole records, and on the `columnheader` of a column selected in every
+/// row.
+///
+/// The two-axis peer of [`windowed_grid_nodes_multiselected`], and it takes the
+/// same kind of argument for the same reason — the R1536 rule that this axis
+/// asks a *question*, so a caller holding runs, bands or a window bitmap passes
+/// its own answer rather than materialising a container for the builder to
+/// query.
+///
+/// - `columns` — how many columns the tree holds, and how many each rendered
+///   row is asked about. The window, not the table's width.
+/// - `selection` — the [`CoreGridSelection`] question, over **absolute** data
+///   row and column indices.
+#[must_use]
+pub fn windowed_grid_nodes_cells(
+    grid_tag: &str,
+    grid_name: &str,
+    columns: usize,
+    set_size: u32,
+    window: &VisibleWindow,
+    selection: &dyn CoreGridSelection,
+) -> Vec<AccessNode> {
+    grid_nodes(
+        grid_tag,
+        grid_name,
+        GridColumns::all(columns),
+        set_size,
+        window,
+        GridSelection::Cells(selection),
         false,
     )
 }

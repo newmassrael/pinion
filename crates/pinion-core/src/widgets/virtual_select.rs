@@ -46,6 +46,7 @@ use crate::external::{
 use crate::input::Modifiers;
 use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
+use crate::widgets::cell_selection::{CellSelection, ColumnSpan, SelectionBehavior};
 use crate::widgets::index_runs::IndexRuns;
 use crate::widgets::scroll::ScrollState;
 
@@ -65,6 +66,32 @@ pub enum SelectionMode {
     /// An arbitrary set of selected rows with an `anchor` origin for
     /// `Shift`-range extension and per-row `Ctrl`-toggle.
     Multi,
+}
+
+/// R1563 §5.27 — what a press on a **horizontal header section** does, beyond
+/// whatever else the binding has wired to it.
+///
+/// Qt reaches this through two independent connections to one `QHeaderView`:
+/// `sectionPressed` drives the view's column selection and `sectionClicked`
+/// drives `sortByColumn` when `setSortingEnabled(true)`. Nothing declares which
+/// a given header has, and a header can silently have both — so "does clicking
+/// this header select the column?" is a question about signal wiring rather
+/// than about the view.
+///
+/// Here it is one declared value. [`Inert`](Self::Inert) is the default and
+/// every pre-R1563 grid: those headers are the sort control (R778), and a round
+/// that adds column selection must not quietly make every sortable header
+/// select as well. The mirror of R1562's `CornerAction`, on the other axis.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SectionPress {
+    /// The section press selects nothing — it is the sort / reorder control, or
+    /// nothing at all.
+    #[default]
+    Inert,
+    /// The section press selects the column through it, with the same
+    /// `Ctrl` / `Shift` chord vocabulary a cell press has (Qt
+    /// `QHeaderView::sectionPressed` → `QTableView::selectColumn`).
+    Select,
 }
 
 /// R1562 §5.40 — how much of the model a selection covers: the tri-state a
@@ -148,27 +175,53 @@ impl SelectionExtent {
 /// does not need them, but they are harmless there.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VirtualSelect {
-    /// The selected data indices, held as the runs they are made of (R1561).
-    /// In `Single` mode this is kept at cardinality ≤ 1.
+    /// The selected **cells**, held as the bands they are made of (R1563).
+    /// In `Single` mode this is kept at one row.
     ///
     /// Was a `BTreeSet<usize>` until R1561, which is one node per selected
     /// **row**: `Ctrl+A` over the 10 000-row `hello-multi-select` binding
     /// allocated ten thousand of them and answered `query("selection")` with
     /// 58 890 bytes of JSON in 14.3 ms, for a fact whose statement is
-    /// `[[0, 9999]]`. See [`IndexRuns`] for the measurement and the invariant.
-    selection: IndexRuns,
+    /// `[[0, 9999]]`. R1561 made it [`IndexRuns`]; R1563 gave it the column
+    /// axis Qt has had all along, without giving the run form up — see
+    /// [`CellSelection`] for the normal form and why a rectangle list could not
+    /// have one.
+    cells: CellSelection,
     /// Range-extension origin — the row a `Shift`-extend grows from,
     /// unchanged while extending. Set by every plain move / toggle.
     anchor: Option<usize>,
+    /// R1563 — the column half of the extension origin, so a `Shift`-press
+    /// under [`SelectionBehavior::SelectItems`] grows a **rectangle** from where the
+    /// last plain press landed. `None` while the selection has no column axis
+    /// in play, which is every `Rows` grid.
+    #[serde(default)]
+    anchor_column: Option<usize>,
     /// The active row (WAI-ARIA active descendant / `QItemSelectionModel`
     /// `currentIndex`): the keyboard-navigation reference and the
     /// `query("selected")` value. Coincides with the sole selected row in
     /// `Single` mode.
     cursor: Option<usize>,
+    /// R1563 — the column half of the active cell. Together with
+    /// [`cursor`](Self::cursor) this is Qt's `currentIndex()`, which is a
+    /// `QModelIndex` and has always had both.
+    #[serde(default)]
+    cursor_column: Option<usize>,
     /// Total dataset size — the validity bound for any selection.
     item_count: usize,
+    /// R1563 — the model's width, and the gate on the whole column axis.
+    ///
+    /// `None` means *this grid has no column axis*: every cell- and
+    /// column-addressed operation refuses rather than guessing a width, and
+    /// `query("column_count")` answers `null` so the refusal is discoverable
+    /// without provoking one. Every pre-R1563 consumer is this, which is why it
+    /// is the default rather than a number that would have to be right.
+    #[serde(default)]
+    column_count: Option<usize>,
     /// Single- vs multi-select cardinality policy.
     mode: SelectionMode,
+    /// R1563 — what a press selects (Qt `setSelectionBehavior`).
+    #[serde(default)]
+    behavior: SelectionBehavior,
 }
 
 impl VirtualSelect {
@@ -179,19 +232,87 @@ impl VirtualSelect {
     #[must_use]
     pub fn new(item_count: usize, mode: SelectionMode) -> Self {
         Self {
-            selection: IndexRuns::new(),
+            cells: CellSelection::new(),
             anchor: None,
+            anchor_column: None,
             cursor: None,
+            cursor_column: None,
             item_count,
+            column_count: None,
             mode,
+            behavior: SelectionBehavior::default(),
         }
     }
 
-    /// The selected data indices, as the runs they are made of (ascending,
-    /// canonical). Cardinality ≤ 1 in a `Single` model.
+    /// R1563 — declare the model's width, opening the column axis.
+    ///
+    /// Without it every cell- and column-addressed operation refuses: a grid
+    /// that never said how wide it is cannot be asked to select its third
+    /// column, and guessing a width from whatever the paint happens to be
+    /// showing would make the answer depend on the scroll position.
+    #[must_use]
+    pub fn with_columns(mut self, column_count: usize) -> Self {
+        self.column_count = Some(column_count);
+        self
+    }
+
+    /// R1563 — declare what a press selects (Qt `setSelectionBehavior`).
+    #[must_use]
+    pub const fn with_behavior(mut self, behavior: SelectionBehavior) -> Self {
+        self.behavior = behavior;
+        self
+    }
+
+    /// The rows selected in **every** column, as the runs they are made of
+    /// (ascending, canonical) — Qt `QItemSelectionModel::selectedRows()`, and
+    /// the whole of the selection in a `Rows` grid. Cardinality ≤ 1 in a
+    /// `Single` model.
+    ///
+    /// R1563 — count-independently so: this is the
+    /// [`ColumnSpan::All`] band, read in O(1), so a row it names is a row
+    /// selected *as a record* and stays one when a column is added. See
+    /// [`CellSelection::rows_all_columns`], and
+    /// [`cells`](Self::cells) for the selection's other axis.
     #[must_use]
     pub fn selection(&self) -> &IndexRuns {
-        &self.selection
+        self.cells.rows_all_columns()
+    }
+
+    /// R1563 — the selection with both its axes.
+    #[must_use]
+    pub fn cells(&self) -> &CellSelection {
+        &self.cells
+    }
+
+    /// R1563 — the model's width, or `None` when this grid has no column axis.
+    #[must_use]
+    pub fn column_count(&self) -> Option<usize> {
+        self.column_count
+    }
+
+    /// R1563 — what a press selects.
+    #[must_use]
+    pub fn behavior(&self) -> SelectionBehavior {
+        self.behavior
+    }
+
+    /// R1563 — the column half of the active cell; together with
+    /// [`cursor`](Self::cursor) this is Qt's `currentIndex()`.
+    #[must_use]
+    pub fn cursor_column(&self) -> Option<usize> {
+        self.cursor_column
+    }
+
+    /// R1563 — the column half of the range-extension origin.
+    #[must_use]
+    pub fn anchor_column(&self) -> Option<usize> {
+        self.anchor_column
+    }
+
+    /// R1563 — whether the cell at `(row, col)` is selected.
+    #[must_use]
+    pub fn is_cell_selected(&self, row: usize, col: usize) -> bool {
+        self.cells.contains(row, col)
     }
 
     /// R1561 — how many rows are selected: Qt's missing
@@ -204,7 +325,7 @@ impl VirtualSelect {
     /// one addition.
     #[must_use]
     pub fn selected_count(&self) -> usize {
-        self.selection.len()
+        self.selection().len()
     }
 
     /// The active row (the `query("selected")` value, the WAI-ARIA active
@@ -215,16 +336,33 @@ impl VirtualSelect {
         self.cursor
     }
 
-    /// Whether `index` is selected.
+    /// Whether `index` is selected as a **record** — every column of it.
     #[must_use]
     pub fn is_selected(&self, index: usize) -> bool {
-        self.selection.contains(index)
+        self.selection().contains(index)
     }
 
     /// Total dataset size — the validity bound for any selection.
     #[must_use]
     pub fn item_count(&self) -> usize {
         self.item_count
+    }
+
+    /// R1563 — the width every subtraction resolves
+    /// [`ColumnSpan::All`] against. Zero when the grid has no column axis,
+    /// which is sound because the only spans such a grid holds are `All`, and
+    /// `All` minus `All` is empty at any width.
+    fn columns(&self) -> usize {
+        self.column_count.unwrap_or(0)
+    }
+
+    /// Move the active cell and reset the extension origin to it — the shared
+    /// tail of every plain (unmodified) press, on whichever axis it landed.
+    fn anchor_at(&mut self, row: Option<usize>, col: Option<usize>) {
+        self.anchor = row;
+        self.anchor_column = col;
+        self.cursor = row;
+        self.cursor_column = col;
     }
 
     /// Move the active row to `index` and replace the selection with just
@@ -235,13 +373,12 @@ impl VirtualSelect {
         if index >= self.item_count {
             return false;
         }
-        if self.cursor == Some(index) && self.selection == IndexRuns::run(index, index) {
-            return false;
-        }
-        self.selection = IndexRuns::run(index, index);
-        self.anchor = Some(index);
-        self.cursor = Some(index);
-        true
+        let moved = self.cursor != Some(index) || self.cursor_column.is_some();
+        let changed = self
+            .cells
+            .replace(&IndexRuns::run(index, index), &ColumnSpan::All);
+        self.anchor_at(Some(index), None);
+        changed || moved
     }
 
     /// `Ctrl`-toggle `index`: flip its membership, leaving the rest of the
@@ -256,11 +393,18 @@ impl VirtualSelect {
         if self.mode == SelectionMode::Single {
             return self.select(index);
         }
-        if !self.selection.remove(index) {
-            self.selection.insert(index);
+        let row = IndexRuns::run(index, index);
+        // R1563 — a row that is only *partly* selected is not selected as a
+        // record, so toggling it takes the whole record rather than dropping
+        // the cells it already had. The alternative reading — "it has
+        // something, so clear it" — makes one `Ctrl`-click undo a selection the
+        // user cannot see the boundary of.
+        if self.selection().contains(index) {
+            self.cells.remove(&row, &ColumnSpan::All, self.columns());
+        } else {
+            self.cells.add(&row, &ColumnSpan::All);
         }
-        self.anchor = Some(index);
-        self.cursor = Some(index);
+        self.anchor_at(Some(index), None);
         true
     }
 
@@ -290,11 +434,13 @@ impl VirtualSelect {
         // gesture that made the old representation's cost visible: `Shift+End`
         // on a large model is the *cheapest* thing a user can ask for and was
         // the most expensive thing the model could do.
-        let next = IndexRuns::run(lo, hi);
-        let changed = next != self.selection || self.cursor != Some(index);
-        self.selection = next;
+        let moved = self.cursor != Some(index) || self.cursor_column.is_some();
+        let changed = self
+            .cells
+            .replace(&IndexRuns::run(lo, hi), &ColumnSpan::All);
         self.cursor = Some(index);
-        changed
+        self.cursor_column = None;
+        changed || moved
     }
 
     /// Select every row (`Ctrl+A`). A no-op in `Single` mode or on an empty
@@ -307,19 +453,13 @@ impl VirtualSelect {
         if self.mode == SelectionMode::Single || self.item_count == 0 {
             return false;
         }
-        let all = IndexRuns::run(0, self.item_count - 1);
-        if self.selection == all {
-            return false;
-        }
-        self.selection = all;
-        true
+        self.cells
+            .replace(&IndexRuns::run(0, self.item_count - 1), &ColumnSpan::All)
     }
 
     pub fn clear(&mut self) -> bool {
-        let had = !self.selection.is_empty();
-        self.selection.clear();
-        self.anchor = None;
-        self.cursor = None;
+        let had = self.cells.clear();
+        self.anchor_at(None, None);
         had
     }
 
@@ -367,13 +507,10 @@ impl VirtualSelect {
             _ => None,
         };
         let want = next.map_or_else(IndexRuns::new, |i| IndexRuns::run(i, i));
-        if self.cursor == next && self.selection == want {
-            return false;
-        }
-        self.selection = want;
-        self.anchor = next;
-        self.cursor = next;
-        true
+        let moved = self.cursor != next || self.cursor_column.is_some();
+        let changed = self.cells.replace(&want, &ColumnSpan::All);
+        self.anchor_at(next, None);
+        changed || moved
     }
 
     /// Admin replace to an arbitrary set (the multi-select restore channel).
@@ -386,14 +523,220 @@ impl VirtualSelect {
     /// whole-model selection costs one comparison instead of one per row.
     pub fn set_selection(&mut self, indices: &IndexRuns) -> bool {
         let next = indices.clamped_below(self.item_count);
-        if next == self.selection {
+        let last = next.last();
+        let moved = self.cursor != last || self.cursor_column.is_some();
+        let changed = self.cells.replace(&next, &ColumnSpan::All);
+        self.anchor_at(last, None);
+        changed || moved
+    }
+
+    /// R1563 — admin replace of the **two-axis** selection (the persisted /
+    /// restore channel for a grid that selects cells or columns).
+    ///
+    /// Clamped to the model on both axes, so a restored snapshot taken against
+    /// a wider table cannot name a column that no longer exists. The active
+    /// cell becomes the last selected row, as the row-axis restore does.
+    pub fn set_cells(&mut self, cells: &CellSelection) -> bool {
+        let next = cells.clamped(self.item_count, self.columns());
+        let last = next.last_row();
+        let moved = self.cursor != last || self.cursor_column.is_some();
+        let changed = next != self.cells;
+        self.cells = next;
+        self.anchor_at(last, None);
+        changed || moved
+    }
+
+    /// R1563 — plain press on the cell `(row, col)`: replace the selection with
+    /// just that cell and make it the active cell + extension origin.
+    ///
+    /// Refuses (returns `false`, changing nothing) when the grid declared no
+    /// column axis — see [`with_columns`](Self::with_columns) — or when either
+    /// coordinate is outside the model, matching the row axis, where an
+    /// out-of-range index has always been ignored rather than clamped.
+    pub fn select_cell(&mut self, row: usize, col: usize) -> bool {
+        if !self.cell_exists(row, col) {
             return false;
         }
-        let last = next.last();
-        self.selection = next;
-        self.anchor = last;
-        self.cursor = last;
+        let moved = self.cursor != Some(row) || self.cursor_column != Some(col);
+        let changed = self
+            .cells
+            .replace(&IndexRuns::run(row, row), &ColumnSpan::column(col));
+        self.anchor_at(Some(row), Some(col));
+        changed || moved
+    }
+
+    /// R1563 — `Ctrl`-press on the cell `(row, col)`: flip that one cell,
+    /// leaving the rest of the selection alone. Collapses to
+    /// [`select_cell`](Self::select_cell) in a `Single` model.
+    pub fn toggle_cell(&mut self, row: usize, col: usize) -> bool {
+        if !self.cell_exists(row, col) {
+            return false;
+        }
+        if self.mode == SelectionMode::Single {
+            return self.select_cell(row, col);
+        }
+        let rows = IndexRuns::run(row, row);
+        let span = ColumnSpan::column(col);
+        if self.cells.contains(row, col) {
+            self.cells.remove(&rows, &span, self.columns());
+        } else {
+            self.cells.add(&rows, &span);
+        }
+        self.anchor_at(Some(row), Some(col));
         true
+    }
+
+    /// R1563 — `Shift`-press on the cell `(row, col)`: replace the selection
+    /// with the **rectangle** from the extension origin to it, leaving the
+    /// origin put. Qt's `QItemSelectionRange(anchor, current)`.
+    ///
+    /// With no origin on both axes yet — the state a grid is in before its
+    /// first cell press — it behaves as a plain
+    /// [`select_cell`](Self::select_cell), the row axis's rule for a
+    /// `Shift`-press with no anchor.
+    pub fn extend_to_cell(&mut self, row: usize, col: usize) -> bool {
+        if !self.cell_exists(row, col) {
+            return false;
+        }
+        if self.mode == SelectionMode::Single {
+            return self.select_cell(row, col);
+        }
+        let (Some(anchor_row), Some(anchor_col)) = (self.anchor, self.anchor_column) else {
+            return self.select_cell(row, col);
+        };
+        let rows = span_between(anchor_row, row);
+        let cols = span_between(anchor_col, col);
+        let moved = self.cursor != Some(row) || self.cursor_column != Some(col);
+        let changed = self.cells.replace(&rows, &ColumnSpan::Runs(cols));
+        self.cursor = Some(row);
+        self.cursor_column = Some(col);
+        changed || moved
+    }
+
+    /// R1563 — plain press on the header section for `col`: replace the
+    /// selection with that whole column. Qt `QTableView::selectColumn`.
+    ///
+    /// The rows are named as a run against the model's **current** height, and
+    /// deliberately so: the row axis is the one this framework windows, and a
+    /// selection that silently claimed rows streaming in later is not what
+    /// selecting a column means. The column axis is the one that outlives its
+    /// count — see [`CellSelection`].
+    pub fn select_column(&mut self, col: usize) -> bool {
+        if !self.column_exists(col) || self.item_count == 0 {
+            return false;
+        }
+        let moved = self.cursor != Some(0) || self.cursor_column != Some(col);
+        let changed = self
+            .cells
+            .replace(&self.all_rows(), &ColumnSpan::column(col));
+        self.anchor_at(Some(0), Some(col));
+        changed || moved
+    }
+
+    /// R1563 — `Ctrl`-press on the header section for `col`: add the column to
+    /// the selection, or take it back when it is already selected in every row.
+    /// Collapses to [`select_column`](Self::select_column) in a `Single` model.
+    pub fn toggle_column(&mut self, col: usize) -> bool {
+        if !self.column_exists(col) || self.item_count == 0 {
+            return false;
+        }
+        if self.mode == SelectionMode::Single {
+            return self.select_column(col);
+        }
+        let rows = self.all_rows();
+        let span = ColumnSpan::column(col);
+        if self.cells.column_extent(col, self.item_count) == SelectionExtent::All {
+            self.cells.remove(&rows, &span, self.columns());
+        } else {
+            self.cells.add(&rows, &span);
+        }
+        self.anchor_at(Some(0), Some(col));
+        true
+    }
+
+    /// R1563 — `Shift`-press on the header section for `col`: select every
+    /// column from the extension origin's column to it. With no column origin
+    /// yet, behaves as a plain [`select_column`](Self::select_column).
+    pub fn extend_to_column(&mut self, col: usize) -> bool {
+        if !self.column_exists(col) || self.item_count == 0 {
+            return false;
+        }
+        if self.mode == SelectionMode::Single {
+            return self.select_column(col);
+        }
+        let Some(anchor_col) = self.anchor_column else {
+            return self.select_column(col);
+        };
+        let moved = self.cursor_column != Some(col);
+        let changed = self.cells.replace(
+            &self.all_rows(),
+            &ColumnSpan::Runs(span_between(anchor_col, col)),
+        );
+        self.cursor = Some(0);
+        self.cursor_column = Some(col);
+        changed || moved
+    }
+
+    /// R1563 — how much of `row` is selected, the tri-state the vertical band
+    /// shows. [`SelectionExtent::Empty`] for every row of a grid with no column
+    /// axis that has nothing selected, [`All`](SelectionExtent::All) for one it
+    /// holds as a record.
+    #[must_use]
+    pub fn row_extent(&self, row: usize) -> SelectionExtent {
+        match self.column_count {
+            // With no column axis every span is `All`, so a row is selected or
+            // it is not — asking `CellSelection` with a width of zero would
+            // answer `Empty` for a row that *is* selected.
+            None => {
+                if self.selection().contains(row) {
+                    SelectionExtent::All
+                } else {
+                    SelectionExtent::Empty
+                }
+            }
+            Some(columns) => self.cells.row_extent(row, columns),
+        }
+    }
+
+    /// R1563 — how much of `col` is selected, the tri-state the horizontal band
+    /// shows.
+    #[must_use]
+    pub fn column_extent(&self, col: usize) -> SelectionExtent {
+        self.cells.column_extent(col, self.item_count)
+    }
+
+    /// Qt `QItemSelectionModel::selectedColumns()` — the columns selected in
+    /// every row. Empty when the grid has no column axis.
+    #[must_use]
+    pub fn column_selection(&self) -> IndexRuns {
+        self.cells
+            .columns_covering_all_rows(self.item_count, self.columns())
+    }
+
+    /// The whole row axis as one run — the rows a column selection covers.
+    fn all_rows(&self) -> IndexRuns {
+        IndexRuns::run(0, self.item_count.saturating_sub(1))
+    }
+
+    /// Whether `col` is a column of this model, and whether it has columns at
+    /// all.
+    fn column_exists(&self, col: usize) -> bool {
+        self.column_count.is_some_and(|count| col < count)
+    }
+
+    /// Whether `(row, col)` is a cell of this model.
+    fn cell_exists(&self, row: usize, col: usize) -> bool {
+        row < self.item_count && self.column_exists(col)
+    }
+}
+
+/// The inclusive run between two endpoints, in either order — the shared half
+/// of every `Shift`-extend, on either axis.
+fn span_between(anchor: usize, to: usize) -> IndexRuns {
+    if anchor <= to {
+        IndexRuns::run(anchor, to)
+    } else {
+        IndexRuns::run(to, anchor)
     }
 }
 
@@ -445,6 +788,24 @@ pub struct VirtualSelectExternal {
     /// view-level behaviours a press drives beyond selection. `None` for every
     /// consumer that only selects.
     grid_gesture: Option<Box<GridGestureFn>>,
+    /// R1563 — what a press on a horizontal header section does.
+    section_press: SectionPress,
+}
+
+/// R1563 — which axis a decoded press resolved to, so one chord vocabulary can
+/// reach all three. See [`VirtualSelectExternal::press`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PressAxis {
+    /// A whole record — a cell press under
+    /// [`SelectionBehavior::SelectRows`], a row-header press on any grid, or a bare
+    /// list item.
+    Row(usize),
+    /// A whole column — a header-section press under
+    /// [`SectionPress::Select`], or a cell press under
+    /// [`SelectionBehavior::SelectColumns`].
+    Column(usize),
+    /// One cell — a cell press under [`SelectionBehavior::SelectItems`].
+    Cell(usize, usize),
 }
 
 impl core::fmt::Debug for VirtualSelectExternal {
@@ -465,6 +826,7 @@ impl VirtualSelectExternal {
         Self {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Single)),
             grid_gesture: None,
+            section_press: SectionPress::Inert,
         }
     }
 
@@ -509,7 +871,36 @@ impl VirtualSelectExternal {
         Self {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Multi)),
             grid_gesture: None,
+            section_press: SectionPress::Inert,
         }
+    }
+
+    /// R1563 — declare the model's width, opening the column axis
+    /// ([`VirtualSelect::with_columns`]). Without it every cell- and
+    /// column-addressed path refuses, and `query("column_count")` answers
+    /// `null` so the refusal is discoverable without provoking one.
+    #[must_use]
+    pub fn with_columns(mut self, column_count: usize) -> Self {
+        self.em.inner.column_count = Some(column_count);
+        self
+    }
+
+    /// R1563 — declare what a press selects (Qt `setSelectionBehavior`).
+    #[must_use]
+    pub fn with_behavior(mut self, behavior: SelectionBehavior) -> Self {
+        self.em.inner.behavior = behavior;
+        self
+    }
+
+    /// R1563 — declare what a press on a horizontal header section does.
+    ///
+    /// [`SectionPress::Inert`] (the default) is every grid whose headers are
+    /// the sort control. See [`SectionPress`] for why this is declared rather
+    /// than inferred from the selection behaviour.
+    #[must_use]
+    pub const fn with_section_press(mut self, press: SectionPress) -> Self {
+        self.section_press = press;
+        self
     }
 
     /// The active row (the `query("selected")` value, the
@@ -521,11 +912,69 @@ impl VirtualSelectExternal {
         self.em.inner.cursor
     }
 
+    /// R1563 — the selection with both its axes
+    /// ([`VirtualSelect::cells`]).
+    #[must_use]
+    pub fn cells(&self) -> &CellSelection {
+        self.em.inner.cells()
+    }
+
+    /// R1563 — the model's width, or `None` when this grid has no column axis.
+    #[must_use]
+    pub fn column_count(&self) -> Option<usize> {
+        self.em.inner.column_count()
+    }
+
+    /// R1563 — what a press selects.
+    #[must_use]
+    pub fn behavior(&self) -> SelectionBehavior {
+        self.em.inner.behavior()
+    }
+
+    /// R1563 — what a press on a horizontal header section does.
+    #[must_use]
+    pub fn section_press(&self) -> SectionPress {
+        self.section_press
+    }
+
+    /// R1563 — whether the cell at `(row, col)` is selected.
+    #[must_use]
+    pub fn is_cell_selected(&self, row: usize, col: usize) -> bool {
+        self.em.inner.is_cell_selected(row, col)
+    }
+
+    /// R1563 — the column half of the active cell (Qt `currentIndex()`).
+    #[must_use]
+    pub fn cursor_column(&self) -> Option<usize> {
+        self.em.inner.cursor_column()
+    }
+
+    /// R1563 — how much of `row` is selected: the tri-state the vertical band
+    /// shows ([`VirtualSelect::row_extent`]).
+    #[must_use]
+    pub fn row_extent(&self, row: usize) -> SelectionExtent {
+        self.em.inner.row_extent(row)
+    }
+
+    /// R1563 — how much of `col` is selected: the tri-state the horizontal band
+    /// shows ([`VirtualSelect::column_extent`]).
+    #[must_use]
+    pub fn column_extent(&self, col: usize) -> SelectionExtent {
+        self.em.inner.column_extent(col)
+    }
+
+    /// Qt `QItemSelectionModel::selectedColumns()` — the columns selected in
+    /// every row.
+    #[must_use]
+    pub fn column_selection(&self) -> IndexRuns {
+        self.em.inner.column_selection()
+    }
+
     /// The full selection, as the runs it is made of. Cardinality ≤ 1 in a
     /// single-select model.
     #[must_use]
     pub fn selection(&self) -> &IndexRuns {
-        &self.em.inner.selection
+        self.em.inner.selection()
     }
 
     /// R1561 — how many rows are selected, without building the list Qt has to
@@ -538,7 +987,7 @@ impl VirtualSelectExternal {
     /// Whether `index` is selected.
     #[must_use]
     pub fn is_selected(&self, index: usize) -> bool {
-        self.em.inner.selection.contains(index)
+        self.em.inner.is_selected(index)
     }
 
     /// The range-extension origin (`anchor`), or `None`.
@@ -650,6 +1099,65 @@ impl VirtualSelectExternal {
         self.em.inner.set_selection(indices)
     }
 
+    /// R1563 — replace the two-axis selection directly (the admin /
+    /// persisted-restore channel, not an interaction). Clamped to the model on
+    /// both axes. Returns `true` if it changed.
+    pub fn set_cells(&mut self, cells: &CellSelection) -> bool {
+        self.em.inner.set_cells(cells)
+    }
+
+    /// R1563 — plain press on the cell `(row, col)`
+    /// ([`VirtualSelect::select_cell`]) — the **interaction** path. On a real
+    /// change, queues the §5.20 selection intent.
+    pub fn select_cell(&mut self, row: usize, col: usize) -> bool {
+        self.interaction(|model| model.select_cell(row, col))
+    }
+
+    /// R1563 — `Ctrl`-press on the cell `(row, col)`
+    /// ([`VirtualSelect::toggle_cell`]).
+    pub fn toggle_cell(&mut self, row: usize, col: usize) -> bool {
+        self.interaction(|model| model.toggle_cell(row, col))
+    }
+
+    /// R1563 — `Shift`-press on the cell `(row, col)`
+    /// ([`VirtualSelect::extend_to_cell`]).
+    pub fn extend_to_cell(&mut self, row: usize, col: usize) -> bool {
+        self.interaction(|model| model.extend_to_cell(row, col))
+    }
+
+    /// R1563 — plain press on the header section for `col`
+    /// ([`VirtualSelect::select_column`]).
+    pub fn select_column(&mut self, col: usize) -> bool {
+        self.interaction(|model| model.select_column(col))
+    }
+
+    /// R1563 — `Ctrl`-press on the header section for `col`
+    /// ([`VirtualSelect::toggle_column`]).
+    pub fn toggle_column(&mut self, col: usize) -> bool {
+        self.interaction(|model| model.toggle_column(col))
+    }
+
+    /// R1563 — `Shift`-press on the header section for `col`
+    /// ([`VirtualSelect::extend_to_column`]).
+    pub fn extend_to_column(&mut self, col: usize) -> bool {
+        self.interaction(|model| model.extend_to_column(col))
+    }
+
+    /// R1563 — run one model transition on the **interaction** path: apply it,
+    /// and queue the §5.20 selection intent when it changed something.
+    ///
+    /// The six second-axis verbs share it rather than each repeating the
+    /// `if !changed { return false }` / `push_selection_intent` pair the row
+    /// verbs were written with one at a time — a shape that is right three
+    /// times and a silent omission the fourth.
+    fn interaction(&mut self, apply: impl FnOnce(&mut VirtualSelect) -> bool) -> bool {
+        if !apply(&mut self.em.inner) {
+            return false;
+        }
+        self.push_selection_intent();
+        true
+    }
+
     /// Queue the §5.20 selection intent for the **interaction** path,
     /// carrying the mode-appropriate payload: a single-select model emits
     /// `"selected"` with the active index (the pre-R780 wire, so every
@@ -728,6 +1236,20 @@ impl VirtualSelectExternal {
             }
             return;
         }
+        if !crate::input::is_activation_event(event_name) {
+            return;
+        }
+        // R1563 — a horizontal section press, when the grid declared that its
+        // sections select. Handled before the row fall-through because a header
+        // has no row: `GridSendKey::row()` answers `None` for it, so without
+        // this the press would be dropped exactly as it was before R1563.
+        if let (Some(grid_key), SectionPress::Select) = (parsed, self.section_press)
+            && grid_key.row().is_none()
+            && let Some(col) = grid_key.col()
+        {
+            self.press(PressAxis::Column(col), modifiers);
+            return;
+        }
         let row = match parsed {
             Some(grid_key) => grid_key.row(),
             None => key.parse::<usize>().ok(),
@@ -735,28 +1257,49 @@ impl VirtualSelectExternal {
         let Some(index) = row else {
             return;
         };
-        if crate::input::is_activation_event(event_name) {
-            // R781 §5.35 §5.40 — modifier-aware click selection, the pointer
-            // peer of the `nav_select_key` keyboard ops, decoded through the
-            // R880.1 [`SelectionChord`](crate::input::SelectionChord) policy
-            // SSOT: `Ctrl`/`Cmd`-click toggles the row's membership,
-            // `Shift`-click extends the range from the anchor (the ordered-
-            // model meaning of *extend*), a plain click moves + replaces. In
-            // a single-select model `toggle` / `extend_to` collapse to a
-            // plain `select`, so a chorded click on a single-select list
-            // still just selects — exactly the pre-R781 behaviour.
-            match crate::input::SelectionChord::from_modifiers(modifiers) {
-                crate::input::SelectionChord::Toggle => {
-                    self.toggle(index);
-                }
-                crate::input::SelectionChord::Extend => {
-                    self.extend_to(index);
-                }
-                crate::input::SelectionChord::Replace => {
-                    self.select(index);
-                }
-            }
-        }
+        // R1563 — what a press on a *cell* selects is the grid's declared
+        // behaviour (Qt `setSelectionBehavior`). A row header carries no column
+        // and always selects its row: it is the address of a record, which is
+        // why the band exists. A bare list-item key has no column either.
+        let axis = match (self.behavior(), parsed.and_then(GridSendKey::col)) {
+            (SelectionBehavior::SelectItems, Some(col)) => PressAxis::Cell(index, col),
+            (SelectionBehavior::SelectColumns, Some(col)) => PressAxis::Column(col),
+            _ => PressAxis::Row(index),
+        };
+        self.press(axis, modifiers);
+    }
+
+    /// R781 §5.35 §5.40 / R1563 — the modifier-aware press, the pointer peer of
+    /// the [`nav_select_key`] keyboard ops, for whichever axis the address
+    /// resolved to.
+    ///
+    /// The chord policy itself is decoded by the R880.1
+    /// [`SelectionChord`](crate::input::SelectionChord) SSOT: `Ctrl` / `Cmd`
+    /// toggles membership, `Shift` extends from the anchor (the ordered-model
+    /// meaning of *extend*), a plain press moves and replaces. In a
+    /// single-select model every toggle / extend collapses to a plain select,
+    /// so a chorded click on a single-select list still just selects — exactly
+    /// the pre-R781 behaviour.
+    ///
+    /// One function over the **product** of chord and axis, rather than three
+    /// per-axis copies of the same three-arm match: adding an axis, or a fourth
+    /// chord, then fails to compile until every combination is stated. Three
+    /// copies would each still compile while one of them quietly kept the old
+    /// vocabulary — which is the shape R1562 removed on the row axis and the
+    /// reason a band press and a cell press cannot mean different things.
+    fn press(&mut self, axis: PressAxis, modifiers: Modifiers) {
+        use crate::input::SelectionChord as Chord;
+        match (Chord::from_modifiers(modifiers), axis) {
+            (Chord::Replace, PressAxis::Row(row)) => self.select(row),
+            (Chord::Toggle, PressAxis::Row(row)) => self.toggle(row),
+            (Chord::Extend, PressAxis::Row(row)) => self.extend_to(row),
+            (Chord::Replace, PressAxis::Column(col)) => self.select_column(col),
+            (Chord::Toggle, PressAxis::Column(col)) => self.toggle_column(col),
+            (Chord::Extend, PressAxis::Column(col)) => self.extend_to_column(col),
+            (Chord::Replace, PressAxis::Cell(row, col)) => self.select_cell(row, col),
+            (Chord::Toggle, PressAxis::Cell(row, col)) => self.toggle_cell(row, col),
+            (Chord::Extend, PressAxis::Cell(row, col)) => self.extend_to_cell(row, col),
+        };
     }
 
     /// The active index as an `IntrospectValue` (`Int` or `Null`) — the
@@ -772,7 +1315,54 @@ impl VirtualSelectExternal {
     /// query. Delegates to the [`selection_to_value`] serialize SSOT (the
     /// encode peer of [`read_selection`]).
     fn selection_value(&self) -> IntrospectValue {
-        selection_to_value(&self.em.inner.selection)
+        selection_to_value(self.em.inner.selection())
+    }
+
+    /// R1563 — the two-axis selection as its wire form, through the
+    /// [`cells_to_value`] encode SSOT (the peer of [`read_cells`]).
+    fn cells_value(&self) -> IntrospectValue {
+        cells_to_value(self.cells())
+    }
+
+    /// R1563 — run a cell-addressed verb: decode the `[row, col]` argument,
+    /// apply, and answer with the resulting two-axis selection.
+    ///
+    /// A grid with no column axis **refuses** (`Rejected`) rather than quietly
+    /// doing nothing and answering with an unchanged selection — the caller
+    /// asked for something this grid cannot do, and `Rejected` is the outcome
+    /// that says so. Qt's `QTableView::selectColumn` returns `void` and a call
+    /// on a view with no model is simply lost. An out-of-range *index* is not
+    /// that case: it is the same ignored-index contract the row verbs have had
+    /// since R746, so it answers with the unchanged selection.
+    fn cell_action(
+        &mut self,
+        args: &IntrospectValue,
+        apply: fn(&mut Self, usize, usize) -> bool,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let (row, col) = decode_cell_arg(args).ok_or(InvokeError::TypeMismatch)?;
+        if self.column_count().is_none() {
+            return Err(InvokeError::Rejected);
+        }
+        apply(self, row, col);
+        Ok(self.cells_value())
+    }
+
+    /// R1563 — run a column-addressed verb. Same refusal rule as
+    /// [`cell_action`](Self::cell_action).
+    fn column_action(
+        &mut self,
+        args: &IntrospectValue,
+        apply: fn(&mut Self, usize) -> bool,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Int(col) = *args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let col = usize::try_from(col).map_err(|_| InvokeError::TypeMismatch)?;
+        if self.column_count().is_none() {
+            return Err(InvokeError::Rejected);
+        }
+        apply(self, col);
+        Ok(self.cells_value())
     }
 
     /// The mode as its canonical wire string (`"single"` / `"multi"`).
@@ -836,17 +1426,61 @@ impl ExternalIntrospect for VirtualSelectExternal {
         // `anchor` — the range-extension origin (query only).
         // `mode` — `"single"` / `"multi"` cardinality policy (query only).
         // `item_count` — construction-fixed dataset size (query only).
-        // `send` — the R51.42 §5.35 composite pointer channel (`<i>:Event`).
+        // `cells` — settable two-axis selection as a JSON array of bands
+        //   (R1563; query + intervene). `selection` is its `All`-span band.
+        // `column_selection` — Qt `selectedColumns()` (R1563, query only).
+        // `column_count` — the model's width, `null` when this grid declared no
+        //   column axis, in which case every cell / column path refuses. Query
+        //   only: a width is what the grid IS, not a knob.
+        // `behavior` / `section_press` — what a press selects, and what a
+        //   header-section press does (R1563, query only; both are
+        //   construction-fixed the way `mode` is).
+        // `selected_column` / `anchor_column` — the column halves of the active
+        //   cell and of the extension origin (R1563, query only).
+        // `cell_count` / `band_count` — how many CELLS the selection covers and
+        //   how many bands hold them: the extension and the size of the
+        //   statement, which on this axis are different numbers.
+        //
+        // R1563 — the **verbs are declared too**, as `SchemaChannel::Invoke`.
+        // Six of them were absent before this round (`select`, `toggle`,
+        // `extend_to`, `select_all`, `toggle_all`, `clear`), so an agent reading
+        // `$schema` for this surface was told what it could read and nothing
+        // about what it could do. R1562's census found that and recorded the
+        // cause as a type that could not say "action" — which was **wrong**:
+        // `SchemaField::action` has existed since R1504. It was six missing
+        // lines. `send` moves from a read to an action for the same reason: it
+        // is called, never queried, and it was declared as a readable string.
         IntrospectSchema::new(
             const {
                 &[
                     SchemaField::new("selected", "int"),
+                    SchemaField::new("selected_column", "int"),
                     SchemaField::new("selection", "json"),
                     SchemaField::new("selection_count", "int"),
+                    SchemaField::new("cells", "json"),
+                    SchemaField::new("cell_count", "int"),
+                    SchemaField::new("band_count", "int"),
+                    SchemaField::new("column_selection", "json"),
+                    SchemaField::new("column_count", "int"),
+                    SchemaField::new("behavior", "string"),
+                    SchemaField::new("section_press", "string"),
                     SchemaField::new("anchor", "int"),
+                    SchemaField::new("anchor_column", "int"),
                     SchemaField::new("mode", "string"),
                     SchemaField::new("item_count", "int"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("select", "int"),
+                    SchemaField::action("toggle", "json"),
+                    SchemaField::action("extend_to", "json"),
+                    SchemaField::action("select_all", "json"),
+                    SchemaField::action("toggle_all", "json"),
+                    SchemaField::action("clear", "int"),
+                    SchemaField::action("select_cell", "json"),
+                    SchemaField::action("toggle_cell", "json"),
+                    SchemaField::action("extend_to_cell", "json"),
+                    SchemaField::action("select_column", "json"),
+                    SchemaField::action("toggle_column", "json"),
+                    SchemaField::action("extend_to_column", "json"),
+                    SchemaField::action("send", "int"),
                 ]
             },
         )
@@ -866,6 +1500,53 @@ impl ExternalIntrospect for VirtualSelectExternal {
             // `QModelIndex` per selected row to read the list's length.
             "selection_count" => Some(
                 i64::try_from(self.selected_count())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
+            ),
+            // R1563 — the two-axis selection, and the two numbers that describe
+            // it: how many cells it covers, and how many bands say so. On the
+            // row axis those collapsed into one question; here a select-all
+            // over a million rows and two hundred columns is 200 000 000 cells
+            // in **one** band, and an agent budgeting a read wants the second
+            // number, not the first.
+            "cells" => Some(self.cells_value()),
+            "cell_count" => Some(usize_value(
+                self.cells().cell_count(self.em.inner.columns()),
+            )),
+            "band_count" => Some(usize_value(self.cells().band_count())),
+            "column_selection" => Some(selection_to_value(&self.column_selection())),
+            // `null` rather than `0`: a grid with no column axis is not a grid
+            // zero columns wide, and the difference is exactly what a caller
+            // must know before addressing a cell.
+            "column_count" => Some(
+                self.column_count()
+                    .and_then(|c| i64::try_from(c).ok())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
+            ),
+            "behavior" => Some(IntrospectValue::Text(
+                match self.behavior() {
+                    SelectionBehavior::SelectRows => "rows",
+                    SelectionBehavior::SelectColumns => "columns",
+                    SelectionBehavior::SelectItems => "items",
+                }
+                .to_string(),
+            )),
+            "section_press" => Some(IntrospectValue::Text(
+                match self.section_press() {
+                    SectionPress::Inert => "inert",
+                    SectionPress::Select => "select",
+                }
+                .to_string(),
+            )),
+            "selected_column" => Some(
+                self.cursor_column()
+                    .and_then(|i| i64::try_from(i).ok())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
+            ),
+            "anchor_column" => Some(
+                self.em
+                    .inner
+                    .anchor_column()
+                    .and_then(|i| i64::try_from(i).ok())
                     .map_or(IntrospectValue::Null, IntrospectValue::Int),
             ),
             "anchor" => Some(
@@ -923,7 +1604,29 @@ impl ExternalIntrospect for VirtualSelectExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "selection_count" | "anchor" | "mode" | "item_count" => Err(InterveneError::ReadOnly),
+            // R1563 — the two-axis restore. Canonicalising and clamped on both
+            // axes ([`CellSelection`]'s `From<Vec<SelectionBand>>` and
+            // [`VirtualSelect::set_cells`]), so a payload whose bands overlap,
+            // repeat a span or name a column the model does not have reaches
+            // exactly the state the mutators build. A malformed band — a column
+            // span that is neither `"all"` nor an array of runs — is a type
+            // mismatch rather than a silently smaller selection.
+            "cells" => match value {
+                IntrospectValue::Json(json @ serde_json::Value::Array(_)) => {
+                    let cells: CellSelection =
+                        serde_json::from_value(json).map_err(|_| InterveneError::TypeMismatch)?;
+                    self.set_cells(&cells);
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.set_cells(&CellSelection::new());
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            "selection_count" | "cell_count" | "band_count" | "column_selection"
+            | "column_count" | "behavior" | "section_press" | "selected_column"
+            | "anchor_column" | "anchor" | "mode" | "item_count" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -989,6 +1692,23 @@ impl ExternalIntrospect for VirtualSelectExternal {
                 self.clear();
                 Ok(self.selected_value())
             }
+            // R1563 — the second axis's six verbs. Each answers with the
+            // resulting two-axis selection, so a caller sees the outcome in one
+            // round-trip exactly as the row verbs do — and it has to be `cells`
+            // rather than `selection`, because a cell selection has no rows in
+            // the `All` band and `selection` would answer `[]` after a press
+            // that plainly selected something.
+            //
+            // A cell is addressed as a two-element array. Not `"<row>_<col>"`:
+            // that spelling belongs to the *pointer* channel (`send`), where the
+            // key is a paint tag's sub-region; here the argument is a pair of
+            // numbers and JSON has a way to say so.
+            "select_cell" => self.cell_action(&args, Self::select_cell),
+            "toggle_cell" => self.cell_action(&args, Self::toggle_cell),
+            "extend_to_cell" => self.cell_action(&args, Self::extend_to_cell),
+            "select_column" => self.column_action(&args, Self::select_column),
+            "toggle_column" => self.column_action(&args, Self::toggle_column),
+            "extend_to_column" => self.column_action(&args, Self::extend_to_column),
             // R51.42 §5.35 composite pointer channel: the windowed
             // `vlist#<i>` rows route the full pointer arc here as
             // `invoke("send", "<i>:PointerEnter")` … `"<i>:PointerUp")`.
@@ -1025,9 +1745,77 @@ impl ExternalIntrospect for VirtualSelectExternal {
 /// The pre-R1561 shape returned a `Vec` of every selected index and each
 /// binding then projected that into a per-row bitmap, so a select-all cost the
 /// model's size twice on every frame that read it.
+/// R1563 — a `usize` as an `IntrospectValue::Int`, or `Null` when it does not
+/// fit. The three count slots on this surface all answer this way, and writing
+/// the fallback three times is how one of them ends up answering `0` for a
+/// number too large to send.
+fn usize_value(count: usize) -> IntrospectValue {
+    i64::try_from(count).map_or(IntrospectValue::Null, IntrospectValue::Int)
+}
+
+/// R1563 — decode a `[row, col]` cell argument.
+///
+/// Both coordinates must be present and be non-negative integers. A pair with a
+/// negative or fractional member is a **type mismatch**, not a clamp: R1561
+/// made the same call for a malformed run array, and the reason holds here —
+/// `[-1, 3]` is a caller bug, and answering it with a selection of column 3 in
+/// row 0 would hide it.
+fn decode_cell_arg(args: &IntrospectValue) -> Option<(usize, usize)> {
+    let IntrospectValue::Json(serde_json::Value::Array(pair)) = args else {
+        return None;
+    };
+    let [row, col] = pair.as_slice() else {
+        return None;
+    };
+    Some((
+        usize::try_from(row.as_u64()?).ok()?,
+        usize::try_from(col.as_u64()?).ok()?,
+    ))
+}
+
+/// R1563 §5.40 — **serialize SSOT** for the two-axis selection: the bands, each
+/// a `{"rows": [[first, last], …], "columns": "all" | [[first, last], …]}`.
+///
+/// The encode peer of [`read_cells`], kept beside it so a shape change cannot
+/// break one direction silently (the R743.1 decode-of-encode rule).
+#[must_use]
+pub fn cells_to_value(cells: &CellSelection) -> IntrospectValue {
+    serde_json::to_value(cells).map_or(IntrospectValue::Null, IntrospectValue::Json)
+}
+
+/// R1563 §5.40 — **deserialize peer** of the coordinator's `"cells"` query.
+///
+/// An empty array, an absent slot and a mistyped one all decode to the empty
+/// selection, matching [`read_selection`]. A *malformed band* decodes to empty
+/// too — this is the read path, where the caller asked what is selected and the
+/// answer was unreadable; the **write** path
+/// (`intervene("cells", …)`) refuses instead, because there a malformed payload
+/// is a caller's statement and silently accepting a smaller one changes the
+/// model.
+#[must_use]
+pub fn read_cells(intro: &dyn ExternalIntrospect) -> CellSelection {
+    match intro.query("cells") {
+        Some(IntrospectValue::Json(json)) => {
+            serde_json::from_value(json).unwrap_or_else(|_| CellSelection::new())
+        }
+        _ => CellSelection::new(),
+    }
+}
+
 #[must_use]
 pub fn read_selection(intro: &dyn ExternalIntrospect) -> IndexRuns {
-    match intro.query("selection") {
+    read_selection_at(intro, "selection")
+}
+
+/// R1563 — the same decode for any slot that carries a run set, named by path.
+///
+/// The surface has two of them now — `selection` (rows selected as records) and
+/// `column_selection` (Qt `selectedColumns()`) — encoded by the one
+/// [`selection_to_value`]. A second copy of this four-line decode is how the
+/// two directions drift, which is the R743.1 rule this pair exists under.
+#[must_use]
+pub fn read_selection_at(intro: &dyn ExternalIntrospect, path: &str) -> IndexRuns {
+    match intro.query(path) {
         Some(IntrospectValue::Json(json)) => serde_json::from_value(json).unwrap_or_default(),
         _ => IndexRuns::new(),
     }
@@ -1257,6 +2045,7 @@ pub fn nav_select_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::external::SchemaChannel;
 
     #[test]
     fn new_starts_unselected() {
@@ -1402,10 +2191,12 @@ mod tests {
     /// its implementation: a slot could be declared and unreachable, or
     /// reachable and undeclared, in either direction and silently.
     ///
-    /// `send` is the one declared path that does not read: it is the R51.42
-    /// composite pointer **write** channel, the same carve-out the R1353 audit
-    /// makes for action slots. Stated here rather than left as an exception the
-    /// reader has to infer from a `None`.
+    /// R1563 — the carve-out for `send` is gone, and with it the reason the
+    /// test had to name a path by hand: every non-reading path now **declares**
+    /// itself an action ([`SchemaChannel::Invoke`]), so the split is read off
+    /// the declaration instead of being a string this test remembers. Before
+    /// this round `send` was the one action declared as a readable string and
+    /// six real verbs were not declared at all.
     #[test]
     fn r1561_schema_is_exactly_what_query_answers() {
         let s = VirtualSelectExternal::new_multi(50);
@@ -1414,28 +2205,78 @@ mod tests {
             declared,
             [
                 "selected",
+                "selected_column",
                 "selection",
                 "selection_count",
+                "cells",
+                "cell_count",
+                "band_count",
+                "column_selection",
+                "column_count",
+                "behavior",
+                "section_press",
                 "anchor",
+                "anchor_column",
                 "mode",
                 "item_count",
+                "select",
+                "toggle",
+                "extend_to",
+                "select_all",
+                "toggle_all",
+                "clear",
+                "select_cell",
+                "toggle_cell",
+                "extend_to_cell",
+                "select_column",
+                "toggle_column",
+                "extend_to_column",
                 "send",
             ],
             "the declared surface is exact — a field added or dropped lands here",
         );
-        for path in &declared {
-            if *path == "send" {
-                assert_eq!(
-                    s.query(path),
+        for field in s.schema().fields {
+            match field.channel {
+                SchemaChannel::Read => assert!(
+                    s.query(field.path).is_some(),
+                    "declared slot {:?} must answer — a declaration nothing \
+                     implements is a surface an agent cannot follow",
+                    field.path,
+                ),
+                SchemaChannel::Invoke => assert_eq!(
+                    s.query(field.path),
                     None,
-                    "`send` is a write channel and reads as absent",
-                );
-                continue;
+                    "declared action {:?} must not also read: `SchemaChannel` \
+                     is what tells an agent which call to make",
+                    field.path,
+                ),
             }
+        }
+        // Every verb the `invoke` match answers is declared. The reverse
+        // direction of the same audit, and the one R1562's census found open:
+        // `UnknownPath` is what an undeclared verb *should* return, so a verb
+        // that works while being undeclared is invisible to it.
+        for verb in [
+            "select",
+            "toggle",
+            "extend_to",
+            "select_all",
+            "toggle_all",
+            "clear",
+            "select_cell",
+            "toggle_cell",
+            "extend_to_cell",
+            "select_column",
+            "toggle_column",
+            "extend_to_column",
+            "send",
+        ] {
             assert!(
-                s.query(path).is_some(),
-                "declared slot {path:?} must answer — a declaration nothing \
-                 implements is a surface an agent cannot follow",
+                s.schema()
+                    .fields
+                    .iter()
+                    .any(|f| f.path == verb && f.channel == SchemaChannel::Invoke),
+                "{verb:?} is answered by `invoke` and must be declared as an action",
             );
         }
     }

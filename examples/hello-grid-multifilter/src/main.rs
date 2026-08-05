@@ -241,7 +241,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         },
         &theme,
         &style,
-        |id| selected == Some(id),
+        &|id| selected == Some(id),
         GridModel {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| grid.cell(c.row, c.col).to_string(),

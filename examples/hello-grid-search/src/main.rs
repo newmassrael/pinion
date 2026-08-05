@@ -220,7 +220,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         },
         &theme,
         &style,
-        |_| false, // search has its own cursor highlight; selection is a separate axis
+        &|_| false, // search has its own cursor highlight; selection is a separate axis
         GridModel {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| search.cell(c.row, c.col).to_string(),

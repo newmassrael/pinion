@@ -294,7 +294,7 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
         },
         &theme,
         &style,
-        |id| selection.is_selected(id),
+        &|id| selection.is_selected(id),
         GridModel {
             cell: cell_text,
             columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),

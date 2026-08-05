@@ -371,6 +371,31 @@ impl GridSendKey {
         }
     }
 
+    /// R1563 — the **column** this key addresses, if it addresses one.
+    ///
+    /// The mirror of [`row`](Self::row), and it earns its place for the same
+    /// reason that one did: a [`Header`](Self::Header) answering with its column
+    /// is what lets a horizontal section press reach the very
+    /// `select_column` / `toggle_column` / `extend_to_column` transition a
+    /// [`Cell`](Self::Cell) press reaches under
+    /// [`SelectionBehavior::SelectColumns`](crate::widgets::cell_selection::SelectionBehavior::SelectColumns),
+    /// rather than a second implementation of the chord vocabulary.
+    ///
+    /// [`RowHeader`](Self::RowHeader) and [`Corner`](Self::Corner) answer
+    /// `None` — a row's section addresses every column, and the corner
+    /// addresses every one of both, and neither of those is *a* column. Note
+    /// the two accessors are not complements: a [`Cell`](Self::Cell) answers on
+    /// both, which is what a cell is.
+    #[must_use]
+    pub fn col(self) -> Option<usize> {
+        match self {
+            Self::Header { col } | Self::Cell { col, .. } | Self::EditorStep { col, .. } => {
+                Some(col)
+            }
+            Self::RowHeader { .. } | Self::Group { .. } | Self::Corner => None,
+        }
+    }
+
     /// Encode the sub-key — the **producer** side, paired with
     /// [`parse`](Self::parse) so the paint tag and the decoder grammar
     /// cannot drift. The full composite paint tag is

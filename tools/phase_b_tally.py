@@ -165,7 +165,16 @@ AXES = [
         "evidence": [
             ("example-name", [
                 "property-grid", "data-grid", "node-editor", "inspector",
-                "dock-", "tree-", "tree-view", "column-", "cell-select",
+                "dock-", "tree-", "tree-view", "cell-select",
+                # R1563 — `column-reorder` / `column-visibility` rather than
+                # `column-`: this axis owns the two header-MANIPULATION
+                # bindings, and the unbounded prefix took `hello-column-select`
+                # with them, which is a Model/View selection grid. The R1560
+                # finding again, one axis over — an unbounded substring credits
+                # an axis with work that is not its own, and it does it
+                # silently, because the round that adds the example sees only a
+                # total go up.
+                "column-reorder", "column-visibility",
                 "cell-editor",
                 "asset-browser", "file-manager", "undo", "grid-header-menu",
                 "grid-frozen-col", "row-dissect", "hex-dump", "code-fold",
@@ -331,7 +340,7 @@ AXES = [
                 # written. The leading hyphen is the boundary the names already
                 # have.
                 "-table", "grid-", "streaming-log", "tail-reveal", "live-data",
-                "multi-select", "listbox", "flex-virtual",
+                "multi-select", "listbox", "flex-virtual", "column-select",
             ]),
         ],
         # R1526 re-judgment, forced by this round's own change: introducing the
@@ -445,9 +454,53 @@ AXES = [
         # than `ResizeToContents`; and R1530's last small one now holds on both
         # axes — a binding states its row window twice (paint + a11y) as it
         # already did its column window.
-        "judged_at": 1548,
-        "completion": 91,
-        "evidence_snapshot": {"example-name": 37, "round-axis": 8},
+        #
+        # R1563 re-judgment, DEMANDED by the tool: the round ledger takes this
+        # axis 8 -> 11 (+37.5%), past the band, and it absorbs THREE rounds —
+        # R1561 and R1562 each landed at or inside the edge and deferred their
+        # look (R1562 at exactly +25%, and the test is `> 25%`).
+        #
+        # Between them they close the item this axis's own gap statement named
+        # twice running, and named as the largest one left: THE SELECTION HAD
+        # ONE AXIS. R1561 made it a set of runs rather than of rows (a
+        # `Ctrl+A` over 10 000 rows answered `query("selection")` with 58 890
+        # bytes in 10.9 ms for a fact whose statement is eleven); R1562 made
+        # the vertical band's section press select the row through it, by the
+        # derivation that a section ANSWERS WITH ITS ROW; and R1563 gave the
+        # model the column axis those two kept arriving at the edge of — a
+        # column header selects the column through it, a cell press selects a
+        # cell, and `Shift` grows a rectangle.
+        #
+        # The shape is the round's argument rather than a detail: a set of
+        # cells has no unique minimal decomposition into rectangles (a cross is
+        # two rectangles two ways, both minimal), and this framework's
+        # selection is CANONICAL because that is what lets it report whether an
+        # interaction changed anything. So `CellSelection` holds the function
+        # row -> column set GROUPED BY ITS VALUE — one band per distinct
+        # `ColumnSpan` — which is unique by construction. Past Qt: `ColumnSpan`
+        # carries no column count, so a record stays whole when the schema
+        # grows, where a Qt range built against `columnCount() - 1` is silently
+        # demoted and drops out of `selectedRows()`.
+        #
+        # +4 and not more, and the remainder is audited at R1563 rather than
+        # carried: the section axis still answers 2 of Qt's roles on both axes
+        # (`ToolTipRole` / `TextAlignmentRole` / `InitialSortOrderRole` /
+        # `SizeHintRole`); the band's width is stated rather than
+        # `ResizeToContents`; a binding still states its row window twice
+        # (paint + a11y) and `virtual_grid.rs` still has two row emitters;
+        # DRAG-select across sections is still blocked on a substrate absence
+        # the pointer wire has (it does not say whether a button is held —
+        # W3C `PointerEvent.buttons`); the KEYBOARD has no two-axis vocabulary
+        # (Qt's `Ctrl+Space` on a cell, `Ctrl+Shift+Arrow` growing a
+        # rectangle), which is this round's own new gap; the `SelectColumns`
+        # arm has no binding; and R1563 FOUND one this axis had never named —
+        # the eager `Table` holds its own single-rectangle cell selection
+        # (R952), so the tree now has two cell-selection models, one canonical
+        # and windowed, one a rectangle bounded by a model small enough to
+        # materialise.
+        "judged_at": 1563,
+        "completion": 95,
+        "evidence_snapshot": {"example-name": 37, "round-axis": 11},
     },
     {
         "key": "catalog",
