@@ -158,6 +158,16 @@ struct CellSnapshot {
     /// the coordinator's own O(bands) answer rather than recomputed here by
     /// scanning [`Self::rows`] ten thousand times per column.
     columns: [bool; NCOLS],
+    /// Per-column "selected in **any** row" — what decides whether a header
+    /// section shows as involved.
+    ///
+    /// R1563.1 — the union of the bands' own column masks, taken while
+    /// projecting them, so it costs O(bands). It was a scan of
+    /// [`Self::rows`] per painted section, which is O(model x window) EVERY
+    /// FRAME on the axis whose whole claim is that per-frame work is bounded
+    /// by what is visible. Found by the round's own debt census, not by a
+    /// failing test — nothing asserts a paint's cost here.
+    touched: [bool; NCOLS],
     /// How many **cells** are selected (the status readout).
     cells: usize,
     /// How many **bands** hold them: the size of the statement. Selecting the
@@ -175,6 +185,7 @@ impl CellSnapshot {
         Self {
             rows: [0; N],
             columns: [false; NCOLS],
+            touched: [false; NCOLS],
             cells: 0,
             bands: 0,
             records: 0,
@@ -188,6 +199,9 @@ impl CellSnapshot {
         let mut s = Self::empty();
         for band in cells.bands() {
             let mask = column_mask(&band.columns);
+            for (col, touched) in s.touched.iter_mut().enumerate() {
+                *touched |= mask & (1u8 << col) != 0;
+            }
             for run in band.rows.clamped_below(N).runs() {
                 s.rows[run.first..=run.last].fill(mask);
             }
@@ -246,11 +260,10 @@ impl GridSelection for CellSnapshot {
         if self.columns[col] {
             return SelectionExtent::All;
         }
-        // Not covered everywhere — but "is it covered anywhere" is what decides
-        // whether the section shows as involved, and only a look can answer it.
-        // Asked once per PAINTED section, so the cost is the column window's
-        // width times the model's height, not the model's area.
-        if self.rows.iter().any(|m| m & (1u8 << col) != 0) {
+        // Not covered everywhere — but "is it covered anywhere" still decides
+        // whether the section shows as involved, and R1563.1 makes that O(1)
+        // by taking it off the bands rather than by looking at the rows.
+        if self.touched[col] {
             SelectionExtent::Partial
         } else {
             SelectionExtent::Empty
@@ -614,6 +627,53 @@ mod tests {
             Some(wash),
             "its neighbour does not"
         );
+    }
+
+    /// R1563.1 — a column selected in SOME rows shows as involved and not as
+    /// selected, and the derivation that answers it is the bands' own column
+    /// union rather than a scan of the model.
+    ///
+    /// Nothing asserted this arm when it was written: the round's tests covered
+    /// the row band's `Partial` and the column band's `All`, and the column
+    /// band's `Partial` — the one the O(model) scan existed for — had no test
+    /// at all. Found by the debt census, which is why the fix could be made
+    /// without a failing test to guide it and why this exists now.
+    #[test]
+    fn r1563_1_a_partly_covered_column_is_involved_not_selected() {
+        let theme = pinion_core::theme::Theme::light();
+        let idle = theme.resolve(ColorRole::SurfaceContainerHigh);
+        let touched = theme.resolve(ColorRole::SurfaceContainerHighest);
+        let scene = run_view(&one_cell(2, 1));
+        assert_eq!(
+            fill_of(&scene, &GridTag::col_header(TABLE_TAG, 1)),
+            Some(touched),
+            "column 1 holds the selected cell, so its section is involved"
+        );
+        assert_ne!(
+            fill_of(&scene, &GridTag::col_header(TABLE_TAG, 1)),
+            Some(selection_wash()),
+            "but it is not selected — one of ten thousand rows is not a column"
+        );
+        // Its neighbour holds nothing, and says so by declaring NO fill of its
+        // own — an unselected section keeps the band's `SurfaceContainerHigh`,
+        // and stating that colour a second time on the section would be two
+        // declarations of one fill that a later theme change could split.
+        assert_eq!(
+            fill_of(&scene, &GridTag::col_header(TABLE_TAG, 0)),
+            Some(pinion_core::style::Color::TRANSPARENT),
+            "an untouched section declares no fill"
+        );
+        assert_ne!(idle, pinion_core::style::Color::TRANSPARENT);
+        // The union is the whole answer: a snapshot's `touched` must agree with
+        // what a scan of the projected rows would have said, for every column.
+        let snap = snapshot_of(&one_cell(2, 1));
+        for col in 0..NCOLS {
+            let by_scan = snap.rows.iter().any(|m| m & (1u8 << col) != 0);
+            assert_eq!(
+                snap.touched[col], by_scan,
+                "column {col}: the O(bands) union must equal the O(model) scan"
+            );
+        }
     }
 
     /// A partly selected row's band is neither of the two states a bool has —
