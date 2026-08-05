@@ -100,6 +100,21 @@ pub struct ReorderModel {
     grab_snapshot: RefCell<Option<Vec<usize>>>,
 }
 
+/// R1565.1 §5.15 — an `order` write must carry exactly one entry per
+/// position, and the refusal states both counts.
+///
+/// [`ReorderModel::set_order`] answers `false` for this AND for a
+/// non-permutation, so a caller composing one sentence out of that bool
+/// fuses two facts a client acts on differently. Its two consumers
+/// (`intervene("order")` here and `ColumnLayout::restore_state`) each check
+/// the length first, and this is the one place that words it.
+fn order_len(given: usize, want: usize) -> InterveneError {
+    InterveneError::out_of_range(format!(
+        "order: this model has {want} positions, so an order needs {want} \
+         entries, not {given}"
+    ))
+}
+
 impl ReorderModel {
     /// Build a model for `count` items in identity order (`[0, 1, …]`),
     /// flowing along `axis`.
@@ -330,11 +345,21 @@ impl ReorderModel {
                     .map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()))
                     .collect();
                 let next = next.ok_or(InterveneError::TypeMismatch)?;
+                // R1565.1 — the LENGTH is checked here rather than left to
+                // `set_order`, which answers `false` for it AND for a
+                // non-permutation. Saying "not a permutation" about a
+                // three-element array handed to a five-section model is true
+                // and useless: the caller needs the count, and a census of
+                // this round's own work found this fusion surviving inside it.
+                if next.len() != self.count {
+                    return Err(order_len(next.len(), self.count));
+                }
                 if self.set_order(&next) {
                     Ok(())
                 } else {
                     Err(InterveneError::out_of_range(format!(
-                        "{next:?} is not a permutation of 0..{}",
+                        "{next:?} is not a permutation of 0..{}: an id repeats \
+                         or is out of range",
                         self.count
                     )))
                 }
@@ -852,7 +877,7 @@ mod tests {
                 "order",
                 &IntrospectValue::Json(serde_json::json!([0, 0, 1, 2])),
             ),
-            "is not a permutation of 0..4",
+            "an id repeats or is out of range",
         );
         assert!(matches!(
             fresh.intervene("order", &IntrospectValue::Json(serde_json::json!(["a"]))),

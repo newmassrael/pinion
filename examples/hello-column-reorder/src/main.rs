@@ -1718,7 +1718,7 @@ mod tests {
                 "order",
                 IntrospectValue::Json(serde_json::json!([0, 0, 1, 2, 3])),
             ),
-            "is not a permutation of 0..5",
+            "an id repeats or is out of range",
         );
         assert_eq!(
             ext.layout.logical_index(0),

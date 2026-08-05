@@ -289,7 +289,7 @@ def body() -> None:
         # ── (F) refusals are typed, and refuse WHOLE ──────────────────
         assert_out_of_range(lambda: tf.intervene("/external/state", {
             "order": [0, 0, 2, 3, 4], "sizes": [9] * 5, "hidden": [True] * 5,
-        }), saying="is not a permutation of 0..5")                                      # 53
+        }), saying="an id repeats or is out of range")                                      # 53
         assert_out_of_range(lambda: tf.intervene("/external/state", {
             "order": [0, 1, 2, 3, 4], "sizes": [9, 9], "hidden": [False] * 5,
         }), saying="needs 5 entries, not 2")                                            # 54

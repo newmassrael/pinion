@@ -197,7 +197,7 @@ def body() -> None:
         # this, a silently-accepted bad permutation would corrupt the mapping
         # every assertion above depends on.
         assert_out_of_range(lambda: tf.intervene("/external/order", [0, 0, 1, 2, 3]),
-                            saying="is not a permutation of 0..5")                      # 35
+                            saying="an id repeats or is out of range")                      # 35
         assert_rpc_error(lambda: tf.intervene(f"/external/order", 3),
                          data="InterveneTypeMismatch")                                  # 36
         assert_rpc_error(lambda: tf.intervene(f"/external/labels", "x"),

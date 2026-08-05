@@ -2309,9 +2309,15 @@ impl ColumnLayout {
                 state.min_section_size, state.max_section_size
             )));
         }
+        // R1565.1 — the length first, because `set_order` answers `false` for
+        // it AND for a non-permutation; the two are different repairs.
+        if state.order.len() != self.count {
+            return Err(row_len("order", state.order.len(), self.count));
+        }
         if !self.sections.set_order(&state.order) {
             return Err(InterveneError::out_of_range(format!(
-                "the saved order {:?} is not a permutation of 0..{}",
+                "the saved order {:?} is not a permutation of 0..{}: an id \
+                 repeats or is out of range",
                 state.order, self.count
             )));
         }
