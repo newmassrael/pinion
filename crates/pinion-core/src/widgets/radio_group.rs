@@ -38,6 +38,7 @@
 //! `"selected"` intent carrying the new index as
 //! [`IntrospectValue::Int`].
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
@@ -47,7 +48,6 @@ use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
 use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// Logical group of N Radio widgets with framework-owned mutual
 /// exclusion. See module docs for the full design rationale.
@@ -526,11 +526,15 @@ impl ExternalIntrospect for RadioGroupExternal {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
                     let (idx, event_name, _): (usize, &str, _) =
-                        crate::composite_tag::parse_send_payload(s).ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::require_parsed_send_payload("radio_group.send", s)?;
                     if idx >= self.count() {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "radio_group.send: no button {idx} in this group (it has {})",
+                            self.count()
+                        )));
                     }
-                    let ev = RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        crate::widget_core::require_event::<RadioEvent>("radio_group", event_name)?;
                     self.send(idx, ev);
                     Ok(match self.selected_index() {
                         Some(i) => {
@@ -549,6 +553,7 @@ impl ExternalIntrospect for RadioGroupExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_refused_saying;
 
     fn activate(group: &mut RadioGroup, i: usize) {
         group.send(i, RadioEvent::PointerEnter);
@@ -870,19 +875,19 @@ mod tests {
     fn external_invoke_send_malformed_args_rejected() {
         let mut g = RadioGroupExternal::new(3);
         // Missing colon.
-        assert_eq!(
-            g.invoke("send", IntrospectValue::Text("PointerEnter".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &g.invoke("send", IntrospectValue::Text("PointerEnter".to_string())),
+            "malformed send payload \"PointerEnter\"",
         );
         // Index out of range.
-        assert_eq!(
-            g.invoke("send", IntrospectValue::Text("99:PointerUp".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &g.invoke("send", IntrospectValue::Text("99:PointerUp".to_string())),
+            "no button 99 in this group (it has 3)",
         );
         // Unknown event name.
-        assert_eq!(
-            g.invoke("send", IntrospectValue::Text("0:Teleport".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &g.invoke("send", IntrospectValue::Text("0:Teleport".to_string())),
+            "\"Teleport\" is not an event this widget accepts",
         );
     }
 

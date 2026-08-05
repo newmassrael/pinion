@@ -241,8 +241,11 @@ impl ExternalIntrospect for VnSaveDemoExternal {
             // Persist the live play-head to a named on-disk slot.
             "save_slot" => {
                 let key = slot_name(&args)?;
-                let blob =
-                    serde_json::to_vec(&self.state.save()).map_err(|_| InvokeError::Rejected)?;
+                let blob = serde_json::to_vec(&self.state.save()).map_err(|why| {
+                    InvokeError::rejected(format!(
+                        "save_slot: the play-head did not serialize: {why}"
+                    ))
+                })?;
                 self.storage.save(&key, &blob);
                 Ok(IntrospectValue::json(&self.state.save()))
             }
@@ -252,12 +255,18 @@ impl ExternalIntrospect for VnSaveDemoExternal {
                 let key = slot_name(&args)?;
                 match self.storage.load(&key) {
                     Some(bytes) => {
-                        let save: VnSave =
-                            serde_json::from_slice(&bytes).map_err(|_| InvokeError::Rejected)?;
+                        let save: VnSave = serde_json::from_slice(&bytes).map_err(|why| {
+                            InvokeError::rejected(format!(
+                                "load_slot: slot {key:?} does not hold a save this build \
+                                 can read: {why}"
+                            ))
+                        })?;
                         self.state.load(save);
                         Ok(IntrospectValue::json(&self.state.save()))
                     }
-                    None => Err(InvokeError::Rejected),
+                    None => Err(InvokeError::rejected(format!(
+                        "load_slot: no save in slot {key:?}"
+                    ))),
                 }
             }
             // Every other verb is the inner crate surface's, verbatim; forward

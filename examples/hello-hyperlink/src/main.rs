@@ -498,7 +498,9 @@ impl ExternalIntrospect for HyperlinkOracle {
                     _ => return Err(InvokeError::TypeMismatch),
                 };
                 let idx = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
-                let uri = self.uri_of(HyperlinkId(idx)).ok_or(InvokeError::Rejected)?;
+                let uri = self.uri_of(HyperlinkId(idx)).ok_or_else(|| {
+                    InvokeError::rejected(format!("{path}: no hyperlink {idx} in this document"))
+                })?;
                 self.activated = Some((HyperlinkId(idx), uri.clone()));
                 Ok(IntrospectValue::Text(uri))
             }
@@ -606,6 +608,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     fn colors() -> CellColors {
         CellColors {
@@ -699,9 +702,9 @@ mod tests {
             .unwrap();
         assert_eq!(o.query("hover_index"), Some(IntrospectValue::Null));
         // Guards.
-        assert_eq!(
-            o.invoke("activate", IntrospectValue::Int(9)),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &o.invoke("activate", IntrospectValue::Int(9)),
+            "no hyperlink 9 in this document",
         );
         assert_eq!(
             o.invoke("bogus", IntrospectValue::Null),

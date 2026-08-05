@@ -386,7 +386,9 @@ impl ExternalIntrospect for TreeSortExternal {
             "cycle_sort" => Ok(self.set(self.state.sort.get().cycle())),
             "set_sort" => match args {
                 IntrospectValue::Text(s) => {
-                    let mode = TreeSort::parse(&s).ok_or(InvokeError::Rejected)?;
+                    let mode = TreeSort::parse(&s).ok_or_else(|| {
+                        InvokeError::rejected(format!("set_sort: {s:?} is not a sort mode"))
+                    })?;
                     Ok(self.set(mode))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -755,6 +757,7 @@ mod tests {
         SceneGraphFilter, TOTAL_NODES, TREE_TAG, TreeRow, TreeSort, TreeSortExternal,
         apply_key_impl, initial_nodes, sorted_tree, tree_row_tag, use_filter, use_tree_state, view,
     };
+    use pinion_core::test_fixtures::assert_refused_saying;
     use std::rc::Rc;
 
     use pinion_a11y::{AriaRole, WidgetA11y};
@@ -1158,9 +1161,9 @@ mod tests {
                 TreeSort::Desc,
                 "set_sort wrote the shared signal"
             );
-            assert_eq!(
-                ext.invoke("set_sort", IntrospectValue::Text("bogus".to_owned())),
-                Err(InvokeError::Rejected)
+            assert_refused_saying(
+                &ext.invoke("set_sort", IntrospectValue::Text("bogus".to_owned())),
+                "\"bogus\" is not a sort mode",
             );
             // intervene mirrors set_sort; a bad value is a TypeMismatch.
             ext.intervene("sort", IntrospectValue::Text("asc".to_owned()))

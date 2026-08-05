@@ -1335,6 +1335,11 @@ AXES = [
                 "ai-introspect", "answer-origin", "encoded-answer",
                 "endpoint-identity", "viewport-question", "conn-lifecycle",
                 "forge-counter", "subscribe",
+                # R1564 — a refused invoke states why. The wire's error channel
+                # is this axis's subject as much as its answer channel is: PR-82
+                # measured a consumer guessing at causes because `error.data`
+                # published a variant name where the surface had a sentence.
+                "refused-invoke",
             ]),
         ],
         # R1539 re-judged 30 -> 42, demanded by the tool: this axis had never
@@ -1407,9 +1412,46 @@ AXES = [
         #    not WHICH SUBTREE. There is no per-subscription filter. Qt has no
         #    equivalent at all so it is an axis gap rather than round debt, but
         #    a large scene where an agent watches one panel will want it.
-        "judged_at": 1552,
-        "completion": 50,
-        "evidence_snapshot": {"example-name": 8, "round-axis": 2},
+        "judged_at": 1564,
+        "completion": 55,
+                # R1564 re-judged 50 -> 55, DEMANDED by the tool: the ledger took this
+        # axis 2 -> 3 and the round-axis snapshot moved +50%, past the band.
+        #
+        # It closes the ERROR half of a describable API — R1539 opened the
+        # answer half and R1552 the direction. `InvokeError::Rejected` was
+        # payload-free, so a producer that knew exactly why it was refusing had
+        # nowhere to say it, and the wire published `"InvokeRejected"`: the
+        # transport's classification, not the fact the surface observed. The
+        # cost was MEASURED by the consumer rather than argued — six of sprag's
+        # fifteen reachable CLI failure paths print an `or`-joined guess at
+        # causes their own daemon had already told apart (PINION-PR82).
+        #
+        # Only +5, and the ceiling is the axis's own NAME. Two things hold it
+        # down, both stated rather than waved at:
+        #
+        #  - This round made the surface BIGGER and changed a WIRE CONTRACT: a
+        #    refusal moved from -32602 to -32005. That is the opposite of
+        #    stabilisation in the short run, and it is a prerequisite for it in
+        #    the long run — a category error cannot be frozen, and "the
+        #    parameters were invalid" is the wrong statement about a call whose
+        #    parameters were fine.
+        #  - Of R1539's four remaining gaps it touches exactly one, and touches
+        #    it partially: "no per-method error taxonomy" is now a per-CLASS
+        #    one (the framework's finding vs the surface's refusal, told apart
+        #    by code), which is what a consumer needs to branch. Per METHOD is
+        #    still absent.
+        #
+        # Audited at R1564, and what remains is larger than what was closed:
+        # `InterveneError` carries no reason at all, so `ReadOnly` /
+        # `OutOfRange` are exactly as opaque as `Rejected` was — the write-state
+        # channel is the next slice ([[wire-form-read-write-symmetry]]); no
+        # version negotiation, deprecation path, compatibility policy or freeze
+        # (the four things "stabilisation" names, untouched since R1519); no
+        # method->type binding; the census still covers `pinion-rpc` only; no
+        # per-subscription filter (R1552's own); and the -32000..-32099 space is
+        # now three codes deep with no published map, so a client discovers
+        # `ACTION_REFUSED` by reading pinion's source rather than by asking.
+        "evidence_snapshot": {"example-name": 9, "round-axis": 3},
     },
 ]
 

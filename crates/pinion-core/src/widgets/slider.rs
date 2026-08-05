@@ -62,6 +62,7 @@ pub use sm::SliderPolicy;
 // `WidgetCore::read_state` + `WidgetCore::event_name` via
 // `state_name_derive` + `event_name_derive` on `#[widget(...)]`.
 
+use crate::WidgetStateName;
 use crate::event::WheelStepper;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -70,7 +71,6 @@ use crate::external::{
 use crate::input::Modifiers;
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// R1533 §5.45 §5.38 — one wheel notch on a **continuous** slider, in
 /// normalised units.
@@ -634,7 +634,7 @@ impl ExternalIntrospect for SliderExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = SliderEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<SliderEvent>("slider", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -660,6 +660,7 @@ fn slider_axis_name(axis: SliderAxis) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WidgetEventName;
 
     #[test]
     fn initial_state_is_idle_zero() {

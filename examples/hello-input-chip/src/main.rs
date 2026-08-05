@@ -50,7 +50,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
-use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
@@ -526,7 +525,10 @@ impl ExternalIntrospect for ChipDeleteExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     let (id, event_name, _): (u64, &str, _) =
-                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                        pinion_core::composite_tag::require_parsed_send_payload(
+                            "input_chip.send",
+                            payload,
+                        )?;
                     let committed = self.drive(id, event_name);
                     if committed && self.is_present(id) {
                         self.delete_by_id(id);
@@ -542,7 +544,9 @@ impl ExternalIntrospect for ChipDeleteExternal {
             // from "no-op stale id".
             "delete" => match args {
                 IntrospectValue::Int(i) => {
-                    let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let id = u64::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a chip id"))
+                    })?;
                     let was_present = self.is_present(id);
                     self.delete_by_id(id);
                     Ok(IntrospectValue::Bool(was_present))

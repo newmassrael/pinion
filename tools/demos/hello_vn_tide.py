@@ -68,6 +68,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_pixel_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     isolated_storage_dir,
@@ -239,14 +240,16 @@ def _prove_and_checkpoint(g: RpcSubprocess) -> dict[str, Any]:
     assert_eq(script["steps"][4]["goto"], 7, "the peril line carries its End jump")
 
     # ── (E) every failure surfaces loudly over the wire, never a silent success.
-    assert_rpc_error(lambda: inv("choose", 0), data="InvokeRejected")  # at End, not a choice
+    # R1564 — the two `choose` refusals used to be one value; the wire now
+    # distinguishes "not at a choice" from "no such option".
+    assert_action_refused(lambda: inv("choose", 0), saying="not at a choice right now")
     assert_rpc_error(lambda: tick("soon"), data="InvokeTypeMismatch")
     assert_rpc_error(lambda: inv("bogus", None), data="UnknownInvokePath")
     assert_rpc_error(lambda: inv("load", 3), data="InvokeTypeMismatch")
     assert_rpc_error(lambda: g.intervene(f"{EXT}/mode", "x"), data="ReadOnly")
     assert_rpc_error(lambda: g.intervene(f"{EXT}/nonexistent", 3), data="UnknownIntervenePath")
     g.intervene(f"{EXT}/step", 2)
-    assert_rpc_error(lambda: inv("choose", 9), data="InvokeRejected")
+    assert_action_refused(lambda: inv("choose", 9), saying="no option 9 at this choice")
 
     # ── (F) persist a distinctive checkpoint — mid-countdown dialogue AND a
     # non-default stage (night background + the 무녀 sprite still shown) — to an
@@ -282,7 +285,9 @@ def _prove_reload(g: RpcSubprocess, checkpoint: dict[str, Any]) -> None:
     assert (q("background") or "").endswith("tideflat.png"), "fresh boot has the DEFAULT background"
     assert_eq(q("sprite_count"), 1, "fresh boot has only the opening 무녀 sprite")
     # Loading a slot that was never written is Rejected (well-typed, nothing there).
-    assert_rpc_error(lambda: g.invoke(f"{EXT}/load_slot", "nope"), data="InvokeRejected")
+    assert_action_refused(
+        lambda: g.invoke(f"{EXT}/load_slot", "nope"), saying='no save in slot "slot.nope"'
+    )
     # The checkpoint the previous process saved reloads from disk — dialogue AND stage.
     g.invoke(f"{EXT}/load_slot", "checkpoint")
     assert_eq(q("step"), checkpoint["step"], "the saved step survived the restart")

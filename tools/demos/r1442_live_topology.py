@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -187,7 +188,10 @@ def body() -> None:
             "assertion above is about a picture that never moved"
         )
         assert_eq(q(tf, "feed_remaining"), 0, "the incident played out")
-        assert_rpc_error(lambda: tf.invoke("/external/advance", None))
+        assert_action_refused(
+            lambda: tf.invoke("/external/advance", None),
+            saying="the scripted timeline has no further step",
+        )
         # The graph really is different now.
         assert_eq(q(tf, "services"), len(SEED_SERVICES) + 1, "cache and gw-ap in, auth out")
         assert "auth" not in q(tf, "service_names"), "auth was retired"
@@ -247,23 +251,54 @@ def body() -> None:
         before = q(tf, "services")
         assert isinstance(tf.invoke("/external/add_service", "billing"), str)
         assert_eq(q(tf, "services"), before + 1, "a service appeared")
-        assert_rpc_error(lambda: tf.invoke("/external/add_service", "billing"))
+        assert_action_refused(
+            lambda: tf.invoke("/external/add_service", "billing"),
+            saying='a service named "billing" is already in the topology',
+        )
         assert isinstance(tf.invoke("/external/connect", "gw-us,billing"), str)
-        assert_rpc_error(lambda: tf.invoke("/external/connect", "gw-us,billing"))
-        assert_rpc_error(lambda: tf.invoke("/external/connect", "gw-us,ghost"))
-        assert_rpc_error(lambda: tf.invoke("/external/connect", "billing"))
+        # R1564 — these three were one indistinguishable frame; the first two
+        # are a topology fact and the third is a malformed argument.
+        assert_action_refused(
+            lambda: tf.invoke("/external/connect", "gw-us,billing"),
+            saying="a link that is already there",
+        )
+        assert_action_refused(
+            lambda: tf.invoke("/external/connect", "gw-us,ghost"),
+            saying="names a service that is not",
+        )
+        assert_action_refused(
+            lambda: tf.invoke("/external/connect", "billing"),
+            saying='malformed argument "billing"',
+        )
         assert_eq(
             tf.invoke("/external/node_column", "billing"),
             tf.invoke("/external/node_column", "api"),
             "one hop downstream, like the other gateway consumers",
         )
         assert isinstance(tf.invoke("/external/disconnect", "gw-us,billing"), str)
-        assert_rpc_error(lambda: tf.invoke("/external/disconnect", "gw-us,billing"))
+        # R1564 — five refusals that arrived as one indistinguishable frame.
+        # Every one is a different fact about the topology or the argument.
+        assert_action_refused(
+            lambda: tf.invoke("/external/disconnect", "gw-us,billing"),
+            saying="no link gw-us -> billing in the topology",
+        )
         assert isinstance(tf.invoke("/external/remove_service", "billing"), str)
-        assert_rpc_error(lambda: tf.invoke("/external/remove_service", "billing"))
-        assert_rpc_error(lambda: tf.invoke("/external/node_x", "billing"))
-        assert_rpc_error(lambda: tf.invoke("/external/column_order", "not-a-number"))
-        assert_rpc_error(lambda: tf.invoke("/external/wire_points", "api,gw-eu"))
+        assert_action_refused(
+            lambda: tf.invoke("/external/remove_service", "billing"),
+            saying='no service named "billing"',
+        )
+        assert_action_refused(
+            lambda: tf.invoke("/external/node_x", "billing"),
+            saying='no service named "billing"',
+        )
+        assert_action_refused(
+            lambda: tf.invoke("/external/column_order", "not-a-number"),
+            saying='"not-a-number" is not a column index',
+        )
+        assert_action_refused(
+            lambda: tf.invoke("/external/wire_points", "api,gw-eu"),
+            saying="both exist but are not connected",
+        )
 
         # Every published measurement is a READ — a client cannot assert a
         # crossing count the drawing does not have.

@@ -3552,6 +3552,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-refused-invoke"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-rpc",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-replay"
 version = "0.0.1"
 dependencies = [

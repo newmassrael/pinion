@@ -45,6 +45,7 @@
 //! `"selected"` intent carrying the new selected row index as
 //! [`IntrospectValue::Int`].
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
@@ -55,7 +56,6 @@ use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
 use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// R954 §5.38 §5.40 — re-exported where the eager [`Table`] names it.
 ///
@@ -918,6 +918,134 @@ impl TableExternal {
         self.em.inner.selected_tsv()
     }
 
+    /// R1564 §5.15 — the `send` arm's body, lifted out of
+    /// [`invoke`](ExternalIntrospect::invoke) so that match stays inside the
+    /// workspace line budget. Same split R952 made for `invoke_cell_select`;
+    /// this round's reasons pushed the arm over it.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::Rejected`] naming the malformed payload, the
+    /// unaddressable target or the axis this surface does not have.
+    fn dispatch_send(&mut self, s: &str) -> Result<IntrospectValue, InvokeError> {
+        // R880.1 — the `split_send_payload` `:` grammar SSOT
+        // strips a held-modifier third segment (a hand-rolled
+        // split_once read "PointerUp:c" as the event name and
+        // a Ctrl+click on a cell/header was silently rejected).
+        let (key, event_name, mods) = crate::composite_tag::require_send_payload("table.send", s)?;
+        // R730 §5.40 / R777.1 — the `'#'`-split sub-key is
+        // decoded by the shared `GridSendKey` SSOT (the same
+        // grammar the paint producer encodes and
+        // `VirtualSelectExternal` decodes): a header click
+        // `"h<col>"` cycles the sort on `PointerUp` (the
+        // activate edge; other phases inert), a cell click
+        // `"<row>_<col>"` drives that cell's radio.
+        match crate::composite_tag::GridSendKey::parse(key).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "table.send: {key:?} is not a grid address \
+                     (expected \"h<col>\", \"r<row>\", \"<row>_<col>\" or \"c\")"
+            ))
+        })? {
+            crate::composite_tag::GridSendKey::Header { col } => {
+                if col >= self.col_count() {
+                    return Err(InvokeError::rejected(format!(
+                        "table.send: no column {col} in this table (it has {})",
+                        self.col_count()
+                    )));
+                }
+                if event_name == PointerWireEvent::Up.as_wire_name() {
+                    self.cycle_sort(col);
+                }
+                Ok(self.query("sort_dir").unwrap_or(IntrospectValue::Null))
+            }
+            crate::composite_tag::GridSendKey::Cell { row, col } => {
+                if row >= self.row_count() || col >= self.col_count() {
+                    return Err(InvokeError::rejected(format!(
+                        "table.send: no cell ({row}, {col}) in this table \
+                             (it is {} x {})",
+                        self.row_count(),
+                        self.col_count()
+                    )));
+                }
+                // R954 §5.38 — a `SelectItems` grid selects the
+                // clicked *cell* on the activate edge (PointerUp):
+                // a plain click collapses the rectangle to it, a
+                // `Shift`-click extends it from the anchor. Other
+                // pointer phases are inert — no row washing (the
+                // R953 SelectRows-on-click smell). The keyboard /
+                // RPC `select-cell` wire is behavior-agnostic.
+                if self.selection_behavior() == SelectionBehavior::SelectItems {
+                    if event_name == PointerWireEvent::Up.as_wire_name() {
+                        if mods.shift {
+                            self.em.inner.extend_cell(row, col);
+                        } else {
+                            self.em.inner.select_cell(row, col);
+                        }
+                        // R955.1 — setter-returns-read-outcome: echo
+                        // the new cell rectangle so a pointer client
+                        // learns the selection in one round-trip (the
+                        // SelectRows branch's `selected_row` analog).
+                        return Ok(self
+                            .query("cell_selection")
+                            .unwrap_or(IntrospectValue::Null));
+                    }
+                    return Ok(IntrospectValue::Null);
+                }
+                let ev = crate::widget_core::require_event::<RadioEvent>("table", event_name)?;
+                self.send_cell(row, col, ev);
+                // R735 §5.38 — single returns the (possibly new)
+                // `selected_row`; multi returns Null (no single
+                // row). AI clients follow up with `selected.<i>`
+                // / `selected_rows()` for the new full set.
+                Ok(if self.is_multiselect() {
+                    IntrospectValue::Null
+                } else {
+                    match self.selected_row() {
+                        Some(r) => IntrospectValue::Int(int_of(r)),
+                        None => IntrospectValue::Null,
+                    }
+                })
+            }
+            // R1562 — a row-header press (`"r<row>"`) selects the
+            // whole line, on the surface that paints a vertical band
+            // as much as on the virtualized one. Reaching the SAME
+            // model verbs a cell press reaches is the point: one
+            // behaviour, addressed two ways.
+            crate::composite_tag::GridSendKey::RowHeader { row } => {
+                if row >= self.row_count() {
+                    return Err(InvokeError::rejected(format!(
+                        "table.send: no row {row} in this table (it has {})",
+                        self.row_count()
+                    )));
+                }
+                self.send_row_header(row, event_name)
+            }
+            // R1562 — the corner (`"c"`) addresses the whole model.
+            crate::composite_tag::GridSendKey::Corner => {
+                if event_name == PointerWireEvent::Up.as_wire_name() {
+                    self.toggle_all_rows();
+                }
+                Ok(self.selection_outcome())
+            }
+            // R892 — the eager `Table` has no group axis; a
+            // group-header key is not addressable here.
+            //
+            // R1555 — nor an editing axis. `GridEditState` is wired
+            // by the virtualized grid path, so the eager table paints
+            // no editor and therefore has no step affordance to
+            // address. Rejected rather than ignored, so a binding
+            // that sends one learns it went nowhere.
+            crate::composite_tag::GridSendKey::Group { .. } => Err(InvokeError::rejected(
+                "table.send: the eager table has no group axis, \
+                         so a group-header address reaches nothing",
+            )),
+            crate::composite_tag::GridSendKey::EditorStep { .. } => Err(InvokeError::rejected(
+                "table.send: the eager table paints no cell editor, \
+                         so it has no step affordance to address",
+            )),
+        }
+    }
+
     /// R952 §5.38 — the cell range selection `invoke` actions, split out of
     /// [`invoke`](ExternalIntrospect::invoke) for SRP (and to keep that
     /// dispatch under the line ceiling, like the find / fold helpers
@@ -990,7 +1118,7 @@ impl TableExternal {
             }
             return Ok(IntrospectValue::Null);
         }
-        let ev = RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
+        let ev = crate::widget_core::require_event::<RadioEvent>("table", event_name)?;
         self.send_cell(row, 0, ev);
         Ok(self.selection_outcome())
     }
@@ -1415,108 +1543,7 @@ impl ExternalIntrospect for TableExternal {
             // as `"<row>_<col>:<EventName>"` (the R51.42 `'#'`-split
             // funnel). Returns the new selected row (or `Null`).
             "send" => match args {
-                IntrospectValue::Text(ref s) => {
-                    // R880.1 — the `split_send_payload` `:` grammar SSOT
-                    // strips a held-modifier third segment (a hand-rolled
-                    // split_once read "PointerUp:c" as the event name and
-                    // a Ctrl+click on a cell/header was silently rejected).
-                    let (key, event_name, mods) =
-                        crate::composite_tag::split_send_payload(s).ok_or(InvokeError::Rejected)?;
-                    // R730 §5.40 / R777.1 — the `'#'`-split sub-key is
-                    // decoded by the shared `GridSendKey` SSOT (the same
-                    // grammar the paint producer encodes and
-                    // `VirtualSelectExternal` decodes): a header click
-                    // `"h<col>"` cycles the sort on `PointerUp` (the
-                    // activate edge; other phases inert), a cell click
-                    // `"<row>_<col>"` drives that cell's radio.
-                    match crate::composite_tag::GridSendKey::parse(key)
-                        .ok_or(InvokeError::Rejected)?
-                    {
-                        crate::composite_tag::GridSendKey::Header { col } => {
-                            if col >= self.col_count() {
-                                return Err(InvokeError::Rejected);
-                            }
-                            if event_name == PointerWireEvent::Up.as_wire_name() {
-                                self.cycle_sort(col);
-                            }
-                            Ok(self.query("sort_dir").unwrap_or(IntrospectValue::Null))
-                        }
-                        crate::composite_tag::GridSendKey::Cell { row, col } => {
-                            if row >= self.row_count() || col >= self.col_count() {
-                                return Err(InvokeError::Rejected);
-                            }
-                            // R954 §5.38 — a `SelectItems` grid selects the
-                            // clicked *cell* on the activate edge (PointerUp):
-                            // a plain click collapses the rectangle to it, a
-                            // `Shift`-click extends it from the anchor. Other
-                            // pointer phases are inert — no row washing (the
-                            // R953 SelectRows-on-click smell). The keyboard /
-                            // RPC `select-cell` wire is behavior-agnostic.
-                            if self.selection_behavior() == SelectionBehavior::SelectItems {
-                                if event_name == PointerWireEvent::Up.as_wire_name() {
-                                    if mods.shift {
-                                        self.em.inner.extend_cell(row, col);
-                                    } else {
-                                        self.em.inner.select_cell(row, col);
-                                    }
-                                    // R955.1 — setter-returns-read-outcome: echo
-                                    // the new cell rectangle so a pointer client
-                                    // learns the selection in one round-trip (the
-                                    // SelectRows branch's `selected_row` analog).
-                                    return Ok(self
-                                        .query("cell_selection")
-                                        .unwrap_or(IntrospectValue::Null));
-                                }
-                                return Ok(IntrospectValue::Null);
-                            }
-                            let ev =
-                                RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
-                            self.send_cell(row, col, ev);
-                            // R735 §5.38 — single returns the (possibly new)
-                            // `selected_row`; multi returns Null (no single
-                            // row). AI clients follow up with `selected.<i>`
-                            // / `selected_rows()` for the new full set.
-                            Ok(if self.is_multiselect() {
-                                IntrospectValue::Null
-                            } else {
-                                match self.selected_row() {
-                                    Some(r) => IntrospectValue::Int(int_of(r)),
-                                    None => IntrospectValue::Null,
-                                }
-                            })
-                        }
-                        // R1562 — a row-header press (`"r<row>"`) selects the
-                        // whole line, on the surface that paints a vertical band
-                        // as much as on the virtualized one. Reaching the SAME
-                        // model verbs a cell press reaches is the point: one
-                        // behaviour, addressed two ways.
-                        crate::composite_tag::GridSendKey::RowHeader { row } => {
-                            if row >= self.row_count() {
-                                return Err(InvokeError::Rejected);
-                            }
-                            self.send_row_header(row, event_name)
-                        }
-                        // R1562 — the corner (`"c"`) addresses the whole model.
-                        crate::composite_tag::GridSendKey::Corner => {
-                            if event_name == PointerWireEvent::Up.as_wire_name() {
-                                self.toggle_all_rows();
-                            }
-                            Ok(self.selection_outcome())
-                        }
-                        // R892 — the eager `Table` has no group axis; a
-                        // group-header key is not addressable here.
-                        //
-                        // R1555 — nor an editing axis. `GridEditState` is wired
-                        // by the virtualized grid path, so the eager table paints
-                        // no editor and therefore has no step affordance to
-                        // address. Rejected rather than ignored, so a binding
-                        // that sends one learns it went nowhere.
-                        crate::composite_tag::GridSendKey::Group { .. }
-                        | crate::composite_tag::GridSendKey::EditorStep { .. } => {
-                            Err(InvokeError::Rejected)
-                        }
-                    }
-                }
+                IntrospectValue::Text(ref s) => self.dispatch_send(s),
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R730 §5.40 — direct sort cycle for AI clients: `invoke
@@ -1525,9 +1552,14 @@ impl ExternalIntrospect for TableExternal {
             // Returns the resulting `sort_dir` token.
             "sort" => match args {
                 IntrospectValue::Int(i) => {
-                    let col = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let col = usize::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("table.sort: {i} is not a column index"))
+                    })?;
                     if col >= self.col_count() {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "table.sort: no column {col} in this table (it has {})",
+                            self.col_count()
+                        )));
                     }
                     self.cycle_sort(col);
                     Ok(self.query("sort_dir").unwrap_or(IntrospectValue::Null))
@@ -1547,6 +1579,7 @@ impl ExternalIntrospect for TableExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_refused_saying;
 
     #[test]
     fn r886_1_cell_cmp_is_a_total_order_on_mixed_cells() {
@@ -1759,13 +1792,13 @@ mod tests {
         assert_eq!(ext.selected_row(), Some(1));
         assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(1)));
         // Malformed and out-of-range wires reject.
-        assert_eq!(
-            ext.invoke("send", IntrospectValue::Text("nope".to_string())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &ext.invoke("send", IntrospectValue::Text("nope".to_string())),
+            "malformed send payload \"nope\"",
         );
-        assert_eq!(
-            ext.invoke("send", IntrospectValue::Text("9_9:PointerUp".to_string())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &ext.invoke("send", IntrospectValue::Text("9_9:PointerUp".to_string())),
+            "no cell (9, 9) in this table (it is 2 x 2)",
         );
     }
 
@@ -1876,9 +1909,9 @@ mod tests {
             Some(IntrospectValue::Text("ascending".to_string()))
         );
         // Out-of-range column rejects.
-        assert_eq!(
-            ext.invoke("sort", IntrospectValue::Int(9)),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &ext.invoke("sort", IntrospectValue::Int(9)),
+            "no column 9 in this table",
         );
     }
 
@@ -2440,9 +2473,9 @@ mod tests {
         );
         // Out of range is refused rather than silently ignored.
         let bad = compose_send_payload(Some("r99"), "PointerUp", Modifiers::default());
-        assert_eq!(
-            from_band.invoke("send", IntrospectValue::Text(bad)),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &from_band.invoke("send", IntrospectValue::Text(bad)),
+            "no row 99 in this table",
         );
     }
 

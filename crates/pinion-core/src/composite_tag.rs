@@ -31,8 +31,15 @@
 //!
 //! Generic over [`core::str::FromStr`] keeps the substrate type-safe
 //! at the call site — each consumer receives a parsed `K` they declared
-//! up-front, with `K::Err` collapsed into `None` for the caller's
-//! `.ok_or(InvokeError::Rejected)?` flow.
+//! up-front, with `K::Err` collapsed into `None`.
+//!
+//! R1564 §5.15 — the `Option`-returning decoders have `Result` peers
+//! ([`require_send_payload`], [`require_parsed_send_payload`],
+//! [`require_pair`]) that state **why** the decode failed, because a refusal
+//! that names nothing is what
+//! [`RefusalReason`](crate::external::RefusalReason) exists to end. Prefer
+//! them from an `invoke` arm; the `Option` forms remain for callers that
+//! branch on absence rather than refusing.
 //!
 //! R660 §5.16 — framework-side composites
 //! ([`crate::widgets::radio_group::RadioGroupExternal`],
@@ -42,6 +49,7 @@
 //! composite-tag invoke arm in the workspace shares one parser.
 //!
 
+use crate::external::InvokeError;
 use crate::input::Modifiers;
 use core::str::FromStr;
 
@@ -200,12 +208,85 @@ pub fn parse_send_payload<K: FromStr>(payload: &str) -> Option<(K, &str, Modifie
 /// middle slice, not a typed pair.
 ///
 /// `None` when the separator is absent or either half does not parse as its
-/// requested type, so a caller maps one `None` to its own
-/// [`InvokeError::Rejected`](crate::external::InvokeError::Rejected).
+/// requested type. Prefer [`require_pair`] from an `invoke` arm — it says
+/// which of those it was.
 #[must_use]
 pub fn parse_pair<A: FromStr, B: FromStr>(payload: &str, sep: char) -> Option<(A, B)> {
     let (a, b) = payload.split_once(sep)?;
     Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+}
+
+/// R1564 §5.15 (PINION-PR82) — [`split_send_payload`] as a refusal that states
+/// why, for the `invoke` arms that decode a composite send.
+///
+/// The `None` those decoders answer with is one bit, and every site that
+/// mapped it to a bare `InvokeError::Rejected` discarded three facts it was
+/// already holding: which action was addressed, which wire form was expected,
+/// and what arrived instead. Composing that sentence *here* is the same
+/// argument this module already makes about the grammar — one codec, so two
+/// decoders cannot disagree about what "malformed" means, and now they cannot
+/// disagree about how to say so either.
+///
+/// `action` is the invoke path the caller was serving; it leads the sentence
+/// because a refusal read out of context has to name what was refused.
+///
+/// # Errors
+///
+/// [`InvokeError::Rejected`] naming the malformed payload, when
+/// [`split_send_payload`] answers `None`.
+pub fn require_send_payload<'a>(
+    action: &str,
+    payload: &'a str,
+) -> Result<(&'a str, &'a str, Modifiers), InvokeError> {
+    split_send_payload(payload).ok_or_else(|| {
+        InvokeError::rejected(format!(
+            "{action}: malformed send payload {payload:?} (expected \"<key>:<EventName>[:<mods>]\")"
+        ))
+    })
+}
+
+/// R1564 §5.15 — [`parse_send_payload`] as a refusal that states why.
+///
+/// Distinguishes the two failures the `Option` form fuses: a payload that does
+/// not have the composite shape at all, and one that does but whose `<key>`
+/// segment is not a `K`. They are different operator actions — fix the caller's
+/// encoding, or address a target that exists — which is precisely the
+/// distinction PINION-PR82 measured six sprag CLI paths guessing at.
+///
+/// # Errors
+///
+/// [`InvokeError::Rejected`] naming either the malformed payload or the
+/// unparseable key.
+pub fn require_parsed_send_payload<'a, K: FromStr>(
+    action: &str,
+    payload: &'a str,
+) -> Result<(K, &'a str, Modifiers), InvokeError> {
+    let (key_str, event_name, modifiers) = require_send_payload(action, payload)?;
+    let key = key_str.parse().map_err(|_| {
+        InvokeError::rejected(format!(
+            "{action}: send key {key_str:?} is not a valid target for this surface"
+        ))
+    })?;
+    Ok((key, event_name, modifiers))
+}
+
+/// R1564 §5.15 — [`parse_pair`] as a refusal that states why, for the `invoke`
+/// arms whose argument is a typed pair.
+///
+/// # Errors
+///
+/// [`InvokeError::Rejected`] naming the malformed argument and the separator
+/// it was expected to carry.
+pub fn require_pair<A: FromStr, B: FromStr>(
+    action: &str,
+    payload: &str,
+    sep: char,
+) -> Result<(A, B), InvokeError> {
+    parse_pair(payload, sep).ok_or_else(|| {
+        InvokeError::rejected(format!(
+            "{action}: malformed argument {payload:?} (expected \"<a>{sep}<b>\")"
+        ))
+    })
 }
 
 /// R777.1 §5.16 §5.40 — the **grid composite send sub-key** grammar: the

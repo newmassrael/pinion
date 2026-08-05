@@ -113,7 +113,7 @@ use pinion_a11y::{
     listbox_option_nodes, tree_access_nodes, tree_row_tag, windowed_list_nodes_selected,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
-use pinion_core::composite_tag::{prefixed_index, split_send_payload};
+use pinion_core::composite_tag::prefixed_index;
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
@@ -697,7 +697,8 @@ fn default_properties() -> Vec<CellValue> {
 /// Branch-node id prefix for a category section (`cat.Identity`). The separator
 /// is `.` (not `:`): a branch id rides the composite-tag pointer wire as the
 /// `send` payload's key, and that payload is `:`-delimited
-/// ([`split_send_payload`]), so a `:` in the id would mis-split a header click.
+/// ([`split_send_payload`](pinion_core::composite_tag::split_send_payload)), so a `:`
+/// in the id would mis-split a header click.
 const CAT_PREFIX: &str = "cat.";
 /// Branch-node id prefix for a struct property (`struct.Position`).
 const STRUCT_PREFIX: &str = "struct.";
@@ -1995,8 +1996,50 @@ impl PropertyGridExternal {
     /// struct), a **branch** row (`cat:…` / `struct:…` toggles collapse), or a
     /// numeric leaf row (focus + bool-toggle / popup-open / `DoubleClick`-edit)
     /// — all route into this one coordinator.
+    /// R1564 — the popup-commit verbs, lifted out of
+    /// [`invoke`](ExternalIntrospect::invoke) to keep that dispatch under the
+    /// workspace line ceiling. Same split this file already made for
+    /// [`dispatch_send`](Self::dispatch_send).
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::TypeMismatch`] when the argument is not an index, and
+    /// [`InvokeError::Rejected`] naming an index this surface cannot address.
+    fn dispatch_popup(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match (path, args) {
+            // Commit a popup option by index, closing the popup (the option
+            // click + RPC choice-commit path). Requires an open choice popup.
+            ("choose", IntrospectValue::Int(i)) => {
+                let opt = usize::try_from(*i).map_err(|_| {
+                    InvokeError::rejected(format!("{path}: {i} is not an option index"))
+                })?;
+                Ok(IntrospectValue::Bool(self.commit_choice_index(opt)))
+            }
+            // Commit a colour swatch by index, closing the popup (the swatch
+            // click + RPC path). Requires an open colour popup.
+            ("pick_color", IntrospectValue::Int(i)) => {
+                let sw = usize::try_from(*i).map_err(|_| {
+                    InvokeError::rejected(format!("{path}: {i} is not a swatch index"))
+                })?;
+                Ok(IntrospectValue::Bool(self.commit_color_swatch(sw)))
+            }
+            // Dismiss the open popup without committing (RPC + the keyboard
+            // `Escape` / barrier path share `close_popup`).
+            ("close_popup", _) => {
+                self.close_popup();
+                Ok(IntrospectValue::Null)
+            }
+            _ => Err(InvokeError::TypeMismatch),
+        }
+    }
+
     fn dispatch_send(&mut self, s: &str) -> Result<IntrospectValue, InvokeError> {
-        let (key, event_name, _) = split_send_payload(s).ok_or(InvokeError::Rejected)?;
+        let (key, event_name, _) =
+            pinion_core::composite_tag::require_send_payload("property_grid.send", s)?;
         if key == "dismiss" {
             if event_name == "PointerUp" {
                 self.close_popup();
@@ -2004,7 +2047,11 @@ impl PropertyGridExternal {
             return Ok(IntrospectValue::Null);
         }
         if let Some(opt) = key.strip_prefix(CHOICE_OPT_PREFIX) {
-            let i: usize = opt.parse().map_err(|_| InvokeError::Rejected)?;
+            let i: usize = opt.parse().map_err(|_| {
+                InvokeError::rejected(format!(
+                    "property_grid.send: choice target {key:?} carries no option index"
+                ))
+            })?;
             if event_name == "PointerUp" {
                 self.commit_choice_index(i);
             } else {
@@ -2013,7 +2060,11 @@ impl PropertyGridExternal {
             return Ok(IntrospectValue::Null);
         }
         if let Some(sw) = key.strip_prefix(COLOR_SW_PREFIX) {
-            let i: usize = sw.parse().map_err(|_| InvokeError::Rejected)?;
+            let i: usize = sw.parse().map_err(|_| {
+                InvokeError::rejected(format!(
+                    "property_grid.send: swatch target {key:?} carries no preset index"
+                ))
+            })?;
             if event_name == "PointerUp" {
                 self.commit_color_swatch(i);
             } else {
@@ -2085,9 +2136,13 @@ impl PropertyGridExternal {
         // element leaf (`elem.<k>`): both scrub / edit through the unified
         // `ValueRef` path, so an element row behaves exactly like a numeric
         // scalar row (R931).
-        let value_ref = row_ref(key).ok_or(InvokeError::Rejected)?;
+        let value_ref = row_ref(key).ok_or_else(|| {
+            InvokeError::rejected(format!("property_grid.send: {key:?} is not a row address"))
+        })?;
         if self.value_at(value_ref).is_none() {
-            return Err(InvokeError::Rejected);
+            return Err(InvokeError::rejected(format!(
+                "property_grid.send: row {key:?} holds no editable value"
+            )));
         }
         Ok(self.dispatch_leaf(key, event_name, value_ref))
     }
@@ -2514,7 +2569,9 @@ impl ExternalIntrospect for PropertyGridExternal {
             // row.
             "toggle" => match args {
                 IntrospectValue::Int(i) => {
-                    let row = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let row = usize::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a row index"))
+                    })?;
                     Ok(IntrospectValue::Bool(self.toggle(row)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -2527,7 +2584,9 @@ impl ExternalIntrospect for PropertyGridExternal {
             // keyboard reset also route through (one funnel, two addressings).
             "reset" => match args {
                 IntrospectValue::Int(i) => {
-                    let row = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let row = usize::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a row index"))
+                    })?;
                     Ok(IntrospectValue::Bool(self.reset_to_default(row)))
                 }
                 IntrospectValue::Text(ref id) => match row_ref(id) {
@@ -2535,7 +2594,9 @@ impl ExternalIntrospect for PropertyGridExternal {
                         Ok(IntrospectValue::Bool(self.reset_to_default(i)))
                     }
                     Some(ValueRef::Elem(k)) => Ok(IntrospectValue::Bool(self.reset_element(k))),
-                    None => Err(InvokeError::Rejected),
+                    None => Err(InvokeError::rejected(format!(
+                        "{path}: {id:?} is not a row address"
+                    ))),
                 },
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -2557,7 +2618,9 @@ impl ExternalIntrospect for PropertyGridExternal {
             // R930.1 latch / cursor invalidation).
             "remove_elem" => match args {
                 IntrospectValue::Int(i) => {
-                    let k = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let k = usize::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not an element index"))
+                    })?;
                     Ok(IntrospectValue::Bool(self.remove_elem(k)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -2568,7 +2631,11 @@ impl ExternalIntrospect for PropertyGridExternal {
             // whether it moved.
             "move_elem" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (from, to) = parse_move_pair(s).ok_or(InvokeError::Rejected)?;
+                    let (from, to) = parse_move_pair(s).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: malformed argument {s:?} (expected \"<from>,<to>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(self.move_elem(from, to)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -2599,9 +2666,14 @@ impl ExternalIntrospect for PropertyGridExternal {
             // choice row, opens the popup.
             "begin" => match args {
                 IntrospectValue::Int(i) => {
-                    let row = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let row = usize::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a row index"))
+                    })?;
                     if row >= self.count() {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "{path}: no row {row} in this grid (it has {})",
+                            self.count()
+                        )));
                     }
                     Ok(IntrospectValue::Bool(
                         self.begin_edit(ValueRef::Scalar(row)),
@@ -2611,35 +2683,17 @@ impl ExternalIntrospect for PropertyGridExternal {
                 // or an array element "elem.2"), the unified `ValueRef` address
                 // the keyboard element-edit path uses.
                 IntrospectValue::Text(ref id) => {
-                    let value_ref = row_ref(id).ok_or(InvokeError::Rejected)?;
+                    let value_ref = row_ref(id).ok_or_else(|| {
+                        InvokeError::rejected(format!("{path}: {id:?} is not a row address"))
+                    })?;
                     Ok(IntrospectValue::Bool(self.begin_edit(value_ref)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
-            // Commit a popup option by index, closing the popup (the option
-            // click + RPC choice-commit path). Requires an open choice popup.
-            "choose" => match args {
-                IntrospectValue::Int(i) => {
-                    let opt = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
-                    Ok(IntrospectValue::Bool(self.commit_choice_index(opt)))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // Commit a colour swatch by index, closing the popup (the swatch
-            // click + RPC path). Requires an open colour popup.
-            "pick_color" => match args {
-                IntrospectValue::Int(i) => {
-                    let sw = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
-                    Ok(IntrospectValue::Bool(self.commit_color_swatch(sw)))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // Dismiss the open popup without committing (RPC + the keyboard
-            // `Escape` / barrier path share `close_popup`).
-            "close_popup" => {
-                self.close_popup();
-                Ok(IntrospectValue::Null)
-            }
+            // The three popup verbs, split out (SRP + the workspace line
+            // ceiling, which R1564's reasons pushed this dispatch over) — the
+            // same lift `dispatch_send` already is.
+            "choose" | "pick_color" | "close_popup" => self.dispatch_popup(path, &args),
             _ => Err(InvokeError::UnknownPath),
         }
     }

@@ -47,7 +47,7 @@
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 
-use crate::composite_tag::{parse_pair, parse_send_payload, split_subindex};
+use crate::composite_tag::{require_pair, require_parsed_send_payload, split_subindex};
 use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
     SchemaField,
@@ -340,7 +340,7 @@ impl ReorderModel {
     /// Reorder actions for [`ExternalIntrospect::invoke`]:
     ///
     /// - `send` — composite `"{visual}:{EventName}"` wire form (parsed via
-    ///   the shared [`parse_send_payload`] SSOT). A `PointerDown` records
+    ///   the shared [`require_parsed_send_payload`] SSOT). A `PointerDown` records
     ///   the pressed visual so `begin_drag` can arm it.
     /// - `move` — move the focused item by the integer delta (clamped,
     ///   cursor following); returns the new focused index or `Null`.
@@ -366,7 +366,7 @@ impl ReorderModel {
                 };
                 // R781 — modifiers ignored (reorder press has no modifier axis).
                 let (visual, event, _): (usize, &str, _) =
-                    parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                    require_parsed_send_payload("reorder.send", payload)?;
                 if event == PointerWireEvent::Down.as_wire_name() && visual < self.count {
                     self.pressed.set(Some(visual));
                 }
@@ -406,10 +406,13 @@ impl ReorderModel {
                 // R1451 — the typed-pair argument codec, shared with
                 // `ColumnLayout`'s three pair invokes (the inline
                 // `split_once` this replaced was its first site).
-                let (from, to) =
-                    parse_pair::<usize, usize>(payload, ':').ok_or(InvokeError::Rejected)?;
+                let (from, to) = require_pair::<usize, usize>("reorder.move", payload, ':')?;
                 if from >= self.count || to >= self.count {
-                    return Err(InvokeError::Rejected);
+                    return Err(InvokeError::rejected(format!(
+                        "reorder.move: {from} -> {to} is outside this model \
+                         (it has {} positions)",
+                        self.count
+                    )));
                 }
                 self.move_section(from, to);
                 Ok(self.query("order").unwrap_or(IntrospectValue::Null))
@@ -554,6 +557,7 @@ pub fn read_reorder(intro: &dyn ExternalIntrospect) -> ReorderView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_refused_saying;
 
     fn drop_h(visual: usize, x_rel: f32) -> DropPoint {
         DropPoint {
@@ -857,14 +861,14 @@ mod tests {
             .expect("move_section is a known action");
         assert_eq!(out, m.query("order").expect("order is queryable"));
         assert_eq!(m.order(), [1, 2, 0, 3]);
-        assert!(matches!(
-            m.invoke("move_section", &IntrospectValue::Text("0:9".into())),
-            Err(InvokeError::Rejected)
-        ));
-        assert!(matches!(
-            m.invoke("move_section", &IntrospectValue::Text("nope".into())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &m.invoke("move_section", &IntrospectValue::Text("0:9".into())),
+            "0 -> 9 is outside this model",
+        );
+        assert_refused_saying(
+            &m.invoke("move_section", &IntrospectValue::Text("nope".into())),
+            "malformed argument \"nope\"",
+        );
         assert!(matches!(
             m.invoke("move_section", &IntrospectValue::Int(0)),
             Err(InvokeError::TypeMismatch)

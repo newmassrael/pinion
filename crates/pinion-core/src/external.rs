@@ -942,11 +942,103 @@ pub enum InterveneError {
     OutOfRange,
 }
 
+/// R1564 §5.15 §2 #2 (PINION-PR82) — the sentence a producer attaches when it
+/// refuses to fire an action: what an operator reads, and what an agent reasons
+/// about.
+///
+/// # Why a refusal has to carry one
+///
+/// [`InvokeError::Rejected`] used to be a payload-free variant, so a producer
+/// that knew *exactly* why it was refusing had nowhere to say it. The cost was
+/// measured downstream rather than argued: over sprag's fifteen reachable CLI
+/// failure paths, **six** print a list of causes joined by `or` — not because
+/// the consumer is lazy, but because the daemon's own handler knew which one it
+/// was and the wire had no slot for the answer. `sprag_host::workspace::
+/// report_agent` refuses in exactly two places, "no detector installed" and "no
+/// pane with that id", and the two demand completely different operator
+/// actions; they arrived fused, as the string `InvokeRejected`.
+///
+/// The variant's own doc had already conceded the point — it listed
+/// "preconditions unmet, statechart in a forbidding state, etc.", which is a
+/// set, not a reason. This type is where that set collapses back to the member
+/// the producer actually observed.
+///
+/// # What a good reason says
+///
+/// It names the **thing** and the **fact about it**, in the vocabulary the
+/// caller used: `"no pane 999 on this host"`, not `"precondition failed"`. It
+/// is prose for a human and for a model, never a discriminator — a consumer
+/// that needs to branch reads the JSON-RPC error *code* (see
+/// `pinion_rpc::ACTION_REFUSED`), which is exactly why that code was split out
+/// of `-32602 Invalid params` in the same round. Matching on this text is the
+/// thing this type exists to stop, not to enable.
+///
+/// # Past Qt
+///
+/// Qt's floor here is the absence of a channel: `QMetaObject::invokeMethod`
+/// answers `bool`, `QAction::trigger()` answers `void`, and a `QAbstractButton`
+/// that declines a click reports nothing at all. There is no Qt API a refused
+/// action can put a sentence into, so nothing here is parity — the shape is
+/// chosen ([[qt-is-the-floor-not-the-target]]).
+///
+/// `Cow` rather than `String` because the overwhelming majority of in-tree
+/// reasons are fixed sentences known at compile time, and a refusal on a hot
+/// decode path should not allocate to say so; a runtime reason that interpolates
+/// the offending value ([`InvokeError::rejected`] takes both) is the case that
+/// pays.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RefusalReason(Cow<'static, str>);
+
+impl RefusalReason {
+    /// A fixed sentence, known at compile time — no allocation.
+    #[must_use]
+    pub const fn stated(reason: &'static str) -> Self {
+        Self(Cow::Borrowed(reason))
+    }
+
+    /// The sentence, for rendering onto a wire or into a log.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The sentence as a `Cow`, so a static reason reaches the wire without an
+    /// allocation the borrow already avoided.
+    #[must_use]
+    pub fn into_cow(self) -> Cow<'static, str> {
+        self.0
+    }
+}
+
+impl From<&'static str> for RefusalReason {
+    fn from(reason: &'static str) -> Self {
+        Self(Cow::Borrowed(reason))
+    }
+}
+
+impl From<String> for RefusalReason {
+    fn from(reason: String) -> Self {
+        Self(Cow::Owned(reason))
+    }
+}
+
+impl From<Cow<'static, str>> for RefusalReason {
+    fn from(reason: Cow<'static, str>) -> Self {
+        Self(reason)
+    }
+}
+
+impl std::fmt::Display for RefusalReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Failure modes for [`ExternalIntrospect::invoke`] (R17 bidirectional
 /// RPC spec round — symbolic action channel, third leg of the
 /// query / intervene / invoke triad).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvokeError {
     /// Path is not declared as an action in the schema.
     UnknownPath,
@@ -954,10 +1046,52 @@ pub enum InvokeError {
     /// type.
     TypeMismatch,
     /// Path exists and args type matches, but the action refused to
-    /// fire (preconditions unmet, statechart in a forbidding state,
-    /// etc.). Distinct from `TypeMismatch` because retrying with
+    /// fire. Distinct from `TypeMismatch` because retrying with
     /// different args may succeed.
-    Rejected,
+    ///
+    /// R1564 — carries the producer's own [`RefusalReason`]. Build it with
+    /// [`rejected`](Self::rejected) rather than the tuple constructor, so a
+    /// `&'static str` and a `format!` reason are written the same way.
+    ///
+    /// The reason is **required by the type**: there is no arm of this variant
+    /// that refuses anonymously, and that is deliberate. An optional reason is
+    /// a reason nobody supplies — the same argument
+    /// [`ArgDomain::Open`]'s doc makes about a domain that must never be a
+    /// default. The cost is that every producer states something; the benefit
+    /// is that no operator ever reads a refusal that names nothing.
+    Rejected(RefusalReason),
+}
+
+impl InvokeError {
+    /// R1564 §5.15 — refuse to fire, stating why.
+    ///
+    /// Takes `&'static str`, `String` or `Cow<'static, str>`, so a fixed
+    /// sentence costs no allocation and an interpolated one
+    /// (`format!("no pane {id}")`) needs no ceremony:
+    ///
+    /// ```
+    /// # use pinion_core::external::InvokeError;
+    /// let id = 999;
+    /// let fixed = InvokeError::rejected("the detector is not installed");
+    /// let interpolated = InvokeError::rejected(format!("no pane {id} on this host"));
+    /// assert_ne!(fixed, interpolated);
+    /// ```
+    #[must_use]
+    pub fn rejected(reason: impl Into<RefusalReason>) -> Self {
+        Self::Rejected(reason.into())
+    }
+
+    /// R1564 §5.15 — the producer's sentence, when this is a refusal that
+    /// carries one. `None` for [`UnknownPath`](Self::UnknownPath) /
+    /// [`TypeMismatch`](Self::TypeMismatch), whose meaning is the variant
+    /// itself and whose wire word the transport owns.
+    #[must_use]
+    pub fn reason(&self) -> Option<&RefusalReason> {
+        match self {
+            Self::Rejected(reason) => Some(reason),
+            _ => None,
+        }
+    }
 }
 
 /// Opt-in symbolic introspection (§5.15 item 8). An `External` exposes

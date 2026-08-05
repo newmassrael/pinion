@@ -941,7 +941,7 @@ impl MenuBarExternal {
         // hand-rolled split_once read "PointerUp:c" as the event name and a
         // Ctrl+click outside the dropdown failed to dismiss it).
         let (sub, event_name, _mods) =
-            crate::composite_tag::split_send_payload(payload).ok_or(InvokeError::Rejected)?;
+            crate::composite_tag::require_send_payload("menu.send", payload)?;
         // R1543 §5.39 — `KeyboardActivate` is not a pointer event and must be
         // decoded before the pointer vocabulary, which would reject it. It is
         // the wire a MNEMONIC arrives on: the shell resolves `Alt+F` to the
@@ -961,20 +961,38 @@ impl MenuBarExternal {
             let mut chars = sub.chars();
             match (chars.next(), chars.as_str()) {
                 (Some('t'), rest) => {
-                    let index: usize = rest.parse().map_err(|_| InvokeError::Rejected)?;
+                    let index: usize = rest.parse().map_err(|_| {
+                        InvokeError::rejected(format!(
+                            "menu.send: title target {sub:?} carries no index \
+                             ({rest:?} is not a number)"
+                        ))
+                    })?;
                     self.em.inner.activate_title(index);
                 }
                 (Some('i'), rest) => {
-                    let path = parse_path(rest).ok_or(InvokeError::Rejected)?;
+                    let path = parse_path(rest).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "menu.send: item target {sub:?} is not a dotted descent path"
+                        ))
+                    })?;
                     if let Some(full) = self.em.inner.activate_rel(&path) {
                         self.emit_command(&full);
                     }
                 }
-                _ => return Err(InvokeError::Rejected),
+                _ => {
+                    return Err(InvokeError::rejected(format!(
+                        "menu.send: KeyboardActivate target {sub:?} names no sub-element \
+                         (expected \"t<index>\" or \"i<path>\")"
+                    )));
+                }
             }
             return Ok(open_value(self.open_menu()));
         }
-        let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
+        let event = PointerWireEvent::from_wire_name(event_name).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "menu.send: {event_name:?} is neither a pointer event name nor KeyboardActivate"
+            ))
+        })?;
         // R715 §5.16 — the transparent dismiss barrier (`<bar>#barrier`,
         // painted behind an open dropdown over the area below the title
         // strip): a `PointerUp` outside the menu closes it. Other pointer
@@ -986,21 +1004,39 @@ impl MenuBarExternal {
             return Ok(open_value(self.open_menu()));
         }
         let mut chars = sub.chars();
-        let kind = chars.next().ok_or(InvokeError::Rejected)?;
+        let kind = chars.next().ok_or_else(|| {
+            InvokeError::rejected(
+                "menu.send: empty target (expected \"t<index>\", \"i<path>\" or \"barrier\")",
+            )
+        })?;
         let rest = chars.as_str();
         match kind {
             // Title: a single top-level menu index.
             't' => {
-                let idx: usize = rest.parse().map_err(|_| InvokeError::Rejected)?;
+                let idx: usize = rest.parse().map_err(|_| {
+                    InvokeError::rejected(format!(
+                        "menu.send: title target {sub:?} carries no index \
+                         ({rest:?} is not a number)"
+                    ))
+                })?;
                 self.send_title(idx, event);
             }
             // R985 — item: a dotted descent path relative to the open
             // dropdown (`i2` top item, `i2.0` item 0 of submenu 2, …).
             'i' => {
-                let path = parse_path(rest).ok_or(InvokeError::Rejected)?;
+                let path = parse_path(rest).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "menu.send: item target {sub:?} is not a dotted descent path"
+                    ))
+                })?;
                 self.send_item(&path, event);
             }
-            _ => return Err(InvokeError::Rejected),
+            _ => {
+                return Err(InvokeError::rejected(format!(
+                    "menu.send: target {sub:?} names no sub-element \
+                     (expected \"t<index>\", \"i<path>\" or \"barrier\")"
+                )));
+            }
         }
         Ok(open_value(self.open_menu()))
     }
@@ -1349,6 +1385,7 @@ impl ExternalIntrospect for MenuBarExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_refused_saying;
 
     fn bar() -> MenuBar {
         // File(3) / Edit(5) / View(2).
@@ -1466,21 +1503,22 @@ mod tests {
     #[test]
     fn r1543_a_malformed_activation_target_is_rejected() {
         let mut e = ext();
-        assert_eq!(
-            e.invoke(
+        // R1564 — "a non-numeric title index is rejected, not silently index 0"
+        // and "the dismiss barrier has no activation" were two *comments* on two
+        // identical refusals. They are now two different sentences on the wire.
+        assert_refused_saying(
+            &e.invoke(
                 "send",
-                IntrospectValue::Text("tx:KeyboardActivate".to_string())
+                IntrospectValue::Text("tx:KeyboardActivate".to_string()),
             ),
-            Err(InvokeError::Rejected),
-            "a non-numeric title index is rejected, not silently index 0"
+            "title target \"tx\" carries no index",
         );
-        assert_eq!(
-            e.invoke(
+        assert_refused_saying(
+            &e.invoke(
                 "send",
-                IntrospectValue::Text("barrier:KeyboardActivate".to_string())
+                IntrospectValue::Text("barrier:KeyboardActivate".to_string()),
             ),
-            Err(InvokeError::Rejected),
-            "the dismiss barrier has no activation"
+            "KeyboardActivate target \"barrier\" names no sub-element",
         );
         assert_eq!(e.open_menu(), None);
     }
@@ -1778,24 +1816,21 @@ mod tests {
     #[test]
     fn external_send_malformed_rejected() {
         let mut e = ext();
-        assert_eq!(
-            e.invoke("send", IntrospectValue::Text("no_colon".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &e.invoke("send", IntrospectValue::Text("no_colon".to_string())),
+            "malformed send payload \"no_colon\"",
         );
-        assert_eq!(
-            e.invoke("send", IntrospectValue::Text("x0:PointerUp".to_string())),
-            Err(InvokeError::Rejected),
-            "unknown sub-kind"
+        assert_refused_saying(
+            &e.invoke("send", IntrospectValue::Text("x0:PointerUp".to_string())),
+            "target \"x0\" names no sub-element",
         );
-        assert_eq!(
-            e.invoke("send", IntrospectValue::Text("t0:Teleport".to_string())),
-            Err(InvokeError::Rejected),
-            "unknown pointer event"
+        assert_refused_saying(
+            &e.invoke("send", IntrospectValue::Text("t0:Teleport".to_string())),
+            "\"Teleport\" is neither a pointer event name nor KeyboardActivate",
         );
-        assert_eq!(
-            e.invoke("send", IntrospectValue::Text("tA:PointerUp".to_string())),
-            Err(InvokeError::Rejected),
-            "non-numeric index"
+        assert_refused_saying(
+            &e.invoke("send", IntrospectValue::Text("tA:PointerUp".to_string())),
+            "title target \"tA\" carries no index",
         );
     }
 

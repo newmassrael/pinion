@@ -41,13 +41,13 @@ pub use sm::{RadioEvent, RadioState};
 // and drives selection through `RadioEvent::from_name` via the traits.
 use sm::RadioPolicy;
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// Radio widget state machine + selection value sidecar. Activate
 /// (`Pressed → Hover`) sets the value to `true` unconditionally;
@@ -307,7 +307,7 @@ impl ExternalIntrospect for RadioExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = RadioEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<RadioEvent>("radio", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -321,6 +321,7 @@ impl ExternalIntrospect for RadioExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WidgetEventName;
 
     #[test]
     fn initial_state_is_idle_unselected() {

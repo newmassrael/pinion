@@ -45,6 +45,11 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# R1564 §5.15 (PINION-PR82) — activate `pinion_core::test_fixtures::
+# assert_refused_saying` for the refusal tests. Cargo unifies the dep with the
+# regular `[dependencies]` entry above; the `test-fixtures` feature is only
+# active for test builds, never in production.
+pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
 # (R684 §5.21 §5.16) Test-only dependency on pinion-runtime so the
 # dock + splitter substrate tests can drive a real `compute_layout`
 # pass over their assembled scenes (the only way to pin "header

@@ -42,13 +42,13 @@ pub use sm::{CheckboxEvent, CheckboxState};
 // rejects them and an RPC `invoke("send", …)` cannot forge them. The
 // introspect path below calls `self.state().as_name()`.
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// Checkbox widget state machine + Off/On value sidecar. Statechart
 /// identical to [`Toggle`](crate::widgets::toggle::Toggle); divergence is the
@@ -298,7 +298,7 @@ impl ExternalIntrospect for CheckboxExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = CheckboxEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<CheckboxEvent>("checkbox", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -312,6 +312,7 @@ impl ExternalIntrospect for CheckboxExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WidgetEventName;
 
     #[test]
     fn initial_state_is_idle_unchecked() {

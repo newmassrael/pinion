@@ -657,6 +657,58 @@ struct InspectorExternal {
 }
 
 impl InspectorExternal {
+    /// R1564 §5.15 — the index-addressed selection verbs, lifted out of
+    /// [`invoke`](ExternalIntrospect::invoke).
+    ///
+    /// Three arms wrote the same bound check and, once each had to compose a
+    /// *sentence*, the same call to [`no_such_object`](Self::no_such_object).
+    /// Three copies of one refusal are three places for it to drift.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::TypeMismatch`] when the argument is not an index, and
+    /// [`InvokeError::Rejected`] naming an object this inspector does not hold.
+    fn dispatch_select(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let &IntrospectValue::Int(n) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let idx = usize::try_from(n).map_err(|_| InvokeError::TypeMismatch)?;
+        if idx >= self.object_count() {
+            return Err(self.no_such_object(path, idx));
+        }
+        match path {
+            "select" => {
+                self.select(idx);
+                Ok(selected_to_value(self.cursor()))
+            }
+            "toggle" => {
+                self.toggle(idx);
+                Ok(selection_to_value(&self.selection_set()))
+            }
+            "extend_to" => {
+                self.extend_to(idx);
+                Ok(selection_to_value(&self.selection_set()))
+            }
+            // Unreachable through `invoke`, which routes exactly the three
+            // above here. Refusing rather than defaulting keeps a future
+            // fourth verb from silently behaving like `extend_to`.
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
+    /// R1564 §5.15 (PINION-PR82) — "no object at that index", with the extent.
+    /// Three selection verbs share the bound, so they share the sentence.
+    fn no_such_object(&self, action: &str, idx: usize) -> InvokeError {
+        InvokeError::rejected(format!(
+            "{action}: no object {idx} in this inspector (it holds {})",
+            self.object_count()
+        ))
+    }
+
     fn new(
         objects: Rc<Signal<Vec<ObjectData>>>,
         selection: Rc<Signal<VirtualSelect>>,
@@ -1678,30 +1730,10 @@ impl ExternalIntrospect for InspectorExternal {
             _ => Err(InvokeError::TypeMismatch),
         };
         match path {
-            "select" => {
-                let idx = int_arg(args)?;
-                if idx >= self.object_count() {
-                    return Err(InvokeError::Rejected);
-                }
-                self.select(idx);
-                Ok(selected_to_value(self.cursor()))
-            }
-            "toggle" => {
-                let idx = int_arg(args)?;
-                if idx >= self.object_count() {
-                    return Err(InvokeError::Rejected);
-                }
-                self.toggle(idx);
-                Ok(selection_to_value(&self.selection_set()))
-            }
-            "extend_to" => {
-                let idx = int_arg(args)?;
-                if idx >= self.object_count() {
-                    return Err(InvokeError::Rejected);
-                }
-                self.extend_to(idx);
-                Ok(selection_to_value(&self.selection_set()))
-            }
+            // R1564 — the three index-addressed selection verbs share one
+            // bound and now one sentence, so they share one arm; the lift also
+            // keeps this dispatch under the workspace line ceiling.
+            "select" | "toggle" | "extend_to" => self.dispatch_select(path, &args),
             "select_all" => {
                 self.select_all();
                 Ok(selection_to_value(&self.selection_set()))
@@ -1732,7 +1764,11 @@ impl ExternalIntrospect for InspectorExternal {
             // `idx` is not a common numeric row.
             "step_property" => match args {
                 IntrospectValue::Text(spec) => {
-                    let (idx, dir) = parse_step_spec(&spec).ok_or(InvokeError::Rejected)?;
+                    let (idx, dir) = parse_step_spec(&spec).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: malformed argument {spec:?} (expected \"<row>,<dir>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(self.step_property(idx, dir)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -1742,7 +1778,11 @@ impl ExternalIntrospect for InspectorExternal {
             // when `idx` is not a common Choice row.
             "cycle_property" => match args {
                 IntrospectValue::Text(spec) => {
-                    let (idx, dir) = parse_step_spec(&spec).ok_or(InvokeError::Rejected)?;
+                    let (idx, dir) = parse_step_spec(&spec).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: malformed argument {spec:?} (expected \"<row>,<dir>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(self.cycle_property(idx, dir)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -1751,7 +1791,11 @@ impl ExternalIntrospect for InspectorExternal {
             // an unknown token is a typed Rejected, never a silent default.
             "focus_region" => match args {
                 IntrospectValue::Text(token) => {
-                    let region = FocusRegion::from_wire(&token).ok_or(InvokeError::Rejected)?;
+                    let region = FocusRegion::from_wire(&token).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: {token:?} is not a focus region on this inspector"
+                        ))
+                    })?;
                     self.set_region(region);
                     Ok(IntrospectValue::Text(self.focus_region().wire().to_owned()))
                 }
@@ -2982,6 +3026,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     fn ext() -> InspectorExternal {
         let owner = Owner::new();
@@ -3583,9 +3628,9 @@ mod tests {
         assert_eq!(parse_step_spec("1"), None);
         let mut e = ext();
         e.invoke("select_all", IntrospectValue::Null).unwrap();
-        assert_eq!(
-            e.invoke("step_property", IntrospectValue::Text("bad".to_owned())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &e.invoke("step_property", IntrospectValue::Text("bad".to_owned())),
+            "malformed argument \"bad\"",
         );
         assert_eq!(
             e.invoke("step_property", IntrospectValue::Int(1)),

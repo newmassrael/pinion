@@ -26,6 +26,7 @@ use std::borrow::Cow;
 use crate::Frame;
 use crate::cell_metric::CellMetric;
 use crate::command::Command;
+use crate::external::InvokeError;
 use crate::external::{External, IntrospectValue, StubExternal};
 use crate::intent::Intent;
 use crate::reactive::Owner;
@@ -1039,6 +1040,40 @@ pub fn text_grid_consistency_buffer() -> GridBuffer {
             ],
         )
         .with_cursor(GridCursor::new(0, 2, CursorShape::Block, true))
+}
+
+/// R1564 §5.15 (PINION-PR82) — assert `result` is a refusal whose **stated
+/// reason** mentions `needle`.
+///
+/// The assertion shape a `Rejected` test needs after R1564, and it exists
+/// because the obvious mechanical rewrite is a regression. Before this round a
+/// refusal carried nothing, so `assert_eq!(r, Err(Rejected))` was as strong as
+/// an assertion about one could be. After it, the same line only compiles as
+/// `matches!(r, Err(Rejected(_)))` — **strictly weaker than what it replaced**,
+/// because it passes for a refusal that names something else entirely. Forty-odd
+/// call sites rewritten that way would have quietly traded the round's whole
+/// subject for a green build.
+///
+/// `needle` should be the *distinguishing* clause, not the widget prefix every
+/// reason from that surface shares.
+///
+/// # Panics
+///
+/// When `result` is `Ok`, when it is a non-`Rejected` failure, or when the
+/// stated reason does not contain `needle`.
+pub fn assert_refused_saying<T: std::fmt::Debug>(result: &Result<T, InvokeError>, needle: &str) {
+    match result {
+        Ok(value) => panic!("expected a refusal saying {needle:?}, got Ok({value:?})"),
+        Err(err) => {
+            let Some(reason) = err.reason() else {
+                panic!("expected a stated refusal saying {needle:?}, got {err:?}");
+            };
+            assert!(
+                reason.as_str().contains(needle),
+                "refusal did not say {needle:?}; it said {reason:?}",
+            );
+        }
+    }
 }
 
 #[cfg(test)]

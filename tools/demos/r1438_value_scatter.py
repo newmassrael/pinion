@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -265,8 +266,17 @@ def body() -> None:
         assert_rpc_error(
             lambda: ta.intervene(f"{EXT}/encoding", 7), data="InterveneTypeMismatch"
         )
-        assert_rpc_error(lambda: ta.invoke(f"{EXT}/mark_color_at", "9,9"))
-        assert_rpc_error(lambda: ta.invoke(f"{EXT}/color_at", "not-a-number"))
+        # R1564 — an unaddressable point and an unparseable number were the
+        # same frame; a SURFACE refusal now says which, while the READ below
+        # stays a framework finding under -32602.
+        assert_action_refused(
+            lambda: ta.invoke(f"{EXT}/mark_color_at", "9,9"),
+            saying='"9,9" does not address a point',
+        )
+        assert_action_refused(
+            lambda: ta.invoke(f"{EXT}/color_at", "not-a-number"),
+            saying='"not-a-number" is not a number',
+        )
         assert_rpc_error(lambda: ta.query(f"{EXT}/no_such_field"))
 
         # ── Phase 10 — and still works after the rejects ──────────────

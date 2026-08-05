@@ -4084,7 +4084,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 // (the one SSOT), so the caller only maps the error.
                 match self.apply_intent(&intent) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
-                    Err(_) => Err(InvokeError::Rejected),
+                    Err(why) => Err(InvokeError::rejected(why.to_string())),
                 }
             }
             "reorganize" => self.invoke_reorganize(args),
@@ -4103,13 +4103,15 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 // only fails on a >usize::MAX index, which is always out of
                 // range, so it folds into the same rejection.
                 let Ok(index) = usize::try_from(index) else {
-                    return Err(InvokeError::Rejected);
+                    return Err(InvokeError::rejected(format!(
+                        "activate_tab: tab index {index} is out of range for any well"
+                    )));
                 };
                 // `activate_tab` records the `"rejected: …"` outcome itself
                 // (the one SSOT), so the caller only maps the error.
                 match self.activate_tab(well_id, index) {
                     Ok(summary) => Ok(IntrospectValue::Text(summary)),
-                    Err(_) => Err(InvokeError::Rejected),
+                    Err(why) => Err(InvokeError::rejected(why.to_string())),
                 }
             }
             // R1134 §5.51.1 §2 #2 — toggle this surface's torn-slot policy live.
@@ -4129,12 +4131,21 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // (not `TypeMismatch`) is the honest answer even to a malformed arg.
             "set_float_policy" => {
                 if self.reorganizer.float_policy_locked() {
-                    return Err(InvokeError::Rejected);
+                    return Err(InvokeError::rejected(
+                        "set_float_policy: this binding DECLARED its float policy \
+                         (with_float_policy), so the wire cannot flip it — the host \
+                         implements the declared model and a client cannot",
+                    ));
                 }
                 let IntrospectValue::Text(name) = args else {
                     return Err(InvokeError::TypeMismatch);
                 };
-                let policy = FloatPolicy::from_wire(&name).ok_or(InvokeError::Rejected)?;
+                let policy = FloatPolicy::from_wire(&name).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "set_float_policy: {name:?} is not a float policy \
+                         (expected \"collapse\" or \"placeholder\")"
+                    ))
+                })?;
                 self.reorganizer.set_float_policy(policy);
                 Ok(IntrospectValue::Text(policy.as_str().to_string()))
             }
@@ -4212,20 +4223,30 @@ impl DockReorganizeExternal {
         let (Some(source), Some(target), Some(zone_str)) = (source, target, zone_str) else {
             return Err(InvokeError::TypeMismatch);
         };
-        let zone = parse_drop_zone(zone_str).ok_or(InvokeError::Rejected)?;
+        let zone = parse_drop_zone(zone_str).ok_or_else(|| {
+            InvokeError::rejected(format!("reorganize: {zone_str:?} is not a drop zone"))
+        })?;
         // Zone → intent through the [`intent_for_zone`] SSOT; a
         // `None`/unmappable zone is a rejected gesture.
-        let intent = intent_for_zone(source, target, zone).ok_or(InvokeError::Rejected)?;
+        let intent = intent_for_zone(source, target, zone).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "reorganize: drop zone {zone_str:?} maps to no reorganization \
+                 of {source:?} onto {target:?}"
+            ))
+        })?;
         if matches!(intent, DockReorganizeIntent::Tabify { .. }) && !self.reorganizer.tabbing() {
-            self.reorganizer
-                .note_outcome("rejected: tabbing disabled on this dock surface");
-            return Err(InvokeError::Rejected);
+            // R1564 — the sentence `note_outcome` has recorded since R1087 now
+            // also reaches the wire, instead of being an internal log beside a
+            // refusal that named nothing.
+            const WHY: &str = "rejected: tabbing disabled on this dock surface";
+            self.reorganizer.note_outcome(WHY);
+            return Err(InvokeError::rejected(WHY));
         }
         // `apply_intent` records the `"rejected: …"` outcome itself (the one
         // SSOT), so the caller only maps the error.
         match self.apply_intent(&intent) {
             Ok(summary) => Ok(IntrospectValue::Text(summary)),
-            Err(_) => Err(InvokeError::Rejected),
+            Err(why) => Err(InvokeError::rejected(why.to_string())),
         }
     }
 
@@ -4246,10 +4267,12 @@ impl DockReorganizeExternal {
             .get("zone")
             .and_then(serde_json::Value::as_str)
             .ok_or(InvokeError::TypeMismatch)?;
-        let zone = parse_drop_zone(zone_str).ok_or(InvokeError::Rejected)?;
+        let zone = parse_drop_zone(zone_str).ok_or_else(|| {
+            InvokeError::rejected(format!("dock_outer: {zone_str:?} is not a drop zone"))
+        })?;
         match self.reorganizer.dock_panel_outer(source, zone) {
             Ok(summary) => Ok(IntrospectValue::Text(summary)),
-            Err(_) => Err(InvokeError::Rejected),
+            Err(why) => Err(InvokeError::rejected(why.to_string())),
         }
     }
 
@@ -4261,7 +4284,7 @@ impl DockReorganizeExternal {
         };
         match self.reorganizer.undock_tab(&panel) {
             Ok(summary) => Ok(IntrospectValue::Text(summary)),
-            Err(_) => Err(InvokeError::Rejected),
+            Err(why) => Err(InvokeError::rejected(why.to_string())),
         }
     }
 }
@@ -4719,7 +4742,7 @@ impl ExternalIntrospect for TabWellExternal {
         // SSOT), so the caller only maps the error.
         match self.reorganizer.activate_tab(&self.well_id, index) {
             Ok(summary) => Ok(IntrospectValue::Text(summary)),
-            Err(_) => Err(InvokeError::Rejected),
+            Err(why) => Err(InvokeError::rejected(why.to_string())),
         }
     }
 }
@@ -12438,6 +12461,7 @@ mod reorganize_tests {
     //! 3. [`DockReorganizeExternal`] — the `scene/invoke` AI-native
     //!    wire: parse JSON payload, apply, mutate the shared topology
     //!    Signal, expose the result via `query`.
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     use std::rc::Rc;
 
@@ -13816,13 +13840,13 @@ mod reorganize_tests {
         .unwrap();
         assert_eq!(reorganizer.float_policy(), FloatPolicy::Placeholder);
         // Unknown name = rejected; non-text arg = type mismatch.
-        assert!(matches!(
-            ext.invoke(
+        assert_refused_saying(
+            &ext.invoke(
                 "set_float_policy",
-                IntrospectValue::Text("bogus".to_string())
+                IntrospectValue::Text("bogus".to_string()),
             ),
-            Err(InvokeError::Rejected),
-        ));
+            "\"bogus\" is not a float policy",
+        );
         assert!(matches!(
             ext.invoke("set_float_policy", IntrospectValue::Null),
             Err(InvokeError::TypeMismatch),
@@ -13869,13 +13893,15 @@ mod reorganize_tests {
         // The wire flip is refused — and, decisively, does NOT take effect. A
         // rejection that still mutated would be the original defect wearing an
         // error code.
-        assert!(matches!(
-            ext.invoke(
+        // R1564 — a DECLARED policy and an unknown spelling were the same
+        // value; they are different operator problems and now say so.
+        assert_refused_saying(
+            &ext.invoke(
                 "set_float_policy",
-                IntrospectValue::Text("placeholder".to_string())
+                IntrospectValue::Text("placeholder".to_string()),
             ),
-            Err(InvokeError::Rejected),
-        ));
+            "this binding DECLARED its float policy",
+        );
         assert_eq!(
             reorganizer.float_policy(),
             FloatPolicy::Collapse,
@@ -14151,7 +14177,11 @@ mod reorganize_tests {
                 ),
             )
             .unwrap_err();
-        assert_eq!(err, InvokeError::Rejected);
+        assert!(
+            err.reason()
+                .is_some_and(|why| why.as_str().contains("\"Diagonal\" is not a drop zone")),
+            "the refusal names the zone that was not one, got {err:?}",
+        );
     }
 
     #[test]
@@ -14167,7 +14197,13 @@ mod reorganize_tests {
                 ),
             )
             .unwrap_err();
-        assert_eq!(err, InvokeError::Rejected);
+        // R1564 — the sentence `TopologyError` has always carried now reaches
+        // the wire instead of being collapsed into a payload-free variant.
+        assert!(
+            err.reason()
+                .is_some_and(|why| why.as_str().contains("panel_id \"ghost\" not found")),
+            "the refusal names the panel that is not there, got {err:?}",
+        );
         // Live topology untouched on a rejected gesture.
         assert_eq!(signal.get(), before);
     }
@@ -14270,15 +14306,15 @@ mod reorganize_tests {
         let mut ext = DockReorganizeExternal::from_reorganizer(reorganizer);
         assert_eq!(ext.query("tabbing"), Some(IntrospectValue::Bool(false)));
 
-        assert!(matches!(
-            ext.invoke(
+        assert_refused_saying(
+            &ext.invoke(
                 "reorganize",
                 IntrospectValue::Json(serde_json::json!({
                     "source": "a", "target": "b", "zone": "Center",
                 })),
             ),
-            Err(InvokeError::Rejected),
-        ));
+            "tabbing disabled on this dock surface",
+        );
         // The topology is UNTOUCHED — no well minted, nothing re-parented. A
         // client that renders this tree stays in step with a host that cannot
         // express tabs (the divergence PR-60 reported: refusing the host WRITE
@@ -14605,20 +14641,21 @@ mod reorganize_tests {
         let signal = Rc::new(Signal::new(Some(well_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
         // Index past the well's end — a well-formed but rejected gesture.
-        assert_eq!(
-            ext.invoke(
+        assert_refused_saying(
+            &ext.invoke(
                 "activate_tab",
                 IntrospectValue::Json(serde_json::json!({"well_id":"w0","index":9})),
             ),
-            Err(InvokeError::Rejected),
+            "active index 9 is out of range",
         );
-        // Unknown well id.
-        assert_eq!(
-            ext.invoke(
+        // Unknown well id. R1564 — a different fact, and now a different
+        // sentence: the two arrived indistinguishable before.
+        assert_refused_saying(
+            &ext.invoke(
                 "activate_tab",
                 IntrospectValue::Json(serde_json::json!({"well_id":"nope","index":0})),
             ),
-            Err(InvokeError::Rejected),
+            "tab-well id \"nope\" not found",
         );
         // The live topology is untouched by either rejection.
         assert_eq!(first_well_active(signal.get().unwrap().root()), Some(0));
@@ -14770,9 +14807,9 @@ mod reorganize_tests {
     fn r1096_tab_well_out_of_range_or_unknown_well_click_rejected() {
         let (signal, reorg, mut ext) = tab_well_fixture();
         // An index past the well's end is a well-formed but rejected gesture.
-        assert_eq!(
-            ext.invoke("send", IntrospectValue::Text("9:PointerUp".into())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &ext.invoke("send", IntrospectValue::Text("9:PointerUp".into())),
+            "active index 9 is out of range",
         );
         assert_eq!(
             first_well_active(signal.get().unwrap().root()),
@@ -14781,9 +14818,9 @@ mod reorganize_tests {
         );
         // An external bound to a non-existent well rejects every click.
         let mut ghost = TabWellExternal::new("ghost", Rc::clone(&reorg));
-        assert_eq!(
-            ghost.invoke("send", IntrospectValue::Text("0:PointerUp".into())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &ghost.invoke("send", IntrospectValue::Text("0:PointerUp".into())),
+            "tab-well id \"ghost\" not found",
         );
     }
 

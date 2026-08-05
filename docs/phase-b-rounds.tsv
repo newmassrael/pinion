@@ -85,3 +85,4 @@
 1561	modelview	a selection is a set of runs, not a set of rows, QItemSelectionModel as canonical merged ranges with an O(runs) count on the wire
 1562	modelview	a section selects the line through it, Qt QHeaderView section press + QTableCornerButton as one derivation with the cell press, tri-state and named
 1563	modelview	a selection has two axes, Qt QItemSelectionRange as canonical row-grouped bands + a column header selects the column through it
+1564	api	a refused invoke states why, the producer RefusalReason forwarded verbatim to error.data under its own JSON-RPC code

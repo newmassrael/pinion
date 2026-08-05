@@ -1341,7 +1341,10 @@ impl VirtualSelectExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         let (row, col) = decode_cell_arg(args).ok_or(InvokeError::TypeMismatch)?;
         if self.column_count().is_none() {
-            return Err(InvokeError::Rejected);
+            return Err(InvokeError::rejected(
+                "this surface selects whole rows: it has no column extent, \
+                 so a cell address names nothing",
+            ));
         }
         apply(self, row, col);
         Ok(self.cells_value())
@@ -1359,7 +1362,10 @@ impl VirtualSelectExternal {
         };
         let col = usize::try_from(col).map_err(|_| InvokeError::TypeMismatch)?;
         if self.column_count().is_none() {
-            return Err(InvokeError::Rejected);
+            return Err(InvokeError::rejected(
+                "this surface selects whole rows: it has no column extent, \
+                 so a column address names nothing",
+            ));
         }
         apply(self, col);
         Ok(self.cells_value())

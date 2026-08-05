@@ -502,6 +502,16 @@ fn expand_widget_event_name(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     ::core::option::Option::None
                 }
             }
+            // R1564 — the same const `from_name` gates on, rendered as the
+            // names a caller may send. Derived from that const rather than
+            // from the variant list, so the vocabulary a refusal advertises
+            // and the vocabulary `from_name` admits cannot drift apart.
+            fn drivable_names() -> ::std::vec::Vec<&'static str> {
+                Self::EXTERNALLY_DRIVABLE_EVENTS
+                    .iter()
+                    .map(::pinion_core::WidgetEventName::as_name)
+                    .collect()
+            }
         }
     })
 }

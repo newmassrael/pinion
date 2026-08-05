@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -297,8 +298,14 @@ def body() -> None:
                          data="InterveneTypeMismatch")                                  # 56
         assert_eq(_h(tf, "state"), saved,
                   "four refusals, and not one field of them landed")                    # 57
-        assert_rpc_error(lambda: tf.invoke("/external/resize_section", "9:100"))        # 58
-        assert_rpc_error(lambda: tf.invoke("/external/set_section_hidden", "0:maybe"))  # 59
+        assert_action_refused(
+            lambda: tf.invoke("/external/resize_section", "9:100"),
+            saying="no section 9 in this header",
+        )                                                                               # 58
+        assert_action_refused(
+            lambda: tf.invoke("/external/set_section_hidden", "0:maybe"),
+            saying='malformed argument "0:maybe"',
+        )                                                                               # 59
 
         # ── (G) swapSections is not moveSection ───────────────────────
         _reset(tf)

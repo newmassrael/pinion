@@ -51,7 +51,6 @@ use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, ListOption, ToolbarControl, WidgetA11y,
     listbox_option_nodes, toolbar_button_nodes,
 };
-use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
@@ -464,7 +463,10 @@ impl ExternalIntrospect for SelRowExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     let (id, event_name, _): (u64, &str, _) =
-                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                        pinion_core::composite_tag::require_parsed_send_payload(
+                            "selection_toolbar.send",
+                            payload,
+                        )?;
                     if event_name == "PointerUp" {
                         Ok(IntrospectValue::Bool(self.toggle_by_id(id)))
                     } else {

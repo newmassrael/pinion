@@ -327,7 +327,11 @@ impl ExternalIntrospect for PaletteExternal {
                     if self.select(i) {
                         Ok(IntrospectValue::Int(n))
                     } else {
-                        Err(InvokeError::Rejected)
+                        Err(InvokeError::rejected(format!(
+                            "{path}: no command {i} in the current filtered list \
+                             (it has {})",
+                            self.visible().len()
+                        )))
                     }
                 }
                 _ => Err(InvokeError::TypeMismatch),

@@ -75,6 +75,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -225,13 +226,13 @@ def body() -> None:
         assert_eq(_h(tf, "sizes"), [300, 90, 100, 130, 100],
                   "and does NOT cascade, rule on or not — Qt's own split")       # 27
         assert_eq(_h(tf, "visible_total"), 720, "so this one does grow the row")  # 28
-        assert_rpc_error(
+        assert_action_refused(
             lambda: tf.invoke("/external/interactive_resize_section", "9:200"),
-            data="InvokeRejected",
+            saying="no section 9 in this header",
         )                                                                        # 29
-        assert_rpc_error(
+        assert_action_refused(
             lambda: tf.invoke("/external/interactive_resize_section", "nonsense"),
-            data="InvokeRejected",
+            saying='malformed argument "nonsense"',
         )                                                                        # 30
 
         # ── (G) the gesture ends ──────────────────────────────────────

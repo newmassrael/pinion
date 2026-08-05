@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -174,8 +175,16 @@ def body() -> None:
                   "moveSection returns the resulting order, and undoes the drag")       # 27
         assert_eq(_painted_headers(tf), HEADERS, "the strip is back to schema order")   # 28
         assert_eq(_painted_row0(tf), ROW0, "and so is the body")                        # 29
-        assert_rpc_error(lambda: tf.invoke(f"/external/move_section", "0:9"))      # 30
-        assert_rpc_error(lambda: tf.invoke(f"/external/move_section", "nope"))     # 31
+        # R1564 — an out-of-range target and a malformed pair were the same
+        # frame; they are different mistakes with different fixes.
+        assert_action_refused(
+            lambda: tf.invoke("/external/move_section", "0:9"),
+            saying="0 -> 9 is outside this model",
+        )                                                                          # 30
+        assert_action_refused(
+            lambda: tf.invoke("/external/move_section", "nope"),
+            saying='malformed argument "nope"',
+        )                                                                          # 31
 
         # ── (F) restoreState — a whole permutation, as typed data ─────
         tf.intervene(f"/external/order", [4, 3, 2, 1, 0])

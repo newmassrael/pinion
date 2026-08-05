@@ -241,7 +241,12 @@ impl DeviationOracle {
             let c: usize = c.trim().parse().ok()?;
             (r < ROWS && c < COLS).then_some((r, c))
         });
-        parsed.ok_or(InvokeError::Rejected)
+        parsed.ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{s:?} does not address a cell (expected \"<row>,<col>\" with \
+                 row < {ROWS} and col < {COLS})"
+            ))
+        })
     }
 
     /// The worst WCAG contrast ratio over every cell — the accessibility floor
@@ -575,6 +580,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     fn palette() -> Palette {
         Palette::new(INK_DARK, INK_LIGHT)
@@ -670,14 +676,14 @@ mod tests {
         // Out of range and malformed args reject rather than clamping into a
         // neighbouring cell's answer — and the two failure kinds are told
         // apart: a wrong ARG TYPE can never succeed, a wrong CELL might.
-        assert!(matches!(
-            o.invoke("value_at", IntrospectValue::Text("99,0".to_owned())),
-            Err(InvokeError::Rejected)
-        ));
-        assert!(matches!(
-            o.invoke("value_at", IntrospectValue::Text("nope".to_owned())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &o.invoke("value_at", IntrospectValue::Text("99,0".to_owned())),
+            "\"99,0\" does not address a cell",
+        );
+        assert_refused_saying(
+            &o.invoke("value_at", IntrospectValue::Text("nope".to_owned())),
+            "\"nope\" does not address a cell",
+        );
         assert!(matches!(
             o.invoke("value_at", IntrospectValue::Float(3.0)),
             Err(InvokeError::TypeMismatch)

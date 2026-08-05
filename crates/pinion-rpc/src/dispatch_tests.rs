@@ -4753,14 +4753,51 @@ fn scene_intents_drain_is_idempotent_on_clean_scene() {
 }
 
 #[test]
-fn scene_invoke_rejected_event_returns_invoke_rejected() {
+fn scene_invoke_rejected_event_returns_the_producers_reason_under_its_own_code() {
+    // R1564 §5.15 (PINION-PR82) — pre-R1564 this asserted `-32602` carrying the
+    // string `"InvokeRejected"`. Both halves changed, and they changed together:
+    // the payload is now the SURFACE's sentence, and free application prose in
+    // `data` would have made the wire less machine-readable than the variant
+    // name it replaced — so the refusal moved to a code of its own, which is
+    // what a consumer branches on instead.
     use pinion_core::widgets::button::ButtonExternal;
     let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
     let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"Teleport"},"id":54}"#;
     let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
     let err = resp.error.unwrap();
+    assert_eq!(err.code, crate::ACTION_REFUSED);
+    assert_eq!(err.message, "Action refused");
+    let Some(Value::String(reason)) = err.data else {
+        panic!("a refusal must state a reason, got {:?}", err.data);
+    };
+    assert!(
+        reason.contains("\"Teleport\" is not an event this widget accepts"),
+        "the sentence names what arrived: {reason}",
+    );
+    assert!(
+        reason.contains("PointerDown"),
+        "and the vocabulary that would have been accepted: {reason}",
+    );
+}
+
+#[test]
+fn r1564_a_framework_finding_keeps_invalid_params_and_its_own_word() {
+    // The other side of the split, and what makes the code meaningful: a path
+    // the SCHEMA does not declare is this crate's finding, not the surface's,
+    // so it stays `-32602` carrying the variant name. Without this the new code
+    // would be an unfalsifiable claim — everything could be `ACTION_REFUSED`
+    // and every assertion above would still pass.
+    use pinion_core::widgets::button::ButtonExternal;
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
+    let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/nope","args":null},"id":55}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
     assert_eq!(err.code, -32602);
-    assert_eq!(err.data, Some(Value::String("InvokeRejected".to_string())));
+    assert_eq!(err.message, "Invalid params");
+    assert_eq!(
+        err.data,
+        Some(Value::String("UnknownInvokePath".to_string()))
+    );
 }
 
 // ---- §5.32 R39.1: scene/locate JSON-RPC wire ----

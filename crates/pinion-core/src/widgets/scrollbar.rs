@@ -355,6 +355,7 @@ use sm::ScrollBarPolicy;
 
 use std::rc::Rc;
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -363,7 +364,6 @@ use crate::intent::Intent;
 use crate::reactive::{Owner, Signal};
 use crate::widgets::scroll::ScrollState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// `ScrollBar` widget state machine + orientation sidecar.
 ///
@@ -916,7 +916,8 @@ impl ExternalIntrospect for ScrollBarExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = ScrollBarEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        crate::widget_core::require_event::<ScrollBarEvent>("scrollbar", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -1100,6 +1101,7 @@ mod r55_d2_tests {
     //! initial state + four-state transition graph + drag-end
     //! commit semantics + cancel-on-leave + introspect surface +
     //! orientation immutability.
+    use crate::test_fixtures::assert_refused_saying;
 
     use super::{
         ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation, ScrollBarState,
@@ -1336,7 +1338,7 @@ mod r55_d2_tests {
     fn external_invoke_send_rejects_unknown_event() {
         let mut sx = ScrollBarExternal::new();
         let r = sx.invoke("send", IntrospectValue::Text("Click".to_string()));
-        assert_eq!(r, Err(InvokeError::Rejected));
+        assert_refused_saying(&r, "\"Click\" is not an event this widget accepts");
     }
 
     #[test]

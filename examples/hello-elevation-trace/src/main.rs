@@ -274,6 +274,12 @@ impl TraceOracle {
         self.state.as_ref().is_some_and(|s| s.filled.get())
     }
 
+    /// R1564 §5.15 (PINION-PR82) — the sentence for "this chart's current
+    /// encoding assigns no colour here". Two arms answer it, and the fact an
+    /// operator needs is that the chart is not USING that visual channel —
+    /// saying so is why the arm refuses instead of returning an unused colour.
+    const UNENCODED: &str = "this trace's current encoding assigns no colour to that segment";
+
     /// Parse an index argument. A non-string argument is a
     /// [`TypeMismatch`](InvokeError::TypeMismatch) (the same shape cannot
     /// succeed on retry); an unparseable or out-of-range one is
@@ -283,7 +289,8 @@ impl TraceOracle {
             IntrospectValue::Text(s) => s.trim().to_string(),
             _ => return Err(InvokeError::TypeMismatch),
         };
-        text.parse::<usize>().map_err(|_| InvokeError::Rejected)
+        text.parse::<usize>()
+            .map_err(|_| InvokeError::rejected(format!("{text:?} is not a sample index")))
     }
 }
 
@@ -387,7 +394,14 @@ impl ExternalIntrospect for TraceOracle {
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         let encoding = self.encoding();
-        let sample = |i: usize| PROFILE.get(i).copied().ok_or(InvokeError::Rejected);
+        let sample = |i: usize| {
+            PROFILE.get(i).copied().ok_or_else(|| {
+                InvokeError::rejected(format!(
+                    "no sample {i} in this profile (it has {})",
+                    PROFILE.len()
+                ))
+            })
+        };
         match path {
             "slope_at" => Ok(IntrospectValue::Float(sample(Self::parse_index(&args)?)?.2)),
             "elevation_at" => Ok(IntrospectValue::Float(sample(Self::parse_index(&args)?)?.1)),
@@ -397,17 +411,23 @@ impl ExternalIntrospect for TraceOracle {
                 // saying so is more honest than returning an unused colour.
                 encoded_color(slope, encoding)
                     .map(|c| IntrospectValue::Text(hex(c)))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| InvokeError::rejected(Self::UNENCODED))
             }
             "segment_color_at" => {
                 let k = Self::parse_index(&args)?;
                 segment_color(k, encoding)
                     .map(|c| IntrospectValue::Text(hex(c)))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| InvokeError::rejected(Self::UNENCODED))
             }
-            "x_fraction_at" => x_fraction(Self::parse_index(&args)?)
-                .map(IntrospectValue::Float)
-                .ok_or(InvokeError::Rejected),
+            "x_fraction_at" => {
+                let i = Self::parse_index(&args)?;
+                x_fraction(i).map(IntrospectValue::Float).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "x_fraction_at: no sample {i} in this profile (it has {})",
+                        PROFILE.len()
+                    ))
+                })
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }

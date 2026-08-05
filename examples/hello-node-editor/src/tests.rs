@@ -1,5 +1,6 @@
 use super::*;
 use pinion_core::scene::ExternalNode;
+use pinion_core::test_fixtures::assert_refused_saying;
 
 /// R878 — the idle paint posture (no rename in flight).
 const IDLE_TF: RootState = (TextFieldState::Idle, 0);
@@ -2637,9 +2638,9 @@ fn r849_add_node_rpc_returns_the_new_id_and_rejects_unknown_kinds() {
             Some(IntrospectValue::Int(2))
         );
         // An unknown kind is Rejected; the graph is unchanged.
-        assert_eq!(
-            intro.invoke("add_node", IntrospectValue::Text("Bogus".to_owned())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &intro.invoke("add_node", IntrospectValue::Text("Bogus".to_owned())),
+            "\"Bogus\" is not a node kind",
         );
         assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(5)));
         // node_ids enumerates the new sparse id (read/write symmetry).
@@ -3749,9 +3750,9 @@ fn r852_save_load_set_graph_over_rpc_invoke() {
                 .find_external_with_tag_mut(GRAPH_TAG)
                 .expect("present");
             let intro = node.handle.introspect_mut().expect("introspect");
-            assert_eq!(
-                intro.invoke("set_graph", IntrospectValue::Text("garbage".to_owned())),
-                Err(InvokeError::Rejected),
+            assert_refused_saying(
+                &intro.invoke("set_graph", IntrospectValue::Text("garbage".to_owned())),
+                "not a graph this editor can load",
             );
         }
     });
@@ -6124,9 +6125,9 @@ fn r1226_cut_wires_verb_schema_and_wire_form() {
         );
         // A malformed spec Rejects (never a silent empty cut); a non-string
         // arg is a TypeMismatch.
-        assert_eq!(
-            coord.invoke("cut_wires", IntrospectValue::Text("bad".to_owned())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &coord.invoke("cut_wires", IntrospectValue::Text("bad".to_owned())),
+            "malformed cut spec \"bad\"",
         );
         assert_eq!(
             coord.invoke("cut_wires", IntrospectValue::Int(1)),

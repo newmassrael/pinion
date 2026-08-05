@@ -769,7 +769,10 @@ impl ExternalIntrospect for HexDumpOracle {
                 IntrospectValue::Text(ref s) => {
                     let (start, end) = parse_cell(s).ok_or(InvokeError::TypeMismatch)?;
                     if end <= start || end > SAMPLE_LEN {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "select_range: [{start}, {end}) is not a non-empty range \
+                             inside this buffer (it holds {SAMPLE_LEN} bytes)"
+                        )));
                     }
                     self.selection = Some((start, end - 1));
                     self.pending_anchor = false;
@@ -927,6 +930,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::style::Color;
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     /// A column / row index as the `u16` the [`GridBuffer`] accessors take.
     fn c(n: usize) -> u16 {
@@ -1242,13 +1246,13 @@ mod tests {
         );
         assert_eq!(o.query("selection_start"), Some(IntrospectValue::Null));
         // Empty / out-of-range ranges are rejected.
-        assert_eq!(
-            o.invoke("select_range", IntrospectValue::Text("5,5".into())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &o.invoke("select_range", IntrospectValue::Text("5,5".into())),
+            "[5, 5) is not a non-empty range",
         );
-        assert_eq!(
-            o.invoke("select_range", IntrospectValue::Text("120,200".into())),
-            Err(InvokeError::Rejected),
+        assert_refused_saying(
+            &o.invoke("select_range", IntrospectValue::Text("120,200".into())),
+            "[120, 200) is not a non-empty range",
         );
     }
 

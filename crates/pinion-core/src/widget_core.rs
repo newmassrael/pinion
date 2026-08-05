@@ -1047,9 +1047,100 @@ pub trait WidgetEventName: Sized {
     /// Parse `name` back to the corresponding **externally-drivable**
     /// variant. Returns `None` when `name` is unknown or names an
     /// internal-only / `Null` variant — the RPC `invoke("send", …)`
-    /// path surfaces that `None` as `InvokeError::Rejected`, exactly
-    /// as the pre-R699 hand-written `parse_*_event` did.
+    /// path surfaces that `None` as a
+    /// [`RefusalReason`](crate::external::RefusalReason)-carrying
+    /// [`InvokeError::Rejected`](crate::external::InvokeError::Rejected)
+    /// (R1564), exactly as the pre-R699 hand-written `parse_*_event` did.
     fn from_name(name: &str) -> Option<Self>;
+
+    /// R1564 §5.15 §2 #2 — every name [`from_name`](Self::from_name) admits,
+    /// in declaration order.
+    ///
+    /// The set was already known — the sce codegen emits it as
+    /// `EXTERNALLY_DRIVABLE_EVENTS` and the derive's `from_name` tests
+    /// membership against it — and it was **unreachable**, so a refused
+    /// `send` could say that a name was wrong and not what would have been
+    /// right. That is the difference between a refusal an operator reads and
+    /// one an operator can act on, which is the whole subject of
+    /// [`RefusalReason`](crate::external::RefusalReason).
+    ///
+    /// Qt's floor: `QMetaObject::invokeMethod` with an unknown member answers
+    /// `false` and, in a debug build, prints `No such method` to stderr — the
+    /// meta-object holds every method's signature and the failure path
+    /// enumerates none of them.
+    ///
+    /// A `Vec` rather than a `&'static [&'static str]` because the const holds
+    /// *variants*, and mapping them to names is what the derive would have to
+    /// do anyway; this runs on a refusal, never on a hot path.
+    fn drivable_names() -> Vec<&'static str>;
+}
+
+/// R1564 §5.15 §2 #2 (PINION-PR82) — decode a `send` action's event name, or
+/// refuse with a sentence naming both the name that arrived and the vocabulary
+/// that would have been accepted.
+///
+/// Sixteen widget `invoke` arms wrote `X::from_name(name).ok_or(Rejected)?`,
+/// and every one of them threw away two facts it was holding: the offending
+/// name, and — through [`WidgetEventName::drivable_names`] — the closed set it
+/// failed to be a member of. An operator reading `InvokeRejected` learned
+/// neither.
+///
+/// `widget` names the surface, because a refusal is read out of context: it is
+/// the wire word for the widget kind (`"button"`, `"checkbox"`), not the paint
+/// tag, which the caller already has in the path it sent.
+///
+/// ```
+/// # use pinion_core::widget_core::require_event;
+/// # use pinion_core::widgets::button::ButtonEvent;
+/// let refusal = require_event::<ButtonEvent>("button", "Bogus").unwrap_err();
+/// let said = refusal.reason().expect("a rejection states why").as_str().to_owned();
+/// assert!(said.contains("\"Bogus\""), "{said}");
+/// assert!(said.contains("PointerDown"), "{said}");
+/// ```
+///
+/// # Errors
+///
+/// [`InvokeError::Rejected`](crate::external::InvokeError::Rejected) when
+/// `name` is not an externally-drivable event of `E`.
+pub fn require_event<E: WidgetEventName>(
+    widget: &str,
+    name: &str,
+) -> Result<E, crate::external::InvokeError> {
+    E::from_name(name).ok_or_else(|| {
+        crate::external::InvokeError::rejected(format!(
+            "{widget}.send: {name:?} is not an event this widget accepts (accepts: {})",
+            E::drivable_names().join(", ")
+        ))
+    })
+}
+
+/// R1564 §5.15 — the vocabulary a [`require_event`] refusal advertised, parsed
+/// back out of it.
+///
+/// Test support, and it earns its place in production code rather than in a
+/// test module because of how it was found. The first assertion written about
+/// this asked whether the message *contained* `"accepts: <name>"` — a question
+/// about the name's POSITION in the list, which a counterfactual advertising
+/// every variant passed, because the internal raise it must not advertise
+/// happened to land second. A membership question needs the list, so the list
+/// has to be recoverable; recovering it by hand at each call site would put the
+/// same parsing mistake in every test that asks.
+///
+/// Returns an empty slice for any refusal that is not one of these — which is
+/// itself the honest answer, since no other refusal advertises a vocabulary.
+#[must_use]
+pub fn advertised_vocabulary(err: &crate::external::InvokeError) -> Vec<&str> {
+    let Some(reason) = err.reason() else {
+        return Vec::new();
+    };
+    let Some((_, listed)) = reason.as_str().split_once("(accepts: ") else {
+        return Vec::new();
+    };
+    listed
+        .trim_end_matches(')')
+        .split(", ")
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// R644 §5.16 — type-safe single-source-of-truth tag identifier.
@@ -1301,5 +1392,96 @@ mod r1071_apply_key_repeat_tests {
                 "unhandled key stays unhandled regardless of repeat={repeat}",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod r1564_advertised_vocabulary {
+    //! R1564 §5.15 (PINION-PR82) — the vocabulary a refusal advertises is the
+    //! vocabulary the surface accepts.
+    //!
+    //! This module exists because a counterfactual **passed**. The claim was
+    //! being checked one refusal message at a time, by substring, and the
+    //! substring asked about a name's position rather than its membership — so
+    //! a derive that advertised every variant (internal `<raise>` events and
+    //! the SCXML `Null` sentinel included) satisfied every assertion in the
+    //! tree. What is asserted here is the property itself, over several event
+    //! enums, in both directions: nothing advertised is refused, and the
+    //! internal names are advertised by none of them.
+    //!
+    //! Both directions are needed and neither alone is enough. Without the
+    //! first, `drivable_names` could return the whole variant list. Without the
+    //! second, it could return an empty one — vacuously "accurate", and useless
+    //! to the operator the sentence exists for.
+
+    use super::{WidgetEventName, advertised_vocabulary, require_event};
+    use crate::widgets::button::ButtonEvent;
+    use crate::widgets::disclosure::DisclosureEvent;
+    use crate::widgets::listbox_item::ListboxItemEvent;
+    use crate::widgets::radio::RadioEvent;
+    use crate::widgets::text_field::TextFieldEvent;
+    use crate::widgets::toggle::ToggleEvent;
+
+    /// Every name a refusal advertises is a name `from_name` admits.
+    fn advertises_only_what_it_accepts<E: WidgetEventName + std::fmt::Debug>(widget: &str) {
+        let refusal = require_event::<E>(widget, "\u{0}definitely-not-an-event")
+            .expect_err("a NUL-led name is not an event of any statechart");
+        let advertised = advertised_vocabulary(&refusal);
+        assert!(
+            !advertised.is_empty(),
+            "{widget}: a refusal that lists nothing tells the operator nothing",
+        );
+        for name in &advertised {
+            assert!(
+                E::from_name(name).is_some(),
+                "{widget}: advertised {name:?}, which from_name then refuses",
+            );
+        }
+        // …and the reverse: every accepted name is advertised. Checked through
+        // the one surface that can be enumerated from outside — the drivable
+        // list itself — so this pins that the two derivations are one.
+        for name in E::drivable_names() {
+            assert!(
+                advertised.contains(&name),
+                "{widget}: accepts {name:?} without advertising it",
+            );
+        }
+    }
+
+    #[test]
+    fn six_widgets_advertise_exactly_what_they_accept() {
+        advertises_only_what_it_accepts::<ButtonEvent>("button");
+        advertises_only_what_it_accepts::<DisclosureEvent>("disclosure");
+        advertises_only_what_it_accepts::<ListboxItemEvent>("listbox_item");
+        advertises_only_what_it_accepts::<RadioEvent>("radio");
+        advertises_only_what_it_accepts::<TextFieldEvent>("text_field");
+        advertises_only_what_it_accepts::<ToggleEvent>("toggle");
+    }
+
+    #[test]
+    fn the_scxml_null_sentinel_is_advertised_by_nobody() {
+        // `Null` is in every generated Event enum and is drivable by none of
+        // them — the sharpest single witness that the advertised list comes
+        // from `EXTERNALLY_DRIVABLE_EVENTS` and not from the variant list.
+        for advertised in [
+            advertised_vocabulary(&require_event::<ButtonEvent>("button", "?").unwrap_err()),
+            advertised_vocabulary(&require_event::<ToggleEvent>("toggle", "?").unwrap_err()),
+            advertised_vocabulary(&require_event::<RadioEvent>("radio", "?").unwrap_err()),
+        ] {
+            assert!(
+                !advertised.contains(&"Null"),
+                "the SCXML sentinel reached the wire: {advertised:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_refusal_that_advertises_nothing_parses_to_nothing() {
+        // The accessor's own boundary: `advertised_vocabulary` must not invent
+        // a list for a refusal that has none, or the assertions above would
+        // read a fabricated empty set as a real one.
+        let plain = crate::external::InvokeError::rejected("no pane 999 on this host");
+        assert!(advertised_vocabulary(&plain).is_empty());
+        assert!(advertised_vocabulary(&crate::external::InvokeError::TypeMismatch).is_empty());
     }
 }

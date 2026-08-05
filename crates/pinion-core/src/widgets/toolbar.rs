@@ -391,8 +391,12 @@ impl ToolbarExternal {
     /// round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (idx, event_name, _mods): (usize, &str, _) =
-            crate::composite_tag::parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
-        let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
+            crate::composite_tag::require_parsed_send_payload("toolbar.send", payload)?;
+        let event = PointerWireEvent::from_wire_name(event_name).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "toolbar.send: {event_name:?} is not a pointer event name"
+            ))
+        })?;
         self.send_item(idx, event);
         Ok(focus_value(self.focus()))
     }
@@ -586,6 +590,7 @@ fn kind_name(kind: ToolItem) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_refused_saying;
 
     /// Bold(toggle) / Italic(toggle) / Underline(toggle) / Undo(cmd) /
     /// Redo(cmd) — the formatting-toolbar shape the `hello-toolbar`
@@ -842,19 +847,20 @@ mod tests {
     #[test]
     fn external_send_malformed_rejected() {
         let mut e = ext();
-        assert_eq!(
-            e.invoke("send", IntrospectValue::Text("no_colon".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &e.invoke("send", IntrospectValue::Text("no_colon".to_string())),
+            "malformed send payload \"no_colon\"",
         );
-        assert_eq!(
-            e.invoke("send", IntrospectValue::Text("0:Teleport".to_string())),
-            Err(InvokeError::Rejected),
-            "unknown pointer event"
+        assert_refused_saying(
+            &e.invoke("send", IntrospectValue::Text("0:Teleport".to_string())),
+            "\"Teleport\" is not a pointer event name",
         );
-        assert_eq!(
-            e.invoke("send", IntrospectValue::Text("A:PointerUp".to_string())),
-            Err(InvokeError::Rejected),
-            "non-numeric index"
+        // R1564 — the three refusals this test drives were indistinguishable
+        // before the reason existed; a malformed payload and an unaddressable
+        // target now say different things.
+        assert_refused_saying(
+            &e.invoke("send", IntrospectValue::Text("A:PointerUp".to_string())),
+            "send key \"A\" is not a valid target",
         );
     }
 

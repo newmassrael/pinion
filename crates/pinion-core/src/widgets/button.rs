@@ -33,6 +33,7 @@ pub use sm::{ButtonEvent, ButtonState};
 // `WidgetCore::read_state` + `WidgetCore::event_name` via the
 // `state_name_derive` flag on `#[pinion_derive::widget]`.
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -40,7 +41,6 @@ use crate::external::{
 use crate::input::AutoRepeat;
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// R12 Button widget. R51.4 §5.38 refactor: a type alias over the
 /// shared [`Widget<P>`] facade — Button has no value sidecar, so the
@@ -313,7 +313,7 @@ impl ExternalIntrospect for ButtonExternal {
             // outcome in a single round-trip.
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = ButtonEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<ButtonEvent>("button", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -411,13 +411,18 @@ impl ExternalIntrospect for ButtonStateSnapshot {
     ) -> Result<IntrospectValue, InvokeError> {
         // Snapshot has no action channel — the live `ButtonExternal`
         // is where transitions land.
-        Err(InvokeError::Rejected)
+        Err(InvokeError::rejected(
+            "button snapshot: this surface is a read-only copy; \
+             drive the live button external instead",
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WidgetEventName;
+    use crate::test_fixtures::assert_refused_saying;
 
     /// Hold a `ButtonExternal` down over its own send surface.
     fn hold(b: &mut ButtonExternal) {
@@ -741,7 +746,10 @@ mod tests {
     fn button_external_invoke_unknown_event_name_is_rejected() {
         let mut bx = ButtonExternal::new();
         let r = bx.invoke("send", IntrospectValue::Text("Teleport".to_string()));
-        assert_eq!(r, Err(InvokeError::Rejected));
+        assert_refused_saying(&r, "\"Teleport\" is not an event this widget accepts");
+        // R1564 — and it names the vocabulary that WOULD have been accepted,
+        // which is the difference between a refusal read and one acted on.
+        assert_refused_saying(&r, "PointerDown");
         // State unchanged because the action did not fire.
         assert_eq!(bx.state(), ButtonState::Idle);
     }
@@ -764,7 +772,7 @@ mod tests {
     fn button_state_snapshot_invoke_always_rejects() {
         let mut snap = ButtonStateSnapshot::new(ButtonState::Idle);
         let r = snap.invoke("send", IntrospectValue::Text("PointerEnter".to_string()));
-        assert_eq!(r, Err(InvokeError::Rejected));
+        assert_refused_saying(&r, "read-only copy");
     }
 
     #[test]

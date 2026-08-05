@@ -138,7 +138,15 @@ impl VnExternal {
             // A precondition failure (off a choice, or index out of range) is
             // Rejected, not TypeMismatch — the args were well-typed, the
             // action refused. Retrying with a valid index may succeed.
-            Err(ChooseError::NotAChoice | ChooseError::OutOfRange) => Err(InvokeError::Rejected),
+            // R1564 — the comment above already named the two, and they left
+            // by the same door. They are different operator problems: one waits
+            // for the script to reach a choice, the other picks a valid index.
+            Err(ChooseError::NotAChoice) => Err(InvokeError::rejected(
+                "choose: the script is not at a choice right now",
+            )),
+            Err(ChooseError::OutOfRange) => Err(InvokeError::rejected(format!(
+                "choose: no option {index} at this choice"
+            ))),
         }
     }
 
@@ -196,7 +204,9 @@ impl VnExternal {
         if self.state.stage().move_to(id, at) {
             Ok(self.stage_json())
         } else {
-            Err(InvokeError::Rejected)
+            Err(InvokeError::rejected(format!(
+                "move: no sprite {id:?} on this stage"
+            )))
         }
     }
 
@@ -220,7 +230,9 @@ impl VnExternal {
         if self.state.stage().set_source(id, source) {
             Ok(self.stage_json())
         } else {
-            Err(InvokeError::Rejected)
+            Err(InvokeError::rejected(format!(
+                "set_sprite_source: no sprite {id:?} on this stage"
+            )))
         }
     }
 }
@@ -438,6 +450,7 @@ mod tests {
     use crate::vn::model::{VnOption, VnScript, VnStep};
     use pinion_core::external::External;
     use pinion_core::reactive::Owner;
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     fn script() -> VnScript {
         VnScript::new(vec![
@@ -606,13 +619,13 @@ mod tests {
                 ),
                 Err(InvokeError::TypeMismatch)
             ));
-            assert!(matches!(
-                ext.invoke(
+            assert_refused_saying(
+                &ext.invoke(
                     "move",
-                    IntrospectValue::Json(serde_json::json!({"id": "ghost", "at": "left"}))
+                    IntrospectValue::Json(serde_json::json!({"id": "ghost", "at": "left"})),
                 ),
-                Err(InvokeError::Rejected)
-            ));
+                "no sprite \"ghost\" on this stage",
+            );
         });
     }
 
@@ -668,11 +681,13 @@ mod tests {
     #[test]
     fn failure_surfaces_are_loud() {
         with_external(|ext| {
-            // choose off a choice -> Rejected.
-            assert!(matches!(
-                ext.invoke("choose", IntrospectValue::Int(0)),
-                Err(InvokeError::Rejected)
-            ));
+            // choose off a choice -> Rejected. R1564 — and it says WHICH of
+            // the two refusals it is; the out-of-range one below used to be
+            // the same value.
+            assert_refused_saying(
+                &ext.invoke("choose", IntrospectValue::Int(0)),
+                "the script is not at a choice right now",
+            );
             // wrong tick type -> TypeMismatch.
             assert!(matches!(
                 ext.invoke("tick", IntrospectValue::Text("soon".into())),
@@ -694,10 +709,10 @@ mod tests {
             ));
             // out-of-range choose on a real choice -> Rejected.
             ext.intervene("step", IntrospectValue::Int(1)).unwrap();
-            assert!(matches!(
-                ext.invoke("choose", IntrospectValue::Int(9)),
-                Err(InvokeError::Rejected)
-            ));
+            assert_refused_saying(
+                &ext.invoke("choose", IntrospectValue::Int(9)),
+                "no option 9 at this choice",
+            );
         });
     }
 }

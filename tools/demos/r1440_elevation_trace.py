@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -266,7 +267,10 @@ def body() -> None:
         assert area["style"].get("gradient") is None, (
             "but flat — no encoding, no gradient"
         )
-        assert_rpc_error(lambda: invoke(ta, "endpoint_color_at", "0"))
+        assert_action_refused(
+            lambda: invoke(ta, "endpoint_color_at", "0"),
+            saying="assigns no colour to that segment",
+        )
 
         set_encoding(ta, "diverging")
         assert_eq(
@@ -277,7 +281,9 @@ def body() -> None:
         assert_rpc_error(lambda: ta.intervene(f"{EXT}/encoding", "sideways"))
         assert_rpc_error(lambda: ta.intervene(f"{EXT}/filled", "yes"))
         assert_rpc_error(lambda: ta.intervene(f"{EXT}/domain_low", 1.0))
-        assert_rpc_error(lambda: invoke(ta, "slope_at", "99"))
+        assert_action_refused(
+            lambda: invoke(ta, "slope_at", "99"), saying="no sample 99 in this profile"
+        )
         assert_eq(query(ta, "encoding"), "diverging", "a rejected write changed nothing")
         assert_eq(query(ta, "filled"), True, "and neither did the other one")
 

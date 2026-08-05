@@ -40,6 +40,13 @@ rtrb = "0.3"
 # crate must build everywhere, so device output is opt-in.
 cpal = { version = "0.15", optional = true }
 
+[dev-dependencies]
+# R1564 §5.15 (PINION-PR82) — activate `pinion_core::test_fixtures::
+# assert_refused_saying` for the refusal tests. Cargo unifies the dep with the
+# regular `[dependencies]` entry above; the `test-fixtures` feature is only
+# active for test builds, never in production.
+pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
+
 [features]
 # Real audio-device output via cpal (Linux: requires `libasound2-dev`).
 cpal-backend = ["dep:cpal"]

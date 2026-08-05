@@ -1,26 +1,24 @@
 [package]
-name = "hello-tree-filter"
+name = "hello-refused-invoke"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R821 §5.27 §5.40 §5.50 — recursive tree filter proxy consumer: a scene-graph outliner whose search box filters the whole tree to the paths that lead to a match (QSortFilterProxyModel recursive). Type or RPC set_filter and matches buried inside collapsed groups are revealed, auto-expanded, with non-match siblings pruned; the filtered visible-row sequence windows + lowers to WAI-ARIA exactly like the unfiltered tree."
+description = "R1564 §5.15 §5.12 §2 #2 — a refused invoke states WHY: the producer's own sentence reaches the JSON-RPC error.data verbatim, under a code that is not Invalid params"
 publish = false
 
 [[bin]]
-name = "hello-tree-filter"
+name = "hello-refused-invoke"
 path = "src/main.rs"
 
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
-# R821 §5.27 — `view_virtual_tree` windowed tree paint + the
-# `view_vertical_scrollbar` peer; the filtered `flat_visible_filtered`
-# sequence drops into both unchanged.
-pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
-serde = { workspace = true, features = ["derive"] }
+# R1564 §5.12 — the tests drive the same typed dispatcher the wire uses, so
+# they pin the code + reason the socket will publish.
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
 # R1537 §5.16 — the emitted renderer owns its wgpu device through
 # pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
 pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }

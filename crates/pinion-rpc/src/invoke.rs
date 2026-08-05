@@ -33,7 +33,7 @@
 //! only.
 
 use pinion_core::Scene;
-use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError};
+use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError, RefusalReason};
 
 use crate::origin::{AnswerOrigin, Refusal, SceneSource};
 use crate::path::PathError;
@@ -60,8 +60,39 @@ pub enum InvokeError {
     UnknownInvokePath,
     /// The args variant does not match the action's declared type.
     InvokeTypeMismatch,
-    /// The action declined to fire (preconditions unmet, etc.).
-    InvokeRejected,
+    /// The action declined to fire, **stating why** — R1564 §5.15 §2 #2
+    /// (PINION-PR82).
+    ///
+    /// The payload is the producer's own [`RefusalReason`], forwarded verbatim
+    /// to the JSON-RPC `error.data`. Before R1564 this variant carried nothing
+    /// and the wire published the string `"InvokeRejected"`, which names the
+    /// transport's classification and not the fact the surface observed — so a
+    /// consumer had no material to build a message out of, and the measured
+    /// result downstream was six of sprag's fifteen CLI failure paths printing
+    /// an `or`-joined guess at causes their own daemon had already told apart.
+    ///
+    /// Unlike every other variant here, the sentence is **not** this crate's to
+    /// author: the transport forwards it. That is what makes the refusal
+    /// attributable in the same sense R1487's [`AnswerOrigin`] made it — R1487
+    /// said which surface refused, and this says what it refused about.
+    InvokeRejected(RefusalReason),
+    /// R1564 — the surface reported a [`TraitInvokeError`] this transport has
+    /// not been taught to name.
+    ///
+    /// [`TraitInvokeError`] is `#[non_exhaustive]`, so the conversion below
+    /// needs a wildcard arm. Pre-R1564 that arm answered `InvokeRejected`,
+    /// which was a *guess* nothing paid for while the variant was empty and
+    /// becomes a fabrication once it has to carry a producer's sentence: the
+    /// transport would be inventing a reason for a refusal it does not
+    /// understand, and an operator would read an authored-looking statement
+    /// with no author. Naming the situation is the honest answer, and it is the
+    /// same correction R1487 made to `NoExternalAtPath`.
+    ///
+    /// Unreachable today by construction — no third failure mode exists — so it
+    /// is a compile-time-visible landing site rather than a tested path, which
+    /// is exactly its purpose: the round that adds a variant upstream finds
+    /// this arm instead of shipping through it.
+    UnmappedSurfaceError,
     /// R1487 §2 #7 — the address named a **retained** `External` reached
     /// through the shared ([`invoke_shared`]) walk, which cannot act on it.
     ///
@@ -97,13 +128,15 @@ impl From<ResolveExternalError> for InvokeError {
 
 impl From<TraitInvokeError> for InvokeError {
     fn from(err: TraitInvokeError) -> Self {
-        // `TraitInvokeError` is `#[non_exhaustive]`; future trait
-        // variants collapse into `InvokeRejected` via the wildcard
-        // until a follow-up slice maps them explicitly.
+        // `TraitInvokeError` is `#[non_exhaustive]`, so the wildcard is
+        // mandatory here. R1564 — it no longer answers `InvokeRejected`: see
+        // [`UnmappedSurfaceError`](InvokeError::UnmappedSurfaceError) for why a
+        // reason-carrying variant must not be the wildcard's landing site.
         match err {
             TraitInvokeError::UnknownPath => InvokeError::UnknownInvokePath,
             TraitInvokeError::TypeMismatch => InvokeError::InvokeTypeMismatch,
-            _ => InvokeError::InvokeRejected,
+            TraitInvokeError::Rejected(reason) => InvokeError::InvokeRejected(reason),
+            _ => InvokeError::UnmappedSurfaceError,
         }
     }
 }

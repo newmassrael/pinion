@@ -55,13 +55,13 @@ pub use sm::{ColorAreaEvent, ColorAreaState};
 // macros are retired. The statechart grammar mirrors the Slider's; only
 // the `*Activate` raise variant is renamed.
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// `ColorArea` widget state machine + two `f32` value sidecars
 /// (`x` = saturation, `y` = value, both `0.0..=1.0` normalised).
@@ -369,7 +369,8 @@ impl ExternalIntrospect for ColorAreaExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = ColorAreaEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        crate::widget_core::require_event::<ColorAreaEvent>("color_area", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }

@@ -238,13 +238,21 @@ impl ValueScatterOracle {
         self.diverging.as_ref().is_some_and(|s| s.diverging.get())
     }
 
+    /// R1564 §5.15 (PINION-PR82) — the sentence for a point that exists but
+    /// carries no reading. Two arms answer it; a missing sample is a state of
+    /// the DATA, not a bad address, and the two used to be one value.
+    const MISSING_SAMPLE: &str = "that point exists but holds no sample value";
+
     /// Parse a float argument. A non-string argument is a
     /// [`TypeMismatch`](InvokeError::TypeMismatch) (the same shape cannot
     /// succeed on retry); an unparseable string is
     /// [`Rejected`](InvokeError::Rejected) (another argument would work).
     fn parse_value(arg: &IntrospectValue) -> Result<f64, InvokeError> {
         match arg {
-            IntrospectValue::Text(s) => s.trim().parse::<f64>().map_err(|_| InvokeError::Rejected),
+            IntrospectValue::Text(s) => s
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| InvokeError::rejected(format!("{s:?} is not a number"))),
             IntrospectValue::Float(f) => Ok(*f),
             _ => Err(InvokeError::TypeMismatch),
         }
@@ -260,7 +268,12 @@ impl ValueScatterOracle {
             let j: usize = j.trim().parse().ok()?;
             probes().get(i)?.points.get(j).copied()
         });
-        parsed.ok_or(InvokeError::Rejected)
+        parsed.ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{s:?} does not address a point (expected \"<probe>,<point>\" \
+                 with both in range)"
+            ))
+        })
     }
 }
 
@@ -347,11 +360,13 @@ impl ExternalIntrospect for ValueScatterOracle {
                 point
                     .value
                     .map(IntrospectValue::Float)
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| InvokeError::rejected(Self::MISSING_SAMPLE))
             }
             "mark_color_at" => {
                 let point = Self::parse_point(&args)?;
-                let value = point.value.ok_or(InvokeError::Rejected)?;
+                let value = point
+                    .value
+                    .ok_or_else(|| InvokeError::rejected(Self::MISSING_SAMPLE))?;
                 Ok(IntrospectValue::Text(hex(encoded_color(value, diverging))))
             }
             _ => Err(InvokeError::UnknownPath),

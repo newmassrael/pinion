@@ -62,13 +62,13 @@ pub use sm::{ListboxItemEvent, ListboxItemState};
 // `ListboxItemEvent::from_name` via the traits.
 use sm::ListboxItemPolicy;
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// `ListBoxItem` widget state machine + selection value sidecar.
 /// Activate (`Pressed → Hover` from pointer release, or
@@ -320,7 +320,10 @@ impl ExternalIntrospect for ListBoxItemExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = ListboxItemEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<ListboxItemEvent>(
+                        "listbox_item",
+                        name,
+                    )?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -334,6 +337,8 @@ impl ExternalIntrospect for ListBoxItemExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WidgetEventName;
+    use crate::test_fixtures::assert_refused_saying;
 
     fn activate(item: &mut ListBoxItem) {
         item.send(ListboxItemEvent::PointerEnter);
@@ -492,7 +497,7 @@ mod tests {
     fn external_invoke_unknown_event_rejected() {
         let mut ix = ListBoxItemExternal::new();
         let r = ix.invoke("send", IntrospectValue::Text("BogusEvent".to_string()));
-        assert!(matches!(r, Err(InvokeError::Rejected)));
+        assert_refused_saying(&r, "\"BogusEvent\" is not an event this widget accepts");
     }
 
     #[test]

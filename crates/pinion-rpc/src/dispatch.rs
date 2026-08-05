@@ -8148,19 +8148,98 @@ fn preview_view_to_json(view: &PreviewView, now: std::time::Instant) -> Value {
     Value::Object(obj)
 }
 
-/// R1487 — the wire word for an [`InvokeError`], split out of the former
+/// R1564 §5.15 §2 #2 (PINION-PR82) — JSON-RPC error code for **an action the
+/// surface refused to fire**, as distinct from `-32602 Invalid params`.
+///
+/// # Why this is not `-32602`
+///
+/// `-32602` means the parameters were wrong. A refused action's parameters were
+/// *right*: the path resolved, the argument type matched, and the surface then
+/// declined on a fact about its own state. Publishing that under "Invalid
+/// params" tells a client to fix its call when the call was well formed.
+///
+/// Splitting it becomes load-bearing precisely because R1564 put the
+/// **producer's** sentence in `data`. Before that every `data` string was a word
+/// this crate authored, so a consumer could match one to classify. Now
+/// `error.data` on a refusal is arbitrary application prose — the very thing a
+/// consumer must not branch on — and the code is what is left to branch on. The
+/// two changes are one change: a free-text `data` without a code split would
+/// have made the wire *less* machine-readable, not more.
+///
+/// It also removes a live collision the forcing consumer reported: sprag reads
+/// `-32602` from `scene/query` as "no such session", and that reading is safe
+/// today only because a *read* cannot carry an action refusal. "Safe by
+/// accident" is a state worth spending a code on.
+///
+/// `-32005` sits in JSON-RPC 2.0's implementation-defined server-error range
+/// (`-32000..=-32099`), beside the `-32004` `focus/*` already uses for "service
+/// unavailable". Those two are the whole of pinion's error space; a third
+/// belongs next to them, not scattered.
+pub const ACTION_REFUSED: i32 = -32005;
+
+/// R1564 — a refusal's wire form: the JSON-RPC code **and** the detail string,
+/// decided together.
+///
+/// They are one value because they cannot be allowed to disagree — a reason
+/// that names an application refusal under `-32602` is a mislabelled error, and
+/// the way that happens is two functions each deciding one half. Every
+/// `*_error_reason` in this module now returns this, so the code is chosen at
+/// the same `match` arm as the word.
+struct WireFault {
+    code: i32,
+    reason: Cow<'static, str>,
+}
+
+impl WireFault {
+    /// The transport's own classification, under `-32602 Invalid params` — the
+    /// pre-R1564 shape, which is still right for every failure the framework
+    /// itself diagnoses.
+    fn params(reason: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            code: -32602,
+            reason: reason.into(),
+        }
+    }
+}
+
+/// R1564 — the JSON-RPC `message` for a code this module emits.
+///
+/// Derived from the code rather than passed beside it, so the pair cannot drift:
+/// `message` is a category label, and a category with two spellings is two
+/// categories to a client parsing it.
+fn fault_message(code: i32) -> &'static str {
+    if code == ACTION_REFUSED {
+        "Action refused"
+    } else {
+        "Invalid params"
+    }
+}
+
+/// R1487 — the wire form of an [`InvokeError`], split out of the former
 /// `invoke_error_to_rpc` so the bare and the disclosing renderings share one
 /// vocabulary (peer of [`query_error_reason`]).
-fn invoke_error_reason(err: &InvokeError) -> Cow<'static, str> {
+///
+/// R1564 §5.15 (PINION-PR82) — answers a [`WireFault`], not a bare string,
+/// because the refused-action case now differs from its neighbours in **code**
+/// as well as in text. See [`ACTION_REFUSED`].
+fn invoke_error_reason(err: &InvokeError) -> WireFault {
     match err {
-        InvokeError::Path(inner) => inner.wire_tag(),
-        InvokeError::UnsupportedPath => Cow::Borrowed("UnsupportedPath"),
-        InvokeError::NoExternalAtPath => Cow::Borrowed("NoExternalAtPath"),
-        InvokeError::IntrospectionOptedOut => Cow::Borrowed("IntrospectionOptedOut"),
-        InvokeError::UnknownInvokePath => Cow::Borrowed("UnknownInvokePath"),
-        InvokeError::InvokeTypeMismatch => Cow::Borrowed("InvokeTypeMismatch"),
-        InvokeError::InvokeRejected => Cow::Borrowed("InvokeRejected"),
-        InvokeError::RetainedNodeNotWritable => Cow::Borrowed("RetainedNodeNotWritable"),
+        InvokeError::Path(inner) => WireFault::params(inner.wire_tag()),
+        InvokeError::UnsupportedPath => WireFault::params("UnsupportedPath"),
+        InvokeError::NoExternalAtPath => WireFault::params("NoExternalAtPath"),
+        InvokeError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
+        InvokeError::UnknownInvokePath => WireFault::params("UnknownInvokePath"),
+        InvokeError::InvokeTypeMismatch => WireFault::params("InvokeTypeMismatch"),
+        // R1564 — the producer's own sentence, verbatim, under its own code.
+        // Every other arm here is a word this crate authored; this one is not,
+        // and the code is what lets a consumer tell those apart without
+        // matching prose ([[wire-form-read-write-symmetry]]).
+        InvokeError::InvokeRejected(reason) => WireFault {
+            code: ACTION_REFUSED,
+            reason: reason.clone().into_cow(),
+        },
+        InvokeError::UnmappedSurfaceError => WireFault::params("UnmappedSurfaceError"),
+        InvokeError::RetainedNodeNotWritable => WireFault::params("RetainedNodeNotWritable"),
     }
 }
 
@@ -8231,17 +8310,23 @@ fn handle_scene_intervene(
 }
 
 /// R1487 — peer of [`invoke_error_reason`] for the write-state channel.
-fn intervene_error_reason(err: &InterveneError) -> Cow<'static, str> {
+fn intervene_error_reason(err: &InterveneError) -> WireFault {
+    // R1564 — every arm is `-32602`: `InterveneError` has no reason-carrying
+    // variant yet, so no write refusal here is the producer's own sentence.
+    // That asymmetry with `invoke` is stated rather than hidden — the write
+    // channel's `ReadOnly` / `OutOfRange` are the next slice of PINION-PR82,
+    // and giving them a code before they have a reason would publish a
+    // distinction with nothing behind it.
     match err {
-        InterveneError::Path(inner) => inner.wire_tag(),
-        InterveneError::UnsupportedPath => Cow::Borrowed("UnsupportedPath"),
-        InterveneError::NoExternalAtPath => Cow::Borrowed("NoExternalAtPath"),
-        InterveneError::IntrospectionOptedOut => Cow::Borrowed("IntrospectionOptedOut"),
-        InterveneError::UnknownIntervenePath => Cow::Borrowed("UnknownIntervenePath"),
-        InterveneError::InterveneTypeMismatch => Cow::Borrowed("InterveneTypeMismatch"),
-        InterveneError::ReadOnly => Cow::Borrowed("ReadOnly"),
-        InterveneError::OutOfRange => Cow::Borrowed("OutOfRange"),
-        InterveneError::RetainedNodeNotWritable => Cow::Borrowed("RetainedNodeNotWritable"),
+        InterveneError::Path(inner) => WireFault::params(inner.wire_tag()),
+        InterveneError::UnsupportedPath => WireFault::params("UnsupportedPath"),
+        InterveneError::NoExternalAtPath => WireFault::params("NoExternalAtPath"),
+        InterveneError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
+        InterveneError::UnknownIntervenePath => WireFault::params("UnknownIntervenePath"),
+        InterveneError::InterveneTypeMismatch => WireFault::params("InterveneTypeMismatch"),
+        InterveneError::ReadOnly => WireFault::params("ReadOnly"),
+        InterveneError::OutOfRange => WireFault::params("OutOfRange"),
+        InterveneError::RetainedNodeNotWritable => WireFault::params("RetainedNodeNotWritable"),
     }
 }
 
@@ -8516,13 +8601,16 @@ fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
 /// one (`error.data.reason` = this string) render through here, so opting
 /// into provenance cannot silently rename a reason a client already
 /// matches on.
-fn query_error_reason(err: &QueryError) -> Cow<'static, str> {
+fn query_error_reason(err: &QueryError) -> WireFault {
+    // R1564 — a READ cannot be refused by a producer: `query` answers
+    // `Option`, so every failure here is the transport's own classification and
+    // every one is `-32602`.
     match err {
-        QueryError::Path(inner) => inner.wire_tag(),
-        QueryError::UnsupportedPath => Cow::Borrowed("UnsupportedPath"),
-        QueryError::NoExternalAtPath => Cow::Borrowed("NoExternalAtPath"),
-        QueryError::IntrospectionOptedOut => Cow::Borrowed("IntrospectionOptedOut"),
-        QueryError::UnknownIntrospectPath => Cow::Borrowed("UnknownIntrospectPath"),
+        QueryError::Path(inner) => WireFault::params(inner.wire_tag()),
+        QueryError::UnsupportedPath => WireFault::params("UnsupportedPath"),
+        QueryError::NoExternalAtPath => WireFault::params("NoExternalAtPath"),
+        QueryError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
+        QueryError::UnknownIntrospectPath => WireFault::params("UnknownIntrospectPath"),
     }
 }
 
@@ -8551,12 +8639,13 @@ fn query_error_reason(err: &QueryError) -> Cow<'static, str> {
 /// answer to "what does a disclosing refusal look like".
 fn refusal_to_rpc<E>(
     refusal: &Refusal<E>,
-    reason: impl Fn(&E) -> Cow<'static, str>,
+    reason: impl Fn(&E) -> WireFault,
     with_origin: bool,
 ) -> RpcError {
-    let reason = reason(&refusal.error);
+    let WireFault { code, reason } = reason(&refusal.error);
+    let message = fault_message(code);
     if !with_origin {
-        return RpcError::invalid_params(reason);
+        return RpcError::new(code, message).with_data_string(reason);
     }
     let mut data = serde_json::Map::new();
     data.insert("reason".to_owned(), Value::String(reason.into_owned()));
@@ -8566,7 +8655,7 @@ fn refusal_to_rpc<E>(
             Value::String(origin.to_wire().to_owned()),
         );
     }
-    RpcError::new(-32602, "Invalid params").with_data(Value::Object(data))
+    RpcError::new(code, message).with_data(Value::Object(data))
 }
 
 pub(crate) fn introspect_value_to_json(value: IntrospectValue) -> Value {

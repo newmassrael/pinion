@@ -274,8 +274,12 @@ impl ContextMenuExternal {
         // Ctrl+click outside the popup dismisses it (the hand-rolled
         // split_once read "PointerUp:c" as the event name).
         let (sub, event_name, _mods) =
-            crate::composite_tag::split_send_payload(payload).ok_or(InvokeError::Rejected)?;
-        let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
+            crate::composite_tag::require_send_payload("context_menu.send", payload)?;
+        let event = PointerWireEvent::from_wire_name(event_name).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "context_menu.send: {event_name:?} is not a pointer event name"
+            ))
+        })?;
         // R715 §5.16 — the transparent dismiss barrier painted behind the
         // popup: a `PointerUp` outside the panel closes it. Other pointer
         // events over the barrier are inert.
@@ -286,11 +290,25 @@ impl ContextMenuExternal {
             return Ok(IntrospectValue::Bool(self.is_open()));
         }
         let mut chars = sub.chars();
-        let kind = chars.next().ok_or(InvokeError::Rejected)?;
-        let idx: usize = chars.as_str().parse().map_err(|_| InvokeError::Rejected)?;
+        let kind = chars.next().ok_or_else(|| {
+            InvokeError::rejected(
+                "context_menu.send: empty target (expected \"i<index>\" or \"barrier\")",
+            )
+        })?;
+        let rest = chars.as_str();
+        let idx: usize = rest.parse().map_err(|_| {
+            InvokeError::rejected(format!(
+                "context_menu.send: target {sub:?} carries no item index ({rest:?} is not a number)"
+            ))
+        })?;
         match kind {
             'i' => self.send_item(idx, event),
-            _ => return Err(InvokeError::Rejected),
+            _ => {
+                return Err(InvokeError::rejected(format!(
+                    "context_menu.send: target {sub:?} names no sub-element \
+                     (expected \"i<index>\" or \"barrier\")"
+                )));
+            }
         }
         Ok(IntrospectValue::Bool(self.is_open()))
     }
@@ -298,9 +316,17 @@ impl ContextMenuExternal {
     /// Parse the `open_at` wire payload `"<x>,<y>"` (window-space floats)
     /// and open the popup there. Returns the open flag.
     fn dispatch_open_at(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
-        let (xs, ys) = payload.split_once(',').ok_or(InvokeError::Rejected)?;
-        let x: f32 = xs.trim().parse().map_err(|_| InvokeError::Rejected)?;
-        let y: f32 = ys.trim().parse().map_err(|_| InvokeError::Rejected)?;
+        let (xs, ys) = payload.split_once(',').ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "context_menu.open_at: malformed argument {payload:?} (expected \"<x>,<y>\")"
+            ))
+        })?;
+        let x: f32 = xs.trim().parse().map_err(|_| {
+            InvokeError::rejected(format!("context_menu.open_at: x {xs:?} is not a number"))
+        })?;
+        let y: f32 = ys.trim().parse().map_err(|_| {
+            InvokeError::rejected(format!("context_menu.open_at: y {ys:?} is not a number"))
+        })?;
         self.em.inner.open(x, y);
         Ok(IntrospectValue::Bool(self.is_open()))
     }

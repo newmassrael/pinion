@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1564 §5.15 §5.7 — renderer for the refused-invoke demo. Same single-source
+  emit template as hello-answer-origin's; only the struct name differs.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="RefusedInvokeRenderer"
+        backend="vello"/>

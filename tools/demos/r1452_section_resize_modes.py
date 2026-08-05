@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -248,9 +249,20 @@ def body() -> None:
 
         # ── (G) refusals are typed, and change nothing ────────────────
         before = _h(tf, "state")
-        assert_rpc_error(lambda: tf.invoke("/external/set_resize_mode", "0:Stretch"))  # 39
-        assert_rpc_error(lambda: tf.invoke("/external/set_resize_mode", "9:fixed"))    # 40
-        assert_rpc_error(lambda: tf.invoke("/external/set_all_resize_modes", "snug"))  # 41
+        # R1564 — a bad SPELLING, a bad SECTION and a bad whole-row spelling
+        # arrived identically; each now names what it found.
+        assert_action_refused(
+            lambda: tf.invoke("/external/set_resize_mode", "0:Stretch"),
+            saying='malformed argument "0:Stretch"',
+        )                                                                              # 39
+        assert_action_refused(
+            lambda: tf.invoke("/external/set_resize_mode", "9:fixed"),
+            saying="no section 9 in this header",
+        )                                                                              # 40
+        assert_action_refused(
+            lambda: tf.invoke("/external/set_all_resize_modes", "snug"),
+            saying='"snug" is not a section resize mode',
+        )                                                                              # 41
         assert_rpc_error(lambda: tf.intervene("/external/state", {
             "order": [0, 1, 2, 3, 4], "sizes": BOOT_W, "hidden": [False] * NCOLS,
             "modes": ["interactive", "Stretch", "fixed", "fixed", "fixed"],

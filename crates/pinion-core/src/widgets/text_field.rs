@@ -94,6 +94,7 @@ use sm::TextFieldPolicy;
 
 use std::rc::Rc;
 
+use crate::WidgetStateName;
 use crate::clipboard::{Clipboard, ClipboardSelection};
 use crate::composite_tag::split_send_payload;
 use crate::external::{
@@ -111,7 +112,6 @@ use crate::widget_core::ExtraExternal;
 use crate::widgets::caret_blink::{CaretBlink, use_caret_blink};
 use crate::widgets::text_edit::{FormatField, TextEditState, use_text_edit_state};
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// R56.1.b §5.38 §5.21 — closed-form caret rectangle derivation.
 ///
@@ -2029,7 +2029,11 @@ impl TextFieldExternal {
             // of the `caret` intervene's range guard.
             "toggle-fold" => match args {
                 IntrospectValue::Int(line) => {
-                    let l = usize::try_from(*line).map_err(|_| InvokeError::Rejected)?;
+                    let l = usize::try_from(*line).map_err(|_| {
+                        InvokeError::rejected(format!(
+                            "text_field.toggle-fold: {line} is not a line number"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(
                         self.text_state().is_some_and(|s| s.toggle_fold(l)),
                     ))
@@ -2122,7 +2126,11 @@ impl TextFieldExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         match args {
             IntrospectValue::Int(line) => {
-                let l = usize::try_from(*line).map_err(|_| InvokeError::Rejected)?;
+                let l = usize::try_from(*line).map_err(|_| {
+                    InvokeError::rejected(format!(
+                        "text_field.go-to-line: {line} is not a line number"
+                    ))
+                })?;
                 let resolved = self.text_state().map_or(0, |s| s.go_to_line(l));
                 Ok(IntrospectValue::Int(
                     i64::try_from(resolved).unwrap_or(i64::MAX),
@@ -2162,7 +2170,7 @@ impl TextFieldExternal {
                 return Ok(IntrospectValue::Text(self.state().as_name().to_string()));
             }
         }
-        let ev = TextFieldEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+        let ev = crate::widget_core::require_event::<TextFieldEvent>("text_field", name)?;
         self.send(ev);
         Ok(IntrospectValue::Text(self.state().as_name().to_string()))
     }
@@ -2745,6 +2753,7 @@ mod tests {
     //! Mirror of the R55.D.2 `ScrollBar` test layout: initial state,
     //! four-state transition graph, commit/cancel detection, ARIA
     //! commit-on-blur path, introspect surface.
+    use crate::test_fixtures::assert_refused_saying;
 
     use super::{TextField, TextFieldEvent, TextFieldExternal, TextFieldState};
     use crate::external::SchemaField;
@@ -3072,7 +3081,7 @@ mod tests {
     fn external_invoke_send_rejects_unknown_event() {
         let mut tfx = TextFieldExternal::new();
         let r = tfx.invoke("send", IntrospectValue::Text("Click".to_string()));
-        assert_eq!(r, Err(InvokeError::Rejected));
+        assert_refused_saying(&r, "\"Click\" is not an event this widget accepts");
     }
 
     #[test]
@@ -6897,6 +6906,7 @@ mod r933_fold_tests {
     //! R933 §5.36 — code-folding RPC surface on [`TextFieldExternal`]:
     //! the `fold_regions` derived read and the `toggle-fold` / `fold-all`
     //! / `unfold-all` actions (the AI-first peer of the gutter chevron).
+    use crate::test_fixtures::assert_refused_saying;
 
     use super::{TextFieldExternal, TextFieldSendKey};
     use crate::external::{ExternalIntrospect, IntrospectValue, InvokeError};
@@ -6983,12 +6993,9 @@ mod r933_fold_tests {
     #[test]
     fn r933_invoke_fold_rejects_bad_args() {
         let (_state, mut tfx) = wired("x {\n y\n}\n");
-        assert!(
-            matches!(
-                tfx.invoke("toggle-fold", IntrospectValue::Int(-1)),
-                Err(InvokeError::Rejected),
-            ),
-            "a negative line cannot name a row",
+        assert_refused_saying(
+            &tfx.invoke("toggle-fold", IntrospectValue::Int(-1)),
+            "-1 is not a line number",
         );
         assert!(matches!(
             tfx.invoke("toggle-fold", IntrospectValue::Null),
@@ -7121,12 +7128,9 @@ mod r933_fold_tests {
     #[test]
     fn r941_invoke_go_to_line_rejects_negative_and_bad_type() {
         let (_state, mut tfx) = wired("a\nb");
-        assert!(
-            matches!(
-                tfx.invoke("go-to-line", IntrospectValue::Int(-1)),
-                Err(InvokeError::Rejected)
-            ),
-            "a negative line cannot name a row (the toggle-fold guard mirror)",
+        assert_refused_saying(
+            &tfx.invoke("go-to-line", IntrospectValue::Int(-1)),
+            "-1 is not a line number",
         );
         assert!(matches!(
             tfx.invoke("go-to-line", IntrospectValue::Null),
@@ -7265,12 +7269,9 @@ mod r933_fold_tests {
             send_text(&mut tfx, "Focus").is_ok(),
             "a bare SCXML event still dispatches"
         );
-        assert!(
-            matches!(
-                send_text(&mut tfx, "foo:PointerUp"),
-                Err(InvokeError::Rejected)
-            ),
-            "a non-gutter composite is not a recognized send",
+        assert_refused_saying(
+            &send_text(&mut tfx, "foo:PointerUp"),
+            "\"foo:PointerUp\" is not an event this widget accepts",
         );
     }
 

@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -201,7 +202,10 @@ def body() -> None:
         # restore the drawing discarded on the way.
         assert_eq(q(tf, "mode"), "stable", "★ untangling did not adopt a new ordering")
         settled_columns = columns(tf)
-        assert_rpc_error(lambda: tf.invoke("/external/advance", None))
+        assert_action_refused(
+            lambda: tf.invoke("/external/advance", None),
+            saying="the scripted timeline has no further step",
+        )
         assert_eq(
             columns(tf), settled_columns, "a refused step leaves the drawing alone"
         )

@@ -172,7 +172,11 @@ impl TooltipExternal {
             // tooltip but must not error — the router forwards them when
             // the cursor presses on the shared-tag overlay body.
             Some(PointerWireEvent::Down | PointerWireEvent::Up | PointerWireEvent::Cancel) => {}
-            None => return Err(InvokeError::Rejected),
+            None => {
+                return Err(InvokeError::rejected(format!(
+                    "tooltip.send: {name:?} is not a pointer event name"
+                )));
+            }
         }
         Ok(())
     }
@@ -298,6 +302,7 @@ impl ExternalIntrospect for TooltipExternal {
 mod tests {
     use super::*;
     use crate::external::External;
+    use crate::test_fixtures::assert_refused_saying;
 
     fn send(t: &mut TooltipExternal, name: &str) {
         t.invoke("send", IntrospectValue::Text(name.to_string()))
@@ -452,7 +457,7 @@ mod tests {
     fn send_unknown_event_is_rejected() {
         let mut t = TooltipExternal::new();
         let r = t.invoke("send", IntrospectValue::Text("Teleport".to_string()));
-        assert_eq!(r, Err(InvokeError::Rejected));
+        assert_refused_saying(&r, "\"Teleport\" is not a pointer event name");
     }
 
     #[test]

@@ -71,7 +71,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::composite_tag::{parse_pair, split_send_payload};
+use crate::composite_tag::{require_pair, split_send_payload};
 use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
     InvokeError, SchemaArg, SchemaField, read_only_or_unknown,
@@ -402,12 +402,16 @@ impl ColumnLayoutState {
 /// sentinel is not a member of the enum, and making it one would put a
 /// "no opinion" variant into a type whose whole job is to name one.
 fn section_and_alignment(text: &str) -> Result<(usize, Option<TextAlign>), InvokeError> {
-    let (logical, spelling) =
-        parse_pair::<usize, String>(text, ':').ok_or(InvokeError::Rejected)?;
+    let (logical, spelling) = require_pair::<usize, String>("set_section_alignment", text, ':')?;
     let align = if spelling == "default" {
         None
     } else {
-        Some(TextAlign::from_wire(&spelling).ok_or(InvokeError::Rejected)?)
+        Some(TextAlign::from_wire(&spelling).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "set_section_alignment: {spelling:?} is not an alignment spelling, \
+                 and is not the \"default\" sentinel that hands the section back to the header"
+            ))
+        })?)
     };
     Ok((logical, align))
 }
@@ -1698,9 +1702,14 @@ impl ColumnLayout {
     /// section that does not exist.
     fn invoke_set_section_alignment(&self, text: &str) -> Result<IntrospectValue, InvokeError> {
         let (logical, align) = section_and_alignment(text)?;
-        if !self.set_section_alignment(logical, align) {
-            return Err(InvokeError::Rejected);
-        }
+        // R1564 — the precondition is checked BEFORE the call rather than
+        // inferred from the returned `bool` afterwards: the setter answers
+        // `false` on exactly one condition, so that condition is the reason,
+        // and reading it off a bool would leave the sentence guessing at what
+        // the setter already knew.
+        self.require_section("set_section_alignment", logical)?;
+        let applied = self.set_section_alignment(logical, align);
+        debug_assert!(applied, "require_section is the setter's only false path");
         Ok(self.query("alignments").unwrap_or(IntrospectValue::Null))
     }
 
@@ -1811,11 +1820,16 @@ impl ColumnLayout {
     /// exist.
     fn invoke_set_section_selection(&self, text: &str) -> Result<IntrospectValue, InvokeError> {
         let (logical, spelling) =
-            parse_pair::<usize, String>(text, ':').ok_or(InvokeError::Rejected)?;
-        let selection: SectionSelection = spelling.parse().map_err(|()| InvokeError::Rejected)?;
-        if !self.set_section_selection(logical, selection) {
-            return Err(InvokeError::Rejected);
-        }
+            require_pair::<usize, String>("set_section_selection", text, ':')?;
+        let selection: SectionSelection = spelling.parse().map_err(|()| {
+            InvokeError::rejected(format!(
+                "set_section_selection: {spelling:?} is not a section-selection spelling"
+            ))
+        })?;
+        // R1564 — precondition before the call; see `invoke_set_section_alignment`.
+        self.require_section("set_section_selection", logical)?;
+        let applied = self.set_section_selection(logical, selection);
+        debug_assert!(applied, "require_section is the setter's only false path");
         Ok(self.query("highlights").unwrap_or(IntrospectValue::Null))
     }
 
@@ -2660,11 +2674,34 @@ impl ColumnLayout {
         let IntrospectValue::Text(text) = args else {
             return Err(InvokeError::TypeMismatch);
         };
-        let (logical, size) = parse_pair::<usize, u32>(text, ':').ok_or(InvokeError::Rejected)?;
-        if logical >= self.count {
-            return Err(InvokeError::Rejected);
-        }
+        let (logical, size) = require_pair::<usize, u32>("resize_section", text, ':')?;
+        self.require_section("resize_section", logical)?;
         Ok((logical, size))
+    }
+
+    /// R1564 §5.15 (PINION-PR82) — the section-exists precondition every
+    /// section-addressed `invoke` arm shares, stating what it found rather than
+    /// that it found something wrong.
+    ///
+    /// Seven arms wrote `if logical >= self.count { return Err(Rejected) }`
+    /// inline. That was tolerable while the refusal carried nothing — the seven
+    /// copies were byte-identical, so they could not disagree. Once each has to
+    /// compose a *sentence* they can, and the section count is exactly the fact
+    /// a client cannot see from the refusal it is holding: `no section 7`
+    /// leaves open whether the header has six or none.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::Rejected`] naming the method, the absent section and the
+    /// header's extent.
+    fn require_section(&self, method: &str, logical: usize) -> Result<(), InvokeError> {
+        if logical >= self.count {
+            return Err(InvokeError::rejected(format!(
+                "{method}: no section {logical} in this header (it has {})",
+                self.count
+            )));
+        }
+        Ok(())
     }
 
     fn width_vector(&self, value: &IntrospectValue) -> Result<Vec<u32>, InterveneError> {
@@ -2903,7 +2940,7 @@ impl ColumnLayout {
 
     /// Header-layout actions for [`ExternalIntrospect::invoke`] — Qt's own
     /// section vocabulary, each taking the typed pair wire form
-    /// ([`parse_pair`]):
+    /// ([`require_pair`]):
     ///
     /// - `swap_sections` — `"<visual_a>:<visual_b>"`; returns the new order
     /// - `resize_section` — `"<logical>:<px>"`; returns the applied size
@@ -2943,10 +2980,9 @@ impl ColumnLayout {
         match method {
             "swap_sections" => {
                 let text = pair_text(args)?;
-                let (a, b) = parse_pair::<usize, usize>(&text, ':').ok_or(InvokeError::Rejected)?;
-                if a >= self.count || b >= self.count {
-                    return Err(InvokeError::Rejected);
-                }
+                let (a, b) = require_pair::<usize, usize>("swap_sections", &text, ':')?;
+                self.require_section("swap_sections", a)?;
+                self.require_section("swap_sections", b)?;
                 self.swap_sections(a, b);
                 Ok(self.query("order").unwrap_or(IntrospectValue::Null))
             }
@@ -2969,10 +3005,8 @@ impl ColumnLayout {
             "set_section_hidden" => {
                 let text = pair_text(args)?;
                 let (logical, hide) =
-                    parse_pair::<usize, bool>(&text, ':').ok_or(InvokeError::Rejected)?;
-                if logical >= self.count {
-                    return Err(InvokeError::Rejected);
-                }
+                    require_pair::<usize, bool>("set_section_hidden", &text, ':')?;
+                self.require_section("set_section_hidden", logical)?;
                 self.set_section_hidden(logical, hide);
                 Ok(self
                     .query("visible_sections")
@@ -2992,11 +3026,9 @@ impl ColumnLayout {
             // the outcome an agent needs is the row, not the section.
             "set_resize_mode" => {
                 let text = pair_text(args)?;
-                let (logical, mode) = parse_pair::<usize, SectionResizeMode>(&text, ':')
-                    .ok_or(InvokeError::Rejected)?;
-                if logical >= self.count {
-                    return Err(InvokeError::Rejected);
-                }
+                let (logical, mode) =
+                    require_pair::<usize, SectionResizeMode>("set_resize_mode", &text, ':')?;
+                self.require_section("set_resize_mode", logical)?;
                 self.set_resize_mode(logical, mode);
                 Ok(self
                     .query("visible_widths")
@@ -3010,10 +3042,8 @@ impl ColumnLayout {
             "set_sort_indicator" => {
                 let text = pair_text(args)?;
                 let (logical, ascending) =
-                    parse_pair::<usize, bool>(&text, ':').ok_or(InvokeError::Rejected)?;
-                if logical >= self.count {
-                    return Err(InvokeError::Rejected);
-                }
+                    require_pair::<usize, bool>("set_sort_indicator", &text, ':')?;
+                self.require_section("set_sort_indicator", logical)?;
                 self.set_sort_indicator(logical, ascending);
                 Ok(self
                     .query("sort_indicator")
@@ -3021,9 +3051,7 @@ impl ColumnLayout {
             }
             "cycle_sort_indicator" => {
                 let logical = args.as_usize().ok_or(InvokeError::TypeMismatch)?;
-                if logical >= self.count {
-                    return Err(InvokeError::Rejected);
-                }
+                self.require_section("cycle_sort_indicator", logical)?;
                 self.cycle_sort_indicator(logical);
                 Ok(self
                     .query("sort_indicator")
@@ -3039,8 +3067,12 @@ impl ColumnLayout {
                 let IntrospectValue::Text(text) = args else {
                     return Err(InvokeError::TypeMismatch);
                 };
-                let mode: SectionResizeMode =
-                    text.trim().parse().map_err(|()| InvokeError::Rejected)?;
+                let spelling = text.trim();
+                let mode: SectionResizeMode = spelling.parse().map_err(|()| {
+                    InvokeError::rejected(format!(
+                        "set_all_resize_modes: {spelling:?} is not a section resize mode"
+                    ))
+                })?;
                 self.set_all_resize_modes(mode);
                 Ok(self
                     .query("visible_widths")
@@ -3186,6 +3218,7 @@ pub fn read_column_layout(intro: &dyn ExternalIntrospect) -> ColumnLayoutView {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_fixtures::assert_refused_saying;
     use std::borrow::Cow;
 
     use super::{
@@ -4129,24 +4162,26 @@ mod tests {
             Err(InvokeError::TypeMismatch)
         ));
         // Text, but not a pair.
-        assert!(matches!(
-            l.invoke("resize_section", &text("140")),
-            Err(InvokeError::Rejected)
-        ));
-        // A pair naming a section that does not exist.
-        assert!(matches!(
-            l.invoke("swap_sections", &text("0:9")),
-            Err(InvokeError::Rejected)
-        ));
-        assert!(matches!(
-            l.invoke("set_section_hidden", &text("9:true")),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &l.invoke("resize_section", &text("140")),
+            "malformed argument \"140\"",
+        );
+        // A pair naming a section that does not exist. R1564 — this and the
+        // malformed pair above were the SAME value before the reason existed,
+        // and they are different mistakes with different fixes.
+        assert_refused_saying(
+            &l.invoke("swap_sections", &text("0:9")),
+            "no section 9 in this header (it has 4)",
+        );
+        assert_refused_saying(
+            &l.invoke("set_section_hidden", &text("9:true")),
+            "no section 9 in this header (it has 4)",
+        );
         // A pair whose second half is the wrong type.
-        assert!(matches!(
-            l.invoke("set_section_hidden", &text("0:yes")),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &l.invoke("set_section_hidden", &text("0:yes")),
+            "malformed argument \"0:yes\"",
+        );
         assert!(matches!(
             l.invoke("hide_everything", &text("0:1")),
             Err(InvokeError::UnknownPath)
@@ -4450,18 +4485,18 @@ mod tests {
             "600 split four ways"
         );
 
-        assert!(matches!(
-            l.invoke("set_resize_mode", &text("0:sideways")),
-            Err(InvokeError::Rejected)
-        ));
-        assert!(matches!(
-            l.invoke("set_all_resize_modes", &text("sideways")),
-            Err(InvokeError::Rejected)
-        ));
-        assert!(matches!(
-            l.invoke("set_resize_mode", &text("9:fixed")),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &l.invoke("set_resize_mode", &text("0:sideways")),
+            "malformed argument \"0:sideways\"",
+        );
+        assert_refused_saying(
+            &l.invoke("set_all_resize_modes", &text("sideways")),
+            "\"sideways\" is not a section resize mode",
+        );
+        assert_refused_saying(
+            &l.invoke("set_resize_mode", &text("9:fixed")),
+            "no section 9 in this header",
+        );
     }
 
     #[test]
@@ -5101,9 +5136,9 @@ mod tests {
             l.intervene("sort_indicator", &text("9:ascending")),
             Err(InterveneError::OutOfRange)
         );
-        assert_eq!(
-            l.invoke("cycle_sort_indicator", &IntrospectValue::Int(9)),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &l.invoke("cycle_sort_indicator", &IntrospectValue::Int(9)),
+            "no section 9 in this header",
         );
         assert_eq!(l.sort_indicator(), None, "no refusal moved the arrow");
     }
@@ -5724,10 +5759,12 @@ mod tests {
             vec![200, 40, 120, 160],
             "and the interactive one does"
         );
-        assert_eq!(
-            c.invoke("interactive_resize_section", &text("9:200")),
-            Err(InvokeError::Rejected),
-            "an out-of-range section is refused by both, through one parser"
+        // "an out-of-range section is refused by both, through one parser" —
+        // and R1564 makes that assertable rather than commented: both arms
+        // reach the one `require_section`, so both say the same sentence.
+        assert_refused_saying(
+            &c.invoke("interactive_resize_section", &text("9:200")),
+            "no section 9 in this header",
         );
     }
 

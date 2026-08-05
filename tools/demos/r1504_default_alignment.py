@@ -73,6 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -199,13 +200,13 @@ def body() -> None:
                   "its neighbours still defer")                                   # 21
         assert f"except {HEADERS[2]}=E" in _readout(tf), \
             f"the readout names the exception: {_readout(tf)}"                    # 22
-        assert_rpc_error(
+        assert_action_refused(
             lambda: tf.invoke("/external/set_section_alignment", "2:middle"),
-            data="InvokeRejected",
+            saying='"middle" is not an alignment spelling',
         )                                                                         # 23
-        assert_rpc_error(
+        assert_action_refused(
             lambda: tf.invoke("/external/set_section_alignment", "9:End"),
-            data="InvokeRejected",
+            saying="no section 9 in this header",
         )                                                                         # 24
 
         # The rule still moves independently of the exception.

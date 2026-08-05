@@ -290,7 +290,10 @@ impl MarketMapOracle {
     /// [`Rejected`](InvokeError::Rejected) (another argument would work).
     fn parse_value(arg: &IntrospectValue) -> Result<f64, InvokeError> {
         match arg {
-            IntrospectValue::Text(s) => s.trim().parse::<f64>().map_err(|_| InvokeError::Rejected),
+            IntrospectValue::Text(s) => s
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| InvokeError::rejected(format!("{s:?} is not a number"))),
             IntrospectValue::Float(f) => Ok(*f),
             _ => Err(InvokeError::TypeMismatch),
         }
@@ -301,7 +304,9 @@ impl MarketMapOracle {
         let IntrospectValue::Text(label) = arg else {
             return Err(InvokeError::TypeMismatch);
         };
-        let idx = sector_index(label.trim()).ok_or(InvokeError::Rejected)?;
+        let idx = sector_index(label.trim()).ok_or_else(|| {
+            InvokeError::rejected(format!("no sector named {:?} on this map", label.trim()))
+        })?;
         let (_, weight, change) = SECTORS[idx];
         Ok((idx, weight, change))
     }
@@ -393,7 +398,12 @@ impl ExternalIntrospect for MarketMapOracle {
                 // chart is not using.
                 encoded_color(value, encoding)
                     .map(|c| IntrospectValue::Text(hex(c)))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "the {encoding:?} encoding this chart is using assigns \
+                             no colour to that value"
+                        ))
+                    })
             }
             "linear_color_at" => Ok(IntrospectValue::Text(hex(linear_color(Self::parse_value(
                 &args,

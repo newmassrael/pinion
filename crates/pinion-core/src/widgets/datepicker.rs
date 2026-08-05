@@ -41,6 +41,7 @@
 //! [`IntrospectValue::Int`] (the day always belongs to the displayed
 //! month at activation time, mirroring `RadioGroup`'s index payload).
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
@@ -51,7 +52,6 @@ use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
 use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// A calendar date in the proleptic Gregorian calendar.
 ///
@@ -646,7 +646,7 @@ impl ExternalIntrospect for DatePickerExternal {
                     // would otherwise read "PointerUp:c" as the event name
                     // and the month-roll click was silently rejected).
                     let (key, event_name, _mods) =
-                        crate::composite_tag::split_send_payload(s).ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::require_send_payload("datepicker.send", s)?;
                     // Composite nav sub-tags: a click on the paint
                     // `"<tag>#prev"` / `"<tag>#next"` button arrives here
                     // as `"prev:<EventName>"` / `"next:<EventName>"` (the
@@ -669,11 +669,21 @@ impl ExternalIntrospect for DatePickerExternal {
                         }
                         _ => {}
                     }
-                    let day: u8 = key.parse().map_err(|_| InvokeError::Rejected)?;
+                    let day: u8 = key.parse().map_err(|_| {
+                        InvokeError::rejected(format!(
+                            "datepicker.send: target {key:?} is neither a day number \
+                             nor the \"prev\" / \"next\" month step"
+                        ))
+                    })?;
                     if day < 1 || day > self.days_in_displayed_month() {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "datepicker.send: day {day} is outside the displayed month \
+                             (it has {} days)",
+                            self.days_in_displayed_month()
+                        )));
                     }
-                    let ev = RadioEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        crate::widget_core::require_event::<RadioEvent>("datepicker", event_name)?;
                     self.send(day, ev);
                     Ok(match self.selected() {
                         Some(d) => IntrospectValue::Int(i64::from(d.day)),
@@ -690,6 +700,7 @@ impl ExternalIntrospect for DatePickerExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_refused_saying;
 
     /// Drive the full pointer click cycle on day `d` — the sequence the
     /// `InputRouter` produces for a click, activating the day cell.
@@ -997,13 +1008,13 @@ mod tests {
     #[test]
     fn external_invoke_out_of_range_day_rejected() {
         let mut p = DatePickerExternal::new(2026, 5, None);
-        assert_eq!(
-            p.invoke("send", IntrospectValue::Text("99:PointerUp".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &p.invoke("send", IntrospectValue::Text("99:PointerUp".to_string())),
+            "day 99 is outside the displayed month (it has 31 days)",
         );
-        assert_eq!(
-            p.invoke("send", IntrospectValue::Text("PointerUp".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &p.invoke("send", IntrospectValue::Text("PointerUp".to_string())),
+            "malformed send payload \"PointerUp\"",
         );
     }
 

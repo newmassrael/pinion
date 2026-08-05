@@ -77,6 +77,7 @@ members = [
     "examples/hello-grid-multifilter",
     "examples/hello-grid-row-style",
     "examples/hello-grid-search",
+    "examples/hello-refused-invoke",
     "examples/hello-row-dissect",
     "examples/hello-grid-pointer",
     "examples/hello-grid-hscroll",

@@ -55,7 +55,7 @@ use crate::glyph::{
     DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED,
 };
 use pinion_core::composite_tag::GridTag;
-use pinion_core::composite_tag::{compose_send_payload, parse_send_payload};
+use pinion_core::composite_tag::compose_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -1054,7 +1054,7 @@ impl TreeRowClickExternal {
     /// R902.1 §5.35 §5.40 — opt in to **modifier-aware clicks**: the `click`
     /// intent then carries the held modifiers via the R781 composite wire form
     /// `"{id}:click[:{token}]"` (decode with
-    /// [`parse_send_payload`] /
+    /// [`require_parsed_send_payload`](pinion_core::composite_tag::require_parsed_send_payload) /
     /// [`split_send_payload`](pinion_core::composite_tag::split_send_payload)),
     /// so a binding can drive a [`SelectionChord`](pinion_core::SelectionChord)
     /// off `Ctrl`/`Shift`-click exactly as the keyboard does. **Default off** —
@@ -1186,7 +1186,10 @@ impl ExternalIntrospect for TreeRowClickExternal {
                     // intent when `with_click_modifiers` is on (else discarded,
                     // the pre-R902.1 "press has no modifier axis" behaviour).
                     let (id, event_name, modifiers): (String, &str, Modifiers) =
-                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                        pinion_core::composite_tag::require_parsed_send_payload(
+                            "tree_row.send",
+                            payload,
+                        )?;
                     match PointerWireEvent::from_wire_name(event_name) {
                         Some(PointerWireEvent::Down) => {
                             self.pressed_id = Some(id);
@@ -1600,6 +1603,7 @@ mod r675_tree_row_click_external_tests {
     //! `examples/hello-tree-view::r674_file_tree_row_external_tests`
     //! module — same behaviours, now pinned at the substrate layer
     //! where every future tree consumer inherits coverage.
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     use super::{TREE_ROW_CLICK_EVENT, TreeRowClickExternal};
     use pinion_core::external::{
@@ -1755,14 +1759,14 @@ mod r675_tree_row_click_external_tests {
     fn r675_malformed_payload_missing_separator_rejected() {
         let mut handler = TreeRowClickExternal::new();
         let result = handler.invoke("send", IntrospectValue::Text("PointerDown".to_string()));
-        assert_eq!(result, Err(InvokeError::Rejected));
+        assert_refused_saying(&result, "malformed send payload \"PointerDown\"");
     }
 
     #[test]
     fn r675_empty_event_name_rejected() {
         let mut handler = TreeRowClickExternal::new();
         let result = handler.invoke("send", IntrospectValue::Text("src:".to_string()));
-        assert_eq!(result, Err(InvokeError::Rejected));
+        assert_refused_saying(&result, "malformed send payload \"src:\"");
     }
 
     #[test]

@@ -600,32 +600,44 @@ impl TopologyOracle {
         }
     }
 
+    /// R1564 §5.15 (PINION-PR82) — the one sentence for "this external is not
+    /// wired to a topology yet". Ten sites reached for it; a shared const keeps
+    /// them one statement rather than ten that can drift.
+    const NO_STATE: &str = "this topology surface is not bound to a model yet";
+
     /// A `"from,to"` pair.
     fn pair(arg: &IntrospectValue) -> Result<(String, String), InvokeError> {
         let raw = Self::text(arg)?;
-        let (from, to) = raw.split_once(',').ok_or(InvokeError::Rejected)?;
+        let (from, to) = raw.split_once(',').ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "malformed argument {raw:?} (expected \"<from>,<to>\")"
+            ))
+        })?;
         Ok((from.trim().to_string(), to.trim().to_string()))
     }
 
     fn state(&mut self) -> Result<Rc<TopologyState>, InvokeError> {
-        self.state.clone().ok_or(InvokeError::Rejected)
+        self.state
+            .clone()
+            .ok_or_else(|| InvokeError::rejected(Self::NO_STATE))
     }
 
     /// Resolve a service by name into its placed card, or reject.
     fn card(&self, name: &str) -> Result<(i32, i32), InvokeError> {
-        let state = self.state.as_ref().ok_or(InvokeError::Rejected)?;
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| InvokeError::rejected(Self::NO_STATE))?;
         let id = state
             .topology
             .get()
             .id_of(name)
-            .ok_or(InvokeError::Rejected)?;
-        state
-            .drawing
-            .get()
-            .cards
-            .get(&id)
-            .copied()
-            .ok_or(InvokeError::Rejected)
+            .ok_or_else(|| InvokeError::rejected(format!("no service named {name:?}")))?;
+        state.drawing.get().cards.get(&id).copied().ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "service {name:?} exists but the current drawing places no card for it"
+            ))
+        })
     }
 }
 
@@ -756,45 +768,76 @@ impl TopologyOracle {
             ))),
             "node_column" => {
                 let name = Self::text(args)?;
-                let state = self.state.as_ref().ok_or(InvokeError::Rejected)?;
-                let id = state
-                    .topology
-                    .get()
-                    .id_of(&name)
-                    .ok_or(InvokeError::Rejected)?;
+                let state = self
+                    .state
+                    .as_ref()
+                    .ok_or_else(|| InvokeError::rejected(Self::NO_STATE))?;
+                let id =
+                    state.topology.get().id_of(&name).ok_or_else(|| {
+                        InvokeError::rejected(format!("no service named {name:?}"))
+                    })?;
                 let column = state
                     .drawing
                     .get()
                     .columns
                     .get(&id)
                     .copied()
-                    .ok_or(InvokeError::Rejected)?;
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "service {name:?} exists but the current drawing assigns it no column"
+                        ))
+                    })?;
                 Ok(IntrospectValue::Int(
                     i64::try_from(column).unwrap_or(i64::MAX),
                 ))
             }
             "column_order" => {
                 let raw = Self::text(args)?;
-                let column: usize = raw.parse().map_err(|_| InvokeError::Rejected)?;
-                let state = self.state.as_ref().ok_or(InvokeError::Rejected)?;
+                let column: usize = raw.parse().map_err(|_| {
+                    InvokeError::rejected(format!("column_order: {raw:?} is not a column index"))
+                })?;
+                let state = self
+                    .state
+                    .as_ref()
+                    .ok_or_else(|| InvokeError::rejected(Self::NO_STATE))?;
                 Ok(IntrospectValue::Text(
                     column_order(&state.topology.get(), &state.drawing.get(), column).join(","),
                 ))
             }
             "wire_points" => {
                 let (from, to) = Self::pair(args)?;
-                let state = self.state.as_ref().ok_or(InvokeError::Rejected)?;
+                let state = self
+                    .state
+                    .as_ref()
+                    .ok_or_else(|| InvokeError::rejected(Self::NO_STATE))?;
                 let topology = state.topology.get();
-                let (Some(from), Some(to)) = (topology.id_of(&from), topology.id_of(&to)) else {
-                    return Err(InvokeError::Rejected);
+                let (Some(from_id), Some(to_id)) = (topology.id_of(&from), topology.id_of(&to))
+                else {
+                    return Err(InvokeError::rejected(format!(
+                        "wire_points: no service named {:?}",
+                        if topology.id_of(&from).is_none() {
+                            &from
+                        } else {
+                            &to
+                        }
+                    )));
                 };
                 let at = topology
                     .links
                     .iter()
-                    .position(|l| l.from == from && l.to == to)
-                    .ok_or(InvokeError::Rejected)?;
+                    .position(|l| l.from == from_id && l.to == to_id)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "wire_points: {from} and {to} both exist but are not connected"
+                        ))
+                    })?;
                 let drawing = state.drawing.get();
-                let points = drawing.wires.get(at).ok_or(InvokeError::Rejected)?;
+                let points = drawing.wires.get(at).ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "wire_points: link {from} -> {to} is in the topology \
+                         but the current drawing routed no wire for it"
+                    ))
+                })?;
                 Ok(IntrospectValue::Text(
                     points
                         .iter()
@@ -817,10 +860,9 @@ impl TopologyOracle {
         match path {
             "advance" => {
                 let state = self.state()?;
-                state
-                    .advance()
-                    .map(IntrospectValue::Text)
-                    .ok_or(InvokeError::Rejected)
+                state.advance().map(IntrospectValue::Text).ok_or_else(|| {
+                    InvokeError::rejected("advance: the scripted timeline has no further step")
+                })
             }
             "reset" => {
                 self.state()?.reset();
@@ -834,7 +876,11 @@ impl TopologyOracle {
                 state
                     .apply(&note, |t| t.add(&name).is_some())
                     .then(|| IntrospectValue::Text(note.clone()))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "add: a service named {name:?} is already in the topology"
+                        ))
+                    })
             }
             "remove_service" => {
                 let name = Self::text(args)?;
@@ -843,7 +889,9 @@ impl TopologyOracle {
                 state
                     .apply(&note, |t| t.remove(&name))
                     .then(|| IntrospectValue::Text(note.clone()))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!("remove: no service named {name:?}"))
+                    })
             }
             "connect" => {
                 let (from, to) = Self::pair(args)?;
@@ -852,7 +900,12 @@ impl TopologyOracle {
                 state
                     .apply(&note, |t| t.connect(&from, &to))
                     .then(|| IntrospectValue::Text(note.clone()))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "connect: {from} -> {to} names a service that is not \
+                             in the topology, or a link that is already there"
+                        ))
+                    })
             }
             "disconnect" => {
                 let (from, to) = Self::pair(args)?;
@@ -861,7 +914,11 @@ impl TopologyOracle {
                 state
                     .apply(&note, |t| t.disconnect(&from, &to))
                     .then(|| IntrospectValue::Text(note.clone()))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "disconnect: no link {from} -> {to} in the topology"
+                        ))
+                    })
             }
             _ => Err(InvokeError::UnknownPath),
         }

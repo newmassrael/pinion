@@ -84,6 +84,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -298,13 +299,13 @@ def _main(tf: RpcSubprocess) -> None:
               "three presses is a full cycle, so the gesture can undo itself")  # 33
 
     # ── (H) refusals are typed ─────────────────────────────────────
-    assert_rpc_error(
+    assert_action_refused(
         lambda: tf.invoke("/external/set_section_selection", "0:everything"),
-        data="InvokeRejected",
+        saying='"everything" is not a section-selection spelling',
     )                                                                          # 34
-    assert_rpc_error(
+    assert_action_refused(
         lambda: tf.invoke("/external/set_section_selection", f"{NCOLS}:full"),
-        data="InvokeRejected",
+        saying=f"no section {NCOLS} in this header",
     )                                                                          # 35
     assert_rpc_error(
         lambda: tf.intervene("/external/highlight_sections", "yes"),

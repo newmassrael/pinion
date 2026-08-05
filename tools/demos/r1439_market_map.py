@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -268,7 +269,10 @@ def body() -> None:
         assert invoke(ta, "tile_color", "Networking") != invoke(ta, "tile_color", "Edge"), (
             "with the encoding off the colours name categories again"
         )
-        assert_rpc_error(lambda: invoke(ta, "color_at", "0"))
+        assert_action_refused(
+            lambda: invoke(ta, "color_at", "0"),
+            saying="assigns no colour to that value",
+        )
 
         # ── Phase 7 — sequential re-seats the ramp, live ─────────────
         set_encoding(ta, "sequential")
@@ -298,7 +302,10 @@ def body() -> None:
         # ── Phase 8 — the write surface is honest ────────────────────
         assert_rpc_error(lambda: ta.intervene(f"{EXT}/encoding", "sideways"))
         assert_rpc_error(lambda: ta.intervene(f"{EXT}/domain_low", 1.0))
-        assert_rpc_error(lambda: invoke(ta, "tile_color", "Nonexistent"))
+        assert_action_refused(
+            lambda: invoke(ta, "tile_color", "Nonexistent"),
+            saying='no sector named "Nonexistent" on this map',
+        )
         assert_eq(query(ta, "encoding"), "diverging", "a rejected write changed nothing")
 
 

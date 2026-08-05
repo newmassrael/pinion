@@ -61,13 +61,13 @@ pub use sm::{ToggleEvent, ToggleState};
 // macros are retired.
 use sm::TogglePolicy;
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// Toggle widget state machine + Off/On value sidecar. R51.4 §5.38
 /// refactor: the engine wrapping moves into the shared
@@ -362,7 +362,7 @@ impl ExternalIntrospect for ToggleExternal {
             // follow-up query.
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = ToggleEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<ToggleEvent>("toggle", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(format!(
                         "state={}, value={}",
@@ -458,13 +458,18 @@ impl ExternalIntrospect for ToggleStateSnapshot {
         _path: &str,
         _args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
-        Err(InvokeError::Rejected)
+        Err(InvokeError::rejected(
+            "toggle snapshot: this surface is a read-only copy; \
+             drive the live toggle external instead",
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WidgetEventName;
+    use crate::test_fixtures::assert_refused_saying;
 
     // ---- Toggle (bare state machine + value) ------------------------
 
@@ -717,9 +722,9 @@ mod tests {
     #[test]
     fn snapshot_invoke_always_rejects() {
         let mut snap = ToggleStateSnapshot::new(ToggleState::Idle, false);
-        assert_eq!(
-            snap.invoke("send", IntrospectValue::Text("PointerEnter".to_string())),
-            Err(InvokeError::Rejected)
+        assert_refused_saying(
+            &snap.invoke("send", IntrospectValue::Text("PointerEnter".to_string())),
+            "read-only copy",
         );
     }
 

@@ -19,7 +19,7 @@
 //! `TodoToggleExternal` (R658), `RadioGroupExternal` filter group
 //! (R660), `ScrollBarExternal` (R659). Paint-side composite-tag wire
 //! (`<primary>#<sub>`) routes per-item events to the matching
-//! handler; the handlers share the [`parse_send_payload`] helper
+//! handler; the handlers share the [`require_parsed_send_payload`] helper
 //! (`composite_tag` 5-of-5 substrate, R660).
 //!
 //! `cargo run --release -p todomvc`. Tab cycles textfield ↔ filter
@@ -38,7 +38,7 @@ use pinion_platform_storage::{AppStorage, use_app_storage};
 // `<key>:<EventName>` send-payload consumer
 // (TodoDeleteExternal / TodoToggleExternal / TodoFilterExternal —
 // 3-of-3 Rule of Three fired per [[abstraction-needs-second-consumer]]).
-use pinion_core::composite_tag::parse_send_payload;
+use pinion_core::composite_tag::require_parsed_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -1354,7 +1354,7 @@ fn build_filter_row(theme: &Theme, current: FilterMode, radios: &FilterRadioStat
 ///
 /// SSOT note: `hello-input-chip`'s `ChipDeleteExternal` (R756) is the 2nd
 /// composite-delete-over-`Signal<Vec>` consumer of this shape. The shared
-/// core (retain-by-id + count/ids/delete schema + `parse_send_payload` send)
+/// core (retain-by-id + count/ids/delete schema + `require_parsed_send_payload` send)
 /// is a `CompositeCollection<T: HasId>` lift candidate, deliberately deferred
 /// to the 3rd consumer — see that type's doc for the rationale + commit-policy
 /// seam ([[abstraction-needs-second-consumer]]).
@@ -1460,7 +1460,7 @@ impl ExternalIntrospect for TodoDeleteExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     let (id, event_name, _): (u64, &str, _) =
-                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                        require_parsed_send_payload("todo_delete.send", payload)?;
                     if event_name == "PointerDown" {
                         let was_present = self.todos.get().iter().any(|item| item.id == id);
                         self.delete_by_id(id);
@@ -1473,7 +1473,9 @@ impl ExternalIntrospect for TodoDeleteExternal {
             },
             "delete" => match args {
                 IntrospectValue::Int(i) => {
-                    let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let id = u64::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a todo id"))
+                    })?;
                     let was_present = self.todos.get().iter().any(|item| item.id == id);
                     self.delete_by_id(id);
                     Ok(IntrospectValue::Bool(was_present))
@@ -1603,7 +1605,7 @@ impl ExternalIntrospect for TodoToggleExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     let (id, event_name, _): (u64, &str, _) =
-                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                        require_parsed_send_payload("todo_toggle.send", payload)?;
                     if event_name == "PointerDown" {
                         let was_present = self.todos.get().iter().any(|item| item.id == id);
                         self.toggle_by_id(id);
@@ -1627,7 +1629,9 @@ impl ExternalIntrospect for TodoToggleExternal {
             // `query("ids_completed")` already expose enough state.
             "toggle" => match args {
                 IntrospectValue::Int(i) => {
-                    let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let id = u64::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a todo id"))
+                    })?;
                     self.toggle_by_id(id);
                     let post_completed = self
                         .todos
@@ -1815,7 +1819,7 @@ impl ExternalIntrospect for TodoEditExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     let (id, event_name, _): (u64, &str, _) =
-                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                        require_parsed_send_payload("todo_edit.send", payload)?;
                     if event_name == "DoubleClick" {
                         let was_present = self.begin_edit(id);
                         Ok(IntrospectValue::Bool(was_present))
@@ -1833,7 +1837,9 @@ impl ExternalIntrospect for TodoEditExternal {
             // row by id. Same semantics as a DoubleClick payload.
             "begin" => match args {
                 IntrospectValue::Int(i) => {
-                    let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let id = u64::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a todo id"))
+                    })?;
                     let was_present = self.begin_edit(id);
                     Ok(IntrospectValue::Bool(was_present))
                 }

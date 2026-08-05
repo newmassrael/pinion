@@ -53,6 +53,7 @@
 //! * **`value_committed`** — the `Dragging → Hover` activate (drag end)
 //!   emits one intent carrying the active thumb's committed value.
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
@@ -61,7 +62,6 @@ use crate::external::{
 use crate::intent::Intent;
 use crate::widgets::slider::{SliderAxis, SliderEvent, SliderPolicy, SliderState};
 use crate::widgets::{IntentEmitter, Widget};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// R738 §5.38 — which of the two thumbs a value mutation or a drag
 /// gesture targets. `Low` is the lower-bound thumb (constrained to
@@ -535,7 +535,8 @@ impl ExternalIntrospect for RangeSliderExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = SliderEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        crate::widget_core::require_event::<SliderEvent>("range_slider", name)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }

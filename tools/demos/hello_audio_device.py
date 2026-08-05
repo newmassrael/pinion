@@ -88,6 +88,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     run_demo,
     wait_query,
@@ -335,9 +336,9 @@ def body() -> None:
         # `set_voice_position` is REFUSED here, because on this binding the world
         # owns all spatial state — two unarbitrated writers is the bug that shipped
         # once already.
-        assert_rpc_error(
+        assert_action_refused(
             lambda: inv("set_voice_position", {"id": emitter, "position": [0.0, 0.0, 0.0]}),
-            data="InvokeRejected",
+            saying="use set_emitter",
         )
         inv("set_emitter", {"id": emitter, "position": [3.0, 0.0, 14.0]})
         wait_until(
@@ -360,9 +361,9 @@ def body() -> None:
         # observable — and note `set_listener` itself is REFUSED here, because on
         # this binding the world owns the listener (two unarbitrated writers was the
         # other half of that bug).
-        assert_rpc_error(
+        assert_action_refused(
             lambda: inv("set_listener", {"position": [9.0, 9.0, 9.0]}),
-            data="InvokeRejected",
+            saying="use set_emitter",
         )
         inv("set_camera", [3.0, 0.0, 6.0])  # the pose it already holds
         wait_until(
@@ -412,7 +413,10 @@ def body() -> None:
 
         # A bad name is REFUSED and the current device keeps playing — a typo must
         # never leave the app silent.
-        assert_rpc_error(lambda: inv("set_device", "no::such::device"), data="InvokeRejected")
+        assert_action_refused(
+            lambda: inv("set_device", "no::such::device"),
+            saying="the current device is still playing",
+        )
         assert_eq(q("device"), SECOND_SILENT_PCM, "still on the working device")
         assert_eq(q("stream_errors"), 0, "and it is still healthy")
 
@@ -436,7 +440,7 @@ def body() -> None:
         # its absence is what proves the pump is the device, not the demo.
         assert_rpc_error(lambda: inv("render", 1), data="UnknownInvokePath")
         assert_rpc_error(lambda: inv("bogus", None), data="UnknownInvokePath")
-        assert_rpc_error(lambda: inv("play", "nope"), data="InvokeRejected")
+        assert_action_refused(lambda: inv("play", "nope"), saying='no clip named "nope"')
         assert_rpc_error(lambda: inv("set_master_gain", "loud"), data="InvokeTypeMismatch")
         # The device facts are declared but read-only: you change the output by
         # opening a different one, not by writing to the surface.

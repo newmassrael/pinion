@@ -74,6 +74,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -314,9 +315,9 @@ def body() -> None:
             data="OutOfRange",
         )                                                                           # 43
         # and the invoke half refuses it too, with its own typed variant
-        assert_rpc_error(
+        assert_action_refused(
             lambda: tf.invoke("/external/cycle_sort_indicator", 9),
-            data="InvokeRejected",
+            saying="no section 9 in this header",
         )                                                                           # 44
         assert_eq(_h(tf, "sort_indicator"), "3:descending",
                   "no refusal moved the arrow")                                     # 45

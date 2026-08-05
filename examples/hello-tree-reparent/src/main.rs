@@ -62,7 +62,7 @@ use std::borrow::Cow;
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, WidgetA11y, tree_access_nodes, tree_row_tag,
 };
-use pinion_core::composite_tag::{parse_send_payload, split_subindex};
+use pinion_core::composite_tag::split_subindex;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
@@ -562,7 +562,10 @@ impl ExternalIntrospect for OutlinerExternal {
                     return Err(InvokeError::TypeMismatch);
                 };
                 let (id, event, _): (String, &str, _) =
-                    parse_send_payload(&payload).ok_or(InvokeError::Rejected)?;
+                    pinion_core::composite_tag::require_parsed_send_payload(
+                        "tree_reparent.send",
+                        &payload,
+                    )?;
                 if event == PointerWireEvent::Down.as_wire_name()
                     && find_node(&self.state.nodes.get(), &id).is_some()
                 {

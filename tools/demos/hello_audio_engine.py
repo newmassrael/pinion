@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     run_demo,
 )
@@ -153,7 +154,7 @@ def body() -> None:
         assert_eq(q("voice_count"), 0, "send stop_all + render silenced")
 
         # ── every failure surfaces loudly over the wire.
-        assert_rpc_error(lambda: inv("play", "nope"), data="InvokeRejected")
+        assert_action_refused(lambda: inv("play", "nope"), saying='no clip named "nope"')
         assert_rpc_error(lambda: iv("master_gain", "loud"), data="InterveneTypeMismatch")
         assert_rpc_error(lambda: iv("voice_count", 3), data="ReadOnly")
         assert_rpc_error(lambda: iv("nonexistent", 3), data="UnknownIntervenePath")

@@ -4741,11 +4741,66 @@ impl NodeGraphExternal {
     /// within the workspace `too_many_lines` ceiling. Parses `"x1,y1,x2,y2"` and
     /// returns the CSV of cut edge ids; a malformed spec Rejects, a non-string
     /// arg is a TypeMismatch.
+    /// R1564 §5.15 (PINION-PR82) — "no node kind by that name", listing the
+    /// palette. Two sites reach for it, and the palette is short and fixed, so
+    /// a refusal that prints it turns a typo into a one-look fix.
+    fn unknown_kind_reason(action: &str, name: &str) -> InvokeError {
+        let palette: Vec<&str> = PALETTE.iter().map(|&(n, _, _, _)| n).collect();
+        InvokeError::rejected(format!(
+            "{action}: {name:?} is not a node kind (the palette offers: {})",
+            palette.join(", ")
+        ))
+    }
+
+    /// R1564 — the `begin_edit_default` arm's body, lifted for the same reason
+    /// [`invoke_nudge`](Self::invoke_nudge) was.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::TypeMismatch`] when the argument is not text, and
+    /// [`InvokeError::Rejected`] naming a malformed port address.
+    fn invoke_begin_edit_default(
+        &self,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(s) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let (node, port) = parse_node_port(s).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "begin_edit_default: malformed argument {s:?} (expected \"<node>.<port>\")"
+            ))
+        })?;
+        Ok(IntrospectValue::Bool(self.begin_edit_default(node, port)))
+    }
+
+    /// R1564 — the `nudge` arm's body, lifted out of
+    /// [`invoke`](ExternalIntrospect::invoke) to keep that dispatch under the
+    /// workspace line ceiling (this round's reasons pushed it over). Same split
+    /// this file already made for [`invoke_add_node`](Self::invoke_add_node).
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::TypeMismatch`] when the argument is not text, and
+    /// [`InvokeError::Rejected`] naming a malformed delta pair.
+    fn invoke_nudge(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(s) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let (dx, dy) = parse_pair_i32(s).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "nudge: malformed argument {s:?} (expected \"<dx>,<dy>\")"
+            ))
+        })?;
+        Ok(IntrospectValue::Bool(self.nudge_selected(dx, dy)))
+    }
+
     fn invoke_cut_wires(&self, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         let IntrospectValue::Text(s) = args else {
             return Err(InvokeError::TypeMismatch);
         };
-        let (a, b) = parse_cut_spec(&s).ok_or(InvokeError::Rejected)?;
+        let (a, b) = parse_cut_spec(&s)
+            .ok_or_else(|| InvokeError::rejected(format!("cut_wires: malformed cut spec {s:?}")))?;
         Ok(IntrospectValue::Text(csv_ids(
             self.cut_wires(a, b).iter().map(|id| id.raw()),
         )))
@@ -4921,8 +4976,10 @@ impl NodeGraphExternal {
         let kind = PALETTE
             .iter()
             .position(|&(name, _, _, _)| name == *s)
-            .ok_or(InvokeError::Rejected)?;
-        let id = self.add_node(kind).ok_or(InvokeError::Rejected)?;
+            .ok_or_else(|| Self::unknown_kind_reason("add_node", s))?;
+        let id = self
+            .add_node(kind)
+            .ok_or_else(|| InvokeError::rejected("add_node: the graph is at its node limit"))?;
         Ok(IntrospectValue::Int(i64::from(id.raw())))
     }
 
@@ -6996,8 +7053,12 @@ impl ExternalIntrospect for NodeGraphExternal {
             "add_node" => self.invoke_add_node(&args),
             "add_edge" => match args {
                 IntrospectValue::Text(s) => {
-                    let (fnode, fport, tnode, tport) =
-                        parse_quad(&s).ok_or(InvokeError::Rejected)?;
+                    let (fnode, fport, tnode, tport) = parse_quad(&s).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: malformed argument {s:?} \
+                             (expected \"<from_node>.<from_port>,<to_node>.<to_port>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(
                         self.add_edge(fnode, fport, tnode, tport),
                     ))
@@ -7016,7 +7077,12 @@ impl ExternalIntrospect for NodeGraphExternal {
             // `reconnect_edge`. Arg `"edge,to_node,to_port"`.
             "reconnect_edge" => match args {
                 IntrospectValue::Text(s) => {
-                    let (edge, tnode, tport) = parse_reconnect(&s).ok_or(InvokeError::Rejected)?;
+                    let (edge, tnode, tport) = parse_reconnect(&s).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: malformed argument {s:?} \
+                             (expected \"<edge>,<to_node>,<to_port>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(
                         self.reconnect_edge(edge, tnode, tport),
                     ))
@@ -7071,13 +7137,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // (the AI-first / test twin of double-clicking a pin's default
             // label). Arg = `"<node>.<port>"`. `false` on an unknown node /
             // out-of-range port (graph unchanged), mirroring `begin_rename`.
-            "begin_edit_default" => match args {
-                IntrospectValue::Text(s) => {
-                    let (node, port) = parse_node_port(&s).ok_or(InvokeError::Rejected)?;
-                    Ok(IntrospectValue::Bool(self.begin_edit_default(node, port)))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
+            "begin_edit_default" => self.invoke_begin_edit_default(&args),
             // R918 — open the Details panel's inline editor on the selected
             // node's `field` row (the RPC twin of a panel-row click, mirroring
             // `begin_rename` / `begin_edit_default` for the card). The resulting
@@ -7092,13 +7152,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R877 — fit the node bbox into the canvas (the keyboard `f`
             // twin). `false` on an empty graph.
             "frame_all" => Ok(IntrospectValue::Bool(self.frame_all())),
-            "nudge" => match args {
-                IntrospectValue::Text(s) => {
-                    let (dx, dy) = parse_pair_i32(&s).ok_or(InvokeError::Rejected)?;
-                    Ok(IntrospectValue::Bool(self.nudge_selected(dx, dy)))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
+            "nudge" => self.invoke_nudge(&args),
             // R852 — replace the graph from a JSON snapshot (the write-twin of
             // `query serialized`); malformed JSON or a version mismatch is
             // Rejected and leaves the graph unchanged.
@@ -7106,7 +7160,11 @@ impl ExternalIntrospect for NodeGraphExternal {
                 IntrospectValue::Text(s) => self
                     .load_json(&s)
                     .then_some(IntrospectValue::Bool(true))
-                    .ok_or(InvokeError::Rejected),
+                    .ok_or_else(|| {
+                        InvokeError::rejected(
+                            "set_graph: the payload is not a graph this editor can load",
+                        )
+                    }),
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R852 — persist to / restore from the Storage backend. `load`
@@ -7165,7 +7223,10 @@ impl NodeGraphExternal {
             "open_pin_create" => match args {
                 IntrospectValue::Text(s) => {
                     let Some((from_node, from_port)) = parse_node_port(&s) else {
-                        return Some(Err(InvokeError::Rejected));
+                        return Some(Err(InvokeError::rejected(format!(
+                            "open_pin_create: malformed argument {s:?} \
+                             (expected \"<node>.<port>\")"
+                        ))));
                     };
                     let Some(src) = self.node_by_id(from_node) else {
                         return Some(Ok(IntrospectValue::Bool(false)));
@@ -7202,7 +7263,9 @@ impl NodeGraphExternal {
             "pin_create_highlight" => match args {
                 IntrospectValue::Text(s) => match s.trim().parse::<i32>() {
                     Ok(delta) => Ok(IntrospectValue::Bool(self.move_pin_highlight(delta))),
-                    Err(_) => Err(InvokeError::Rejected),
+                    Err(_) => Err(InvokeError::rejected(format!(
+                        "pin_create_highlight: {s:?} is not a step delta"
+                    ))),
                 },
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -7214,7 +7277,12 @@ impl NodeGraphExternal {
                     IntrospectValue::Text(s) => {
                         match PALETTE.iter().position(|&(name, _, _, _)| name == s) {
                             Some(kind) => self.commit_pin_create_kind(kind),
-                            None => return Some(Err(InvokeError::Rejected)),
+                            None => {
+                                return Some(Err(Self::unknown_kind_reason(
+                                    "commit_pin_create",
+                                    &s,
+                                )));
+                            }
                         }
                     }
                     IntrospectValue::Null => self.commit_pin_create_highlighted(),
@@ -7222,7 +7290,12 @@ impl NodeGraphExternal {
                 };
                 committed
                     .map(|id| IntrospectValue::Int(i64::from(id.raw())))
-                    .ok_or(InvokeError::Rejected)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(
+                            "commit_pin_create: no pin-create menu is open on a \
+                             port this kind could connect to",
+                        )
+                    })
             }
             // Close the menu without creating (the Escape / click-away twin).
             // `false` when no menu was open.

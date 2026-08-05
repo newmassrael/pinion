@@ -63,6 +63,7 @@
 //! * R51.92.2 §5.40 — [`set_selected`](ListBox::set_selected) is a
 //!   **slot-assignment** setter (no intent, no focused-sync).
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
@@ -72,7 +73,6 @@ use crate::intent::Intent;
 use crate::widgets::listbox_item::{ListBoxItem, ListboxItemEvent, ListboxItemState};
 use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// Logical group of N `ListBoxItem` widgets with framework-owned
 /// mutual exclusion. See module docs for the full design rationale
@@ -769,12 +769,16 @@ impl ExternalIntrospect for ListBoxExternal {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
                     let (idx, event_name, _): (usize, &str, _) =
-                        crate::composite_tag::parse_send_payload(s).ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::require_parsed_send_payload("listbox.send", s)?;
                     if idx >= self.count() {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "listbox.send: no item {idx} in this listbox (it has {})",
+                            self.count()
+                        )));
                     }
-                    let ev =
-                        ListboxItemEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<ListboxItemEvent>(
+                        "listbox", event_name,
+                    )?;
                     self.send(idx, ev);
                     // R51.98 §5.38 — return path is mode-aware:
                     // single returns the (possibly new) `selected_index`
@@ -803,6 +807,7 @@ impl ExternalIntrospect for ListBoxExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_refused_saying;
 
     fn activate(list: &mut ListBox, i: usize) {
         list.send(i, ListboxItemEvent::PointerEnter);
@@ -1082,14 +1087,14 @@ mod tests {
     fn external_invoke_send_out_of_range_rejected() {
         let mut lx = ListBoxExternal::new(2);
         let r = lx.invoke("send", IntrospectValue::Text("5:PointerEnter".to_string()));
-        assert!(matches!(r, Err(InvokeError::Rejected)));
+        assert_refused_saying(&r, "no item 5 in this listbox (it has 2)");
     }
 
     #[test]
     fn external_invoke_send_malformed_wire_rejected() {
         let mut lx = ListBoxExternal::new(2);
         let r = lx.invoke("send", IntrospectValue::Text("no_colon".to_string()));
-        assert!(matches!(r, Err(InvokeError::Rejected)));
+        assert_refused_saying(&r, "malformed send payload \"no_colon\"");
     }
 
     // R51.98 — multi-select mode regression.

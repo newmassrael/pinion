@@ -53,6 +53,7 @@
 //! section — distinct from [`RadioGroup`](crate::widgets::radio_group::RadioGroup), where clear is only
 //! reachable via `set_selected`).
 
+use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
@@ -61,7 +62,6 @@ use crate::external::{
 use crate::intent::Intent;
 use crate::widgets::disclosure::{Disclosure, DisclosureEvent, DisclosureState};
 use crate::widgets::{IntentEmitter, WidgetTransition};
-use crate::{WidgetEventName, WidgetStateName};
 
 /// Logical group of N [`Disclosure`] sections with framework-owned
 /// single-expand mutual exclusion. See module docs for rationale.
@@ -412,11 +412,20 @@ impl ExternalIntrospect for DisclosureGroupExternal {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
                     let (idx, event_name, _): (usize, &str, _) =
-                        crate::composite_tag::parse_send_payload(s).ok_or(InvokeError::Rejected)?;
+                        crate::composite_tag::require_parsed_send_payload(
+                            "disclosure_group.send",
+                            s,
+                        )?;
                     if idx >= self.count() {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "disclosure_group.send: no section {idx} in this group (it has {})",
+                            self.count()
+                        )));
                     }
-                    let ev = DisclosureEvent::from_name(event_name).ok_or(InvokeError::Rejected)?;
+                    let ev = crate::widget_core::require_event::<DisclosureEvent>(
+                        "disclosure_group",
+                        event_name,
+                    )?;
                     self.send(idx, ev);
                     Ok(match self.expanded_index() {
                         Some(i) => {
@@ -437,6 +446,8 @@ mod tests {
     //! R700 §5.38 — single-expand mutual exclusion, model-driven
     //! restore, transition intent emission, and the §5.12 RPC surface
     //! (query / intervene / invoke) of [`DisclosureGroupExternal`].
+    use crate::test_fixtures::assert_refused_saying;
+    use crate::widget_core::advertised_vocabulary;
 
     use super::*;
 
@@ -648,25 +659,35 @@ mod tests {
         );
         assert_eq!(ext.expanded_index(), Some(0));
         // Out-of-range index rejected.
-        assert!(matches!(
-            ext.invoke("send", IntrospectValue::Text("9:PointerUp".into())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &ext.invoke("send", IntrospectValue::Text("9:PointerUp".into())),
+            "no section 9 in this group (it has 2)",
+        );
         // Unknown / internal event names rejected (DisclosureActivate
         // is an internal raise; Null is the SCXML sentinel).
-        assert!(matches!(
-            ext.invoke("send", IntrospectValue::Text("0:Bogus".into())),
-            Err(InvokeError::Rejected)
-        ));
-        assert!(matches!(
-            ext.invoke("send", IntrospectValue::Text("0:DisclosureActivate".into())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &ext.invoke("send", IntrospectValue::Text("0:Bogus".into())),
+            "\"Bogus\" is not an event this widget accepts",
+        );
+        // R1564 — an INTERNAL raise is refused with the same sentence, and the
+        // vocabulary it prints is exactly the externally-drivable set, so the
+        // refusal shows that `DisclosureActivate` is not in it. The MEMBERSHIP
+        // check is the point and the first cut of it got that wrong: it asked
+        // whether the message contained `"accepts: DisclosureActivate"`, which
+        // is a question about the name's POSITION, and a counterfactual that
+        // advertised every variant sailed past it because the internal raise
+        // landed second in the list.
+        let internal = ext.invoke("send", IntrospectValue::Text("0:DisclosureActivate".into()));
+        assert_refused_saying(&internal, "\"DisclosureActivate\" is not an event");
+        assert!(
+            !advertised_vocabulary(internal.as_ref().unwrap_err()).contains(&"DisclosureActivate"),
+            "an internal raise must not appear in the advertised vocabulary",
+        );
         // Malformed payload (no ':') rejected.
-        assert!(matches!(
-            ext.invoke("send", IntrospectValue::Text("PointerUp".into())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &ext.invoke("send", IntrospectValue::Text("PointerUp".into())),
+            "malformed send payload \"PointerUp\"",
+        );
         // Wrong arg type / unknown path.
         assert!(matches!(
             ext.invoke("send", IntrospectValue::Int(0)),

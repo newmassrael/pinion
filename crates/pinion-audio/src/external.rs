@@ -96,7 +96,10 @@ impl AudioEngineExternal {
             self.engine.borrow_mut().stop_all();
             return Ok(IntrospectValue::Null);
         }
-        let clip = self.clips.get(verb).ok_or(InvokeError::Rejected)?;
+        let clip = self
+            .clips
+            .get(verb)
+            .ok_or_else(|| unknown_clip("send", verb))?;
         let id = self
             .engine
             .borrow_mut()
@@ -309,7 +312,10 @@ impl ExternalIntrospect for AudioEngineExternal {
             },
             "play" => {
                 let (name, opts) = parse_play(args)?;
-                let clip = self.clips.get(&name).ok_or(InvokeError::Rejected)?;
+                let clip = self
+                    .clips
+                    .get(&name)
+                    .ok_or_else(|| unknown_clip("play", &name))?;
                 let id = self.engine.borrow_mut().play(clip, name.clone(), opts);
                 self.pending_intents.push(Intent::new_static(
                     "audio.play",
@@ -577,14 +583,20 @@ impl ExternalIntrospect for AudioControllerExternal {
         match path {
             "play" => {
                 let (name, opts) = parse_play(args)?;
-                let clip = self.clips.get(&name).ok_or(InvokeError::Rejected)?;
-                // `Rejected` also covers a full command ring (the play could
-                // not be queued) — both are "could not play now".
+                let clip = self
+                    .clips
+                    .get(&name)
+                    .ok_or_else(|| unknown_clip("play", &name))?;
+                // R1564 — pre-R1564 these two were the SAME value, under a
+                // comment conceding it: "`Rejected` also covers a full command
+                // ring — both are 'could not play now'". They are not the same
+                // fact. An unknown clip will never play; a full ring is the one
+                // an agent should retry. Now the wire says which.
                 let id = self
                     .controller
                     .borrow_mut()
                     .play(clip, name.clone(), opts)
-                    .ok_or(InvokeError::Rejected)?;
+                    .ok_or_else(|| InvokeError::rejected(RING_FULL))?;
                 self.pending_intents.push(Intent::new_static(
                     "audio.play",
                     IntrospectValue::Text(name),
@@ -642,7 +654,10 @@ impl ExternalIntrospect for AudioControllerExternal {
                         queued_or_rejected(self.controller.borrow_mut().set_voice_policy(policy))
                     }
                     // Type matches (Text) but the value is not a known policy.
-                    None => Err(InvokeError::Rejected),
+                    None => Err(InvokeError::rejected(format!(
+                        "set_voice_policy: {s:?} is not a voice policy \
+                         (expected \"reject_newest\" or \"steal_oldest\")"
+                    ))),
                 },
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -761,8 +776,24 @@ fn queued_or_rejected(queued: bool) -> Result<IntrospectValue, InvokeError> {
     if queued {
         Ok(IntrospectValue::Null)
     } else {
-        Err(InvokeError::Rejected)
+        Err(InvokeError::rejected(RING_FULL))
     }
+}
+
+/// R1564 §5.15 — the one sentence for "the command never reached the audio
+/// thread", shared by every value-less driving invoke and by `play`.
+///
+/// It says *retryable* explicitly, because that is the operator's next move and
+/// it is the fact that distinguishes this refusal from an unknown clip — the
+/// two were the same value before this round.
+const RING_FULL: &str = "the audio command ring is full, so this command never \
+                         reached the audio thread; retry after the next render";
+
+/// R1564 §5.15 — "no clip by that name", naming the name and the surface's own
+/// vocabulary. The clip set is small and enumerable, so a refusal that lists it
+/// turns a typo into a one-look fix.
+fn unknown_clip(action: &str, name: &str) -> InvokeError {
+    InvokeError::rejected(format!("{action}: no clip named {name:?} on this surface"))
 }
 
 fn int_of_u64(n: u64) -> i64 {
@@ -782,6 +813,7 @@ fn f32_of(x: f64) -> f32 {
 mod tests {
     use super::*;
     use pinion_core::external::External;
+    use pinion_core::test_fixtures::assert_refused_saying;
 
     fn director() -> AudioEngineExternal {
         let engine = Rc::new(RefCell::new(AudioEngine::new(48_000)));
@@ -815,10 +847,10 @@ mod tests {
     #[test]
     fn play_unknown_clip_is_rejected() {
         let mut ext = director();
-        assert!(matches!(
-            ext.invoke("play", IntrospectValue::Text("nope".to_string())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &ext.invoke("play", IntrospectValue::Text("nope".to_string())),
+            "no clip named \"nope\"",
+        );
     }
 
     #[test]
@@ -858,10 +890,10 @@ mod tests {
         ));
         ext.invoke("send", IntrospectValue::Text("stop_all".to_string()))
             .expect("stop_all sends");
-        assert!(matches!(
-            ext.invoke("send", IntrospectValue::Text("nope".to_string())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &ext.invoke("send", IntrospectValue::Text("nope".to_string())),
+            "no clip named \"nope\"",
+        );
     }
 
     #[test]
@@ -1188,10 +1220,10 @@ mod tests {
     #[test]
     fn rt_unknown_clip_and_paths_are_rejected() {
         let (mut ext, _renderer) = rt_director(8);
-        assert!(matches!(
-            ext.invoke("play", IntrospectValue::Text("nope".to_string())),
-            Err(InvokeError::Rejected)
-        ));
+        assert_refused_saying(
+            &ext.invoke("play", IntrospectValue::Text("nope".to_string())),
+            "no clip named \"nope\"",
+        );
         assert!(matches!(
             ext.invoke("bogus", IntrospectValue::Null),
             Err(InvokeError::UnknownPath)
@@ -1365,10 +1397,10 @@ mod tests {
             ),
             ext.invoke("stop", IntrospectValue::Int(1)),
         ] {
-            assert!(
-                matches!(drive, Err(InvokeError::Rejected)),
-                "full ring: {drive:?}"
-            );
+            // R1564 — a full ring now SAYS it is a full ring, and says the
+            // command never reached the audio thread. Before this round it was
+            // the same value an unknown clip produced.
+            assert_refused_saying(&drive, "audio command ring is full");
         }
         // The refused set_listener did not advance the mirror (no drift).
         match ext.query("listener") {
@@ -1615,13 +1647,13 @@ mod tests {
             Some(IntrospectValue::Int(0))
         ));
         // An unknown policy string is Rejected (Text type ok, value invalid).
-        assert!(matches!(
-            ext.invoke(
+        assert_refused_saying(
+            &ext.invoke(
                 "set_voice_policy",
-                IntrospectValue::Text("nonsense".to_string())
+                IntrospectValue::Text("nonsense".to_string()),
             ),
-            Err(InvokeError::Rejected)
-        ));
+            "\"nonsense\" is not a voice policy",
+        );
         // voice_policy is query-read, invoke-write → intervene is ReadOnly.
         assert!(matches!(
             ext.intervene(

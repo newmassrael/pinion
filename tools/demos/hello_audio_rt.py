@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_action_refused,
     assert_rpc_error,
     run_demo,
 )
@@ -224,10 +225,13 @@ def body() -> None:
         assert_eq(q("rejected"), rej1, "steal-oldest rejects nothing")
 
         # ── (F) every failure surfaces loudly over the wire, never a silent success.
-        assert_rpc_error(lambda: inv("play", "nope"), data="InvokeRejected")
+        assert_action_refused(lambda: inv("play", "nope"), saying='no clip named "nope"')
         assert_rpc_error(lambda: inv("bogus", None), data="UnknownInvokePath")
         assert_rpc_error(lambda: inv("set_master_gain", "loud"), data="InvokeTypeMismatch")
-        assert_rpc_error(lambda: inv("set_voice_policy", "nonsense"), data="InvokeRejected")
+        assert_action_refused(
+            lambda: inv("set_voice_policy", "nonsense"),
+            saying='"nonsense" is not a voice policy',
+        )
         assert_rpc_error(lambda: render("two"), data="InvokeTypeMismatch")
         # The RT surface is read-via-query, write-via-invoke: an intervene of a
         # declared read-only field is ReadOnly; an undeclared path is unknown.

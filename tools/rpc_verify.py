@@ -1637,17 +1637,59 @@ def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
         )
 
 
+#: R1564 §5.15 (PINION-PR82) — JSON-RPC code for an action the surface REFUSED
+#: to fire, as distinct from `-32602 Invalid params` (the parameters were fine).
+#: Mirrors `pinion_rpc::ACTION_REFUSED`; see its doc for why the split exists.
+ACTION_REFUSED = -32005
+
+
+def assert_action_refused(fn, *, saying: str) -> str:
+    """Assert `fn()` is refused by the SURFACE, with a stated reason containing
+    `saying`. Returns the full reason.
+
+    The wire peer of `pinion_core::test_fixtures::assert_refused_saying`, and the
+    replacement for `assert_rpc_error(..., data="InvokeRejected")`.
+
+    That older call asserted the wire carried the *variant name* — the whole of
+    what a refusal could say before R1564, and, as PINION-PR82 measured
+    downstream, not enough for a consumer to build a message from. The
+    mechanical migration (drop the `data=`) would have left these demos checking
+    only that something failed, which is weaker than what they replaced. So this
+    asserts the fact R1564 added: the producer's own sentence, under the code
+    that says a well-formed call was declined.
+    """
+    try:
+        fn()
+    except RpcError as exc:
+        assert_eq(exc.code, ACTION_REFUSED, f"refusal saying {saying!r}: JSON-RPC code")
+        reason = exc.data if isinstance(exc.data, str) else (exc.data or {}).get("reason")
+        assert isinstance(reason, str), (
+            f"a refusal must state a reason; error.data was {exc.data!r}"
+        )
+        assert saying in reason, (
+            f"refusal did not say {saying!r}; it said {reason!r}"
+        )
+        return reason
+    raise AssertionError(
+        f"expected a refusal saying {saying!r}, but the call succeeded"
+    )
+
+
 def assert_rpc_error(fn, *, code: int = -32602, data: Any = None) -> None:
     """Assert `fn()` raises a JSON-RPC error with the given `code` (and, when
     supplied, `error.data`) — and did NOT succeed.
 
     The typed peer of `assert_eq` for the wire's failure channel. The dispatch
-    layer maps every `InvokeError` / `InterveneError` variant to a `-32602
-    Invalid params` carrying the variant name in `error.data` (e.g.
-    `"InvokeRejected"`, `"ReadOnly"`), so `data=` proves the failure travelled
+    layer maps a framework-diagnosed `InvokeError` / `InterveneError` variant to
+    a `-32602 Invalid params` carrying the variant name in `error.data` (e.g.
+    `"UnknownInvokePath"`, `"ReadOnly"`), so `data=` proves the failure travelled
     the real wire with the right typed reason — not a silent success and not a
     generic transport error. Callers pass a zero-arg lambda:
-    `assert_rpc_error(lambda: g.invoke(P, A), data="InvokeRejected")`.
+    `assert_rpc_error(lambda: g.invoke(P, A), data="UnknownInvokePath")`.
+
+    R1564 — an action the SURFACE refused is no longer one of these: it arrives
+    under `ACTION_REFUSED` carrying the producer's sentence. Use
+    `assert_action_refused` for it.
     """
     try:
         fn()

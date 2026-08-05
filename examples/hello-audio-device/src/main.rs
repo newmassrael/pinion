@@ -542,7 +542,9 @@ impl ExternalIntrospect for DeviceAudioExternal {
                 }
                 // The CURRENT device is still playing — a bad name must never
                 // leave the app silent, so this is a loud refusal, not a fault.
-                Err(_) => Err(InvokeError::Rejected),
+                Err(why) => Err(InvokeError::rejected(format!(
+                    "set_device: {why}; the current device is still playing"
+                ))),
             };
         }
         // On THIS binding the WORLD owns the listener: the per-frame clock is its
@@ -554,7 +556,10 @@ impl ExternalIntrospect for DeviceAudioExternal {
         // clock exactly as `set_listener` did. On this binding the world owns ALL
         // spatial state; `set_emitter` is its verb.
         if path == "set_listener" || path == "set_voice_position" {
-            return Err(InvokeError::Rejected);
+            return Err(InvokeError::rejected(format!(
+                "{path}: this binding's world owns all spatial state, so a direct \
+                 write would race the frame clock; use set_emitter"
+            )));
         }
         // ★ Move an EMITTER — the operation a game performs hundreds of times a
         // frame (one listener, many sounds). World-only, like `set_camera`: the

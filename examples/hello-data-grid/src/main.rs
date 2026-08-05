@@ -2486,7 +2486,7 @@ impl DataGridExternal {
         // R880.1 — the `split_send_payload` `:` grammar SSOT strips a held-modifier
         // third segment (a hand-rolled split read "PointerUp:c" as the event name).
         let (key, event_name, _mods) =
-            pinion_core::composite_tag::split_send_payload(s).ok_or(InvokeError::Rejected)?;
+            pinion_core::composite_tag::require_send_payload("data_grid.send", s)?;
         // R940 — the choice dropdown's light-dismiss barrier + option targets,
         // routed back through this one `send` funnel (the property-grid popup
         // shape): `dismiss` closes the popup, `opt<i>` commits / hovers option i.
@@ -2497,7 +2497,11 @@ impl DataGridExternal {
             return Ok(IntrospectValue::Null);
         }
         if let Some(opt) = key.strip_prefix(CHOICE_OPT_PREFIX) {
-            let i: usize = opt.parse().map_err(|_| InvokeError::Rejected)?;
+            let i: usize = opt.parse().map_err(|_| {
+                InvokeError::rejected(format!(
+                    "data_grid.send: choice target {key:?} carries no option index"
+                ))
+            })?;
             if event_name == "PointerUp" {
                 self.commit_choice(i);
             } else {
@@ -2509,7 +2513,11 @@ impl DataGridExternal {
         // `opt<i>` peer for the swatch palette. `strip_prefix(COLOR_SW_PREFIX)`
         // is tried AFTER `opt` so the two prefixes never alias.
         if let Some(sw) = key.strip_prefix(COLOR_SW_PREFIX) {
-            let i: usize = sw.parse().map_err(|_| InvokeError::Rejected)?;
+            let i: usize = sw.parse().map_err(|_| {
+                InvokeError::rejected(format!(
+                    "data_grid.send: swatch target {key:?} carries no preset index"
+                ))
+            })?;
             if event_name == "PointerUp" {
                 self.commit_color_swatch(i);
             } else {
@@ -2546,13 +2554,17 @@ impl DataGridExternal {
             }
             return Ok(IntrospectValue::Null);
         }
-        match GridSendKey::parse(key).ok_or(InvokeError::Rejected)? {
+        match GridSendKey::parse(key).ok_or_else(|| {
+            InvokeError::rejected(format!("data_grid.send: {key:?} is not a grid address"))
+        })? {
             // R886 — a clicked column header cycles that column's sort through the
             // `cycle_col_sort` SSOT (unsorted → asc → desc → unsorted; a different
             // column jumps to it ascending), exactly the read-only grids' behaviour.
             GridSendKey::Header { col } => {
                 if col >= NCOLS {
-                    return Err(InvokeError::Rejected);
+                    return Err(InvokeError::rejected(format!(
+                        "data_grid.send: no column {col} in this grid (it has {NCOLS})"
+                    )));
                 }
                 if event_name == "PointerUp" {
                     self.sort.set(cycle_col_sort(self.sort.get(), col, NCOLS));
@@ -2564,7 +2576,10 @@ impl DataGridExternal {
             // `GridSendKey::Group` wire, parallel to the column-header sort cycle).
             GridSendKey::Group { group } => {
                 if group >= self.group_count() {
-                    return Err(InvokeError::Rejected);
+                    return Err(InvokeError::rejected(format!(
+                        "data_grid.send: no group {group} in this grid (it has {})",
+                        self.group_count()
+                    )));
                 }
                 if event_name == "PointerUp" {
                     self.toggle_group(group);
@@ -2582,9 +2597,14 @@ impl DataGridExternal {
             // R1562 — the vertical section axis. This grid's model answers no
             // `headerData(section, Qt::Vertical, …)`, so it paints no row-header
             // band and no corner.
-            GridSendKey::EditorStep { .. }
-            | GridSendKey::RowHeader { .. }
-            | GridSendKey::Corner => Err(InvokeError::Rejected),
+            GridSendKey::EditorStep { .. } => Err(InvokeError::rejected(
+                "data_grid.send: this grid hand-rolls its cell editing, \
+                 so it paints no step affordance to address",
+            )),
+            GridSendKey::RowHeader { .. } | GridSendKey::Corner => Err(InvokeError::rejected(
+                "data_grid.send: this grid's model answers no vertical header, \
+                 so it paints no row-header band and no corner",
+            )),
         }
     }
 
@@ -2595,7 +2615,10 @@ impl DataGridExternal {
         event_name: &str,
     ) -> Result<IntrospectValue, InvokeError> {
         if row >= self.nrows() || col >= NCOLS {
-            return Err(InvokeError::Rejected);
+            return Err(InvokeError::rejected(format!(
+                "data_grid.send: no cell ({row}, {col}) in this grid (it is {} x {NCOLS})",
+                self.nrows()
+            )));
         }
         match event_name {
             "PointerDown" => {
@@ -3493,14 +3516,21 @@ impl ExternalIntrospect for DataGridExternal {
             "move_row" => match args {
                 IntrospectValue::Text(ref s) => {
                     if !self.reorder_enabled() {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(
+                            "move_row: a manual position is only meaningful in the plain \
+                             view, and this grid is currently sorted, filtered or grouped",
+                        ));
                     }
                     // R1372.2 — `"from,to"` is a comma-separated `usize` pair, the
                     // same wire shape `select-cell`/`extend-cell` parse, so route
                     // it through the one `parse_row_col` SSOT rather than a 4th
                     // inline copy (the row/col vs from/to naming differs; the parse
                     // does not).
-                    let (from, to) = parse_row_col(s).ok_or(InvokeError::Rejected)?;
+                    let (from, to) = parse_row_col(s).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "move_row: malformed argument {s:?} (expected \"<from>,<to>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(self.move_row(from, to)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -3524,14 +3554,22 @@ impl ExternalIntrospect for DataGridExternal {
             // pair. The AI-first peers of the keyboard `Shift`+arrow / `Escape`.
             "select-cell" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (row, col) = parse_row_col(s).ok_or(InvokeError::Rejected)?;
+                    let (row, col) = parse_row_col(s).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: malformed argument {s:?} (expected \"<row>,<col>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(self.select_cell(row, col)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             "extend-cell" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (row, col) = parse_row_col(s).ok_or(InvokeError::Rejected)?;
+                    let (row, col) = parse_row_col(s).ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{path}: malformed argument {s:?} (expected \"<row>,<col>\")"
+                        ))
+                    })?;
                     Ok(IntrospectValue::Bool(self.extend_cell(row, col)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -3547,7 +3585,9 @@ impl ExternalIntrospect for DataGridExternal {
             "reset" => match args {
                 IntrospectValue::Text(ref s) => {
                     let Some(GridSendKey::Cell { row, col }) = GridSendKey::parse(s) else {
-                        return Err(InvokeError::Rejected);
+                        return Err(InvokeError::rejected(format!(
+                            "{path}: {s:?} is not a cell address (expected \"<row>_<col>\")"
+                        )));
                     };
                     Ok(IntrospectValue::Bool(self.reset_cell(row, col)))
                 }
@@ -3560,14 +3600,18 @@ impl ExternalIntrospect for DataGridExternal {
             // the count cleared (the Qt / Excel "reset row" / "reset column").
             "reset_row" => match args {
                 IntrospectValue::Int(i) => {
-                    let row = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let row = usize::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a row index"))
+                    })?;
                     Ok(IntrospectValue::Int(int_of(self.reset_row(row))))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             "reset_col" => match args {
                 IntrospectValue::Int(i) => {
-                    let col = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let col = usize::try_from(i).map_err(|_| {
+                        InvokeError::rejected(format!("{path}: {i} is not a column index"))
+                    })?;
                     Ok(IntrospectValue::Int(int_of(self.reset_col(col))))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -5447,6 +5491,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::test_fixtures::assert_refused_saying;
     // R940 — the popup-a11y test asserts the listbox role; AriaRole is test-only
     // here (the production a11y path names roles through the substrate builders).
     use pinion_a11y::AriaRole;
@@ -6262,10 +6307,10 @@ mod tests {
                 .expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // A non-cell key (a header) is not a reset target -> Rejected.
-            assert!(matches!(
-                intro.invoke("reset", IntrospectValue::Text("h2".to_owned())),
-                Err(InvokeError::Rejected),
-            ));
+            assert_refused_saying(
+                &intro.invoke("reset", IntrospectValue::Text("h2".to_owned())),
+                "\"h2\" is not a cell address",
+            );
             assert!(matches!(
                 intro.invoke("reset", IntrospectValue::Int(3)),
                 Err(InvokeError::TypeMismatch),
