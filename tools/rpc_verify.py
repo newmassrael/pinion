@@ -1649,6 +1649,23 @@ ACTION_REFUSED = -32005
 #: range, and `-32602` is published as carrying a closed vocabulary.
 VALUE_OUT_OF_RANGE = -32006
 
+#: R1565.2 — the codes whose `error.data` is the SURFACE's own sentence rather
+#: than a word from this dispatcher's closed vocabulary. Mirrors the
+#: `data_is_prose` column `rpc/errors` publishes, and is asserted equal to it by
+#: `r1564_refusal_states_why.py` phase (H) — a mirror nothing compares is a
+#: second contract free to drift from the first.
+#:
+#: A test may only MATCH a payload under a code that is not in here. That is the
+#: rule `assert_rpc_error` enforces below: prose is shown, never branched on.
+PROSE_DATA_CODES = frozenset({ACTION_REFUSED, VALUE_OUT_OF_RANGE})
+
+#: The helper that asserts each prose-carrying code, for the error message a
+#: caller reaching for the wrong one gets.
+_PROSE_HELPER = {
+    ACTION_REFUSED: "assert_action_refused(fn, saying=...)",
+    VALUE_OUT_OF_RANGE: "assert_out_of_range(fn, saying=...)",
+}
+
 
 def assert_out_of_range(fn, *, saying: str) -> str:
     """Assert `fn()` is refused as OUT OF RANGE, with a stated reason containing
@@ -1709,9 +1726,9 @@ def assert_action_refused(fn, *, saying: str) -> str:
     )
 
 
-def assert_rpc_error(fn, *, code: int = -32602, data: Any = None) -> None:
-    """Assert `fn()` raises a JSON-RPC error with the given `code` (and, when
-    supplied, `error.data`) — and did NOT succeed.
+def assert_rpc_error(fn, *, data: Any, code: int = -32602) -> None:
+    """Assert `fn()` raises a JSON-RPC error carrying `data`, under `code` — and
+    did NOT succeed.
 
     The typed peer of `assert_eq` for the wire's failure channel. The dispatch
     layer maps a framework-diagnosed `InvokeError` / `InterveneError` variant to
@@ -1724,13 +1741,42 @@ def assert_rpc_error(fn, *, code: int = -32602, data: Any = None) -> None:
     R1564 — an action the SURFACE refused is no longer one of these: it arrives
     under `ACTION_REFUSED` carrying the producer's sentence. Use
     `assert_action_refused` for it.
+
+    # Why `data` is REQUIRED (R1565.2)
+
+    It used to default to `None`, which made "some error came back under -32602"
+    a whole assertion. Twenty of the 114 call sites were written that way, and
+    the shape cost this project a red `main` twice in two rounds: R1564 and
+    R1565 each split a fact out of `-32602` into its own code, each ran a census
+    of what read the old contract, and each census filtered on `data=` — so the
+    data-less sites were invisible to it BOTH times. Four of them then failed in
+    CI 50 minutes after the push, saying `expected -32602, got -32006`: an
+    assertion that had never named which refusal it wanted could not say that
+    the refusal it got was the right one under a new name.
+
+    A demo that does not name the fact it expects is also passing for a reason
+    nobody chose. Three of the twenty were proving something other than their
+    own comment claimed — `r1441` asserts "it is a READ; a client cannot set a
+    card's height" and what the wire actually answered was
+    `UnknownIntervenePath`, which says the path does not exist, about a path
+    `$schema` declares (R1566's subject).
+
+    So the fact is named at every site. `-32602` carries a word from a closed
+    vocabulary — `rpc/errors` publishes exactly that — so naming it is cheap and
+    stable, and the codes that carry PROSE are refused here by name, pointing at
+    the helper that asserts a sentence instead.
     """
+    if code in PROSE_DATA_CODES:
+        raise AssertionError(
+            f"assert_rpc_error cannot check code {code}: rpc/errors publishes its "
+            f"error.data as the surface's own prose, which a test must show and "
+            f"never match. Use {_PROSE_HELPER[code]}."
+        )
     try:
         fn()
     except RpcError as exc:
-        assert_eq(exc.code, code, f"{data or 'error'}: JSON-RPC code")
-        if data is not None:
-            assert_eq(exc.data, data, "error.data variant")
+        assert_eq(exc.code, code, f"{data!r}: JSON-RPC code")
+        assert_eq(exc.data, data, "error.data variant")
         return
     raise AssertionError(
         f"expected RpcError (code={code}, data={data!r}), but the call succeeded"

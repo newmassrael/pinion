@@ -41,6 +41,7 @@ from rpc_verify import (
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -278,9 +279,14 @@ def body() -> None:
         )
 
         # ── Phase 8 — the write surface is honest ─────────────────────
-        assert_rpc_error(lambda: ta.intervene(f"{EXT}/encoding", "sideways"))
-        assert_rpc_error(lambda: ta.intervene(f"{EXT}/filled", "yes"))
-        assert_rpc_error(lambda: ta.intervene(f"{EXT}/domain_low", 1.0))
+        assert_out_of_range(
+            lambda: ta.intervene(f"{EXT}/encoding", "sideways"),
+            saying='"sideways" is not an encoding',
+        )
+        assert_rpc_error(
+            lambda: ta.intervene(f"{EXT}/filled", "yes"), data="InterveneTypeMismatch"
+        )
+        assert_rpc_error(lambda: ta.intervene(f"{EXT}/domain_low", 1.0), data="ReadOnly")
         assert_action_refused(
             lambda: invoke(ta, "slope_at", "99"), saying="no sample 99 in this profile"
         )

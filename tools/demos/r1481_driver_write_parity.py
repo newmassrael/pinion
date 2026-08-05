@@ -172,8 +172,12 @@ def body() -> None:
         # ── (F) a path that reaches no driver is still refused ──────────────
         # The fallback is not a wildcard: it does not make every painted node
         # writable, only the ones whose handle the tick loop shares.
-        assert_rpc_error(lambda: tf.intervene("nosuchtag/external/x", 1))
-        assert_rpc_error(lambda: tf.invoke("nosuchtag/external/x", None))
+        assert_rpc_error(
+            lambda: tf.intervene("nosuchtag/external/x", 1), data="NoExternalAtPath"
+        )
+        assert_rpc_error(
+            lambda: tf.invoke("nosuchtag/external/x", None), data="NoExternalAtPath"
+        )
 
         # ── (G) read/write symmetry: every readable slot answers a write ────
         # …with a REASON, never with "there is nothing here". That was the
@@ -215,7 +219,9 @@ def body() -> None:
         assert isinstance(state, dict), f"H: the snapshot is a node, got {type(state)}"
         # The retained widget's own external still refuses a driver path, so
         # the fallback did not become the first thing tried.
-        assert_rpc_error(lambda: tf.intervene("/external/velocity", 1.0))
+        assert_rpc_error(
+            lambda: tf.intervene("/external/velocity", 1.0), data="UnknownIntervenePath"
+        )
 
         # ── (I) the binding is still alive after all of it ──────────────────
         assert tf.query(f"{BALL}/pos") is not None, "I: the driver still answers"

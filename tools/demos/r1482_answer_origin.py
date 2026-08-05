@@ -218,7 +218,10 @@ def body() -> None:
             lambda: tf.query(f"{PROBE}/ghost", with_origin=True),
             data={"reason": "UnknownIntrospectPath", "origin": "paint_frame"},
         )
-        assert_rpc_error(lambda: tf.query(f"{SIM}/ghost", with_origin=True))
+        assert_rpc_error(
+            lambda: tf.query(f"{SIM}/ghost", with_origin=True),
+            data={"origin": "paint_driver", "reason": "UnknownIntrospectPath"},
+        )
 
         # ── (K) an explicit false is the same as absent ─────────────────────
         # A client threading the flag from config must not get a second shape

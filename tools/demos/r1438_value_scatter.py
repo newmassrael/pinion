@@ -279,7 +279,7 @@ def body() -> None:
             lambda: ta.invoke(f"{EXT}/color_at", "not-a-number"),
             saying='"not-a-number" is not a number',
         )
-        assert_rpc_error(lambda: ta.query(f"{EXT}/no_such_field"))
+        assert_rpc_error(lambda: ta.query(f"{EXT}/no_such_field"), data="UnknownIntrospectPath")
 
         # ── Phase 10 — and still works after the rejects ──────────────
         assert_eq(query(ta, "encoding"), "diverging", "the rejects changed nothing")

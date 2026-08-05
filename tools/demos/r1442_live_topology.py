@@ -52,6 +52,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -303,8 +304,13 @@ def body() -> None:
         # Every published measurement is a READ — a client cannot assert a
         # crossing count the drawing does not have.
         for path in ("crossings", "order_changes", "depth", "bends", "straight_inner"):
-            assert_rpc_error(lambda p=path: tf.intervene(f"/external/{p}", 0))
-        assert_rpc_error(lambda: tf.intervene("/external/mode", "sideways"))
+            assert_rpc_error(
+                lambda p=path: tf.intervene(f"/external/{p}", 0), data="ReadOnly"
+            )
+        assert_out_of_range(
+            lambda: tf.intervene("/external/mode", "sideways"),
+            saying='"sideways" is not a layout mode',
+        )
         assert_eq(q(tf, "mode"), "stable", "and a rejected mode changes nothing")
 
 

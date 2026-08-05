@@ -61,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     ACTION_REFUSED,
+    PROSE_DATA_CODES,
     VALUE_OUT_OF_RANGE,
     RpcSubprocess,
     assert_action_refused,
@@ -227,6 +228,16 @@ def body() -> None:
         )
         # The rule is stated ON THE WIRE, not only in this crate's rustdoc.
         assert "Branch on error.code" in catalogue["data_doc"], catalogue["data_doc"]
+        # R1565.2 — and this harness's own copy of that rule is the SAME rule.
+        # `rpc_verify.PROSE_DATA_CODES` decides which codes a demo is allowed to
+        # match a payload under; a mirror nothing compares is a second contract
+        # free to drift from the first, which is how the constants above would
+        # go stale the next time a code is split out.
+        assert_eq(
+            {e["code"] for e in catalogue["errors"] if e["data_is_prose"]},
+            set(PROSE_DATA_CODES),
+            "H: the harness mirrors exactly the codes the wire calls prose",
+        )
         # An application code is classifiable arithmetically, so a code added
         # after a client shipped is still placeable rather than merely unknown.
         low, high = catalogue["application_range"]

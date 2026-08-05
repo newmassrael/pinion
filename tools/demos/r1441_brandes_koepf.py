@@ -113,13 +113,18 @@ def body() -> None:
             f"line up' and 'tops line up' would be the same claim: {heights}"
         )
         # It is a READ; a client cannot set a card's height.
-        assert_rpc_error(lambda: tf.intervene("/external/node.0.h", 99))
-        assert_rpc_error(lambda: q(tf, "node.999.h"))
+        assert_rpc_error(
+            lambda: tf.intervene("/external/node.0.h", 99), data="UnknownIntervenePath"
+        )
+        assert_rpc_error(lambda: q(tf, "node.999.h"), data="UnknownIntrospectPath")
 
         # `layout_crossings` — the tidiness metric, derived not cached.
         crossings = q(tf, "layout_crossings")
         assert isinstance(crossings, int) and crossings >= 0, crossings
-        assert_rpc_error(lambda: tf.intervene("/external/layout_crossings", 0))
+        assert_rpc_error(
+            lambda: tf.intervene("/external/layout_crossings", 0),
+            data="UnknownIntervenePath",
+        )
 
         # ── (B) ★ Brandes-Köpf: a chain comes out dead straight ──────
         # Scramble, tidy, then every edge of the seed chain must join two equal
@@ -198,7 +203,10 @@ def body() -> None:
             f"(got {inner}) — an edge spanning <3 layers has none"
         )
         assert_eq(straight, inner, "★ every inner segment is drawn on one coordinate")
-        assert_rpc_error(lambda: tf.intervene("/external/layout_inner_segments", 0))
+        assert_rpc_error(
+            lambda: tf.intervene("/external/layout_inner_segments", 0),
+            data="UnknownIntervenePath",
+        )
 
         # The seed graph, whose longest edge spans one layer, has no inner
         # segment at all — so the guarantee above is about THIS graph, not a

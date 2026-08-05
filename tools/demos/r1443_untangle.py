@@ -54,6 +54,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -295,14 +296,22 @@ def body() -> None:
         # ── (G) the surface: what it accepts and what it refuses ─────
         tf.intervene("/external/mode", "stable")
         assert_eq(q(tf, "mode"), "stable")
-        assert_rpc_error(lambda: tf.intervene("/external/mode", "untangle"))
+        assert_out_of_range(
+            lambda: tf.intervene("/external/mode", "untangle"),
+            saying='"untangle" is not a layout mode',
+        )
         assert_eq(q(tf, "mode"), "stable", "a rejected mode changes nothing")
         # `untangle` is a verb, not a writable measurement.
-        assert_rpc_error(lambda: tf.intervene("/external/untangle", "yes"))
-        assert_rpc_error(lambda: tf.invoke("/external/untangled", None))
+        assert_rpc_error(
+            lambda: tf.intervene("/external/untangle", "yes"),
+            data="UnknownIntervenePath",
+        )
+        assert_rpc_error(lambda: tf.invoke("/external/untangled", None), data="UnknownInvokePath")
         # The measurements it moves stay read-only.
         for path in ("crossings", "order_changes", "depth"):
-            assert_rpc_error(lambda p=path: tf.intervene(f"/external/{p}", 0))
+            assert_rpc_error(
+                lambda p=path: tf.intervene(f"/external/{p}", 0), data="ReadOnly"
+            )
 
 
 if __name__ == "__main__":
