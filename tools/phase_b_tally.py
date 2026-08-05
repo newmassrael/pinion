@@ -730,6 +730,17 @@ AXES = [
                 # census for the same reason the last one was: a chart type
                 # this axis did not yet name.
                 "boxplot",
+                # R1567 — `hello-candlestick`, the THIRD consecutive series
+                # type this census flagged UNCLASSIFIED on arrival. That is
+                # the pattern list's shape, not three oversights: naming chart
+                # TYPES means every new one is invisible until someone adds
+                # it, so the census is a lagging indicator by construction.
+                # Left as a list rather than fixed, because the alternative —
+                # matching any example that depends on `pinion-chart` — would
+                # credit this axis for a consumer that merely embeds a chart
+                # (a dashboard, a dock pane), which is the false-positive the
+                # census exists to avoid.
+                "candlestick",
             ]),
         ],
         # R1534 re-judgment, 72 -> 77, demanded by the tool (the round ledger

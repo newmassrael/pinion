@@ -1951,6 +1951,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-candlestick"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-card"
 version = "0.0.1"
 dependencies = [

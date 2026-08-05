@@ -52,6 +52,20 @@ pub(crate) fn count_prefix(scene: &Scene, prefix: &str) -> usize {
     tags(scene).iter().filter(|t| t.starts_with(prefix)).count()
 }
 
+/// The content of the [`Scene::Text`] carrying `tag` — `None` when nothing
+/// carries it, or the node that does is not text.
+///
+/// R1567 lift. `donut`, `bar`, `timeline` and `treemap` each held a
+/// byte-identical copy, and the candlestick chart's slot-label assertion
+/// would have been the fifth — the same mechanical duplication R1553 lifted
+/// [`find`] and [`tags`] for, one accessor later.
+pub(crate) fn text_of<'a>(scene: &'a Scene, tag: &str) -> Option<&'a str> {
+    match find(scene, tag)? {
+        Scene::Text(t) => Some(t.content.as_str()),
+        _ => None,
+    }
+}
+
 fn collect(scene: &Scene, out: &mut Vec<String>) {
     if let Some(t) = scene.tag() {
         out.push(t.to_string());

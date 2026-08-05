@@ -48,22 +48,22 @@
 
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect};
-use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
+use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::distribution::{
     Distribution, DistributionSource, SummaryPosition, distribution_bounds,
     positive_distribution_bounds,
 };
 use crate::draw::{
-    CalloutRow, absolute, box_node, callout, fill_parent, label_node, marker_node, outline_box,
-    plot_rect, polygon_node, stroke_path, to_f32, to_u32,
+    CalloutRow, absolute, box_node, callout, category_label_node, fill_parent, marker_node,
+    outline_box, plot_rect, polygon_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     axis_domain, axis_format, axis_minor_ticks, axis_scale, axis_ticks, kind_extent, tick_pixels,
 };
 use crate::scale::{
-    AxisKind, Categories, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE, ValueScale, index_value,
+    AxisKind, Categories, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE, ValueScale,
 };
 use crate::style::ChartStyle;
 use crate::ticks::{TickFormat, tick_step};
@@ -130,7 +130,7 @@ impl BoxPlotChart {
     /// view, and the `"chart"` tag prefix.
     #[must_use]
     pub fn new(distributions: Vec<Distribution>) -> Self {
-        let categories = Categories::new(distributions.iter().map(|d| d.label.clone()));
+        let categories = Categories::new(distributions.iter().map(|d| d.label().to_owned()));
         Self {
             distributions,
             palette: CategoricalPalette::default(),
@@ -251,11 +251,11 @@ impl BoxPlotChart {
         let mut out = Vec::new();
         for (i, d) in self.distributions.iter().enumerate() {
             let five = [
-                (P::LowerExtreme, d.lower_whisker),
-                (P::LowerQuartile, d.q1),
-                (P::Median, d.median),
-                (P::UpperQuartile, d.q3),
-                (P::UpperExtreme, d.upper_whisker),
+                (P::LowerExtreme, d.lower_whisker()),
+                (P::LowerQuartile, d.q1()),
+                (P::Median, d.median()),
+                (P::UpperQuartile, d.q3()),
+                (P::UpperExtreme, d.upper_whisker()),
             ];
             for (at, value) in five {
                 if !self.y_kind.defines(value) {
@@ -266,7 +266,7 @@ impl BoxPlotChart {
                     });
                 }
             }
-            for (j, &value) in d.outliers.iter().enumerate() {
+            for (j, &value) in d.outliers().iter().enumerate() {
                 if !self.y_kind.defines(value) {
                     out.push(OffScaleLandmark {
                         distribution: i,
@@ -342,16 +342,15 @@ impl BoxPlotChart {
         let x_format = axis_format(&g.x_axis(), &[]);
         for i in visible_indices(&g) {
             children.extend(self.marks_for(&g, i, style));
-            let (slot_lo, slot_hi) = g.x.band(i).unwrap_or((g.left, g.left));
-            children.push(label_node(
-                x_format.label(index_value(i)),
-                to_u32(slot_lo),
-                to_u32(g.bottom) + 4,
-                to_u32(slot_hi - slot_lo).max(1),
-                TextAlign::Center,
+            children.push(category_label_node(
+                &g.x,
+                i,
+                g.left,
+                g.bottom,
+                &x_format,
                 style.label,
                 size,
-                format!("{}.xlabel.{i}", self.tag_prefix),
+                &self.tag_prefix,
             ));
         }
 
@@ -405,8 +404,8 @@ impl BoxPlotChart {
         // The whiskers hang off the box edges the axis DID place, so an
         // upper whisker survives a lower one the axis cannot carry.
         for (end, from, tag) in [
-            (dist.upper_whisker, bx.top, "hi"),
-            (dist.lower_whisker, bx.bottom, "lo"),
+            (dist.upper_whisker(), bx.top, "hi"),
+            (dist.lower_whisker(), bx.bottom, "lo"),
         ] {
             let Some(y) = g.y.map(end) else { continue };
             out.push(stroke_path(
@@ -422,7 +421,7 @@ impl BoxPlotChart {
         }
 
         let radius = (style.marker_radius / 2).max(2);
-        for (j, &v) in dist.outliers.iter().enumerate() {
+        for (j, &v) in dist.outliers().iter().enumerate() {
             let Some(y) = g.y.map(v) else { continue };
             out.push(marker_node(
                 bx.center,
@@ -445,9 +444,9 @@ impl BoxPlotChart {
         let center = f32::midpoint(slot_lo, slot_hi);
         let half = g.box_w / 2.0;
         let (left, right) = (center - half, center + half);
-        let top = g.y.map(d.q3)?;
-        let bottom = g.y.map(d.q1)?;
-        let median_y = g.y.map(d.median)?;
+        let top = g.y.map(d.q3())?;
+        let bottom = g.y.map(d.q1())?;
+        let median_y = g.y.map(d.median())?;
 
         // The waist, when notched AND the distribution can answer one. A
         // pre-computed summary carries no sample count, so it keeps a plain
@@ -573,21 +572,25 @@ impl BoxPlotChart {
         // tick labels use rather than in a second one invented here.
         let fmt = |v: f64| g.y_format().readout(v);
         let mut rows = vec![
-            self.row("median", &fmt(d.median), style.tooltip_fg, "median"),
+            self.row("median", &fmt(d.median()), style.tooltip_fg, "median"),
             self.row(
                 "IQR",
-                &format!("{}\u{2013}{}", fmt(d.q1), fmt(d.q3)),
+                &format!("{}\u{2013}{}", fmt(d.q1()), fmt(d.q3())),
                 style.tooltip_fg,
                 "iqr",
             ),
             self.row(
                 "whiskers",
-                &format!("{}\u{2013}{}", fmt(d.lower_whisker), fmt(d.upper_whisker)),
+                &format!(
+                    "{}\u{2013}{}",
+                    fmt(d.lower_whisker()),
+                    fmt(d.upper_whisker())
+                ),
                 style.tooltip_fg,
                 "whiskers",
             ),
         ];
-        rows.push(match d.source {
+        rows.push(match d.source() {
             DistributionSource::Samples { count, method, .. } => self.row(
                 "n",
                 &format!("{count} ({})", method.name()),
@@ -596,10 +599,10 @@ impl BoxPlotChart {
             ),
             DistributionSource::Summary => self.row("n", "pre-computed", style.label, "n"),
         });
-        if !d.outliers.is_empty() {
+        if !d.outliers().is_empty() {
             rows.push(self.row(
                 "outliers",
-                &d.outliers.len().to_string(),
+                &d.outliers().len().to_string(),
                 self.palette.color(idx),
                 "outliers",
             ));
@@ -609,7 +612,7 @@ impl BoxPlotChart {
             anchor,
             g.right,
             g.top,
-            &d.label,
+            d.label(),
             format!("{}.inspect.header", self.tag_prefix),
             &rows,
             style,
@@ -765,7 +768,7 @@ mod tests {
         with_far.push(600.0);
         let d = Distribution::from_samples("far", &with_far, QuantileMethod::Tukey)
             .expect("finite samples");
-        assert_eq!(d.outliers.len(), 2, "two samples past the fence");
+        assert_eq!(d.outliers().len(), 2, "two samples past the fence");
 
         let scene = BoxPlotChart::new(vec![d]).build(RECT, &ChartStyle::default());
         assert!(has(&scene, "chart.outlier.0.0"));

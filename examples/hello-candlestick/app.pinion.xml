@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1567 Phase-B charting consumer: pinion-forge renderer manifest for
+  hello-candlestick. Emits `HelloCandlestickRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper) — the same
+  single-source emit template every chart example uses; only the struct
+  name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloCandlestickRenderer"
+        backend="vello"/>

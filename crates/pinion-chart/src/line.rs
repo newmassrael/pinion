@@ -90,12 +90,12 @@ use core::fmt::Write as _;
 
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect};
-use pinion_core::style::{Color, Stroke, StrokeCap, TextAlign};
+use pinion_core::style::{Color, Stroke, StrokeCap};
 
 use crate::color_scale::{ColorScale, ValueEncoding};
 use crate::draw::{
     CalloutRow, MUTED_ALPHA, absolute, area_path, area_path_along_x, box_node, callout,
-    fill_parent, label_node, legend_band_color_bar, marker_node, stroke_path, to_u32,
+    fill_parent, legend_band_color_bar, marker_node, stroke_path,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{
@@ -841,33 +841,22 @@ impl LineChart {
         style: &ChartStyle,
         steps: &Steps,
     ) -> Vec<Scene> {
-        let size = style.label_size_px.max(1);
         let y_pos = tick_pixels(&plot.y, y_ticks);
         let mut out =
             crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, &steps.y, style, &self.tag_prefix);
-        // The numeric x-axis labels stay here: shared only with the scatter chart
-        // (two consumers) — the categorical bar chart labels its slots with
-        // category names instead — so the numeric x-label loop is deferred from
-        // the R1377 lift until a third numeric-x consumer arrives.
-        let slot = 60;
-        for (k, &t) in x_ticks.iter().enumerate() {
-            // (R1396) `centered_label_x` clamps the box inside `rect`, so the
-            // last tick's box no longer overhangs the chart into a docked
-            // neighbour; the box's `TextOverflow::Clip` (in `label_node`)
-            // scissors any glyphs the clamp squeezes.
-            let Some(px) = plot.x.map(t) else { continue };
-            let x = crate::draw::centered_label_x(px, slot, rect);
-            out.push(label_node(
-                steps.x.label(t),
-                x,
-                to_u32(plot.bottom) + 4,
-                slot,
-                TextAlign::Center,
-                style.label,
-                size,
-                format!("{}.label.x.{k}", self.tag_prefix),
-            ));
-        }
+        // R1567 lifted the numeric x-label loop into `crate::draw` at its third
+        // consumer, which is the threshold the comment that used to sit here
+        // named in advance (line + scatter were two; the candlestick chart's
+        // elapsed reading is the third).
+        out.extend(crate::draw::x_tick_labels(
+            &plot.x,
+            x_ticks,
+            plot.bottom,
+            rect,
+            &steps.x,
+            style,
+            &self.tag_prefix,
+        ));
         out
     }
 

@@ -85,17 +85,15 @@
 
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect};
-use pinion_core::style::{Color, LayoutStyle, Size, TextAlign};
+use pinion_core::style::{Color, LayoutStyle, Size};
 
 use crate::draw::{
-    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, fill_parent, label_node, outline_box,
-    plot_rect, to_f32, to_u32,
+    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, category_label_node, fill_parent,
+    outline_box, plot_rect, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::axis_format;
-use crate::scale::{
-    Categories, CategoryScale, CategoryWindow, LinearScale, ValueScale, index_value,
-};
+use crate::scale::{Categories, CategoryScale, CategoryWindow, LinearScale, ValueScale};
 use crate::style::ChartStyle;
 use crate::ticks::{TickFormat, format_axis_tick, nice_ticks, tick_step};
 
@@ -482,16 +480,15 @@ impl BarChart {
             }
             // Category label centred under the slot (always, even for a
             // non-finite bar, so the axis stays legible).
-            let (slot_lo, slot_hi) = g.x.band(i).unwrap_or((g.left, g.left));
-            children.push(label_node(
-                x_format.label(index_value(i)),
-                to_u32(slot_lo),
-                to_u32(g.bottom) + 4,
-                to_u32(slot_hi - slot_lo).max(1),
-                TextAlign::Center,
+            children.push(category_label_node(
+                &g.x,
+                i,
+                g.left,
+                g.bottom,
+                &x_format,
                 style.label,
                 size,
-                format!("{}.xlabel.{i}", self.tag_prefix),
+                &self.tag_prefix,
             ));
         }
 
@@ -779,7 +776,8 @@ fn value_text(bar: &Bar, y_step: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene_probe::{find, tags};
+    use crate::scale::index_value;
+    use crate::scene_probe::{find, tags, text_of};
     use pinion_core::scene::Rect;
 
     fn three() -> Vec<Bar> {
@@ -1029,13 +1027,6 @@ mod tests {
             "50 of [0,100] fills ~half the plot height, got {} vs {expected_h}",
             bar.rect.h
         );
-    }
-
-    fn text_of<'a>(scene: &'a Scene, tag: &str) -> Option<&'a str> {
-        match find(scene, tag)? {
-            Scene::Text(t) => Some(t.content.as_str()),
-            _ => None,
-        }
     }
 
     #[test]

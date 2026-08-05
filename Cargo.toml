@@ -117,6 +117,7 @@ members = [
     "examples/hello-category-axis",
     "examples/hello-log-chart",
     "examples/hello-boxplot",
+    "examples/hello-candlestick",
     "examples/hello-time-chart",
     "examples/hello-hex-dump",
     "examples/hello-hyperlink",

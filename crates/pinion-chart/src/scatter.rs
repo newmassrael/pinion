@@ -15,9 +15,10 @@
 //! shared [`crate::draw`] primitives the line AND bar charts also call; the
 //! legend row it shares with line and donut; the circle geometry (a filled
 //! point mark, a stroked inspect ring) with the line chart's inspect marker.
-//! What stays scatter's own is the point marks, the inspector's ring, and — a
-//! two-consumer duplicate deferred from the lift, shared only with the line
-//! chart — its numeric x-tick-label loop.
+//! What stays scatter's own is the point marks and the inspector's ring. The
+//! numeric x-tick-label loop was the last two-consumer duplicate here; R1567
+//! lifted it into [`crate::draw`] when the candlestick chart's elapsed reading
+//! became its third consumer, which is the threshold the deferral named.
 //!
 //! # Coordinate contract
 //!
@@ -43,11 +44,11 @@ use core::fmt::Write as _;
 
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
-use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
+use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::color_scale::{ColorScale, ValueEncoding};
 use crate::draw::{
-    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, fill_parent, label_node,
+    CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, fill_parent,
     legend_band_color_bar, marker_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
@@ -511,27 +512,20 @@ impl ScatterChart {
         style: &ChartStyle,
         steps: &Steps,
     ) -> Vec<Scene> {
-        let size = style.label_size_px.max(1);
         let y_pos = tick_pixels(&plot.y, y_ticks);
         let mut out =
             crate::draw::y_tick_labels(rect.x, y_ticks, &y_pos, &steps.y, style, &self.tag_prefix);
-        let slot = 60;
-        for (k, &t) in x_ticks.iter().enumerate() {
-            // (R1396) Clamp the box inside `rect` (see the line chart's twin) so
-            // the last x-tick label no longer overhangs a docked neighbour.
-            let Some(px) = plot.x.map(t) else { continue };
-            let x = crate::draw::centered_label_x(px, slot, rect);
-            out.push(label_node(
-                steps.x.label(t),
-                x,
-                to_u32(plot.bottom) + 4,
-                slot,
-                TextAlign::Center,
-                style.label,
-                size,
-                format!("{}.label.x.{k}", self.tag_prefix),
-            ));
-        }
+        // R1567 — the numeric x-label loop moved to `crate::draw` at its third
+        // consumer; see the line chart's twin.
+        out.extend(crate::draw::x_tick_labels(
+            &plot.x,
+            x_ticks,
+            plot.bottom,
+            rect,
+            &steps.x,
+            style,
+            &self.tag_prefix,
+        ));
         out
     }
 

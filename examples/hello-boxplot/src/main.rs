@@ -212,10 +212,10 @@ fn caption(state: &Options) -> String {
     let small = &chart.distributions()[SMALL_N];
     let head = format!(
         "{} \u{2014} {} upper quartile {:.2}, {} outlier(s)",
-        small.label,
+        small.label(),
         state.method().name(),
-        small.q3,
-        small.outliers.len(),
+        small.q3(),
+        small.outliers().len(),
     );
 
     let off = chart.off_scale();
@@ -691,7 +691,7 @@ mod tests {
     fn r1553_the_method_decides_whether_the_sample_is_an_outlier() {
         let q3_and_outliers = |m| {
             let d = &summarise(m)[SMALL_N];
-            (d.q3, d.outliers.len())
+            (d.q3(), d.outliers().len())
         };
         let (tukey_q3, tukey_out) = q3_and_outliers(QuantileMethod::Tukey);
         let (linear_q3, linear_out) = q3_and_outliers(QuantileMethod::Linear);

@@ -565,15 +565,8 @@ struct TimelineGeom {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene_probe::{find, tags};
+    use crate::scene_probe::{find, tags, text_of};
     use pinion_core::scene::Rect;
-
-    fn text_of<'a>(scene: &'a Scene, tag: &str) -> Option<&'a str> {
-        match find(scene, tag)? {
-            Scene::Text(t) => Some(t.content.as_str()),
-            _ => None,
-        }
-    }
 
     /// Two lanes, three spans each — abutting so a scrub always lands in one.
     fn two_lanes() -> Vec<Lane> {

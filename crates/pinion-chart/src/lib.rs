@@ -190,9 +190,58 @@
 //!   positions rather than a length from zero. A landmark the axis cannot
 //!   place draws nothing and is reported by [`BoxPlotChart::off_scale`].
 //!
-//! Not yet: [`Distribution`]'s other reading — a candlestick (Qt's
-//! `QCandlestickSeries`) is the same interval geometry over open / high /
-//! low / close, and would be this box's second consumer.
+//! And (R1567) the second series type with extent — a [`Candle`], drawn by
+//! [`CandlestickChart`] (Qt's `QCandlestickSeries`). The paragraph that stood
+//! here said a candlestick would be the box plot's *second consumer*, "the
+//! same interval geometry over open / high / low / close". **Building one
+//! showed that was wrong, and the reason is the round.**
+//!
+//! A [`Distribution`]'s five landmarks are totally ordered by construction.
+//! A candle has four, and only three order relations among them: `low` is
+//! below both middle values and `high` above both, while `open` and `close`
+//! are **not ordered against each other at all**. That absence is not a
+//! weaker invariant, it is the datum — which of the two is larger is the fact
+//! a candlestick chart exists to show, and two sessions with the same four
+//! numbers, the same extent and the same box mean opposite things. A type
+//! whose invariant is "non-decreasing" cannot hold it. What the two really
+//! share is the *paint*, and that is where the sharing now is (the per-slot
+//! x-label lift in [`draw`](crate)).
+//!
+//! Six things follow and are worth knowing before using it:
+//!
+//! * **The relations are checked and the refusal names the slot.**
+//!   `QCandlestickSet` is five `qreal`s with `void` setters, so a transposed
+//!   high and low, or an open outside the extremes, paints whatever geometry
+//!   it implies. [`Candle::new`] refuses each ([`CandleError`]).
+//! * **The direction is a value with three arms.** Qt has `increasingColor`
+//!   and `decreasingColor` — paint properties on the *series* — and no
+//!   accessor on the set, and its documented rule is a strict `close > open`,
+//!   so a **doji** (the session that closed where it opened, the single
+//!   most-read signal in the form) is silently painted as a losing one.
+//!   [`Direction::Doji`] is its own arm.
+//! * **The direction survives the loss of hue.** It is also the body's
+//!   [`BodyFill`] — hollow for a rise, solid for a fall, the traditional
+//!   Japanese form, which predates colour — so a colour-blind reader or a
+//!   grayscale print keeps it. The default hues were chosen by *measurement*:
+//!   the conventional mid-green / mid-red pair is all but isoluminant at
+//!   1.11:1, which is exactly why that palette fails, and
+//!   [`CandlestickChart::direction_contrast`] publishes the ratio.
+//! * **One datum, two readings of the x-axis** ([`SessionAxis`]). A candle
+//!   carries its own instant, so whether the axis is equal ordinal slots
+//!   (Qt's `QBarCategoryAxis` — how a price chart is read, and the weekend is
+//!   invisible) or real UTC time (Qt's `QDateTimeAxis` — where the weekend is
+//!   a gap) is a property of the chart. Qt reaches the two by attaching
+//!   different axis objects and supplying the category names as a **second
+//!   data source** unrelated to the sets' timestamps; here the slot names are
+//!   *derived* from the instants and the sessions sorted by them once, so the
+//!   readings cannot disagree. One [`CategoryWindow`] narrows both.
+//! * **The derived readings exist.** Body, range, the two shadows, the
+//!   signed change and the percent change (`None` where it does not exist)
+//!   are on the datum; `QCandlestickSet` exposes none, so every Qt consumer
+//!   recomputes them.
+//! * **A slot the axis cannot place is REPORTED**
+//!   ([`CandlestickChart::off_scale`]) rather than pinned to a domain floor —
+//!   R1528's stance, on the axis a long price history actually wants.
 //!
 //! Not yet: cross-filtering between two ARBITRARY chart types, and a y-rescale
 //! to a brush-zoomed x-window (distinct from R1381's rescale-to-VISIBLE-series)
@@ -260,6 +309,8 @@
 mod bar;
 mod boxplot;
 mod brush;
+mod candle;
+mod candlestick;
 mod civil;
 mod color_scale;
 mod distribution;
@@ -284,6 +335,10 @@ mod window;
 pub use bar::{Bar, BarChart};
 pub use boxplot::{BoxPlotChart, LandmarkKind, OffScaleLandmark};
 pub use brush::{Brush, BrushStripColors};
+pub use candle::{
+    BodyFill, Candle, CandleError, CandlePosition, Direction, candle_bounds, positive_candle_bounds,
+};
+pub use candlestick::{CandlestickChart, OffScaleCandle, SessionAxis};
 pub use color_scale::{ColorScale, contrast_ratio, readable_ink, relative_luminance};
 pub use distribution::{
     DEFAULT_FENCE, Distribution, DistributionError, DistributionSource, QuantileMethod,

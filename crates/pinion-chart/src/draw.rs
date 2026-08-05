@@ -22,6 +22,7 @@ use pinion_core::style::{
 };
 
 use crate::color_scale::ValueEncoding;
+use crate::scale::{CategoryScale, ValueScale, index_value};
 use crate::style::{ChartStyle, Margin};
 use crate::ticks::{TickFormat, format_at_decimals, value_decimals};
 
@@ -242,6 +243,95 @@ pub(crate) fn label_node(
                 .with_size(Size::px(width.max(1), label_box_h(size))),
         ),
     )
+}
+
+/// The x-axis label for category slot `index`, centred under the band the
+/// [`CategoryScale`] draws it in and tagged `{prefix}.xlabel.{index}` (R1567).
+///
+/// The per-CATEGORY x label, as distinct from [`label_node`]'s general form
+/// and from the per-TICK `{prefix}.label.x.{k}` a numeric axis emits. It
+/// arrived here as its third byte-identical copy — the bar chart (R1374), the
+/// box plot (R1553) and the candlestick chart all place a label under a slot
+/// the same way, and each held its own `band(i).unwrap_or(..)` fallback for
+/// the case the axis carries no such slot. Three mechanical copies is the
+/// lift threshold this project works to; the fallback is the reason it
+/// matters, since a chart that got it wrong would paint every out-of-window
+/// label stacked at the plot's left edge.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the parameters are the label's frame plus the axis it is derived from; a struct would rename them, not remove them"
+)]
+pub(crate) fn category_label_node(
+    x: &CategoryScale,
+    index: usize,
+    left: f32,
+    bottom: f32,
+    format: &TickFormat,
+    color: Color,
+    size: u32,
+    prefix: &str,
+) -> Scene {
+    let (slot_lo, slot_hi) = x.band(index).unwrap_or((left, left));
+    label_node(
+        format.label(index_value(index)),
+        to_u32(slot_lo),
+        to_u32(bottom) + X_LABEL_GAP,
+        to_u32(slot_hi - slot_lo).max(1),
+        TextAlign::Center,
+        color,
+        size,
+        format!("{prefix}.xlabel.{index}"),
+    )
+}
+
+/// The gap (px) between the plot's baseline and the top of an x-axis label
+/// box — one definition, so the three category charts cannot drift apart by a
+/// pixel.
+const X_LABEL_GAP: u32 = 4;
+
+/// Fixed width (px) of a numeric x-tick label's box. A tick label is centred
+/// on its tick and clamped inside the chart, so the slot is what decides how
+/// much of a long label survives [`label_node`]'s clip.
+const X_TICK_SLOT: u32 = 60;
+
+/// The x-axis tick labels of a **numeric** axis, tagged
+/// `{prefix}.label.x.{k}` — one per tick the scale can place, centred on it
+/// and clamped inside `rect` (R1567).
+///
+/// The per-TICK x label, as distinct from [`category_label_node`]'s per-SLOT
+/// one. R1377 lifted the y-axis twin and deliberately left this here, with
+/// the reason written down in `line.rs`: *"deferred from the R1377 lift until
+/// a third numeric-x consumer arrives"*. The candlestick chart's elapsed
+/// reading is that third consumer, so the loop lands where its own comment
+/// said it would.
+pub(crate) fn x_tick_labels(
+    x: &ValueScale,
+    ticks: &[f64],
+    bottom: f32,
+    rect: Rect,
+    format: &TickFormat,
+    style: &ChartStyle,
+    prefix: &str,
+) -> Vec<Scene> {
+    let size = style.label_size_px.max(1);
+    let mut out = Vec::new();
+    for (k, &t) in ticks.iter().enumerate() {
+        // (R1396) A tick the scale cannot place has no label — a log axis's
+        // domain can exclude one — and the box is clamped inside `rect` so the
+        // last label does not overhang into a docked neighbour.
+        let Some(px) = x.map(t) else { continue };
+        out.push(label_node(
+            format.label(t),
+            centered_label_x(px, X_TICK_SLOT, rect),
+            to_u32(bottom) + X_LABEL_GAP,
+            X_TICK_SLOT,
+            TextAlign::Center,
+            style.label,
+            size,
+            format!("{prefix}.label.x.{k}"),
+        ));
+    }
+    out
 }
 
 /// Height (px) of the box a [`label_node`] of text `size` occupies.
@@ -1204,6 +1294,95 @@ pub(crate) fn to_u32(v: f32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── the two x-axis label emitters (R1567) ───────────────────────────
+    //
+    // Both were lifted here at their third consumer, and a counterfactual
+    // pass found each one's defining property UNTESTED at every consumer it
+    // came from: three charts asserted that a slot label exists and what it
+    // says, and none that it sits under the slot it names. A lift inherits
+    // its sources' coverage, so those holes are closed here rather than in
+    // one of the three.
+
+    /// ★ A category label is centred under the band it names — the property
+    /// that makes it a *slot* label rather than a string at the plot's left
+    /// edge. All three category charts read this one definition.
+    #[test]
+    fn r1567_a_category_label_is_centred_under_its_own_band() {
+        let cats = crate::scale::Categories::new(["a", "b", "c"]);
+        let x = CategoryScale::new(cats.clone(), cats.extent(), (100.0, 400.0));
+        let format = TickFormat::Category(cats);
+        let style = ChartStyle::default();
+        let mut lefts = Vec::new();
+        for i in 0..3 {
+            let node = category_label_node(&x, i, 100.0, 200.0, &format, style.label, 11, "chart");
+            let Scene::Text(t) = &node else {
+                panic!("a label is a text node")
+            };
+            let (band_lo, band_hi) = x.band(i).expect("placed");
+            let (left_px, top_px) = t.layout.absolute_position.expect("absolutely placed");
+            assert_eq!(left_px, to_u32(band_lo), "label {i} starts at its band");
+            assert_eq!(
+                top_px,
+                200 + X_LABEL_GAP,
+                "label {i} sits under the baseline"
+            );
+            let want = to_u32(band_hi - band_lo).max(1);
+            assert_eq!(
+                t.layout.size.width,
+                SizeValue::Px(want),
+                "label {i} spans its band"
+            );
+            assert_eq!(t.tag.as_deref(), Some(&*format!("chart.xlabel.{i}")));
+            lefts.push(left_px);
+        }
+        assert!(
+            lefts.windows(2).all(|w| w[0] < w[1]),
+            "the three labels ascend with their slots: {lefts:?}"
+        );
+    }
+
+    /// ★ A numeric x label is emitted only for a tick the scale can PLACE.
+    ///
+    /// Defensive in every shipped chart — `axis_ticks` clips to the domain,
+    /// so a live tick set holds no unmappable value — which is exactly why
+    /// nothing exercised it, and why a counterfactual that dropped the guard
+    /// went unnoticed. Asked of the helper directly, where the case can be
+    /// constructed.
+    #[test]
+    fn r1567_a_numeric_x_label_skips_a_tick_the_scale_cannot_place() {
+        let scale = ValueScale::Log(crate::scale::LogScale::new(
+            (1.0, 100.0),
+            (0.0, 300.0),
+            10.0,
+        ));
+        assert!(scale.map(0.0).is_none(), "a log axis cannot place zero");
+        let out = x_tick_labels(
+            &scale,
+            &[0.0, 1.0, 10.0, 100.0],
+            200.0,
+            Rect::new(0, 0, 320, 240),
+            &TickFormat::Log,
+            &ChartStyle::default(),
+            "chart",
+        );
+        assert_eq!(out.len(), 3, "the unplaceable tick emits no label");
+        // ...and the survivors keep the INDEX of the tick they came from, so a
+        // consumer reading `chart.label.x.2` gets the third tick and not the
+        // third surviving one.
+        let tags: Vec<Option<String>> = out
+            .iter()
+            .map(|n| n.tag().map(ToString::to_string))
+            .collect();
+        assert_eq!(
+            tags,
+            vec![
+                Some("chart.label.x.1".to_string()),
+                Some("chart.label.x.2".to_string()),
+                Some("chart.label.x.3".to_string()),
+            ]
+        );
+    }
 
     // ─── centered_label_x (R1396) ────────────────────────────────────────
 

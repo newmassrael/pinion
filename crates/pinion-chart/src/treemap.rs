@@ -779,7 +779,7 @@ fn percent_text(value: f64, total: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene_probe::find;
+    use crate::scene_probe::{find, text_of};
     use pinion_core::scene::Rect;
     use pinion_core::style::SizeValue;
 
@@ -791,13 +791,6 @@ mod tests {
             }
         }
         n
-    }
-
-    fn text_of<'a>(scene: &'a Scene, tag: &str) -> Option<&'a str> {
-        match find(scene, tag)? {
-            Scene::Text(t) => Some(t.content.as_str()),
-            _ => None,
-        }
     }
 
     fn tile_rect(scene: &Scene, tag: &str) -> Rect {

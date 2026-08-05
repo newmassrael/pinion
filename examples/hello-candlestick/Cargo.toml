@@ -1,0 +1,29 @@
+[package]
+name = "hello-candlestick"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1567 candlestick consumer — the forcing consumer for pinion-chart's Candle, the datum whose two middle landmarks are deliberately unordered (Qt QCandlestickSeries). A session's open and close are ordered against the extremes and NOT against each other, which is what a candlestick chart exists to show and what a totally-ordered five-landmark summary cannot hold. The direction is a value with three arms including the doji Qt has no name for, and it is encoded twice — hue AND hollow-vs-solid body — so it survives a colour-blind reader. One datum reads two ways on the x-axis: equal ordinal sessions or real UTC time, from one declaration, where Qt needs a second data source of category names unrelated to the sets' timestamps."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# R1567 — the candle datum and the candlestick chart under test.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for the radiogroup + toggle-button a11y nodes.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+# The shared chip skin the reading radio and the two option toggles wear.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the `HelloCandlestickRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

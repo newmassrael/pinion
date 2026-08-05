@@ -6,8 +6,14 @@
 //! [`Distribution`] is the summary of *many* samples at one slot — five
 //! landmarks with extent along the value axis, plus the samples that fall
 //! outside them. It is what a box plot draws (Tukey, *Exploratory Data
-//! Analysis*, 1977) and what a candlestick draws over a different reading of
-//! the same geometry.
+//! Analysis*, 1977).
+//!
+//! R1553 wrote here that a candlestick was "a different reading of the same
+//! geometry", and R1567 found that wrong when it built one: a candle's `open`
+//! and `close` are **not ordered against each other**, and this type's whole
+//! invariant is that its landmarks are. See [`Candle`](crate::Candle) for the
+//! argument. What the two share is the *paint* — a band across a slot with
+//! landmarks mapped through the value axis — which is where it is now shared.
 //!
 //! # Why the derivation lives here rather than in the caller
 //!
@@ -348,30 +354,77 @@ pub enum DistributionSource {
 /// The five landmarks are non-decreasing by construction on both paths:
 /// derivation cannot produce an inverted box, and
 /// [`from_summary`](Self::from_summary) rejects one.
+///
+/// **The fields are private, and R1567 made them so.** That sentence above
+/// is the type's whole claim, and while a caller could write
+/// `d.q1 = 100.0` after construction it was false — the rejection in
+/// `from_summary` was defeatable by assignment, which is the same shape as a
+/// checked constructor with a public setter. The comparison that surfaced it
+/// is [`Candle`](crate::Candle), whose invariant is likewise the only reason
+/// the type exists.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Distribution {
-    /// The slot label — a category name on the x-axis.
-    pub label: String,
-    /// Bottom of the box (the lower quartile / hinge).
-    pub q1: f64,
-    /// The line inside the box.
-    pub median: f64,
-    /// Top of the box (the upper quartile / hinge).
-    pub q3: f64,
-    /// The lower whisker end: the most extreme sample still inside the fence
-    /// when derived, or the caller's lower extreme when handed in.
-    pub lower_whisker: f64,
-    /// The upper whisker end, mirroring [`lower_whisker`](Self::lower_whisker).
-    pub upper_whisker: f64,
-    /// The samples outside the fence, ascending. Always empty for a
-    /// [`Summary`](DistributionSource::Summary) — not because there were
-    /// none, but because a summary has no samples to classify.
-    pub outliers: Vec<f64>,
-    /// How these numbers came to be, and hence which statistics exist.
-    pub source: DistributionSource,
+    label: String,
+    q1: f64,
+    median: f64,
+    q3: f64,
+    lower_whisker: f64,
+    upper_whisker: f64,
+    outliers: Vec<f64>,
+    source: DistributionSource,
 }
 
 impl Distribution {
+    /// The slot label — a category name on the x-axis.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Bottom of the box (the lower quartile / hinge).
+    #[must_use]
+    pub const fn q1(&self) -> f64 {
+        self.q1
+    }
+
+    /// The line inside the box.
+    #[must_use]
+    pub const fn median(&self) -> f64 {
+        self.median
+    }
+
+    /// Top of the box (the upper quartile / hinge).
+    #[must_use]
+    pub const fn q3(&self) -> f64 {
+        self.q3
+    }
+
+    /// The lower whisker end: the most extreme sample still inside the fence
+    /// when derived, or the caller's lower extreme when handed in.
+    #[must_use]
+    pub const fn lower_whisker(&self) -> f64 {
+        self.lower_whisker
+    }
+
+    /// The upper whisker end, mirroring [`lower_whisker`](Self::lower_whisker).
+    #[must_use]
+    pub const fn upper_whisker(&self) -> f64 {
+        self.upper_whisker
+    }
+
+    /// The samples outside the fence, ascending. Always empty for a
+    /// [`Summary`](DistributionSource::Summary) — not because there were
+    /// none, but because a summary has no samples to classify.
+    #[must_use]
+    pub fn outliers(&self) -> &[f64] {
+        &self.outliers
+    }
+
+    /// How these numbers came to be, and hence which statistics exist.
+    #[must_use]
+    pub const fn source(&self) -> DistributionSource {
+        self.source
+    }
     /// Summarise `samples` under `method`, with Tukey's conventional
     /// [`DEFAULT_FENCE`].
     ///
@@ -711,7 +764,7 @@ mod tests {
         let q1_of = |m| {
             Distribution::from_samples("q", &QUARTET, m)
                 .expect("four finite samples")
-                .q1
+                .q1()
         };
         assert!((q1_of(QuantileMethod::Tukey) - 1.5).abs() < 1e-12);
         assert!((q1_of(QuantileMethod::Linear) - 1.75).abs() < 1e-12);
@@ -726,7 +779,7 @@ mod tests {
         ] {
             let d = Distribution::from_samples("q", &QUARTET, m).expect("four finite samples");
             assert!(
-                (d.median - 2.5).abs() < 1e-12,
+                (d.median() - 2.5).abs() < 1e-12,
                 "{m:?} median {} is not the ordinary median",
                 d.median
             );
@@ -740,7 +793,7 @@ mod tests {
             Distribution::from_samples("odd", &[1.0, 2.0, 3.0, 4.0, 5.0], QuantileMethod::Tukey)
                 .expect("five finite samples");
         assert!((d.q1 - 2.0).abs() < 1e-12, "lower hinge {}", d.q1);
-        assert!((d.median - 3.0).abs() < 1e-12);
+        assert!((d.median() - 3.0).abs() < 1e-12);
         assert!((d.q3 - 4.0).abs() < 1e-12, "upper hinge {}", d.q3);
     }
 
@@ -758,13 +811,17 @@ mod tests {
         let samples = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 40.0];
         let d = Distribution::from_samples("fenced", &samples, QuantileMethod::Tukey)
             .expect("ten finite samples");
-        assert_eq!(d.outliers, vec![40.0], "the far sample is the only outlier");
+        assert_eq!(
+            d.outliers(),
+            vec![40.0],
+            "the far sample is the only outlier"
+        );
         assert!(
-            (d.upper_whisker - 9.0).abs() < 1e-12,
+            (d.upper_whisker() - 9.0).abs() < 1e-12,
             "the whisker stops at the most extreme sample INSIDE the fence, got {}",
             d.upper_whisker
         );
-        assert!((d.lower_whisker - 1.0).abs() < 1e-12);
+        assert!((d.lower_whisker() - 1.0).abs() < 1e-12);
         // The extent still reaches the outlier: it is drawn, so the axis must
         // hold it.
         assert!((d.extent().1 - 40.0).abs() < 1e-12);
@@ -774,8 +831,8 @@ mod tests {
         let wide =
             Distribution::from_samples_fenced("fenced", &samples, QuantileMethod::Tukey, 9.0)
                 .expect("ten finite samples");
-        assert!(wide.outliers.is_empty(), "a wide fence classifies none");
-        assert!((wide.upper_whisker - 40.0).abs() < 1e-12);
+        assert!(wide.outliers().is_empty(), "a wide fence classifies none");
+        assert!((wide.upper_whisker() - 40.0).abs() < 1e-12);
     }
 
     /// ★ The notch exists only where `n` does. A derived distribution answers
@@ -797,7 +854,7 @@ mod tests {
         assert!(s.notch().is_none(), "a summary has no n, so no notch");
         assert_eq!(s.count(), None);
         assert_eq!(s.method(), None);
-        assert!(s.outliers.is_empty());
+        assert!(s.outliers().is_empty());
     }
 
     /// ★ An out-of-order summary is rejected and the rejection NAMES the
@@ -845,7 +902,7 @@ mod tests {
         )
         .expect("four finite samples survive");
         assert_eq!(d.count(), Some(4), "only the finite samples are counted");
-        assert!((d.median - 2.5).abs() < 1e-12);
+        assert!((d.median() - 2.5).abs() < 1e-12);
 
         assert_eq!(
             Distribution::from_samples("none", &[f64::NAN], QuantileMethod::Tukey),
@@ -889,7 +946,7 @@ mod tests {
         // outlier, the "no whiskers" reading.
         let d = Distribution::from_samples_fenced("f", &QUARTET, QuantileMethod::Tukey, 0.0)
             .expect("a zero fence is legal");
-        assert_eq!(d.outliers, vec![1.0, 4.0]);
+        assert_eq!(d.outliers(), vec![1.0, 4.0]);
     }
 
     /// ★ A single sample summarises to a degenerate but total distribution —
@@ -899,10 +956,10 @@ mod tests {
         let d = Distribution::from_samples("one", &[7.0], QuantileMethod::Tukey)
             .expect("one finite sample");
         assert_eq!(
-            (d.q1, d.median, d.q3, d.lower_whisker, d.upper_whisker),
+            (d.q1(), d.median, d.q3(), d.lower_whisker, d.upper_whisker),
             (7.0, 7.0, 7.0, 7.0, 7.0)
         );
-        assert!(d.outliers.is_empty());
+        assert!(d.outliers().is_empty());
         assert!(
             d.iqr().abs() < f64::EPSILON,
             "a constant sample has no spread"
@@ -916,7 +973,7 @@ mod tests {
 
         for m in [QuantileMethod::Linear, QuantileMethod::Exclusive] {
             let d = Distribution::from_samples("one", &[7.0], m).expect("one finite sample");
-            assert_eq!((d.q1, d.median, d.q3), (7.0, 7.0, 7.0), "{m:?}");
+            assert_eq!((d.q1(), d.median, d.q3), (7.0, 7.0, 7.0), "{m:?}");
         }
     }
 
@@ -932,7 +989,7 @@ mod tests {
         )
         .expect("finite samples");
         assert!(
-            d.outliers.contains(&900.0),
+            d.outliers().contains(&900.0),
             "the far sample is an outlier: {:?}",
             d.outliers
         );
