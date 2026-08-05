@@ -69,7 +69,7 @@ pub(crate) mod test_fixtures;
 
 pub use accelerators::{
     AcceleratorEntry, AcceleratorsOutcome, ChordVerdict, handle_scene_accelerators,
-    parse_chord_param,
+    parse_chord_param, resolve_chord_param,
 };
 pub use access::access_to_json;
 pub use animate_control::{

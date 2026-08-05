@@ -5895,21 +5895,14 @@ impl<V: WidgetView> ShellCore<V> {
         // being present and readable, so every other dispatch pays nothing and
         // a malformed spelling falls through to the refusal `scene/accelerators`
         // itself produces.
-        let accelerator_chord = (request.method == "scene/accelerators")
-            .then(|| {
-                pinion_rpc::parse_chord_param(request.params.as_ref())
-                    .ok()
-                    .flatten()
-            })
-            .flatten()
-            .map(|chord| {
-                let focused = self.focus.focused().map(str::to_owned);
-                let (claimed, shadowed_by) = self.core.accelerator_for_chord(
+        let accelerator_focus = self.focus.focused().map(str::to_owned);
+        let accelerator_chord =
+            pinion_rpc::resolve_chord_param(&request.method, request.params.as_ref(), |chord| {
+                self.core.accelerator_for_chord(
                     pinion_runtime::DEFAULT_WINDOW,
-                    focused.as_deref(),
-                    &chord,
-                );
-                pinion_rpc::ChordVerdict::resolve(&chord, claimed, shadowed_by)
+                    accelerator_focus.as_deref(),
+                    chord,
+                )
             });
         let reposition_signal = (request.method == "scene/window_move")
             .then(|| self.core.root_owner().run(V::windows_signal))

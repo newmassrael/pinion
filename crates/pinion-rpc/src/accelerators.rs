@@ -167,6 +167,39 @@ pub fn handle_scene_accelerators(
     serde_json::to_value(outcome).map_err(RpcError::internal_error)
 }
 
+/// Resolve `scene/accelerators`' optional `chord` parameter into a verdict.
+///
+/// The whole embedder-side pre-resolve in one place: the method gate, the
+/// parameter read, the tolerance of a malformed spelling (which falls through
+/// to the refusal `scene/accelerators` itself produces), and the verdict's
+/// construction. `resolve` is the only per-backend part — the shell call that
+/// answers what the chord would do.
+///
+/// Lifted at its SECOND consumer rather than its third. The rule that waits
+/// for a third exists to avoid abstracting a shape that has not settled, and
+/// here the shape cannot gain a third: there are exactly two backends. What a
+/// second copy buys instead is the §2 #6 divergence R1569's own counterfactual
+/// found — removing the TUI gate left every GUI assertion green, so the two
+/// embedders are precisely where a window and a terminal drift unobserved.
+#[must_use]
+pub fn resolve_chord_param(
+    method: &str,
+    params: Option<&Value>,
+    resolve: impl FnOnce(
+        &Chord,
+    ) -> (
+        Option<pinion_core::accelerator::AcceleratorLayer>,
+        Option<String>,
+    ),
+) -> Option<ChordVerdict> {
+    if method != "scene/accelerators" {
+        return None;
+    }
+    let chord = parse_chord_param(params).ok().flatten()?;
+    let (claimed, shadowed_by) = resolve(&chord);
+    Some(ChordVerdict::resolve(&chord, claimed, shadowed_by))
+}
+
 /// Read the optional `chord` request parameter.
 ///
 /// # Errors
@@ -248,6 +281,39 @@ mod tests {
         .expect("serializes");
         assert_eq!(asked["chord"]["claimed_by"], json!("keybinding"));
         assert_eq!(asked["chord"]["accel"], json!("Ctrl+s"));
+    }
+
+    /// The method gate, reached DIRECTLY because that is the only shape that
+    /// reaches it: the verdict is read by one arm, so removing the gate costs
+    /// work and changes no response — R1569's counterfactual removed it and
+    /// every wire assertion still passed. The lift inherited that gap from
+    /// both embedders' inline copies, neither of which was ever tested either.
+    #[test]
+    fn a_verdict_is_resolved_for_this_method_and_no_other() {
+        let params = json!({"chord": "Ctrl+s"});
+        let asked = std::cell::Cell::new(0_u32);
+        let probe = |_: &_| {
+            asked.set(asked.get() + 1);
+            (Some(AcceleratorLayer::Keybinding), None)
+        };
+        assert!(super::resolve_chord_param("scene/accelerators", Some(&params), probe).is_some(),);
+        assert_eq!(asked.get(), 1, "the shell was asked exactly once");
+        for other in ["scene/snapshot", "scene/mnemonics", "rpc/methods"] {
+            assert!(
+                super::resolve_chord_param(other, Some(&params), probe).is_none(),
+                "{other} must not resolve a chord even when one is supplied",
+            );
+        }
+        assert_eq!(asked.get(), 1, "and every other dispatch pays NOTHING");
+        // A malformed spelling is tolerated here and refused by the method
+        // itself, so a bad param cannot make an unrelated dispatch fail.
+        let bad = json!({"chord": "Ctrl+Frobnicate+P"});
+        assert!(super::resolve_chord_param("scene/accelerators", Some(&bad), probe).is_none());
+        assert_eq!(
+            asked.get(),
+            1,
+            "an unreadable chord never reaches the shell"
+        );
     }
 
     #[test]

@@ -30196,6 +30196,48 @@
         "`examples/hello-key-sequence` adds no `#[cfg(test)]` scene walker — it reads the paint through `Debug` — so the registered walker debt stays at R1568's 40 files rather than growing."
       ]
     },
+    "R1569.1": {
+      "decision_summary": "R1569.1 §5.12 §2 #6 — THE PRE-RESOLVE IS ONE PLACE, AND ITS GATE IS TESTED. R1569's end-of-round duplication census found what the round itself had not recorded: the two embedders carried logically identical copies of ' chord pre-resolve — the method gate, the parameter read, the malformed-spelling tolerance, and the verdict construction — differing only in a variable name. R1569 had already lifted the verdict's field mapping () one paragraph earlier for exactly the §2 #6 reason, and stopped one layer short. Lifted at the SECOND consumer deliberately: the rule that waits for a third exists to avoid abstracting a shape that has not settled, and this one cannot gain a third because there are exactly two backends — while R1569's own CF8 had already proved that these two blocks are where a window and a terminal drift with every assertion still green. THE LIFT THEN PRODUCED ITS OWN FINDING, which is R1567's lesson landing again: a counterfactual removing the LIFTED helper's method gate left the wire demo and every unit test passing, because neither embedder's inline gate had ever been tested and the lift inherited that gap intact. Closed with a direct-call test — the only shape that reaches a gate whose removal costs work and changes no response — which counts how many times the shell is asked, so \"every other dispatch pays nothing\" is asserted rather than described. Also closed: the tally reported  UNCLASSIFIED at the push that shipped it, so the catalog axis's pattern census now names it. Three findings, all three from tools rather than from recollection: a duplication census, a counterfactual, and the tally's own report.",
+      "changes_bullets": [
+        "`pinion-rpc` `resolve_chord_param` — the embedder-side pre-resolve in ONE place: the method gate, the parameter read, the tolerance of a malformed spelling, and the verdict's construction. `resolve` is the only per-backend part.",
+        "Lifted at its SECOND consumer rather than its third. The rule that waits for a third exists to avoid abstracting a shape that has not settled, and this shape CANNOT gain a third: there are exactly two backends. What a second copy buys instead is the §2 #6 divergence R1569's own counterfactual found — removing the TUI gate left every GUI assertion green, so the two embedders are precisely where a window and a terminal drift unobserved.",
+        "`tools/phase_b_tally.py` — `key-sequence` added to the catalog axis's pattern census. The tally reported `hello-key-sequence` UNCLASSIFIED at the push that shipped it, which is the census doing its job; work with no axis is work the tally cannot see."
+      ],
+      "verification_bullets": [
+        "THE LIFT WAS FOUND BY CENSUS, NOT BY MEMORY. The two embedder blocks were normalised and compared: identical but for the variable name — the same gate, the same parse, the same call, the same construction.",
+        "COUNTERFACTUAL CF9, applied to the LIFTED helper: its method gate removed. The wire demo PASSED and every unit test passed. That is R1567's lesson landing again — a lift inherits the source's coverage, and NEITHER embedder's inline gate had ever been tested, so the lift carried the gap forward intact.",
+        "Closed the same way CF4 was: a DIRECT-CALL test, which is the only shape that reaches a gate whose removal costs work and changes no response. It counts how many times the shell is asked, so \"every other dispatch pays nothing\" is asserted rather than described.",
+        "CF9b re-run against the new test: caught immediately.",
+        "`cargo test` + `cargo clippy -D pedantic` on `pinion-rpc`, `pinion-shell`, `pinion-tui`; `cargo fmt --all --check`; tally selftest PASS; the R1569 demo re-run PASS (14 phases)."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "None. The three items this follow-up existed to close — the two-copy pre-resolve, its untested gate, and the UNCLASSIFIED example — are closed and each re-verified by counterfactual or by re-running the tool that reported it. R1569's own eight carries are unchanged and remain stated limits or pre-existing findings owned by no round."
+      ],
+      "publishable_decision_summary": "R1569.1 §5.12 §2 #6 — THE PRE-RESOLVE IS ONE PLACE, AND ITS GATE IS TESTED. R1569's end-of-round duplication census found what the round itself had not recorded: the two embedders carried logically identical copies of ' chord pre-resolve — the method gate, the parameter read, the malformed-spelling tolerance, and the verdict construction — differing only in a variable name. R1569 had already lifted the verdict's field mapping () one paragraph earlier for exactly the §2 #6 reason, and stopped one layer short. Lifted at the SECOND consumer deliberately: the rule that waits for a third exists to avoid abstracting a shape that has not settled, and this one cannot gain a third because there are exactly two backends — while R1569's own CF8 had already proved that these two blocks are where a window and a terminal drift with every assertion still green. THE LIFT THEN PRODUCED ITS OWN FINDING, which is R1567's lesson landing again: a counterfactual removing the LIFTED helper's method gate left the wire demo and every unit test passing, because neither embedder's inline gate had ever been tested and the lift inherited that gap intact. Closed with a direct-call test — the only shape that reaches a gate whose removal costs work and changes no response — which counts how many times the shell is asked, so \"every other dispatch pays nothing\" is asserted rather than described. Also closed: the tally reported  UNCLASSIFIED at the push that shipped it, so the catalog axis's pattern census now names it. Three findings, all three from tools rather than from recollection: a duplication census, a counterfactual, and the tally's own report.",
+      "publishable_changes_bullets": [
+        "`pinion-rpc` `resolve_chord_param` — the embedder-side pre-resolve in ONE place: the method gate, the parameter read, the tolerance of a malformed spelling, and the verdict's construction. `resolve` is the only per-backend part.",
+        "Lifted at its SECOND consumer rather than its third. The rule that waits for a third exists to avoid abstracting a shape that has not settled, and this shape CANNOT gain a third: there are exactly two backends. What a second copy buys instead is the §2 #6 divergence R1569's own counterfactual found — removing the TUI gate left every GUI assertion green, so the two embedders are precisely where a window and a terminal drift unobserved.",
+        "`tools/phase_b_tally.py` — `key-sequence` added to the catalog axis's pattern census. The tally reported `hello-key-sequence` UNCLASSIFIED at the push that shipped it, which is the census doing its job; work with no axis is work the tally cannot see."
+      ],
+      "publishable_verification_bullets": [
+        "THE LIFT WAS FOUND BY CENSUS, NOT BY MEMORY. The two embedder blocks were normalised and compared: identical but for the variable name — the same gate, the same parse, the same call, the same construction.",
+        "COUNTERFACTUAL CF9, applied to the LIFTED helper: its method gate removed. The wire demo PASSED and every unit test passed. That is R1567's lesson landing again — a lift inherits the source's coverage, and NEITHER embedder's inline gate had ever been tested, so the lift carried the gap forward intact.",
+        "Closed the same way CF4 was: a DIRECT-CALL test, which is the only shape that reaches a gate whose removal costs work and changes no response. It counts how many times the shell is asked, so \"every other dispatch pays nothing\" is asserted rather than described.",
+        "CF9b re-run against the new test: caught immediately.",
+        "`cargo test` + `cargo clippy -D pedantic` on `pinion-rpc`, `pinion-shell`, `pinion-tui`; `cargo fmt --all --check`; tally selftest PASS; the R1569 demo re-run PASS (14 phases)."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None. The three items this follow-up existed to close — the two-copy pre-resolve, its untested gate, and the UNCLASSIFIED example — are closed and each re-verified by counterfactual or by re-running the tool that reported it. R1569's own eight carries are unchanged and remain stated limits or pre-existing findings owned by no round."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

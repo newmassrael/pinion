@@ -525,6 +525,11 @@ AXES = [
                 # so a member with no pattern is reported UNCLASSIFIED rather
                 # than counted somewhere convenient.
                 "group-box",
+                # R1569 — the key-sequence editor (Qt `QKeySequenceEdit`), the
+                # field a shortcut is recorded into. Added on the round that
+                # built it, because the census reported it UNCLASSIFIED at the
+                # push that shipped it — which is the census doing its job.
+                "key-sequence",
             ]),
         ],
         # R1533 re-judgment, 82 -> 84, demanded by the tool: the round ledger
