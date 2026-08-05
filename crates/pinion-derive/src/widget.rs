@@ -193,7 +193,7 @@
 
 use std::collections::HashSet;
 
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     Expr, ExprPath, Ident, ItemStruct, LitStr, Token, Type,
@@ -201,6 +201,38 @@ use syn::{
     punctuated::Punctuated,
     spanned::Spanned,
 };
+
+/// R1570 §5.16 — wrap a forward-to-inherent call in the guard that makes a
+/// MISSING inherent function a compile error instead of infinite recursion.
+///
+/// Every body this macro generates that reads `<TheView>::name(..)` is calling
+/// a function it also *defines*, one trait level up. When the view declares the
+/// inherent function, that one wins and the forward is a bridge. When it does
+/// not, the call resolves back to the trait method it sits inside and the
+/// forward calls itself — which release-mode tail-call optimisation turns into
+/// a bare jump: 100% CPU, no stack growth, no syscall, never returns.
+///
+/// Bringing [`pinion_core::widget_forward`]'s guard for that one name into
+/// scope — for the length of this body and nothing more — gives the call a
+/// second candidate in exactly the case where the inherent function is absent,
+/// so rustc reports [E0034] at the `#[widget(...)]` attribute and names the
+/// guard. See that module for why one guard per name, and why their signatures
+/// need not match the forwarded ones.
+///
+/// [`pinion_core::widget_forward`]: ../pinion_core/widget_forward/index.html
+/// [E0034]: https://doc.rust-lang.org/error_codes/E0034.html
+fn guarded_forward(guard: &str, call: &TokenStream2) -> TokenStream2 {
+    let guard = Ident::new(guard, Span::call_site());
+    quote! {
+        {
+            // Anonymous: the guard is a resolution candidate, never a name the
+            // generated body or the binding's own code can see.
+            #[allow(unused_imports)]
+            use ::pinion_core::widget_forward::#guard as _;
+            #call
+        }
+    }
+}
 
 /// R644 §5.16 — source form of the `tag = X` attribute.
 ///
@@ -269,53 +301,11 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
             access_value.as_ref(),
         )
     };
-    // R645 §5.16 — derive flags split. `state_name_derive` was the
-    // R643 combined flag; R645 split it so tuple-state bindings
-    // (`Slider` / `TextField` / `Toggle` — first elem enum + second
-    // elem value field) can use `event_name_derive` alone without
-    // claiming `read_state_derive` they cannot satisfy (tuple
-    // `read_state` reads two introspect fields; `WidgetStateName`
-    // only covers the enum half today). `state_name_derive` is
-    // still accepted as an alias for the combined R643 form to
-    // keep R642/R643 retrofit bindings working unchanged.
-    let combined = flags.contains("state_name_derive");
-    let derive_read_state = combined || flags.contains("read_state_derive");
-    let derive_event_name = combined || flags.contains("event_name_derive");
-    let read_state_body = if derive_read_state {
-        // R643 §5.16 — derive via WidgetStateName trait. Walks the
-        // same introspect chain every binding hand-wrote pre-R643
-        // (Scene::External → ExternalIntrospect → query("state") →
-        // Text); a missing field at any link falls back to the
-        // default variant (matches the pre-R643 `_ => Self::Idle`
-        // convention via `from_name_or_default("")`).
-        quote! {
-            if let ::pinion_core::Scene::External(node) = scene {
-                if let ::core::option::Option::Some(intro) = node.handle.introspect() {
-                    if let ::core::option::Option::Some(
-                        ::pinion_core::external::IntrospectValue::Text(name)
-                    ) = intro.query("state") {
-                        return <#state as ::pinion_core::WidgetStateName>
-                            ::from_name_or_default(&name);
-                    }
-                }
-            }
-            <#state as ::pinion_core::WidgetStateName>::from_name_or_default("")
-        }
-    } else {
-        quote! { <#view_ident>::read_state(scene) }
-    };
-    let event_name_body = if derive_event_name {
-        // R643 §5.16 — derive via WidgetEventName trait. Every variant
-        // (including the SCXML 3.13 Null sentinel + internal-only
-        // ones the winit handler never produces) gets its canonical
-        // PascalCase name; the pre-R643 `_ => "__internal__"` catch-
-        // all is gone (every binding's `parse_X_event` rejected it
-        // anyway — losing nothing, gaining AI-side observability
-        // for the previously-hidden variants).
-        quote! { <#event as ::pinion_core::WidgetEventName>::as_name(&event) }
-    } else {
-        quote! { <#view_ident>::event_name(event) }
-    };
+    let CoreMethodBodies {
+        read_state: read_state_body,
+        event_name: event_name_body,
+        view: view_body,
+    } = emit_core_method_bodies(view_ident, &state, &event, &flags);
     let initial_size_strategy_body =
         emit_initial_size_strategy_body(view_ident, &init_w, &init_h, &flags);
 
@@ -351,7 +341,7 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
                 // `clippy::pedantic` `trivially_copy_pass_by_ref` lint
                 // prefers (`Frame` is `Copy` + 4 bytes today). Macro
                 // is the boundary; user code stays clippy-clean.
-                <#view_ident>::view(state, *frame)
+                #view_body
             }
 
             #optional_forwards
@@ -366,6 +356,95 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
             }
         }
     })
+}
+
+/// R641 §5.16 — the bodies of the three [`pinion_core::WidgetCore`] methods the
+/// macro emits for EVERY binding, as opposed to the flag-gated set
+/// [`emit_optional_forwards`] handles.
+///
+/// R1570 lifted them out of [`expand`] as a group, because they share one
+/// decision — derive the body, or forward to the view's own inherent function —
+/// and because that decision is now the thing worth reading in one place: each
+/// forward carries a [`guarded_forward`] guard, and each derive does not need
+/// one. `view` is in the group despite never deriving, since it is the third
+/// always-emitted method and separating it would put two of three here.
+///
+/// [`pinion_core::WidgetCore`]: ../pinion_core/trait.WidgetCore.html
+struct CoreMethodBodies {
+    read_state: TokenStream2,
+    event_name: TokenStream2,
+    view: TokenStream2,
+}
+
+fn emit_core_method_bodies(
+    view_ident: &Ident,
+    state: &Type,
+    event: &Type,
+    flags: &HashSet<String>,
+) -> CoreMethodBodies {
+    // R645 §5.16 — derive flags split. `state_name_derive` was the
+    // R643 combined flag; R645 split it so tuple-state bindings
+    // (`Slider` / `TextField` / `Toggle` — first elem enum + second
+    // elem value field) can use `event_name_derive` alone without
+    // claiming `read_state_derive` they cannot satisfy (tuple
+    // `read_state` reads two introspect fields; `WidgetStateName`
+    // only covers the enum half today). `state_name_derive` is
+    // still accepted as an alias for the combined R643 form to
+    // keep R642/R643 retrofit bindings working unchanged.
+    let combined = flags.contains("state_name_derive");
+    let derive_read_state = combined || flags.contains("read_state_derive");
+    let derive_event_name = combined || flags.contains("event_name_derive");
+    let read_state = if derive_read_state {
+        // R643 §5.16 — derive via WidgetStateName trait. Walks the
+        // same introspect chain every binding hand-wrote pre-R643
+        // (Scene::External → ExternalIntrospect → query("state") →
+        // Text); a missing field at any link falls back to the
+        // default variant (matches the pre-R643 `_ => Self::Idle`
+        // convention via `from_name_or_default("")`).
+        quote! {
+            if let ::pinion_core::Scene::External(node) = scene {
+                if let ::core::option::Option::Some(intro) = node.handle.introspect() {
+                    if let ::core::option::Option::Some(
+                        ::pinion_core::external::IntrospectValue::Text(name)
+                    ) = intro.query("state") {
+                        return <#state as ::pinion_core::WidgetStateName>
+                            ::from_name_or_default(&name);
+                    }
+                }
+            }
+            <#state as ::pinion_core::WidgetStateName>::from_name_or_default("")
+        }
+    } else {
+        guarded_forward(
+            "ReadStateNeedsInherentFn",
+            &quote! { <#view_ident>::read_state(scene) },
+        )
+    };
+    let event_name = if derive_event_name {
+        // R643 §5.16 — derive via WidgetEventName trait. Every variant
+        // (including the SCXML 3.13 Null sentinel + internal-only
+        // ones the winit handler never produces) gets its canonical
+        // PascalCase name; the pre-R643 `_ => "__internal__"` catch-
+        // all is gone (every binding's `parse_X_event` rejected it
+        // anyway — losing nothing, gaining AI-side observability
+        // for the previously-hidden variants).
+        quote! { <#event as ::pinion_core::WidgetEventName>::as_name(&event) }
+    } else {
+        guarded_forward(
+            "EventNameNeedsInherentFn",
+            &quote! { <#view_ident>::event_name(event) },
+        )
+    };
+    let view = guarded_forward(
+        "ViewNeedsInherentFn",
+        &quote! { <#view_ident>::view(state, *frame) },
+    );
+
+    CoreMethodBodies {
+        read_state,
+        event_name,
+        view,
+    }
 }
 
 /// R670 §5.16 — `initial_size_strategy` body selector. The default emit is
@@ -388,7 +467,10 @@ fn emit_initial_size_strategy_body(
     flags: &HashSet<String>,
 ) -> TokenStream2 {
     if flags.contains("initial_size_strategy") {
-        quote! { <#view_ident>::initial_size_strategy() }
+        guarded_forward(
+            "InitialSizeStrategyNeedsInherentFn",
+            &quote! { <#view_ident>::initial_size_strategy() },
+        )
     } else {
         quote! {
             ::pinion_shell::SizeStrategy::Fixed {
@@ -425,6 +507,10 @@ fn emit_optional_forwards(
 ) -> TokenStream2 {
     let mut out = TokenStream2::new();
     if flags.contains("apply_key") {
+        let body = guarded_forward(
+            "ApplyKeyNeedsInherentFn",
+            &quote! { <#view_ident>::apply_key(scene, focused, key, modifiers) },
+        );
         out.extend(quote! {
             fn apply_key(
                 scene: &mut ::pinion_core::Scene,
@@ -432,14 +518,18 @@ fn emit_optional_forwards(
                 key: &str,
                 modifiers: ::pinion_core::input::Modifiers,
             ) -> bool {
-                <#view_ident>::apply_key(scene, focused, key, modifiers)
+                #body
             }
         });
     }
     if flags.contains("keybinding") {
+        let body = guarded_forward(
+            "KeybindingNeedsInherentFn",
+            &quote! { <#view_ident>::keybinding(key) },
+        );
         out.extend(quote! {
             fn keybinding(key: &str) -> ::core::option::Option<#event> {
-                <#view_ident>::keybinding(key)
+                #body
             }
         });
     }
@@ -453,9 +543,13 @@ fn emit_optional_forwards(
         // `clippy::trivially_copy_pass_by_ref` on the inherent fn.
         // Macro absorbs the deref + the inherent takes by-value so
         // user code stays clippy-clean.
+        let body = guarded_forward(
+            "FmtStateLogNeedsInherentFn",
+            &quote! { <#view_ident>::fmt_state_log(*state) },
+        );
         out.extend(quote! {
             fn fmt_state_log(state: &#state) -> ::std::string::String {
-                <#view_ident>::fmt_state_log(*state)
+                #body
             }
         });
     }
@@ -472,12 +566,16 @@ fn emit_optional_forwards(
         // intent.payload, NOT V::read_state which lags the in-flight
         // SCXML transition by one tick per
         // [[intent-payload-post-flip-authority]]).
+        let body = guarded_forward(
+            "UpdateNeedsInherentFn",
+            &quote! { <#view_ident>::update(state, intent) },
+        );
         out.extend(quote! {
             fn update(
                 state: #state,
                 intent: &::pinion_core::intent::Intent,
             ) -> ::std::vec::Vec<::pinion_core::command::Command> {
-                <#view_ident>::update(state, intent)
+                #body
             }
         });
     }
@@ -624,19 +722,35 @@ fn emit_a11y_impl(
             }
         }
     } else {
-        quote! {
-            impl ::pinion_a11y::WidgetA11y for #view_ident {
-                fn access_node(
-                    state: &#state,
-                    focused: ::core::option::Option<&str>,
-                ) -> ::std::vec::Vec<::pinion_a11y::AccessNode> {
-                    // R641 §5.16 — bridge trait `&State` to the
-                    // inherent by-value signature `WidgetCore::State:
-                    // Copy` guarantees is always sound + matches the
-                    // clippy `trivially_copy_pass_by_ref` preference
-                    // for Copy ZST / one-byte enums.
-                    <#view_ident>::access_node(*state, focused)
-                }
+        emit_a11y_forwarding_impl(view_ident, state)
+    }
+}
+
+/// R641 §5.16 — the `WidgetA11y` impl for a binding that supplies its own
+/// `access_node` (no `role` declared): the escape hatch composite widgets
+/// (`RadioGroup` / `Listbox`) take, whose multi-node enumeration does not fit
+/// the single-node derive.
+///
+/// R1570 lifted it out of [`emit_a11y_impl`], whose two arms have nothing in
+/// common but the trait they implement — one derives a node from declarations,
+/// this one forwards — and which the arm's own guard pushed past the length
+/// limit. That limit was pointing at the right seam.
+fn emit_a11y_forwarding_impl(view_ident: &Ident, state: &Type) -> TokenStream2 {
+    let body = guarded_forward(
+        "AccessNodeNeedsInherentFn",
+        // R641 §5.16 — bridge trait `&State` to the inherent by-value
+        // signature `WidgetCore::State: Copy` guarantees is always sound +
+        // matches the clippy `trivially_copy_pass_by_ref` preference for
+        // Copy ZST / one-byte enums.
+        &quote! { <#view_ident>::access_node(*state, focused) },
+    );
+    quote! {
+        impl ::pinion_a11y::WidgetA11y for #view_ident {
+            fn access_node(
+                state: &#state,
+                focused: ::core::option::Option<&str>,
+            ) -> ::std::vec::Vec<::pinion_a11y::AccessNode> {
+                #body
             }
         }
     }
@@ -1165,5 +1279,220 @@ fn require_variant(name: &Ident, flag: &str, source: StateFlagSource) -> syn::Re
                  dispatched)",
             ),
         )),
+    }
+}
+
+#[cfg(test)]
+mod forward_guard_tests {
+    //! R1570 §5.16 — every forward this macro emits carries its guard.
+    //!
+    //! This is a **census**, not a spot check. A body reading
+    //! `<TheView>::name(..)` inside the trait method named `name` calls itself
+    //! whenever the view declares no inherent function, so a forward added
+    //! without a guard reintroduces the exact defect R1570 closed — and
+    //! reintroduces it *silently*, since the tree only notices when some
+    //! binding forgets that particular method. So the assertion is over the
+    //! whole expansion: pair up the unqualified `<View>::name` calls with the
+    //! `widget_forward` imports and require the two sets to agree.
+    //!
+    //! Qualified calls (`<View as SomeTrait>::name(..)`) are excluded by
+    //! construction, and correctly: naming the trait is itself an
+    //! unambiguous resolution, so those cannot fall back to anything.
+
+    use super::expand;
+    use quote::quote;
+
+    /// Every optional forward switched ON, no `role` (so the a11y half
+    /// forwards too) and neither derive flag (so `read_state` / `event_name`
+    /// forward rather than deriving) — the expansion that reaches every
+    /// guarded site at once.
+    fn every_forward() -> String {
+        expand(
+            quote! {
+                tag = "probe",
+                state = ProbeState,
+                event = ProbeEvent,
+                title = "probe",
+                renderer = ProbeRenderer,
+                initial_size = (10, 10),
+                external = ProbeExternal::new,
+                initial_size_strategy,
+                apply_key,
+                keybinding,
+                fmt_state_log,
+                update,
+            },
+            quote! { struct ProbeView; },
+        )
+        .expect("the probe attribute is well-formed")
+        .to_string()
+    }
+
+    /// The identifier following each `< ProbeView > :: ` in the rendered
+    /// token stream — i.e. every call that could resolve to the trait method
+    /// it is standing inside.
+    fn unqualified_forwards(src: &str) -> Vec<String> {
+        idents_after(src, "< ProbeView > :: ")
+    }
+
+    /// The guard trait named by each `widget_forward :: ` import.
+    fn imported_guards(src: &str) -> Vec<String> {
+        idents_after(src, "widget_forward :: ")
+    }
+
+    fn idents_after(src: &str, marker: &str) -> Vec<String> {
+        let mut out: Vec<String> = src
+            .match_indices(marker)
+            .map(|(at, _)| {
+                src[at + marker.len()..]
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect()
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// `read_state` -> `ReadStateNeedsInherentFn`, the naming the guard module
+    /// and this macro have to agree on. Derived rather than tabulated, so a
+    /// new forward cannot be added to one side and typoed into the other.
+    fn guard_for(method: &str) -> String {
+        let mut name = String::new();
+        let mut upper = true;
+        for c in method.chars() {
+            if c == '_' {
+                upper = true;
+            } else if upper {
+                name.extend(c.to_uppercase());
+                upper = false;
+            } else {
+                name.push(c);
+            }
+        }
+        name.push_str("NeedsInherentFn");
+        name
+    }
+
+    #[test]
+    fn every_unqualified_forward_is_guarded() {
+        let src = every_forward();
+        let forwards = unqualified_forwards(&src);
+        assert!(
+            !forwards.is_empty(),
+            "the probe expansion emitted no forwards at all — the fixture \
+             stopped exercising what it audits"
+        );
+
+        let mut expected: Vec<String> = forwards.iter().map(|m| guard_for(m)).collect();
+        expected.sort();
+        assert_eq!(
+            imported_guards(&src),
+            expected,
+            "a `<View>::name(..)` forward is emitted without \
+             `pinion_core::widget_forward`'s guard for that name (or with the \
+             wrong one). Such a forward calls itself when the binding declares \
+             no inherent `name` — see R1570."
+        );
+    }
+
+    #[test]
+    fn the_probe_reaches_all_nine_forwards() {
+        // Named individually so that *losing* a forwarding site — which would
+        // make the census above pass by covering less — fails here instead.
+        let forwards = unqualified_forwards(&every_forward());
+        for method in [
+            "access_node",
+            "apply_key",
+            "event_name",
+            "fmt_state_log",
+            "initial_size_strategy",
+            "keybinding",
+            "read_state",
+            "update",
+            "view",
+        ] {
+            assert!(
+                forwards.iter().any(|f| f == method),
+                "the probe expansion no longer contains the `{method}` forward"
+            );
+        }
+        assert_eq!(forwards.len(), 9, "forwards = {forwards:?}");
+    }
+
+    #[test]
+    fn a_derived_half_emits_no_forward_and_so_needs_no_guard() {
+        // The negative control for the census: when `read_state` / `event_name`
+        // are DERIVED there is no self-call to guard, and the guard must not be
+        // imported for them either — an import with no forward would make the
+        // set comparison pass for the wrong reason.
+        let src = expand(
+            quote! {
+                tag = "probe",
+                state = ProbeState,
+                event = ProbeEvent,
+                title = "probe",
+                renderer = ProbeRenderer,
+                initial_size = (10, 10),
+                external = ProbeExternal::new,
+                state_name_derive,
+            },
+            quote! { struct ProbeView; },
+        )
+        .expect("the probe attribute is well-formed")
+        .to_string();
+
+        let forwards = unqualified_forwards(&src);
+        assert!(!forwards.iter().any(|f| f == "read_state"), "{forwards:?}");
+        assert!(!forwards.iter().any(|f| f == "event_name"), "{forwards:?}");
+        assert!(
+            !imported_guards(&src)
+                .iter()
+                .any(|g| g == "ReadStateNeedsInherentFn" || g == "EventNameNeedsInherentFn"),
+            "a guard was imported for a name that is derived, not forwarded"
+        );
+    }
+
+    #[test]
+    fn a_qualified_call_is_not_counted_as_a_forward() {
+        // `<ProbeView as WidgetCore>::tag()` appears in the derived a11y body.
+        // It names its trait, so it cannot resolve to anything else and needs
+        // no guard — and the census must not demand one, or the two sets could
+        // only be made to agree by guarding calls that are already safe.
+        let src = expand(
+            quote! {
+                tag = "probe",
+                state = ProbeState,
+                event = ProbeEvent,
+                title = "probe",
+                renderer = ProbeRenderer,
+                initial_size = (10, 10),
+                external = ProbeExternal::new,
+                role = Button,
+                state_name_derive,
+            },
+            quote! { struct ProbeView; },
+        )
+        .expect("the probe attribute is well-formed")
+        .to_string();
+
+        assert!(
+            src.contains("< ProbeView as :: pinion_core :: WidgetCore > :: tag"),
+            "the fixture stopped containing a qualified call, so it no longer \
+             discriminates"
+        );
+        assert!(!unqualified_forwards(&src).iter().any(|f| f == "tag"));
+    }
+
+    #[test]
+    fn the_guard_name_derivation_matches_the_module() {
+        // The two sides are written in different crates, so the mapping is
+        // pinned here rather than left to reading.
+        assert_eq!(guard_for("view"), "ViewNeedsInherentFn");
+        assert_eq!(guard_for("read_state"), "ReadStateNeedsInherentFn");
+        assert_eq!(
+            guard_for("initial_size_strategy"),
+            "InitialSizeStrategyNeedsInherentFn"
+        );
     }
 }

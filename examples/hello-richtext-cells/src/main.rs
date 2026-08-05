@@ -59,7 +59,7 @@ use pinion_core::style::{
 };
 use pinion_core::text_table::{CellSpec, TableFormat};
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{ColorRole, Frame, Scene, WidgetStateName, use_theme};
+use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 use pinion_widget_paint::document::{TextBlock, view_document};
@@ -334,6 +334,7 @@ fn view(state: ToggleState, noting: bool, _frame: &Frame) -> Scene {
         checked = bool_field(1),
     ),
     access_value = bool_field(1),
+    event_name_derive,
     apply_key,
     keybinding,
 )]
@@ -361,6 +362,40 @@ impl TableDocumentView {
     /// free [`view`].
     fn view(state: (ToggleState, bool), frame: Frame) -> Scene {
         view(state.0, state.1, &frame)
+    }
+
+    // R1570 §5.16 — the functions this binding's `#[widget(...)]` had always
+    // declared and never had. It was copied from `hello-richtext` without
+    // them, and the macro's forward for a declared-but-absent name resolved
+    // back to the trait method it defines, so `event_name`, `apply_key` and
+    // `keybinding` were each an unconditional self-call — a tail-call loop in
+    // release. `pinion_core::widget_forward` now makes that a compile error.
+    //
+    // `event_name` is answered by `event_name_derive` above rather than
+    // written out, because the body would be character-for-character what that
+    // flag emits, and hand-rolling a substrate that already exists is the very
+    // shape this round is about.
+
+    /// The `d` / `e` accelerators the sibling binding maps, so this demo's
+    /// Switch can be driven to either palette from the keyboard.
+    fn keybinding(key: &str) -> Option<ToggleEvent> {
+        match key {
+            "d" => Some(ToggleEvent::Disable),
+            "e" => Some(ToggleEvent::Enable),
+            _ => None,
+        }
+    }
+
+    /// ARIA toggle-button keyboard activation (Space / Enter flips the
+    /// Off / On sidecar in parity with a pointer click) — required of a
+    /// `role = Switch`, and absent here until R1570.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
 

@@ -67,6 +67,7 @@ pub mod topology;
 pub mod tray;
 pub mod undo;
 pub mod widget_core;
+pub mod widget_forward;
 pub mod widgets;
 pub mod window_focus_state;
 
