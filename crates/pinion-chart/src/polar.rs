@@ -377,6 +377,12 @@ mod tests {
     #[test]
     fn r1568_a_sector_does_not_wrap_and_says_so() {
         let gauge = compass().with_sweep(PI); // half a turn
+        // The sweep READS BACK, which is the half a builder-only property
+        // would leave missing: `origin` / `period` / `winding` / `closes` are
+        // all askable, and an axis that can be told something it cannot be
+        // asked is the asymmetry [[wire-form-read-write-symmetry]] names.
+        assert!((gauge.sweep() - PI).abs() < 1e-6, "{}", gauge.sweep());
+        assert!((compass().sweep() - TAU).abs() < 1e-6);
         assert!(!gauge.closes());
         assert!(gauge.defines(0.0) && gauge.defines(360.0));
         assert_eq!(gauge.angle(370.0), None, "a sector does not reach it");

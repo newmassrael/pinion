@@ -779,7 +779,7 @@ mod tests {
         )]
     }
 
-    fn compass_chart() -> PolarChart {
+    fn week_polar() -> PolarChart {
         PolarChart::new(wind(), AngularScale::new((0.0, 360.0)))
     }
 
@@ -790,7 +790,7 @@ mod tests {
     #[test]
     fn r1568_a_closed_axis_closes_the_series_by_derivation() {
         let style = ChartStyle::default();
-        let scene = compass_chart().build(RECT, &style);
+        let scene = week_polar().build(RECT, &style);
         let Some(Scene::Path(p)) = find(&scene, "chart.series.0") else {
             panic!("the series is a path")
         };
@@ -899,7 +899,7 @@ mod tests {
 
         // The visible consequence, on the compass: no two angular labels ever
         // land on the same spoke.
-        let chart = compass_chart();
+        let chart = week_polar();
         let scene = chart.build(RECT, &style);
         let count = count_prefix(&scene, "chart.label.a.");
         assert_eq!(
@@ -953,7 +953,7 @@ mod tests {
     /// 270.
     #[test]
     fn r1568_the_hit_test_measures_the_short_way_round() {
-        let chart = compass_chart();
+        let chart = week_polar();
         let picked = chart
             .nearest_in(&chart.series()[0], 355.0)
             .expect("a sample");
@@ -1028,13 +1028,33 @@ mod tests {
         ));
     }
 
+    /// ★ The marks are opt-out: a polar LINE chart draws its trace and no
+    /// vertices. Round-close census found the builder reachable and never
+    /// exercised, which is how a toggle acquires a second behaviour nobody
+    /// notices.
+    #[test]
+    fn r1568_the_point_marks_are_opt_out() {
+        let style = ChartStyle::default();
+        assert_eq!(
+            count_prefix(&week_polar().build(RECT, &style), "chart.point."),
+            wind()[0].points.len(),
+            "on by default, one per sample"
+        );
+        let bare = week_polar().markers(false).build(RECT, &style);
+        assert_eq!(count_prefix(&bare, "chart.point."), 0);
+        assert!(
+            has(&bare, "chart.series.0"),
+            "the trace itself is unaffected"
+        );
+    }
+
     /// ★ The grid is rings and spokes, and the rim exists only where the axis
     /// closes — a full circle on a sector would claim angles the axis does
     /// not carry.
     #[test]
     fn r1568_the_grid_is_rings_and_spokes_and_the_rim_follows_the_axis() {
         let style = ChartStyle::default();
-        let scene = compass_chart().build(RECT, &style);
+        let scene = week_polar().build(RECT, &style);
         assert!(count_prefix(&scene, "chart.ring.") > 0);
         assert!(count_prefix(&scene, "chart.spoke.") > 0);
         assert!(has(&scene, "chart.rim"));
@@ -1056,7 +1076,7 @@ mod tests {
     #[test]
     fn r1568_the_winding_reaches_the_painted_position() {
         let style = ChartStyle::default();
-        let compass = compass_chart();
+        let compass = week_polar();
         let mathematical = PolarChart::new(wind(), AngularScale::new((0.0, 360.0)).mathematical());
         assert_eq!(mathematical.angular().winding(), Winding::CounterClockwise);
 
@@ -1077,7 +1097,7 @@ mod tests {
     #[test]
     fn r1568_the_scrub_states_the_bearing_and_the_values() {
         let style = ChartStyle::default();
-        let chart = compass_chart().inspect(Some(88.0));
+        let chart = week_polar().inspect(Some(88.0));
         let readout = chart.inspect_readout(RECT, &style).expect("scrubbed");
         assert!(readout.contains("gusts"), "{readout}");
 
@@ -1093,11 +1113,11 @@ mod tests {
         }
 
         // A bearing OUTSIDE the period still scrubs, to its wrapped twin.
-        let wrapped = compass_chart().inspect(Some(448.0));
+        let wrapped = week_polar().inspect(Some(448.0));
         assert!(has(&wrapped.build(RECT, &style), "chart.inspect.spoke"));
         assert_eq!(
             wrapped.inspect_readout(RECT, &style),
-            compass_chart()
+            week_polar()
                 .inspect(Some(88.0))
                 .inspect_readout(RECT, &style),
             "448 is 88"
@@ -1105,7 +1125,7 @@ mod tests {
 
         // Counterfactual: with no scrub there is no overlay at all.
         assert_eq!(
-            count_prefix(&compass_chart().build(RECT, &style), "chart.inspect."),
+            count_prefix(&week_polar().build(RECT, &style), "chart.inspect."),
             0
         );
     }
@@ -1121,7 +1141,7 @@ mod tests {
         assert_eq!(count_prefix(&scene, "chart.series."), 0);
         assert!(empty.off_scale().is_empty() && empty.wrapped().is_empty());
         assert_eq!(
-            tags(&compass_chart().build_fill((0, 0), &style)),
+            tags(&week_polar().build_fill((0, 0), &style)),
             vec!["chart".to_string()]
         );
         // A hidden series drops its geometry and keeps its legend slot.
