@@ -235,6 +235,13 @@ jobs:
             # shellcheck disable=SC2086  # deliberate: the demo emits the args
             cargo $cargo_args
           done < /tmp/pinion-warmup.txt
+      - name: Demo harness lifecycle tests
+        # R1570.3 — the harness that drives every demo below, tested before it
+        # is trusted. Its teardown could leave a driven binary running while
+        # raising out of the demo, and four such orphans turned four
+        # deterministic sweep failures into thirty-seven that differed between
+        # runs. Sub-second: no cargo, no display.
+        run: python3 tools/test_rpc_verify.py
       - name: Run full demo sweep under Xvfb
         run: |
           Xvfb :99 -screen 0 1600x1200x24 >/tmp/xvfb.log 2>&1 &

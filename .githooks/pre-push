@@ -75,6 +75,18 @@ if ! bash "$repo_root/tools/test_hooks.sh" >&2; then
     exit 1
 fi
 
+# R1570.3 — the DEMO harness gets the same treatment, for the same reason and
+# after the same cost. `tools/rpc_verify.py` drives every demo in the repo and
+# nothing verified it: its teardown could let an exception escape while leaving
+# the driven binary running, and in CI four such orphans turned four
+# deterministic failures into thirty-seven that differed between runs. Runs in
+# under a second — no cargo, no display.
+echo "pre-push: demo harness lifecycle tests ..." >&2
+if ! python3 "$repo_root/tools/test_rpc_verify.py" >&2; then
+    echo "pre-push: the demo harness failed its own tests" >&2
+    exit 1
+fi
+
 msg_gate_failed=0
 tmp_msg="$(mktemp)"
 trap 'rm -f "$tmp_msg"' EXIT

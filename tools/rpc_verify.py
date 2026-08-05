@@ -388,6 +388,71 @@ class Response:
     result: Any
 
 
+class LeakedProcess(Exception):
+    """R1570.3 — a driven binary outlived the demo that launched it.
+
+    Raised at teardown so a leak fails the demo that caused it, instead of
+    being left for whatever runs next to trip over.
+    """
+
+
+def terminate_process_tree(
+    proc: subprocess.Popen,
+    *,
+    term_grace: float = 2.0,
+    kill_grace: float = 2.0,
+) -> Optional[str]:
+    """Reap `proc` and everything it spawned. Return `None`, or why it survived.
+
+    R1570.3 — the previous body was `SIGTERM; wait(2); kill(); wait(1)`, and the
+    second `wait` could raise `TimeoutExpired` **out of the demo** while leaving
+    the process running. Measured consequence, in CI: four binaries R1570 had
+    left spinning became four orphans, and the 33 demos that ran after them on
+    the same machine failed in a set that DIFFERED between runs. Four
+    deterministic failures were reported as thirty-seven non-deterministic ones,
+    and the root cause was only reachable by intersecting the two runs.
+
+    Two things changed. Signals go to the process GROUP (the launch asks for a
+    fresh session, so the group is exactly this binary and its children), which
+    is what `Popen.kill` cannot do — a demo whose binary spawns a helper leaks
+    the helper otherwise. And a survivor is REPORTED rather than raised over:
+    the caller decides, because at teardown there may already be a more
+    interesting exception in flight.
+
+    Returns `None` when the process is reaped. Otherwise a sentence naming the
+    pid and what was tried — the fact the sweep needs to attribute the leak to
+    the demo that made it.
+    """
+    if proc.poll() is not None:
+        return None
+
+    def signal_group(sig: int) -> None:
+        # The group is the fresh session `__enter__` asked for. Falling back to
+        # the single process rather than skipping: a caller that launched
+        # without `start_new_session` (or a platform without process groups)
+        # should still get the old behaviour, not silently no signal at all.
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.send_signal(sig)
+            except (ProcessLookupError, OSError):
+                pass
+
+    for sig, grace in ((signal.SIGTERM, term_grace), (signal.SIGKILL, kill_grace)):
+        signal_group(sig)
+        try:
+            proc.wait(timeout=grace)
+            return None
+        except subprocess.TimeoutExpired:
+            continue
+
+    return (
+        f"pid {proc.pid} survived SIGTERM ({term_grace}s) and SIGKILL "
+        f"({kill_grace}s) sent to its process group"
+    )
+
+
 class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     """Spawn a pinion example, drive it over JSON-RPC 2.0 stdin/stdout."""
 
@@ -484,6 +549,11 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             encoding="utf-8",
             bufsize=1,
             env=env,
+            # R1570.3 — a fresh session makes this binary its own process-group
+            # leader, so teardown can signal the GROUP and reap anything it
+            # spawned. `Popen.kill` reaches only the direct child, which is how
+            # a leaked helper survives a demo that looked cleanly shut down.
+            start_new_session=True,
         )
         self._stdout_thread = threading.Thread(
             target=self._pump_stdout, daemon=True
@@ -569,24 +639,33 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.shutdown()
+        leak = self.shutdown()
+        # R1570.3 — a leak fails the demo that caused it, but never masks a
+        # failure already in flight: an assertion error is the more useful
+        # verdict, and the leak is a consequence of whatever went wrong.
+        if leak is not None and exc_type is None:
+            raise LeakedProcess(
+                f"{self.example} was still running after teardown: {leak}. "
+                f"A demo that leaves a process behind poisons every demo the "
+                f"sweep runs after it — see R1570.3"
+            )
 
-    def shutdown(self) -> None:
+    def shutdown(self) -> Optional[str]:
+        """Reap the driven binary. Return `None`, or why it survived.
+
+        R1570.3 — returns rather than raises, so `__exit__` can decide whether
+        the leak is the most interesting thing that happened.
+        """
         if self._proc is None:
-            return
-        if self._proc.poll() is None:
+            return None
+        proc, self._proc = self._proc, None
+        if proc.poll() is None:
             try:
-                if self._proc.stdin is not None and not self._proc.stdin.closed:
-                    self._proc.stdin.close()
+                if proc.stdin is not None and not proc.stdin.closed:
+                    proc.stdin.close()
             except (OSError, BrokenPipeError):
                 pass
-            try:
-                self._proc.send_signal(signal.SIGTERM)
-                self._proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-                self._proc.wait(timeout=1.0)
-        self._proc = None
+        return terminate_process_tree(proc)
 
     def _resolve_binary(self) -> Optional[Path]:
         # R1330 — build-then-run: unless the caller vouches the binary is already

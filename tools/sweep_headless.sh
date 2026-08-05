@@ -104,6 +104,20 @@ fi
 # shellcheck disable=SC2016  # intentional: expands in the child bash, not here
 runner='
   total=0; passed=0; n="$#"; failures=""; skipped=""; skip_count=0
+  # R1570.3 — residual-process backstop. A demo that leaves its binary running
+  # poisons every demo the sweep runs after it: in the R1570 CI run four
+  # orphans turned four deterministic failures into thirty-seven that differed
+  # between runs, and the only way to the root cause was intersecting the two.
+  # `rpc_verify` now reaps the process GROUP and fails a demo that leaks, but a
+  # gate whose only enforcement lives in the thing being gated is the shape
+  # R1495 already paid for. So the sweep checks independently.
+  #
+  # Baseline first: a developer box may legitimately have a pinion binary
+  # running before the sweep starts, and only processes that appear AFTER a
+  # demo are attributable to it.
+  residual() { pgrep -f "$PWD/target/" 2>/dev/null | sort -u | tr "\n" " "; }
+  baseline=" $(residual)"
+  leaks=""
   # One number, named once: the kill and the message that reports it must not
   # be able to disagree. They briefly did while R1472 was being written, and a
   # counterfactual run caught the harness announcing a budget it had not used.
@@ -154,11 +168,30 @@ runner='
         echo "    | (the demo produced no output before exiting $rc)" >&2
       fi
     fi
+    # R1570.3 — attribute a leak to the demo that made it, while it is still
+    # the demo on screen. Reported for every outcome, not only failures: a
+    # demo that PASSES and leaks is the dangerous one, because the poisoning
+    # then looks like it came from somewhere else.
+    for pid in $(residual); do
+      case "$baseline" in
+        *" $pid "*|*" $pid") ;;
+        *)
+          echo "    | LEAK: pid $pid still running after $(basename "$f")" >&2
+          kill -9 "$pid" 2>/dev/null || true
+          leaks="$leaks $(basename "$f")"
+          baseline="$baseline $pid " ;;
+      esac
+    done
   done
   echo "----------------------------------------"
   echo "[sweep] $passed asserted / $total run; $skip_count skipped a phase"
   if [ "$skip_count" -gt 0 ]; then echo "[sweep] SKIPPED (env dep absent, coverage NOT exercised):$skipped" >&2; fi
+  if [ -n "$leaks" ]; then
+    echo "[sweep] LEAKED A PROCESS:$leaks" >&2
+    echo "[sweep] every demo after one of these ran against a poisoned machine" >&2
+  fi
   if [ -n "$failures" ]; then echo "[sweep] FAILURES:$failures" >&2; exit 1; fi
+  if [ -n "$leaks" ]; then exit 1; fi
   exit 0
 '
 
