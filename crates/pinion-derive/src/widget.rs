@@ -264,6 +264,7 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
         external,
         extra_externals,
         role,
+        apply_key_strategy,
         state_flags,
         access_value,
         flags,
@@ -283,7 +284,13 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
         },
     };
 
-    let optional_forwards = emit_optional_forwards(view_ident, &state, &event, &flags);
+    let optional_forwards = emit_optional_forwards(
+        view_ident,
+        &state,
+        &event,
+        &flags,
+        apply_key_strategy.as_ref(),
+    );
     // R645 §5.16 — `a11y_manual` flag suppresses the WidgetA11y emit
     // entirely (Slider needs `.with_value(AccessValue::Float)` past
     // the macro's `state_flags`-only derive; ImageButton or other
@@ -486,6 +493,44 @@ fn emit_initial_size_strategy_body(
 /// nullary fn returning `Vec<ExtraExternal>` invoked inside the root Owner
 /// scope (so `use_*` reactive hooks in it resolve the same `Rc`s the view fn
 /// later reads). Absent → the trait default (empty) stands and the
+/// R1570.2 §5.16 — the `apply_key` body a `<strategy>` names, derived.
+///
+/// `aria_activate` is `apply_aria_activate(scene, focused, key, Self::tag())`:
+/// Space / Enter activate the control when it holds focus, which is what
+/// WAI-ARIA asks of every operable role and what HTML and Qt both give without
+/// being asked. R1570.2's census found **25** bindings writing exactly that,
+/// byte for byte — mechanical wiring with no opinion in it, which is the
+/// [[three-site-internal-duplication-substrate-lift]] shape at eight times the
+/// threshold.
+///
+/// Emitted as the whole trait method rather than as a body handed to the
+/// forwarding arm, because the two are alternatives: this one needs no
+/// inherent fn and therefore no [`guarded_forward`] guard. The guard exists to
+/// catch a forward that resolves to itself, and there is no forward here.
+///
+/// `tag()` is reached through the qualified `<View as WidgetCore>::tag()`
+/// rather than `Self::tag()`, so the emitted body does not depend on which
+/// trait `Self` resolves through at the expansion site.
+fn emit_derived_apply_key(view_ident: &Ident, strategy: &Ident) -> TokenStream2 {
+    debug_assert_eq!(strategy.to_string(), "aria_activate", "parser gates this");
+    quote! {
+        fn apply_key(
+            scene: &mut ::pinion_core::Scene,
+            focused: ::core::option::Option<&str>,
+            key: &str,
+            modifiers: ::pinion_core::input::Modifiers,
+        ) -> bool {
+            let _ = modifiers;
+            ::pinion_core::widgets::aria::apply_aria_activate(
+                scene,
+                focused,
+                key,
+                <#view_ident as ::pinion_core::WidgetCore>::tag(),
+            )
+        }
+    }
+}
+
 /// single-External state-scene shape is preserved bit-for-bit.
 fn emit_extra_externals(extra_externals: Option<&Expr>) -> TokenStream2 {
     match extra_externals {
@@ -504,8 +549,12 @@ fn emit_optional_forwards(
     state: &Type,
     event: &Type,
     flags: &HashSet<String>,
+    apply_key_strategy: Option<&Ident>,
 ) -> TokenStream2 {
     let mut out = TokenStream2::new();
+    if let Some(strategy) = apply_key_strategy {
+        out.extend(emit_derived_apply_key(view_ident, strategy));
+    }
     if flags.contains("apply_key") {
         let body = guarded_forward(
             "ApplyKeyNeedsInherentFn",
@@ -805,6 +854,10 @@ struct WidgetArgs {
     /// `expr()`.
     extra_externals: Option<Expr>,
     role: Option<Ident>,
+    /// R1570.2 §5.16 — `apply_key = <strategy>`, the DERIVED alternative to
+    /// the bare `apply_key` flag's forward-to-inherent. `None` means the
+    /// binding either forwards (bare flag) or declares no `apply_key` at all.
+    apply_key_strategy: Option<Ident>,
     state_flags: StateFlagsConfig,
     /// (R653 §5.16) Optional `access_value = bool_field(N)` top-level
     /// arg that adds a `.with_value(AccessValue::Bool(state.N))` chain
@@ -833,6 +886,7 @@ struct WidgetArgsBuilder {
     external: Option<Expr>,
     extra_externals: Option<Expr>,
     role: Option<Ident>,
+    apply_key_strategy: Option<Ident>,
     state_flags: Option<StateFlagsConfig>,
     access_value: Option<StateFlagSource>,
     flags: HashSet<String>,
@@ -864,6 +918,11 @@ impl WidgetArgsBuilder {
                 Spanned::span,
             ),
             WidgetArg::Role(v) => assign(&mut self.role, v, "role", |i: &Ident| i.span()),
+            WidgetArg::ApplyKeyStrategy(v) => {
+                assign(&mut self.apply_key_strategy, v, "apply_key", |i: &Ident| {
+                    i.span()
+                })
+            }
             WidgetArg::StateFlags(cfg, span) => {
                 if self.state_flags.is_some() {
                     return Err(syn::Error::new(span, "duplicate 'state_flags' attribute"));
@@ -893,6 +952,17 @@ impl WidgetArgsBuilder {
         // both. Bare `state_flags` with no `role` would silently drop
         // the mapping (the inherent-path branch ignores it); we reject
         // at parse time so the author catches the mistake.
+        // R1570.2 §5.16 — the two `apply_key` forms are alternatives: one
+        // forwards to an inherent fn, the other derives a body. Accepting both
+        // would make the emitted method depend on which the reader noticed.
+        if self.apply_key_strategy.is_some() && self.flags.contains("apply_key") {
+            return Err(syn::Error::new(
+                input_span,
+                "'apply_key' is declared twice: as a bare flag (forward to an \
+                 inherent fn) and as 'apply_key = <strategy>' (derive the \
+                 body). Keep one",
+            ));
+        }
         if let Some(cfg) = &self.state_flags {
             if self.role.is_none() && cfg.has_any() {
                 return Err(syn::Error::new(
@@ -951,6 +1021,7 @@ impl WidgetArgsBuilder {
             external: self.external.ok_or_else(|| missing("external"))?,
             extra_externals: self.extra_externals,
             role: self.role,
+            apply_key_strategy: self.apply_key_strategy,
             state_flags: self.state_flags.unwrap_or_default(),
             access_value: self.access_value,
             flags: self.flags,
@@ -1022,6 +1093,10 @@ enum WidgetArg {
     /// first consumer.
     ExtraExternals(Expr),
     Role(Ident),
+    /// R1570.2 §5.16 — `apply_key = <strategy>`. The bare `apply_key` flag
+    /// forwards to an inherent fn; this form names a body the macro DERIVES,
+    /// which is what 25 bindings were hand-writing character for character.
+    ApplyKeyStrategy(Ident),
     StateFlags(StateFlagsConfig, proc_macro2::Span),
     /// (R653 §5.16) `access_value = bool_field(N)` parsed into the
     /// same `StateFlagSource` enum the `state_flags(checked = ...)`
@@ -1034,6 +1109,16 @@ enum WidgetArg {
     AccessValue(StateFlagSource, proc_macro2::Span),
     Flag(String, proc_macro2::Span),
 }
+
+/// R1570.2 §5.16 — the bodies `apply_key = <strategy>` can DERIVE.
+///
+/// One entry today, and it is the one 25 bindings were writing out character
+/// for character. A second is already implied by the tree — `menu_apply_key`,
+/// the command-menu family's canonical body (R772.1) — which is why this is a
+/// named strategy rather than a second bare flag: `apply_key_aria` would have
+/// to be joined by `apply_key_menu`, and the pair would say nothing about
+/// being alternatives.
+const APPLY_KEY_STRATEGIES: &[&str] = &["aria_activate"];
 
 const KNOWN_FLAGS: &[&str] = &[
     "apply_key",
@@ -1081,6 +1166,21 @@ impl Parse for WidgetArg {
                 "external" => Ok(Self::External(input.parse()?)),
                 "extra_externals" => Ok(Self::ExtraExternals(input.parse()?)),
                 "role" => Ok(Self::Role(input.parse()?)),
+                "apply_key" => {
+                    let strategy: Ident = input.parse()?;
+                    if !APPLY_KEY_STRATEGIES.contains(&strategy.to_string().as_str()) {
+                        return Err(syn::Error::new(
+                            strategy.span(),
+                            format!(
+                                "unknown 'apply_key' strategy: '{strategy}' — \
+                                 accepted: {}. Omit the '= <strategy>' to \
+                                 forward to an inherent fn instead",
+                                APPLY_KEY_STRATEGIES.join(" / "),
+                            ),
+                        ));
+                    }
+                    Ok(Self::ApplyKeyStrategy(strategy))
+                }
                 "access_value" => {
                     // R653 §5.16 — accept only the `bool_field(N)`
                     // call form. The bare-ident form is reserved for
@@ -1494,5 +1594,98 @@ mod forward_guard_tests {
             guard_for("initial_size_strategy"),
             "InitialSizeStrategyNeedsInherentFn"
         );
+    }
+}
+
+#[cfg(test)]
+mod apply_key_strategy_tests {
+    //! R1570.2 §5.16 — the derived `apply_key` is a body, not a forward.
+    //!
+    //! The two forms are alternatives and the difference is structural: the
+    //! bare flag emits a call the binding must have an inherent fn for (and so
+    //! carries R1570's guard), while `= <strategy>` emits the body itself (and
+    //! so must NOT carry one — a guard there would demand an inherent fn the
+    //! whole point is not to need).
+
+    use super::expand;
+    use quote::quote;
+
+    fn expand_with(extra: &proc_macro2::TokenStream) -> syn::Result<String> {
+        expand(
+            quote! {
+                tag = "probe",
+                state = ProbeState,
+                event = ProbeEvent,
+                title = "probe",
+                renderer = ProbeRenderer,
+                initial_size = (10, 10),
+                external = ProbeExternal::new,
+                #extra
+            },
+            quote! { struct ProbeView; },
+        )
+        .map(|ts| ts.to_string())
+    }
+
+    #[test]
+    fn the_strategy_emits_the_body_and_no_guard() {
+        let src = expand_with(&quote! { apply_key = aria_activate, }).expect("well-formed");
+        assert!(
+            src.contains("apply_aria_activate"),
+            "the derived body calls the substrate"
+        );
+        assert!(
+            src.contains("< ProbeView as :: pinion_core :: WidgetCore > :: tag"),
+            "the tag is reached through a QUALIFIED path, so the emitted body \
+             does not depend on which trait `Self` resolves through"
+        );
+        assert!(
+            !src.contains("ApplyKeyNeedsInherentFn"),
+            "a derived body needs no inherent fn, so guarding it would demand \
+             the very thing the strategy exists to avoid"
+        );
+        assert!(
+            !src.contains("< ProbeView > :: apply_key"),
+            "and it must not ALSO forward — that would be the recursion R1570 \
+             closed, reintroduced through the other door"
+        );
+    }
+
+    #[test]
+    fn the_bare_flag_still_forwards_under_its_guard() {
+        // The negative control for the test above: without it, deleting the
+        // forwarding arm entirely would satisfy every assertion there.
+        let src = expand_with(&quote! { apply_key, }).expect("well-formed");
+        assert!(src.contains("< ProbeView > :: apply_key"));
+        assert!(src.contains("ApplyKeyNeedsInherentFn"));
+        assert!(!src.contains("apply_aria_activate"));
+    }
+
+    #[test]
+    fn declaring_both_forms_is_refused() {
+        // They are alternatives; accepting both would make the emitted method
+        // depend on which one the reader happened to notice.
+        let err = expand_with(&quote! { apply_key, apply_key = aria_activate, })
+            .expect_err("both forms must be refused");
+        assert!(err.to_string().contains("declared twice"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_strategy_names_the_accepted_set() {
+        let err = expand_with(&quote! { apply_key = teleport, })
+            .expect_err("an unknown strategy must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("teleport"), "{msg}");
+        assert!(
+            msg.contains("aria_activate"),
+            "the refusal names what IS accepted: {msg}"
+        );
+    }
+
+    #[test]
+    fn no_apply_key_at_all_emits_neither() {
+        let src = expand_with(&quote! {}).expect("well-formed");
+        assert!(!src.contains("fn apply_key"));
+        assert!(!src.contains("ApplyKeyNeedsInherentFn"));
     }
 }

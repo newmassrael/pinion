@@ -30,7 +30,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_core::{Frame, Scene};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, use_hover_progress, view_button};
@@ -135,7 +135,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         pressed = Pressed,
         disabled = Disabled,
     ),
-    apply_key,
+    apply_key = aria_activate,
     // Derive `read_state` + `event_name` from ButtonState/ButtonEvent's
     // WidgetStateName / WidgetEventName impls (R643). Without this the macro
     // forwards `read_state` to an inherent method this binding does not define,
@@ -147,15 +147,6 @@ struct WindowFocusView;
 impl WindowFocusView {
     fn view(state: ButtonState, frame: Frame) -> Scene {
         view(state, &frame)
-    }
-
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
 

@@ -39,7 +39,7 @@ use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, La
 use pinion_core::theme::ThemeMode;
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_core::{Frame, Scene};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 use pinion_widget_paint::button::{ButtonColors, ButtonStyle, use_hover_progress, view_button};
@@ -155,7 +155,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 }
 
 /// `WidgetView` binding for the Button widget. R641 §5.16 lifted the
-/// mechanical [`WidgetCore`] / [`WidgetA11y`](pinion_a11y::WidgetA11y) / [`WidgetView`](pinion_shell::WidgetView) trait
+/// mechanical [`WidgetCore`](pinion_core::WidgetCore) / [`WidgetA11y`](pinion_a11y::WidgetA11y) / [`WidgetView`](pinion_shell::WidgetView) trait
 /// wiring into the [`#[widget]`](pinion_derive::widget) attribute;
 /// R642 §5.16 added the declarative `role = Button` +
 /// `state_flags(...)` derive that emits the single-node
@@ -191,14 +191,14 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         pressed = Pressed,
         disabled = Disabled,
     ),
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
     state_name_derive,
 )]
 struct ButtonView;
 
 impl ButtonView {
-    /// R641 inherent forward for [`WidgetCore::view`]. The macro
+    /// R641 inherent forward for [`WidgetCore::view`](pinion_core::WidgetCore::view). The macro
     /// emits the trait method as `<ButtonView>::view(state, *frame)`
     /// (deref'd from the trait's `&Frame` to keep the inherent
     /// signature clippy-clean for the `Copy` 4-byte `Frame` ZST). The
@@ -210,7 +210,7 @@ impl ButtonView {
         view(state, &frame)
     }
 
-    /// R641 inherent forward for [`WidgetCore::keybinding`]. Maps
+    /// R641 inherent forward for [`WidgetCore::keybinding`](pinion_core::WidgetCore::keybinding). Maps
     /// single-character keys to typed [`ButtonEvent`] variants the
     /// shell dispatches through the §5.15 invoke channel.
     fn keybinding(key: &str) -> Option<ButtonEvent> {
@@ -219,28 +219,6 @@ impl ButtonView {
             "e" => Some(ButtonEvent::Enable),
             _ => None,
         }
-    }
-
-    /// R51.54 §5.39 — ARIA Button keyboard activation. Space / Enter
-    /// on the focused button fires a `KeyboardActivate` event, which
-    /// the SCXML template (`standard_button.sce-template.xml`)
-    /// processes as an internal transition from `Idle` or `Hover` —
-    /// no visual state change, but the `Button::detect` substrate
-    /// emits a `"click"` intent (parity with the `Pressed → Hover`
-    /// pointer path). `Disabled` ignores activation; the SCXML
-    /// transition is absent from that state per the ARIA spec.
-    ///
-    /// R641 §5.16 — moved to inherent method; the
-    /// [`#[widget(..., apply_key)]`](pinion_derive::widget) flag
-    /// instructs the macro to emit the [`WidgetCore::apply_key`]
-    /// forwarding stub.
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
 
@@ -252,6 +230,7 @@ fn main() {
 mod a11y_tests {
     use super::*;
     use pinion_core::Color;
+    use pinion_core::WidgetCore;
     use pinion_core::theme::Theme;
 
     /// R51.69 §5.40 — convenience that mirrors the production

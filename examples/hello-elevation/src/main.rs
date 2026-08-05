@@ -54,7 +54,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
+use pinion_core::{ColorRole, Frame, Scene, WidgetStateName, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 // R711 §5.50 — the lifted shared elevation ramp (this binding is one of
@@ -251,8 +251,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
         checked = bool_field(1),
     ),
     access_value = bool_field(1),
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
+    event_name_derive,
 )]
 struct ElevationView;
 
@@ -281,27 +282,12 @@ impl ElevationView {
         view(state.0, state.1, &frame)
     }
 
-    fn event_name(event: ToggleEvent) -> &'static str {
-        pinion_core::WidgetEventName::as_name(&event)
-    }
-
     fn keybinding(key: &str) -> Option<ToggleEvent> {
         match key {
             "d" => Some(ToggleEvent::Disable),
             "e" => Some(ToggleEvent::Enable),
             _ => None,
         }
-    }
-
-    /// ARIA toggle-button keyboard activation (Space / Enter flips the
-    /// rest/raised sidecar in parity with a pointer click).
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
 

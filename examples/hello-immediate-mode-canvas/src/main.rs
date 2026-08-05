@@ -69,7 +69,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Owner, Scene};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -133,7 +133,7 @@ const CANVAS_DRIVER_CACHE_KEY: &str = "hello_immediate_mode_canvas.driver";
 
 /// (R681 §2 #4) Tags addressing each element of the paint tree —
 /// the composite-paint-root convention (R55.G.17) requires the
-/// painted scene to contain a node tagged [`CanvasView::tag()`]
+/// painted scene to contain a node tagged [`CanvasView::tag()`](pinion_core::WidgetCore::tag)
 /// somewhere; we attach `CANVAS_TAG` to the root Container.
 /// `CANVAS_NODE_TAG` is the §5.20 intent tag on the immediate-mode
 /// node itself so RPC `scene/query {path: ".../canvas_node"}`
@@ -349,14 +349,14 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         pressed = Pressed,
         disabled = Disabled,
     ),
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
     state_name_derive,
 )]
 struct CanvasView;
 
 impl CanvasView {
-    /// R641 inherent forward for [`WidgetCore::view`]. Re-borrows
+    /// R641 inherent forward for [`WidgetCore::view`](pinion_core::WidgetCore::view). Re-borrows
     /// the by-value `Frame` the macro hands in so the free
     /// `view(...)` fn keeps the canonical `&Frame` signature.
     fn view(state: ButtonState, frame: Frame) -> Scene {
@@ -371,17 +371,6 @@ impl CanvasView {
             _ => None,
         }
     }
-
-    /// ARIA Button keyboard activation — Space / Enter on the
-    /// focused button fires the SCXML `KeyboardActivate` transition.
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
-    }
 }
 
 fn main() {
@@ -391,6 +380,7 @@ fn main() {
 #[cfg(test)]
 mod r681_immediate_mode_canvas_tests {
     use super::*;
+    use pinion_core::WidgetCore;
     use pinion_core::scene::Scene as PinionScene;
 
     #[test]

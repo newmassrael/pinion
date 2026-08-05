@@ -585,9 +585,10 @@ fn view(state: ToggleState, on: bool, scrub: f32, _frame: &Frame) -> Scene {
     external = ToggleExternal::new,
     extra_externals = hist_scrub_extras,
     a11y_manual,
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
     initial_size_strategy,
+    event_name_derive,
 )]
 struct ProfilerView;
 
@@ -626,27 +627,12 @@ impl ProfilerView {
         view(state.0, state.1, state.2, &frame)
     }
 
-    fn event_name(event: ToggleEvent) -> &'static str {
-        pinion_core::WidgetEventName::as_name(&event)
-    }
-
     fn keybinding(key: &str) -> Option<ToggleEvent> {
         match key {
             "d" => Some(ToggleEvent::Disable),
             "e" => Some(ToggleEvent::Enable),
             _ => None,
         }
-    }
-
-    /// ARIA toggle-button keyboard activation (Space / Enter flips the
-    /// repaint bit in parity with a pointer click).
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
 

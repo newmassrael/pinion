@@ -79,7 +79,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Command, Frame, Intent, Scene, WidgetCore, WidgetStateName};
+use pinion_core::{Color, Command, Frame, Intent, Scene, WidgetStateName};
 use pinion_derive::widget;
 use pinion_runtime::{Handler, HandlerFuture, HandlerRegistry};
 use pinion_shell::vello_renderer_impl;
@@ -173,7 +173,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         pressed = Pressed,
         disabled = Disabled,
     ),
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
     update,
 )]
@@ -208,15 +208,6 @@ impl CommandsView {
             "e" => Some(ButtonEvent::Enable),
             _ => None,
         }
-    }
-
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
     /// R51.170 §5.23 R27 — reducer-driven dogfood. Match the SCXML-

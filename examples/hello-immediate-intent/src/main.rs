@@ -55,7 +55,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, Intent, Owner, Scene, Signal, WidgetCore};
+use pinion_core::{Color, Frame, Intent, Owner, Scene, Signal};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -540,7 +540,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         pressed = Pressed,
         disabled = Disabled,
     ),
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
     update,
     state_name_derive,
@@ -548,7 +548,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 struct BallView;
 
 impl BallView {
-    /// R641 inherent forward for [`WidgetCore::view`].
+    /// R641 inherent forward for [`WidgetCore::view`](pinion_core::WidgetCore::view).
     fn view(state: ButtonState, frame: Frame) -> Scene {
         view(state, &frame)
     }
@@ -560,17 +560,6 @@ impl BallView {
             "e" => Some(ButtonEvent::Enable),
             _ => None,
         }
-    }
-
-    /// ARIA Button keyboard activation — Space / Enter on the focused
-    /// button fires the SCXML `KeyboardActivate` transition.
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
     /// R827 / R830 §2 #4 §5.20 — the immediate -> retained reducer. Each
@@ -605,6 +594,7 @@ fn main() {
 #[cfg(test)]
 mod r827_immediate_intent_tests {
     use super::*;
+    use pinion_core::WidgetCore;
     use pinion_core::scene::Scene as PinionScene;
 
     #[test]

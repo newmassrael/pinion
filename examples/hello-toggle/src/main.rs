@@ -51,9 +51,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{
-    Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetCore, WidgetStateName, use_theme,
-};
+use pinion_core::{Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetStateName, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -297,7 +295,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
         checked = bool_field(1),
     ),
     access_value = bool_field(1),
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
     update,
     fmt_state_log,
@@ -346,21 +344,6 @@ impl ToggleView {
             "e" => Some(ToggleEvent::Enable),
             _ => None,
         }
-    }
-
-    /// R51.55 §5.39 — ARIA Toggle Button keyboard activation. Space
-    /// and Enter on the focused toggle fire `KeyboardActivate`,
-    /// which flips the Off ↔ On sidecar and emits the `"toggle"`
-    /// intent in parity with a pointer click. ARIA toggle buttons
-    /// accept both keys; pure ARIA checkboxes accept only Space —
-    /// `hello-toggle` is a toggle button so both land here.
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
     /// R57.X.toggle — reducer side-effect: on the [`Toggle`]'s

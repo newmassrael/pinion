@@ -54,7 +54,7 @@ use pinion_core::style::{
 };
 use pinion_core::text_list::{ListFormat, ListSpec, ListStyle};
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
+use pinion_core::{ColorRole, Frame, Scene, WidgetStateName, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 use pinion_widget_paint::document::{TextBlock, view_document};
@@ -275,7 +275,7 @@ fn view(state: ToggleState, checking: bool, _frame: &Frame) -> Scene {
     ),
     access_value = bool_field(1),
     event_name_derive,
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
 )]
 struct ListDocumentView;
@@ -324,18 +324,6 @@ impl ListDocumentView {
             "e" => Some(ToggleEvent::Enable),
             _ => None,
         }
-    }
-
-    /// ARIA toggle-button keyboard activation (Space / Enter flips the
-    /// Off / On sidecar in parity with a pointer click) — required of a
-    /// `role = Switch`, and absent here until R1570.
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
 

@@ -74,7 +74,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Scene};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -289,7 +289,7 @@ const POPOVER_BTN_TAG: &str = "popover_btn";
         pressed = Pressed,
         disabled = Disabled,
     ),
-    apply_key,
+    apply_key = aria_activate,
     keybinding,
     state_name_derive,
     initial_size_strategy,
@@ -297,7 +297,7 @@ const POPOVER_BTN_TAG: &str = "popover_btn";
 struct PopoverView;
 
 impl PopoverView {
-    /// R641 inherent forward for [`WidgetCore::view`]. Re-borrows
+    /// R641 inherent forward for [`WidgetCore::view`](pinion_core::WidgetCore::view). Re-borrows
     /// the by-value `Frame` the macro hands in so the free `view(...)`
     /// fn above keeps the canonical `&Frame` signature.
     fn view(state: ButtonState, frame: Frame) -> Scene {
@@ -313,18 +313,6 @@ impl PopoverView {
             "e" => Some(ButtonEvent::Enable),
             _ => None,
         }
-    }
-
-    /// ARIA Button keyboard activation (Space / Enter on the focused
-    /// button fires `KeyboardActivate` → SCXML internal transition →
-    /// `click` intent). Mirrors hello-button exactly.
-    fn apply_key(
-        scene: &mut Scene,
-        focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
     /// **The R670 atomic (1) substrate consumer.** Overrides the
@@ -356,6 +344,7 @@ fn main() {
 #[cfg(test)]
 mod r670_intrinsic_first_paint_tests {
     use super::*;
+    use pinion_core::WidgetCore;
 
     /// (R670 §5.16) Pin the binding's `initial_size_strategy` to the
     /// `IntrinsicAfterFirstPaint` variant. A regression that flips this
