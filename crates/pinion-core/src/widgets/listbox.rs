@@ -631,7 +631,7 @@ impl ExternalIntrospect for ListBoxExternal {
                         "bool",
                         const { &[SchemaArg::index("index", "count")] },
                     ),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

@@ -6603,10 +6603,10 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("selected_edge", "int"),
     SchemaField::new("renaming", "int"),
     SchemaField::new("editing", "json"),
-    SchemaField::new("begin_rename", "int"),
-    SchemaField::new("begin_edit_default", "string"),
-    SchemaField::new("begin_edit_value", "int"),
-    SchemaField::new("begin_edit_detail", "string"),
+    SchemaField::action("begin_rename", "int"),
+    SchemaField::action("begin_edit_default", "string"),
+    SchemaField::action("begin_edit_value", "int"),
+    SchemaField::action("begin_edit_detail", "string"),
     SchemaField::parametric(
         "node.<id>.title",
         "string",
@@ -6722,64 +6722,64 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("viewport.x", "float"),
     SchemaField::new("viewport.y", "float"),
     SchemaField::new("viewport.zoom", "float"),
-    SchemaField::new("send", "string"),
-    SchemaField::new("add_node", "string"),
-    SchemaField::new("frame_all", "json"),
-    SchemaField::new("add_edge", "string"),
-    SchemaField::new("remove_edge", "int"),
-    SchemaField::new("reconnect_edge", "string"),
+    SchemaField::action("send", "string"),
+    SchemaField::action("add_node", "string"),
+    SchemaField::action("frame_all", "json"),
+    SchemaField::action("add_edge", "string"),
+    SchemaField::action("remove_edge", "int"),
+    SchemaField::action("reconnect_edge", "string"),
     // R1226 — the wire knife: cut every edge the segment "x1,y1,x2,y2"
     // (graph units) crosses, as one undo step. Returns the CSV of cut
     // edge ids (mirrors `edge_ids`), empty when nothing was crossed.
-    SchemaField::new("cut_wires", "string"),
+    SchemaField::action("cut_wires", "string"),
     // R1235 — splice a reroute node into edge `<int>`; returns the new
     // node id (`Null` for an unknown edge).
-    SchemaField::new("add_reroute", "int"),
+    SchemaField::action("add_reroute", "int"),
     // R1227 — comment-frame verbs: `add_frame` (no arg) frames the
     // current node selection, returning the new frame id (`Null` when
     // nothing is selected); `remove_frame` deletes a frame by id.
-    SchemaField::new("add_frame", "int"),
-    SchemaField::new("remove_frame", "int"),
-    SchemaField::new("delete_node", "int"),
-    SchemaField::new("delete_selected", "json"),
+    SchemaField::action("add_frame", "int"),
+    SchemaField::action("remove_frame", "int"),
+    SchemaField::action("delete_node", "int"),
+    SchemaField::action("delete_selected", "json"),
     // R1236 — dissolve = delete + reconnect through a 1-in/1-out node
     // (the reroute inverse). `dissolve_node <id>`; `dissolve_selected`
     // (no arg) dissolves the lone selected node.
-    SchemaField::new("dissolve_node", "int"),
-    SchemaField::new("dissolve_selected", "json"),
-    SchemaField::new("select_all", "json"),
-    SchemaField::new("nudge", "string"),
+    SchemaField::action("dissolve_node", "int"),
+    SchemaField::action("dissolve_selected", "json"),
+    SchemaField::action("select_all", "json"),
+    SchemaField::action("nudge", "string"),
     // R948 — align / distribute the selection (no args; the AI-first
     // peer of an editor's align toolbar). Each returns whether the
     // graph changed.
-    SchemaField::new("align_left", "json"),
-    SchemaField::new("align_center_h", "json"),
-    SchemaField::new("align_right", "json"),
-    SchemaField::new("align_top", "json"),
-    SchemaField::new("align_center_v", "json"),
-    SchemaField::new("align_bottom", "json"),
-    SchemaField::new("distribute_h", "json"),
-    SchemaField::new("distribute_v", "json"),
+    SchemaField::action("align_left", "json"),
+    SchemaField::action("align_center_h", "json"),
+    SchemaField::action("align_right", "json"),
+    SchemaField::action("align_top", "json"),
+    SchemaField::action("align_center_v", "json"),
+    SchemaField::action("align_bottom", "json"),
+    SchemaField::action("distribute_h", "json"),
+    SchemaField::action("distribute_v", "json"),
     // R1383 — tidy the whole graph into a layered left-to-right arrangement
     // (Sugiyama); no args, ONE undo step, returns whether anything moved.
-    SchemaField::new("auto_layout", "json"),
+    SchemaField::action("auto_layout", "json"),
     // R1390 — relax the whole graph into a force-directed (organic) cluster;
     // no args, ONE undo step, returns whether anything moved.
-    SchemaField::new("force_layout", "json"),
+    SchemaField::action("force_layout", "json"),
     SchemaField::new("serialized", "string"),
-    SchemaField::new("set_graph", "string"),
-    SchemaField::new("save", "json"),
-    SchemaField::new("load", "json"),
+    SchemaField::action("set_graph", "string"),
+    SchemaField::action("save", "json"),
+    SchemaField::action("load", "json"),
     // R1220 — the pin-drop create menu (drag off a pin → typed menu →
     // auto-wire). `pin_create` reads the open menu (Null when closed);
     // the verbs open / filter / rove / commit / cancel it — the AI-first
     // peer of the live gesture, funnelling through the same coordinator.
     SchemaField::new("pin_create", "json"),
-    SchemaField::new("open_pin_create", "string"),
-    SchemaField::new("pin_create_filter", "string"),
-    SchemaField::new("pin_create_highlight", "string"),
-    SchemaField::new("commit_pin_create", "string"),
-    SchemaField::new("cancel_pin_create", "json"),
+    SchemaField::action("open_pin_create", "string"),
+    SchemaField::action("pin_create_filter", "string"),
+    SchemaField::action("pin_create_highlight", "string"),
+    SchemaField::action("commit_pin_create", "string"),
+    SchemaField::action("cancel_pin_create", "json"),
 ];
 
 impl ExternalIntrospect for NodeGraphExternal {

@@ -927,10 +927,10 @@ impl ExternalIntrospect for GroupOrderExternal {
                         const { &[SchemaArg::index("g", "group_count")] },
                     ),
                     SchemaField::new("cursor", "int"),
-                    SchemaField::new("toggle_group", "int"),
-                    SchemaField::new("collapse_all", "int"),
-                    SchemaField::new("expand_all", "int"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("toggle_group", "int"),
+                    SchemaField::action("collapse_all", "int"),
+                    SchemaField::action("expand_all", "int"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

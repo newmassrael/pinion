@@ -496,8 +496,8 @@ impl ExternalIntrospect for ToolbarExternal {
                         "bool",
                         const { &[SchemaArg::index("i", "count")] },
                     ),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("key", "string"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("key", "string"),
                 ]
             },
         )
@@ -962,8 +962,8 @@ mod tests {
                     "bool",
                     const { &[SchemaArg::index("i", "count")] }
                 ),
-                SchemaField::new("send", "string"),
-                SchemaField::new("key", "string"),
+                SchemaField::action("send", "string"),
+                SchemaField::action("key", "string"),
             ]
         );
     }

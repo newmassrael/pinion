@@ -301,11 +301,10 @@ def body() -> None:
             saying='"untangle" is not a layout mode',
         )
         assert_eq(q(tf, "mode"), "stable", "a rejected mode changes nothing")
-        # `untangle` is a verb, not a writable measurement.
-        assert_rpc_error(
-            lambda: tf.intervene("/external/untangle", "yes"),
-            data="UnknownIntervenePath",
-        )
+        # `untangle` is a verb, not a writable measurement — R1566, and the
+        # surface now DECLARES it as one, so the refusal names the channel
+        # instead of denying the path exists.
+        assert_rpc_error(lambda: tf.intervene("/external/untangle", "yes"), data="PathIsAnAction")
         assert_rpc_error(lambda: tf.invoke("/external/untangled", None), data="UnknownInvokePath")
         # The measurements it moves stay read-only.
         for path in ("crossings", "order_changes", "depth"):

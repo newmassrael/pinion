@@ -3022,37 +3022,37 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
         const { &[SchemaArg::open("group", "string")] },
     ),
     SchemaField::new("scrubbing", "bool"),
-    SchemaField::new("send", "string"),
-    SchemaField::new("toggle", "json"),
-    SchemaField::new("begin", "json"),
-    SchemaField::new("cycle_sort", "json"),
-    SchemaField::new("set_filter", "string"),
-    SchemaField::new("set_group", "string"),
-    SchemaField::new("toggle_group", "int"),
-    SchemaField::new("collapse_all", "json"),
-    SchemaField::new("expand_all", "json"),
-    SchemaField::new("add_row", "json"),
-    SchemaField::new("remove_row", "int"),
+    SchemaField::action("send", "string"),
+    SchemaField::action("toggle", "json"),
+    SchemaField::action("begin", "json"),
+    SchemaField::action("cycle_sort", "json"),
+    SchemaField::action("set_filter", "string"),
+    SchemaField::action("set_group", "string"),
+    SchemaField::action("toggle_group", "int"),
+    SchemaField::action("collapse_all", "json"),
+    SchemaField::action("expand_all", "json"),
+    SchemaField::action("add_row", "json"),
+    SchemaField::action("remove_row", "int"),
     // R1237 — paste a TSV block at the cursor; returns the cells written.
-    SchemaField::new("paste", "string"),
+    SchemaField::action("paste", "string"),
     // R937 — row drag-to-reorder: whether reorder is enabled now (the
     // plain view), the live drop gap a drag is hovering, and the move verb.
     SchemaField::new("reorder_enabled", "bool"),
     SchemaField::new("drag_preview", "int"),
-    SchemaField::new("move_row", "string"),
+    SchemaField::action("move_row", "string"),
     // R940 — choice dropdown: whether a popup is open + its keyboard
     // cursor (read side), and the open / commit / close verbs (the
     // AI-first peer of a pointer click on the cell + an option).
     SchemaField::new("popup_open", "bool"),
     SchemaField::new("popup_cursor", "int"),
-    SchemaField::new("open_choice", "json"),
-    SchemaField::new("choose", "int"),
-    SchemaField::new("close_popup", "json"),
+    SchemaField::action("open_choice", "json"),
+    SchemaField::action("choose", "int"),
+    SchemaField::action("close_popup", "json"),
     // R943 — colour swatch popup: open it on the focused cell + commit a
     // preset swatch (the choice popup's colour peer; the AI-first path for
     // an arbitrary colour is `intervene value` with a `#RRGGBB` hex).
-    SchemaField::new("open_color", "json"),
-    SchemaField::new("pick_color", "int"),
+    SchemaField::action("open_color", "json"),
+    SchemaField::action("pick_color", "int"),
     // R960 — per-cell modified-from-default + reset-to-default (the
     // editable grid's Unreal / Qt "reset property to default" affordance).
     SchemaField::parametric(
@@ -3073,11 +3073,11 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
         const { &[SchemaArg::open("row", "int")] },
     ),
     SchemaField::new("modified_count", "int"),
-    SchemaField::new("reset", "string"),
-    SchemaField::new("reset_all", "json"),
+    SchemaField::action("reset", "string"),
+    SchemaField::action("reset_all", "json"),
     // R965 — reset a whole row / column to its column default(s).
-    SchemaField::new("reset_row", "int"),
-    SchemaField::new("reset_col", "int"),
+    SchemaField::action("reset_row", "int"),
+    SchemaField::action("reset_col", "int"),
 ];
 
 impl ExternalIntrospect for DataGridExternal {

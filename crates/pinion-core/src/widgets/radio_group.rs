@@ -423,7 +423,7 @@ impl ExternalIntrospect for RadioGroupExternal {
                         "bool",
                         const { &[SchemaArg::index("index", "count")] },
                     ),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -920,7 +920,7 @@ mod tests {
                     "bool",
                     const { &[SchemaArg::index("index", "count")] }
                 ),
-                SchemaField::new("send", "string"),
+                SchemaField::action("send", "string"),
             ]
         );
     }

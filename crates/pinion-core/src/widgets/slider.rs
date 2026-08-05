@@ -571,7 +571,7 @@ impl ExternalIntrospect for SliderExternal {
                     // R737 §5.38 — discrete snap increment (normalised units);
                     // `0.0` is the continuous-slider sentinel.
                     SchemaField::new("step", "float"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -852,7 +852,7 @@ mod tests {
                 SchemaField::new("value", "float"),
                 SchemaField::new("orientation", "string"),
                 SchemaField::new("step", "float"),
-                SchemaField::new("send", "string"),
+                SchemaField::action("send", "string"),
             ]
         );
     }

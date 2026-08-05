@@ -14,10 +14,20 @@
 //! contract with another.
 //!
 //! **The rule this publishes** is the one a client needs and cannot infer:
-//! `-32602` carries a word from a closed vocabulary this crate owns, and every
-//! application-defined code (`-32000..=-32099`) carries a sentence the surface
-//! wrote. So `data_is_prose` is not decoration — it tells a client whether the
-//! payload it is holding may be matched or only shown.
+//! `-32602` carries a word this crate owns, and every application-defined code
+//! (`-32000..=-32099`) carries a sentence the surface wrote. So `data_is_prose`
+//! is not decoration — it tells a client whether the payload it is holding may
+//! be matched or only shown.
+//!
+//! R1566 published the words themselves (`data_vocabulary`), because a round
+//! that ADDS to a closed vocabulary and does not publish it leaves the client
+//! exactly where R1564 found it. Enumerating them corrected the rule as well as
+//! completing it: `-32602`'s payload is not always one of the words. Two focus
+//! refusals put the word in `error.message` and the caller's own tag in
+//! `error.data`, and a window-prefix failure appends the offending id to its
+//! word. So the honest statement is "a word this crate owns, or an echo of what
+//! the caller supplied — never free application prose", and that is what the
+//! entry now says.
 //!
 //! Standard JSON-RPC 2.0 codes are listed too, and deliberately: an agent
 //! meeting `-32601` should not have to know which half of the protocol it came
@@ -46,7 +56,56 @@ pub struct ErrorEntry {
     /// ones pinion allocates in the implementation-defined server-error range.
     /// A client that already handles the standard set can skip them.
     pub standard: bool,
+    /// R1566 — every word `error.data` may hold under this code, exhaustively.
+    /// Empty when `data_is_prose`, and empty for a code that carries no word.
+    ///
+    /// R1565 published `data_is_prose: false` for `-32602` on the strength of
+    /// the payload being "a word from this dispatcher's closed vocabulary" —
+    /// and left the vocabulary itself unpublished, so a client could learn that
+    /// matching was *safe* and still had to read pinion's source to learn what
+    /// to match. R1566 was the round that made that bite: it added three words
+    /// (`PathIsAnAction`, `PathIsAReadSlot`, and `ReadOnly` reaching cases it
+    /// never used to), and shipping them undiscoverable would have repeated
+    /// exactly the mistake this module exists to end.
+    ///
+    /// Enumerating it also corrected the claim. See the `-32602` entry's
+    /// `meaning`: not every payload under that code is one of these words, and
+    /// the ones that are not are **echoes of the caller's own input** rather
+    /// than application prose — a distinction `data_is_prose` alone cannot
+    /// carry and a client very much needs.
+    pub data_vocabulary: Vec<String>,
 }
+
+/// R1566 — every word `-32602`'s `error.data` may hold, in sorted order.
+///
+/// Kept sorted because it is published as a set and a client may binary-search
+/// it; kept here rather than beside the `match` arms that emit it because the
+/// arms are spread over three dispatchers and a vocabulary is a property of the
+/// code. `r1566_the_published_vocabulary_is_exactly_what_is_emitted` scans the
+/// source in **both** directions, so a word added to a dispatcher and not here
+/// fails, and so does a word here that nothing emits — a dead entry in a closed
+/// vocabulary is a promise to a client that will never be kept.
+const VOCABULARY_32602: &[&str] = &[
+    // `PathError::wire_tag` — the window-prefix failures. `UnknownWindow`
+    // appends the offending id after a colon, so it is the one member a client
+    // matches by PREFIX; the entry's `meaning` says so.
+    "EmptyWindowId",
+    "InterveneTypeMismatch",
+    "IntrospectionOptedOut",
+    "InvokeTypeMismatch",
+    "MalformedPrefix",
+    "NoExternalAtPath",
+    "PathIsAReadSlot",
+    "PathIsAnAction",
+    "ReadOnly",
+    "RetainedNodeNotWritable",
+    "UnknownIntervenePath",
+    "UnknownIntrospectPath",
+    "UnknownInvokePath",
+    "UnknownWindow",
+    "UnmappedSurfaceError",
+    "UnsupportedPath",
+];
 
 /// The published catalog. Ordered by code, descending — the standard codes
 /// first, then pinion's own, which is the order a reader meets them in.
@@ -58,7 +117,12 @@ fn entries() -> Vec<ErrorEntry> {
             meaning: meaning.to_owned(),
             data_is_prose,
             standard,
+            data_vocabulary: Vec::new(),
         };
+    let with_vocabulary = |entry: ErrorEntry, words: &[&str]| ErrorEntry {
+        data_vocabulary: words.iter().map(|w| (*w).to_owned()).collect(),
+        ..entry
+    };
     vec![
         e(
             -32600,
@@ -74,14 +138,25 @@ fn entries() -> Vec<ErrorEntry> {
             false,
             true,
         ),
-        e(
-            -32602,
-            "Invalid params",
-            "the parameters are missing, mis-shaped, or name something that does \
-             not exist. error.data carries a word from this dispatcher's closed \
-             vocabulary (\"UnknownInvokePath\", \"ReadOnly\", …), so it may be matched",
-            false,
-            true,
+        with_vocabulary(
+            e(
+                -32602,
+                "Invalid params",
+                "the parameters are missing, mis-shaped, or name something that \
+                 does not exist. error.data is EITHER one of the words in \
+                 data_vocabulary — a closed set this dispatcher owns, safe to \
+                 match — or an echo of what the caller itself supplied (the tag \
+                 a focus request named, the window id that did not resolve). It \
+                 is never free application prose, which is what data_is_prose \
+                 records. Two shapes widen it without changing the word: an \
+                 opt-in with_origin request answers an OBJECT whose `reason` \
+                 holds the word beside the surface that refused (R1485), and a \
+                 window-prefix failure answers the word with the offending id \
+                 appended after a colon",
+                false,
+                true,
+            ),
+            VOCABULARY_32602,
         ),
         e(
             -32603,
@@ -232,6 +307,97 @@ mod tests {
                 e.code,
                 if application { "inside" } else { "outside" },
                 e.standard,
+            );
+        }
+    }
+
+    /// R1566 — the vocabulary is complete in BOTH directions.
+    ///
+    /// One direction stops a word reaching the wire undiscoverable, which is
+    /// the whole reason the field exists. The other stops a word being
+    /// published that nothing emits: a closed vocabulary with a dead member is
+    /// a client branch that can never be taken, and it is the failure mode a
+    /// hand-kept list drifts into first — an entry outlives the arm that made
+    /// it, and nothing notices because the *interesting* direction still
+    /// passes.
+    #[test]
+    fn r1566_the_published_vocabulary_is_exactly_what_is_emitted() {
+        let catalogue = rpc_errors();
+        let published: &[String] = &catalogue
+            .errors
+            .iter()
+            .find(|e| e.code == -32602)
+            .expect("-32602 is published")
+            .data_vocabulary;
+        let mut emitted: Vec<&str> = Vec::new();
+        for src in [
+            include_str!("dispatch.rs"),
+            include_str!("query.rs"),
+            include_str!("invoke.rs"),
+            include_str!("intervene.rs"),
+            include_str!("path.rs"),
+        ] {
+            for line in src.lines() {
+                let trimmed = line.trim_start();
+                // A word MENTIONED in a doc comment is not a word emitted, and
+                // these modules quote most of the vocabulary in prose.
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+                for opener in ["WireFault::params(\"", "Cow::Borrowed(\""] {
+                    let mut rest = line;
+                    while let Some(i) = rest.find(opener) {
+                        rest = &rest[i + opener.len()..];
+                        if let Some(end) = rest.find('"') {
+                            emitted.push(&rest[..end]);
+                        }
+                    }
+                }
+                // `UnknownWindow` is built by `format!`, so the scan sees the
+                // prefix rather than a whole literal — the one member whose
+                // payload is not a bare word, and the reason the entry's
+                // `meaning` tells a client to match it by prefix.
+                if line.contains("\"UnknownWindow: {requested:?}") {
+                    emitted.push("UnknownWindow");
+                }
+            }
+        }
+        emitted.sort_unstable();
+        emitted.dedup();
+        for word in &emitted {
+            assert!(
+                published.iter().any(|p| p == word),
+                "{word:?} reaches the wire under -32602 and is absent from the \
+                 published vocabulary, so a client can only learn it by reading \
+                 pinion's source",
+            );
+        }
+        for word in published {
+            assert!(
+                emitted.contains(&word.as_str()),
+                "{word:?} is published as a -32602 payload and nothing emits it \
+                 — a dead entry is a client branch that can never be taken",
+            );
+        }
+    }
+
+    /// The vocabulary is a SET: sorted, so a client may binary-search it, and
+    /// free of duplicates, because two entries for one word is two meanings.
+    #[test]
+    fn r1566_the_vocabulary_is_a_sorted_set() {
+        for entry in rpc_errors().errors {
+            let mut sorted = entry.data_vocabulary.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(
+                sorted, entry.data_vocabulary,
+                "code {} publishes an unsorted or duplicated vocabulary",
+                entry.code,
+            );
+            assert!(
+                !entry.data_is_prose || entry.data_vocabulary.is_empty(),
+                "code {} says its payload is prose AND publishes words to match",
+                entry.code,
             );
         }
     }

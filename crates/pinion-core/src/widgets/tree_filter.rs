@@ -337,7 +337,7 @@ impl ExternalIntrospect for TreeFilterExternal {
                         "string",
                         const { &[SchemaArg::index("pos", "visible_count")] },
                     ),
-                    SchemaField::new("set_filter", "string"),
+                    SchemaField::action("set_filter", "string"),
                 ]
             },
         )

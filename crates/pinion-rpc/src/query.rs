@@ -67,9 +67,18 @@ fn introspect_or_schema(
     if introspect_path == SCHEMA_PATH {
         Ok(schema_value(intro))
     } else {
-        intro
-            .query(introspect_path)
-            .ok_or(QueryError::UnknownIntrospectPath)
+        intro.query(introspect_path).ok_or_else(|| {
+            // R1566 — a read that found nothing asks the declaration ONE
+            // question before it is allowed to say the path does not exist:
+            // is this name an action? Only that arm, because a declared
+            // *readable* family whose index addresses nothing is genuinely
+            // unknown, and answering otherwise would trade one false statement
+            // for its mirror image.
+            match intro.schema().field_for(introspect_path).map(|f| f.channel) {
+                Some(SchemaChannel::Invoke) => QueryError::PathIsAnAction,
+                _ => QueryError::UnknownIntrospectPath,
+            }
+        })
     }
 }
 
@@ -143,8 +152,24 @@ pub enum QueryError {
     NoExternalAtPath,
     /// The `External` did not opt in to §5.15 item 8 introspection.
     IntrospectionOptedOut,
-    /// `External` opted in, but the introspect path is not in its schema.
+    /// `External` opted in, but the introspect path is not readable: either the
+    /// schema does not declare it at all, or it declares a parametric family
+    /// whose argument addresses nothing (`node.999.h` under `node.<id>.h` — the
+    /// index is genuinely absent, so "unknown" is the true answer).
     UnknownIntrospectPath,
+    /// R1566 §2 #7 — the path is declared, on the **invoke** channel: it is an
+    /// action to call, not a slot to read.
+    ///
+    /// The read half of the same correction
+    /// [`InterveneError::PathIsAnAction`](crate::InterveneError::PathIsAnAction)
+    /// makes on the write channel. Without it an agent that read `$schema`,
+    /// saw a name, and asked for its value was told the name does not exist —
+    /// by the surface that had just published it.
+    ///
+    /// Qt's `QObject::property()` answers an **invalid `QVariant`** for a
+    /// method name, which is the same value it answers for a name that is not
+    /// in the meta-object at all.
+    PathIsAnAction,
 }
 
 impl From<PathError> for QueryError {
@@ -257,6 +282,61 @@ mod tests {
     use pinion_core::Color;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
+
+    /// R1566 — a surface with an action in its schema. `query` cannot answer
+    /// it (an action is not readable, which is the whole distinction), so this
+    /// is the shape whose refusal used to say the name does not exist.
+    #[derive(Debug)]
+    struct MixedChannels;
+
+    impl pinion_core::external::ExternalIntrospect for MixedChannels {
+        fn schema(&self) -> pinion_core::external::IntrospectSchema {
+            use pinion_core::external::{IntrospectSchema, SchemaField};
+            IntrospectSchema::new(
+                const {
+                    &[
+                        SchemaField::new("depth", "int"),
+                        SchemaField::action("reset", "string"),
+                    ]
+                },
+            )
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            (path == "depth").then_some(IntrospectValue::Int(3))
+        }
+        fn intervene(
+            &mut self,
+            _path: &str,
+            _value: IntrospectValue,
+        ) -> Result<(), pinion_core::external::InterveneError> {
+            Err(pinion_core::external::InterveneError::UnknownPath)
+        }
+    }
+
+    /// R1566 §2 #7 — a read refused on a DECLARED action names the channel,
+    /// and a read refused on a genuinely absent name does not.
+    ///
+    /// The asymmetry with the write channel is asserted here because it is a
+    /// decision and not an oversight: a *readable* family whose index
+    /// addresses nothing is genuinely unknown, so only the cross-channel arm
+    /// overrides. Trading `UnknownIntrospectPath` for its mirror image would
+    /// have been the same defect pointing the other way.
+    #[test]
+    fn r1566_a_read_refused_on_an_action_names_the_channel() {
+        let surface = MixedChannels;
+        assert_eq!(
+            introspect_or_schema(&surface, "depth"),
+            Ok(IntrospectValue::Int(3)),
+        );
+        assert_eq!(
+            introspect_or_schema(&surface, "reset"),
+            Err(QueryError::PathIsAnAction),
+        );
+        assert_eq!(
+            introspect_or_schema(&surface, "nothing_declared"),
+            Err(QueryError::UnknownIntrospectPath),
+        );
+    }
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))

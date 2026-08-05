@@ -258,7 +258,7 @@ impl ExternalIntrospect for DisclosureExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("expanded", "bool"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -457,7 +457,7 @@ mod tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("expanded", "bool"),
-                SchemaField::new("send", "string")
+                SchemaField::action("send", "string")
             ]
         );
     }

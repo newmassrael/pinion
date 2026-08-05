@@ -1820,6 +1820,94 @@ def rpc_error_data(
     raise AssertionError(f"{label}: expected an RpcError, but the call succeeded")
 
 
+def call(tf, method: str, params: Any = None) -> Any:
+    """The `result` of a request — `tf.request` answers with the envelope.
+
+    Lifted R1566 at the eighth byte-identical copy. Seven demos had written it
+    out (`r1539`, `r1546`, `r1551`, `r1552`, `r1559`, `r1560`, `r1564`), each
+    with the same body and the same docstring, because `request` returns the
+    frame and almost every caller wants what is inside it. Mechanical wiring
+    with no opinion in it, so the Rule-of-Three lift is unconditional
+    ([[three-site-internal-duplication-substrate-lift]]).
+
+    The `assert` is the part worth having in one place: a `None` envelope means
+    the request produced no response at all, and a caller that indexed straight
+    into `.result` would meet that as an `AttributeError` naming nothing.
+    """
+    resp = tf.request(method, params if params is not None else {})
+    assert resp is not None, f"{method} answered nothing"
+    return resp.result
+
+
+def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
+    """Assert every scalar path in `external`'s `$schema` answers on the channel
+    it declares. Returns `{"read": n, "invoke": n}`, the counts it checked.
+
+    R1566 §2 #7 — the gate that makes `SchemaChannel` load-bearing.
+
+    R1504 added the channel and nothing ever branched on it, so `Read` was a
+    silent default and a surface could declare a verb as a readable slot with
+    nothing to notice. Measured at R1566 over nine bindings: **116 of 288**
+    declared scalar fields — 40% — were actions declared as read slots.
+    `hello-data-grid` published `add_row`, `paste` and `reset_all` as string
+    fields an agent could read; `hello-untangle`'s own demo docstring calls
+    `untangle` "a **verb**" beside a declaration that says otherwise.
+
+    Nobody was lying. The declaration simply had no consumer, and a fact with no
+    consumer is a fact nothing keeps true. R1566 gave it one — the refusal a
+    client gets for addressing a path on the wrong channel is now derived from
+    it — which is what turned 116 silent mistakes into a measurable defect and
+    is why this gate ships with them.
+
+    # It cannot mutate
+
+    Only `query` is used. A `read` path must answer it; an `invoke` path must
+    refuse it with `PathIsAnAction`. Probing the *write* directions would be a
+    stronger check and is deliberately not done here: `invoke` on a path that is
+    an action fires the action, and a gate that can change the thing it is
+    inspecting is a gate no demo can afford to run mid-scenario.
+
+    Parametric families (`cell.<row>.<col>`) are skipped — the placeholder is not
+    an address, so there is nothing to ask for. `SchemaField::EMPTY`'s blank path
+    is skipped for the same reason.
+    """
+    fields = tf.query(f"{external}/$schema")
+    if isinstance(fields, dict):
+        fields = fields.get("fields", fields)
+    checked = {"read": 0, "invoke": 0}
+    unreadable: list[str] = []
+    readable_actions: list[str] = []
+    for field in fields:
+        path = field.get("path") or ""
+        if not path or "<" in path:
+            continue
+        channel = field.get("channel", "read")
+        if channel == "read":
+            checked["read"] += 1
+            try:
+                tf.query(f"{external}/{path}")
+            except RpcError as exc:
+                unreadable.append(f"{path} ({exc.data!r})")
+        else:
+            checked["invoke"] += 1
+            try:
+                tf.query(f"{external}/{path}")
+                readable_actions.append(path)
+            except RpcError as exc:
+                if exc.data != "PathIsAnAction":
+                    readable_actions.append(f"{path} (refused {exc.data!r})")
+    assert not unreadable, (
+        f"{external}: {len(unreadable)} path(s) declared on the READ channel "
+        f"that query does not answer — the surface publishes a name and then "
+        f"says it does not exist: {unreadable}"
+    )
+    assert not readable_actions, (
+        f"{external}: {len(readable_actions)} path(s) declared on the INVOKE "
+        f"channel that do not refuse a read as PathIsAnAction: {readable_actions}"
+    )
+    return checked
+
+
 def assert_disclosed(result: Any, label: str = "call") -> dict:
     """Assert `result` is an origin-disclosing envelope; return it.
 

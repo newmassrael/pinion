@@ -919,17 +919,17 @@ impl ExternalIntrospect for DirectoryExternal {
                         "bool",
                         const { &[SchemaArg::index("idx", "count")] },
                     ),
-                    SchemaField::new("navigate", "string"),
-                    SchemaField::new("up", "string"),
-                    SchemaField::new("select", "string"),
-                    SchemaField::new("open", "string"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("navigate", "string"),
+                    SchemaField::action("up", "string"),
+                    SchemaField::action("select", "string"),
+                    SchemaField::action("open", "string"),
+                    SchemaField::action("send", "string"),
                     // R789 write surface (file-manager mutations).
-                    SchemaField::new("mkdir", "bool"),
-                    SchemaField::new("touch", "bool"),
-                    SchemaField::new("delete", "bool"),
+                    SchemaField::action("mkdir", "bool"),
+                    SchemaField::action("touch", "bool"),
+                    SchemaField::action("delete", "bool"),
                     // R791 — rename the selection to the string arg.
-                    SchemaField::new("rename", "bool"),
+                    SchemaField::action("rename", "bool"),
                     // R794 — the in-flight drag-to-move state (§2 #7 — the live
                     // drag is scene-as-data). `dragging` (bool) is whether a row is
                     // armed; `drop_target` (query) is the resolved target under the

@@ -681,9 +681,9 @@ impl ExternalIntrospect for UndoStackExternal {
                     SchemaField::new("count", "int"),
                     SchemaField::new("undo_label", "string"),
                     SchemaField::new("redo_label", "string"),
-                    SchemaField::new("undo", "bool"),
-                    SchemaField::new("redo", "bool"),
-                    SchemaField::new("clear", "int"),
+                    SchemaField::action("undo", "bool"),
+                    SchemaField::action("redo", "bool"),
+                    SchemaField::action("clear", "int"),
                 ]
             },
         )

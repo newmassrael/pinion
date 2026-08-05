@@ -1546,23 +1546,23 @@ impl ExternalIntrospect for InspectorExternal {
                         const { &[SchemaArg::index("i", "row_count")] },
                     ),
                     SchemaField::new("any_modified", "bool"),
-                    SchemaField::new("select", "int"),
-                    SchemaField::new("toggle", "int"),
-                    SchemaField::new("extend_to", "int"),
-                    SchemaField::new("select_all", "null"),
-                    SchemaField::new("clear", "null"),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("reset", "int"),
-                    SchemaField::new("reset_all", "null"),
+                    SchemaField::action("select", "int"),
+                    SchemaField::action("toggle", "int"),
+                    SchemaField::action("extend_to", "int"),
+                    SchemaField::action("select_all", "null"),
+                    SchemaField::action("clear", "null"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("reset", "int"),
+                    SchemaField::action("reset_all", "null"),
                     // R1221 — the Details inline-edit verbs (the AI-first peers of the
                     // value-cell click gestures): flip a common Bool across the whole
                     // selection, or step a common numeric (arg "<i>,<dir>", dir a signed
                     // unit count). Both write across every selected object.
-                    SchemaField::new("toggle_property", "int"),
-                    SchemaField::new("step_property", "string"),
+                    SchemaField::action("toggle_property", "int"),
+                    SchemaField::action("step_property", "string"),
                     // R1225 — cycle a common Choice across the selection (arg "<i>,<dir>",
                     // the enum peer of step_property; the value-cell click twin).
-                    SchemaField::new("cycle_property", "string"),
+                    SchemaField::action("cycle_property", "string"),
                     // R1224 — the keyboard-focus surface (§2 #2: the region + property
                     // cursor the Arrow keys drive are observable + drivable over RPC).
                     // `focus_region` reads/sets which pane owns the cursor ("objects" /
@@ -1570,7 +1570,7 @@ impl ExternalIntrospect for InspectorExternal {
                     // `focus_property` places the cursor at a row (and focuses Details).
                     SchemaField::new("focus_region", "string"),
                     SchemaField::new("prop_cursor", "int"),
-                    SchemaField::new("focus_property", "int"),
+                    SchemaField::action("focus_property", "int"),
                     // R1249 — the inline absolute type-in editor surface (§2 #2: the
                     // editor's open row + live buffer are observable, and the AI drives
                     // the whole edit over RPC without char-by-char keys). `editing` reads
@@ -1580,9 +1580,9 @@ impl ExternalIntrospect for InspectorExternal {
                     // and closes, `cancel_edit` closes without writing.
                     SchemaField::new("editing", "int"),
                     SchemaField::new("edit_text", "string"),
-                    SchemaField::new("begin_edit", "int"),
-                    SchemaField::new("commit_edit", "string"),
-                    SchemaField::new("cancel_edit", "null"),
+                    SchemaField::action("begin_edit", "int"),
+                    SchemaField::action("commit_edit", "string"),
+                    SchemaField::action("cancel_edit", "null"),
                     // R1373 — the numeric-scrub live state (§2 #2: the AI reads
                     // whether a press-drag is mid-scrub, the property-grid /
                     // data-grid `scrubbing` peer). The scrub itself is driven by

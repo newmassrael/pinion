@@ -663,22 +663,22 @@ impl ExternalIntrospect for TopologyOracle {
                     SchemaField::new("inner_segments", "int"),
                     SchemaField::new("straight_inner", "int"),
                     // Per-service placement, arg = the name.
-                    SchemaField::new("node_x", "string"),
-                    SchemaField::new("node_y", "string"),
-                    SchemaField::new("node_column", "string"),
+                    SchemaField::action("node_x", "string"),
+                    SchemaField::action("node_y", "string"),
+                    SchemaField::action("node_column", "string"),
                     // The remembered order, arg = the column index.
-                    SchemaField::new("column_order", "string"),
+                    SchemaField::action("column_order", "string"),
                     // A wire's polyline, arg = "from,to".
-                    SchemaField::new("wire_points", "string"),
+                    SchemaField::action("wire_points", "string"),
                     // The feed and the topology verbs.
-                    SchemaField::new("advance", "string"),
-                    SchemaField::new("reset", "string"),
+                    SchemaField::action("advance", "string"),
+                    SchemaField::action("reset", "string"),
                     // R1443 — tidy what is drawn now, leaving `mode` alone.
-                    SchemaField::new("untangle", "string"),
-                    SchemaField::new("add_service", "string"),
-                    SchemaField::new("remove_service", "string"),
-                    SchemaField::new("connect", "string"),
-                    SchemaField::new("disconnect", "string"),
+                    SchemaField::action("untangle", "string"),
+                    SchemaField::action("add_service", "string"),
+                    SchemaField::action("remove_service", "string"),
+                    SchemaField::action("connect", "string"),
+                    SchemaField::action("disconnect", "string"),
                 ]
             },
         )

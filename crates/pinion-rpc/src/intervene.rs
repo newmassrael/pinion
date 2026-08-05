@@ -38,7 +38,8 @@
 
 use pinion_core::Scene;
 use pinion_core::external::{
-    InterveneError as TraitInterveneError, IntrospectValue, RefusalReason,
+    InterveneError as TraitInterveneError, IntrospectSchema, IntrospectValue, RefusalReason,
+    SchemaChannel,
 };
 
 use crate::origin::{AnswerOrigin, Refusal, SceneSource};
@@ -62,10 +63,21 @@ pub enum InterveneError {
     /// The `External` did not opt in to §5.15 item 7 introspection
     /// (so the intervene channel is unreachable).
     IntrospectionOptedOut,
-    /// The state path is not declared in the `External`'s schema, or
-    /// is declared but cannot be written (read-only slots return the
-    /// trait's `ReadOnly` variant which surfaces here).
+    /// The state path is not declared in the `External`'s schema **on any
+    /// channel**.
+    ///
+    /// R1566 narrowed this from "the surface's `intervene` did not recognise
+    /// the string", which is a different fact and was frequently a false one —
+    /// see `InterveneError::from_declined` (crate-private).
     UnknownIntervenePath,
+    /// R1566 §2 #7 — the path is declared, on the **invoke** channel: it is an
+    /// action to call, not a slot to write.
+    ///
+    /// Qt has no answer here at all. `QObject::setProperty()` returns a bare
+    /// `bool`, so a Qt caller who addressed a method name as a property learns
+    /// only that it did not work, and has to go back to the meta-object and
+    /// search `QMetaObject::method()` themselves to find out why.
+    PathIsAnAction,
     /// The value variant does not match the slot's declared type.
     InterveneTypeMismatch,
     /// The slot is read-only on this `External`. Distinct from
@@ -121,26 +133,77 @@ impl From<ResolveExternalError> for InterveneError {
     }
 }
 
-impl From<TraitInterveneError> for InterveneError {
-    fn from(err: TraitInterveneError) -> Self {
-        // The four variants get distinct codes so the RPC client can branch
-        // (`UnknownPath` ↔ "schema does not declare", `ReadOnly` ↔
-        // "schema declares but immutable", `OutOfRange` ↔ "value
-        // outside accepted bounds").
-        //
-        // R1565 — the wildcard no longer absorbs `TypeMismatch`. It used to,
-        // which meant a variant added upstream would be reported to a client as
-        // "your value was the wrong TYPE" — a specific and probably false
-        // statement about the caller's payload. Naming the four explicitly
-        // leaves the wildcard for the unknown, and
-        // [`UnmappedSurfaceError`](InterveneError::UnmappedSurfaceError) is what
-        // it honestly says; the same correction R1564 made on the read-write
-        // channel's peer.
+impl InterveneError {
+    /// R1566 §2 #7 §5.12 — the wire refusal for a surface that declined a
+    /// write, judged **against that surface's own declaration**.
+    ///
+    /// # Why this is not a `From` impl
+    ///
+    /// It was one until R1566, and an infallible `err.into()` is exactly what
+    /// made the bug possible: the conversion had no access to the schema, so
+    /// the only thing it could do with the trait's `UnknownPath` was repeat it.
+    /// The trait documents that variant as "path is not declared in the
+    /// schema", and an impl cannot honour that — it knows only that *its own*
+    /// `match` fell through. Both facts are spelled `UnknownPath`, and one of
+    /// them is a lie whenever the path is declared.
+    ///
+    /// The lie is not hypothetical and not rare. R1353 wrote the rule down as
+    /// [`read_only_or_unknown`](pinion_core::external::read_only_or_unknown),
+    /// whose doc says "every read-only External needs exactly this rule" — and
+    /// it is opt-in, so **two** of the framework's surfaces route through it
+    /// against 97 that implement `intervene`. Measured over the wire at R1566:
+    /// `hello-node-editor` answers `layout_crossings` to `query` and tells a
+    /// writer it does not exist; `hello-untangle` does the same for `untangle`,
+    /// which its own `$schema` declares as an action.
+    ///
+    /// Taking `schema` and `path` by value makes the judgement unskippable
+    /// rather than remembered: there are seven dispatch sites for this
+    /// conversion (`intervene` × 2, `dry_run` × 2, `simulate` × 2, `rewind`),
+    /// and a rule they each had to *apply* is a rule six of them would
+    /// eventually not.
+    #[must_use]
+    pub(crate) fn from_declined(
+        err: TraitInterveneError,
+        schema: &IntrospectSchema,
+        path: &str,
+    ) -> Self {
         match err {
-            TraitInterveneError::UnknownPath => InterveneError::UnknownIntervenePath,
+            // The only arm that is re-judged, and only against what the
+            // surface itself declares — this never contradicts an impl, it
+            // answers where the impl had nothing to say. R1565's note below
+            // stands for the rest: naming each variant explicitly leaves the
+            // wildcard for the genuinely unknown.
+            TraitInterveneError::UnknownPath => match schema.field_for(path) {
+                Some(field) if field.channel == SchemaChannel::Invoke => {
+                    InterveneError::PathIsAnAction
+                }
+                // A SCALAR declared path the impl did not recognise is a path
+                // the impl does not write, so `ReadOnly` is the true statement.
+                //
+                // A PARAMETRIC one is not, and the difference is the round's
+                // one sharp edge. `SchemaChannel::Read` does not mean
+                // "read-only" — it means "readable", and every writable slot is
+                // declared that way too. For a scalar that costs nothing,
+                // because an impl that writes a name does not answer
+                // `UnknownPath` for it. For a family it costs everything: the
+                // impl DID recognise the shape and rejected the ARGUMENT, so
+                // `voice.999.gain` under a writable `voice.<id>.gain` would be
+                // reported read-only, which is false about a family a client
+                // may write all day. `hello-audio-engine` caught exactly that.
+                //
+                // Nothing is lost by stopping here: `read_only_or_unknown` has
+                // answered `ReadOnly` for a genuinely read-only family since
+                // R1353, at the impl, where the difference is knowable.
+                Some(field) if field.args.is_empty() => InterveneError::ReadOnly,
+                Some(_) | None => InterveneError::UnknownIntervenePath,
+            },
             TraitInterveneError::TypeMismatch => InterveneError::InterveneTypeMismatch,
             TraitInterveneError::ReadOnly => InterveneError::ReadOnly,
             TraitInterveneError::OutOfRange(reason) => InterveneError::OutOfRange(reason),
+            // R1565 — the wildcard no longer absorbs `TypeMismatch`. It used
+            // to, which meant a variant added upstream would be reported to a
+            // client as "your value was the wrong TYPE" — a specific and
+            // probably false statement about the caller's payload.
             _ => InterveneError::UnmappedSurfaceError,
         }
     }
@@ -198,10 +261,21 @@ pub fn intervene_from(
     let origin = AnswerOrigin::of(source, false);
     let (intro, state_path) = resolve_external_introspect_mut(scene, raw_path)
         .map_err(|e| InterveneRefusal::from_resolve(e, origin))?;
-    intro
-        .intervene(&state_path, value)
-        .map(|()| ((), origin))
-        .map_err(|e| InterveneRefusal::from_surface(e.into(), origin))
+    match intro.intervene(&state_path, value) {
+        Ok(()) => Ok(((), origin)),
+        // R1566 — the declaration is read only on the REFUSAL path, and after
+        // the write: after, because that is when the mutable borrow ends and
+        // because a surface may declare a path it grew during this very call;
+        // only, because a successful write must not pay for a judgement it
+        // does not need.
+        Err(err) => {
+            let declared = intro.schema();
+            Err(InterveneRefusal::from_surface(
+                InterveneError::from_declined(err, &declared, &state_path),
+                origin,
+            ))
+        }
+    }
 }
 
 /// R1481 §2 #4 §5.12 — the immediate-mode half of [`intervene`], reachable
@@ -231,12 +305,16 @@ fn intervene_immediate_at(
             origin,
         )));
     };
-    Some(
-        intro
-            .intervene(&state_path, value.clone())
-            .map(|()| ((), origin))
-            .map_err(|e| InterveneRefusal::from_surface(e.into(), origin)),
-    )
+    Some(match intro.intervene(&state_path, value.clone()) {
+        Ok(()) => Ok(((), origin)),
+        Err(err) => {
+            let declared = intro.schema();
+            Err(InterveneRefusal::from_surface(
+                InterveneError::from_declined(err, &declared, &state_path),
+                origin,
+            ))
+        }
+    })
 }
 
 /// R1481 §2 #4 §5.12 — intervene against a scene held by shared reference.
@@ -304,6 +382,68 @@ mod tests {
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
 
+    use pinion_core::external::{SchemaArg, SchemaField};
+
+    /// A surface declaring BOTH channels plus a parametric family — the three
+    /// shapes [`InterveneError::from_declined`] tells apart.
+    const MIXED: IntrospectSchema = IntrospectSchema::new(
+        const {
+            &[
+                SchemaField::new("depth", "int"),
+                SchemaField::parametric(
+                    "cell.<row>",
+                    "int",
+                    const { &[SchemaArg::index("row", "depth")] },
+                ),
+                SchemaField::action("reset", "string"),
+            ]
+        },
+    );
+
+    /// R1566 §2 #7 — a fall-through is re-judged against the DECLARATION, and
+    /// the three answers are three different facts.
+    #[test]
+    fn r1566_a_declared_path_is_never_reported_unknown_to_a_write() {
+        let judge =
+            |path| InterveneError::from_declined(TraitInterveneError::UnknownPath, &MIXED, path);
+        assert_eq!(judge("depth"), InterveneError::ReadOnly);
+        assert_eq!(judge("reset"), InterveneError::PathIsAnAction);
+        assert_eq!(
+            judge("nothing_declared"),
+            InterveneError::UnknownIntervenePath
+        );
+        // ★ A PARAMETRIC family is NOT re-judged, and the reason is the one
+        // sharp edge of this round: `SchemaChannel::Read` means "readable",
+        // not "read-only", so a declared family may well be writable and its
+        // impl may be refusing the ARGUMENT rather than the path. Answering
+        // `ReadOnly` there would be a fresh false statement — the mirror of
+        // the one this round exists to remove. `hello-audio-engine`'s
+        // `voice.999.gain` under a writable `voice.<id>.gain` is the case.
+        assert_eq!(judge("cell.0"), InterveneError::UnknownIntervenePath);
+        assert_eq!(judge("cell.999"), InterveneError::UnknownIntervenePath);
+    }
+
+    /// The other half of the same contract: where the surface DID judge, its
+    /// verdict is carried through untouched. Without this the round would have
+    /// traded one wrong word for a differently wrong one.
+    #[test]
+    fn r1566_a_surface_that_judged_the_write_keeps_its_verdict() {
+        let judge = |err| InterveneError::from_declined(err, &MIXED, "depth");
+        assert_eq!(
+            judge(TraitInterveneError::TypeMismatch),
+            InterveneError::InterveneTypeMismatch
+        );
+        assert_eq!(
+            judge(TraitInterveneError::ReadOnly),
+            InterveneError::ReadOnly
+        );
+        let ranged = judge(TraitInterveneError::out_of_range("depth runs 0..=8"));
+        let InterveneError::OutOfRange(reason) = ranged else {
+            panic!("R1565's sentence must survive the re-judgement: {ranged:?}");
+        };
+        assert_eq!(reason.as_str(), "depth runs 0..=8");
+    }
+
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
     }
@@ -326,8 +466,17 @@ mod tests {
 
     impl pinion_core::external::ExternalIntrospect for SpeedDriver {
         fn schema(&self) -> pinion_core::external::IntrospectSchema {
+            // R1566 — `halve` is declared. It was not, and this fixture was
+            // itself an instance of what the round measured: a verb the
+            // surface answers and its schema does not mention, so an agent
+            // reading the declaration could not find it.
             pinion_core::external::IntrospectSchema::new(
-                const { &[pinion_core::external::SchemaField::new("speed", "int")] },
+                const {
+                    &[
+                        pinion_core::external::SchemaField::new("speed", "int"),
+                        pinion_core::external::SchemaField::action("halve", "int"),
+                    ]
+                },
             )
         }
         fn query(&self, path: &str) -> Option<IntrospectValue> {

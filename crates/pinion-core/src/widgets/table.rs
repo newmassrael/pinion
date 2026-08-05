@@ -1307,7 +1307,7 @@ impl ExternalIntrospect for TableExternal {
                         "bool",
                         const { &[SchemaArg::index("row", "rows")] },
                     ),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                     // R730 §5.40 — sort surface. `sort_col` is the sort key column
                     // (`-1` when unsorted); `sort_dir` is "none"/"ascending"/
                     // "descending"; `order.<visual>` is the data-row index painted
@@ -1320,7 +1320,7 @@ impl ExternalIntrospect for TableExternal {
                         "int",
                         const { &[SchemaArg::index("visual", "rows")] },
                     ),
-                    SchemaField::new("sort", "int"),
+                    SchemaField::action("sort", "int"),
                     // R952 §5.38 — cell range selection (the spreadsheet / Qt
                     // `SelectItems` model, distinct from the `selected.<row>` row
                     // selection). `cell_selection` reads the selected rectangle as
@@ -1333,9 +1333,9 @@ impl ExternalIntrospect for TableExternal {
                     SchemaField::new("cell_selection", "string"),
                     SchemaField::new("cell_selection_count", "int"),
                     SchemaField::new("cell_selection_tsv", "string"),
-                    SchemaField::new("select-cell", "boolean"),
-                    SchemaField::new("extend-cell", "boolean"),
-                    SchemaField::new("clear-cell-selection", "boolean"),
+                    SchemaField::action("select-cell", "boolean"),
+                    SchemaField::action("extend-cell", "boolean"),
+                    SchemaField::action("clear-cell-selection", "boolean"),
                 ]
             },
         )

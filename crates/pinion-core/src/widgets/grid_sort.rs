@@ -815,9 +815,9 @@ impl ExternalIntrospect for GridSortExternal {
                             ]
                         },
                     ),
-                    SchemaField::new("cycle_sort", "int"),
-                    SchemaField::new("set_filter", "string"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("cycle_sort", "int"),
+                    SchemaField::action("set_filter", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

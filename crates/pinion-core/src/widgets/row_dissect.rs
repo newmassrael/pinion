@@ -546,11 +546,11 @@ impl ExternalIntrospect for RowDissectionExternal {
                         "int",
                         const { &[SchemaArg::index("idx", "node_count")] },
                     ),
-                    SchemaField::new("select", "int"),
-                    SchemaField::new("toggle", "string"),
-                    SchemaField::new("expand", "string"),
-                    SchemaField::new("collapse", "string"),
-                    SchemaField::new("clear", "string"),
+                    SchemaField::action("select", "int"),
+                    SchemaField::action("toggle", "string"),
+                    SchemaField::action("expand", "string"),
+                    SchemaField::action("collapse", "string"),
+                    SchemaField::action("clear", "string"),
                 ]
             },
         )

@@ -314,7 +314,7 @@ impl ExternalIntrospect for ToggleExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("value", "bool"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -687,7 +687,7 @@ mod tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("value", "bool"),
-                SchemaField::new("send", "string")
+                SchemaField::action("send", "string")
             ]
         );
     }

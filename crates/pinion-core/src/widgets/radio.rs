@@ -271,7 +271,7 @@ impl ExternalIntrospect for RadioExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("selected", "bool"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -474,7 +474,7 @@ mod tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("selected", "bool"),
-                SchemaField::new("send", "string")
+                SchemaField::action("send", "string")
             ]
         );
     }

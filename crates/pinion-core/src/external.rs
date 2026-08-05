@@ -2365,6 +2365,18 @@ pub use query_proxy_external_impl;
 /// declared path exactly would have answered `UnknownPath` for it — telling an
 /// agent that a path it can plainly `query` does not exist, which is the precise
 /// lie this function was written to prevent.
+///
+/// # R1566 — the dispatcher now backstops this, and this still earns its place
+///
+/// The wire refusal is derived from the declaration at the RPC boundary, so a
+/// surface that never calls this no longer publishes the lie. What that
+/// derivation cannot do is the parametric case: it sees only `UnknownPath` and
+/// cannot tell "this shape is not mine" from "this shape is mine and its
+/// ARGUMENT addresses nothing", and a declared family may be writable
+/// (`voice.<id>.gain` is), so concluding `ReadOnly` there would be a fresh
+/// false statement. Called from an impl, after that impl's own arms, the
+/// question is already settled — which is why a family member resolves
+/// correctly here and is deliberately left alone out there.
 #[must_use]
 pub fn read_only_or_unknown(schema: &IntrospectSchema, path: &str) -> InterveneError {
     if schema.field_for(path).is_some() {

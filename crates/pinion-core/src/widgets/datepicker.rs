@@ -542,7 +542,7 @@ impl ExternalIntrospect for DatePickerExternal {
                         "bool",
                         const { &[SchemaArg::open("day", "int")] },
                     ),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

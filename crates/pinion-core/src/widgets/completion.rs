@@ -668,10 +668,10 @@ impl ExternalIntrospect for CompleterExternal {
                         "int",
                         const { &[SchemaArg::index("i", "completion_count")] },
                     ),
-                    SchemaField::new("set_prefix", "string"),
-                    SchemaField::new("next", "string"),
-                    SchemaField::new("prev", "string"),
-                    SchemaField::new("jump", "int"),
+                    SchemaField::action("set_prefix", "string"),
+                    SchemaField::action("next", "string"),
+                    SchemaField::action("prev", "string"),
+                    SchemaField::action("jump", "int"),
                 ]
             },
         )

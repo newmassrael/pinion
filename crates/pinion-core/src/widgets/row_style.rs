@@ -409,8 +409,8 @@ impl ExternalIntrospect for RowStyleExternal {
                         "string",
                         const { &[SchemaArg::index("row", "rows")] },
                     ),
-                    SchemaField::new("add_rule", "string"),
-                    SchemaField::new("clear", "int"),
+                    SchemaField::action("add_rule", "string"),
+                    SchemaField::action("clear", "int"),
                 ]
             },
         )

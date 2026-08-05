@@ -57,6 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    call,
     find_by_tag,
     run_demo,
     wait_until,
@@ -110,13 +111,6 @@ LINE_KEYS = {"start", "end", "x", "y", "advance", "trailing_whitespace", "height
 # A line's x is a shaped f32; compare against the declared px with a tolerance
 # well below one cell so it cannot absorb a wrong answer.
 EPS = 0.5
-
-
-def call(tf: RpcSubprocess, method: str, params: Any = None) -> Any:
-    """The `result` of a request — `tf.request` answers with the envelope."""
-    resp = tf.request(method, params if params is not None else {})
-    assert resp is not None, f"{method} answered nothing"
-    return resp.result
 
 
 def report_for(tf: RpcSubprocess, i: int) -> dict[str, Any]:

@@ -430,11 +430,11 @@ impl ExternalIntrospect for RowSearchExternal {
                             ]
                         },
                     ),
-                    SchemaField::new("set_query", "string"),
-                    SchemaField::new("next", "string"),
-                    SchemaField::new("prev", "string"),
-                    SchemaField::new("jump", "int"),
-                    SchemaField::new("clear", "string"),
+                    SchemaField::action("set_query", "string"),
+                    SchemaField::action("next", "string"),
+                    SchemaField::action("prev", "string"),
+                    SchemaField::action("jump", "int"),
+                    SchemaField::action("clear", "string"),
                 ]
             },
         )

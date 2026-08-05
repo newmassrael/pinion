@@ -262,7 +262,7 @@ impl ExternalIntrospect for CheckboxExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("checked", "bool"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -464,7 +464,7 @@ mod tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("checked", "bool"),
-                SchemaField::new("send", "string")
+                SchemaField::action("send", "string")
             ]
         );
     }

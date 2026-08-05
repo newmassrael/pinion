@@ -8260,6 +8260,7 @@ fn invoke_error_reason(err: &InvokeError) -> WireFault {
         InvokeError::NoExternalAtPath => WireFault::params("NoExternalAtPath"),
         InvokeError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
         InvokeError::UnknownInvokePath => WireFault::params("UnknownInvokePath"),
+        InvokeError::PathIsAReadSlot => WireFault::params("PathIsAReadSlot"),
         InvokeError::InvokeTypeMismatch => WireFault::params("InvokeTypeMismatch"),
         // R1564 — the producer's own sentence, verbatim, under its own code.
         // Every other arm here is a word this crate authored; this one is not,
@@ -8357,6 +8358,7 @@ fn intervene_error_reason(err: &InterveneError) -> WireFault {
         InterveneError::NoExternalAtPath => WireFault::params("NoExternalAtPath"),
         InterveneError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
         InterveneError::UnknownIntervenePath => WireFault::params("UnknownIntervenePath"),
+        InterveneError::PathIsAnAction => WireFault::params("PathIsAnAction"),
         InterveneError::InterveneTypeMismatch => WireFault::params("InterveneTypeMismatch"),
         InterveneError::ReadOnly => WireFault::params("ReadOnly"),
         InterveneError::OutOfRange(reason) => WireFault {
@@ -8649,6 +8651,7 @@ fn query_error_reason(err: &QueryError) -> WireFault {
         QueryError::NoExternalAtPath => WireFault::params("NoExternalAtPath"),
         QueryError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
         QueryError::UnknownIntrospectPath => WireFault::params("UnknownIntrospectPath"),
+        QueryError::PathIsAnAction => WireFault::params("PathIsAnAction"),
     }
 }
 

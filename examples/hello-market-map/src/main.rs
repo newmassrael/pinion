@@ -333,13 +333,13 @@ impl ExternalIntrospect for MarketMapOracle {
                     SchemaField::new("area_order", "string"),
                     SchemaField::new("change_order", "string"),
                     // Per-value oracles, arg = the change.
-                    SchemaField::new("color_at", "string"),
-                    SchemaField::new("linear_color_at", "string"),
-                    SchemaField::new("strip_offset_at", "string"),
+                    SchemaField::action("color_at", "string"),
+                    SchemaField::action("linear_color_at", "string"),
+                    SchemaField::action("strip_offset_at", "string"),
                     // Per-sector oracles, arg = the label.
-                    SchemaField::new("tile_weight", "string"),
-                    SchemaField::new("tile_change", "string"),
-                    SchemaField::new("tile_color", "string"),
+                    SchemaField::action("tile_weight", "string"),
+                    SchemaField::action("tile_change", "string"),
+                    SchemaField::action("tile_color", "string"),
                 ]
             },
         )

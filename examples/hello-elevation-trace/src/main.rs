@@ -316,12 +316,12 @@ impl ExternalIntrospect for TraceOracle {
                     SchemaField::new("peak_index", "float"),
                     SchemaField::new("steepest_index", "float"),
                     // Per-sample oracles, arg = the index.
-                    SchemaField::new("slope_at", "string"),
-                    SchemaField::new("elevation_at", "string"),
-                    SchemaField::new("endpoint_color_at", "string"),
-                    SchemaField::new("x_fraction_at", "string"),
+                    SchemaField::action("slope_at", "string"),
+                    SchemaField::action("elevation_at", "string"),
+                    SchemaField::action("endpoint_color_at", "string"),
+                    SchemaField::action("x_fraction_at", "string"),
                     // Per-segment oracle, arg = the segment index.
-                    SchemaField::new("segment_color_at", "string"),
+                    SchemaField::action("segment_color_at", "string"),
                 ]
             },
         )

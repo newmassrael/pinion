@@ -317,7 +317,7 @@ impl ExternalIntrospect for ColorAreaExternal {
                     SchemaField::new("state", "string"),
                     SchemaField::new("x", "float"),
                     SchemaField::new("y", "float"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

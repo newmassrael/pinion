@@ -293,11 +293,11 @@ impl ExternalIntrospect for ValueScatterOracle {
                     // The ramp's centre stop, `#rrggbb` — what an on-target mark is.
                     SchemaField::new("neutral_hex", "string"),
                     // Per-value oracles, arg = the value.
-                    SchemaField::new("color_at", "string"),
-                    SchemaField::new("linear_color_at", "string"),
+                    SchemaField::action("color_at", "string"),
+                    SchemaField::action("linear_color_at", "string"),
                     // Per-mark oracles, arg `"i,j"`.
-                    SchemaField::new("value_at", "string"),
-                    SchemaField::new("mark_color_at", "string"),
+                    SchemaField::action("value_at", "string"),
+                    SchemaField::action("mark_color_at", "string"),
                 ]
             },
         )

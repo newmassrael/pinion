@@ -496,7 +496,7 @@ impl ExternalIntrospect for RangeSliderExternal {
                     // Which thumb a value mutation last landed on ("low"/"high").
                     SchemaField::new("active", "string"),
                     SchemaField::new("orientation", "string"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

@@ -373,7 +373,7 @@ impl ExternalIntrospect for SpinButtonExternal {
                     // AI-observable hover / pressed feedback).
                     SchemaField::new("dec_state", "string"),
                     SchemaField::new("inc_state", "string"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

@@ -76,6 +76,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    call,
     run_demo,
     wait_until,
 )
@@ -93,13 +94,6 @@ JSON_TYPES = {
     "null",
     "any",
 }
-
-
-def call(tf: RpcSubprocess, method: str, params: Any = None) -> Any:
-    """The `result` of a request — `tf.request` answers with the envelope."""
-    resp = tf.request(method, params if params is not None else {})
-    assert resp is not None, f"{method} answered nothing"
-    return resp.result
 
 
 def type_ok(value: Any, ty: str) -> bool:

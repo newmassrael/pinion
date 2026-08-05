@@ -112,7 +112,12 @@ def body() -> None:
             "★ the seed cards are NOT all the same height — otherwise 'centres "
             f"line up' and 'tops line up' would be the same claim: {heights}"
         )
-        # It is a READ; a client cannot set a card's height.
+        # It is a READ; a client cannot set a card's height. R1566 leaves this
+        # one as `UnknownIntervenePath` deliberately: `node.<id>.h` is a
+        # parametric FAMILY, and a family declared readable may still be
+        # writable (`node.<id>.x` is), so the dispatcher cannot conclude
+        # read-only from the declaration without risking a fresh false
+        # statement. The scalar measurements below are the case it can decide.
         assert_rpc_error(
             lambda: tf.intervene("/external/node.0.h", 99), data="UnknownIntervenePath"
         )
@@ -121,10 +126,7 @@ def body() -> None:
         # `layout_crossings` — the tidiness metric, derived not cached.
         crossings = q(tf, "layout_crossings")
         assert isinstance(crossings, int) and crossings >= 0, crossings
-        assert_rpc_error(
-            lambda: tf.intervene("/external/layout_crossings", 0),
-            data="UnknownIntervenePath",
-        )
+        assert_rpc_error(lambda: tf.intervene("/external/layout_crossings", 0), data="ReadOnly")
 
         # ── (B) ★ Brandes-Köpf: a chain comes out dead straight ──────
         # Scramble, tidy, then every edge of the seed chain must join two equal
@@ -204,8 +206,7 @@ def body() -> None:
         )
         assert_eq(straight, inner, "★ every inner segment is drawn on one coordinate")
         assert_rpc_error(
-            lambda: tf.intervene("/external/layout_inner_segments", 0),
-            data="UnknownIntervenePath",
+            lambda: tf.intervene("/external/layout_inner_segments", 0), data="ReadOnly"
         )
 
         # The seed graph, whose longest edge spans one layer, has no inner

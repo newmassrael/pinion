@@ -523,7 +523,7 @@ impl ExternalIntrospect for ColumnWidthExternal {
                         "int",
                         const { &[SchemaArg::index("col", "cols")] },
                     ),
-                    SchemaField::new("set_col_width", "string"),
+                    SchemaField::action("set_col_width", "string"),
                 ]
             },
         )

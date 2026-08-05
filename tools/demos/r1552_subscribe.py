@@ -56,6 +56,7 @@ from rpc_verify import (  # noqa: E402
     SocketClient,
     assert_eq,
     assert_rpc_error,
+    call,
     find_by_tag,
     run_demo,
     texts_of,
@@ -69,13 +70,6 @@ CHANGED = "scene/changed"
 REVISION_TAG = "sub_revision"
 STREAMS_TAG = "sub_streams"
 PUBLISHED_TAG = "sub_published"
-
-
-def call(tf: RpcSubprocess, method: str, params: Any = None) -> Any:
-    """The `result` of a request — `tf.request` answers with the envelope."""
-    resp = tf.request(method, params if params is not None else {})
-    assert resp is not None, f"{method} answered nothing"
-    return resp.result
 
 
 def revision(tf: RpcSubprocess) -> int:

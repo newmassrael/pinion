@@ -2316,16 +2316,16 @@ impl ExternalIntrospect for PropertyGridExternal {
                         const { &[SchemaArg::open("addr", "string")] },
                     ),
                     SchemaField::new("any_modified", "bool"),
-                    SchemaField::new("reset", "int"),
-                    SchemaField::new("reset_all", "json"),
+                    SchemaField::action("reset", "int"),
+                    SchemaField::action("reset_all", "json"),
                     // R931 — the dynamic array: element count + the add / remove /
                     // reorder verbs. Element values read / write through the same
                     // `value.elem.<k>` / `kind.elem.<k>` / `name.elem.<k>` paths as a
                     // scalar (the unified `ValueRef` wire address).
                     SchemaField::new("elem_count", "int"),
-                    SchemaField::new("add_elem", "int"),
-                    SchemaField::new("remove_elem", "int"),
-                    SchemaField::new("move_elem", "string"),
+                    SchemaField::action("add_elem", "int"),
+                    SchemaField::action("remove_elem", "int"),
+                    SchemaField::action("move_elem", "string"),
                     // R936 — the array branch's modified roll-up (length or any element
                     // differs) + its wholesale reset, the array peer of
                     // `struct_modified.<id>` / `reset_struct`.
@@ -2334,7 +2334,7 @@ impl ExternalIntrospect for PropertyGridExternal {
                         "bool",
                         const { &[SchemaArg::open("branch_id", "string")] },
                     ),
-                    SchemaField::new("reset_array", "bool"),
+                    SchemaField::action("reset_array", "bool"),
                     // R921 — per-branch collapse (read + intervene + toggle) and the
                     // struct aggregate (summary tuple + modified roll-up + reset-all).
                     SchemaField::parametric(
@@ -2352,8 +2352,8 @@ impl ExternalIntrospect for PropertyGridExternal {
                         "bool",
                         const { &[SchemaArg::open("struct_id", "string")] },
                     ),
-                    SchemaField::new("toggle_branch", "bool"),
-                    SchemaField::new("reset_struct", "int"),
+                    SchemaField::action("toggle_branch", "bool"),
+                    SchemaField::action("reset_struct", "int"),
                     // R921 — the roving keyboard cursor's node id (read + intervene; a
                     // leaf value-index string "6" or a branch `cat.` / `struct.` id,
                     // Null when unset). The AI-first cursor move (no click side effect).
@@ -2362,12 +2362,12 @@ impl ExternalIntrospect for PropertyGridExternal {
                     // R875 — live numeric-scrub flag (true between the first drag move
                     // and the release); the AI-first witness of a scrub in flight.
                     SchemaField::new("scrubbing", "bool"),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("toggle", "int"),
-                    SchemaField::new("begin", "int"),
-                    SchemaField::new("choose", "int"),
-                    SchemaField::new("pick_color", "int"),
-                    SchemaField::new("close_popup", "json"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("toggle", "int"),
+                    SchemaField::action("begin", "int"),
+                    SchemaField::action("choose", "int"),
+                    SchemaField::action("pick_color", "int"),
+                    SchemaField::action("close_popup", "json"),
                 ]
             },
         )

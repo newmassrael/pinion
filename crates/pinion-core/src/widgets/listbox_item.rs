@@ -284,7 +284,7 @@ impl ExternalIntrospect for ListBoxItemExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("selected", "bool"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

@@ -566,6 +566,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("meaning", WireTy::String, None),
                 WireField::new("data_is_prose", WireTy::Boolean, None),
                 WireField::new("standard", WireTy::Boolean, None),
+                WireField::new("data_vocabulary", WireTy::Array, None),
             ],
         },
     },

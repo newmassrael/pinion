@@ -878,7 +878,7 @@ impl ExternalIntrospect for ScrollBarExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("orientation", "string"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -1368,7 +1368,7 @@ mod r55_d2_tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("orientation", "string"),
-                SchemaField::new("send", "string"),
+                SchemaField::action("send", "string"),
             ],
         );
     }

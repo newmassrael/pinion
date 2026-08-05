@@ -3892,7 +3892,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     // (`"placeholder"` / `"collapse"`), read here + driven by the
                     // `set_float_policy` invoke so an AI toggles collapse vs placeholder.
                     SchemaField::new("float_policy", "string"),
-                    SchemaField::new("set_float_policy", "string"),
+                    SchemaField::action("set_float_policy", "string"),
                     // (R1350 §5.51.1 §2 #7 PR-59) Whether `float_policy` was DECLARED by
                     // the binding (`with_float_policy`) and is therefore refused to the
                     // wire. Modelled exactly on `tabbing` above — a readable policy an
@@ -3908,18 +3908,18 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     // null), so an AI client watching one tag sees both the
                     // committed `last_outcome` and the live drag.
                     SchemaField::new("drop_preview", "json"),
-                    SchemaField::new("drop", "json"),
-                    SchemaField::new("reorganize", "json"),
+                    SchemaField::action("drop", "json"),
+                    SchemaField::action("reorganize", "json"),
                     // (R1085 §5.51) Tab-well navigation: make tab `index` of well
                     // `well_id` visible (`{"well_id": "...", "index": N}`). The
                     // AI-first primary for tab activation — discoverable here so an
                     // agent reasoning over a `Tabs` well can switch tabs symbolically
                     // (no pixels), the §2 #2 RPC-as-primary-path contract.
-                    SchemaField::new("activate_tab", "json"),
+                    SchemaField::action("activate_tab", "json"),
                     // (R1145 §5.51) Undock a tabbed panel back into a split sibling
                     // (`"<panel_id>"`) — the reverse of a centre-zone tabify, the AI-first
                     // primary for separating merged tabs (no pixels, no floating window).
-                    SchemaField::new("undock_tab", "string"),
+                    SchemaField::action("undock_tab", "string"),
                 ]
             },
         )

@@ -514,9 +514,9 @@ impl ExternalIntrospect for ViewSortFilterExternal {
                         "int",
                         const { &[SchemaArg::index("pos", "view_len")] },
                     ),
-                    SchemaField::new("cycle_sort", "string"),
-                    SchemaField::new("set_filter", "int"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("cycle_sort", "string"),
+                    SchemaField::action("set_filter", "int"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

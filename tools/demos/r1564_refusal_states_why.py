@@ -68,19 +68,13 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_out_of_range,
     assert_rpc_error,
+    call,
     rpc_error_data,
     run_demo,
 )
 
 EXAMPLE = "hello-refused-invoke"
 EXT = "/external"
-
-
-def call(tf: RpcSubprocess, method: str, params: Any = None) -> Any:
-    """The `result` of a request — `tf.request` answers with the envelope."""
-    resp = tf.request(method, params if params is not None else {})
-    assert resp is not None, f"{method} answered nothing"
-    return resp.result
 
 
 def q(tf: RpcSubprocess, field: str) -> Any:
