@@ -224,6 +224,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(track_fill).with_corner_radius(TRACK_RADIUS))
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Row)
                     .with_justify(knob_justify)
                     .with_align_items(AlignItems::Center)

@@ -238,7 +238,16 @@ def body() -> None:
             )
 
         # ── (F) checking fills the SAME rect the outline occupied ──────
+        # R1570.1 — the click now also FOCUSES the checkbox, because that round
+        # made a declared interactive role a focus stop (HTML's native
+        # `<input type=checkbox>` and Qt's `Qt::StrongFocus` both do). The focus
+        # ring is painted around the tagged Container, which spans `[box]
+        # [label]`, so it merges the two into one continuous ink band and
+        # `find_box`'s "leftmost band" walk returns the whole row. That is the
+        # ring being real, not the box moving — so the state is put back before
+        # the capture rather than the finder being taught to ignore ink.
         tf.click(path=TAG)
+        tf.request("focus/set", {"tag": None})
         checked = capture(tf, "checked")
         cx0, cy0, cx1, cy1 = find_box(checked, page)
         assert_eq((cx0, cy0, cx1, cy1), (x0, y0, x1, y1), "checked box occupies the same rect")
@@ -258,7 +267,10 @@ def body() -> None:
         )
 
         # ── (G) unchecking restores the hollow outline ─────────────────
+        # Same reason as (F): the click focuses, so put the focus back before
+        # measuring ink.
         tf.click(path=TAG)
+        tf.request("focus/set", {"tag": None})
         again = capture(tf, "unchecked-again")
         ax0, ay0, ax1, ay1 = find_box(again, page)
         assert_eq((ax0, ay0, ax1, ay1), (x0, y0, x1, y1), "box rect survives the round trip")

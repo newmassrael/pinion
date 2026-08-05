@@ -230,6 +230,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(switch_fill).with_corner_radius(18))
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Center)
                     .with_align_items(AlignItems::Center)

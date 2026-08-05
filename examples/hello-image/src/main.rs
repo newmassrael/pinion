@@ -189,7 +189,11 @@ fn view(state: ToggleState, bounds: bool, _frame: Frame) -> Scene {
             .with_corner_radius(10),
         )
         .with_tag(TOGGLE_TAG)
-        .with_layout(LayoutStyle::new().with_size(Size::px(120, 28))),
+        .with_layout(
+            LayoutStyle::new()
+                .with_focusable(true)
+                .with_size(Size::px(120, 28)),
+        ),
     );
     let toggle_caption = Scene::Text(TextNode::styled(
         format!("highlight bounds: {knob} ({})", state.as_name()),

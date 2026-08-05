@@ -671,9 +671,45 @@ AXES = [
         # the fade cannot reach (`Image` / `External` / `ImmediateModeNode` /
         # `TextGrid`) — Qt cannot grey a `QOpenGLWidget` either, so it is
         # stated on the wire rather than fixed.
-        "judged_at": 1554,
-        "completion": 93,
-        "evidence_snapshot": {"example-name": 74, "round-axis": 4},
+        # R1570 re-judge, 93 -> 95, demanded by the tool: the round ledger took
+        # this axis 4 -> 6 and it absorbs TWO rounds, because R1569 landed at
+        # exactly the band edge (+25%, and the test is `> 25%`) and deferred
+        # its look.
+        #
+        # R1569 made the FOCUSED widget able to shadow the window's accelerator
+        # layers (Qt `QEvent::ShortcutOverride`) — a place the tree sat BELOW
+        # the floor, and shipped: typing `d` into `hello-textfield`'s focused
+        # field disabled the field. It also closes one of the five widget kinds
+        # this axis's own list called absent, `QKeySequenceEdit`, since the
+        # editor is what forced the axis.
+        #
+        # R1570.1 closed something the gap list had never NAMED, which is why
+        # it is worth more than its size: the catalog's atomic controls were
+        # not keyboard-operable at all. `#[widget(role = ...)]` announces an
+        # operable control, and in **17 of 23** such bindings `focus/set`
+        # refused the tag and `focus/next` answered `None` — no focus stop in
+        # the window. HTML gives it without a `tabindex` and Qt gives it as
+        # `Qt::StrongFocus`, so this was below both floors. The second-order
+        # cost is what makes it structural rather than cosmetic:
+        # `apply_aria_activate` gates on `focused == Some(my_tag)`, so 13 of
+        # the 25 byte-identical `apply_key` bodies in the tree were UNREACHABLE
+        # code under doc comments describing a Space/Enter behaviour that could
+        # not happen.
+        #
+        # Only +2, and the reason is that the axis's STATED gap list barely
+        # moved: the wheel item (`External::wheel` still has two implementors)
+        # is untouched and still the largest cross-cutting one, mnemonic
+        # adoption is still four sites, the disabled cascade still has one
+        # consumer, and four absent widget kinds remain (`QDial`, a paged
+        # container, `QFontComboBox`, the canned `QMessageBox` /
+        # `QInputDialog`). R1570.1 adds two of its own, audited: ten of the
+        # sixteen hand-painted controls repeat the focus declaration because
+        # there is no `switch` painter to own it, and a POINTER click paints
+        # the focus ring with no `:focus-visible` distinction — not below Qt,
+        # whose common styles do the same, but now visible on 17 more controls.
+        "judged_at": 1570,
+        "completion": 95,
+        "evidence_snapshot": {"example-name": 76, "round-axis": 6},
     },
     {
         "key": "dataviz",

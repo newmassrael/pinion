@@ -133,6 +133,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(BTN_FILL))
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Center)
                     .with_align_items(AlignItems::Center)

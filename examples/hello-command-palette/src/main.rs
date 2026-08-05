@@ -469,6 +469,7 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(surface))
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Column)
                     .with_gap(10)
                     .with_size(Size::px(WIN_W, WIN_H)),

@@ -67,6 +67,20 @@ pub struct CheckboxStyle {
     /// box across the `Noto` / `DejaVu` / `Inter` font fallback chain the
     /// shell's parley resolver picks).
     pub glyph_size_px: u32,
+    /// R1570 §5.39 — keyboard focus stop. When `true`, [`view_checkbox`] marks
+    /// the tagged Container `.with_focusable(true)` so the scene-derived §5.39
+    /// enumeration collects it as a Tab stop.
+    ///
+    /// Default `true`, and the default is the point: this field did not exist
+    /// until R1570, so `hello-checkbox` shipped a `role = CheckBox` that
+    /// `focus/set` refused and `focus/next` could not reach — which also made
+    /// its `apply_aria_activate` unreachable, since that gates on
+    /// `focused == Some(tag)`. HTML's native `<input type=checkbox>` and Qt's
+    /// `QCheckBox` (`Qt::StrongFocus`) are both focusable without asking, so
+    /// the fail-safe direction is the same one [`crate::button::ButtonStyle::focusable`]
+    /// took
+    /// at R1030 for the same reason.
+    pub focusable: bool,
 }
 
 impl CheckboxStyle {
@@ -81,7 +95,17 @@ impl CheckboxStyle {
             row_gap: 10,
             font_size_px: 16,
             glyph_size_px: 18,
+            focusable: true,
         }
+    }
+
+    /// R1570 §5.39 — override the keyboard focus stop (default `true`).
+    /// An interactive checkbox keeps the default; a decorative or
+    /// coordinator-driven one opts out. See [`Self::focusable`].
+    #[must_use]
+    pub const fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
     }
 }
 
@@ -179,7 +203,8 @@ pub fn view_checkbox(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
-                    .with_gap(style.row_gap),
+                    .with_gap(style.row_gap)
+                    .with_focusable(style.focusable),
             ),
     )
 }

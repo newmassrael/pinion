@@ -138,6 +138,7 @@ fn view(state: RadioState, selected: bool, _frame: &Frame) -> Scene {
             .with_tag("main_radio")
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_gap(ROW_GAP),

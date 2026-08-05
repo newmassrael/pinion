@@ -314,6 +314,7 @@ fn mode_switch(
             .with_style(BoxStyle::filled(switch_fill).with_corner_radius(18))
             .with_layout(
                 LayoutStyle::new()
+                    .with_focusable(true)
                     .with_absolute_position(110, 330)
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Center)
