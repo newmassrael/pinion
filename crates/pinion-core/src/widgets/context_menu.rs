@@ -426,15 +426,20 @@ impl ExternalIntrospect for ContextMenuExternal {
                     self.em.inner.close();
                     Ok(())
                 }
-                IntrospectValue::Bool(true) => Err(InterveneError::OutOfRange),
+                IntrospectValue::Bool(true) => Err(InterveneError::out_of_range(
+                    "a context menu opens at a POINT, so `open` can only be \
+                     written false; use invoke open_at \"<x>,<y>\"",
+                )),
                 _ => Err(InterveneError::TypeMismatch),
             },
             "active" => match value {
                 IntrospectValue::Int(i) => {
                     if !self.is_open() {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(
+                            "no item is highlightable while the popup is closed",
+                        ));
                     }
-                    let item = resolve_index(i, self.item_count())?;
+                    let item = resolve_index("item", i, self.item_count())?;
                     self.em.inner.active = Some(item);
                     Ok(())
                 }
@@ -520,6 +525,7 @@ fn query_anchor_axis(intro: &dyn ExternalIntrospect, path: &str) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
 
     fn menu() -> ContextMenu {
         ContextMenu::new(4)
@@ -750,9 +756,9 @@ mod tests {
     fn intervene_active_out_of_range_rejected() {
         let mut e = ext();
         e.dispatch_open_at("0,0").unwrap();
-        assert_eq!(
-            e.intervene("active", IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &e.intervene("active", IntrospectValue::Int(9)),
+            "no item 9 here",
         );
     }
 
@@ -767,9 +773,9 @@ mod tests {
     #[test]
     fn intervene_open_true_rejected_needs_anchor() {
         let mut e = ext();
-        assert_eq!(
-            e.intervene("open", IntrospectValue::Bool(true)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &e.intervene("open", IntrospectValue::Bool(true)),
+            "a context menu opens at a POINT",
         );
     }
 

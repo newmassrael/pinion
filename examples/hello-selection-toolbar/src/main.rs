@@ -408,9 +408,13 @@ impl ExternalIntrospect for SelRowExternal {
             "focus" => match value {
                 IntrospectValue::Int(i) => {
                     let n = self.count();
-                    let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
+                    let idx = usize::try_from(i).map_err(|_| {
+                        InterveneError::out_of_range(format!("{i} is not a row index"))
+                    })?;
                     if n == 0 || idx >= n {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(format!(
+                            "no row {idx} in this list (it has {n})"
+                        )));
                     }
                     self.focus = idx;
                     Ok(())
@@ -431,7 +435,10 @@ impl ExternalIntrospect for SelRowExternal {
                     return Err(InterveneError::TypeMismatch);
                 };
                 if idx >= self.count() {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "no row {idx} in this list (it has {})",
+                        self.count()
+                    )));
                 }
                 self.items.set_with(|prev| {
                     prev.iter()
@@ -907,6 +914,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_a11y::AriaRole;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
 
     fn by_tag<'a>(nodes: &'a [AccessNode], tag: &str) -> &'a AccessNode {
         nodes.iter().find(|n| n.tag == tag).expect("node present")
@@ -1041,9 +1049,9 @@ mod tests {
                 .unwrap();
             assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(0)));
             // Out-of-range / type errors are reported, not silently dropped.
-            assert_eq!(
-                ext.intervene("selected.99", IntrospectValue::Bool(true)),
-                Err(InterveneError::OutOfRange)
+            assert_out_of_range_saying(
+                &ext.intervene("selected.99", IntrospectValue::Bool(true)),
+                "no row 99 in this list",
             );
             assert_eq!(
                 ext.intervene("selected.0", IntrospectValue::Int(1)),

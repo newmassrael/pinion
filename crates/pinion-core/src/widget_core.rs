@@ -1114,35 +1114,6 @@ pub fn require_event<E: WidgetEventName>(
     })
 }
 
-/// R1564 §5.15 — the vocabulary a [`require_event`] refusal advertised, parsed
-/// back out of it.
-///
-/// Test support, and it earns its place in production code rather than in a
-/// test module because of how it was found. The first assertion written about
-/// this asked whether the message *contained* `"accepts: <name>"` — a question
-/// about the name's POSITION in the list, which a counterfactual advertising
-/// every variant passed, because the internal raise it must not advertise
-/// happened to land second. A membership question needs the list, so the list
-/// has to be recoverable; recovering it by hand at each call site would put the
-/// same parsing mistake in every test that asks.
-///
-/// Returns an empty slice for any refusal that is not one of these — which is
-/// itself the honest answer, since no other refusal advertises a vocabulary.
-#[must_use]
-pub fn advertised_vocabulary(err: &crate::external::InvokeError) -> Vec<&str> {
-    let Some(reason) = err.reason() else {
-        return Vec::new();
-    };
-    let Some((_, listed)) = reason.as_str().split_once("(accepts: ") else {
-        return Vec::new();
-    };
-    listed
-        .trim_end_matches(')')
-        .split(", ")
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
 /// R644 §5.16 — type-safe single-source-of-truth tag identifier.
 ///
 /// Pre-R644 every binding spelled its tag as a bare `&'static str`
@@ -1402,19 +1373,27 @@ mod r1564_advertised_vocabulary {
     //!
     //! This module exists because a counterfactual **passed**. The claim was
     //! being checked one refusal message at a time, by substring, and the
-    //! substring asked about a name's position rather than its membership — so
-    //! a derive that advertised every variant (internal `<raise>` events and
+    //! substring asked about a name's *position* rather than its membership —
+    //! so a derive that advertised every variant (internal `<raise>` events and
     //! the SCXML `Null` sentinel included) satisfied every assertion in the
-    //! tree. What is asserted here is the property itself, over several event
-    //! enums, in both directions: nothing advertised is refused, and the
-    //! internal names are advertised by none of them.
+    //! tree.
     //!
-    //! Both directions are needed and neither alone is enough. Without the
+    //! R1564.1 — the first fix reached for the message and **parsed the list
+    //! back out of it**, which closed the hole and opened a smaller one: a
+    //! sentence whose format drifted would answer with an empty list, and an
+    //! empty list satisfies a membership test vacuously. The property does not
+    //! need the message at all. `require_event` composes the sentence *from*
+    //! `drivable_names`, so asking that function directly is asking the source
+    //! rather than its rendering — and the one thing the message must be
+    //! checked for (that the names actually reach it) is a `contains` per name
+    //! with nothing to parse. The accessor is gone.
+    //!
+    //! Both directions are asserted and neither alone is enough. Without the
     //! first, `drivable_names` could return the whole variant list. Without the
     //! second, it could return an empty one — vacuously "accurate", and useless
     //! to the operator the sentence exists for.
 
-    use super::{WidgetEventName, advertised_vocabulary, require_event};
+    use super::{WidgetEventName, require_event};
     use crate::widgets::button::ButtonEvent;
     use crate::widgets::disclosure::DisclosureEvent;
     use crate::widgets::listbox_item::ListboxItemEvent;
@@ -1422,40 +1401,46 @@ mod r1564_advertised_vocabulary {
     use crate::widgets::text_field::TextFieldEvent;
     use crate::widgets::toggle::ToggleEvent;
 
-    /// Every name a refusal advertises is a name `from_name` admits.
-    fn advertises_only_what_it_accepts<E: WidgetEventName + std::fmt::Debug>(widget: &str) {
-        let refusal = require_event::<E>(widget, "\u{0}definitely-not-an-event")
-            .expect_err("a NUL-led name is not an event of any statechart");
-        let advertised = advertised_vocabulary(&refusal);
+    /// The advertised vocabulary is exactly the accepted one, and it reaches
+    /// the sentence.
+    fn advertises_exactly_what_it_accepts<E: WidgetEventName + std::fmt::Debug>(widget: &str) {
+        let names = E::drivable_names();
         assert!(
-            !advertised.is_empty(),
+            !names.is_empty(),
             "{widget}: a refusal that lists nothing tells the operator nothing",
         );
-        for name in &advertised {
+        let refusal = require_event::<E>(widget, "\u{0}definitely-not-an-event")
+            .expect_err("a NUL-led name is not an event of any statechart");
+        let said = refusal
+            .reason()
+            .expect("a rejection states why")
+            .as_str()
+            .to_owned();
+        for name in &names {
+            // (1) Advertised implies accepted. This is the direction the
+            // counterfactual breaks, and it needs no message: `drivable_names`
+            // IS what the sentence is built from.
             assert!(
                 E::from_name(name).is_some(),
-                "{widget}: advertised {name:?}, which from_name then refuses",
+                "{widget}: advertises {name:?}, which from_name then refuses",
             );
-        }
-        // …and the reverse: every accepted name is advertised. Checked through
-        // the one surface that can be enumerated from outside — the drivable
-        // list itself — so this pins that the two derivations are one.
-        for name in E::drivable_names() {
+            // (2) …and the name reaches the operator, which is the only thing
+            // the rendered sentence is responsible for.
             assert!(
-                advertised.contains(&name),
-                "{widget}: accepts {name:?} without advertising it",
+                said.contains(name),
+                "{widget}: accepts {name:?} without saying so: {said}",
             );
         }
     }
 
     #[test]
     fn six_widgets_advertise_exactly_what_they_accept() {
-        advertises_only_what_it_accepts::<ButtonEvent>("button");
-        advertises_only_what_it_accepts::<DisclosureEvent>("disclosure");
-        advertises_only_what_it_accepts::<ListboxItemEvent>("listbox_item");
-        advertises_only_what_it_accepts::<RadioEvent>("radio");
-        advertises_only_what_it_accepts::<TextFieldEvent>("text_field");
-        advertises_only_what_it_accepts::<ToggleEvent>("toggle");
+        advertises_exactly_what_it_accepts::<ButtonEvent>("button");
+        advertises_exactly_what_it_accepts::<DisclosureEvent>("disclosure");
+        advertises_exactly_what_it_accepts::<ListboxItemEvent>("listbox_item");
+        advertises_exactly_what_it_accepts::<RadioEvent>("radio");
+        advertises_exactly_what_it_accepts::<TextFieldEvent>("text_field");
+        advertises_exactly_what_it_accepts::<ToggleEvent>("toggle");
     }
 
     #[test]
@@ -1463,25 +1448,47 @@ mod r1564_advertised_vocabulary {
         // `Null` is in every generated Event enum and is drivable by none of
         // them — the sharpest single witness that the advertised list comes
         // from `EXTERNALLY_DRIVABLE_EVENTS` and not from the variant list.
-        for advertised in [
-            advertised_vocabulary(&require_event::<ButtonEvent>("button", "?").unwrap_err()),
-            advertised_vocabulary(&require_event::<ToggleEvent>("toggle", "?").unwrap_err()),
-            advertised_vocabulary(&require_event::<RadioEvent>("radio", "?").unwrap_err()),
-        ] {
-            assert!(
-                !advertised.contains(&"Null"),
-                "the SCXML sentinel reached the wire: {advertised:?}",
-            );
-        }
+        assert!(!ButtonEvent::drivable_names().contains(&"Null"));
+        assert!(!ToggleEvent::drivable_names().contains(&"Null"));
+        assert!(!RadioEvent::drivable_names().contains(&"Null"));
     }
 
     #[test]
-    fn a_refusal_that_advertises_nothing_parses_to_nothing() {
-        // The accessor's own boundary: `advertised_vocabulary` must not invent
-        // a list for a refusal that has none, or the assertions above would
-        // read a fabricated empty set as a real one.
-        let plain = crate::external::InvokeError::rejected("no pane 999 on this host");
-        assert!(advertised_vocabulary(&plain).is_empty());
-        assert!(advertised_vocabulary(&crate::external::InvokeError::TypeMismatch).is_empty());
+    fn r1564_1_every_invoke_failure_declares_how_a_transport_renders_it() {
+        // R1564.1 — the compile-time guard `pinion-rpc` cannot have.
+        //
+        // `InvokeError` is `#[non_exhaustive]`, so the transport's
+        // `From<InvokeError>` needs a `_` arm; R1564 made that arm answer
+        // `UnmappedSurfaceError` rather than fabricate a reason, which is the
+        // honest RUNTIME answer and leaves the decision unmade until someone
+        // notices. `#[non_exhaustive]` constrains other crates and not this
+        // one, so an exhaustive match HERE is a compile error the day a variant
+        // is added — which is the point, and why this lives in the defining
+        // crate ([`ArgDomain::to_wire`](crate::external::ArgDomain::to_wire)'s
+        // own argument).
+        use crate::external::InvokeError;
+        fn renders_as(err: &InvokeError) -> &'static str {
+            match err {
+                InvokeError::UnknownPath | InvokeError::TypeMismatch => "a framework word",
+                InvokeError::Rejected(_) => "the producer's sentence",
+            }
+        }
+        // …and the classification is not free-floating: it agrees with what the
+        // value can actually supply.
+        for (err, expected) in [
+            (InvokeError::UnknownPath, "a framework word"),
+            (InvokeError::TypeMismatch, "a framework word"),
+            (
+                InvokeError::rejected("no pane 999"),
+                "the producer's sentence",
+            ),
+        ] {
+            assert_eq!(renders_as(&err), expected);
+            assert_eq!(
+                err.reason().is_some(),
+                expected == "the producer's sentence",
+                "a failure renders as a sentence iff it carries one: {err:?}",
+            );
+        }
     }
 }

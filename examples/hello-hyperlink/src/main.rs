@@ -468,7 +468,10 @@ impl ExternalIntrospect for HyperlinkOracle {
                 IntrospectValue::Int(i) => {
                     let idx = u32::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
                     if (idx as usize) >= LINKS.len() {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(format!(
+                            "no hyperlink {idx} in this document (it has {})",
+                            LINKS.len()
+                        )));
                     }
                     self.hovered = Some(HyperlinkId(idx));
                     Ok(())
@@ -608,6 +611,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
     use pinion_core::test_fixtures::assert_refused_saying;
 
     fn colors() -> CellColors {
@@ -719,9 +723,9 @@ mod tests {
         assert_eq!(o.hovered, Some(HyperlinkId(0)));
         o.intervene("hover_index", IntrospectValue::Null).unwrap();
         assert_eq!(o.hovered, None);
-        assert_eq!(
-            o.intervene("hover_index", IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &o.intervene("hover_index", IntrospectValue::Int(9)),
+            "no hyperlink 9 in this document",
         );
         assert_eq!(
             o.intervene("link_count", IntrospectValue::Int(1)),

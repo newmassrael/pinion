@@ -528,7 +528,7 @@ impl ExternalIntrospect for ToolbarExternal {
             "count" => Err(InterveneError::ReadOnly),
             "focus" => match value {
                 IntrospectValue::Int(i) => {
-                    let idx = resolve_index(i, self.count())?;
+                    let idx = resolve_index("item", i, self.count())?;
                     self.em.inner.set_focus(idx);
                     Ok(())
                 }
@@ -545,7 +545,11 @@ impl ExternalIntrospect for ToolbarExternal {
                 match value {
                     IntrospectValue::Bool(b) => {
                         if self.kind(i) != Some(ToolItem::Toggle) {
-                            return Err(InterveneError::OutOfRange);
+                            return Err(InterveneError::out_of_range(format!(
+                                "item {i} is a {:?}, and only a Toggle carries a \
+                                 pressed slot",
+                                self.kind(i)
+                            )));
                         }
                         self.em.inner.pressed[i] = b;
                         Ok(())
@@ -590,6 +594,7 @@ fn kind_name(kind: ToolItem) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
 
     /// Bold(toggle) / Italic(toggle) / Underline(toggle) / Undo(cmd) /
@@ -723,13 +728,13 @@ mod tests {
         e.intervene("focus", IntrospectValue::Int(2)).unwrap();
         assert_eq!(e.focus(), 2);
         assert!(!e.is_dirty(), "intervene fires no intent");
-        assert_eq!(
-            e.intervene("focus", IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &e.intervene("focus", IntrospectValue::Int(9)),
+            "no item 9 here",
         );
-        assert_eq!(
-            e.intervene("focus", IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &e.intervene("focus", IntrospectValue::Int(-1)),
+            "-1 is not a item index",
         );
     }
 
@@ -741,9 +746,11 @@ mod tests {
         assert_eq!(e.is_pressed(1), Some(true));
         assert!(!e.is_dirty(), "programmatic pressed fires no toggle intent");
         // A command control has no pressed slot.
-        assert_eq!(
-            e.intervene("pressed.3", IntrospectValue::Bool(true)),
-            Err(InterveneError::OutOfRange)
+        // R1565 — "index out of range" and "that control has no pressed slot"
+        // were one value; the comment above was the only thing distinguishing.
+        assert_out_of_range_saying(
+            &e.intervene("pressed.3", IntrospectValue::Bool(true)),
+            "only a Toggle carries a pressed slot",
         );
     }
 

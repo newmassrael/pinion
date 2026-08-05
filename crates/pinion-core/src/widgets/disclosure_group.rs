@@ -269,7 +269,7 @@ impl DisclosureGroupExternal {
     /// [`InterveneError::OutOfRange`] (variant mismatch is reserved
     /// for `Value` shape errors, per R51.91).
     fn resolve_index_intervene(&self, i: i64) -> Result<usize, InterveneError> {
-        crate::widgets::wire::resolve_index(i, self.count())
+        crate::widgets::wire::resolve_index("section", i, self.count())
     }
 }
 
@@ -446,8 +446,9 @@ mod tests {
     //! R700 §5.38 — single-expand mutual exclusion, model-driven
     //! restore, transition intent emission, and the §5.12 RPC surface
     //! (query / intervene / invoke) of [`DisclosureGroupExternal`].
+    use crate::WidgetEventName;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
-    use crate::widget_core::advertised_vocabulary;
 
     use super::*;
 
@@ -613,14 +614,14 @@ mod tests {
         );
         assert_eq!(ext.expanded_index(), None);
         // Out-of-range + negative -> OutOfRange.
-        assert!(matches!(
-            ext.intervene("expanded_index", IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange)
-        ));
-        assert!(matches!(
-            ext.intervene("expanded_index", IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange)
-        ));
+        assert_out_of_range_saying(
+            &ext.intervene("expanded_index", IntrospectValue::Int(9)),
+            "no section 9 here",
+        );
+        assert_out_of_range_saying(
+            &ext.intervene("expanded_index", IntrospectValue::Int(-1)),
+            "-1 is not a section index",
+        );
         // Wrong value shape -> TypeMismatch; count read-only.
         assert!(matches!(
             ext.intervene("expanded_index", IntrospectValue::Bool(true)),
@@ -680,7 +681,7 @@ mod tests {
         let internal = ext.invoke("send", IntrospectValue::Text("0:DisclosureActivate".into()));
         assert_refused_saying(&internal, "\"DisclosureActivate\" is not an event");
         assert!(
-            !advertised_vocabulary(internal.as_ref().unwrap_err()).contains(&"DisclosureActivate"),
+            !DisclosureEvent::drivable_names().contains(&"DisclosureActivate"),
             "an internal raise must not appear in the advertised vocabulary",
         );
         // Malformed payload (no ':') rejected.

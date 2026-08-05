@@ -56,6 +56,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -267,8 +268,8 @@ def body() -> None:
             "order": [0, 1, 2, 3, 4], "sizes": BOOT_W, "hidden": [False] * NCOLS,
             "modes": ["interactive", "Stretch", "fixed", "fixed", "fixed"],
         }), data="InterveneTypeMismatch")                                           # 42
-        assert_rpc_error(lambda: tf.intervene("/external/content_widths", [1, 2]),
-                         data="OutOfRange")                                         # 43
+        assert_out_of_range(lambda: tf.intervene("/external/content_widths", [1, 2]),
+                            saying="needs 5 entries, not 2")                        # 43
         assert_eq(_h(tf, "state"), before, "five refusals, nothing moved")          # 44
 
 

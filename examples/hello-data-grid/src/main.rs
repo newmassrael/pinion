@@ -5491,6 +5491,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
     use pinion_core::test_fixtures::assert_refused_saying;
     // R940 — the popup-a11y test asserts the listbox role; AriaRole is test-only
     // here (the production a11y path names roles through the substrate builders).
@@ -9537,9 +9538,9 @@ mod tests {
             );
             assert_eq!(cell_choice(&scene, "value.0.1"), 4, "set to script");
             // Out-of-range index → OutOfRange; wrong payload type → TypeMismatch.
-            assert_eq!(
-                grid_set(&mut scene, "value.0.1", IntrospectValue::Int(9)),
-                Err(InterveneError::OutOfRange)
+            assert_out_of_range_saying(
+                &grid_set(&mut scene, "value.0.1", IntrospectValue::Int(9)),
+                "no option 9 on this cell",
             );
             assert_eq!(
                 grid_set(

@@ -2582,6 +2582,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 "scene/pacing_state" => {
                     (handle_scene_pacing_state(pacing_state), HandlerKind::Read)
                 }
+                "rpc/errors" => (handle_rpc_errors(), HandlerKind::Read),
                 "rpc/methods" => (handle_rpc_methods(), HandlerKind::Read),
                 "rpc/schema" => (handle_rpc_schema(), HandlerKind::Read),
                 "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
@@ -3689,6 +3690,15 @@ fn handle_scene_windows(windows: Option<Vec<DeclaredWindow>>) -> Result<Value, R
 /// [`crate::RPC_METHODS`] catalog so an AI can DISCOVER the wire surface
 /// instead of needing every method's literal string. Context-free (the
 /// catalog is a const), so it never errors except on a serialize fault.
+/// R1564.1 §5.7 §5.12 §2 #7 — `rpc/errors` handler: publish the error-code
+/// catalog, so the fact that decides how a client may treat `error.data` is
+/// askable rather than only readable in this crate's source. Context-free, so
+/// it never errors except on a serialize fault.
+fn handle_rpc_errors() -> Result<Value, RpcError> {
+    serde_json::to_value(crate::errors::rpc_errors())
+        .map_err(|e| RpcError::invalid_params(format!("serialize: {e}")))
+}
+
 fn handle_rpc_methods() -> Result<Value, RpcError> {
     serde_json::to_value(rpc_methods())
         .map_err(|e| RpcError::invalid_params(format!("serialize: {e}")))
@@ -8177,6 +8187,27 @@ fn preview_view_to_json(view: &PreviewView, now: std::time::Instant) -> Value {
 /// belongs next to them, not scattered.
 pub const ACTION_REFUSED: i32 = -32005;
 
+/// R1565 §5.15 §2 #2 (PINION-PR82) — JSON-RPC error code for **a written value
+/// outside the slot's accepted range**, as distinct from `-32602 Invalid
+/// params`.
+///
+/// The write channel's peer of [`ACTION_REFUSED`], and it exists for a reason
+/// one notch subtler. Unlike a refused action, an out-of-range write really
+/// *is* a bad parameter, so `-32602` was the right *category* — what makes it
+/// wrong now is the **payload**. R1565 put the producer's sentence in
+/// `error.data` for this arm (the variant says "out of range" and cannot say
+/// which range), and `rpc/errors` publishes the rule that `-32602` carries a
+/// word from this crate's closed vocabulary while every application-defined
+/// code carries free application text. Leaving this under `-32602` would
+/// falsify that rule for every method at once — so the code is *forced* by the
+/// reason rather than chosen for taste, which is the same argument
+/// [`ACTION_REFUSED`] makes and the reason the two are one design.
+///
+/// A client that only cares that its parameters were wrong can still treat
+/// `-32602` and this as one class; the split exists so a client that reads
+/// `error.data` knows which kind of thing it is holding.
+pub const VALUE_OUT_OF_RANGE: i32 = -32006;
+
 /// R1564 — a refusal's wire form: the JSON-RPC code **and** the detail string,
 /// decided together.
 ///
@@ -8208,10 +8239,10 @@ impl WireFault {
 /// `message` is a category label, and a category with two spellings is two
 /// categories to a client parsing it.
 fn fault_message(code: i32) -> &'static str {
-    if code == ACTION_REFUSED {
-        "Action refused"
-    } else {
-        "Invalid params"
+    match code {
+        ACTION_REFUSED => "Action refused",
+        VALUE_OUT_OF_RANGE => "Value out of range",
+        _ => "Invalid params",
     }
 }
 
@@ -8311,12 +8342,15 @@ fn handle_scene_intervene(
 
 /// R1487 — peer of [`invoke_error_reason`] for the write-state channel.
 fn intervene_error_reason(err: &InterveneError) -> WireFault {
-    // R1564 — every arm is `-32602`: `InterveneError` has no reason-carrying
-    // variant yet, so no write refusal here is the producer's own sentence.
-    // That asymmetry with `invoke` is stated rather than hidden — the write
-    // channel's `ReadOnly` / `OutOfRange` are the next slice of PINION-PR82,
-    // and giving them a code before they have a reason would publish a
-    // distinction with nothing behind it.
+    // R1565 — `OutOfRange` is the one arm here whose meaning the variant does
+    // not determine, so it is the one that carries the producer's sentence, and
+    // carrying it FORCES a code of its own. The rule `rpc/errors` publishes is
+    // that `-32602` carries a word from this crate's closed vocabulary and
+    // every application code carries free application text; putting a sentence
+    // under `-32602` would falsify that rule for every other method at once.
+    //
+    // `ReadOnly` and `InterveneTypeMismatch` stay `-32602` and stay words: each
+    // is fully determined by its variant, so a sentence would restate it.
     match err {
         InterveneError::Path(inner) => WireFault::params(inner.wire_tag()),
         InterveneError::UnsupportedPath => WireFault::params("UnsupportedPath"),
@@ -8325,7 +8359,11 @@ fn intervene_error_reason(err: &InterveneError) -> WireFault {
         InterveneError::UnknownIntervenePath => WireFault::params("UnknownIntervenePath"),
         InterveneError::InterveneTypeMismatch => WireFault::params("InterveneTypeMismatch"),
         InterveneError::ReadOnly => WireFault::params("ReadOnly"),
-        InterveneError::OutOfRange => WireFault::params("OutOfRange"),
+        InterveneError::OutOfRange(reason) => WireFault {
+            code: VALUE_OUT_OF_RANGE,
+            reason: reason.clone().into_cow(),
+        },
+        InterveneError::UnmappedSurfaceError => WireFault::params("UnmappedSurfaceError"),
         InterveneError::RetainedNodeNotWritable => WireFault::params("RetainedNodeNotWritable"),
     }
 }

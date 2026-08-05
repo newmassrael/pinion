@@ -598,7 +598,9 @@ impl ExternalIntrospect for RecordsExternal {
         let suffix = path
             .strip_prefix("value.")
             .ok_or(InterveneError::UnknownPath)?;
-        let (row, col) = Self::cell_index(suffix).ok_or(InterveneError::OutOfRange)?;
+        let (row, col) = Self::cell_index(suffix).ok_or_else(|| {
+            InterveneError::out_of_range(format!("{suffix:?} does not address a cell"))
+        })?;
         let next = COL_KINDS[col].coerce(value)?;
         let mut cells = self.cells.get();
         cells[row * NCOLS + col] = next;

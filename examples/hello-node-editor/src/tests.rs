@@ -1,5 +1,6 @@
 use super::*;
 use pinion_core::scene::ExternalNode;
+use pinion_core::test_fixtures::assert_out_of_range_saying;
 use pinion_core::test_fixtures::assert_refused_saying;
 
 /// R878 — the idle paint posture (no rename in flight).
@@ -4757,10 +4758,9 @@ fn r878_intervene_title_is_the_undoable_write_twin() {
                 Ok(()),
                 "a Text write renames (trimmed)",
             );
-            assert_eq!(
-                intro.intervene("node.2.title", IntrospectValue::Text("  ".to_owned())),
-                Err(InterveneError::OutOfRange),
-                "an empty title is a value rejection",
+            assert_out_of_range_saying(
+                &intro.intervene("node.2.title", IntrospectValue::Text("  ".to_owned())),
+                "a node title cannot be blank",
             );
             assert_eq!(
                 intro.intervene("node.2.title", IntrospectValue::Int(7)),
@@ -5144,10 +5144,9 @@ fn r879_intervene_selected_ids_is_the_strict_write_twin() {
             sel_set(&[0, 2]),
             "CSV writes the set"
         );
-        assert_eq!(
-            intro.intervene("selected_ids", IntrospectValue::Text("0,99".to_owned())),
-            Err(InterveneError::OutOfRange),
-            "an unknown member rejects the whole write",
+        assert_out_of_range_saying(
+            &intro.intervene("selected_ids", IntrospectValue::Text("0,99".to_owned())),
+            "no node 99 in this graph",
         );
         assert_eq!(
             use_selection().get(),
@@ -6237,9 +6236,9 @@ fn r1227_frame_rename_undoable() {
             Err(InterveneError::TypeMismatch),
         );
         // An empty title is rejected (the frame keeps its name).
-        assert_eq!(
-            coord.intervene(&title_path, IntrospectValue::Text("  ".to_owned())),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &coord.intervene(&title_path, IntrospectValue::Text("  ".to_owned())),
+            "a frame title cannot be blank",
         );
         // An unknown frame id is UnknownPath.
         assert_eq!(

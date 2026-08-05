@@ -1270,7 +1270,7 @@ impl ExternalIntrospect for MenuBarExternal {
             // the `"command"` intent (RPC restore / form default).
             "open" => match value {
                 IntrospectValue::Int(i) => {
-                    let m = resolve_index(i, self.menu_count())?;
+                    let m = resolve_index("menu", i, self.menu_count())?;
                     self.em.inner.open = Some(m);
                     // R985 — opening a top menu resets the submenu descent.
                     self.em.inner.open_path.clear();
@@ -1297,7 +1297,10 @@ impl ExternalIntrospect for MenuBarExternal {
                     }
                     let p = parse_path(s).ok_or(InterveneError::TypeMismatch)?;
                     if !self.em.inner.is_valid_open_path(&p) {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(format!(
+                            "{s:?} is not a path this menubar can be open at \
+                             (each step must name a submenu of the one before it)"
+                        )));
                     }
                     self.em.inner.open_path = p;
                     self.em.inner.active = None;
@@ -1312,9 +1315,13 @@ impl ExternalIntrospect for MenuBarExternal {
                         .em
                         .inner
                         .current_items()
-                        .ok_or(InterveneError::OutOfRange)?
+                        .ok_or_else(|| {
+                            InterveneError::out_of_range(
+                                "no menu is open, so no item is highlightable",
+                            )
+                        })?
                         .len();
-                    let item = resolve_index(i, len)?;
+                    let item = resolve_index("item", i, len)?;
                     self.em.inner.active = Some(item);
                     Ok(())
                 }
@@ -1326,7 +1333,7 @@ impl ExternalIntrospect for MenuBarExternal {
             },
             "bar_focus" => match value {
                 IntrospectValue::Int(i) => {
-                    let m = resolve_index(i, self.menu_count())?;
+                    let m = resolve_index("menu", i, self.menu_count())?;
                     self.em.inner.bar_focus = m;
                     Ok(())
                 }
@@ -1342,11 +1349,9 @@ impl ExternalIntrospect for MenuBarExternal {
                     .strip_prefix("checked.")
                     .ok_or(InterveneError::UnknownPath)?;
                 let p = parse_path(suffix).ok_or(InterveneError::UnknownPath)?;
-                let item = self
-                    .em
-                    .inner
-                    .item_at_path_mut(&p)
-                    .ok_or(InterveneError::OutOfRange)?;
+                let item = self.em.inner.item_at_path_mut(&p).ok_or_else(|| {
+                    InterveneError::out_of_range(format!("no menu item at path {suffix:?}"))
+                })?;
                 match (value, item) {
                     (IntrospectValue::Bool(b), MenuItem::Checkbox { checked, .. }) => {
                         *checked = b;
@@ -1385,6 +1390,7 @@ impl ExternalIntrospect for MenuBarExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
 
     fn bar() -> MenuBar {
@@ -1678,30 +1684,32 @@ mod tests {
     #[test]
     fn external_intervene_open_out_of_range() {
         let mut e = ext();
-        assert_eq!(
-            e.intervene("open", IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &e.intervene("open", IntrospectValue::Int(9)),
+            "no menu 9 here",
         );
-        assert_eq!(
-            e.intervene("open", IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &e.intervene("open", IntrospectValue::Int(-1)),
+            "-1 is not a menu index",
         );
     }
 
     #[test]
     fn external_intervene_active_requires_open_menu() {
         let mut e = ext();
-        assert_eq!(
-            e.intervene("active", IntrospectValue::Int(0)),
-            Err(InterveneError::OutOfRange),
-            "no open menu -> no active slot"
+        assert_out_of_range_saying(
+            &e.intervene("active", IntrospectValue::Int(0)),
+            "no menu is open, so no item is highlightable",
         );
         e.intervene("open", IntrospectValue::Int(1)).unwrap();
         e.intervene("active", IntrospectValue::Int(4)).unwrap();
         assert_eq!(e.active_item(), Some(4));
-        assert_eq!(
-            e.intervene("active", IntrospectValue::Int(5)),
-            Err(InterveneError::OutOfRange)
+        // R1565 — "no menu open" and "no such item in the open menu" were the
+        // same value; the comment above used to be the only thing telling them
+        // apart.
+        assert_out_of_range_saying(
+            &e.intervene("active", IntrospectValue::Int(5)),
+            "no item 5 here",
         );
     }
 
@@ -2144,9 +2152,9 @@ mod tests {
             .unwrap();
         assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(true)));
         assert!(!e.is_dirty(), "intervene fires no command intent");
-        assert_eq!(
-            e.intervene("checked.0.9", IntrospectValue::Bool(true)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &e.intervene("checked.0.9", IntrospectValue::Bool(true)),
+            r#"no menu item at path "0.9""#,
         );
         assert_eq!(
             e.intervene("checked.0.0", IntrospectValue::Int(1)),
@@ -2449,10 +2457,9 @@ mod tests {
         assert_eq!(e.open_path(), &[1]);
         assert!(!e.is_dirty(), "intervene fires no command intent");
         // An index that is not a submenu is rejected.
-        assert_eq!(
-            e.intervene("open_path", IntrospectValue::Text("0".into())),
-            Err(InterveneError::OutOfRange),
-            "item 0 is a command, not a submenu",
+        assert_out_of_range_saying(
+            &e.intervene("open_path", IntrospectValue::Text("0".into())),
+            "each step must name a submenu",
         );
         // Empty string collapses to the top dropdown.
         e.intervene("open_path", IntrospectValue::Text(String::new()))

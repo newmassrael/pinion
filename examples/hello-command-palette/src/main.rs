@@ -301,11 +301,16 @@ impl ExternalIntrospect for PaletteExternal {
             },
             "selected" => match value {
                 IntrospectValue::Int(n) => {
-                    let i = usize::try_from(n).map_err(|_| InterveneError::OutOfRange)?;
+                    let i = usize::try_from(n).map_err(|_| {
+                        InterveneError::out_of_range(format!("{n} is not a command index"))
+                    })?;
                     if self.select(i) {
                         Ok(())
                     } else {
-                        Err(InterveneError::OutOfRange)
+                        Err(InterveneError::out_of_range(format!(
+                            "no command {i} in the current filtered list (it has {})",
+                            self.visible().len()
+                        )))
                     }
                 }
                 _ => Err(InterveneError::TypeMismatch),

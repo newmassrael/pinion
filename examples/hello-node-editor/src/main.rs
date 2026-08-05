@@ -5189,7 +5189,9 @@ impl NodeGraphExternal {
                     if apply_rename(&self.frames, &self.undo, id, &t) {
                         Ok(())
                     } else {
-                        Err(InterveneError::OutOfRange)
+                        Err(InterveneError::out_of_range(
+                            "a frame title cannot be blank",
+                        ))
                     }
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -5752,7 +5754,9 @@ impl NodeGraphExternal {
                 .map_err(|_| InterveneError::TypeMismatch)?;
             let id = NodeId(raw);
             if !self.nodes.get().iter().any(|n| n.id == id) {
-                return Err(InterveneError::OutOfRange);
+                return Err(InterveneError::out_of_range(format!(
+                    "no node {raw} in this graph"
+                )));
             }
             members.insert(id);
         }
@@ -7015,7 +7019,7 @@ impl ExternalIntrospect for NodeGraphExternal {
                     if apply_rename(&self.nodes, &self.undo, id, &t) {
                         Ok(())
                     } else {
-                        Err(InterveneError::OutOfRange)
+                        Err(InterveneError::out_of_range("a node title cannot be blank"))
                     }
                 }
                 _ => Err(InterveneError::TypeMismatch),

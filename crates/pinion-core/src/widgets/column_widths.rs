@@ -482,6 +482,21 @@ impl External for ColumnWidthExternal {
     }
 }
 
+/// R1565 §5.15 — a pixel bound that fits the layout's own `u32` width, stating
+/// the ceiling when it does not.
+///
+/// # Errors
+///
+/// [`InterveneError::OutOfRange`] naming the slot and the ceiling.
+fn pixel_width(slot: &str, px: usize) -> Result<u32, InterveneError> {
+    u32::try_from(px).map_err(|_| {
+        InterveneError::out_of_range(format!(
+            "{slot}: {px} px exceeds the {} px a section width is measured in",
+            u32::MAX
+        ))
+    })
+}
+
 impl ExternalIntrospect for ColumnWidthExternal {
     fn schema(&self) -> IntrospectSchema {
         // `widths`        — comma-separated per-column widths (query + intervene).
@@ -561,16 +576,14 @@ impl ExternalIntrospect for ColumnWidthExternal {
             // split, over one piece of state rather than one address.
             "min_width" => match value.as_usize() {
                 Some(px) => {
-                    self.state
-                        .set_min_width(u32::try_from(px).map_err(|_| InterveneError::OutOfRange)?);
+                    self.state.set_min_width(pixel_width("min_width", px)?);
                     Ok(())
                 }
                 None => Err(InterveneError::TypeMismatch),
             },
             "max_width" => match value.as_usize() {
                 Some(px) => {
-                    self.state
-                        .set_max_width(u32::try_from(px).map_err(|_| InterveneError::OutOfRange)?);
+                    self.state.set_max_width(pixel_width("max_width", px)?);
                     Ok(())
                 }
                 None => Err(InterveneError::TypeMismatch),

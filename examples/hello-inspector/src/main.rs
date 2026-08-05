@@ -1665,9 +1665,15 @@ impl ExternalIntrospect for InspectorExternal {
             // single row (`Int`) or clear it (`Null`).
             "selected" => match value {
                 IntrospectValue::Int(n) => {
-                    let idx = usize::try_from(n).map_err(|_| InterveneError::OutOfRange)?;
+                    let idx = usize::try_from(n).map_err(|_| {
+                        InterveneError::out_of_range(format!("{n} is not an object index"))
+                    })?;
                     if idx >= self.object_count() {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(format!(
+                            "no object {idx} in this inspector (it holds {}, so 0..{})",
+                            self.object_count(),
+                            self.object_count()
+                        )));
                     }
                     self.select(idx);
                     Ok(())

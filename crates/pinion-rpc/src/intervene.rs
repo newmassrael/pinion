@@ -37,7 +37,9 @@
 //! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher only.
 
 use pinion_core::Scene;
-use pinion_core::external::{InterveneError as TraitInterveneError, IntrospectValue};
+use pinion_core::external::{
+    InterveneError as TraitInterveneError, IntrospectValue, RefusalReason,
+};
 
 use crate::origin::{AnswerOrigin, Refusal, SceneSource};
 use crate::path::PathError;
@@ -73,7 +75,23 @@ pub enum InterveneError {
     ReadOnly,
     /// The value is the right variant but its content is outside the
     /// slot's accepted range (e.g. negative caret position).
-    OutOfRange,
+    ///
+    /// R1565 §5.15 (PINION-PR82) — carries the producer's own
+    /// [`RefusalReason`], forwarded verbatim to the JSON-RPC `error.data`,
+    /// because the variant does not determine the range. It is the only arm of
+    /// the trait-level `InterveneError` that gained one, and the only one here
+    /// that needed to: `ReadOnly` and `InterveneTypeMismatch` are each fully
+    /// determined by their variant, so a sentence would restate them.
+    OutOfRange(RefusalReason),
+    /// R1565 — the surface reported a [`TraitInterveneError`] this transport
+    /// has not been taught to name. The peer of
+    /// [`InvokeError::UnmappedSurfaceError`](crate::InvokeError::UnmappedSurfaceError),
+    /// added for the same reason and by the same correction: the wildcard's
+    /// previous landing site was `InterveneTypeMismatch`, which tells a client
+    /// something specific and probably untrue about its own payload.
+    ///
+    /// Unreachable today by construction.
+    UnmappedSurfaceError,
     /// R1487 §2 #7 — the address named a **retained** `External` reached
     /// through the shared ([`intervene_shared`]) walk, which cannot write
     /// to it. The peer of
@@ -105,20 +123,25 @@ impl From<ResolveExternalError> for InterveneError {
 
 impl From<TraitInterveneError> for InterveneError {
     fn from(err: TraitInterveneError) -> Self {
-        // `TraitInterveneError` is `#[non_exhaustive]`; future variants
-        // collapse into `InterveneTypeMismatch` via the wildcard until
-        // a follow-up slice maps them explicitly. The existing four
-        // variants get distinct codes so the RPC client can branch
+        // The four variants get distinct codes so the RPC client can branch
         // (`UnknownPath` ↔ "schema does not declare", `ReadOnly` ↔
         // "schema declares but immutable", `OutOfRange` ↔ "value
         // outside accepted bounds").
+        //
+        // R1565 — the wildcard no longer absorbs `TypeMismatch`. It used to,
+        // which meant a variant added upstream would be reported to a client as
+        // "your value was the wrong TYPE" — a specific and probably false
+        // statement about the caller's payload. Naming the four explicitly
+        // leaves the wildcard for the unknown, and
+        // [`UnmappedSurfaceError`](InterveneError::UnmappedSurfaceError) is what
+        // it honestly says; the same correction R1564 made on the read-write
+        // channel's peer.
         match err {
             TraitInterveneError::UnknownPath => InterveneError::UnknownIntervenePath,
+            TraitInterveneError::TypeMismatch => InterveneError::InterveneTypeMismatch,
             TraitInterveneError::ReadOnly => InterveneError::ReadOnly,
-            TraitInterveneError::OutOfRange => InterveneError::OutOfRange,
-            // Wildcard absorbs `TypeMismatch` plus any future variant
-            // a follow-up slice adds to the non_exhaustive enum.
-            _ => InterveneError::InterveneTypeMismatch,
+            TraitInterveneError::OutOfRange(reason) => InterveneError::OutOfRange(reason),
+            _ => InterveneError::UnmappedSurfaceError,
         }
     }
 }

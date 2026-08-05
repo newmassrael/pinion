@@ -4725,6 +4725,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::scene::ExternalNode;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
 
     // The typed-value pure helpers (kind / name / parse / display / the
     // keystroke gate) are now tested in `pinion_core::cell_value`; this
@@ -6750,9 +6751,9 @@ mod tests {
                 panic!("json")
             };
             assert_eq!(v["label"], serde_json::json!("Additive"));
-            assert_eq!(
-                intro.intervene("value.9", IntrospectValue::Int(9)),
-                Err(InterveneError::OutOfRange),
+            assert_out_of_range_saying(
+                &intro.intervene("value.9", IntrospectValue::Int(9)),
+                "no option 9 on this cell",
             );
             assert_eq!(
                 intro.intervene("value.9", IntrospectValue::Text("x".to_owned())),
@@ -6943,9 +6944,9 @@ mod tests {
                 panic!("json")
             };
             assert_eq!(v["hex"], serde_json::json!("#abcdef"));
-            assert_eq!(
-                intro.intervene("value.11", IntrospectValue::Text("nope".to_owned())),
-                Err(InterveneError::OutOfRange),
+            assert_out_of_range_saying(
+                &intro.intervene("value.11", IntrospectValue::Text("nope".to_owned())),
+                r#""nope" is not a colour"#,
             );
         });
     }

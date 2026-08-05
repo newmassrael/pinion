@@ -407,20 +407,26 @@ impl CellValue {
                 // `query value.<i>` -> `intervene value.<i>` round-trip works and
                 // the read/write wire forms are symmetric.
                 let idx = match value {
-                    IntrospectValue::Int(i) => {
-                        usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?
-                    }
+                    IntrospectValue::Int(i) => usize::try_from(i).map_err(|_| {
+                        InterveneError::out_of_range(format!("{i} is not an option index"))
+                    })?,
                     IntrospectValue::Json(v) => {
                         let sel = v
                             .get("selected")
                             .and_then(serde_json::Value::as_u64)
                             .ok_or(InterveneError::TypeMismatch)?;
-                        usize::try_from(sel).map_err(|_| InterveneError::OutOfRange)?
+                        usize::try_from(sel).map_err(|_| {
+                            InterveneError::out_of_range(format!("{sel} is not an option index"))
+                        })?
                     }
                     _ => return Err(InterveneError::TypeMismatch),
                 };
                 if idx >= options.len() {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "no option {idx} on this cell (it offers {}: {})",
+                        options.len(),
+                        options.join(", ")
+                    )));
                 }
                 Ok(CellValue::Choice {
                     selected: idx,
@@ -444,7 +450,12 @@ impl CellValue {
                 };
                 Color::from_hex(hex.trim())
                     .map(CellValue::Color)
-                    .ok_or(InterveneError::OutOfRange)
+                    .ok_or_else(|| {
+                        InterveneError::out_of_range(format!(
+                            "{:?} is not a colour (expected #rgb, #rrggbb or #rrggbbaa)",
+                            hex.trim()
+                        ))
+                    })
             }
             _ => self.kind().coerce(value),
         }
@@ -742,6 +753,7 @@ fn single_char(key: &str, pred: impl Fn(char) -> bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
 
     #[test]
     fn kind_classifies_every_variant() {
@@ -921,13 +933,15 @@ mod tests {
             }),
         );
         // Out of range and negative both reject without mutating.
-        assert_eq!(
-            v.with_intervene(IntrospectValue::Int(3)),
-            Err(InterveneError::OutOfRange)
+        // R1565 — the two used to be one value; an index past the end names
+        // the options, a negative one cannot be an index at all.
+        assert_out_of_range_saying(
+            &v.with_intervene(IntrospectValue::Int(3)),
+            "no option 3 on this cell",
         );
-        assert_eq!(
-            v.with_intervene(IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &v.with_intervene(IntrospectValue::Int(-1)),
+            "-1 is not an option index",
         );
         // Wrong payload variant is a type mismatch (choice sets by index).
         assert_eq!(
@@ -1030,9 +1044,9 @@ mod tests {
             Ok(CellValue::Color(Color::rgb(255, 128, 0))),
         );
         // Malformed hex is out of range; a non-Text payload is a type mismatch.
-        assert_eq!(
-            v.with_intervene(IntrospectValue::Text("xyz".to_owned())),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &v.with_intervene(IntrospectValue::Text("xyz".to_owned())),
+            r#""xyz" is not a colour"#,
         );
         assert_eq!(
             v.with_intervene(IntrospectValue::Int(5)),
@@ -1094,13 +1108,13 @@ mod tests {
             }),
         );
         // An out-of-range index via EITHER form is `OutOfRange`.
-        assert_eq!(
-            v.with_intervene(IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &v.with_intervene(IntrospectValue::Int(9)),
+            "no option 9 on this cell",
         );
-        assert_eq!(
-            v.with_intervene(IntrospectValue::Json(serde_json::json!({ "selected": 9 }))),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &v.with_intervene(IntrospectValue::Json(serde_json::json!({ "selected": 9 }))),
+            "no option 9 on this cell",
         );
     }
 

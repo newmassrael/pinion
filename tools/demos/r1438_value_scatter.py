@@ -42,6 +42,7 @@ from rpc_verify import (
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -254,8 +255,9 @@ def body() -> None:
         # Typed rejections, not a generic failure: an unknown MODE is a value
         # outside the accepted set, a derived projection is read-only, and a
         # coordinate past the data is rejected rather than clamped.
-        assert_rpc_error(
-            lambda: ta.intervene(f"{EXT}/encoding", "rainbow"), data="OutOfRange"
+        assert_out_of_range(
+            lambda: ta.intervene(f"{EXT}/encoding", "rainbow"),
+            saying='"rainbow" is not an encoding',
         )
         assert_rpc_error(
             lambda: ta.intervene(f"{EXT}/neutral_offset", 0.9), data="ReadOnly"

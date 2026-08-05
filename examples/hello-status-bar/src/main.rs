@@ -183,7 +183,9 @@ impl ExternalIntrospect for StatusBarExternal {
                 IntrospectValue::Int(n) => {
                     self.line.set(
                         u32::try_from(n)
-                            .map_err(|_| InterveneError::OutOfRange)?
+                            .map_err(|_| {
+                                InterveneError::out_of_range(format!("{n} is not a line number"))
+                            })?
                             .max(1),
                     );
                     Ok(())
@@ -194,7 +196,9 @@ impl ExternalIntrospect for StatusBarExternal {
                 IntrospectValue::Int(n) => {
                     self.col.set(
                         u32::try_from(n)
-                            .map_err(|_| InterveneError::OutOfRange)?
+                            .map_err(|_| {
+                                InterveneError::out_of_range(format!("{n} is not a column number"))
+                            })?
                             .max(1),
                     );
                     Ok(())

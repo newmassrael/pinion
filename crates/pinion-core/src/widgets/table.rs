@@ -1186,21 +1186,19 @@ impl TableExternal {
     }
 
     /// Validate an intervene `row` index against the row count.
+    ///
+    /// R1565 — routed through [`wire::resolve_index`](crate::widgets::wire),
+    /// which is what these two were open-coded copies of. Reaching for the
+    /// sentence is what made that visible: three copies of a bound could not
+    /// disagree while they all answered one payload-free variant, and three
+    /// copies composing a sentence can.
     fn resolve_row_intervene(&self, i: i64) -> Result<usize, InterveneError> {
-        let row = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
-        if row >= self.row_count() {
-            return Err(InterveneError::OutOfRange);
-        }
-        Ok(row)
+        crate::widgets::wire::resolve_index("row", i, self.row_count())
     }
 
     /// Validate an intervene `col` index against the column count.
     fn resolve_col_intervene(&self, i: i64) -> Result<usize, InterveneError> {
-        let col = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
-        if col >= self.col_count() {
-            return Err(InterveneError::OutOfRange);
-        }
-        Ok(col)
+        crate::widgets::wire::resolve_index("column", i, self.col_count())
     }
 }
 
@@ -1503,7 +1501,11 @@ impl ExternalIntrospect for TableExternal {
                 let row_str = other.strip_prefix("selected.").unwrap_or("");
                 let row: usize = row_str.parse().map_err(|_| InterveneError::UnknownPath)?;
                 if row >= self.row_count() {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "no row {row} here (it has {}, so 0..{})",
+                        self.row_count(),
+                        self.row_count()
+                    )));
                 }
                 match value {
                     IntrospectValue::Bool(b) => {
@@ -1579,6 +1581,7 @@ impl ExternalIntrospect for TableExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
 
     #[test]
@@ -1763,9 +1766,9 @@ mod tests {
         assert_eq!(ext.query("focused_row"), Some(IntrospectValue::Int(1)));
         assert_eq!(ext.query("focused_col"), Some(IntrospectValue::Int(1)));
         // Out-of-range rejected.
-        assert_eq!(
-            ext.intervene("focused_row", IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &ext.intervene("focused_row", IntrospectValue::Int(9)),
+            "no row 9 here",
         );
         // Read-only slot rejected.
         assert_eq!(
@@ -2103,9 +2106,9 @@ mod tests {
         );
         assert_eq!(ext.selected_rows(), vec![2]);
         // Out-of-range row rejects.
-        assert_eq!(
-            ext.intervene("selected.9", IntrospectValue::Bool(true)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &ext.intervene("selected.9", IntrospectValue::Bool(true)),
+            "no row 9 here",
         );
     }
 

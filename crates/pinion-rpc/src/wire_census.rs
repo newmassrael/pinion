@@ -558,6 +558,18 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "ErrorEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("code", WireTy::Integer, None),
+                WireField::new("message", WireTy::String, None),
+                WireField::new("meaning", WireTy::String, None),
+                WireField::new("data_is_prose", WireTy::Boolean, None),
+                WireField::new("standard", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
         name: "ExportPdfOutcome",
         shape: WireShape::Object {
             fields: &[
@@ -1107,6 +1119,17 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("code", WireTy::Integer, None),
                 WireField::new("message", WireTy::String, None),
                 WireField::new("data", WireTy::Any, None).optional(),
+            ],
+        },
+    },
+    WireType {
+        name: "RpcErrors",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("errors", WireTy::Array, Some("ErrorEntry")),
+                WireField::new("count", WireTy::Integer, None),
+                WireField::new("application_range", WireTy::Array, None),
+                WireField::new("data_doc", WireTy::String, None),
             ],
         },
     },

@@ -1569,7 +1569,9 @@ impl ExternalIntrospect for TextFieldExternal {
                     return Err(InterveneError::TypeMismatch);
                 };
                 if n < 0 {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "{n} is not a caret offset (a caret sits at 0..=len)"
+                    )));
                 }
                 // Lossless cast — TextEditState::set_caret clamps to
                 // text.len() internally, so any in-range i64 is
@@ -3229,6 +3231,7 @@ mod r56_1_b_tests {
     //! R56.1.b §5.38 §5.21 — `caret_rect` closed-form helper +
     //! [`TextField`] composition with [`TextEditState`] +
     //! introspect text/caret slots.
+    use crate::test_fixtures::assert_out_of_range_saying;
 
     use super::{TextField, TextFieldEvent, TextFieldExternal, caret_rect};
     use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue};
@@ -3417,9 +3420,9 @@ mod r56_1_b_tests {
     fn r56_1_b_intervene_caret_rejects_negative_as_out_of_range() {
         let state = Rc::new(TextEditState::new());
         let mut tfx = TextFieldExternal::new().attach_state(state);
-        assert_eq!(
-            tfx.intervene("caret", IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &tfx.intervene("caret", IntrospectValue::Int(-1)),
+            "-1 is not a caret offset",
         );
     }
 

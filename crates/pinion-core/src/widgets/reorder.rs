@@ -309,7 +309,10 @@ impl ReorderModel {
             "focused_index" => {
                 let i = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
                 if i >= self.count {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "no position {i} in this model (it has {}, so 0..{})",
+                        self.count, self.count
+                    )));
                 }
                 self.focused.set(Some(i));
                 Ok(())
@@ -330,7 +333,10 @@ impl ReorderModel {
                 if self.set_order(&next) {
                     Ok(())
                 } else {
-                    Err(InterveneError::OutOfRange)
+                    Err(InterveneError::out_of_range(format!(
+                        "{next:?} is not a permutation of 0..{}",
+                        self.count
+                    )))
                 }
             }
             _ => Err(InterveneError::UnknownPath),
@@ -557,6 +563,7 @@ pub fn read_reorder(intro: &dyn ExternalIntrospect) -> ReorderView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
 
     fn drop_h(visual: usize, x_rel: f32) -> DropPoint {
@@ -712,10 +719,10 @@ mod tests {
         m.intervene("focused_index", &IntrospectValue::Int(2))
             .expect("in range");
         assert_eq!(m.focused(), Some(2));
-        assert!(matches!(
-            m.intervene("focused_index", &IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange)
-        ));
+        assert_out_of_range_saying(
+            &m.intervene("focused_index", &IntrospectValue::Int(9)),
+            "no position 9 in this model",
+        );
         // R1450 — `order` became writable (Qt restoreState), so a wrong-shaped
         // value is now a TypeMismatch rather than "you may not write this".
         assert!(matches!(
@@ -840,13 +847,13 @@ mod tests {
         assert_eq!(fresh.order(), m.order());
         // A well-formed array that is not a permutation is OutOfRange, not
         // TypeMismatch: the shape was right, the value was impossible.
-        assert!(matches!(
-            fresh.intervene(
+        assert_out_of_range_saying(
+            &fresh.intervene(
                 "order",
-                &IntrospectValue::Json(serde_json::json!([0, 0, 1, 2]))
+                &IntrospectValue::Json(serde_json::json!([0, 0, 1, 2])),
             ),
-            Err(InterveneError::OutOfRange)
-        ));
+            "is not a permutation of 0..4",
+        );
         assert!(matches!(
             fresh.intervene("order", &IntrospectValue::Json(serde_json::json!(["a"]))),
             Err(InterveneError::TypeMismatch)

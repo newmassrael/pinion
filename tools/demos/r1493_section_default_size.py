@@ -81,6 +81,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -286,9 +287,9 @@ def body() -> None:
 
         # ── (G) a restore is not order-dependent ──────────────────────
         crossed = dict(saved, min_section_size=200, max_section_size=100)
-        assert_rpc_error(
+        assert_out_of_range(
             lambda: tf.intervene("/external/state", crossed),
-            data="OutOfRange",
+            saying="the saved bounds cross",
         )                                                                        # 31
         assert_eq(_h(tf, "max_section_size"), 150, "and nothing at all was written")  # 32
 

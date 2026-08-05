@@ -33,7 +33,15 @@ socket:
   * a widget `send` refusal names the vocabulary it WOULD have accepted, which
     is derived from the same const `from_name` gates on, so it cannot advertise
     a name the surface would then decline;
-  * nothing was executed by any refused call.
+  * nothing was executed by any refused call;
+  * (R1565) the WRITE channel does the same for the one arm whose variant does
+    not determine its meaning — an out-of-range value states the range, under
+    `VALUE_OUT_OF_RANGE`, while `ReadOnly` keeps its word because its meaning IS
+    its variant;
+  * and (R1564.1) the codes are DISCOVERABLE — `rpc/errors` publishes each one
+    with the fact that decides how a client may treat its payload, so moving
+    the classifying job onto `error.code` did not replace one undiscoverable
+    contract with another.
 
 ZERO-FLAKE: no sleeps, no timing assertions — every check is a request/response
 pair against deterministic state the demo itself drives.
@@ -53,9 +61,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     ACTION_REFUSED,
+    VALUE_OUT_OF_RANGE,
     RpcSubprocess,
     assert_action_refused,
     assert_eq,
+    assert_out_of_range,
     assert_rpc_error,
     rpc_error_data,
     run_demo,
@@ -63,6 +73,13 @@ from rpc_verify import (  # noqa: E402
 
 EXAMPLE = "hello-refused-invoke"
 EXT = "/external"
+
+
+def call(tf: RpcSubprocess, method: str, params: Any = None) -> Any:
+    """The `result` of a request — `tf.request` answers with the envelope."""
+    resp = tf.request(method, params if params is not None else {})
+    assert resp is not None, f"{method} answered nothing"
+    return resp.result
 
 
 def q(tf: RpcSubprocess, field: str) -> Any:
@@ -170,12 +187,62 @@ def body() -> None:
         assert_eq(q(tf, "panes"), "1, 3", "G: and neither refusal changed the host")
         assert_eq(q(tf, "reports"), 1, "G: nor the report count")
 
-        # ── (H) the surface is discoverable, so an agent finds these actions ─
+        # ── (G2) the WRITE channel states its range, under its own code ─────
+        # R1565 — `OutOfRange` was the one arm of `InterveneError` whose meaning
+        # its variant does not determine, and it now carries the range. The code
+        # is FORCED rather than chosen: `data` became free application text, and
+        # `rpc/errors` publishes that -32602 carries a closed vocabulary.
+        tf.intervene(f"{EXT}/reports", 7)
+        assert_eq(q(tf, "reports"), 7, "G2: an in-range restore lands")
+        said = assert_out_of_range(
+            lambda: tf.intervene(f"{EXT}/reports", 10_000),
+            saying="a report count runs 0..=1000",
+        )
+        assert "10000 is outside it" in said, f"G2: and names the value: {said!r}"
+        assert_eq(q(tf, "reports"), 7, "G2: a refused write changed nothing")
+        # A READ-ONLY slot keeps the pre-R1565 code and word: its meaning IS its
+        # variant, so a sentence would restate it. Without this the new code
+        # would be unfalsifiable — everything could carry prose.
+        assert_rpc_error(lambda: tf.intervene(f"{EXT}/panes", "x"), data="ReadOnly")
+        assert_rpc_error(lambda: tf.intervene(f"{EXT}/reports", "seven"),
+                         data="InterveneTypeMismatch")
+
+        # ── (H) the CODES are discoverable too, not only readable in source ─
+        # R1564.1 — without this the round would have replaced one
+        # undiscoverable contract with another: `data` became the surface's
+        # prose, which moved the classifying job onto `error.code`, and an
+        # agent could only learn what -32005 meant by reading pinion.
+        catalogue = call(tf, "rpc/errors")
+        by_code = {e["code"]: e for e in catalogue["errors"]}
+        assert_eq(catalogue["count"], len(catalogue["errors"]), "H: the count is the list")
+        refused_entry = by_code[ACTION_REFUSED]
+        assert by_code[VALUE_OUT_OF_RANGE]["data_is_prose"], (
+            "H: the write channel's code is published as prose-carrying too"
+        )
+        assert_eq(refused_entry["message"], "Action refused", "H: the message it pairs with")
+        assert refused_entry["data_is_prose"], "H: and it says the payload is prose"
+        assert not by_code[-32602]["data_is_prose"], (
+            "H: while -32602 carries a word from a closed vocabulary, which is "
+            "the whole distinction a consumer needs"
+        )
+        # The rule is stated ON THE WIRE, not only in this crate's rustdoc.
+        assert "Branch on error.code" in catalogue["data_doc"], catalogue["data_doc"]
+        # An application code is classifiable arithmetically, so a code added
+        # after a client shipped is still placeable rather than merely unknown.
+        low, high = catalogue["application_range"]
+        assert low <= ACTION_REFUSED <= high, "H: ACTION_REFUSED is in the published range"
+        assert not refused_entry["standard"], "H: and is pinion's, not JSON-RPC's"
+        # The catalogue is reachable the way everything else is: by asking.
+        assert "rpc/errors" in {m["name"] for m in call(tf, "rpc/methods")["methods"]}, (
+            "H: rpc/errors is in the method catalogue"
+        )
+
+        # ── (I) the surface is discoverable, so an agent finds these actions ─
         schema = tf.query(f"{EXT}/$schema")
         declared = {f["path"] for f in schema}
         for action in ("report", "install_detector", "evict_pane"):
-            assert action in declared, f"H: {action} is declared: {sorted(declared)}"
-        assert "has_pane.<id>" in declared, "H: including the parametric read"
+            assert action in declared, f"I: {action} is declared: {sorted(declared)}"
+        assert "has_pane.<id>" in declared, "I: including the parametric read"
 
 
 if __name__ == "__main__":

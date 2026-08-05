@@ -440,9 +440,19 @@ impl DatePickerExternal {
     /// arrow-key cursor). Does not activate the day or fire the
     /// `"selected"` intent. Out-of-range / zero days are rejected.
     fn resolve_day_intervene(&self, i: i64) -> Result<u8, InterveneError> {
-        let day = u8::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
-        if day < 1 || day > self.days_in_displayed_month() {
-            return Err(InterveneError::OutOfRange);
+        // R1565 — NOT `wire::resolve_index`: a day is ONE-based and inclusive
+        // (`1..=days`), which `[0, count)` cannot state, so the range this
+        // sentence names would be a lie if it borrowed that helper's.
+        let days = self.days_in_displayed_month();
+        let Ok(day) = u8::try_from(i) else {
+            return Err(InterveneError::out_of_range(format!(
+                "{i} is not a day number"
+            )));
+        };
+        if day < 1 || day > days {
+            return Err(InterveneError::out_of_range(format!(
+                "day {day} is outside the displayed month (it has {days}, so 1..={days})"
+            )));
         }
         Ok(day)
     }
@@ -700,6 +710,7 @@ impl ExternalIntrospect for DatePickerExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
 
     /// Drive the full pointer click cycle on day `d` — the sequence the
@@ -980,13 +991,15 @@ mod tests {
         assert!(!p.is_dirty());
         p.intervene("focused_day", IntrospectValue::Null).unwrap();
         assert_eq!(p.focused_day(), None);
-        assert_eq!(
-            p.intervene("focused_day", IntrospectValue::Int(99)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &p.intervene("focused_day", IntrospectValue::Int(99)),
+            "day 99 is outside the displayed month",
         );
-        assert_eq!(
-            p.intervene("focused_day", IntrospectValue::Int(0)),
-            Err(InterveneError::OutOfRange),
+        // R1565 — and the range it names is ONE-based, which is why this
+        // surface does not borrow `wire::resolve_index`'s `0..count`.
+        assert_out_of_range_saying(
+            &p.intervene("focused_day", IntrospectValue::Int(0)),
+            "so 1..=31",
         );
         assert_eq!(
             p.intervene("focused_day", IntrospectValue::Bool(true)),

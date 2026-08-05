@@ -366,7 +366,9 @@ impl ExternalIntrospect for MarketMapOracle {
                 let IntrospectValue::Text(mode) = value else {
                     return Err(InterveneError::TypeMismatch);
                 };
-                let encoding = Encoding::parse(mode.as_str()).ok_or(InterveneError::OutOfRange)?;
+                let encoding = Encoding::parse(mode.as_str()).ok_or_else(|| {
+                    InterveneError::out_of_range(format!("{mode:?} is not an encoding"))
+                })?;
                 if let Some(state) = self.state.as_ref() {
                     state.encoding.set(encoding);
                 }

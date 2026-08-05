@@ -94,6 +94,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("font/parse", MethodOcc::Read),
     ("font/postscript_name", MethodOcc::Read),
     ("font/subfamily_name", MethodOcc::Read),
+    ("rpc/errors", MethodOcc::Read),
     ("rpc/methods", MethodOcc::Read),
     ("rpc/schema", MethodOcc::Read),
     ("scene/access", MethodOcc::Read),

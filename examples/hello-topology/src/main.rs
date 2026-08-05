@@ -720,7 +720,9 @@ impl ExternalIntrospect for TopologyOracle {
                 let IntrospectValue::Text(name) = value else {
                     return Err(InterveneError::TypeMismatch);
                 };
-                let mode = Mode::parse(name.as_str()).ok_or(InterveneError::OutOfRange)?;
+                let mode = Mode::parse(name.as_str()).ok_or_else(|| {
+                    InterveneError::out_of_range(format!("{name:?} is not a layout mode"))
+                })?;
                 if let Some(state) = self.state.as_ref() {
                     state.mode.set(mode);
                     // Re-place immediately: the mode is not a preference stored

@@ -75,6 +75,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -310,9 +311,9 @@ def body() -> None:
         )                                                                           # 42
         # Well-formed but not this header's section — a DIFFERENT error, because
         # the client's mistake is a different mistake.
-        assert_rpc_error(
+        assert_out_of_range(
             lambda: tf.intervene("/external/sort_indicator", "9:ascending"),
-            data="OutOfRange",
+            saying="no section 9 in this header",
         )                                                                           # 43
         # and the invoke half refuses it too, with its own typed variant
         assert_action_refused(
@@ -325,7 +326,7 @@ def body() -> None:
 
         # A restore naming a section this header lacks is refused WHOLE — the
         # indicator's range check joins the length checks ahead of any write.
-        assert_rpc_error(
+        assert_out_of_range(
             lambda: tf.intervene(
                 "/external/state",
                 {
@@ -337,7 +338,7 @@ def body() -> None:
                     "sort_indicator_shown": True,
                 },
             ),
-            data="OutOfRange",
+            saying="the saved sort indicator names section 9",
         )                                                                           # 47
         assert_eq(_h(tf, "order"), IDENTITY, "and not one field of it was written")  # 48
         assert_eq(_h(tf, "sort_indicator"), "3:descending", "the sort held too")    # 49

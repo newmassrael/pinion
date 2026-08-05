@@ -26,8 +26,8 @@ use std::borrow::Cow;
 use crate::Frame;
 use crate::cell_metric::CellMetric;
 use crate::command::Command;
-use crate::external::InvokeError;
 use crate::external::{External, IntrospectValue, StubExternal};
+use crate::external::{InterveneError, InvokeError};
 use crate::intent::Intent;
 use crate::reactive::Owner;
 use crate::scene::{
@@ -1067,6 +1067,41 @@ pub fn assert_refused_saying<T: std::fmt::Debug>(result: &Result<T, InvokeError>
         Err(err) => {
             let Some(reason) = err.reason() else {
                 panic!("expected a stated refusal saying {needle:?}, got {err:?}");
+            };
+            assert!(
+                reason.as_str().contains(needle),
+                "refusal did not say {needle:?}; it said {reason:?}",
+            );
+        }
+    }
+}
+
+/// R1565 §5.15 (PINION-PR82) — the [`assert_refused_saying`] peer for the
+/// **write-state** channel: assert `result` is a refusal whose stated reason
+/// mentions `needle`.
+///
+/// Separate from its sibling rather than generic over the error type, and the
+/// reason is the asymmetry it exists to keep visible: on this channel only
+/// [`InterveneError::OutOfRange`] carries a reason, because it is the only arm
+/// whose meaning the variant does not determine. A helper that took "any error
+/// with a reason" would read as though `ReadOnly` might grow one, and a test
+/// written against it would quietly pass on a refusal that named nothing.
+///
+/// # Panics
+///
+/// When `result` is `Ok`, when it is a reason-free failure (`UnknownPath` /
+/// `TypeMismatch` / `ReadOnly`), or when the stated reason omits `needle`.
+pub fn assert_out_of_range_saying<T: std::fmt::Debug>(
+    result: &Result<T, InterveneError>,
+    needle: &str,
+) {
+    match result {
+        Ok(value) => {
+            panic!("expected an out-of-range refusal saying {needle:?}, got Ok({value:?})")
+        }
+        Err(err) => {
+            let Some(reason) = err.reason() else {
+                panic!("expected a stated out-of-range refusal saying {needle:?}, got {err:?}");
             };
             assert!(
                 reason.as_str().contains(needle),

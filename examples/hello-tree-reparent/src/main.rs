@@ -540,7 +540,9 @@ impl ExternalIntrospect for OutlinerExternal {
                     return Err(InterveneError::TypeMismatch);
                 };
                 if find_node(&self.state.nodes.get(), &id).is_none() {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "no node {id:?} in this tree"
+                    )));
                 }
                 self.state.focused.set(Some(id));
                 Ok(())

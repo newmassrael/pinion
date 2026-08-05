@@ -440,10 +440,15 @@ impl SceneScaleExternal {
     /// indistinguishable from one that lied.
     fn set_rows(&mut self, rows: usize) -> Result<(), InterveneError> {
         if rows == 0 {
-            return Err(InterveneError::OutOfRange);
+            return Err(InterveneError::out_of_range(
+                "a scale model needs at least one row",
+            ));
         }
         if self.state.eager && rows > MAX_EAGER_ROWS {
-            return Err(InterveneError::OutOfRange);
+            return Err(InterveneError::out_of_range(format!(
+                "the eager arm materialises every row, so it is capped at \
+                 {MAX_EAGER_ROWS}; ask for {rows} on the windowed arm instead"
+            )));
         }
         self.state.rows = rows;
         Ok(())
@@ -455,7 +460,9 @@ impl SceneScaleExternal {
     /// label is not a narrower row, it is a different scene.
     fn set_label_chars(&mut self, chars: usize) -> Result<(), InterveneError> {
         if chars == 0 || chars > MAX_LABEL_CHARS {
-            return Err(InterveneError::OutOfRange);
+            return Err(InterveneError::out_of_range(format!(
+                "a row label runs 1..={MAX_LABEL_CHARS} characters, not {chars}"
+            )));
         }
         self.state.label_chars = chars;
         Ok(())
@@ -467,7 +474,11 @@ impl SceneScaleExternal {
     /// names one cause.
     fn set_eager(&mut self, eager: bool) -> Result<(), InterveneError> {
         if eager && self.state.rows > MAX_EAGER_ROWS {
-            return Err(InterveneError::OutOfRange);
+            return Err(InterveneError::out_of_range(format!(
+                "this model has {} rows and the eager arm is capped at \
+                 {MAX_EAGER_ROWS}; lower rows first",
+                self.state.rows
+            )));
         }
         self.state.eager = eager;
         Ok(())
@@ -570,7 +581,9 @@ impl ExternalIntrospect for SceneScaleExternal {
         match path {
             "rows" => match value {
                 IntrospectValue::Int(i) => {
-                    let rows = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
+                    let rows = usize::try_from(i).map_err(|_| {
+                        InterveneError::out_of_range(format!("{i} is not a row count"))
+                    })?;
                     self.set_rows(rows)
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -581,7 +594,9 @@ impl ExternalIntrospect for SceneScaleExternal {
             },
             "label_chars" => match value {
                 IntrospectValue::Int(i) => {
-                    let chars = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
+                    let chars = usize::try_from(i).map_err(|_| {
+                        InterveneError::out_of_range(format!("{i} is not a character count"))
+                    })?;
                     self.set_label_chars(chars)
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -729,6 +744,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::reactive::Owner;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
 
     fn render(state: ScaleState) -> Scene {
         Owner::new().run(|| view(state, &Frame::default()))
@@ -903,11 +919,16 @@ mod tests {
         // width it did not ask for cannot tell a cap from a lie.
         let mut ext = SceneScaleExternal::new();
         assert!(ext.set_label_chars(MAX_LABEL_CHARS).is_ok());
-        assert_eq!(
-            ext.set_label_chars(MAX_LABEL_CHARS + 1),
-            Err(InterveneError::OutOfRange),
+        // R1565 — the cap and the floor were one value; each now names the
+        // range, which is the fact a client that asked for 0 or 999 needs.
+        assert_out_of_range_saying(
+            &ext.set_label_chars(MAX_LABEL_CHARS + 1),
+            &format!("a row label runs 1..={MAX_LABEL_CHARS} characters"),
         );
-        assert_eq!(ext.set_label_chars(0), Err(InterveneError::OutOfRange));
+        assert_out_of_range_saying(
+            &ext.set_label_chars(0),
+            &format!("a row label runs 1..={MAX_LABEL_CHARS} characters"),
+        );
         assert_eq!(
             ext.state.label_chars, MAX_LABEL_CHARS,
             "a refused write leaves the value alone",
@@ -957,9 +978,9 @@ mod tests {
         // back a value it did not ask for and has no way to know why.
         let mut ext = SceneScaleExternal::new();
         assert!(ext.set_eager(true).is_ok(), "1,000 rows is within the cap");
-        assert_eq!(
-            ext.intervene("rows", IntrospectValue::Int(1_000_000)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &ext.intervene("rows", IntrospectValue::Int(1_000_000)),
+            "the eager arm materialises every row",
         );
         assert_eq!(
             ext.query("rows"),
@@ -975,9 +996,9 @@ mod tests {
             ext.intervene("rows", IntrospectValue::Int(1_000_000))
                 .is_ok()
         );
-        assert_eq!(
-            ext.intervene("eager", IntrospectValue::Bool(true)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &ext.intervene("eager", IntrospectValue::Bool(true)),
+            "lower rows first",
         );
         assert_eq!(ext.query("eager"), Some(IntrospectValue::Bool(false)));
     }

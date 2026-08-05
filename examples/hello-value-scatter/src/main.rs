@@ -327,7 +327,11 @@ impl ExternalIntrospect for ValueScatterOracle {
                 let diverging = match mode.as_str() {
                     "diverging" => true,
                     "sequential" => false,
-                    _ => return Err(InterveneError::OutOfRange),
+                    _ => {
+                        return Err(InterveneError::out_of_range(format!(
+                            "{mode:?} is not an encoding (expected \"diverging\" or \"sequential\")"
+                        )));
+                    }
                 };
                 if let Some(state) = self.diverging.as_ref() {
                     state.diverging.set(diverging);

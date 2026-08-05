@@ -24,6 +24,13 @@ serde_json = { workspace = true }
 pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }
 
+[dev-dependencies]
+# R1565 §5.15 (PINION-PR82) — activate `pinion_core::test_fixtures::
+# assert_out_of_range_saying` for the refusal tests.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1", features = [
+    "test-fixtures",
+] }
+
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
 

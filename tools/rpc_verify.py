@@ -1642,6 +1642,40 @@ def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
 #: Mirrors `pinion_rpc::ACTION_REFUSED`; see its doc for why the split exists.
 ACTION_REFUSED = -32005
 
+#: R1565 §5.15 (PINION-PR82) — JSON-RPC code for a written value outside the
+#: slot's accepted range. Mirrors `pinion_rpc::VALUE_OUT_OF_RANGE`. Split from
+#: `-32602` for the payload rather than the category: the value really was a bad
+#: parameter, but `error.data` now carries the surface's own sentence naming the
+#: range, and `-32602` is published as carrying a closed vocabulary.
+VALUE_OUT_OF_RANGE = -32006
+
+
+def assert_out_of_range(fn, *, saying: str) -> str:
+    """Assert `fn()` is refused as OUT OF RANGE, with a stated reason containing
+    `saying`. Returns the full reason.
+
+    The write channel's peer of `assert_action_refused`, and separate from it on
+    purpose: the two are different codes because they are different facts about
+    the caller's request (its ARGUMENT was outside a range, versus its argument
+    was fine and the surface declined), and a helper that accepted either would
+    let a test pass while the wire reported the wrong one.
+    """
+    try:
+        fn()
+    except RpcError as exc:
+        assert_eq(exc.code, VALUE_OUT_OF_RANGE, f"out-of-range saying {saying!r}: code")
+        reason = exc.data if isinstance(exc.data, str) else (exc.data or {}).get("reason")
+        assert isinstance(reason, str), (
+            f"an out-of-range write must state its range; error.data was {exc.data!r}"
+        )
+        assert saying in reason, (
+            f"refusal did not say {saying!r}; it said {reason!r}"
+        )
+        return reason
+    raise AssertionError(
+        f"expected an out-of-range refusal saying {saying!r}, but the call succeeded"
+    )
+
 
 def assert_action_refused(fn, *, saying: str) -> str:
     """Assert `fn()` is refused by the SURFACE, with a stated reason containing

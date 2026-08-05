@@ -714,7 +714,9 @@ impl ExternalIntrospect for HexDumpOracle {
                 ref v => {
                     let b = parse_index(v).ok_or(InterveneError::TypeMismatch)?;
                     if b >= SAMPLE_LEN {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(format!(
+                            "no byte {b} in this buffer (it holds {SAMPLE_LEN})"
+                        )));
                     }
                     self.select_byte(b);
                     Ok(())
@@ -930,6 +932,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::style::Color;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
     use pinion_core::test_fixtures::assert_refused_saying;
 
     /// A column / row index as the `u16` the [`GridBuffer`] accessors take.
@@ -1366,9 +1369,9 @@ mod tests {
         assert_eq!(o.query("cursor_byte"), Some(IntrospectValue::Null));
 
         // Out of range and read-only slots are rejected.
-        assert_eq!(
-            o.intervene("cursor_byte", IntrospectValue::Int(128)),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &o.intervene("cursor_byte", IntrospectValue::Int(128)),
+            "no byte 128 in this buffer",
         );
         assert_eq!(
             o.intervene("byte_count", IntrospectValue::Int(1)),

@@ -56,6 +56,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -286,12 +287,12 @@ def body() -> None:
         assert_eq(_placements(tf)[2]["size"], 240, "sizes restored onto their sections") # 52
 
         # ── (F) refusals are typed, and refuse WHOLE ──────────────────
-        assert_rpc_error(lambda: tf.intervene("/external/state", {
+        assert_out_of_range(lambda: tf.intervene("/external/state", {
             "order": [0, 0, 2, 3, 4], "sizes": [9] * 5, "hidden": [True] * 5,
-        }), data="OutOfRange")                                                          # 53
-        assert_rpc_error(lambda: tf.intervene("/external/state", {
+        }), saying="is not a permutation of 0..5")                                      # 53
+        assert_out_of_range(lambda: tf.intervene("/external/state", {
             "order": [0, 1, 2, 3, 4], "sizes": [9, 9], "hidden": [False] * 5,
-        }), data="OutOfRange")                                                          # 54
+        }), saying="needs 5 entries, not 2")                                            # 54
         assert_rpc_error(lambda: tf.intervene("/external/state", 7),
                          data="InterveneTypeMismatch")                                  # 55
         assert_rpc_error(lambda: tf.intervene("/external/hidden", [1, 2, 3, 4, 5]),

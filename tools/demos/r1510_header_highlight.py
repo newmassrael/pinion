@@ -85,6 +85,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -311,9 +312,9 @@ def _main(tf: RpcSubprocess) -> None:
         lambda: tf.intervene("/external/highlight_sections", "yes"),
         data="InterveneTypeMismatch",
     )                                                                          # 36
-    assert_rpc_error(
+    assert_out_of_range(
         lambda: tf.intervene("/external/selections", ["full"]),
-        data="OutOfRange",
+        saying="needs 5 entries, not 1",
     )                                                                          # 37
     assert_rpc_error(
         lambda: tf.intervene("/external/selections", ["everything"] * NCOLS),

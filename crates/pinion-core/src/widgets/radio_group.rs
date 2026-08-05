@@ -338,7 +338,7 @@ impl RadioGroupExternal {
     /// `TypeMismatch` misuse — variant mismatch is reserved for
     /// `Value` shape errors).
     fn resolve_index_intervene(&self, i: i64) -> Result<usize, InterveneError> {
-        crate::widgets::wire::resolve_index(i, self.count())
+        crate::widgets::wire::resolve_index("button", i, self.count())
     }
 
     /// R51.87 §5.40 — AT-side active descendant index, or `None`.
@@ -553,6 +553,7 @@ impl ExternalIntrospect for RadioGroupExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
 
     fn activate(group: &mut RadioGroup, i: usize) {
@@ -736,9 +737,9 @@ mod tests {
         // failure is the index, not the variant. Pre-R51.91 this
         // returned `TypeMismatch` (framework-table-stakes carry).
         let mut g = RadioGroupExternal::new(2);
-        assert_eq!(
-            g.intervene("selected_index", IntrospectValue::Int(5)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &g.intervene("selected_index", IntrospectValue::Int(5)),
+            "no button 5 here (it has 2, so 0..2)",
         );
     }
 
@@ -749,9 +750,9 @@ mod tests {
     #[test]
     fn r51_91_selected_index_negative_int_is_out_of_range() {
         let mut g = RadioGroupExternal::new(3);
-        assert_eq!(
-            g.intervene("selected_index", IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &g.intervene("selected_index", IntrospectValue::Int(-1)),
+            "-1 is not a button index",
         );
     }
 
@@ -786,9 +787,9 @@ mod tests {
         g.intervene("selected_index", IntrospectValue::Int(2))
             .unwrap();
         assert_eq!(g.selected_index(), Some(2));
-        assert_eq!(
-            g.intervene("selected_index", IntrospectValue::Int(3)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &g.intervene("selected_index", IntrospectValue::Int(3)),
+            "no button 3 here (it has 3, so 0..3)",
         );
     }
 
@@ -1015,13 +1016,13 @@ mod tests {
         // pre-R51.91 `TypeMismatch` was a framework-expressivity
         // carry now repaid.
         let mut g = RadioGroupExternal::new(2);
-        assert_eq!(
-            g.intervene("focused_index", IntrospectValue::Int(5)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &g.intervene("focused_index", IntrospectValue::Int(5)),
+            "no button 5 here (it has 2, so 0..2)",
         );
-        assert_eq!(
-            g.intervene("focused_index", IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &g.intervene("focused_index", IntrospectValue::Int(-1)),
+            "-1 is not a button index",
         );
     }
 

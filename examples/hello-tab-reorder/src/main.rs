@@ -361,7 +361,9 @@ impl ExternalIntrospect for ReorderableTabsExternal {
             "selected_id" => {
                 let i = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
                 if i >= N {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "no tab {i} here (it has {N}, so 0..{N})"
+                    )));
                 }
                 self.selected.set(i);
                 Ok(())
@@ -850,6 +852,7 @@ mod tests {
     use super::*;
     use pinion_core::Modifiers;
     use pinion_core::scene::ExternalNode;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
 
     const NONE: Modifiers = Modifiers::empty();
 
@@ -957,10 +960,10 @@ mod tests {
         ext.intervene("selected_id", IntrospectValue::Int(3))
             .expect("in range");
         assert_eq!(ext.selected.get(), 3);
-        assert!(matches!(
-            ext.intervene("selected_id", IntrospectValue::Int(9)),
-            Err(InterveneError::OutOfRange)
-        ));
+        assert_out_of_range_saying(
+            &ext.intervene("selected_id", IntrospectValue::Int(9)),
+            "no tab 9 here",
+        );
         // R1450 — `order` is writable now (the model owns the permutation
         // check), so a wrong-shaped value is a TypeMismatch, and a real
         // permutation restores the strip: the tab order of a saved session.

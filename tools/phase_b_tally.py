@@ -1412,9 +1412,35 @@ AXES = [
         #    not WHICH SUBTREE. There is no per-subscription filter. Qt has no
         #    equivalent at all so it is an axis gap rather than round debt, but
         #    a large scene where an agent watches one panel will want it.
-        "judged_at": 1564,
-        "completion": 55,
-                # R1564 re-judged 50 -> 55, DEMANDED by the tool: the ledger took this
+        "judged_at": 1565,
+        "completion": 62,
+                # R1565 re-judged 55 -> 62, DEMANDED by the tool (ledger 3 -> 4). It
+        # closes BOTH items R1564's own audit left open.
+        #
+        #  - The WRITE channel had no reason at all, so `ReadOnly` /
+        #    `OutOfRange` were exactly as opaque as `Rejected` had been. Only
+        #    `OutOfRange` gains a payload, and that asymmetry is the design: it
+        #    is the one arm whose meaning its variant does not determine.
+        #  - The code R1564 allocated was discoverable only by reading pinion's
+        #    source. `rpc/errors` completes the discovery triple — R1089 names,
+        #    R1539 shapes, R1565 codes — and publishes `data_is_prose`, the
+        #    single fact that tells a client whether `error.data` may be MATCHED
+        #    or only shown. A source-scan test proves every code this crate
+        #    emits is in the catalogue.
+        #
+        # +7 and not more. This is still not stabilisation: the four things that
+        # word names are untouched, and the round again made the surface bigger
+        # and moved a wire contract. What it did was finish making the error
+        # channel DESCRIBABLE, which is a prerequisite for freezing it.
+        #
+        # Audited at R1565, unchanged from R1539/R1552: no method->type binding;
+        # no version negotiation, deprecation path, compatibility policy or
+        # freeze; the type census covers `pinion-rpc` only; no per-subscription
+        # filter. New this round: `rpc/errors` is a hand-kept catalogue whose
+        # completeness gate scans for `RpcError::new` literals, so a code
+        # reaching the wire by some other construction would escape it.
+        #
+        # R1564 re-judged 50 -> 55, DEMANDED by the tool: the ledger took this
         # axis 2 -> 3 and the round-axis snapshot moved +50%, past the band.
         #
         # It closes the ERROR half of a describable API — R1539 opened the
@@ -1451,7 +1477,7 @@ AXES = [
         # per-subscription filter (R1552's own); and the -32000..-32099 space is
         # now three codes deep with no published map, so a client discovers
         # `ACTION_REFUSED` by reading pinion's source rather than by asking.
-        "evidence_snapshot": {"example-name": 9, "round-axis": 3},
+        "evidence_snapshot": {"example-name": 9, "round-axis": 4},
     },
 ]
 

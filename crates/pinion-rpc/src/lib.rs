@@ -22,6 +22,7 @@ pub mod disabled;
 pub mod dispatch;
 pub mod draw_profile;
 pub mod dry_run;
+pub mod errors;
 pub mod export_pdf;
 pub mod focus;
 pub mod font;
@@ -82,10 +83,11 @@ pub use cross_window_drop::{
 };
 pub use dispatch::{
     ACTION_REFUSED, ClickButton, DeclaredWindow, DeferredInput, DispatchContext, DragButton,
-    DragPhase, KeyWireState, PacingState, Request, RequestId, Response, RpcError, dispatch,
-    dispatch_parsed, parse_request, unknown_window_verdict,
+    DragPhase, KeyWireState, PacingState, Request, RequestId, Response, RpcError,
+    VALUE_OUT_OF_RANGE, dispatch, dispatch_parsed, parse_request, unknown_window_verdict,
 };
 pub use dry_run::{DryRunError, dry_run};
+pub use errors::{DATA_DOC, ErrorEntry, RpcErrors, rpc_errors};
 pub use focus::{
     FocusError, FocusSetParams, FocusState, focus_get, focus_next, focus_prev, focus_set,
 };

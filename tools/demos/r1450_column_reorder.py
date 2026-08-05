@@ -56,6 +56,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_action_refused,
+    assert_out_of_range,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -195,8 +196,8 @@ def body() -> None:
         # The refusals are typed, and neither of them moves the layout. Without
         # this, a silently-accepted bad permutation would corrupt the mapping
         # every assertion above depends on.
-        assert_rpc_error(lambda: tf.intervene(f"/external/order", [0, 0, 1, 2, 3]),
-                         data="OutOfRange")                                             # 35
+        assert_out_of_range(lambda: tf.intervene("/external/order", [0, 0, 1, 2, 3]),
+                            saying="is not a permutation of 0..5")                      # 35
         assert_rpc_error(lambda: tf.intervene(f"/external/order", 3),
                          data="InterveneTypeMismatch")                                  # 36
         assert_rpc_error(lambda: tf.intervene(f"/external/labels", "x"),

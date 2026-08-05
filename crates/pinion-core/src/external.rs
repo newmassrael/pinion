@@ -920,7 +920,7 @@ pub const DOCK_PANEL_DRAG_KIND: &str = "dock-panel";
 
 /// Failure modes for [`ExternalIntrospect::intervene`].
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterveneError {
     /// Path is not declared in the schema.
     UnknownPath,
@@ -939,7 +939,55 @@ pub enum InterveneError {
     /// raise this for negative integers and indices `>= count`. Slot
     /// types with continuous-value clamping (`Slider::value`) prefer
     /// internal clamping over rejection and do not raise this.
-    OutOfRange,
+    ///
+    /// R1565 — carries the producer's own [`RefusalReason`], for the reason
+    /// [`InvokeError::Rejected`] does: **the variant does not determine the
+    /// range**. "Out of range" is the one arm of this enum whose meaning is
+    /// incomplete without the surface saying which range, and a client holding
+    /// it knows only that its value was wrong, not what a right one would be.
+    /// Build it with [`out_of_range`](Self::out_of_range).
+    OutOfRange(RefusalReason),
+}
+
+impl InterveneError {
+    /// R1565 §5.15 (PINION-PR82) — refuse a write because the value is outside
+    /// the slot's range, **stating the range**.
+    ///
+    /// ```
+    /// # use pinion_core::external::InterveneError;
+    /// let err = InterveneError::out_of_range(format!("row {} is outside 0..{}", 99, 12));
+    /// assert!(err.reason().is_some_and(|why| why.as_str().contains("0..12")));
+    /// ```
+    #[must_use]
+    pub fn out_of_range(reason: impl Into<RefusalReason>) -> Self {
+        Self::OutOfRange(reason.into())
+    }
+
+    /// R1565 §5.15 — the producer's sentence, when this is a failure that
+    /// carries one.
+    ///
+    /// `None` for [`UnknownPath`](Self::UnknownPath),
+    /// [`TypeMismatch`](Self::TypeMismatch) and [`ReadOnly`](Self::ReadOnly),
+    /// and that asymmetry with [`OutOfRange`](Self::OutOfRange) is the design
+    /// rather than a gap left in it. Each of those three is **fully determined
+    /// by its variant**: there is one way for a path to be undeclared, one way
+    /// for a `String` to arrive where an `Int` belongs, and one way for a slot
+    /// to be unwritable. `OutOfRange` is the arm with a fact behind it that the
+    /// variant cannot hold — the range — which is exactly the shape
+    /// [`InvokeError::Rejected`] had, and the reason it is the only arm here
+    /// that gained a payload.
+    ///
+    /// (The honest test of that claim: PINION-PR82's complaint was a producer
+    /// knowing *which* of several facts and unable to say. For a read-only slot
+    /// there is only one fact. For an out-of-range value there are as many as
+    /// there are slots.)
+    #[must_use]
+    pub fn reason(&self) -> Option<&RefusalReason> {
+        match self {
+            Self::OutOfRange(reason) => Some(reason),
+            _ => None,
+        }
+    }
 }
 
 /// R1564 §5.15 §2 #2 (PINION-PR82) — the sentence a producer attaches when it

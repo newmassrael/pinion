@@ -1603,6 +1603,7 @@ mod tests {
     use super::*;
     use pinion_core::reactive::Owner;
     use pinion_core::scene::ExternalNode;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
 
     /// R1452 — the external resolves the SHARED layout through
     /// `use_column_layout`, so a test builds it inside an owner scope exactly
@@ -1712,13 +1713,13 @@ mod tests {
             ])))
         );
         // Not a permutation: refused, and nothing moved.
-        assert!(matches!(
-            ext.intervene(
+        assert_out_of_range_saying(
+            &ext.intervene(
                 "order",
-                IntrospectValue::Json(serde_json::json!([0, 0, 1, 2, 3]))
+                IntrospectValue::Json(serde_json::json!([0, 0, 1, 2, 3])),
             ),
-            Err(InterveneError::OutOfRange)
-        ));
+            "is not a permutation of 0..5",
+        );
         assert_eq!(
             ext.layout.logical_index(0),
             Some(4),
@@ -2183,7 +2184,7 @@ mod tests {
                         "hidden": [true, true, true, true, true],
                     })),
                 ),
-                Err(InterveneError::OutOfRange)
+                Err(InterveneError::OutOfRange(_))
             ));
         });
         assert_eq!(after_bad, before, "a refused restore changed nothing");

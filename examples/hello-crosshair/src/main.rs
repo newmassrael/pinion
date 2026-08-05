@@ -307,7 +307,9 @@ impl ExternalIntrospect for CrosshairExternal {
                         }
                         Ok(())
                     } else {
-                        Err(InterveneError::OutOfRange)
+                        Err(InterveneError::out_of_range(format!(
+                            "{f} is not a fraction of the plot width (0.0..=1.0)"
+                        )))
                     }
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -418,6 +420,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::Owner;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
         match scene {
@@ -532,10 +535,9 @@ mod tests {
     #[test]
     fn out_of_range_intervene_is_rejected() {
         let mut ext = CrosshairExternal::new();
-        assert_eq!(
-            ext.intervene("x_frac", IntrospectValue::Float(1.5)),
-            Err(InterveneError::OutOfRange),
-            "a fraction past 1.0 is rejected"
+        assert_out_of_range_saying(
+            &ext.intervene("x_frac", IntrospectValue::Float(1.5)),
+            "1.5 is not a fraction of the plot width",
         );
         assert_eq!(
             ext.intervene("has_crosshair", IntrospectValue::Bool(true)),

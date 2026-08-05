@@ -2251,29 +2251,51 @@ impl ColumnLayout {
         }
     }
 
-    /// Restore a saved layout — Qt's `restoreState()`. `false` (and **no
-    /// change at all**) when `state` does not describe this header: a wrong
-    /// vector length, or an `order` that is not a permutation of
-    /// `0..count`.
+    /// Restore a saved layout — Qt's `restoreState()`. Refused, with **no
+    /// change at all**, when `state` does not describe this header.
     ///
     /// Atomic by construction rather than by a pre-check copy: the length
     /// tests are cheap and total, and
     /// [`ReorderModel::set_order`] is itself validate-then-apply, so a
     /// rejected permutation returns before any size or flag is written. The
     /// permutation rule is therefore still checked in exactly one place.
-    pub fn restore_state(&self, state: &ColumnLayoutState) -> bool {
-        if state.sizes.len() != self.count
-            || state.hidden.len() != self.count
-            || state.modes.len() != self.count
-        {
-            return false;
+    ///
+    /// # Errors
+    ///
+    /// R1565 — [`InterveneError::OutOfRange`] naming **which** of the five
+    /// guards refused: a wrong `sizes` / `hidden` / `modes` length, a sort
+    /// indicator on a section this header lacks, a crossed bound pair, or an
+    /// `order` that is not a permutation of `0..count`. Qt's `restoreState()`
+    /// answers `bool` for the same five, which is the shape this returned until
+    /// R1565 and the reason a refused restore told a client nothing about a
+    /// seven-field snapshot.
+    pub fn restore_state(&self, state: &ColumnLayoutState) -> Result<(), InterveneError> {
+        // R1565 — `Result` rather than `bool`. This function refuses for FIVE
+        // distinct reasons, each already explained by a comment beside its
+        // guard, and every one of them left by the same `false` — so a client
+        // whose restore was refused learned only that something about a
+        // seven-field snapshot was wrong. That is PINION-PR82's complaint one
+        // level below the wire, and the sentence it now returns rides straight
+        // out through `intervene`.
+        for (what, len) in [
+            ("sizes", state.sizes.len()),
+            ("hidden", state.hidden.len()),
+            ("modes", state.modes.len()),
+        ] {
+            if len != self.count {
+                return Err(row_len(what, len, self.count));
+            }
         }
         // R1491 — an indicator on a section this header does not have is the
         // same class of error as a wrong vector length, and is checked here
         // with them so the restore stays atomic. `from_json` cannot make this
         // call: it decodes a snapshot without knowing which header it is for.
-        if state.sort_indicator.is_some_and(|(l, _)| l >= self.count) {
-            return false;
+        if let Some((logical, _)) = state.sort_indicator.filter(|(l, _)| *l >= self.count) {
+            return Err(InterveneError::out_of_range(format!(
+                "the saved sort indicator names section {logical}, and this \
+                 header has {}",
+                self.count
+            )));
         }
         // R1493 — an inverted bound pair describes no header, and is refused
         // here with the other shape errors rather than repaired on the way in.
@@ -2282,10 +2304,16 @@ impl ColumnLayout {
         // first and ceiling-first land on different bounds. A restore that
         // depends on the order its own fields are written is not a restore.
         if state.min_section_size > state.max_section_size {
-            return false;
+            return Err(InterveneError::out_of_range(format!(
+                "the saved bounds cross: min {} is above max {}",
+                state.min_section_size, state.max_section_size
+            )));
         }
         if !self.sections.set_order(&state.order) {
-            return false;
+            return Err(InterveneError::out_of_range(format!(
+                "the saved order {:?} is not a permutation of 0..{}",
+                state.order, self.count
+            )));
         }
         // The bounds go in BEFORE the widths they shape. The other order
         // clamps the restored sizes through the *outgoing* header's bounds and
@@ -2339,7 +2367,7 @@ impl ColumnLayout {
         // A restore replaces the layout wholesale, so a press taken against the
         // outgoing one has nothing left to activate.
         self.pressed_section.set(None);
-        true
+        Ok(())
     }
 
     /// R1501 — every path this layout answers, declared beside the dispatch
@@ -2679,6 +2707,32 @@ impl ColumnLayout {
         Ok((logical, size))
     }
 
+    /// R1565 — the `hidden` whole-row write's decode, lifted out of
+    /// [`intervene`](Self::intervene) to keep that dispatch inside the
+    /// workspace line ceiling (this round's reasons pushed it over). Peer of
+    /// [`width_vector`](Self::width_vector), which the two width rows share.
+    ///
+    /// # Errors
+    ///
+    /// [`InterveneError::TypeMismatch`] when the payload is not an array of
+    /// booleans, and [`InterveneError::OutOfRange`] naming both counts when it
+    /// is the wrong length for this header.
+    fn hidden_vector(&self, value: &IntrospectValue) -> Result<Vec<bool>, InterveneError> {
+        let IntrospectValue::Json(serde_json::Value::Array(items)) = value else {
+            return Err(InterveneError::TypeMismatch);
+        };
+        let flags: Vec<bool> = items
+            .iter()
+            .map(serde_json::Value::as_bool)
+            .collect::<Option<_>>()
+            .ok_or(InterveneError::TypeMismatch)?;
+        if flags.len() == self.count {
+            Ok(flags)
+        } else {
+            Err(row_len("hidden flags", flags.len(), self.count))
+        }
+    }
+
     /// R1564 §5.15 (PINION-PR82) — the section-exists precondition every
     /// section-addressed `invoke` arm shares, stating what it found rather than
     /// that it found something wrong.
@@ -2713,7 +2767,7 @@ impl ColumnLayout {
         if widths.len() == self.count {
             Ok(widths)
         } else {
-            Err(InterveneError::OutOfRange)
+            Err(row_len("widths", widths.len(), self.count))
         }
     }
 
@@ -2738,29 +2792,17 @@ impl ColumnLayout {
                 };
                 let state =
                     ColumnLayoutState::from_json(json).ok_or(InterveneError::TypeMismatch)?;
-                if self.restore_state(&state) {
-                    Ok(())
-                } else {
-                    Err(InterveneError::OutOfRange)
-                }
+                // R1565 — forwarded verbatim: `restore_state` knows which of
+                // its five guards refused, and this arm used to replace that
+                // with one vague sentence about the whole snapshot.
+                self.restore_state(&state)
             }
             "sizes" => {
                 self.sizes.set_widths(self.width_vector(value)?);
                 Ok(())
             }
             "hidden" => {
-                let IntrospectValue::Json(serde_json::Value::Array(items)) = value else {
-                    return Err(InterveneError::TypeMismatch);
-                };
-                let flags: Vec<bool> = items
-                    .iter()
-                    .map(serde_json::Value::as_bool)
-                    .collect::<Option<_>>()
-                    .ok_or(InterveneError::TypeMismatch)?;
-                if flags.len() != self.count {
-                    return Err(InterveneError::OutOfRange);
-                }
-                self.hidden.set(flags);
+                self.hidden.set(self.hidden_vector(value)?);
                 Ok(())
             }
             // R1452 — the two inputs the derived modes read. A grid publishes
@@ -2787,7 +2829,7 @@ impl ColumnLayout {
                     .collect::<Option<_>>()
                     .ok_or(InterveneError::TypeMismatch)?;
                 if row.len() != self.count {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(row_len("selections", row.len(), self.count));
                 }
                 self.selection.set(row);
                 Ok(())
@@ -2818,7 +2860,10 @@ impl ColumnLayout {
                 match parsed {
                     None => self.clear_sort_indicator(),
                     Some((logical, _)) if logical >= self.count => {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(format!(
+                            "no section {logical} in this header (it has {})",
+                            self.count
+                        )));
                     }
                     Some((logical, ascending)) => self.set_sort_indicator(logical, ascending),
                 }
@@ -2838,9 +2883,7 @@ impl ColumnLayout {
                     self.set_available_width(None);
                 } else {
                     let w = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
-                    self.set_available_width(Some(
-                        u32::try_from(w).map_err(|_| InterveneError::OutOfRange)?,
-                    ));
+                    self.set_available_width(Some(px_ceiling("available_width", w)?));
                 }
                 Ok(())
             }
@@ -3161,7 +3204,40 @@ fn bool_rule(value: &IntrospectValue) -> Result<bool, InterveneError> {
 
 fn px_bound(value: &IntrospectValue) -> Result<u32, InterveneError> {
     let px = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
-    u32::try_from(px).map_err(|_| InterveneError::OutOfRange)
+    px_ceiling("width", px)
+}
+
+/// R1565 §5.15 — a pixel value that fits the `u32` a section width is measured
+/// in, stating the ceiling when it does not.
+///
+/// # Errors
+///
+/// [`InterveneError::OutOfRange`] naming the slot and the ceiling.
+fn px_ceiling(slot: &str, px: usize) -> Result<u32, InterveneError> {
+    u32::try_from(px).map_err(|_| {
+        InterveneError::out_of_range(format!(
+            "{slot}: {px} px exceeds the {} px a section width is measured in",
+            u32::MAX
+        ))
+    })
+}
+
+/// R1565 §5.15 — a WHOLE-ROW write must carry exactly one entry per section,
+/// and the refusal states both counts.
+///
+/// Three slots (`sizes` / `hidden` / `selections`) share the rule, and shared
+/// it because the header's extent is the fact a client is missing: "wrong
+/// length" alone leaves it guessing which of the two numbers to change.
+///
+/// # Errors
+///
+/// [`InterveneError::OutOfRange`] naming the row, the length given and the
+/// length required.
+fn row_len(what: &str, given: usize, want: usize) -> InterveneError {
+    InterveneError::out_of_range(format!(
+        "{what}: this header has {want} sections, so a whole-row write needs \
+         {want} entries, not {given}"
+    ))
 }
 
 /// Decode a JSON array of non-negative integers out of an
@@ -3218,6 +3294,7 @@ pub fn read_column_layout(intro: &dyn ExternalIntrospect) -> ColumnLayoutView {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
     use std::borrow::Cow;
 
@@ -3393,7 +3470,9 @@ mod tests {
 
         let other = layout();
         assert!(other.set_section_alignment(0, Some(TextAlign::Center)));
-        other.restore_state(&saved);
+        other
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert_eq!(other.default_alignment(), TextAlign::End);
         assert_eq!(
             other.section_alignment_override(0),
@@ -3514,7 +3593,9 @@ mod tests {
 
         let other = layout();
         assert!(other.set_section_selection(0, SectionSelection::Full));
-        assert!(other.restore_state(&saved));
+        other
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert!(other.highlight_sections(), "the rule came back");
         assert_eq!(
             other.section_selection(0),
@@ -3599,13 +3680,12 @@ mod tests {
         // beside it — §2 #2, not Qt's class boundary. A wrong length is the
         // same `OutOfRange` `content_widths` reports, and an unknown spelling
         // the same `TypeMismatch`.
-        assert_eq!(
-            l.intervene(
+        assert_out_of_range_saying(
+            &l.intervene(
                 "selections",
                 &IntrospectValue::Json(serde_json::json!(["full"])),
             ),
-            Err(InterveneError::OutOfRange),
-            "a short row is another grid's selection",
+            "needs 4 entries, not 1",
         );
         assert_eq!(
             l.intervene(
@@ -3889,7 +3969,8 @@ mod tests {
         l.resize_section(2, 60);
         l.set_section_hidden(3, false);
         l.set_section_hidden(0, true);
-        assert!(l.restore_state(&saved));
+        l.restore_state(&saved)
+            .expect("the snapshot describes this header");
 
         assert_eq!(l.save_state(), saved);
         assert_eq!(l.order(), vec![2, 0, 1, 3]);
@@ -3913,7 +3994,8 @@ mod tests {
         l.set_sections_movable(false);
         l.set_sections_clickable(false);
         l.set_resize_contents_precision(7);
-        assert!(l.restore_state(&saved));
+        l.restore_state(&saved)
+            .expect("the snapshot describes this header");
 
         assert!(l.sections_movable(), "the permission came back");
         assert!(l.sections_clickable(), "and so did the other one");
@@ -3929,7 +4011,8 @@ mod tests {
         let l = interactive_layout();
         let saved = l.save_state();
         press(&l, 1);
-        assert!(l.restore_state(&saved));
+        l.restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert_eq!(release(&l, 1), None, "the press did not survive");
     }
 
@@ -3998,7 +4081,10 @@ mod tests {
             // what rejects it.
             ..ColumnLayoutState::default()
         };
-        assert!(!l.restore_state(&bad_order));
+        assert!(
+            l.restore_state(&bad_order).is_err(),
+            "the snapshot is refused"
+        );
         assert_eq!(l.save_state(), before, "no size or flag was written");
 
         // Wrong vector length — rejected before the order is even considered.
@@ -4011,7 +4097,7 @@ mod tests {
             sort_indicator_shown: false,
             ..ColumnLayoutState::default()
         };
-        assert!(!l.restore_state(&short));
+        assert!(l.restore_state(&short).is_err(), "the snapshot is refused");
         assert_eq!(l.save_state(), before, "the order was not applied either");
     }
 
@@ -4027,7 +4113,9 @@ mod tests {
 
         let other = layout();
         other.move_section(0, 3); // [1, 2, 3, 0]
-        assert!(other.restore_state(&saved));
+        other
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert_eq!(other.order(), vec![0, 1, 2, 3], "the order came back too");
         assert_eq!(other.section_size(0), 200);
     }
@@ -4197,14 +4285,14 @@ mod tests {
     fn vector_intervenes_separate_shape_errors_from_value_errors() {
         let l = layout();
         // Right shape, wrong length.
-        assert!(matches!(
-            l.intervene("sizes", &IntrospectValue::Json(serde_json::json!([10, 20]))),
-            Err(InterveneError::OutOfRange)
-        ));
-        assert!(matches!(
-            l.intervene("hidden", &IntrospectValue::Json(serde_json::json!([true]))),
-            Err(InterveneError::OutOfRange)
-        ));
+        assert_out_of_range_saying(
+            &l.intervene("sizes", &IntrospectValue::Json(serde_json::json!([10, 20]))),
+            "needs 4 entries, not 2",
+        );
+        assert_out_of_range_saying(
+            &l.intervene("hidden", &IntrospectValue::Json(serde_json::json!([true]))),
+            "needs 4 entries, not 1",
+        );
         // Wrong shape entirely.
         assert!(matches!(
             l.intervene(
@@ -4227,7 +4315,7 @@ mod tests {
                     "hidden": [false, false, false, false],
                 }))
             ),
-            Err(InterveneError::OutOfRange)
+            Err(InterveneError::OutOfRange(_))
         ));
         assert_eq!(l.save_state(), layout().save_state(), "all rejected");
 
@@ -4445,7 +4533,8 @@ mod tests {
         });
         let decoded = ColumnLayoutState::from_json(&older).expect("older shape decodes");
         assert_eq!(decoded.modes, vec![SectionResizeMode::Interactive; 4]);
-        assert!(l.restore_state(&decoded));
+        l.restore_state(&decoded)
+            .expect("the snapshot describes this header");
         assert_eq!(l.visible_widths(), vec![80, 70, 60, 50]);
 
         // Present but misspelled is an error, not a silent default — a client
@@ -4531,7 +4620,7 @@ mod tests {
                 "content_widths",
                 &IntrospectValue::Json(serde_json::json!([1]))
             ),
-            Err(InterveneError::OutOfRange)
+            Err(InterveneError::OutOfRange(_))
         ));
         assert!(matches!(
             l.intervene("content_widths", &IntrospectValue::Text("wide".into())),
@@ -4983,7 +5072,9 @@ mod tests {
         let saved = l.save_state();
 
         let other = layout();
-        assert!(other.restore_state(&saved));
+        other
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert_eq!(other.sort_indicator(), Some((2, false)));
         assert!(other.is_sort_indicator_shown());
         assert_eq!(other.order(), saved.order);
@@ -5070,7 +5161,7 @@ mod tests {
         bad.sizes = vec![10, 20, 30, 40];
         bad.sort_indicator = Some((4, true));
 
-        assert!(!l.restore_state(&bad));
+        assert!(l.restore_state(&bad).is_err(), "the snapshot is refused");
         assert_eq!(l.save_state(), before, "not one field was written");
     }
 
@@ -5132,9 +5223,9 @@ mod tests {
         );
         // Well-formed but not this header's section — a different error,
         // because the client's mistake is a different mistake.
-        assert_eq!(
-            l.intervene("sort_indicator", &text("9:ascending")),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &l.intervene("sort_indicator", &text("9:ascending")),
+            "no section 9 in this header",
         );
         assert_refused_saying(
             &l.invoke("cycle_sort_indicator", &IntrospectValue::Int(9)),
@@ -5389,7 +5480,9 @@ mod tests {
         assert_eq!(saved.default_section_size, 80);
 
         let other = layout();
-        assert!(other.restore_state(&saved));
+        other
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert_eq!(
             other.query("min_section_size"),
             Some(IntrospectValue::Int(60))
@@ -5426,7 +5519,9 @@ mod tests {
         let narrow = layout();
         narrow.set_maximum_section_size(110);
         assert_eq!(narrow.save_state().sizes, vec![100, 110, 110, 110]);
-        assert!(narrow.restore_state(&saved));
+        narrow
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert_eq!(
             narrow.section_size(0),
             400,
@@ -5444,7 +5539,10 @@ mod tests {
         let mut crossed = before.clone();
         crossed.min_section_size = 200;
         crossed.max_section_size = 100;
-        assert!(!l.restore_state(&crossed));
+        assert!(
+            l.restore_state(&crossed).is_err(),
+            "the snapshot is refused"
+        );
         assert_eq!(l.save_state(), before, "and nothing at all was written");
     }
 
@@ -5717,7 +5815,9 @@ mod tests {
         let saved = l.save_state();
         let other = layout();
         assert!(!other.cascading_section_resizes());
-        assert!(other.restore_state(&saved));
+        other
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert!(
             other.cascading_section_resizes(),
             "a restore replays the rule, not only the widths it produced"
@@ -6016,7 +6116,9 @@ mod tests {
         let saved = l.save_state();
         let other = filled();
         assert!(!other.stretch_last_section());
-        assert!(other.restore_state(&saved));
+        other
+            .restore_state(&saved)
+            .expect("the snapshot describes this header");
         assert!(
             other.stretch_last_section(),
             "a restore replays the rule, not only the widths it produced"

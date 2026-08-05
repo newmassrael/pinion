@@ -536,7 +536,7 @@ impl ListBoxExternal {
     /// [`InterveneError::OutOfRange`] (value-domain failures), not
     /// `TypeMismatch` (reserved for `Value` shape errors).
     fn resolve_index_intervene(&self, i: i64) -> Result<usize, InterveneError> {
-        crate::widgets::wire::resolve_index(i, self.count())
+        crate::widgets::wire::resolve_index("item", i, self.count())
     }
 
     /// R51.87 §5.40 — AT-side active descendant index, or `None`.
@@ -731,7 +731,11 @@ impl ExternalIntrospect for ListBoxExternal {
                 let idx_str = other.strip_prefix("selected.").unwrap_or("");
                 let idx: usize = idx_str.parse().map_err(|_| InterveneError::UnknownPath)?;
                 if idx >= self.count() {
-                    return Err(InterveneError::OutOfRange);
+                    return Err(InterveneError::out_of_range(format!(
+                        "no item {idx} in this listbox (it has {}, so 0..{})",
+                        self.count(),
+                        self.count()
+                    )));
                 }
                 match value {
                     IntrospectValue::Bool(b) => {
@@ -807,6 +811,7 @@ impl ExternalIntrospect for ListBoxExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
 
     fn activate(list: &mut ListBox, i: usize) {
@@ -1020,22 +1025,22 @@ mod tests {
     #[test]
     fn r51_91_selected_index_out_of_range_is_out_of_range() {
         let mut lx = ListBoxExternal::new(2);
-        assert_eq!(
-            lx.intervene("selected_index", IntrospectValue::Int(5)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &lx.intervene("selected_index", IntrospectValue::Int(5)),
+            "no item 5 here (it has 2, so 0..2)",
         );
-        assert_eq!(
-            lx.intervene("selected_index", IntrospectValue::Int(-1)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &lx.intervene("selected_index", IntrospectValue::Int(-1)),
+            "-1 is not a item index",
         );
     }
 
     #[test]
     fn r51_91_focused_index_out_of_range_is_out_of_range() {
         let mut lx = ListBoxExternal::new(2);
-        assert_eq!(
-            lx.intervene("focused_index", IntrospectValue::Int(5)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &lx.intervene("focused_index", IntrospectValue::Int(5)),
+            "no item 5 here (it has 2, so 0..2)",
         );
     }
 
@@ -1398,9 +1403,9 @@ mod tests {
     #[test]
     fn r51_98_external_intervene_selected_dot_out_of_range() {
         let mut lx = ListBoxExternal::with_multiselect(2);
-        assert_eq!(
-            lx.intervene("selected.5", IntrospectValue::Bool(true)),
-            Err(InterveneError::OutOfRange)
+        assert_out_of_range_saying(
+            &lx.intervene("selected.5", IntrospectValue::Bool(true)),
+            "no item 5 in this listbox",
         );
     }
 

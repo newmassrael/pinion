@@ -462,7 +462,9 @@ impl ExternalIntrospect for HeatmapOracle {
                 IntrospectValue::Text(ref s) => {
                     let (row, col) = parse_cell(s).ok_or(InterveneError::TypeMismatch)?;
                     if row >= ROWS || col >= COLS {
-                        return Err(InterveneError::OutOfRange);
+                        return Err(InterveneError::out_of_range(format!(
+                            "no cell ({row}, {col}) in this heatmap (it is {ROWS} x {COLS})"
+                        )));
                     }
                     self.hover = Some(Hover { row, col });
                     Ok(())
@@ -597,6 +599,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::test_fixtures::assert_out_of_range_saying;
     // The WCAG pair the ramp assertions measure with — crate helpers now
     // (R1436), used only by these tests.
     use pinion_chart::{contrast_ratio, relative_luminance};
@@ -765,9 +768,9 @@ mod tests {
         // Null clears; out-of-range and read-only are rejected.
         o.intervene("hovered_cell", IntrospectValue::Null).unwrap();
         assert_eq!(o.query("hovered_row"), Some(IntrospectValue::Null));
-        assert_eq!(
-            o.intervene("hovered_cell", IntrospectValue::Text("8,0".into())),
-            Err(InterveneError::OutOfRange),
+        assert_out_of_range_saying(
+            &o.intervene("hovered_cell", IntrospectValue::Text("8,0".into())),
+            "no cell (8, 0) in this heatmap",
         );
         assert_eq!(
             o.intervene("rows", IntrospectValue::Int(1)),

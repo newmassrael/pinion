@@ -80,6 +80,10 @@ const HOST_TAG: &str = "host";
 /// can name a pane that exists and one that does not, without a fixture.
 const BOOT_PANES: [u32; 3] = [1, 2, 3];
 
+/// The largest report count this host will accept on a restore. Small and
+/// fixed so the demo can name a value outside it without a fixture.
+const MAX_REPORTS: i64 = 1_000;
+
 // ---------------------------------------------------------------------------
 // the surface
 // ---------------------------------------------------------------------------
@@ -186,8 +190,25 @@ impl ExternalIntrospect for Host {
         }
     }
 
-    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        // Every slot here is derived from what the ACTIONS did; a direct write
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        // R1565 — one writable slot, and it exists to carry the write channel's
+        // half of this round onto the wire: a value outside a range refuses with
+        // the RANGE, under a code of its own. `reports` is a counter, so "how
+        // many reports has this host recorded" is a legitimate restore slot
+        // (a session resumes mid-count) with an obvious bound.
+        if path == "reports" {
+            let IntrospectValue::Int(n) = value else {
+                return Err(InterveneError::TypeMismatch);
+            };
+            if !(0..=MAX_REPORTS).contains(&n) {
+                return Err(InterveneError::out_of_range(format!(
+                    "a report count runs 0..={MAX_REPORTS}, and {n} is outside it"
+                )));
+            }
+            self.reports = n;
+            return Ok(());
+        }
+        // Every other slot is derived from what the ACTIONS did; a direct write
         // would let the demo fake the state a refusal reports on.
         Err(read_only_or_unknown(&self.schema(), path))
     }
