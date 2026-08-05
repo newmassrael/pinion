@@ -131,10 +131,14 @@ impl PolarChart {
     #[must_use]
     pub fn radar(series: Vec<Series>, categories: Categories) -> Self {
         let period = (0.0, index_value(categories.len().max(1)));
-        let mut chart = Self::new(series, AngularScale::new(period));
-        chart.angular_labels = Some(categories);
-        chart.filled = true;
-        chart
+        // Composed from the public builders rather than by writing the fields:
+        // a shortcut over the API a caller has, not a shape only this crate
+        // can reach. A round-close census found this constructor was the only
+        // `with_angular_labels` caller in the tree and that it was not calling
+        // it — which is how a builder becomes reachable-but-unexercised.
+        Self::new(series, AngularScale::new(period))
+            .with_angular_labels(categories)
+            .filled(true)
     }
 
     /// The series this chart was built with.
