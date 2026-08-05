@@ -58,19 +58,16 @@ use pinion_a11y::{
 use pinion_chart::{BoxPlotChart, ChartStyle, Distribution, LandmarkKind, QuantileMethod};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, TextStyle,
-};
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::interaction::InteractionState;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::toggle_group;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
-use pinion_widget_paint::chip::{CHIP_HEIGHT, chip_layout, chip_style, selection_border};
+use pinion_widget_paint::chip::{CHIP_HEIGHT, option_chip};
 use pinion_widget_paint::radio_composite as rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -114,7 +111,6 @@ const BOOT_LOG: bool = false;
 
 const TITLE_FONT_PX: u32 = 17;
 const CAPTION_FONT_PX: u32 = 12;
-const CHIP_FONT_PX: u32 = 13;
 const CHIP_W: u32 = 132;
 
 /// Window-absolute plot region. The chart must be handed its final geometry
@@ -238,57 +234,12 @@ fn caption(state: &Options) -> String {
     )
 }
 
-/// One chip. Generic over the interaction state because the method row and
-/// the option row are owned by two different selection models
-/// (`RadioState` / `ToggleState`) but wear one skin.
-///
-/// `focusable` is where they part: a radio group is ONE Tab stop with a
-/// roving active descendant, so its chips are hit targets but not stops —
-/// the strip container carries the stop. Independent toggles are each a stop,
-/// because Tab is how you reach the second without touching the first.
-fn chip<S: InteractionState + Copy>(
-    tag: String,
-    label: &str,
-    selected: bool,
-    focusable: bool,
-    width: u32,
-    state: S,
-    theme: &Theme,
-) -> Scene {
-    let base = if selected {
-        theme.resolve(ColorRole::Accent)
-    } else {
-        Color::rgba(0, 0, 0, 0)
-    };
-    let ink = if selected {
-        theme.resolve(ColorRole::OnAccent)
-    } else {
-        theme.resolve(ColorRole::OnSurface)
-    };
-    let text = Scene::Text(TextNode::styled(
-        label.to_owned(),
-        Rect::default(),
-        TextStyle::new().with_size_px(CHIP_FONT_PX).with_fg(ink),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![text])
-            .with_tag(tag)
-            .with_style(chip_style(
-                base,
-                selection_border(theme, selected),
-                state,
-                theme,
-            ))
-            .with_layout(chip_layout(Size::px(width, CHIP_HEIGHT), None).with_focusable(focusable)),
-    )
-}
-
 /// The method radio strip: three chips inside one focusable container, which
 /// is the group's single Tab stop.
 fn method_row(state: &Options, theme: &Theme) -> Scene {
     let chips: Vec<Scene> = (0..METHODS.len())
         .map(|i| {
-            chip(
+            option_chip(
                 format!("{METHOD_TAG}#{i}"),
                 METHOD_LABELS[i],
                 state.method_rows[i].1,
@@ -316,7 +267,7 @@ fn method_row(state: &Options, theme: &Theme) -> Scene {
 
 /// The two option toggles, each its own Tab stop.
 fn option_row(state: &Options, theme: &Theme) -> Scene {
-    let notch = chip(
+    let notch = option_chip(
         NOTCH_TAG.to_string(),
         "notch",
         state.notch,
@@ -325,7 +276,7 @@ fn option_row(state: &Options, theme: &Theme) -> Scene {
         state.notch_row.0,
         theme,
     );
-    let log = chip(
+    let log = option_chip(
         LOG_TAG.to_string(),
         "log axis",
         state.log,

@@ -118,6 +118,7 @@ members = [
     "examples/hello-log-chart",
     "examples/hello-boxplot",
     "examples/hello-candlestick",
+    "examples/hello-polar",
     "examples/hello-time-chart",
     "examples/hello-hex-dump",
     "examples/hello-hyperlink",

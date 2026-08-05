@@ -320,6 +320,8 @@ mod line;
 mod model;
 mod palette;
 mod plot;
+mod polar;
+mod polar_chart;
 mod scale;
 mod scatter;
 #[cfg(test)]
@@ -349,6 +351,8 @@ pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;
 pub use plot::OffScale;
+pub use polar::{AngularScale, Winding};
+pub use polar_chart::PolarChart;
 pub use scale::{
     AxisKind, Categories, CategoryLookup, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE,
     LinearScale, LogScale, ValueScale,

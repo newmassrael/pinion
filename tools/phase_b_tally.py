@@ -730,6 +730,12 @@ AXES = [
                 # census for the same reason the last one was: a chart type
                 # this axis did not yet name.
                 "boxplot",
+                # R1568 — `hello-polar`. The FOURTH consecutive arrival this
+                # census could not name, and the first that is not a series
+                # type at all: a polar plot is a coordinate SYSTEM, which the
+                # note below did not anticipate when it called the lag a
+                # property of naming chart types.
+                "polar",
                 # R1567 — `hello-candlestick`, the THIRD consecutive series
                 # type this census flagged UNCLASSIFIED on arrival. That is
                 # the pattern list's shape, not three oversights: naming chart
@@ -870,9 +876,49 @@ AXES = [
         #   * `QCategoryAxis`, label thinning, band-level a11y, drag pan /
         #     rubber-band zoom, the y-window, the plot zoom's a11y, the second
         #     zoom consumer, local time — all eight still open, unchanged.
-        "judged_at": 1553,
-        "completion": 87,
-        "evidence_snapshot": {"example-name": 26, "round-axis": 5},
+        # R1568 re-judged, 87 -> 92, DEMANDED by the tool (the round ledger
+        # takes this axis 5 -> 7, past the band). It absorbs TWO rounds,
+        # because R1567 landed inside the band and deferred its look.
+        #
+        # R1567 took the CANDLESTICK, and corrected a claim while closing it:
+        # R1553 recorded that a candlestick would be the box plot's SECOND
+        # CONSUMER, "the same interval geometry", and building one showed that
+        # wrong. A `Distribution`'s five landmarks are totally ordered by
+        # construction; a `Candle` has four and only THREE order relations
+        # among them, with nothing at all between `open` and `close` — and
+        # that absence IS the datum, because which of the two is larger is
+        # what the form exists to show. Two sessions with the same four
+        # numbers, the same extent and the same box mean opposite things.
+        #
+        # R1568 took POLAR, which is not a series type at all but the crate's
+        # first non-cartesian COORDINATE SYSTEM. `ValueScale` had been the
+        # unexamined assumption under every chart here — a value maps to a
+        # pixel on one line, and four axis kinds fit inside that because each
+        # is still a map onto one line. An angular axis is not: it is
+        # PERIODIC, so 0 and 360 are one place, and everything the round adds
+        # falls out of that one fact (a value outside the period is placed
+        # rather than dropped, a series closes on itself by derivation, and
+        # the tick at the period's end is the tick at its start).
+        #
+        # +5 for the two, and the audit that holds it there:
+        #
+        #   * THREE series types remain — spline, 3D-surface, and the OHLC
+        #     bar, which is the Western reading of R1567's own datum and is
+        #     now the cheapest thing on this axis. 3D-surface needs a 3D
+        #     renderer and is Phase C's, not this axis's.
+        #   * `QCategoryAxis`, label thinning, local time, drag pan /
+        #     rubber-band zoom (blocked on the pointer wire not reporting a
+        #     held button), the y-window, the plot zoom's a11y and its second
+        #     consumer — all seven unchanged since R1545.
+        #   * Neither new form has PER-MARK a11y: both scrub readouts name the
+        #     whole datum, which is past Qt (QtCharts implements no
+        #     accessibility interface), but an individual candle body or polar
+        #     vertex is painted geometry.
+        #   * The polar chart has no cross-filter leg and no legend
+        #     interaction, where the cartesian charts have both.
+        "judged_at": 1568,
+        "completion": 92,
+        "evidence_snapshot": {"example-name": 28, "round-axis": 7},
     },
     {
         "key": "text",

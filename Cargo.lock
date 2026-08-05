@@ -3444,6 +3444,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-polar"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-popover"
 version = "0.0.1"
 dependencies = [

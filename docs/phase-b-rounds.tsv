@@ -89,3 +89,4 @@
 1565	api	the write channel states its range and the codes are enumerable, InterveneError OutOfRange carries a RefusalReason under VALUE_OUT_OF_RANGE plus rpc/errors
 1566	api	a refusal names the channel, a declared path is never reported unknown to the wrong verb, and the -32602 vocabulary is published
 1567	dataviz	a candle is not a distribution, its two middle landmarks are unordered and that is the datum, Qt QCandlestickSeries with a named doji and the direction encoded twice
+1568	dataviz	a polar coordinate system whose angular axis is periodic, Qt QPolarChart with a derived loop close, a placed-and-reported wrap, a sector and a declared winding

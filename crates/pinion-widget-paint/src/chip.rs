@@ -33,11 +33,12 @@
 //! be a **bug** (shared) or a **choice** (local).
 
 use pinion_core::Color;
-use pinion_core::scene::Rect;
+use pinion_core::Scene;
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
+    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::Theme;
+use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::interaction::InteractionState;
 
 /// M3 chip corner radius — 8 px, the spec value. Deliberately *not* the
@@ -53,6 +54,14 @@ pub const INNER_GAP: u32 = 6;
 
 /// Outlined-chip border width — 1 px.
 pub const OUTLINE_W: u32 = 1;
+
+/// An option chip's label size, px (R1568).
+///
+/// A token rather than an [`option_chip`] parameter, and the evidence is the
+/// lift itself: all three bindings that had written that wrapper out chose
+/// **13** independently. Three consumers agreeing is what separates a shared
+/// token from a per-callsite choice — the line this module's header draws.
+pub const CHIP_LABEL_PX: u32 = 13;
 
 /// Shared M3 chip `BoxStyle`: `base_fill` tinted by the [`crate::state_layer`]
 /// overlay for the current interaction `state`, rounded to [`CHIP_RADIUS`],
@@ -103,6 +112,61 @@ pub fn selection_border(theme: &Theme, selected: bool) -> Option<Border> {
 /// content-hugging input chip passes
 /// `Size::auto().with_height(SizeValue::Px(CHIP_HEIGHT))` + horizontal
 /// `padding` so the chip width tracks its label.
+/// A whole **option chip**: an accent-when-selected container carrying one
+/// centred label, sized to `width` (R1568).
+///
+/// The 3rd-consumer lift of a wrapper three chart bindings had written out
+/// byte-identically (`hello-boxplot` R1553, `hello-candlestick` R1567,
+/// `hello-polar` R1568). Everything this module's header calls "per-callsite"
+/// is still per-callsite — the base-fill *rule* is the one thing these three
+/// share and it is the M3 filter-chip rule, `Accent` when on and transparent
+/// when off, with the ink following it so the label never sits on its own
+/// background.
+///
+/// The label size is NOT a parameter: see [`CHIP_LABEL_PX`].
+///
+/// `focusable` is the parameter that must stay a parameter: a radio group is
+/// ONE tab stop with a roving descendant, so its cells are hit targets and
+/// not stops, while independent toggles are each a stop. Baking either in
+/// would make this wrapper wrong for half its callers.
+#[must_use]
+pub fn option_chip<S: InteractionState + Copy>(
+    tag: String,
+    label: &str,
+    selected: bool,
+    focusable: bool,
+    width: u32,
+    state: S,
+    theme: &Theme,
+) -> Scene {
+    let base = if selected {
+        theme.resolve(ColorRole::Accent)
+    } else {
+        Color::rgba(0, 0, 0, 0)
+    };
+    let ink = if selected {
+        theme.resolve(ColorRole::OnAccent)
+    } else {
+        theme.resolve(ColorRole::OnSurface)
+    };
+    let text = Scene::Text(TextNode::styled(
+        label.to_owned(),
+        Rect::default(),
+        TextStyle::new().with_size_px(CHIP_LABEL_PX).with_fg(ink),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![text])
+            .with_tag(tag)
+            .with_style(chip_style(
+                base,
+                selection_border(theme, selected),
+                state,
+                theme,
+            ))
+            .with_layout(chip_layout(Size::px(width, CHIP_HEIGHT), None).with_focusable(focusable)),
+    )
+}
+
 #[must_use]
 pub fn chip_layout(size: Size, padding: Option<Rect>) -> LayoutStyle {
     let mut layout = LayoutStyle::new()
