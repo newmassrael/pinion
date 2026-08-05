@@ -49,7 +49,9 @@ pub use command::{
     BlockOnExecutor, BoxFuture, CommandExecutor, CommandTaskHandle, Executor, Handler,
     HandlerFuture, HandlerRegistry, IntentSink, VecSink,
 };
-pub use core_shell::{CoreShell, DEFAULT_WINDOW, DispatchTail, StateChange};
+pub use core_shell::{
+    ASCII_PROBE_RANGE, AcceleratorRow, CoreShell, DEFAULT_WINDOW, DispatchTail, StateChange,
+};
 pub use draw_profile::{DrawProfile, DrawProfileNode, DrawProfiler};
 pub use focus::FocusManager;
 pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};

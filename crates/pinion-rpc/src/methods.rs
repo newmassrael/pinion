@@ -97,6 +97,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("rpc/errors", MethodOcc::Read),
     ("rpc/methods", MethodOcc::Read),
     ("rpc/schema", MethodOcc::Read),
+    ("scene/accelerators", MethodOcc::Read),
     ("scene/access", MethodOcc::Read),
     ("scene/animate_cancel", MethodOcc::Mutate),
     ("scene/animate_settle", MethodOcc::Mutate),

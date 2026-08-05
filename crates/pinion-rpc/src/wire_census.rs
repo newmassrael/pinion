@@ -222,6 +222,37 @@ pub struct WireType {
 /// editing this table fails that test.
 pub const WIRE_TYPES: &[WireType] = &[
     WireType {
+        name: "AcceleratorEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("accel", WireTy::String, None),
+                WireField::new("layer", WireTy::String, None),
+                WireField::new("target", WireTy::String, None),
+                WireField::new("label", WireTy::String, None),
+                WireField::new("shadowed", WireTy::Boolean, None),
+                // Present and null when nothing claims the chord: "no widget"
+                // is an answer, and omitting the key would read as "the
+                // question was not asked".
+                WireField::new("shadowed_by", WireTy::String, None).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "AcceleratorsOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("accelerators", WireTy::Array, Some("AcceleratorEntry")),
+                WireField::new("focused", WireTy::String, None).nullable(),
+                WireField::new("shadowing", WireTy::String, None).nullable(),
+                WireField::new("probed", WireTy::String, None),
+                // ABSENT rather than null when the request named no chord —
+                // "not asked" and "asked, and it does nothing" are different
+                // facts, and only the absence can say the first.
+                WireField::new("chord", WireTy::Object, Some("ChordVerdict")).optional(),
+            ],
+        },
+    },
+    WireType {
         name: "AnimateControlOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("visited", WireTy::Integer, None)],
@@ -338,6 +369,17 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireTy::Array,
                 Some("CellEditorEntry"),
             )],
+        },
+    },
+    WireType {
+        name: "ChordVerdict",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("accel", WireTy::String, None),
+                WireField::new("claimed_by", WireTy::String, None).nullable(),
+                WireField::new("shadowed", WireTy::Boolean, None),
+                WireField::new("shadowed_by", WireTy::String, None).nullable(),
+            ],
         },
     },
     WireType {

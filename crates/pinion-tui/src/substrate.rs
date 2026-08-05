@@ -53,6 +53,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
+use pinion_core::accelerator::Chord;
 use pinion_core::event::WheelDelta;
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
@@ -759,12 +760,27 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // backends cannot drift on what Alt+F does — only on where the Alt
         // came from (crossterm's `KeyEvent::modifiers` here, winit's
         // out-of-band `ModifiersChanged` cache there).
-        if self.try_mnemonic(key_str, modifiers) {
-            return true;
-        }
-        if let Some(event) = V::keybinding(key_str) {
-            let tail = self.core.forward(event);
-            return self.handle_tail(&tail);
+        //
+        // R1569 §5.39 §2 #6 — and both accelerator layers are gated on the
+        // focused widget's own claim, read through the SAME
+        // `CoreShell::accelerator_shadow` derivation the Vello sibling reads.
+        // The question is asked once here rather than inside each layer,
+        // because a terminal and a window disagreeing about whether a
+        // keystroke was an accelerator is the §2 #6 defect this ordering
+        // exists to prevent.
+        let chord = Chord::new(key_str, modifiers);
+        if self
+            .core
+            .accelerator_shadow(self.focus.focused(), &chord)
+            .is_none()
+        {
+            if self.try_mnemonic(&chord) {
+                return true;
+            }
+            if let Some(event) = V::keybinding(key_str) {
+                let tail = self.core.forward(event);
+                return self.handle_tail(&tail);
+            }
         }
         let focused = V::primary_surface().map(|p| p.tag);
         if let Some(tail) = self.core.apply_key(focused, key_str, modifiers) {
@@ -787,19 +803,63 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// mnemonic reaches both backends through the styled-run path with no
     /// per-backend code, and this is the only per-backend piece: where the
     /// Alt modifier comes from.
-    fn try_mnemonic(&mut self, key_str: &str, modifiers: pinion_core::Modifiers) -> bool {
-        if !modifiers.alt {
+    fn try_mnemonic(&mut self, chord: &Chord) -> bool {
+        if !chord.modifiers().alt {
             return false;
         }
-        let mut chars = key_str.chars();
-        let (Some(typed), None) = (chars.next(), chars.next()) else {
-            return false;
-        };
-        let Some(tail) = self.core.dispatch_mnemonic(typed, &mut self.focus) else {
+        let Some(tail) = self.core.dispatch_mnemonic_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            chord,
+            &mut self.focus,
+        ) else {
             return false;
         };
         self.handle_tail(&tail);
         true
+    }
+
+    /// R1569 §5.39 §5.20 §2 #6 — what this terminal answers
+    /// `scene/accelerators` with: the window's live accelerator map, the focus
+    /// its shadows were resolved against, and the verdict for the chord the
+    /// request named (if it named one).
+    ///
+    /// A named method rather than an inline block in `dispatch_rpc_from`, for
+    /// the reason `auto_repeat_holds` is one: the resolve must happen BEFORE
+    /// the disjoint-field borrow split (it needs `&self.core` and
+    /// `&self.focus`), and a test that wants to observe what the terminal would
+    /// answer should not have to go through the wire to do it.
+    #[must_use]
+    fn accelerator_reads(
+        &self,
+        request: &pinion_rpc::Request,
+    ) -> (
+        Vec<pinion_runtime::AcceleratorRow>,
+        Option<String>,
+        Option<pinion_rpc::ChordVerdict>,
+    ) {
+        let focused = self.focus.focused().map(str::to_owned);
+        let rows = self
+            .core
+            .accelerator_map_for_window(pinion_runtime::DEFAULT_WINDOW, focused.as_deref());
+        // Gated on the method AND on the parameter being present and readable,
+        // so every other dispatch pays nothing and a malformed spelling falls
+        // through to the refusal `scene/accelerators` itself produces.
+        let verdict = (request.method == "scene/accelerators")
+            .then(|| {
+                pinion_rpc::parse_chord_param(request.params.as_ref())
+                    .ok()
+                    .flatten()
+            })
+            .flatten()
+            .map(|chord| {
+                let (claimed, shadowed_by) = self.core.accelerator_for_chord(
+                    pinion_runtime::DEFAULT_WINDOW,
+                    focused.as_deref(),
+                    &chord,
+                );
+                pinion_rpc::ChordVerdict::resolve(&chord, claimed, shadowed_by)
+            });
+        (rows, focused, verdict)
     }
 
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch — the
@@ -1895,6 +1955,10 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // R1549.2 §5.35 §2 #6 — resolved before the borrow split, the
         // `input_state_snapshot` pattern above.
         let auto_repeat_holds = self.auto_repeat_holds();
+        // R1569 §5.39 §5.20 §2 #6 — resolved before the borrow split exactly
+        // like the two above; see `Self::accelerator_reads`.
+        let (accelerators, accelerator_focus, accelerator_chord) =
+            self.accelerator_reads(&parsed_request);
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
@@ -2045,6 +2109,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // records for `scene/frame_timings`. Unconditional: an empty
             // census IS the answer for a terminal with nothing held.
             ctx = ctx.with_auto_repeat_holds(auto_repeat_holds);
+            ctx = ctx.with_accelerators(accelerators, accelerator_focus);
+            ctx = ctx.with_accelerator_chord(accelerator_chord);
             if parsed_request.method == "scene/memory" {
                 ctx = ctx.with_memory_census(terminal_memory_census(&layout_cache.borrow()));
             }

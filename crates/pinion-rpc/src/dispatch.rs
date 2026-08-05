@@ -625,6 +625,32 @@ pub struct DispatchContext<'a> {
     /// where "no override" and "backend keeps no clock" are different
     /// facts).
     pub auto_repeat_holds: Vec<pinion_runtime::AutoRepeatHold>,
+    /// R1569 §5.39 §5.20 — every accelerator live in the dispatch-scoped
+    /// window, resolved by the embedder from
+    /// `CoreShell::accelerator_map_for_window` (the [`Self::input_state`]
+    /// pattern). Consumed by `scene/accelerators`. No `Option`: a window that
+    /// declares no accelerator truthfully has an empty list, so this axis has
+    /// no `*Unavailable` token to distinguish.
+    pub accelerators: Vec<pinion_runtime::AcceleratorRow>,
+    /// R1569 §5.39 — the focus the [`Self::accelerators`] shadows were
+    /// resolved against. Reported beside them because it is meaningful even
+    /// when no row is shadowed: "nothing has focus" and "the focused widget
+    /// claims nothing" are different facts about the same window.
+    pub accelerator_focus: Option<String>,
+    /// R1569 §5.39 — what the chord this request named would do right now,
+    /// for `scene/accelerators`' optional `chord` parameter.
+    ///
+    /// Pre-resolved by the embedder rather than resolved through a closure:
+    /// the chord is a REQUEST parameter, and the embedder has the request, so
+    /// it reads the parameter and answers it before the borrow split — the
+    /// `reposition_signal` shape (gated on the method, so every other dispatch
+    /// pays nothing). The answer needs `WidgetCore::keybinding` plus the paint
+    /// scene plus the focus, none of which this crate can see.
+    ///
+    /// The embedder and this crate BOTH parse the spelling, and cannot
+    /// disagree about it: `Chord::parse` is the one authority, and the refusal
+    /// path lives here because only a dispatcher can answer with an error.
+    pub accelerator_chord: Option<crate::ChordVerdict>,
     /// R888 §5.49 §5.28 — the dispatch-scoped window's frame-pacing
     /// target, resolved by the embedder before dispatch (the
     /// [`Self::input_state`] pattern). Consumed by
@@ -1451,6 +1477,9 @@ impl<'a> DispatchContext<'a> {
             access_producer: None,
             resize_request: None,
             reposition_request: None,
+            accelerators: Vec::new(),
+            accelerator_focus: None,
+            accelerator_chord: None,
             window_focus_request: None,
             last_paint_scene: None,
             font_registry: None,
@@ -1803,6 +1832,34 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// Builder: install the dispatch-scoped window's live accelerator map
+    /// (R1569 §5.39), resolved by the embedder from
+    /// `CoreShell::accelerator_map_for_window`. `scene/accelerators` reads the
+    /// slot; every other arm ignores it. Not calling this leaves the empty
+    /// list, which is the same answer a window declaring no accelerator gives.
+    #[must_use]
+    pub fn with_accelerators(
+        mut self,
+        rows: Vec<pinion_runtime::AcceleratorRow>,
+        focused: Option<String>,
+    ) -> Self {
+        self.accelerators = rows;
+        self.accelerator_focus = focused;
+        self
+    }
+
+    /// Builder: install the verdict for the chord this request named
+    /// (R1569 §5.39). Takes the `Option` rather than gating on it at the call
+    /// site, because "the request named no chord" is the ordinary case and both
+    /// embedders would otherwise write the same `if let` — `None` leaves the
+    /// response without a `chord` key, which reads as "not asked" rather than
+    /// as "asked, and it does nothing".
+    #[must_use]
+    pub fn with_accelerator_chord(mut self, verdict: Option<crate::ChordVerdict>) -> Self {
+        self.accelerator_chord = verdict;
+        self
+    }
+
     /// Builder: install the pre-resolved frame-pacing target for the
     /// dispatch-scoped window (R888 §5.49 §5.28). Consumed by
     /// `scene/pacing_state`; absent -> `PacingStateUnavailable`.
@@ -2034,6 +2091,9 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let input_state = ctx.input_state.take();
     // R888 §5.49 — same single-consumer take as `input_state`.
     let auto_repeat_holds = std::mem::take(&mut ctx.auto_repeat_holds);
+    let accelerators = std::mem::take(&mut ctx.accelerators);
+    let accelerator_focus = ctx.accelerator_focus.take();
+    let accelerator_chord = ctx.accelerator_chord.take();
     let pacing_state = ctx.pacing_state.take();
     // R1087 §5.16 §5.41 §2 #7 — declared-window set; same single-consumer
     // take. `scene/windows` is the only reader; owned (carries a `Vec`).
@@ -2579,6 +2639,23 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     handle_scene_auto_repeat(&auto_repeat_holds),
                     HandlerKind::Read,
                 ),
+                // R1569 §5.39 §5.20 — the RESOLUTION peer of
+                // `scene/mnemonics`: what each declared accelerator would do
+                // right now, and which of them the focused widget has taken.
+                "scene/accelerators" => {
+                    // The parse runs HERE even though the embedder already
+                    // resolved the verdict: a malformed spelling must be a
+                    // refusal, and only a dispatcher can answer with one.
+                    let outcome =
+                        crate::parse_chord_param(request.params.as_ref()).and_then(|chord| {
+                            crate::handle_scene_accelerators(
+                                &accelerators,
+                                accelerator_focus.as_deref(),
+                                chord.and(accelerator_chord),
+                            )
+                        });
+                    (outcome, HandlerKind::Read)
+                }
                 "scene/pacing_state" => {
                     (handle_scene_pacing_state(pacing_state), HandlerKind::Read)
                 }

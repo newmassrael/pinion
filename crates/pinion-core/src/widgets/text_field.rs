@@ -1178,6 +1178,40 @@ impl External for TextFieldExternal {
         self.em.is_dirty()
     }
 
+    /// R1569 §5.39 §5.20 — a focused field claims the keystrokes that are
+    /// **its own**, ahead of the window's accelerator layers.
+    ///
+    /// This is Qt's `QWidgetLineControl::processShortcutOverrideEvent`,
+    /// decomposed the same way: the editing command chords first, then the
+    /// "would this be text" rule. Before R1569 pinion had neither, and the
+    /// consequence shipped in four bindings — `hello-textfield` binds `d` to
+    /// `Disable` through [`WidgetCore::keybinding`](crate::WidgetCore::keybinding),
+    /// so typing `d` into the focused field disabled the field and the
+    /// character never arrived. Qt does not have that defect, so this is one
+    /// of the places the tree sat *below* the floor.
+    ///
+    /// Two things follow from reading the rule off the chord rather than
+    /// re-deciding it here:
+    ///
+    /// * <kbd>Alt</kbd>+char is **not** claimed
+    ///   ([`Chord::is_text_bearing`](crate::accelerator::Chord::is_text_bearing)
+    ///   excludes it), so a mnemonic still opens the File menu while the user
+    ///   is typing — Qt's behaviour, and the reason the declaration is per
+    ///   chord rather than a bool on the widget.
+    /// * a **disabled** field claims nothing. Qt gates on `isReadOnly()` for
+    ///   the same reason: a field that will not accept the key must not stop
+    ///   the accelerator that would have.
+    fn shadows_accelerator(&self, chord: &crate::accelerator::Chord) -> bool {
+        if matches!(self.state(), TextFieldState::Disabled) {
+            return false;
+        }
+        // A command chord (Ctrl / Meta) is clipboard / selection / undo — the
+        // arms `invoke("key", ..)` already implements. R879 named this exact
+        // split inside `edit_field_keymap`; reading it off the chord keeps one
+        // definition of "command" rather than two that must agree.
+        chord.is_command() || chord.is_text_bearing()
+    }
+
     /// R56.1.h §5.38 §5.39 — shell focus change ↔ SCXML statechart
     /// drive. The shell's
     /// `notify_focus_change`

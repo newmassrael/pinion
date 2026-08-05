@@ -9,6 +9,7 @@
 //! module. The JSON-RPC 2.0 wire envelope and method routing entry
 //! point live in [`dispatch`](fn@crate::dispatch).
 
+pub mod accelerators;
 pub mod access;
 pub mod animate_control;
 pub mod animation_state;
@@ -66,6 +67,10 @@ pub mod wire_census;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 
+pub use accelerators::{
+    AcceleratorEntry, AcceleratorsOutcome, ChordVerdict, handle_scene_accelerators,
+    parse_chord_param,
+};
 pub use access::access_to_json;
 pub use animate_control::{
     AnimateControlError, AnimateControlOutcome, animate_cancel, animate_settle,

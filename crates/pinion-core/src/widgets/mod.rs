@@ -20,6 +20,7 @@ pub mod grid_sort;
 pub mod group_order;
 pub mod index_runs;
 pub mod interaction;
+pub mod key_sequence;
 pub mod listbox;
 pub mod listbox_item;
 pub mod measured_rows;

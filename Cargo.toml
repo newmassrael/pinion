@@ -143,6 +143,7 @@ members = [
     "examples/hello-elevation",
     "examples/hello-commands",
     "examples/hello-commands-tui",
+    "examples/hello-key-sequence",
     "examples/hello-textfield",
     "examples/hello-textarea",
     "examples/hello-textgrid",

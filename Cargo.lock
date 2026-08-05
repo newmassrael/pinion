@@ -3000,6 +3000,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-key-sequence"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-lazy-list"
 version = "0.0.1"
 dependencies = [

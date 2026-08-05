@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1569 §5.39 §5.20 — pinion-forge renderer manifest for
+  hello-key-sequence. Same single-source-of-truth template that emits
+  every other example's renderer; only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloKeySequenceRenderer"
+        backend="vello"/>

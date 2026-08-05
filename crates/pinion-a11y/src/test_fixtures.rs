@@ -24,12 +24,16 @@
 
 use pinion_core::test_fixtures::{
     ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
-    ScrollbarMultiFixture,
+    ScrollbarMultiFixture, ShadowingFixture,
 };
 
 use crate::widget_a11y::WidgetA11y;
 
 impl WidgetA11y for ButtonFixture {}
+
+/// R1569 §5.39 — atomic-default impl for the accelerator-shadow fixture; the
+/// orphan-rule placement rationale above applies identically.
+impl WidgetA11y for ShadowingFixture {}
 
 /// R884 §5.40 §5.45 — atomic-default `WidgetA11y` impl for the
 /// multi-External composition fixture [`ScrollbarMultiFixture`].

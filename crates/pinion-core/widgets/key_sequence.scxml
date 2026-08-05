@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.38 §5.39 R1569 — KeySequenceEdit widget statechart
+     (Qt `QKeySequenceEdit`).
+
+     The widget a keymap-preferences pane is built from: it displays a
+     chord sequence and, while RECORDING, takes every keystroke away
+     from the window's accelerator layers so that a chord which already
+     means something can still be recorded as itself.
+
+     States: idle / recording / disabled.
+
+     - **idle**: showing a sequence, claiming nothing. The window's
+       mnemonics and `keybinding` map work normally. `record` enters
+       `recording`; `disable` enters `disabled`.
+
+     - **recording**: every chord reaches this widget first
+       (`External::shadows_accelerator` answers `true` in this state and
+       only in this state). Three exits, and the fact that there are
+       three is the point:
+         * `commit` -> `idle` with `keysequence.captured` raised — the
+           sequence is accepted. Driven by the sequence reaching its
+           declared maximum length, or by the user stopping deliberately.
+         * `cancel` -> `idle` silently — the sequence in flight is
+           discarded and the previous one kept.
+         * `blur` -> `idle` with `keysequence.captured` raised. Qt's
+           `focusOutEvent` calls `finishEditing()`, so focus loss
+           ACCEPTING what was typed is Qt's behaviour and is kept.
+
+     - **disabled**: absorbing class until `enable` arrives. A disabled
+       widget claims no chord, for the same reason a read-only
+       `QLineEdit` declines `ShortcutOverride`: a widget that will not
+       act on the key must not stop the accelerator that would have.
+
+     Why `record` is an EXPLICIT event, where Qt has none:
+
+     Qt starts recording on focus-in and stops only on focus-out or a
+     1-second release timer. That leaves a Qt keymap editor with no way
+     to stop grabbing while it still has focus, and no way to start
+     deliberately — so a user who tabs into the field and then presses
+     the application's Save shortcut silently overwrites the binding
+     they were looking at. Making the arm an event is what lets the
+     shadow be a function of a state the user chose, and it is what
+     every real keymap editor (KDE `KKeySequenceWidget`, and the
+     record-button pattern in VS Code / IntelliJ) does instead.
+
+     `cancel` likewise has no Qt counterpart: `QKeySequenceEdit` cannot
+     abandon an in-flight recording, because the release timer commits
+     whatever arrived.
+
+     Vocabulary notes:
+
+     * `disable` / `enable` mirror the ScrollBar (R55.D.2), Slider
+       (R51.14) and TextField (R56.1.a) vocabulary — the closed-core
+       §5.13 enable/disable pair shared across the widget catalogue.
+     * `blur` mirrors the W3C DOM `FocusEvent` naming §5.39 focus
+       dispatch uses, exactly as `text_field.scxml` does.
+     * `keysequence.captured` is the §5.20 intent raise, the same shape
+       `textfield.commit` has.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <state id="idle">
+    <transition event="record" target="recording"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="recording">
+    <transition event="commit" target="idle">
+      <raise event="keysequence.captured"/>
+    </transition>
+    <transition event="cancel" target="idle"/>
+    <transition event="blur" target="idle">
+      <raise event="keysequence.captured"/>
+    </transition>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="disabled">
+    <transition event="enable" target="idle"/>
+  </state>
+
+</scxml>

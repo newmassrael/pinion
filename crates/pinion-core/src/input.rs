@@ -571,7 +571,10 @@ impl MultiSelectKeyOp {
 /// Qt, Cocoa) exposes as independent booleans — refactoring to a
 /// bitflag or state-machine here would diverge from the industry
 /// vocabulary substrate callers expect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+// R1569 §5.39 — `Hash` because a modifier state is half of a
+// [`Chord`](crate::accelerator::Chord), and a chord is the natural key of a
+// keymap. Free on a four-`bool` POD that already derives `Eq`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Modifiers {
     /// Shift key (left or right) currently held.

@@ -29,7 +29,7 @@
 
 use pinion_core::test_fixtures::{
     ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
-    ScrollbarMultiFixture,
+    ScrollbarMultiFixture, ShadowingFixture,
 };
 use ratatui::backend::TestBackend;
 
@@ -58,6 +58,14 @@ impl WidgetViewTui for ButtonFixture {
 /// R51.169 drain reducer wiring tests on the TUI side, matching the
 /// `pinion_shell::test_fixtures` Vello-side impl byte-for-byte
 /// behaviourally.
+/// R1569 §5.39 §2 #6 — TUI-side impl for the accelerator-shadow fixture, so
+/// the terminal's precedence is asserted through the same `WidgetCore` body
+/// the window's is. Two fixtures would let the backends drift while both
+/// stayed green, which is the gap R1569's own counterfactual found.
+impl WidgetViewTui for ShadowingFixture {
+    type Renderer = crate::TuiRenderer<TestBackend>;
+}
+
 impl WidgetViewTui for EchoButtonFixture {
     type Renderer = crate::TuiRenderer<TestBackend>;
 }

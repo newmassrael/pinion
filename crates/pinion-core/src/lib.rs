@@ -25,6 +25,7 @@
 // this crate itself — `extern crate self as` supplies that alias.
 extern crate self as pinion_core;
 
+pub mod accelerator;
 pub mod animation;
 pub mod app;
 pub mod cell_metric;

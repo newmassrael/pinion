@@ -1688,6 +1688,58 @@ pub trait External: core::fmt::Debug {
         None
     }
 
+    /// R1569 §5.39 §5.20 — while **focused**, does this widget claim `chord`
+    /// ahead of the window's accelerator layers?
+    ///
+    /// The layers are the §5.20 mnemonic map (R1543, <kbd>Alt</kbd>+char) and
+    /// the binding's [`WidgetCore::keybinding`](crate::WidgetCore::keybinding)
+    /// character map. Both fire from anywhere in the window regardless of
+    /// focus, which is what an accelerator *is* — and which is wrong for the
+    /// widget the user is typing into. Answering `true` routes the key
+    /// straight to `apply_key` instead, exactly as if no accelerator had been
+    /// declared for it.
+    ///
+    /// Qt spells this [`QEvent::ShortcutOverride`], an event offered to the
+    /// focus widget which it `accept()`s to claim the key. The capability is
+    /// Qt's floor; the shape is chosen ([[qt-is-the-floor-not-the-target]]),
+    /// and the choice is that this is a **question**, for two reasons:
+    ///
+    /// 1. Qt's override must be accepted on *every* press, so a widget that
+    ///    handles a key in `keyPressEvent` and forgets the `ShortcutOverride`
+    ///    arm in `event()` loses exactly the presses that collide with a
+    ///    shortcut — invisible until someone adds the colliding shortcut, in
+    ///    another file. A widget cannot be asked too late here.
+    /// 2. A question can be evaluated **without a keystroke**, so
+    ///    `scene/accelerators` can publish which declared accelerators are
+    ///    live right now and which are shadowed and by whom. Qt cannot: the
+    ///    event is transient and `QShortcutMap` is private.
+    ///
+    /// # Per chord, deliberately
+    ///
+    /// The right answer differs by chord for the same widget.
+    /// [`TextFieldExternal`](crate::widgets::text_field::TextFieldExternal)
+    /// claims a bare `d` (it is text — Qt's `QLineEdit` does the same) but
+    /// **not** <kbd>Alt</kbd>+<kbd>F</kbd>, so mnemonics keep working while
+    /// typing.
+    /// [`KeySequenceEditExternal`](crate::widgets::key_sequence::KeySequenceEditExternal)
+    /// claims everything while recording, because recording a chord means
+    /// recording *that* chord.
+    ///
+    /// # Only the focused widget is asked
+    ///
+    /// Qt's scope too (`ShortcutOverride` goes to the focus widget), and it is
+    /// what bounds the mechanism: at most one widget can shadow, and it is the
+    /// one the user is typing into. An unfocused widget is never consulted, so
+    /// a `true` here can never make a window's accelerators mysteriously inert.
+    ///
+    /// Default `false` — the accelerator layers keep the precedence they had
+    /// before R1569, so no existing widget changes behaviour by omission.
+    ///
+    /// [`QEvent::ShortcutOverride`]: https://doc.qt.io/qt-6/qevent.html
+    fn shadows_accelerator(&self, _chord: &crate::accelerator::Chord) -> bool {
+        false
+    }
+
     /// R880 §5.35 §5.49 — opt-in for the **bare** (non-composite) send wire
     /// to carry the R781 held-modifier token. When `true`, a background
     /// dispatch with a non-empty modifier state reaches `invoke("send", ...)`

@@ -792,3 +792,55 @@ fn r1552_a_terminal_connection_is_written_to_unprompted() {
     // from the same state this one did.
     assert_eq!(pinion_rpc::process_registry().close_connection(conn), 1);
 }
+
+/// R1569 §5.39 §2 #6 — the TERMINAL asks the same precedence question the
+/// window does, through the same `CoreShell::accelerator_shadow`.
+///
+/// The fixture's `keybinding` map claims `r` and its focused External records
+/// every chord, so one dispatch of `"r"` has two possible outcomes and which
+/// one happens IS the precedence. Written because R1569's counterfactual
+/// removing the TUI gate left every GUI assertion green: a backend with no
+/// coverage is a backend that can silently drift ([[debt-backend-parity-coverage]]).
+#[test]
+fn r1569_the_terminal_asks_the_same_precedence_question() {
+    use pinion_core::test_fixtures::ShadowingFixture;
+
+    let mut core: ShellCoreTui<ShadowingFixture> = ShellCoreTui::new();
+    let paint = core.compute_paint_scene(80, 24);
+    core.update_paint_scene(paint);
+
+    // Baseline: with nothing focused the accelerator wins, so the assertion
+    // below cannot pass by the keybinding map simply being absent.
+    core.dispatch_key("r", pinion_core::Modifiers::default());
+    assert_eq!(
+        *core.cached_state(),
+        (false, true),
+        "unfocused, `r` IS the window's accelerator: it disabled the editor \
+         and recorded nothing",
+    );
+
+    // Put the editor back where it was. A disabled widget claims no chord, so
+    // without this the next step would pass for the wrong reason.
+    for verb in ["Enable", "Record"] {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"scene/invoke","params":{{"path":"/external/send","args":"{verb}"}}}}"#,
+        );
+        assert!(core.dispatch_rpc(&req).is_some(), "{verb} is accepted");
+    }
+
+    let focused = core.dispatch_rpc(
+        r#"{"jsonrpc":"2.0","id":1,"method":"focus/set","params":{"tag":"shadow_fixture"}}"#,
+    );
+    assert!(
+        focused.is_some_and(|r| r.contains("shadow_fixture")),
+        "the fixture takes focus",
+    );
+
+    core.dispatch_key("r", pinion_core::Modifiers::default());
+    assert_eq!(
+        *core.cached_state(),
+        (true, false),
+        "focused and recording, the SAME keystroke reached the widget as a \
+         chord and the accelerator did not fire",
+    );
+}

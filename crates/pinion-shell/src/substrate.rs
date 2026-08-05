@@ -41,6 +41,7 @@ use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, PinionAccessAction, ROOT_NODE_ID, tag_to_node_id,
     translate_action,
 };
+use pinion_core::accelerator::Chord;
 use pinion_core::event::WheelDelta;
 use pinion_core::reactive::{FONT_SOURCES, FontSourceReport, SelfHostedFace};
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
@@ -99,6 +100,13 @@ struct WindowScopedRpcReads {
     /// `Option`: an empty list IS the answer for "nothing is held", so
     /// there is no unavailability to distinguish.
     auto_repeat_holds: Vec<pinion_runtime::AutoRepeatHold>,
+    /// R1569 — `scene/accelerators`; every accelerator live in this window
+    /// with the focused widget's claim resolved against it. Not an `Option`
+    /// for the same reason as the sibling above: a window declaring no
+    /// accelerator truthfully has an empty list.
+    accelerators: Vec<pinion_runtime::AcceleratorRow>,
+    /// R1569 — the focus those shadows were resolved against.
+    accelerator_focus: Option<String>,
     /// R889 — `Some(id)` rejects the whole request with `-32602
     /// unknown_window` before method routing.
     unknown_window: Option<String>,
@@ -1844,6 +1852,10 @@ impl<V: WidgetView> ShellCore<V> {
                 Some(self.key_dispatch_focus_for_window(wid)),
             ),
             auto_repeat_holds: self.auto_repeat_holds_for_window(wid),
+            accelerators: self
+                .core
+                .accelerator_map_for_window(wid, self.focus.focused()),
+            accelerator_focus: self.focus.focused().map(str::to_owned),
             pacing_state: self.core.is_window_known(wid).then(|| {
                 match self.target_fps_for_window(wid) {
                     Some(fps) => pinion_rpc::PacingState::Override(fps),
@@ -2740,19 +2752,34 @@ impl<V: WidgetView> ShellCore<V> {
         // R1543 §5.39 — a character held with Alt is an ACCELERATOR, not text,
         // so the mnemonic arc runs ahead of both the typed-event channel and
         // the focused widget. This is Qt's own precedence (`QShortcutMap` runs
-        // before key delivery); what Qt spells as an opt-out event
-        // (`QEvent::ShortcutOverride` offered to the focus widget) is here the
-        // absence of a declaration — a widget that wants Alt+F for itself
-        // simply does not publish a mnemonic on it, and the key reaches
-        // `apply_key` with `modifiers.alt` set exactly as before.
-        if self.try_mnemonic(c) {
-            return;
+        // before key delivery).
+        //
+        // R1569 §5.39 CORRECTION — R1543 wrote here that Qt's opt-out event
+        // (`QEvent::ShortcutOverride`) was, in pinion, "the absence of a
+        // declaration — a widget that wants Alt+F for itself simply does not
+        // publish a mnemonic on it". That escape is available only to a widget
+        // that OWNS the colliding declaration, and the two widgets that need
+        // the hatch own nothing of the sort: a text field does not declare the
+        // binding's `keybinding("d")`, and a key-sequence editor does not
+        // declare the File menu's Alt+F. The consequence shipped — typing `d`
+        // into `hello-textfield`'s focused field disabled the field, because
+        // `V::keybinding` below runs ahead of the focused widget too. Both
+        // accelerator layers are now gated on the same question.
+        let chord = Chord::new(c, self.modifiers);
+        if self
+            .core
+            .accelerator_shadow(self.focus.focused(), &chord)
+            .is_none()
+        {
+            if self.try_mnemonic(&chord) {
+                return;
+            }
+            if let Some(ev) = V::keybinding(c) {
+                self.forward(ev);
+                return;
+            }
         }
-        if let Some(ev) = V::keybinding(c) {
-            self.forward(ev);
-        } else {
-            self.apply_key_inner(c, repeat);
-        }
+        self.apply_key_inner(c, repeat);
     }
 
     /// R1543 §5.39 — offer `c` to the §5.20 mnemonic arc, returning whether a
@@ -2768,15 +2795,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// `Key::Character` arc's payload, and the R666 auto-discriminator already
     /// routes multi-char strings to the named-key arc, so this rejects only
     /// malformed injections.
-    fn try_mnemonic(&mut self, c: &str) -> bool {
-        if !self.modifiers.alt {
+    fn try_mnemonic(&mut self, chord: &Chord) -> bool {
+        if !chord.modifiers().alt {
             return false;
         }
-        let mut chars = c.chars();
-        let (Some(typed), None) = (chars.next(), chars.next()) else {
-            return false;
-        };
-        let Some(tail) = self.core.dispatch_mnemonic(typed, &mut self.focus) else {
+        let Some(tail) = self.core.dispatch_mnemonic_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            chord,
+            &mut self.focus,
+        ) else {
             return false;
         };
         self.revision.bump();
@@ -5861,6 +5888,29 @@ impl<V: WidgetView> ShellCore<V> {
         // pays nothing. The closure captures the resolved signal (NOT
         // `self`), so it can be `&mut`-borrowed into the DispatchContext
         // inside the split block without re-borrowing `self.core`.
+        // R1569 §5.39 §5.20 — `scene/accelerators`' optional `chord` parameter,
+        // answered before the disjoint-field borrow split below because the
+        // answer needs `self.core` (the paint scene + the focused widget's
+        // claim) and `V::keybinding`. Gated on the method AND on the parameter
+        // being present and readable, so every other dispatch pays nothing and
+        // a malformed spelling falls through to the refusal `scene/accelerators`
+        // itself produces.
+        let accelerator_chord = (request.method == "scene/accelerators")
+            .then(|| {
+                pinion_rpc::parse_chord_param(request.params.as_ref())
+                    .ok()
+                    .flatten()
+            })
+            .flatten()
+            .map(|chord| {
+                let focused = self.focus.focused().map(str::to_owned);
+                let (claimed, shadowed_by) = self.core.accelerator_for_chord(
+                    pinion_runtime::DEFAULT_WINDOW,
+                    focused.as_deref(),
+                    &chord,
+                );
+                pinion_rpc::ChordVerdict::resolve(&chord, claimed, shadowed_by)
+            });
         let reposition_signal = (request.method == "scene/window_move")
             .then(|| self.core.root_owner().run(V::windows_signal))
             .flatten();
@@ -6262,6 +6312,12 @@ impl<V: WidgetView> ShellCore<V> {
             // honest answer for a window with nothing held, so there is no
             // `Unavailable` leg to gate on.
             ctx = ctx.with_auto_repeat_holds(window_reads.auto_repeat_holds);
+            // R1569 §5.39 §5.20 — the window's live accelerator map, plus the
+            // resolver `scene/accelerators`' optional `chord` parameter needs.
+            // The chord is a REQUEST parameter, so it cannot be pre-resolved
+            // here; the closure is the `reposition_request` shape.
+            ctx = ctx.with_accelerators(window_reads.accelerators, window_reads.accelerator_focus);
+            ctx = ctx.with_accelerator_chord(accelerator_chord.clone());
             // R1087 §5.16 §5.41 §2 #7 PR-31 — the declared-window set
             // (resolved above, only for `scene/windows`).
             if let Some(windows) = declared_windows {

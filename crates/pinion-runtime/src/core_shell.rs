@@ -70,6 +70,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use pinion_core::Modifiers;
+use pinion_core::accelerator::{AcceleratorLayer, Chord};
 use pinion_core::composite_tag::split_subindex;
 use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
@@ -414,6 +416,54 @@ pub struct CoreShell<V: WidgetCore> {
     /// using declared positions. The R1120/R1102 shell-stamp pattern (the shell
     /// owns geometry, the cross-window-blind core reads it).
     live_window_origins: RefCell<HashMap<String, (f64, f64)>>,
+}
+
+/// R1569 §5.39 — the character domain
+/// [`CoreShell::accelerator_map_for_window`] probes
+/// `WidgetCore::keybinding` over: printable ASCII, `U+0020..=U+007E`.
+///
+/// A bound rather than a guess. `keybinding` is a *function*, so nothing can
+/// enumerate it; probing every `char` is 1.1M calls a read and probing "the
+/// keys someone might bind" would be a list that quietly decides what counts.
+/// The range covers every literal in the tree today, and the response NAMES it
+/// so a binding that maps a non-ASCII key is visibly out of scope instead of
+/// silently absent from a list that reads as complete.
+pub const ASCII_PROBE_RANGE: std::ops::RangeInclusive<u8> = 0x20..=0x7E;
+
+/// R1569 §5.39 — one live accelerator in a window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceleratorRow {
+    /// The chord's portable spelling — `"Alt+f"`, `"d"`.
+    pub accel: String,
+    /// Which layer declares it.
+    pub layer: AcceleratorLayer,
+    /// The paint tag a mnemonic activates. Empty for a `keybinding`, which
+    /// maps to a typed event rather than to a node.
+    pub target: String,
+    /// The label a mnemonic was marked in, as displayed. Empty for a
+    /// `keybinding`, which has no painted label to be marked in — that being
+    /// exactly the defect R1543 recorded about the hand-rolled character maps.
+    pub label: String,
+    /// The focused widget currently taking this chord, if any.
+    pub shadowed_by: Option<String>,
+}
+
+/// R1569 §5.39 §5.20 — the chord an <kbd>Alt</kbd>+`typed` mnemonic IS.
+///
+/// A mnemonic's modifier state is part of its definition rather than something
+/// read off the keyboard, so the accelerator layer's own convenience entry
+/// point builds it here instead of asking the caller for a state it already
+/// knows. A caller holding the real modifiers (a substrate, which may also see
+/// <kbd>Shift</kbd>) passes its own chord to
+/// [`CoreShell::dispatch_mnemonic_for_window`] directly.
+fn mnemonic_chord(typed: char) -> Chord {
+    Chord::new(
+        typed.to_string(),
+        Modifiers {
+            alt: true,
+            ..Modifiers::empty()
+        },
+    )
 }
 
 /// (R1107.1 §5.51) Get-or-create the per-window [`InputRouter`] AND stamp its
@@ -2202,7 +2252,124 @@ impl<V: WidgetCore> CoreShell<V> {
         typed: char,
         focus: &mut FocusManager,
     ) -> Option<DispatchTail<V::State>> {
-        self.dispatch_mnemonic_for_window(DEFAULT_WINDOW, typed, focus)
+        self.dispatch_mnemonic_for_window(DEFAULT_WINDOW, &mnemonic_chord(typed), focus)
+    }
+
+    /// R1569 §5.39 — every accelerator live in `window_id` right now, and
+    /// which of them the focused widget has taken away.
+    ///
+    /// The **resolution** layer over R1543's declaration layer:
+    /// `scene/mnemonics` answers what the window *declares* (a pure function of
+    /// the paint scene), and this answers what a chord would *do* — which needs
+    /// the paint scene, the focus, and the focused widget's own claim.
+    /// Publishing them apart is deliberate: fusing the shadow into
+    /// `scene/mnemonics` would make that method stop being a function of the
+    /// scene, which is the property R1543's whole derivation rests on.
+    ///
+    /// The `keybinding` half is **probed**, not enumerated:
+    /// [`pinion_core::WidgetCore::keybinding`] is a
+    /// function rather than a table, so the only honest way to ask what it
+    /// claims is to call it. The probed domain is printable ASCII and is
+    /// reported alongside the rows rather than left implicit, because a binding
+    /// that maps `"漢"` exists and would otherwise be silently missing from a
+    /// list that reads as complete.
+    #[must_use]
+    pub fn accelerator_map_for_window(
+        &self,
+        window_id: &str,
+        focused: Option<&str>,
+    ) -> Vec<AcceleratorRow> {
+        let mut rows: Vec<AcceleratorRow> = self
+            .last_paint_scene_for_window(window_id)
+            .map(scene_mnemonics)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|b| {
+                let chord = mnemonic_chord(b.key);
+                AcceleratorRow {
+                    accel: chord.portable(),
+                    layer: AcceleratorLayer::Mnemonic,
+                    target: b.target,
+                    label: b.label,
+                    shadowed_by: self.accelerator_shadow(focused, &chord),
+                }
+            })
+            .collect();
+        for byte in ASCII_PROBE_RANGE {
+            let key = char::from(byte).to_string();
+            if V::keybinding(&key).is_none() {
+                continue;
+            }
+            let chord = Chord::new(key, Modifiers::empty());
+            rows.push(AcceleratorRow {
+                accel: chord.portable(),
+                layer: AcceleratorLayer::Keybinding,
+                // A `keybinding` maps to a typed EVENT the binding forwards to
+                // itself, not to a painted node, so there is no target tag to
+                // name — an empty one rather than a guess.
+                target: String::new(),
+                label: String::new(),
+                shadowed_by: self.accelerator_shadow(focused, &chord),
+            });
+        }
+        rows
+    }
+
+    /// R1569 §5.39 — what `chord` would do in `window_id` right now.
+    ///
+    /// The question a keymap editor asks before accepting a recording, and the
+    /// one Qt cannot answer before the user has already pressed the key.
+    /// Answers the claiming layer (`None` when the chord is free) and,
+    /// separately, whether the focused widget is currently taking it — two
+    /// facts rather than one, because a chord that IS declared and IS shadowed
+    /// is a conflict that would still bite once focus moved on.
+    #[must_use]
+    pub fn accelerator_for_chord(
+        &self,
+        window_id: &str,
+        focused: Option<&str>,
+        chord: &Chord,
+    ) -> (Option<AcceleratorLayer>, Option<String>) {
+        let claimed = self
+            .accelerator_map_for_window(window_id, focused)
+            .into_iter()
+            .find(|row| row.accel == chord.portable())
+            .map(|row| row.layer)
+            // The `keybinding` map is modifier-blind, so a command chord over a
+            // mapped character collides even though its spelling differs.
+            .or_else(|| {
+                (chord.key().chars().count() == 1 && V::keybinding(chord.key()).is_some())
+                    .then_some(AcceleratorLayer::Keybinding)
+            });
+        (claimed, self.accelerator_shadow(focused, chord))
+    }
+
+    /// R1569 §5.39 — the tag of the focused widget that claims `chord` ahead of
+    /// the window's accelerator layers, or `None` when the layers win.
+    ///
+    /// The **one** derivation both backends read, so a window and a terminal
+    /// cannot disagree about whether a keystroke was an accelerator. It is the
+    /// same `find_external_with_tag` resolution
+    /// [`External::auto_repeat`](pinion_core::external::External::auto_repeat)
+    /// and [`External::begin_drag`](pinion_core::external::External::begin_drag)
+    /// reach their widget by, off the PRIMARY half of a possibly-composite tag:
+    /// a widget is the authority on its own sub-regions, so the router never
+    /// parses a composite tag to decide a precedence.
+    ///
+    /// Only the focused widget is asked (Qt's scope for
+    /// `QEvent::ShortcutOverride` too), which is what bounds the mechanism —
+    /// at most one widget can shadow, and it is the one being typed into. An
+    /// unresolvable or absent focus answers `None`, the safe direction: a
+    /// widget that left the scene mid-keystroke cannot leave the window's
+    /// accelerators inert behind it.
+    #[must_use]
+    pub fn accelerator_shadow(&self, focused: Option<&str>, chord: &Chord) -> Option<String> {
+        let (primary, _) = split_subindex(focused?);
+        self.scene
+            .find_external_with_tag(primary)?
+            .handle
+            .shadows_accelerator(chord)
+            .then(|| primary.to_owned())
     }
 
     /// R1543 §5.39 §5.20 — dispatch <kbd>Alt</kbd>+`typed` against the
@@ -2252,9 +2419,21 @@ impl<V: WidgetCore> CoreShell<V> {
     pub fn dispatch_mnemonic_for_window(
         &mut self,
         window_id: &str,
-        typed: char,
+        chord: &Chord,
         focus: &mut FocusManager,
     ) -> Option<DispatchTail<V::State>> {
+        // R1569 §5.39 — the focused widget is offered the chord first. Gated
+        // HERE rather than only at the call sites so the mnemonic layer cannot
+        // be entered without the question having been asked: a third backend
+        // that reached this method directly would otherwise reintroduce
+        // exactly the precedence defect this round closed.
+        if self.accelerator_shadow(focus.focused(), chord).is_some() {
+            return None;
+        }
+        let mut chars = chord.key().chars();
+        let (Some(typed), None) = (chars.next(), chars.next()) else {
+            return None;
+        };
         let target = self.resolve_mnemonic(window_id, typed)?;
         if !focus.focus_set(&target) {
             let (primary, sub) = split_subindex(&target);
@@ -6830,7 +7009,7 @@ mod tests {
 
 #[cfg(test)]
 mod mnemonic_tests {
-    use super::{CoreShell, DEFAULT_WINDOW};
+    use super::{CoreShell, DEFAULT_WINDOW, mnemonic_chord};
     use crate::focus::FocusManager;
     use pinion_core::mnemonic::MnemonicLabel;
     use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
@@ -6856,6 +7035,45 @@ mod mnemonic_tests {
         let mut focus = FocusManager::new();
         focus.update_focusable_tags(vec![BTN.to_owned(), "other".to_owned()]);
         (core, focus)
+    }
+
+    /// R1569 §5.39 — a focused widget that claims the chord takes it away from
+    /// the mnemonic layer, and the gate lives INSIDE this method.
+    ///
+    /// Reached by a direct call because that is the only shape it exists for:
+    /// both shipped substrates ask `accelerator_shadow` before they get here,
+    /// so a wire demo cannot reach the gate at all — measured, not assumed
+    /// (R1569's own counterfactual removed the gate and every wire assertion
+    /// still passed). The gate is defence for a third backend, and this is
+    /// what keeps it from being unverified code that reads as load-bearing.
+    #[test]
+    fn r1569_a_focused_shadowing_widget_takes_the_mnemonic() {
+        let (mut core, mut focus) = shell_painting(labelled(BTN, "&Test"));
+        // Baseline: with nothing focused the accelerator fires, so the
+        // assertion below cannot pass by the mnemonic simply being absent.
+        assert!(
+            core.dispatch_mnemonic_for_window(DEFAULT_WINDOW, &mnemonic_chord('t'), &mut focus)
+                .is_some(),
+            "Alt+T is declared and nothing claims it",
+        );
+
+        // Now put a recording key-sequence editor in the state scene and focus
+        // it. It declares no mnemonic of its own — which is exactly the case
+        // R1543's doc said needed none, and the case that could not work.
+        let mut editor = pinion_core::widgets::key_sequence::KeySequenceEditExternal::new();
+        editor.send(pinion_core::widgets::key_sequence::KeySequenceEvent::Record);
+        *core.scene_mut() = Scene::External(
+            pinion_core::scene::ExternalNode::new(Box::new(editor)).with_tag("kseq"),
+        );
+        focus.update_focusable_tags(vec!["kseq".to_owned()]);
+        assert!(focus.focus_set("kseq"), "the editor takes focus");
+
+        assert!(
+            core.dispatch_mnemonic_for_window(DEFAULT_WINDOW, &mnemonic_chord('t'), &mut focus)
+                .is_none(),
+            "the focused widget claimed Alt+T, so the accelerator must not fire",
+        );
+        assert_eq!(focus.focused(), Some("kseq"), "and focus did not move");
     }
 
     #[test]

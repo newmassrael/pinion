@@ -436,6 +436,106 @@ impl WidgetCore for ButtonFixture {
     }
 }
 
+/// R1569 §5.39 §2 #6 — a binding whose focused widget SHADOWS the window's
+/// accelerator layers.
+///
+/// Its `keybinding` map claims the bare character `r`, and its External is a
+/// [`KeySequenceEditExternal`](crate::widgets::key_sequence::KeySequenceEditExternal)
+/// that records every chord while recording. So one dispatch of `"r"` has two
+/// possible outcomes — the binding's `Record` event, or a recorded chord — and
+/// WHICH one happens is exactly the precedence R1569 added.
+///
+/// Shared rather than per-backend because that is the point: the GUI and the
+/// TUI resolve the shadow through one `CoreShell::accelerator_shadow`, and a
+/// fixture each would let the two drift while both stayed green. R1569's own
+/// counterfactual removed the TUI gate and every GUI assertion still passed —
+/// which is how this fixture came to exist.
+pub struct ShadowingFixture;
+
+impl WidgetCore for ShadowingFixture {
+    /// `(recorded_something, is_disabled)`.
+    ///
+    /// Both, because one alone cannot tell the two outcomes apart: the
+    /// accelerator this fixture declares DISABLES the editor, so "nothing was
+    /// recorded" is consistent with the keystroke having vanished. Observing
+    /// the accelerator's own effect is what makes the baseline a control
+    /// rather than an absence.
+    type State = (bool, bool);
+    type Event = ButtonEvent;
+
+    fn create_external() -> Box<dyn External> {
+        let mut editor = crate::widgets::key_sequence::KeySequenceEditExternal::new();
+        editor.send(crate::widgets::key_sequence::KeySequenceEvent::Record);
+        Box::new(editor)
+    }
+
+    fn tag() -> &'static str {
+        "shadow_fixture"
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        let Some(intro) = scene
+            .find_external_with_tag(Self::tag())
+            .and_then(|n| n.handle.introspect())
+        else {
+            return (false, false);
+        };
+        let recorded = matches!(
+            intro.query("in_flight"),
+            Some(IntrospectValue::Text(ref run)) if !run.is_empty(),
+        );
+        let disabled = matches!(
+            intro.query("state"),
+            Some(IntrospectValue::Text(ref name)) if name == "Disabled",
+        );
+        (recorded, disabled)
+    }
+
+    fn view(_state: Self::State, _frame: &Frame) -> Scene {
+        Scene::Container(ContainerNode {
+            rect: Rect::new(0, 0, 32, 48),
+            tag: Some(Cow::Borrowed("shadow_fixture")),
+            children: vec![Scene::Text(TextNode::default())],
+            layout: crate::style::LayoutStyle::new().with_focusable(true),
+            ..Default::default()
+        })
+    }
+
+    fn event_name(event: Self::Event) -> &'static str {
+        <ButtonFixture as WidgetCore>::event_name(event)
+    }
+
+    fn title() -> &'static str {
+        "Shadow"
+    }
+
+    /// The accelerator the editor must be able to take away.
+    fn keybinding(key: &str) -> Option<Self::Event> {
+        (key == "r").then_some(ButtonEvent::Disable)
+    }
+
+    /// Every key that survives the accelerator layers is a chord to record.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: crate::input::Modifiers,
+    ) -> bool {
+        if focused != Some(Self::tag()) {
+            return false;
+        }
+        let chord = crate::accelerator::Chord::new(key, modifiers);
+        scene
+            .find_external_with_tag_mut(Self::tag())
+            .and_then(|n| n.handle.introspect_mut())
+            .is_some_and(|intro| {
+                intro
+                    .invoke("record", IntrospectValue::Text(chord.portable()))
+                    .is_ok()
+            })
+    }
+}
+
 /// (R55.D.5 §5.45, lifted R884) `Owner::cache` key for the shared
 /// [`ScrollState`](crate::widgets::scroll::ScrollState) the
 /// [`ScrollbarMultiFixture`]'s extra scrollbar External attaches.
