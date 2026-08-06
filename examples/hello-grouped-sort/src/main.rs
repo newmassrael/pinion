@@ -270,7 +270,11 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let list_root = Scene::Container(
         ContainerNode::new(vec![bar, list_row])
             .with_tag(LIST_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_focusable(true)
+                    .flex(FlexDirection::Column),
+            ),
     );
 
     Scene::Container(

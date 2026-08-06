@@ -92,39 +92,73 @@ SWITCH_FAMILY = [
     "hello-richtext-list",
 ]
 
+#: R1570.5 — TUI siblings. They are terminal bindings driven through a
+#: different entry point, and this harness's stdin handshake gets a broken pipe
+#: rather than a refusal. Excluded by NAME and listed, so the exclusion is a
+#: decision on the page instead of a silent gap; their GUI siblings
+#: (`hello-button`, `hello-commands`, `hello-toggle`) are in the population and
+#: share the `WidgetCore` body under test.
+NO_RPC_STDIN = {"hello-button-tui", "hello-commands-tui", "hello-toggle-tui"}
+
 #: A painted node that must NOT be a stop. `hue_strip` is a decorative gradient
 #: `Scene::Box` in `hello-gradient`; R1570.1 stamped it by mistake and this is
 #: what found it.
 DECORATIVE = ("hello-gradient", "hue_strip")
 
 
-def declared_controls() -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
-    """Every `#[widget(...)]` binding, split into interactive and not.
+def declared_controls() -> tuple[
+    list[tuple[str, str, str]], list[tuple[str, str]], list[str]
+]:
+    """Every binding that presents an interactive ARIA role, however it says so.
 
-    Derived from source rather than listed, so the population tracks the tree.
-    Returns `(interactive, excluded)` and the caller prints both.
+    R1570.5 — the population used to be "bindings whose `#[widget(...)]`
+    attribute names an interactive `role`", which is 23. It is not the class:
+    89 bindings construct an interactive `AriaRole`, and the other 66 write
+    their `WidgetA11y` impl by hand. Scoping the gate to the attribute made its
+    verdict read as total while covering a quarter of the subject, and five of
+    the unscanned bindings had the exact defect (`hello-grouped-sort`,
+    `hello-listbox-multi`, `hello-radio-group`, `hello-scene-scale`,
+    `hello-virtual-sort`). A derived population is only as wide as the thing it
+    derives from — that is the same lesson as R1518's curated list, one level
+    less obvious.
+
+    Two kinds come back, because only one of them can be asked a precise
+    question. A binding that DECLARES `role` + `tag` can be asked whether THAT
+    tag is focusable; a hand-written one names its roles somewhere in a
+    `WidgetA11y` impl this scan will not try to parse, so all it can be asked
+    is whether the window has any focus stop at all. Weaker, and still enough:
+    the defect this gate exists for is "no stop anywhere".
+
+    Returns `(declared, excluded_by_role, hand_written)`.
     """
-    interactive: list[tuple[str, str, str]] = []
+    declared: list[tuple[str, str, str]] = []
     excluded: list[tuple[str, str]] = []
+    hand_written: list[str] = []
     for main_rs in sorted((WORKSPACE / "examples").glob("*/src/main.rs")):
         src = main_rs.read_text()
-        attr = re.search(r"#\[widget\((?P<a>.*?)\n\)\]", src, re.S)
-        if attr is None:
-            continue
-        body = attr.group("a")
-        # Anchored to line starts: an unanchored match reads `tag = "..."` out
-        # of the module's own doc comments, which is how this demo's first
-        # draft picked the wrong tag for two bindings.
-        role = re.search(r"^\s*role\s*=\s*(\w+)", body, re.M)
-        tag = re.search(r'^\s*tag\s*=\s*"([^"]+)"', body, re.M)
-        if role is None or tag is None:
-            continue
         name = main_rs.parts[-3]
-        if role.group(1) in INTERACTIVE_ROLES:
-            interactive.append((name, tag.group(1), role.group(1)))
-        else:
-            excluded.append((name, role.group(1)))
-    return interactive, excluded
+        attr = re.search(r"#\[widget\((?P<a>.*?)\n\)\]", src, re.S)
+        if attr is not None:
+            body = attr.group("a")
+            # Anchored to line starts: an unanchored match reads `tag = "..."`
+            # out of the module's own doc comments, which is how this demo's
+            # first draft picked the wrong tag for two bindings.
+            role = re.search(r"^\s*role\s*=\s*(\w+)", body, re.M)
+            tag = re.search(r'^\s*tag\s*=\s*"([^"]+)"', body, re.M)
+            if role is not None and tag is not None:
+                if role.group(1) in INTERACTIVE_ROLES:
+                    declared.append((name, tag.group(1), role.group(1)))
+                else:
+                    excluded.append((name, role.group(1)))
+                continue
+        # No attribute, or one that declares no role: fall back to the roles the
+        # binding CONSTRUCTS. `AriaRole::X` in the source is the only statement
+        # a hand-written `WidgetA11y` impl makes that this scan can read.
+        roles = sorted(set(re.findall(r"AriaRole::(\w+)", src)))
+        if any(r in INTERACTIVE_ROLES for r in roles):
+            if name not in NO_RPC_STDIN:
+                hand_written.append(name)
+    return declared, excluded, hand_written
 
 
 def focused(tf: RpcSubprocess) -> Any:
@@ -133,19 +167,32 @@ def focused(tf: RpcSubprocess) -> Any:
 
 def body() -> None:
     checks = 0
-    interactive, excluded = declared_controls()
+    interactive, excluded, hand_written = declared_controls()
 
     # ── (A) the population is derived, non-empty, and its edges are named ──
-    print(f"[demo] derived population: {len(interactive)} interactive-role binding(s)")
+    print(f"[demo] declared role + tag: {len(interactive)} binding(s)")
     for name, tag, role in interactive:
         print(f"[demo]   {name:30}{role:13}{tag}")
-    print(f"[demo] excluded by role: {len(excluded)}")
+    print(f"[demo] hand-written WidgetA11y with an interactive role: "
+          f"{len(hand_written)}")
+    print(f"[demo] excluded by role: {len(excluded)}  "
+          f"| excluded as non-RPC: {len(NO_RPC_STDIN)}")
     for name, role in excluded:
         print(f"[demo]   {name:30}{role} (not an operable role)")
     assert interactive, (
         "the source scan matched no interactive-role binding — every assertion "
         "below would be vacuous, which is exactly how a curated population "
         "hides an absence"
+    )
+    checks += 1
+    # R1570.5 — the hand-written half is the larger one, and the gate reported
+    # a total verdict without it for exactly one round. Asserting it is
+    # non-empty keeps a scan that silently stops matching from reading as a
+    # tree that has no such bindings.
+    assert len(hand_written) > len(interactive), (
+        f"the hand-written half ({len(hand_written)}) should outnumber the "
+        f"declared one ({len(interactive)}) — if it does not, the AriaRole "
+        f"scan has stopped matching and this gate has quietly narrowed again"
     )
     checks += 1
 
@@ -178,6 +225,22 @@ def body() -> None:
         with RpcSubprocess(name, boot_grace=1.5) as tf:
             stop = tf.request("focus/next").result.get("focused")
             assert stop is not None, f"{name}: focus/next found no stop at all"
+            checks += 1
+
+    # ── (C2) the hand-written half has a stop at all ──────────────────────
+    # Weaker than (B)/(C) by necessity: these bindings name their roles inside
+    # a `WidgetA11y` impl this demo does not parse, so there is no single tag
+    # to point at. "The window has SOME focus stop" is still the defect this
+    # gate exists for — a control announced as operable that no keyboard can
+    # reach — and it is the assertion the 23-binding population could not make
+    # about the other 66.
+    for name in hand_written:
+        with RpcSubprocess(name, boot_grace=1.5) as tf:
+            stop = tf.request("focus/next").result.get("focused")
+            assert stop is not None, (
+                f"{name}: presents an interactive ARIA role and has NO focus "
+                f"stop at all — announced as operable, unreachable by keyboard"
+            )
             checks += 1
 
     # ── (D) NEGATIVE CONTROL — a decorative node is not a stop ────────────

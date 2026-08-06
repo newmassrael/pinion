@@ -378,7 +378,11 @@ fn view(state: ScaleState, _frame: &Frame) -> Scene {
     let list_root = Scene::Container(
         ContainerNode::new(vec![list, scrollbar_visual])
             .with_tag(LIST_TAG)
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_focusable(true)
+                    .flex(FlexDirection::Row),
+            ),
     );
 
     Scene::Container(

@@ -95,6 +95,7 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     let column = Scene::Container(
         ContainerNode::new(rows).with_tag(PRIMARY_TAG).with_layout(
             LayoutStyle::new()
+                .with_focusable(true)
                 .flex(FlexDirection::Column)
                 .with_align_items(AlignItems::Start)
                 .with_gap(ROW_GAP),
