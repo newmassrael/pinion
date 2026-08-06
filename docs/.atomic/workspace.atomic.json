@@ -31640,6 +31640,52 @@
         "The cap means a core-crate change is still reported rather than covered locally; that is the deliberate boundary with CI, not an omission"
       ]
     },
+    "R1583": {
+      "decision_summary": "R1583 §5.40 §5.12 §2 #7 — THE ACCESS WIRE REPORTS THE FOCUS THIS WINDOW RESOLVES. R1581 registered a debt saying scene/access cannot be asked about a window. That was false and this round found it out before working on it: the scope is params.window, which Request::window_scope reads, not the window[id]/ method PREFIX that addresses paths inside query and invoke. One failed spelling had been read as an absent capability. But a real defect was in that place, and it is the one the false debt was standing in front of: the shell's focus target is GLOBAL — one tag across every window — and AccessTreeBuilder::build folds a tag its node set lacks onto the window root, while access_to_json republished the global tag into every window's reply. Measured on hello-window-refocus with focus on edit_title, the notes window's reply named edit_title, and that window's real AccessKit TreeUpdate carries ROOT_NODE_ID. A surface whose whole purpose is to answer \"what does a screen reader on this window see\" was answering with something that window's screen reader does not see.",
+      "changes_bullets": [
+        "access_to_json applies the same existence filter AccessTreeBuilder::build applies, so the wire reports what the AccessKit tree carries rather than being a second description free to disagree with the first",
+        "The fold is NAMED rather than performed silently: the reply keeps the global tag and adds how this window resolved it, so \"where is focus\" and \"what does this window's AT see\" are both still answerable. Collapsing to null would have answered the second by destroying the first",
+        "R947.1's active-descendant filter is mirrored too — a roving cursor scrolled out of the realized set is not advertised as a node this frame does not contain",
+        "r1581_a_focus_stop_is_a_node.py's two EXCLUSIONS became assertions: the node is in the window that paints it, and the window that does not paint it resolves the same tag to its own root. That demo had written down the condition under which its exclusion should go, and this is it"
+      ],
+      "verification_bullets": [
+        "5 new unit tests in pinion-rpc::access (1145 total in the crate), each stating the node set it is about",
+        "Four counterfactuals, all caught with zero coverage gaps: the fold not applied, the fold discarding the global tag, the active-descendant filter dropped, and an absent focus target folded rather than left null",
+        "The demo grew from 25 to 28 assertion sites and its exclusion list to zero",
+        "Every demo in the tree that reads the access focus was re-run: r1517, r1518, r1581, r1464 and r1327, all PASS",
+        "THE DEBT THIS CLOSES WAS ITSELF WRONG, and the correction is the round's first finding: a single failed call had been recorded as an absent capability. The second spelling was never tried",
+        "A trap in the other direction: PINION_ASSUME_BUILT=1 read a binary built before this crate changed, and the demo failed against stale bytes. R1576.1 is the mirror image — that round had to turn the rebuild off, this one had to turn it on"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The window scope is a params field while paths use a window[id]/ prefix; the two spellings coexist and nothing publishes which methods take which, which is what let R1581 conclude a capability was missing"
+      ],
+      "publishable_decision_summary": "R1583 §5.40 §5.12 §2 #7 — THE ACCESS WIRE REPORTS THE FOCUS THIS WINDOW RESOLVES. R1581 registered a debt saying scene/access cannot be asked about a window. That was false and this round found it out before working on it: the scope is params.window, which Request::window_scope reads, not the window[id]/ method PREFIX that addresses paths inside query and invoke. One failed spelling had been read as an absent capability. But a real defect was in that place, and it is the one the false debt was standing in front of: the shell's focus target is GLOBAL — one tag across every window — and AccessTreeBuilder::build folds a tag its node set lacks onto the window root, while access_to_json republished the global tag into every window's reply. Measured on hello-window-refocus with focus on edit_title, the notes window's reply named edit_title, and that window's real AccessKit TreeUpdate carries ROOT_NODE_ID. A surface whose whole purpose is to answer \"what does a screen reader on this window see\" was answering with something that window's screen reader does not see.",
+      "publishable_changes_bullets": [
+        "access_to_json applies the same existence filter AccessTreeBuilder::build applies, so the wire reports what the AccessKit tree carries rather than being a second description free to disagree with the first",
+        "The fold is NAMED rather than performed silently: the reply keeps the global tag and adds how this window resolved it, so \"where is focus\" and \"what does this window's AT see\" are both still answerable. Collapsing to null would have answered the second by destroying the first",
+        "R947.1's active-descendant filter is mirrored too — a roving cursor scrolled out of the realized set is not advertised as a node this frame does not contain",
+        "r1581_a_focus_stop_is_a_node.py's two EXCLUSIONS became assertions: the node is in the window that paints it, and the window that does not paint it resolves the same tag to its own root. That demo had written down the condition under which its exclusion should go, and this is it"
+      ],
+      "publishable_verification_bullets": [
+        "5 new unit tests in pinion-rpc::access (1145 total in the crate), each stating the node set it is about",
+        "Four counterfactuals, all caught with zero coverage gaps: the fold not applied, the fold discarding the global tag, the active-descendant filter dropped, and an absent focus target folded rather than left null",
+        "The demo grew from 25 to 28 assertion sites and its exclusion list to zero",
+        "Every demo in the tree that reads the access focus was re-run: r1517, r1518, r1581, r1464 and r1327, all PASS",
+        "THE DEBT THIS CLOSES WAS ITSELF WRONG, and the correction is the round's first finding: a single failed call had been recorded as an absent capability. The second spelling was never tried",
+        "A trap in the other direction: PINION_ASSUME_BUILT=1 read a binary built before this crate changed, and the demo failed against stale bytes. R1576.1 is the mirror image — that round had to turn the rebuild off, this one had to turn it on"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The window scope is a params field while paths use a window[id]/ prefix; the two spellings coexist and nothing publishes which methods take which, which is what let R1581 conclude a capability was missing"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

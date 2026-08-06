@@ -20,11 +20,12 @@ What the round measured, and what it corrected:
 * The debt note listed **8 bindings**; walking them found **11 stops across 9**.
   `hello-dock-panels-editor` had two missing, not one, and
   `hello-window-refocus` had three.
-* Two of the listed entries were **false positives**, and both for the same
-  reason: their node lives in a window the wire cannot ask about.
-  `scene/access` is not window-routable, so a probe reads the primary window's
-  tree and reports a stop missing whatever a sibling window holds. Both are
-  pinned by Rust tests instead — `hello-multi-window`'s has existed since R813.
+* Two of the listed entries were **false positives**: their node lives in a
+  sibling window. R1581 read that as "the wire cannot ask" and was itself
+  wrong — the scope is `params.window`, not a method prefix. R1583 corrected
+  it, so those two are now ASSERTED here: the node is in the window that
+  paints it, and the window that does not paint it resolves the global focus
+  tag to its own root rather than republishing it.
 * `settings-panel`'s note read "AT-invisible for v1 … carries to R668". R668 is
   nine hundred rounds past, and the one control the panel is navigated by was
   the one control a screen-reader user could not hear.
@@ -77,13 +78,17 @@ EXPECTED: list[tuple[str, dict[str, tuple[str, str]]]] = [
     ("hello-window-focus-multi", {"main_btn": ("button", "focusable button")}),
 ]
 
-#: The two stops whose node lives in a window `scene/access` cannot be asked
-#: about. Named here so their ABSENCE from the wire reading is a stated fact
-#: rather than a silent hole — see the module docstring.
-OTHER_WINDOW = {
-    ("hello-multi-window", "inspector_tree"),
-    ("hello-window-refocus", "notes_pane"),
-}
+#: `(example, stop, the window that PAINTS it, a window that does not)`.
+#:
+#: R1581 excluded these two because it read `scene/access` unscoped and could
+#: not ask about a sibling window. R1583 found that wrong — the scope is
+#: `params.window`, not a method prefix — so the exclusion is now an
+#: ASSERTION: the node is in the window that paints it, and the window that
+#: does not paint it resolves the global focus tag to its own root.
+OTHER_WINDOW = [
+    ("hello-multi-window", "inspector_tree", "inspector", "main"),
+    ("hello-window-refocus", "notes_pane", "notes", "main"),
+]
 
 #: Enough to close the ring on every binding here; the walk stops on a repeat.
 STEPS = 8
@@ -240,8 +245,8 @@ def body() -> None:
             f"label {painted!r}, so a mode change moves both"
         )
 
-    # The two stops the wire cannot judge, stated rather than skipped silently.
-    for example, stop in sorted(OTHER_WINDOW):
+    # ── The multi-window stops, ASSERTED rather than excluded (R1583) ────────
+    for example, stop, painter, other in OTHER_WINDOW:
         with RpcSubprocess(example, boot_grace=1.2) as tf:
             for _ in range(2):
                 tf.tick(0.016)
@@ -258,28 +263,42 @@ def body() -> None:
                 tf.request("focus/next", {})
                 tf.tick(0.016)
             assert landed, f"{example}: could not bring focus to rest on {stop!r}"
-            acc = wait_until(
-                lambda: settled_access(tf, stop),
-                desc=f"{example}: scene/access focus settles on {stop!r}",
+            tf.tick(0.016)
+
+            painted = tf.request("scene/access", {"window": painter}).result or {}
+            node = access_node_by_tag(painted, stop)
+            assert node is not None, (
+                f"{example}: {stop!r} must be a node in {painter!r}, the window "
+                f"that paints it — tags were "
+                f"{[n.get('tag') for n in (painted.get('nodes') or [])]}"
             )
-            assert access_node_by_tag(acc, stop) is None, (
-                f"{example}: {stop!r} now reads from the primary window's tree — "
-                f"if scene/access became window-routable, this demo's premise "
-                f"changed and the exclusion above should go"
-            )
-            # `settled_access` already asserted the target is still PUBLISHED
-            # as this tag; the fold to the window root happens inside the tree
-            # the shell emits to AccessKit, which is what those bindings' own
-            # Rust tests pin.
             assert_eq(
-                (acc.get("focus") or {}).get("tag"),
+                (painted.get("focus") or {}).get("resolved"),
+                "tag",
+                f"{example}/{painter}: the focused control is in THIS tree",
+            )
+
+            # And the window that does NOT paint it resolves the same global
+            # tag to its own root, which is what AccessTreeBuilder does and what
+            # R1583 made the wire say instead of republishing the tag.
+            elsewhere = tf.request("scene/access", {"window": other}).result or {}
+            assert access_node_by_tag(elsewhere, stop) is None, (
+                f"{example}: {stop!r} must not be a ghost in {other!r}"
+            )
+            assert_eq(
+                (elsewhere.get("focus") or {}).get("tag"),
                 stop,
-                f"{example}: the focus target is published",
+                f"{example}/{other}: the global tag stays answerable",
+            )
+            assert_eq(
+                (elsewhere.get("focus") or {}).get("resolved"),
+                "window_root",
+                f"{example}/{other}: and this window's AT lands on its root",
             )
 
     print(
         f"[demo] {total_stops} focus stops over {len(EXPECTED)} bindings, every "
-        f"one a named node; {len(OTHER_WINDOW)} excluded and why"
+        f"one a named node; {len(OTHER_WINDOW)} more asserted per window"
     )
 
 

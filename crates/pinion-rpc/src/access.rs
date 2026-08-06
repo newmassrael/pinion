@@ -32,13 +32,34 @@ use serde_json::{Map, Value};
 /// Serialize the enriched access tree (nodes + the AT focus target) to the
 /// `scene/access` result envelope: `{ count, focus, nodes }`. `focus` is
 /// JSON `null` when no node holds focus.
+///
+/// # R1583 — the focus is reported as THIS window's tree resolves it
+///
+/// The shell's focus target is global: one tag across every window, which is
+/// what `WidgetView::access_node_for_window`'s doc records and what lets the
+/// focus "self-correct to whichever window actually holds the focused tag".
+/// The correction happens in [`pinion_a11y::AccessTreeBuilder::build`], which
+/// folds a focus tag absent from the node set onto the window root.
+///
+/// This serializer did not, so `scene/access {window: X}` published the global
+/// tag into every window's reply — including windows whose real AccessKit
+/// `TreeUpdate` carries `focus = ROOT_NODE_ID`. A surface whose whole purpose
+/// is to answer "what does a screen reader on this window see" answered with
+/// something that window's screen reader does not see.
+///
+/// So the fold is applied here too, and — this is the part that is more than
+/// parity — it is **named** rather than silently performed: the reply keeps the
+/// tag AND says how the window resolved it. An agent asking where focus is
+/// still reads `tag`; an agent asking what this window's AT sees reads
+/// `resolved`. Collapsing to `null` would have answered the second question by
+/// destroying the first.
 #[must_use]
 pub fn access_to_json(nodes: &[AccessNode], focus: Option<&AccessFocus>) -> Value {
     let mut obj = Map::new();
     obj.insert("count".to_string(), Value::from(nodes.len()));
     obj.insert(
         "focus".to_string(),
-        focus.map_or(Value::Null, access_focus_to_json),
+        focus.map_or(Value::Null, |focus| access_focus_to_json(focus, nodes)),
     );
     obj.insert(
         "nodes".to_string(),
@@ -210,10 +231,31 @@ fn access_state_to_json(state: AccessState) -> Option<Value> {
 /// Wire form of the [`AccessFocus`] target: the focused node's `tag` plus,
 /// for a composite (roving / active-descendant) widget, the `active_descendant`
 /// child tag the AT virtual cursor sits on.
-fn access_focus_to_json(focus: &AccessFocus) -> Value {
+fn access_focus_to_json(focus: &AccessFocus, nodes: &[AccessNode]) -> Value {
+    let emitted = |tag: &str| nodes.iter().any(|node| node.tag == tag);
     let mut obj = Map::new();
     obj.insert("tag".to_string(), Value::String(focus.focus_tag.clone()));
-    if let Some(child) = &focus.active_descendant {
+    // R1583 §5.40 — `AccessTreeBuilder::build` resolves the focus tag against
+    // the node set and falls back to the window root when it is absent, and it
+    // applies the SAME existence filter to the active descendant (R947.1: a
+    // roving cursor scrolled out of the realized set must not be advertised as
+    // a NodeId this frame's tree does not contain). Both are mirrored rather
+    // than restated: the wire reports what the AT gets, or it is a second
+    // description free to disagree with the first.
+    obj.insert(
+        "resolved".to_string(),
+        Value::String(
+            if emitted(&focus.focus_tag) {
+                "tag"
+            } else {
+                "window_root"
+            }
+            .to_string(),
+        ),
+    );
+    if let Some(child) = &focus.active_descendant
+        && emitted(child)
+    {
         obj.insert(
             "active_descendant".to_string(),
             Value::String(child.clone()),
@@ -359,5 +401,70 @@ mod tests {
         assert_eq!(n["children"][0], "row#reset");
         assert_eq!(json["focus"]["tag"], "grid");
         assert_eq!(json["focus"]["active_descendant"], "row");
+    }
+
+    // ── R1583: the focus is reported as THIS window's tree resolves it ──────
+
+    #[test]
+    fn a_focus_tag_this_window_carries_is_reported_as_the_tag() {
+        let nodes = vec![AccessNode::new("main_btn", AriaRole::Button)];
+        let json = access_to_json(&nodes, Some(&AccessFocus::atomic("main_btn")));
+        assert_eq!(json["focus"]["tag"], "main_btn");
+        assert_eq!(json["focus"]["resolved"], "tag");
+    }
+
+    #[test]
+    fn a_focus_tag_this_window_does_not_carry_resolves_to_the_window_root() {
+        // The shell's focus target is GLOBAL — one tag across every window —
+        // and `AccessTreeBuilder::build` folds it onto the window root for any
+        // window whose node set lacks it. Before R1583 this serializer
+        // published the tag anyway, so `scene/access {window: "notes"}` said
+        // focus was on a control in the main window while the notes window's
+        // real AccessKit TreeUpdate said the window root. Measured on
+        // `hello-window-refocus`: focus/get `edit_title`, and the notes
+        // window's reply named `edit_title` too.
+        let nodes = vec![AccessNode::new("notes_pane", AriaRole::Group)];
+        let json = access_to_json(&nodes, Some(&AccessFocus::atomic("edit_title")));
+        assert_eq!(
+            json["focus"]["resolved"], "window_root",
+            "this window's AT lands on the root"
+        );
+        assert_eq!(
+            json["focus"]["tag"], "edit_title",
+            "and the global tag is KEPT, so 'where is focus' stays answerable"
+        );
+    }
+
+    #[test]
+    fn an_active_descendant_this_window_does_not_carry_is_dropped() {
+        // R947.1's existence filter, mirrored: `build` names an active
+        // descendant only when the tree emits that node, so a roving cursor
+        // scrolled out of the realized set is not advertised as a NodeId this
+        // frame does not contain. The wire said otherwise until R1583.
+        let nodes = vec![AccessNode::new("grid", AriaRole::Grid)];
+        let json = access_to_json(&nodes, Some(&AccessFocus::composite("grid", "row#99")));
+        assert_eq!(json["focus"]["resolved"], "tag", "the parent IS emitted");
+        assert!(
+            json["focus"].get("active_descendant").is_none(),
+            "but the cursor row is not: {}",
+            json["focus"]
+        );
+    }
+
+    #[test]
+    fn an_active_descendant_this_window_carries_survives() {
+        let nodes = vec![
+            AccessNode::new("grid", AriaRole::Grid),
+            AccessNode::new("row#0", AriaRole::Row),
+        ];
+        let json = access_to_json(&nodes, Some(&AccessFocus::composite("grid", "row#0")));
+        assert_eq!(json["focus"]["active_descendant"], "row#0");
+    }
+
+    #[test]
+    fn a_window_with_no_focus_at_all_still_says_null() {
+        let nodes = vec![AccessNode::new("main_btn", AriaRole::Button)];
+        let json = access_to_json(&nodes, None);
+        assert!(json["focus"].is_null(), "no target is not a folded target");
     }
 }
