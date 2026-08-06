@@ -1112,12 +1112,25 @@ enum WidgetArg {
 
 /// R1570.2 §5.16 — the bodies `apply_key = <strategy>` can DERIVE.
 ///
-/// One entry today, and it is the one 25 bindings were writing out character
-/// for character. A second is already implied by the tree — `menu_apply_key`,
-/// the command-menu family's canonical body (R772.1) — which is why this is a
-/// named strategy rather than a second bare flag: `apply_key_aria` would have
-/// to be joined by `apply_key_menu`, and the pair would say nothing about
-/// being alternatives.
+/// One entry, and it is the body 18 macro bindings were writing out character
+/// for character.
+///
+/// R1570.3 CORRECTION, by measurement. R1570.2 justified the keyed form by
+/// claiming a second strategy was "already implied by the tree", and named it
+/// `menu_apply_key` — a symbol that **does not exist**. The real second
+/// canonical body is
+/// `WidgetCore::forward_key_to_external` (R772.1, the command-menu family —
+/// `pinion-core` is only a dev-dependency here, so this cannot be a link), and
+/// censusing it shows the claim was
+/// stronger than the tree supports: its five callers are ALL hand-written
+/// `impl WidgetCore` blocks with no `#[widget]` attribute, so a
+/// `= forward_to_external` strategy would have zero macro consumers today.
+///
+/// The keyed form is still the right shape, on its own merits rather than on a
+/// queued second entry: `apply_key` already means "forward to an inherent fn",
+/// and a bare `apply_key_aria` beside it would say nothing about the two being
+/// alternatives — which is exactly the confusion the parser now refuses at the
+/// point of declaration. A second strategy is a CANDIDATE, not a plan.
 const APPLY_KEY_STRATEGIES: &[&str] = &["aria_activate"];
 
 const KNOWN_FLAGS: &[&str] = &[
