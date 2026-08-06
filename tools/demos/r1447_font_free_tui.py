@@ -91,6 +91,7 @@ from rpc_verify import (  # noqa: E402
     fc_list_count,
     host_font_count,
     run_demo,
+    terminate_process_tree,
     write_fontconfig,
 )
 
@@ -248,7 +249,13 @@ def paint_on_pty(
     try:
         code = proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        # R1570.5 — reap through the shared path rather than a bare `kill()`
+        # with no follow-up wait. This demo launches outside `RpcSubprocess`,
+        # so R1570.3's teardown fix does not reach it on its own; the sweep's
+        # residual backstop would catch a leak here, but catching it is worse
+        # than not making one.
+        leak = terminate_process_tree(proc)
+        assert leak is None, f"the TUI binary outlived the demo: {leak}"
         code = None
     return painted, errors, code
 

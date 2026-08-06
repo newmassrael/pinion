@@ -43,6 +43,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    terminate_process_tree,
     wait_until,
 )
 
@@ -314,8 +315,13 @@ def native_live_pixel_guard() -> None:
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                print("  PHASE 2 SKIP: XTest drag did not complete")
+                # R1570.5 — the shared reap, not a bare `kill()`. This helper is
+                # launched outside `RpcSubprocess`, so R1570.3's teardown fix
+                # does not reach it; the sweep's residual backstop would catch a
+                # leak, and not making one is better than catching it.
+                leak = terminate_process_tree(proc)
+                print("  PHASE 2 SKIP: XTest drag did not complete"
+                      + (f" ({leak})" if leak else ""))
                 return
             if proc.returncode != 0:
                 print(f"  PHASE 2 SKIP: XTest drag exited {proc.returncode} (no live X pointer?)")
