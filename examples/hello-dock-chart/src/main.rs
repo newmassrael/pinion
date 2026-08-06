@@ -41,7 +41,7 @@
 //! tests below pin the static scene shape (the dock hosts a tagged chart; the
 //! readout pane names the seam) through `compute_layout`.
 
-use pinion_a11y::WidgetA11y;
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, SizeValue, TextStyle};
@@ -160,6 +160,18 @@ fn chart_pane_content(theme: &Theme) -> Scene {
     )
 }
 
+/// What the readout says, as one derivation.
+///
+/// R1581 — the paint and the accessible node read this, so the sentence a
+/// screen reader is given and the sentence on screen cannot be two sentences.
+fn readout_body_text(cw: u32, ch: u32, ratio: f32) -> String {
+    if cw == 0 || ch == 0 {
+        "chart pane unmeasured — it paints on the next pass".to_string()
+    } else {
+        format!("chart pane measured {cw} x {ch} px (split ratio {ratio:.2})")
+    }
+}
+
 /// The readout pane: names the seam's live state as scene data — the measured
 /// chart size and the split ratio. Not chrome for its own sake: it lets the demo
 /// (and an AI) confirm the pane resized by reading text, and it is the neighbour
@@ -179,11 +191,7 @@ fn readout_pane_content(theme: &Theme) -> Scene {
             LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Percent(100))),
         ),
     );
-    let body_text = if cw == 0 || ch == 0 {
-        "chart pane unmeasured — it paints on the next pass".to_string()
-    } else {
-        format!("chart pane measured {cw} x {ch} px (split ratio {ratio:.2})")
-    };
+    let body_text = readout_body_text(cw, ch, ratio);
     let body = Scene::Text(
         TextNode::styled(
             body_text,
@@ -325,9 +333,27 @@ impl WidgetCore for DockChartView {
     }
 }
 
-// Default a11y surface — the chart's own AT description is `pinion-chart`'s
-// (R1359 `describedby_region`); this binding adds no bespoke nodes.
-impl WidgetA11y for DockChartView {}
+impl WidgetA11y for DockChartView {
+    /// R1581 §5.40 — the readout body is a keyboard FOCUS STOP
+    /// (`with_focusable`), and a focus stop with no node in the AT tree is one
+    /// `AccessTreeBuilder` folds onto the window root: a screen-reader user who
+    /// tabs to it is told they are on the window, which is the R1329/PR-53
+    /// failure shape. The chart's own description stays `pinion-chart`'s
+    /// (R1359 `describedby_region`) — this adds only the node the focus ring
+    /// needs, with the same sentence the pane paints.
+    ///
+    /// `access_node` runs in the shell's owner scope, so the pane-viewport and
+    /// split-ratio hooks resolve here exactly as they do in the view.
+    fn access_node(_state: &Self::State, _focused: Option<&str>) -> Vec<AccessNode> {
+        let (cw, ch) = use_pane_viewport_size(CHART_TAG);
+        let ratio = use_split_ratio().get();
+        vec![
+            AccessNode::new(READOUT_BODY_TAG, AriaRole::Status)
+                .with_name("chart pane readout")
+                .with_value(AccessValue::Text(readout_body_text(cw, ch, ratio))),
+        ]
+    }
+}
 
 impl WidgetView for DockChartView {
     type Renderer = HelloDockChartRenderer;

@@ -31538,6 +31538,60 @@
         "The tests are unit-shaped by construction, so the boot path that actually launches a binary -- boot_grace, the first-paint wait, the boot_timeout handshake -- is still exercised only by the demos themselves"
       ]
     },
+    "R1581": {
+      "decision_summary": "R1581 §5.40 §5.39 §2 #7 — A KEYBOARD FOCUS STOP IS A NODE IN THE AT TREE. R1518 made the accessibility focus flag something the assembler stamps, which killed two whole classes of defect, and it named a residue it could not close with a stamp: focus targets that name a tag no node in that tree carries. AccessTreeBuilder folds such a target onto the window root, so a screen-reader user who Tabs to that control is told they are on the window — the R1329/PR-53 failure shape, on controls nobody had checked. This round closes it, and correcting the note was as much of the work as fixing the code. The note listed eight bindings; walking them found eleven stops across nine. Two of its entries were false positives and both for one reason: their node lives in a window the wire cannot ask about. Three of the six it filed as \"the tree exists, the stop is missing\" had no tree at all. And settings-panel's exemption read \"AT-invisible for v1, real ARIA wiring carries to R668\" — R668 is nine hundred rounds past, and the one control that panel is navigated by was the one control a screen-reader user could not hear.",
+      "changes_bullets": [
+        "Eight bindings gained the nodes their focus stops needed: three readouts as a status with the sentence they paint, four buttons named by the label they paint, and settings-panel's section rail as a navigation landmark through the same builder every other rail in the tree uses",
+        "Every announced name comes from the SAME derivation as the pixels -- the three readouts share one readout_body_text between the paint and the node, the dock buttons read the button's own label, the rail goes through navigation_link_nodes -- so spoken and drawn cannot become two sentences",
+        "hello-dock-panels generalised inspector_host_window into panel_host_window at its second consumer, so the viewport button's node lands in the window that paints it by the same rule the inspector tree does",
+        "hello-window-refocus's nodes are emitted per window because its stops are split across two, which is what R813 built access_node_for_window for; the note it replaces argued that being readable over RPC was enough, and being readable over RPC and being reachable by a screen reader are different facts",
+        "An existing test was rewritten rather than adjusted: r813_inspector_at_nodes_emit_for_host_window_only pinned nodes[0].role, so adding a second node broke it without breaking anything it claims. It is now predicate-shaped and additionally asserts that floating the viewport moves its button",
+        "A new debt is registered rather than worked around: scene/access takes no window and rejects the window[id]/ prefix, so a multi-window binding's AT tree cannot be verified over the wire at all"
+      ],
+      "verification_bullets": [
+        "tools/demos/r1581_a_focus_stop_is_a_node.py, 25 assertion sites over 14 focus stops in seven bindings, PASS in 18.8s",
+        "Five counterfactuals, all caught with zero coverage gaps: each binding's new node removed, and one announcing a different sentence from the one it paints",
+        "THE FIRST COUNTERFACTUAL RUN PROVED NOTHING: four of the five failed to COMPILE, so rustc caught them and the demo was never asked. The driver now raises on a build failure instead of reporting it as a result, and the five were rewritten to build",
+        "The demo's own first draft reported a defect that was not there: it asserted the AT tree against stops[-1], and a walk that stops on a repeat has already moved focus PAST its last recorded stop. walk_stops now returns where focus came to rest, and the exclusion cases steer focus onto the stop under test",
+        "Two stops remain unverifiable over the wire and are pinned in Rust instead -- hello-multi-window's assertion has existed since R813, hello-window-refocus's was added here -- and the demo states the exclusion rather than skipping it, so if scene/access ever becomes window-routable the demo fails and says the premise changed",
+        "Every touched binding's own test suite is green, including the rewritten R813 one"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The census covered the bindings the note named, not the tree: a full sweep needs every example built and is what debt-focus-sweep-population-is-curated is about. R1581 removed that debt's stated blocker and did not close it",
+        "settings-panel's DETAIL pane widgets are still absent from the AT surface; the old note meant that wiring, and it is a different axis from \"a focus stop is reachable\"",
+        "scene/access is not window-routable, registered as debt-scene-access-is-not-window-routable; until it is, a multi-window AT tree is checkable only from Rust"
+      ],
+      "publishable_decision_summary": "R1581 §5.40 §5.39 §2 #7 — A KEYBOARD FOCUS STOP IS A NODE IN THE AT TREE. R1518 made the accessibility focus flag something the assembler stamps, which killed two whole classes of defect, and it named a residue it could not close with a stamp: focus targets that name a tag no node in that tree carries. AccessTreeBuilder folds such a target onto the window root, so a screen-reader user who Tabs to that control is told they are on the window — the R1329/PR-53 failure shape, on controls nobody had checked. This round closes it, and correcting the note was as much of the work as fixing the code. The note listed eight bindings; walking them found eleven stops across nine. Two of its entries were false positives and both for one reason: their node lives in a window the wire cannot ask about. Three of the six it filed as \"the tree exists, the stop is missing\" had no tree at all. And settings-panel's exemption read \"AT-invisible for v1, real ARIA wiring carries to R668\" — R668 is nine hundred rounds past, and the one control that panel is navigated by was the one control a screen-reader user could not hear.",
+      "publishable_changes_bullets": [
+        "Eight bindings gained the nodes their focus stops needed: three readouts as a status with the sentence they paint, four buttons named by the label they paint, and settings-panel's section rail as a navigation landmark through the same builder every other rail in the tree uses",
+        "Every announced name comes from the SAME derivation as the pixels -- the three readouts share one readout_body_text between the paint and the node, the dock buttons read the button's own label, the rail goes through navigation_link_nodes -- so spoken and drawn cannot become two sentences",
+        "hello-dock-panels generalised inspector_host_window into panel_host_window at its second consumer, so the viewport button's node lands in the window that paints it by the same rule the inspector tree does",
+        "hello-window-refocus's nodes are emitted per window because its stops are split across two, which is what R813 built access_node_for_window for; the note it replaces argued that being readable over RPC was enough, and being readable over RPC and being reachable by a screen reader are different facts",
+        "An existing test was rewritten rather than adjusted: r813_inspector_at_nodes_emit_for_host_window_only pinned nodes[0].role, so adding a second node broke it without breaking anything it claims. It is now predicate-shaped and additionally asserts that floating the viewport moves its button",
+        "A new debt is registered rather than worked around: scene/access takes no window and rejects the window[id]/ prefix, so a multi-window binding's AT tree cannot be verified over the wire at all"
+      ],
+      "publishable_verification_bullets": [
+        "tools/demos/r1581_a_focus_stop_is_a_node.py, 25 assertion sites over 14 focus stops in seven bindings, PASS in 18.8s",
+        "Five counterfactuals, all caught with zero coverage gaps: each binding's new node removed, and one announcing a different sentence from the one it paints",
+        "THE FIRST COUNTERFACTUAL RUN PROVED NOTHING: four of the five failed to COMPILE, so rustc caught them and the demo was never asked. The driver now raises on a build failure instead of reporting it as a result, and the five were rewritten to build",
+        "The demo's own first draft reported a defect that was not there: it asserted the AT tree against stops[-1], and a walk that stops on a repeat has already moved focus PAST its last recorded stop. walk_stops now returns where focus came to rest, and the exclusion cases steer focus onto the stop under test",
+        "Two stops remain unverifiable over the wire and are pinned in Rust instead -- hello-multi-window's assertion has existed since R813, hello-window-refocus's was added here -- and the demo states the exclusion rather than skipping it, so if scene/access ever becomes window-routable the demo fails and says the premise changed",
+        "Every touched binding's own test suite is green, including the rewritten R813 one"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The census covered the bindings the note named, not the tree: a full sweep needs every example built and is what debt-focus-sweep-population-is-curated is about. R1581 removed that debt's stated blocker and did not close it",
+        "settings-panel's DETAIL pane widgets are still absent from the AT surface; the old note meant that wiring, and it is a different axis from \"a focus stop is reachable\"",
+        "scene/access is not window-routable, registered as debt-scene-access-is-not-window-routable; until it is, a multi-window AT tree is checkable only from Rust"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

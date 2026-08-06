@@ -72,7 +72,7 @@
 //! `ShellCore` per-window paint pipeline (`compute_paint_scene` +
 //! `compute_paint_scene_for_window`, the R1021 `pane_viewport_seam` precedent).
 
-use pinion_a11y::WidgetA11y;
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -329,6 +329,24 @@ fn chart_pane_content(theme: &Theme) -> Scene {
 /// size mirror reads the SAME shared registry the floating window's publish writes,
 /// so once the chart floats and re-measures, this readout in the MAIN window
 /// reflects the floating size (a cross-window §2 #7 witness).
+/// What the readout says, as one derivation.
+///
+/// R1581 — the paint and the accessible node read this, so the sentence a
+/// screen reader is given and the sentence on screen cannot be two sentences.
+fn readout_body_text(floating: bool, cw: u32, ch: u32, ratio: f32) -> String {
+    let where_part = if floating {
+        format!("chart is FLOATING in window {}", floating_window_id())
+    } else {
+        "chart is DOCKED in the left pane".to_string()
+    };
+    let size_part = if cw == 0 || ch == 0 {
+        "unmeasured — it paints on the next pass".to_string()
+    } else {
+        format!("last measured {cw} x {ch} px")
+    };
+    format!("{where_part}; {size_part}; split ratio {ratio:.2}")
+}
+
 fn readout_pane_content(theme: &Theme, floating: bool) -> Scene {
     let (cw, ch) = use_pane_viewport_size(CHART_TAG);
     let ratio = use_split_ratio().get();
@@ -344,19 +362,9 @@ fn readout_pane_content(theme: &Theme, floating: bool) -> Scene {
             LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Percent(100))),
         ),
     );
-    let where_part = if floating {
-        format!("chart is FLOATING in window {}", floating_window_id())
-    } else {
-        "chart is DOCKED in the left pane".to_string()
-    };
-    let size_part = if cw == 0 || ch == 0 {
-        "unmeasured — it paints on the next pass".to_string()
-    } else {
-        format!("last measured {cw} x {ch} px")
-    };
     let body = Scene::Text(
         TextNode::styled(
-            format!("{where_part}; {size_part}; split ratio {ratio:.2}"),
+            readout_body_text(floating, cw, ch, ratio),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(12)
@@ -537,7 +545,28 @@ impl WidgetCore for FloatingChartView {
 // `hello-dock-chart` leaf precedent. Unlike R1409's `Tabs` well (whose roles are
 // not in the scene), a window is already first-class introspectable, so this
 // binding adds no bespoke AccessNodes.
-impl WidgetA11y for FloatingChartView {}
+impl WidgetA11y for FloatingChartView {
+    /// R1581 §5.40 — the readout body is a keyboard FOCUS STOP
+    /// (`with_focusable`), and a focus stop with no node in the AT tree is one
+    /// `AccessTreeBuilder` folds onto the window root, so tabbing to it
+    /// announces the window instead of the readout. Same sentence the pane
+    /// paints, from one derivation.
+    ///
+    /// `access_node` runs in the shell's owner scope, so the topology,
+    /// pane-viewport and split-ratio hooks resolve here as they do in the view.
+    fn access_node(_state: &Self::State, _focused: Option<&str>) -> Vec<AccessNode> {
+        let floating = is_chart_floating(&use_windows_topology().get());
+        let (cw, ch) = use_pane_viewport_size(CHART_TAG);
+        let ratio = use_split_ratio().get();
+        vec![
+            AccessNode::new(READOUT_BODY_TAG, AriaRole::Status)
+                .with_name("floating-chart readout")
+                .with_value(AccessValue::Text(readout_body_text(
+                    floating, cw, ch, ratio,
+                ))),
+        ]
+    }
+}
 
 impl WidgetView for FloatingChartView {
     type Renderer = HelloFloatingChartRenderer;

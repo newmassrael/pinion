@@ -1725,6 +1725,23 @@ impl WidgetA11y for DockPanelsEditorView {
                 .with_name(chrome.title_for(panel).into_owned())
                 .with_focused(focused == Some(*body))
         }));
+        // R1581 §5.40 — the two BUTTONS are focus stops on the same rule the
+        // comment above states, and they were left out of it: a census of what
+        // `focus/next` reaches found both folding onto the window root. The
+        // policy toggle's name is the label it paints, from the same
+        // `policy_toggle_label` the button reads, so spoken and drawn cannot
+        // drift — which is the point that paragraph is making about the panes.
+        let policy = use_editor_reorganizer().float_policy();
+        nodes.push(
+            AccessNode::new(POLICY_BTN_TAG, AriaRole::Button)
+                .with_name(policy_toggle_label(policy))
+                .with_focused(focused == Some(POLICY_BTN_TAG)),
+        );
+        nodes.push(
+            AccessNode::new(VIEWPORT_BTN_TAG, AriaRole::Button)
+                .with_name(VIEWPORT_BTN_LABEL)
+                .with_focused(focused == Some(VIEWPORT_BTN_TAG)),
+        );
         nodes
     }
 

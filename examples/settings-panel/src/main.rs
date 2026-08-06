@@ -37,7 +37,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use pinion_a11y::WidgetA11y;
+use pinion_a11y::{AccessNode, NavLink, WidgetA11y, navigation_link_nodes};
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Effect, Owner, Signal, batch};
@@ -651,6 +651,17 @@ const SECTION_LABELS: [&str; NAV_COUNT] =
 
 // ─── nav rail view ────────────────────────────────────────────────
 
+/// R1581 — the composite tags the rail paints (`nav_rail#0` … `nav_rail#4`),
+/// spelled once so the AT node set and the hit-test targets cannot drift.
+/// `RadioGroupExternal` addresses children by this shape.
+const NAV_LINK_TAGS: [&str; NAV_COUNT] = [
+    "nav_rail#0",
+    "nav_rail#1",
+    "nav_rail#2",
+    "nav_rail#3",
+    "nav_rail#4",
+];
+
 fn view_nav_rail(theme: &Theme, nav: &NavRadioStates) -> Scene {
     let mut rows: Vec<Scene> = Vec::with_capacity(NAV_COUNT);
     for (i, label) in SECTION_LABELS.iter().enumerate() {
@@ -672,7 +683,7 @@ fn view_nav_rail(theme: &Theme, nav: &NavRadioStates) -> Scene {
                 // RadioGroupExternal addresses children by composite
                 // tag (`<group>#<index>`), so the per-row hit-test
                 // tag must follow that shape.
-                .with_tag(format!("{NAV_TAG}#{i}"))
+                .with_tag(NAV_LINK_TAGS[i])
                 .with_style(BoxStyle::filled(fill).with_corner_radius(NAV_ROW_H / 2))
                 .with_layout(
                     LayoutStyle::new()
@@ -1491,9 +1502,36 @@ impl WidgetCore for SettingsPanelView {
 }
 
 impl WidgetA11y for SettingsPanelView {
-    // Default `access_node` returns Vec::new() — AT-invisible for v1.
-    // Real ARIA wiring carries to R668 alongside the interactive
-    // notifications/actions widgets.
+    /// R1581 §5.40 — the nav rail is the panel's keyboard focus stop, so it is
+    /// a node.
+    ///
+    /// The note this replaces read "AT-invisible for v1. Real ARIA wiring
+    /// carries to R668" — and R668 is nine hundred rounds past. A focus stop
+    /// with no node in the AT tree is one `AccessTreeBuilder` folds onto the
+    /// window root, so a screen-reader user tabbing into the settings sections
+    /// heard the window: the one control this panel is navigated by was the one
+    /// control they could not hear.
+    ///
+    /// The full ARIA surface for the DETAIL pane's widgets is still absent —
+    /// that is the wiring the old note meant, and it is a different axis from
+    /// "a focus stop is reachable". This closes the focus-stop half, with the
+    /// `navigation` landmark builder every other rail in the tree uses, so the
+    /// panel cannot describe its sections in a shape of its own.
+    fn access_node(state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
+        let nav = state.2;
+        let links: Vec<NavLink<'_>> = SECTION_LABELS
+            .iter()
+            .enumerate()
+            .map(|(i, label)| NavLink {
+                tag: NAV_LINK_TAGS[i],
+                label,
+                state: nav.states[i],
+                current: nav.selected == i,
+                focused: focused == Some(NAV_TAG) && nav.selected == i,
+            })
+            .collect();
+        navigation_link_nodes(NAV_TAG, "Settings sections", &links)
+    }
 }
 
 impl WidgetView for SettingsPanelView {

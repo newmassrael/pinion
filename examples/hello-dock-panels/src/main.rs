@@ -85,7 +85,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y, tree_access_nodes};
+use pinion_a11y::{AccessFocus, AccessNode, AriaRole, WidgetA11y, tree_access_nodes};
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -1297,9 +1297,16 @@ impl WidgetCore for DockPanelsView {
 /// ghosts in a sibling window). The inspector pane shows in the main dock
 /// while docked, and moves to its own floating window once torn off.
 fn inspector_host_window() -> String {
+    panel_host_window(INSPECTOR_PANEL_TAG)
+}
+
+/// R1581 §5.40 — which window currently paints `panel`, generalised from
+/// [`inspector_host_window`] at its second consumer (the viewport button's AT
+/// node, which has to land in the same window as the button).
+fn panel_host_window(panel: &str) -> String {
     let panels = use_windows_topology().get();
-    if is_panel_floating(&panels, INSPECTOR_PANEL_TAG) {
-        floating_window_id(INSPECTOR_PANEL_TAG)
+    if is_panel_floating(&panels, panel) {
+        floating_window_id(panel)
     } else {
         MAIN_WINDOW_ID.to_owned()
     }
@@ -1365,8 +1372,19 @@ impl WidgetView for DockPanelsView {
         state: &Self::State,
         _focused: Option<&str>,
     ) -> Vec<AccessNode> {
+        let mut nodes = Vec::new();
+        // R1581 §5.40 — the viewport button is the OTHER focus stop, and the
+        // doc above already called it "atomic" while it had no node at all: an
+        // atomic target the tree does not carry is folded onto the window root,
+        // so tabbing to the button announced the window. It goes in the window
+        // that paints it, by the same rule the tree does.
+        if window_id == panel_host_window(VIEWPORT_PANEL_TAG) {
+            nodes.push(
+                AccessNode::new(VIEWPORT_BTN_TAG, AriaRole::Button).with_name(VIEWPORT_BTN_LABEL),
+            );
+        }
         if window_id != inspector_host_window() {
-            return Vec::new();
+            return nodes;
         }
         let theme = use_theme(THEME_TAG).theme_animated();
         let items = inspector_tree_items(*state, &theme);
@@ -1376,14 +1394,15 @@ impl WidgetView for DockPanelsView {
         // `access_focus_target` override already names it as the active
         // descendant); pass it as `focused_id` so the row node carries
         // `with_focused` to match.
-        tree_access_nodes(
+        nodes.extend(tree_access_nodes(
             INSPECTOR_TREE_TAG,
             INSPECTOR_TREE_TAG,
             Some(INSPECTOR_TREE_NAME),
             &rows,
             selected.as_deref(),
             selected.as_deref(),
-        )
+        ));
+        nodes
     }
 
     fn initial_size_strategy() -> SizeStrategy {
@@ -1690,54 +1709,67 @@ mod tests {
     /// `tree` + `treeitem` subtree is emitted only for the window that
     /// paints it — "main" while docked, "torn-inspector" once floated —
     /// and a sibling window's node set is empty (no cross-window ghosts).
+    /// R1581 rewrote the assertions this test makes without changing what it
+    /// claims. They were positional (`nodes[0].role == Tree`) and set-shaped
+    /// (`sibling.is_empty()`), which only held while the inspector tree was the
+    /// ONLY thing this binding contributed. Adding the viewport button's node —
+    /// a focus stop that had none — broke both without breaking the property
+    /// the name states. A test that pins an index pins the wrong thing.
     #[test]
     fn r813_inspector_at_nodes_emit_for_host_window_only() {
         use pinion_a11y::AriaRole;
+        let nodes_for = |window: &str| {
+            <DockPanelsView as WidgetView>::access_node_for_window(window, &ButtonState::Idle, None)
+        };
+        let has_tree = |nodes: &[pinion_a11y::AccessNode]| {
+            nodes
+                .iter()
+                .any(|n| n.tag == INSPECTOR_TREE_TAG && n.role == AriaRole::Tree)
+        };
+        let has_button = |nodes: &[pinion_a11y::AccessNode]| {
+            nodes
+                .iter()
+                .any(|n| n.tag == VIEWPORT_BTN_TAG && n.role == AriaRole::Button)
+        };
         Owner::new().run(|| {
-            // Default topology: inspector docked → host is "main".
-            let main = <DockPanelsView as WidgetView>::access_node_for_window(
-                "main",
-                &ButtonState::Idle,
-                None,
-            );
+            // Default topology: both panels docked → both hosts are "main".
+            let main = nodes_for("main");
+            assert!(has_tree(&main), "docked inspector emits its tree for main");
             assert!(
-                !main.is_empty(),
-                "docked inspector emits its tree for the main window"
+                has_button(&main),
+                "and the docked viewport emits its button, which is the other \
+                 focus stop (R1581)"
             );
-            assert_eq!(main[0].role, AriaRole::Tree, "root node is role=tree");
-            assert_eq!(main[0].tag, INSPECTOR_TREE_TAG);
-            // A non-host sibling window carries no ghost inspector nodes.
-            let sibling = <DockPanelsView as WidgetView>::access_node_for_window(
-                "torn-viewport",
-                &ButtonState::Idle,
-                None,
-            );
+            // A window that hosts neither carries no ghosts of either.
+            let sibling = nodes_for("torn-property");
             assert!(
-                sibling.is_empty(),
-                "non-host window AT tree has no inspector ghost nodes"
+                !has_tree(&sibling),
+                "no inspector ghost in a sibling window"
+            );
+            assert!(!has_button(&sibling), "and no viewport-button ghost");
+
+            // Float the inspector: its host moves, the viewport's does not.
+            toggle_panel_floating(INSPECTOR_PANEL_TAG);
+            let main_after = nodes_for("main");
+            assert!(!has_tree(&main_after), "floated inspector leaves no ghost");
+            assert!(
+                has_button(&main_after),
+                "the viewport is still docked, so its button stays in main"
+            );
+            let floating = nodes_for(&floating_window_id(INSPECTOR_PANEL_TAG));
+            assert!(has_tree(&floating), "the floating window carries the tree");
+            assert!(
+                !has_button(&floating),
+                "and does not carry the still-docked viewport's button"
             );
 
-            // Float the inspector: the host moves to its floating window.
-            toggle_panel_floating(INSPECTOR_PANEL_TAG);
-            let main_after = <DockPanelsView as WidgetView>::access_node_for_window(
-                "main",
-                &ButtonState::Idle,
-                None,
-            );
+            // Float the viewport too: its button follows it, by the same rule.
+            toggle_panel_floating(VIEWPORT_PANEL_TAG);
+            assert!(!has_button(&nodes_for("main")), "the button left main");
             assert!(
-                main_after.is_empty(),
-                "floated inspector leaves no ghosts in the main window"
+                has_button(&nodes_for(&floating_window_id(VIEWPORT_PANEL_TAG))),
+                "and landed in the window that now paints it"
             );
-            let floating = <DockPanelsView as WidgetView>::access_node_for_window(
-                &floating_window_id(INSPECTOR_PANEL_TAG),
-                &ButtonState::Idle,
-                None,
-            );
-            assert!(
-                !floating.is_empty(),
-                "the floating inspector window now carries the tree"
-            );
-            assert_eq!(floating[0].role, AriaRole::Tree);
         });
     }
 

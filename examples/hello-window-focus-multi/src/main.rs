@@ -213,7 +213,28 @@ impl WidgetCore for WindowFocusMultiView {
     }
 }
 
-impl pinion_a11y::WidgetA11y for WindowFocusMultiView {}
+impl pinion_a11y::WidgetA11y for WindowFocusMultiView {
+    /// R1581 §5.40 — the binding's one focus stop is a node.
+    ///
+    /// It had none. A focus stop absent from the AT tree is one
+    /// `AccessTreeBuilder` folds onto the window root, so a screen-reader user
+    /// tabbing to the button was told they were on the window — which is the
+    /// whole subject this binding exists to demonstrate, unavailable to the
+    /// people who most need it stated.
+    ///
+    /// Global rather than per-window on purpose: the inspector window paints no
+    /// button, and `AccessTreeBuilder` already drops a focus tag a window's
+    /// node set lacks back to that window's root (R813). This is the case that
+    /// hook was designed to make free.
+    fn access_node(_state: &Self::State, focused: Option<&str>) -> Vec<pinion_a11y::AccessNode> {
+        use pinion_a11y::{AccessNode, AriaRole};
+        vec![
+            AccessNode::new(MAIN_BTN_TAG, AriaRole::Button)
+                .with_name("focusable button")
+                .with_focused(focused == Some(MAIN_BTN_TAG)),
+        ]
+    }
+}
 
 impl WidgetView for WindowFocusMultiView {
     type Renderer = HelloWindowFocusMultiRenderer;

@@ -388,10 +388,9 @@ impl WidgetCore for WindowRefocusView {
     }
 }
 
-// Default a11y surface: §2 #7 discovery here is per-window scene data (an
-// editor node inside the window that paints it) plus `focus/get`, the
-// `hello-floating-chart` precedent — a window is already first-class
-// introspectable, so this binding adds no bespoke AccessNodes.
+// The AT half lives on `WidgetView::access_node_for_window` (R1581), because
+// this binding's focus stops are split across two windows and a node emitted
+// into a window that does not paint it is a ghost.
 impl WidgetA11y for WindowRefocusView {}
 
 impl WidgetView for WindowRefocusView {
@@ -432,6 +431,41 @@ impl WidgetView for WindowRefocusView {
             Self::view(state, frame)
         }
     }
+
+    /// R1581 §5.40 — every focus stop is a node, in the window that paints it.
+    ///
+    /// The note this replaces argued that "a window is already first-class
+    /// introspectable, so this binding adds no bespoke AccessNodes". Being
+    /// readable over RPC and being reachable by a screen reader are different
+    /// facts: all three focus stops (`edit_title`, `edit_note`, `notes_pane`)
+    /// were absent from the AT tree, so `AccessTreeBuilder` folded focus onto
+    /// the window root and a screen-reader user tabbing between them heard the
+    /// window each time.
+    ///
+    /// Split on the same `window_id` the view is: a node in a window that does
+    /// not paint it is a ghost, which is exactly what R813 built this hook for.
+    fn access_node_for_window(
+        window_id: &str,
+        _state: &Self::State,
+        focused: Option<&str>,
+    ) -> Vec<pinion_a11y::AccessNode> {
+        use pinion_a11y::{AccessNode, AriaRole};
+        if window_id == NOTES_WINDOW {
+            return vec![
+                AccessNode::new(NOTES_PANE_TAG, AriaRole::Group)
+                    .with_name("Notes")
+                    .with_focused(focused == Some(NOTES_PANE_TAG)),
+            ];
+        }
+        vec![
+            AccessNode::new(EDIT_TITLE_TAG, AriaRole::Button)
+                .with_name("Edit title (this window)")
+                .with_focused(focused == Some(EDIT_TITLE_TAG)),
+            AccessNode::new(EDIT_NOTE_TAG, AriaRole::Button)
+                .with_name("Edit note (notes window)")
+                .with_focused(focused == Some(EDIT_NOTE_TAG)),
+        ]
+    }
 }
 
 fn main() {
@@ -440,6 +474,51 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+
+    /// R1581 §5.40 — every focus stop is a node, in the window that paints it.
+    ///
+    /// This is the assertion the RPC surface cannot make: `scene/access` is not
+    /// window-routable, so a probe over the wire reads one window's tree and
+    /// reports `notes_pane` missing whatever the notes window holds. The claim
+    /// "it is there, in the other window" has to be checked HERE or not at all
+    /// — which is why it is a test rather than a sentence.
+    #[test]
+    fn r1581_every_focus_stop_has_a_node_in_the_window_that_paints_it() {
+        use pinion_a11y::AriaRole;
+        Owner::new().run(|| {
+            let tags = |window: &str| -> Vec<String> {
+                <WindowRefocusView as WidgetView>::access_node_for_window(
+                    window,
+                    &[ButtonState::Idle; 2],
+                    None,
+                )
+                .into_iter()
+                .map(|n| n.tag)
+                .collect()
+            };
+            let main = tags(MAIN_WINDOW);
+            assert!(main.iter().any(|t| t == EDIT_TITLE_TAG), "main: {main:?}");
+            assert!(main.iter().any(|t| t == EDIT_NOTE_TAG), "main: {main:?}");
+            assert!(
+                !main.iter().any(|t| t == NOTES_PANE_TAG),
+                "the notes pane is not painted in main, so it is not a node \
+                 there either: {main:?}"
+            );
+
+            let notes = tags(NOTES_WINDOW);
+            assert_eq!(notes, vec![NOTES_PANE_TAG.to_owned()], "notes window");
+
+            // The nodes carry the roles a screen reader announces, not just tags.
+            let notes_nodes = <WindowRefocusView as WidgetView>::access_node_for_window(
+                NOTES_WINDOW,
+                &[ButtonState::Idle; 2],
+                Some(NOTES_PANE_TAG),
+            );
+            assert_eq!(notes_nodes[0].role, AriaRole::Group);
+            assert!(notes_nodes[0].state.focused, "and the focus flag follows");
+        });
+    }
+
     use super::*;
     use pinion_core::Intent;
     use pinion_core::external::IntrospectValue;

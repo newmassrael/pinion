@@ -56,7 +56,7 @@
 //! tests below pin the same behaviour through the real `CoreShell` +
 //! `compute_layout` + `publish_pane_viewports` pipeline.
 
-use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{AccessFocus, AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle};
@@ -264,6 +264,22 @@ fn notes_pane_content(theme: &Theme) -> Scene {
 /// the split ratio. It lets the demo (and an AI) confirm the tab switch + resize
 /// by reading text, and it is the neighbour a pre-R1396 narrow chart would paint
 /// over.
+/// What the readout says, as one derivation.
+///
+/// R1581 — the paint and the accessible node read this, so the sentence a
+/// screen reader is given and the sentence on screen cannot be two sentences.
+fn readout_body_text(active: usize, cw: u32, ch: u32, ratio: f32) -> String {
+    let tab_name = if active == 0 { "chart" } else { "notes" };
+    let size_part = if cw == 0 || ch == 0 {
+        "chart pane unmeasured — it paints on the next pass".to_string()
+    } else if active == 0 {
+        format!("chart tab visible, measured {cw} x {ch} px")
+    } else {
+        format!("chart tab hidden, last measured {cw} x {ch} px")
+    };
+    format!("active tab: {tab_name} (index {active}); {size_part}; split ratio {ratio:.2}")
+}
+
 fn readout_pane_content(theme: &Theme, active: usize) -> Scene {
     let (cw, ch) = use_pane_viewport_size(CHART_TAG);
     let ratio = use_split_ratio().get();
@@ -279,17 +295,9 @@ fn readout_pane_content(theme: &Theme, active: usize) -> Scene {
             LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Percent(100))),
         ),
     );
-    let tab_name = if active == 0 { "chart" } else { "notes" };
-    let size_part = if cw == 0 || ch == 0 {
-        "chart pane unmeasured — it paints on the next pass".to_string()
-    } else if active == 0 {
-        format!("chart tab visible, measured {cw} x {ch} px")
-    } else {
-        format!("chart tab hidden, last measured {cw} x {ch} px")
-    };
     let body = Scene::Text(
         TextNode::styled(
-            format!("active tab: {tab_name} (index {active}); {size_part}; split ratio {ratio:.2}"),
+            readout_body_text(active, cw, ch, ratio),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(12)
@@ -438,11 +446,27 @@ impl WidgetA11y for TabbedChartView {
         // `access_node` runs in the shell's owner scope (the R1095 editor precedent),
         // so the live topology signal resolves; a tab switch's `Signal::set` moves
         // aria-selected here exactly as it moves the painted strip.
-        use_topology_signal()
-            .get()
+        let topology = use_topology_signal().get();
+        let mut nodes = topology
             .as_ref()
             .map(|topology| dock_tablist_access_nodes(topology, focused))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // R1581 §5.40 — the readout body is the OTHER focus stop
+        // (`with_focusable`), and it had no node: a focus stop the tree does
+        // not carry is folded onto the window root, so tabbing to it announced
+        // the window. Same sentence the pane paints, from one derivation.
+        let active = topology
+            .as_ref()
+            .and_then(|t| t.tab_well_active(WELL))
+            .unwrap_or(0);
+        let (cw, ch) = use_pane_viewport_size(CHART_TAG);
+        let ratio = use_split_ratio().get();
+        nodes.push(
+            AccessNode::new(READOUT_BODY_TAG, AriaRole::Status)
+                .with_name("tab well readout")
+                .with_value(AccessValue::Text(readout_body_text(active, cw, ch, ratio))),
+        );
+        nodes
     }
 
     /// R1518 §5.40 — publish the focus-target half of the same walk, so a strip
