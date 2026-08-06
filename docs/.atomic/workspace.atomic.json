@@ -31228,6 +31228,44 @@
         "The OS apply stays HW-gated as every real-window behaviour here is; the DECISION is pinned, the set_outer_position call is not"
       ]
     },
+    "R1576.1": {
+      "decision_summary": "R1576.1 §5.39 §5.12 — STOP-THE-LINE: CI red. `r1570_1_interactive_role_is_a_focus_stop.py` was killed at the sweep's 180s budget and leaked the child it was killed inside. The gate is a CENSUS wearing a demo's clothes — it starts one real windowed shell per binding over a DERIVED population of 88 — which is exactly the premise the budget's own doc rests on and which does not hold here: \"a demo drives an ALREADY-BUILT binary over RPC and finishes in seconds\". MY FIRST DIAGNOSIS WAS WRONG AND MEASURING IT SAID SO: I read the fixed 1.5s boot sleep as the cause, applied the fix, and the local run still blew 400s — because a standalone run rebuilds each example (`ensure_build`) while the sweep sets `PINION_ASSUME_BUILT` after its batch build, so I had been timing 88 incremental cargo builds. Re-measured under the sweep's own conditions the honest number is 186.83s, and the same fix takes it to 46.32s with the assertion count unchanged. Do not pick the cause by reading; isolate it — R1560.1's lesson, walked into again.",
+      "changes_bullets": [
+        "Three loops over one population became one: cold claims first (nothing focused at boot, focus/next enumerates a stop), then focus/set, then the Switch family's Enter with focus already where it needed it",
+        "The 1.5s fixed sleep in front of the readiness handshake is gone (BOOT_GRACE = 0.0): RpcSubprocess already polls scene/cache_stats until the first windowed paint, which is bounded polling and the zero-flake shape this demo's own docstring claims",
+        "The claims are unchanged and the count proves it: 143 assertions before, 143 after"
+      ],
+      "verification_bullets": [
+        "Measured under the sweep's own conditions (PINION_ASSUME_BUILT=1, release binaries present): 186.83s before, 46.32s after, 4.0x, both PASS with 143 assertions",
+        "Per-boot cost isolated first: 2.06s at boot_grace 1.5, 1.26s at the 0.8 default, 1.00s at zero"
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The sweep's budget doc argues against per-demo overrides on measured grounds and is right: this demo was over budget because it wasted the budget, not because 180s is too small for it",
+        "Nothing measures a demo's headroom, so the next gate that boots a population will cross 180s the same silent way; a sweep that reported each demo's elapsed against the budget would make the approach visible"
+      ],
+      "publishable_decision_summary": "R1576.1 §5.39 §5.12 — STOP-THE-LINE: CI red. `r1570_1_interactive_role_is_a_focus_stop.py` was killed at the sweep's 180s budget and leaked the child it was killed inside. The gate is a CENSUS wearing a demo's clothes — it starts one real windowed shell per binding over a DERIVED population of 88 — which is exactly the premise the budget's own doc rests on and which does not hold here: \"a demo drives an ALREADY-BUILT binary over RPC and finishes in seconds\". MY FIRST DIAGNOSIS WAS WRONG AND MEASURING IT SAID SO: I read the fixed 1.5s boot sleep as the cause, applied the fix, and the local run still blew 400s — because a standalone run rebuilds each example (`ensure_build`) while the sweep sets `PINION_ASSUME_BUILT` after its batch build, so I had been timing 88 incremental cargo builds. Re-measured under the sweep's own conditions the honest number is 186.83s, and the same fix takes it to 46.32s with the assertion count unchanged. Do not pick the cause by reading; isolate it — R1560.1's lesson, walked into again.",
+      "publishable_changes_bullets": [
+        "Three loops over one population became one: cold claims first (nothing focused at boot, focus/next enumerates a stop), then focus/set, then the Switch family's Enter with focus already where it needed it",
+        "The 1.5s fixed sleep in front of the readiness handshake is gone (BOOT_GRACE = 0.0): RpcSubprocess already polls scene/cache_stats until the first windowed paint, which is bounded polling and the zero-flake shape this demo's own docstring claims",
+        "The claims are unchanged and the count proves it: 143 assertions before, 143 after"
+      ],
+      "publishable_verification_bullets": [
+        "Measured under the sweep's own conditions (PINION_ASSUME_BUILT=1, release binaries present): 186.83s before, 46.32s after, 4.0x, both PASS with 143 assertions",
+        "Per-boot cost isolated first: 2.06s at boot_grace 1.5, 1.26s at the 0.8 default, 1.00s at zero"
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The sweep's budget doc argues against per-demo overrides on measured grounds and is right: this demo was over budget because it wasted the budget, not because 180s is too small for it",
+        "Nothing measures a demo's headroom, so the next gate that boots a population will cross 180s the same silent way; a sweep that reported each demo's elapsed against the budget would make the approach visible"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

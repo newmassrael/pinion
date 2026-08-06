@@ -81,6 +81,17 @@ WORKSPACE = Path(__file__).resolve().parent.parent.parent
 #: role added later from being silently swept in.
 INTERACTIVE_ROLES = {"Button", "CheckBox", "Switch", "RadioButton", "Listbox"}
 
+#: R1576 — no fixed sleep in front of the readiness handshake.
+#:
+#: `RpcSubprocess` sleeps `boot_grace` and THEN polls `scene/cache_stats` until
+#: the first windowed paint completes — bounded polling, the zero-flake shape
+#: this demo's own docstring claims. The sleep only widens the window in which
+#: an instant crash is reported as a boot failure rather than as a failed first
+#: request, and both carry the same stderr. This demo starts ~89 processes, so
+#: at the 1.5s it used to pass that padding WAS the 180s sweep budget: measured
+#: per boot on one box, 2.06s at 1.5, 1.26s at the 0.8 default, 1.00s at zero.
+BOOT_GRACE = 0.0
+
 #: Bindings whose Switch value bit is readable the same way, used for the
 #: activation half. A subset by design — the sweep proves the PRECONDITION for
 #: all 23, and this proves the CONSEQUENCE where the observable is uniform.
@@ -196,15 +207,34 @@ def body() -> None:
     )
     checks += 1
 
-    # ── (B) every one of them is a focus stop ─────────────────────────────
+    # ── (B) every one of them is a focus stop, and is in the Tab order ────
+    #
+    # R1576 — ONE process per binding, ordered so the claims that need a COLD
+    # focus state come first. Three separate loops over one population booted
+    # this binding three times, and the sweep killed the whole demo at its 180s
+    # budget: 120 real windowed shells, each paying a 1.5s FIXED SLEEP in front
+    # of a readiness handshake that is already bounded polling. Measured on one
+    # box, per boot: 2.06s at `boot_grace=1.5`, 1.26s at the 0.8 default, 1.00s
+    # at zero — so the sleep, not the work, was most of the budget. The claims
+    # are unchanged; what changed is how many times each binding is started.
+    #
+    # `focus/next` ENUMERATING a tag and `focus/set` REACHING it stay distinct
+    # claims (a stop only the latter reaches is unusable from a keyboard) — the
+    # enumeration simply runs BEFORE anything sets focus, which is what "from
+    # cold" meant when it had its own process.
     for name, tag, role in interactive:
-        with RpcSubprocess(name, boot_grace=1.5) as tf:
+        with RpcSubprocess(name, boot_grace=BOOT_GRACE) as tf:
             wait_until(
                 lambda: focused(tf) is None,
                 timeout=4.0,
                 interval=0.03,
                 desc=f"{name}: nothing is focused at boot",
             )
+            checks += 1
+
+            # (C) — in the Tab order, from cold.
+            stop = tf.request("focus/next").result.get("focused")
+            assert stop is not None, f"{name}: focus/next found no stop at all"
             checks += 1
 
             # `focus/set` accepting the tag is the fact `apply_aria_activate`
@@ -217,15 +247,25 @@ def body() -> None:
             )
             checks += 1
 
-    # ── (C) and it is in the Tab order, from cold ─────────────────────────
-    # Separate from (B) on purpose: `focus/set` reaching a tag and `focus/next`
-    # ENUMERATING it are different claims, and a stop that only the former can
-    # reach is not usable from a keyboard.
-    for name, tag, _role in interactive:
-        with RpcSubprocess(name, boot_grace=1.5) as tf:
-            stop = tf.request("focus/next").result.get("focused")
-            assert stop is not None, f"{name}: focus/next found no stop at all"
-            checks += 1
+            # (E) CONSEQUENCE — on the Switch family the activation that was
+            # dead code now fires. Runs here rather than in a fourth loop, with
+            # focus already on the declared tag, which is what it needed anyway.
+            if name in SWITCH_FAMILY:
+
+                def value(tf: RpcSubprocess = tf, tag: str = tag, name: str = name) -> Any:
+                    node = find_by_tag(tf.snapshot(), tag)
+                    assert node is not None, f"{name}: the External is in the state scene"
+                    return node["introspect"]["value"]
+
+                before = value()
+                tf.key(path=tag, name="Enter")
+                wait_until(
+                    lambda: value() != before,
+                    timeout=4.0,
+                    interval=0.03,
+                    desc=f"{name}: Enter reached apply_key's ARIA activation",
+                )
+                checks += 1
 
     # ── (C2) the hand-written half has a stop at all ──────────────────────
     # Weaker than (B)/(C) by necessity: these bindings name their roles inside
@@ -235,7 +275,7 @@ def body() -> None:
     # reach — and it is the assertion the 23-binding population could not make
     # about the other 66.
     for name in hand_written:
-        with RpcSubprocess(name, boot_grace=1.5) as tf:
+        with RpcSubprocess(name, boot_grace=BOOT_GRACE) as tf:
             stop = tf.request("focus/next").result.get("focused")
             assert stop is not None, (
                 f"{name}: presents an interactive ARIA role and has NO focus "
@@ -245,7 +285,7 @@ def body() -> None:
 
     # ── (D) NEGATIVE CONTROL — a decorative node is not a stop ────────────
     deco_binding, deco_tag = DECORATIVE
-    with RpcSubprocess(deco_binding, boot_grace=1.5) as tf:
+    with RpcSubprocess(deco_binding, boot_grace=BOOT_GRACE) as tf:
         refused = False
         try:
             tf.request("focus/set", {"tag": deco_tag})
@@ -259,27 +299,6 @@ def body() -> None:
         checks += 1
         assert_eq(focused(tf), None, "D: and the refusal left focus where it was")
         checks += 1
-
-    # ── (E) CONSEQUENCE — the activation that was dead code now fires ─────
-    for name in SWITCH_FAMILY:
-        with RpcSubprocess(name, boot_grace=1.5) as tf:
-            tag = next(t for n, t, _ in interactive if n == name)
-
-            def value() -> Any:
-                node = find_by_tag(tf.snapshot(), tag)
-                assert node is not None, f"{name}: the External is in the state scene"
-                return node["introspect"]["value"]
-
-            tf.request("focus/set", {"tag": tag})
-            before = value()
-            tf.key(path=tag, name="Enter")
-            wait_until(
-                lambda: value() != before,
-                timeout=4.0,
-                interval=0.03,
-                desc=f"{name}: Enter reached apply_key's ARIA activation",
-            )
-            checks += 1
 
     print(f"[demo] {checks} assertions")
     assert checks >= 30, f"the R660 baseline is 30 assertions; made {checks}"
