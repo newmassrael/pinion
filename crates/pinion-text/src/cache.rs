@@ -315,6 +315,13 @@ pub struct LayoutCache {
     /// to; `None` keeps parley's platform stack. See
     /// [`Self::set_default_font_family`].
     default_family: Option<PinFontFamily>,
+    /// R1573 §5.36 — whether this cache is allowed to consult the platform font
+    /// database at all. `false` for [`Self::with_own_fonts`]: the context is
+    /// built with the scan off, so only registered faces exist.
+    ///
+    /// A field rather than a constructor-time decision because `font_cx` is
+    /// built lazily (R1447): the answer has to survive until the first shape.
+    system_fonts: bool,
     layout_cx: LayoutContext<Color>,
 }
 
@@ -389,11 +396,23 @@ fn ensure_font_context<'a>(
     slot: &'a mut Option<FontContext>,
     status: &mut SystemFontStatus,
     scans: &mut u32,
+    system_fonts: bool,
 ) -> &'a mut FontContext {
     if slot.is_none() {
-        let (cx, probed) = crate::font_source::build_font_context();
+        // R1573 — an own-fonts cache never probes, so it counts no scan and
+        // stays `NotProbed`: nothing was asked of the platform, so neither
+        // `Available` nor `Unavailable` is true of it.
+        let (cx, probed) = if system_fonts {
+            let (cx, probed) = crate::font_source::build_font_context();
+            *scans += 1;
+            (cx, probed)
+        } else {
+            (
+                crate::font_source::own_fonts_context(),
+                SystemFontStatus::NotProbed,
+            )
+        };
         *status = probed;
-        *scans += 1;
         *slot = Some(cx);
     }
     slot.as_mut().expect("built directly above")
@@ -461,6 +480,7 @@ impl LayoutCache {
             font_status: SystemFontStatus::NotProbed,
             app_families: Vec::new(),
             default_family: None,
+            system_fonts: true,
             layout_cx: LayoutContext::new(),
         }
     }
@@ -469,6 +489,55 @@ impl LayoutCache {
     #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(Self::DEFAULT_CAPACITY)
+    }
+
+    /// R1573 §5.36 — a cache that consults **only the faces it is given**: the
+    /// platform font database is never scanned, so
+    /// [`register_font_data`](Self::register_font_data) is the sole source of
+    /// glyphs and every metric this cache measures is a function of the bytes
+    /// the caller shipped.
+    ///
+    /// # What this closes
+    ///
+    /// [`register_font_data`](Self::register_font_data) (R1448) makes an
+    /// application's own face *selectable*, and
+    /// [`set_default_font_family`](Self::set_default_font_family) (R1472) makes
+    /// it the *default* — but the platform stack is still there underneath as
+    /// fallback, so a glyph the shipped face lacks silently comes from the
+    /// machine and the resulting advance is a property of the machine. "My
+    /// fonts are the whole font world" was inexpressible, which is a real
+    /// capability gap for a kiosk, a game, a PDF exporter, and — measured at
+    /// R1573 — for this crate's own tests: **40 of 94 changed their answer**
+    /// when the host's font database was swapped out from under them.
+    ///
+    /// # What it costs, honestly
+    ///
+    /// Text whose script the registered faces do not cover shapes to
+    /// `.notdef` (or to nothing) rather than falling back. That is the point —
+    /// a silent fallback is exactly the non-determinism this constructor
+    /// removes — but it means an own-fonts cache is a *decision about
+    /// coverage*, not a free optimisation.
+    ///
+    /// [`system_font_status`](Self::system_font_status) stays
+    /// [`NotProbed`](SystemFontStatus::NotProbed) forever and
+    /// [`font_scans`](Self::font_scans) stays `0`: nothing was asked of the
+    /// platform, so neither `Available` nor `Unavailable` is true of it. That
+    /// also makes such a cache free of R1447's 25.5 ms scan.
+    ///
+    /// # Against Qt 6.11
+    ///
+    /// Qt has the two halves this builds on — `QFontDatabase::addApplicationFont`
+    /// and `QApplication::setFont` — and **not** this one: `QFontDatabase`
+    /// always carries the system families, `removeAllApplicationFonts()` removes
+    /// only the *application's* faces, and there is no supported way to tell a
+    /// `QFontDatabase` to forget the platform's. A Qt application cannot make
+    /// its own text metrics independent of the host.
+    #[must_use]
+    pub fn with_own_fonts() -> Self {
+        Self {
+            system_fonts: false,
+            ..Self::with_capacity(Self::DEFAULT_CAPACITY)
+        }
     }
 
     /// Shape `text` with `style` and (optionally) wrap at `max_width`
@@ -880,6 +949,7 @@ impl LayoutCache {
             &mut self.font_cx,
             &mut self.font_status,
             &mut self.font_scans,
+            self.system_fonts,
         );
         self.font_status
     }
@@ -917,6 +987,7 @@ impl LayoutCache {
             &mut self.font_cx,
             &mut self.font_status,
             &mut self.font_scans,
+            self.system_fonts,
         );
         let registered = cx.collection.register_fonts(Blob::from(data), None);
         let mut names = Vec::with_capacity(registered.len());
@@ -1090,6 +1161,7 @@ impl LayoutCache {
             &mut self.font_cx,
             &mut self.font_status,
             &mut self.font_scans,
+            self.system_fonts,
         );
         let mut builder = self
             .layout_cx
@@ -1332,7 +1404,7 @@ mod tests {
     /// The two produce the same pixels.
     #[test]
     fn r1531_the_draw_list_is_derived_once_and_replayed() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         for _ in 0..10 {
             let runs = cache.positioned_runs("Row label", &st, &[], None);
@@ -1365,7 +1437,7 @@ mod tests {
     /// cannot start emitting bands for text that did not ask.
     #[test]
     fn r1546_undeclared_text_has_no_bands() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         assert!(cache.backgrounds("Row label", &st, &[], None).is_empty());
     }
@@ -1381,7 +1453,7 @@ mod tests {
     /// one band whose range is the whole declaration.
     #[test]
     fn r1546_one_declaration_is_one_band_across_a_shaping_boundary() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         let mut bold = st.clone().with_bg_color(HL);
         bold.font_weight = pinion_core::style::FontWeight::BOLD;
@@ -1409,7 +1481,7 @@ mod tests {
     /// not one band with something painted over it.
     #[test]
     fn r1546_a_run_without_a_background_punches_a_hole_in_the_base() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let base = style(16).with_bg_color(HL);
         // Built from `base` then cleared — the run inherits everything else.
         let hole = StyleRun::new(3, 6, base.clone().without_bg_color());
@@ -1436,7 +1508,7 @@ mod tests {
     /// `[4,6)`.
     #[test]
     fn r1546_overlapping_declarations_agree_with_the_shaper_on_the_winner() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         let mut first = st.clone().with_bg_color(HL);
         first.fg_color = pinion_core::style::Color::rgb(0xAA, 0x00, 0x00);
@@ -1471,7 +1543,7 @@ mod tests {
     /// (which would ink the empty gutter past the first row's last glyph).
     #[test]
     fn r1546_a_wrapped_declaration_is_one_band_per_visual_row() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         let text = "wrap me across two rows";
         let runs = vec![bg_run(&st, 0, u32::try_from(text.len()).unwrap(), HL)];
@@ -1510,7 +1582,7 @@ mod tests {
     /// highlight would no longer line up with the selection drawn over it.
     #[test]
     fn r1546_the_band_registers_with_the_caret_line_box() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         let runs = vec![bg_run(&st, 0, 9, HL)];
         let bands = cache.backgrounds("Row label", &st, &runs, None).to_vec();
@@ -1531,7 +1603,7 @@ mod tests {
     /// paint identical pixels.
     #[test]
     fn r1546_the_bands_are_derived_once_and_replayed() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         let runs = vec![bg_run(&st, 0, 3, HL)];
         for _ in 0..10 {
@@ -1584,7 +1656,7 @@ mod tests {
             StyleRun::new(0, 4, marked(UnderlineStyle::Curly, SECOND)),
         ];
 
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let derived = cache.positioned_runs("word", &base, &runs, None);
         let underlined: Vec<_> = derived.iter().filter_map(|r| r.underline).collect();
         assert!(
@@ -1632,7 +1704,7 @@ mod tests {
         let node = TextNode::mnemonic_styled("Save &As", Rect::default(), base.clone());
         assert_eq!(node.content, "Save As");
 
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let derived = cache.positioned_runs(&node.content, &node.style, &node.runs, None);
         let underlined: Vec<_> = derived.iter().filter(|r| r.underline.is_some()).collect();
         assert_eq!(underlined.len(), 1, "exactly one run is decorated");
@@ -1662,7 +1734,7 @@ mod tests {
     /// nobody replays.
     #[test]
     fn r1531_a_layout_that_is_only_measured_derives_no_draw_list() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         for _ in 0..10 {
             let _ = cache.layout("Row label", &st, None);
@@ -1683,7 +1755,7 @@ mod tests {
     /// the property that makes it correct rather than merely cheap.
     #[test]
     fn r1531_changed_text_derives_its_own_draw_list() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         let first: Vec<u32> = cache
             .positioned_runs("AAAA", &st, &[], None)
@@ -1739,7 +1811,7 @@ mod tests {
     #[test]
     fn r1531_the_draw_list_is_what_parley_positions() {
         use parley::PositionedLayoutItem;
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let st = style(16);
         let text = "Row label 42 value";
         let derived: Vec<(u32, f32, f32, f32)> = cache
@@ -1775,7 +1847,7 @@ mod tests {
     /// the same list — one layout, two brushes.
     #[test]
     fn r1531_each_run_carries_its_own_brush() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let base = TextStyle::new()
             .with_size_px(16)
             .with_fg(Color::rgb(0, 0, 0));
@@ -1807,7 +1879,7 @@ mod tests {
     /// says so.
     #[test]
     fn r1531_a_decoration_is_resolved_against_its_font_metrics() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let mut st = style(16);
         st.decoration.underline = pinion_core::style::UnderlineStyle::Single;
         let baselines: Vec<f32> = {
@@ -1839,6 +1911,8 @@ mod tests {
     /// `FontContext`, so it pins *deferral*, not *absence*.
     #[test]
     fn r1447_construction_builds_no_font_context() {
+        // R1573 — the host path deliberately: this test's subject IS the
+        // platform scan's laziness, so a cache that never scans proves nothing.
         let mut cache = LayoutCache::new();
         assert_eq!(
             cache.font_scans(),
@@ -1881,7 +1955,7 @@ mod tests {
         // dependent assertion R1453 calls a flake. The demo runs it explicitly
         // under its own font-less config, which is where the claim is true and
         // where it is worth checking.
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         assert_eq!(
             cache.probe_system_fonts(),
             SystemFontStatus::Unavailable,
@@ -1893,6 +1967,7 @@ mod tests {
 
     #[test]
     fn r1448_probe_answers_before_shaping_and_is_idempotent() {
+        // R1573 — the host path deliberately: probing IS the subject.
         let mut cache = LayoutCache::new();
         assert_eq!(cache.font_scans(), 0, "premise: nothing has scanned yet");
         let first = cache.probe_system_fonts();
@@ -1936,6 +2011,8 @@ mod tests {
     /// also pass on a build where the status never resolved at all.
     #[test]
     fn r1448_status_is_not_probed_until_something_looks() {
+        // R1573 — the host path deliberately: the status under test is the
+        // platform database's, and an own-fonts cache has no such status.
         let mut cache = LayoutCache::new();
         assert_eq!(
             cache.system_font_status(),
@@ -1961,6 +2038,7 @@ mod tests {
     /// counted, and fails now.
     #[test]
     fn r1447_font_scan_runs_once_not_per_shape() {
+        // R1573 — the host path deliberately: counting platform scans.
         let mut cache = LayoutCache::new();
         let s = style(16);
         let _ = cache.layout("a", &s, None);
@@ -1982,10 +2060,10 @@ mod tests {
     #[test]
     fn r1447_lazy_context_shapes_identically() {
         let s = style(16);
-        let mut warm = LayoutCache::new();
+        let mut warm = crate::test_font::own_font_cache();
         let _ = warm.layout("priming", &s, None);
         let warm_width = warm.layout("Hello, world", &s, None).width();
-        let mut fresh = LayoutCache::new();
+        let mut fresh = crate::test_font::own_font_cache();
         let fresh_width = fresh.layout("Hello, world", &s, None).width();
         assert!(
             (warm_width - fresh_width).abs() < f32::EPSILON,
@@ -1996,14 +2074,14 @@ mod tests {
 
     #[test]
     fn layout_produces_at_least_one_line() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let layout = cache.layout("Hello", &style(16), None);
         assert!(layout.lines().count() >= 1);
     }
 
     #[test]
     fn repeated_layout_hits_cache() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let s = style(16);
         let _ = cache.layout("Cached", &s, None);
         assert_eq!(cache.len(), 1);
@@ -2013,7 +2091,7 @@ mod tests {
 
     #[test]
     fn different_text_creates_new_entry() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let s = style(16);
         let _ = cache.layout("foo", &s, None);
         let _ = cache.layout("bar", &s, None);
@@ -2022,7 +2100,7 @@ mod tests {
 
     #[test]
     fn different_max_width_creates_new_entry() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let s = style(16);
         let _ = cache.layout("text", &s, Some(100));
         let _ = cache.layout("text", &s, Some(200));
@@ -2031,7 +2109,7 @@ mod tests {
 
     #[test]
     fn different_style_creates_new_entry() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let _ = cache.layout("text", &style(16), None);
         let _ = cache.layout("text", &style(24), None);
         assert_eq!(cache.len(), 2);
@@ -2041,7 +2119,7 @@ mod tests {
     fn r1454_shapes_counts_misses_and_a_warm_set_adds_none() {
         // R1454 — the instrument the LRU's one failure mode needs. A bounded
         // working set warms once; the second pass costs nothing.
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let style = TextStyle::new().with_size_px(13);
         let set: Vec<String> = (0..40).map(|i| format!("row-{i}")).collect();
         for s in &set {
@@ -2156,7 +2234,7 @@ mod tests {
     /// from "grew until it ran out of room to grow".
     #[test]
     fn r1521_growth_settles_at_the_working_set_not_at_the_ceiling() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let style = TextStyle::new().with_size_px(13);
         let set: Vec<String> = (0..300).map(|i| format!("row-{i}")).collect();
         for _ in 0..6 {
@@ -2284,7 +2362,7 @@ mod tests {
     /// never grows once and the whole round is inert.
     #[test]
     fn r1521_a_pro_tool_working_set_warms_at_the_default_capacity() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let style = TextStyle::new().with_size_px(13);
         let set: Vec<String> = (0..1200)
             .map(|i| format!("row {i} some cell content"))
@@ -2322,7 +2400,7 @@ mod tests {
     /// every consumer while every other test here still passed.
     #[test]
     fn r1521_default_cache_starts_small_and_may_grow() {
-        let cache = LayoutCache::new();
+        let cache = crate::test_font::own_font_cache();
         assert_eq!(cache.capacity(), LayoutCache::DEFAULT_CAPACITY);
         assert_eq!(cache.max_capacity(), LayoutCache::MAX_CAPACITY);
         assert!(
@@ -2382,7 +2460,7 @@ mod tests {
     /// deliberate behavior change rather than a quiet regression.
     #[test]
     fn different_fg_color_creates_new_entry() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let red = TextStyle::new()
             .with_size_px(16)
             .with_fg(Color::rgb(255, 0, 0));
@@ -2403,7 +2481,7 @@ mod tests {
     /// styled call with no runs hits the entry a plain call created.
     #[test]
     fn empty_runs_match_single_style_entry() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let s = style(16);
         let _ = cache.layout("text", &s, None);
         assert_eq!(cache.len(), 1);
@@ -2415,7 +2493,7 @@ mod tests {
     /// node is a distinct cache entry from the same text single-styled.
     #[test]
     fn styled_runs_create_distinct_entry() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let base = style(16);
         let red = TextStyle::new()
             .with_size_px(16)
@@ -2433,7 +2511,7 @@ mod tests {
     #[test]
     fn styled_run_splits_and_restyles() {
         use parley::PositionedLayoutItem;
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let base = style(16);
         let big = style(40);
         let runs = vec![StyleRun::new(0, 1, big)];
@@ -2463,7 +2541,7 @@ mod tests {
     #[test]
     fn styled_run_carries_per_run_brush() {
         use parley::PositionedLayoutItem;
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let base = TextStyle::new()
             .with_size_px(16)
             .with_fg(Color::rgb(0, 0, 0));
@@ -2510,6 +2588,10 @@ mod tests {
     /// generic-keyword routing in `style_properties`.
     #[test]
     fn r1002_generic_monospace_keyword_is_fixed_pitch() {
+        // R1573 — the host path deliberately: the subject is how the platform
+        // resolves the GENERIC `monospace` keyword, and the only face this tree
+        // vendors is proportional. Registering a monospace face would make the
+        // test deterministic and stop it testing generic-family resolution.
         let mut cache = LayoutCache::new();
         let i = glyph_advance(&mut cache, "i", "monospace", 32);
         let m = glyph_advance(&mut cache, "M", "monospace", 32);
@@ -2546,6 +2628,7 @@ mod tests {
     /// font-derivation hook a `Scene::TextGrid` producer consumes.
     #[test]
     fn r1002_measure_monospace_cell_is_usable() {
+        // R1573 — the host path deliberately, for the reason above.
         let mut cache = LayoutCache::new();
         let m16 = cache
             .measure_monospace_cell(16)
@@ -2576,6 +2659,8 @@ mod tests {
     /// *some* family would change what every pre-R1472 caller shapes.
     #[test]
     fn r1472_default_family_round_trips_and_starts_unset() {
+        // R1573 — a bare cache deliberately: the claim is that the default
+        // starts UNSET, and the deterministic fixture sets it on purpose.
         let mut cache = LayoutCache::new();
         assert_eq!(
             cache.default_font_family(),
@@ -2606,7 +2691,7 @@ mod tests {
     /// `SansSerif` fallback either way.
     #[test]
     fn r1472_changing_the_default_evicts_what_it_reinterprets() {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let _ = cache.layout("keyed with an unset family", &style(16), None);
         let after_first = cache.shapes();
 
@@ -2741,6 +2826,7 @@ mod footprint {
                 font_status,
                 app_families,
                 default_family,
+                system_fonts,
                 // parley's shaping scratch space — opaque, and named on the row.
                 layout_cx: _,
             } = self;
@@ -2755,6 +2841,7 @@ mod footprint {
                 + font_status.footprint()
                 + app_families.footprint()
                 + default_family.footprint()
+                + system_fonts.footprint()
         }
     }
 
@@ -2787,6 +2874,9 @@ mod footprint {
         /// without naming a single `Layout`.
         #[test]
         fn r1550_an_empty_cache_still_holds_its_index() {
+            // R1573 — `LayoutCache::new()` deliberately, not the deterministic
+            // fixture: this measures an EMPTY cache, and the fixture registers a
+            // face, so the fixture's cache is not the object under test.
             let cache = LayoutCache::new();
             assert!(cache.footprint() > 100_000, "{}", cache.footprint());
             let row = cache.arena_footprint();
@@ -2807,8 +2897,8 @@ mod footprint {
         #[test]
         fn r1550_a_long_entry_costs_more_than_a_short_one() {
             let style = TextStyle::new();
-            let mut short = LayoutCache::new();
-            let mut long = LayoutCache::new();
+            let mut short = crate::test_font::own_font_cache();
+            let mut long = crate::test_font::own_font_cache();
             let empty = short.footprint();
             short.layout("OK", &style, None);
             long.layout(&"lorem ipsum dolor sit amet ".repeat(200), &style, None);
@@ -2838,7 +2928,7 @@ mod footprint {
         #[test]
         fn r1550_deriving_a_draw_list_grows_the_entry() {
             let style = TextStyle::new();
-            let mut cache = LayoutCache::new();
+            let mut cache = crate::test_font::own_font_cache();
             let text = "the quick brown fox jumps over the lazy dog";
             cache.layout(text, &style, None);
             let shaped = cache.footprint();
@@ -2866,8 +2956,8 @@ mod footprint {
             use pinion_core::scene::StyleRun;
             let base = TextStyle::new();
             let text = "the quick brown fox jumps over the lazy dog".repeat(4);
-            let mut plain = LayoutCache::new();
-            let mut styled = LayoutCache::new();
+            let mut plain = crate::test_font::own_font_cache();
+            let mut styled = crate::test_font::own_font_cache();
             let empty = plain.footprint();
 
             plain.layout(&text, &base, None);
@@ -2900,7 +2990,7 @@ mod footprint {
         #[test]
         fn r1550_one_opaque_layout_per_entry() {
             let style = TextStyle::new();
-            let mut cache = LayoutCache::new();
+            let mut cache = crate::test_font::own_font_cache();
             for i in 0..7 {
                 cache.layout(&format!("row {i}"), &style, None);
             }

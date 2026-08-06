@@ -31,6 +31,8 @@ mod font_metrics;
 pub mod font_source;
 pub mod glyph_run;
 mod layout;
+#[cfg(test)]
+mod test_font;
 
 pub use cache::LayoutCache;
 pub use caret::{

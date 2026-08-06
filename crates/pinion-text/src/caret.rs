@@ -657,7 +657,7 @@ mod tests {
     /// helper queries against (cache is borrowed by the caller so
     /// the `&Layout` lives across the helper call).
     fn shape(text: &'static str) -> LayoutCache {
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let style = TextStyle::default();
         let _ = cache.layout(text, &style, None);
         cache
@@ -820,7 +820,7 @@ mod tests {
         // caret in the second visual row must land *after* byte 0 (the
         // start of that visual row), proving the boundary is visual.
         let text = "the quick brown fox jumps over the lazy dog";
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let style = TextStyle::default();
         let _ = cache.layout(text, &style, Some(90));
         let layout = cache.layout(text, &style, Some(90));
@@ -909,7 +909,7 @@ mod tests {
         // first row is a logical-line start, so a gutter paints a single
         // number for the wrapped paragraph.
         let text = "the quick brown fox jumps over the lazy dog";
-        let mut cache = LayoutCache::new();
+        let mut cache = crate::test_font::own_font_cache();
         let style = pinion_core::style::TextStyle::default();
         let _ = cache.layout(text, &style, Some(90));
         let layout = cache.layout(text, &style, Some(90));

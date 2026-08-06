@@ -124,6 +124,23 @@ pub(crate) fn build_font_context() -> (FontContext, SystemFontStatus) {
     }
 }
 
+/// R1573 §5.36 — a [`FontContext`] that will consult **only** the faces it is
+/// given: the platform scan is not run, so
+/// [`register_font_data`](crate::LayoutCache::register_font_data) is the sole
+/// source of glyphs.
+///
+/// Distinct from the [`SystemFontStatus::Unavailable`] path above, which reaches
+/// the same collection because the host's database *failed*. Here it is a
+/// **declaration**: the caller has decided that its own faces are the whole
+/// font world, so the metrics it measures are a function of the bytes it shipped
+/// and of nothing on the machine. That is what
+/// [`LayoutCache::with_own_fonts`](crate::LayoutCache::with_own_fonts) is for,
+/// and why it reports [`SystemFontStatus::NotProbed`] rather than `Unavailable`
+/// — nothing was probed, and nothing failed.
+pub(crate) fn own_fonts_context() -> FontContext {
+    context(false)
+}
+
 /// A [`FontContext`] over a collection with or without the platform scan.
 ///
 /// parley's own `FontContext::new()` is hardcoded to `CollectionOptions`'

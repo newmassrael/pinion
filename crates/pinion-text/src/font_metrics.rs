@@ -108,6 +108,10 @@ mod tests {
     /// the R1003 seam (it would catch a regression in the wiring or the bridge).
     #[test]
     fn seam_delivers_measured_cell_into_owner_scope() {
+        // R1573 — the host path deliberately: this measures the GENERIC
+        // `monospace` family through the platform, which is what the seam under
+        // test carries. Both sides of the equality read the same host, so the
+        // assertion is a comparison rather than an absolute metric.
         let direct = LayoutCache::new()
             .measure_monospace_cell(32)
             .expect("32px monospace measures");
@@ -170,7 +174,7 @@ mod tests {
         // Recover the fractional width the same way the provider does and check
         // the reported one is its ceiling.
         let raw = f64::from(
-            LayoutCache::new()
+            crate::test_font::own_font_cache()
                 .layout("report.pdf", &style, None)
                 .width(),
         );
