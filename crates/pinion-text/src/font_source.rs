@@ -63,12 +63,20 @@ static SYSTEM_FONTS_USABLE: OnceLock<bool> = OnceLock::new();
 ///
 /// # Why `catch_unwind`
 ///
-/// The failure is an `unwrap` inside fontique, not a `Result` pinion can
-/// match on, so there is no return value to inspect — the only way to learn
-/// that this host has no usable font database is to attempt the scan and
-/// survive it. `catch_unwind` is the established in-repo boundary for exactly
-/// this shape (`pinion_core::reactive::owner` isolates each cleanup closure
-/// the same way), and the workspace sets no `panic = "abort"` profile.
+/// One of the two ways this host can have no usable font database is an
+/// `unwrap` inside fontique, not a `Result` pinion can match on, so there is no
+/// return value to inspect — surviving the scan is the only way to observe it.
+/// `catch_unwind` is the established in-repo boundary for exactly this shape
+/// (`pinion_core::reactive::owner` isolates each cleanup closure the same way),
+/// and the workspace sets no `panic = "abort"` profile.
+///
+/// # Why surviving it is not the answer (R1574.4)
+///
+/// The *other* way is that the scan completes and the database is empty, and
+/// which of the two a given host takes is a property of its fontconfig rather
+/// than of pinion — see [`scan_yields_a_family`], where both hosts are
+/// measured. So the verdict is the family count, and the unwind boundary only
+/// keeps a failed scan from taking the process with it.
 ///
 /// ## What is actually known about the unwind (R1448.1)
 ///
@@ -103,25 +111,64 @@ static SYSTEM_FONTS_USABLE: OnceLock<bool> = OnceLock::new();
 pub(crate) fn build_font_context() -> (FontContext, SystemFontStatus) {
     if SYSTEM_FONTS_USABLE.get() == Some(&false) {
         // Already known bad on this host: skip straight to the font-less
-        // collection rather than re-running a scan that will only panic again.
+        // collection rather than re-running a scan that can only reach the same
+        // verdict again (a panic, or a database with nothing in it).
         return (context(false), SystemFontStatus::Unavailable);
     }
     // The closure captures nothing and `CollectionOptions` is `Copy`, so it is
     // `UnwindSafe` without an assertion.
-    if let Ok(cx) = catch_unwind(|| context(true)) {
+    //
+    // R1574.4 — the scan AND the family count are inside one `catch_unwind`,
+    // because surviving the scan is not the fact this reports. See
+    // `scan_yields_a_family` below.
+    if let Ok(Some(cx)) = catch_unwind(|| {
+        let mut cx = context(true);
+        scan_yields_a_family(&mut cx).then_some(cx)
+    }) {
         let _ = SYSTEM_FONTS_USABLE.set(true);
         (cx, SystemFontStatus::Available)
     } else {
         let _ = SYSTEM_FONTS_USABLE.set(false);
         tracing::warn!(
-            "platform font database unusable; continuing without system fonts. \
-             Text shapes but renders no glyphs until a face is supplied via \
-             LayoutCache::register_font_data (or declared at boot with \
-             ShellConfig::with_application_font). Any fontique panic line above \
-             is upstream's and has been recovered from."
+            "platform font database yields no font family; continuing without \
+             system fonts. Text shapes but renders no glyphs until a face is \
+             supplied via LayoutCache::register_font_data (or declared at boot \
+             with ShellConfig::with_application_font). Either the scan failed \
+             (any fontique panic line above is upstream's and has been \
+             recovered from) or it succeeded over an empty database — both are \
+             the same fact for a caller asking whether it can draw text."
         );
         (context(false), SystemFontStatus::Unavailable)
     }
+}
+
+/// R1574.4 §5.36 — does this scanned collection actually offer a family?
+///
+/// The question [`SystemFontStatus`] exists to answer is "can this process draw
+/// text from the platform?", and until R1574.4 the code answered a *different*
+/// one: "did the scan return without unwinding?". Those are the same fact only
+/// on a host where an empty font database makes fontique panic — which is a
+/// property of the host's fontconfig, not of pinion.
+///
+/// The two hosts were measured against each other rather than reasoned about.
+/// Under one identical, deliberately empty `FONTCONFIG_FILE`
+/// (`tools/demos/r1447_font_free_tui.py`'s zero-face config, `fc-list` = 0 on
+/// both), a 635-face developer box unwound inside fontique and reported
+/// `Unavailable`, while a 53-face CI runner completed the scan and reported
+/// **`Available` with nothing in it**. So a caller on that runner was told the
+/// platform database was usable, and every string it shaped came back blank.
+///
+/// That is also why the count runs inside the same [`catch_unwind`] as the
+/// scan: on a host where the backend is left half-initialised, asking for the
+/// families is exactly where the second unwind would come from, and both
+/// unwinds mean the identical thing to the caller.
+///
+/// `family_names()` is `Collection`'s own enumeration, so this asks the
+/// database the question directly instead of inferring it. It stops at the
+/// first name — the answer is a yes/no, and a host with 10,000 faces should not
+/// pay for a full walk to learn that it has more than none.
+fn scan_yields_a_family(cx: &mut FontContext) -> bool {
+    cx.collection.family_names().next().is_some()
 }
 
 /// R1573 §5.36 — a [`FontContext`] that will consult **only** the faces it is
@@ -153,5 +200,50 @@ fn context(system_fonts: bool) -> FontContext {
             system_fonts,
         }),
         source_cache: SourceCache::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{context, scan_yields_a_family};
+    use parley::fontique::Blob;
+
+    /// R1574.4 §5.36 — an unscanned collection offers no family, and a
+    /// registered face makes it offer one.
+    ///
+    /// This is the predicate the [`super::SystemFontStatus`] verdict now rests
+    /// on, asserted where it is **host-independent**: `context(false)` runs no
+    /// platform scan, so "empty" is a property of the code rather than of the
+    /// machine, and it is the exact collection a font-less host ends up with.
+    ///
+    /// The second half is what makes it an instrument instead of a tautology.
+    /// Without it this test would also pass against a `scan_yields_a_family`
+    /// that returned `false` unconditionally — which would report `Unavailable`
+    /// on every host in the world, the mirror-image defect of the one R1574.4
+    /// fixes. Registering the crate's own fixture face is what pins the
+    /// direction.
+    #[test]
+    fn r1574_4_family_presence_is_what_the_predicate_reads() {
+        let mut cx = context(false);
+        assert!(
+            !scan_yields_a_family(&mut cx),
+            "a collection built with no platform scan offers no family — this \
+             is the state a font-less host reaches, and the one that must not \
+             report Available",
+        );
+
+        let registered = cx
+            .collection
+            .register_fonts(Blob::from(crate::test_font::NOTO_SANS.to_vec()), None);
+        assert!(
+            !registered.is_empty(),
+            "premise: the fixture face registered, so the second assertion is \
+             about the predicate rather than about a rejected blob",
+        );
+        assert!(
+            scan_yields_a_family(&mut cx),
+            "the same collection now offers a family, so the predicate reads \
+             the database rather than answering a constant",
+        );
     }
 }

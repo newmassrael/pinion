@@ -75,11 +75,25 @@ pub enum SystemFontStatus {
     /// frame — stays here for its whole life.
     #[default]
     NotProbed,
-    /// The platform font database was read.
+    /// The platform font database was read **and offers at least one family**.
+    ///
+    /// R1574.4 — the second half is the whole of what makes this worth
+    /// publishing. A status that meant only "the scan returned" would be
+    /// `Available` on a host whose database is empty, and every string shaped
+    /// there comes back blank; a caller reading this to decide whether it needs
+    /// to ship its own face would decide wrongly. Measured on two hosts under
+    /// one identical zero-face `FONTCONFIG_FILE`: one unwound inside fontique,
+    /// the other completed the scan over nothing.
     Available,
-    /// The platform font database could not be read on this host: no font
+    /// The platform font database offers no family on this host: no font
     /// package installed, a container built without one, a `FONTCONFIG_FILE`
-    /// pointing at an empty tree.
+    /// pointing at an empty tree — or a scan that failed outright.
+    ///
+    /// R1574.4 — "failed" and "succeeded with nothing in it" are deliberately
+    /// ONE state, because they are one fact for the caller: there is no
+    /// platform face to draw with. Splitting them would publish a distinction
+    /// nobody can act on differently, and one that varies by host for the
+    /// identical font configuration.
     ///
     /// Text still shapes and still lays out — a caller gets boxes, not a
     /// crash, which is Qt's behavior and, before R1448, not pinion's. To get
