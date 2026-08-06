@@ -31490,6 +31490,54 @@
         "21 debt files remain open after the census correction, and clearing them is the campaign this round opens rather than finishes"
       ]
     },
+    "R1580": {
+      "decision_summary": "R1580 §5.16 — THE HARNESS EVERY DEMO RIDES IS TESTED PAST ITS TEARDOWN. R1570.3 put tests on tools/rpc_verify.py for the first time and covered exactly one function, terminate_process_tree, because that is where that round was bitten. The argument it made — this code drives every demo in the repository and nothing verifies it — applies unchanged to the rest of the file, and the rest of the file is what every demo calls on every line. wait_until in particular is where the zero-flake policy is actually enforced: it is the thing that replaced a fixed sleep with an observation, so a defect in it turns into flake spread across two hundred demos rather than one failing test. This round takes the file from 6 cases and 11 assertions to 22 and 50, still under a second, still inside pre-push, and still without launching a single process: request runs against a fake pipe, wait_until against a deterministic predicate, and the scene readers against literal dicts. Two of the eight counterfactuals found defects in the harness itself rather than confirming its behaviour.",
+      "changes_bullets": [
+        "request is covered where it is hardest: it answers the frame carrying its own id and skips others, and it KEEPS a server-initiated notification rather than discarding it -- the property R1552 recorded as the reason the wire form is a notification and not a second response",
+        "wait_until evaluates its predicate BEFORE consulting the deadline, so a condition already true never fails on a zero budget; a loop written the other way makes every demo's first check load-dependent, and that is now an assertion rather than a reading",
+        "The timeout message is pinned to carry the description, the last value seen and the budget spent -- the three things that make a timed-out demo diagnosable without a rerun",
+        "find_by_tag is pinned to descend Container.children and Scroll.content and NOT a Text's content, which is a string; access_node_by_tag is pinned as a flat scan, because an access tree nests by tag reference rather than by containment",
+        "key's argument rules are asserted, including R882.1's positionless release, and the boot gate is asserted to read PINION_ASSUME_BUILT's VALUE rather than its presence -- the R1333 defect where setting 0 disabled the rebuild",
+        "A case that RAISES is now that case's failure rather than a dead suite, and every verdict carries the name of the case it came from, so a failure and an exception are reported in one vocabulary",
+        "The case list is DERIVED from the module rather than hand-written, and a scan that finds nothing reports itself broken instead of clean"
+      ],
+      "verification_bullets": [
+        "22 cases / 50 assertions, 0.95s, run by pre-push before it trusts the demos",
+        "Eight counterfactuals, all caught with zero coverage gaps: notifications discarded, any id answering, the deadline consulted before the predicate, the last value dropped from the message, a Scroll no longer descended, the boot gate presence-checking, key accepting an empty name, and assert_eq dropping its label",
+        "TWO of those counterfactuals found harness defects rather than confirming behaviour. Making wait_until check its deadline first did not turn the file red, it turned it SILENT -- the exception escaped and took the summary line and the other twenty-one verdicts with it. And the case list was a hand-written tuple, the same shape debt-focus-sweep-population-is-curated names one file over: a case added and not registered is not a failure, it is a non-existence",
+        "The counterfactual driver cross-checks its own detector against the suite's summary and refuses to report if the two disagree, which is what caught the raising-case gap instead of reporting it as a coverage hole"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "The population fix here is local to this suite; debt-focus-sweep-population-is-curated is the same shape in tools/demos and is still open",
+        "The tests are unit-shaped by construction, so the boot path that actually launches a binary -- boot_grace, the first-paint wait, the boot_timeout handshake -- is still exercised only by the demos themselves"
+      ],
+      "publishable_decision_summary": "R1580 §5.16 — THE HARNESS EVERY DEMO RIDES IS TESTED PAST ITS TEARDOWN. R1570.3 put tests on tools/rpc_verify.py for the first time and covered exactly one function, terminate_process_tree, because that is where that round was bitten. The argument it made — this code drives every demo in the repository and nothing verifies it — applies unchanged to the rest of the file, and the rest of the file is what every demo calls on every line. wait_until in particular is where the zero-flake policy is actually enforced: it is the thing that replaced a fixed sleep with an observation, so a defect in it turns into flake spread across two hundred demos rather than one failing test. This round takes the file from 6 cases and 11 assertions to 22 and 50, still under a second, still inside pre-push, and still without launching a single process: request runs against a fake pipe, wait_until against a deterministic predicate, and the scene readers against literal dicts. Two of the eight counterfactuals found defects in the harness itself rather than confirming its behaviour.",
+      "publishable_changes_bullets": [
+        "request is covered where it is hardest: it answers the frame carrying its own id and skips others, and it KEEPS a server-initiated notification rather than discarding it -- the property R1552 recorded as the reason the wire form is a notification and not a second response",
+        "wait_until evaluates its predicate BEFORE consulting the deadline, so a condition already true never fails on a zero budget; a loop written the other way makes every demo's first check load-dependent, and that is now an assertion rather than a reading",
+        "The timeout message is pinned to carry the description, the last value seen and the budget spent -- the three things that make a timed-out demo diagnosable without a rerun",
+        "find_by_tag is pinned to descend Container.children and Scroll.content and NOT a Text's content, which is a string; access_node_by_tag is pinned as a flat scan, because an access tree nests by tag reference rather than by containment",
+        "key's argument rules are asserted, including R882.1's positionless release, and the boot gate is asserted to read PINION_ASSUME_BUILT's VALUE rather than its presence -- the R1333 defect where setting 0 disabled the rebuild",
+        "A case that RAISES is now that case's failure rather than a dead suite, and every verdict carries the name of the case it came from, so a failure and an exception are reported in one vocabulary",
+        "The case list is DERIVED from the module rather than hand-written, and a scan that finds nothing reports itself broken instead of clean"
+      ],
+      "publishable_verification_bullets": [
+        "22 cases / 50 assertions, 0.95s, run by pre-push before it trusts the demos",
+        "Eight counterfactuals, all caught with zero coverage gaps: notifications discarded, any id answering, the deadline consulted before the predicate, the last value dropped from the message, a Scroll no longer descended, the boot gate presence-checking, key accepting an empty name, and assert_eq dropping its label",
+        "TWO of those counterfactuals found harness defects rather than confirming behaviour. Making wait_until check its deadline first did not turn the file red, it turned it SILENT -- the exception escaped and took the summary line and the other twenty-one verdicts with it. And the case list was a hand-written tuple, the same shape debt-focus-sweep-population-is-curated names one file over: a case added and not registered is not a failure, it is a non-existence",
+        "The counterfactual driver cross-checks its own detector against the suite's summary and refuses to report if the two disagree, which is what caught the raising-case gap instead of reporting it as a coverage hole"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The population fix here is local to this suite; debt-focus-sweep-population-is-curated is the same shape in tools/demos and is still open",
+        "The tests are unit-shaped by construction, so the boot path that actually launches a binary -- boot_grace, the first-paint wait, the boot_timeout handshake -- is still exercised only by the demos themselves"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

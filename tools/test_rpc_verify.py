@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R1570.3 — the demo harness's process lifecycle, tested.
+"""R1570.3 / R1580 — the demo harness, tested.
 
 `tools/rpc_verify.py` drives every demo in this repo and, until R1570.3, nothing
 verified any of it. That is the same gap R1495 closed for the hook libraries,
@@ -9,10 +9,20 @@ running**. In CI the four binaries R1570 had left spinning became four orphans,
 and the 33 demos that ran after them failed in a set that differed between runs
 — four deterministic failures reported as thirty-seven non-deterministic ones.
 
-What is tested here is `terminate_process_tree`, the one function teardown goes
-through. The subjects are synthesised rather than borrowed from the tree,
-because the interesting cases are processes a demo binary is not: one that
-ignores `SIGTERM`, and one that leaves a child behind.
+R1570.3 tested `terminate_process_tree`, the one function teardown goes through.
+The subjects are synthesised rather than borrowed from the tree, because the
+interesting cases are processes a demo binary is not: one that ignores
+`SIGTERM`, and one that leaves a child behind.
+
+R1580 covers the rest, which is what every demo calls on every line: the wire
+(`request` — id matching and the notification split R1552 warned about), the
+clock (`wait_until`, where the zero-flake policy is actually enforced), the
+readers (`find_by_tag`, `access_node_by_tag`, `assert_eq`), the injectors
+(`key`'s argument rules) and the boot gate (`PINION_ASSUME_BUILT`). None of it
+needs a process: `request` runs against a fake pipe, `wait_until` against a
+deterministic predicate, the readers against literal scene dicts. The suite
+still finishes in well under a second, which is what keeps it inside
+`pre-push`.
 
 Run from the workspace root (fast — no cargo, no display):
     python3 tools/test_rpc_verify.py
@@ -20,6 +30,7 @@ Run from the workspace root (fast — no cargo, no display):
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -29,10 +40,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from rpc_verify import terminate_process_tree  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcError,
+    RpcSubprocess,
+    access_node_by_tag,
+    assert_eq,
+    find_by_tag,
+    terminate_process_tree,
+    wait_until,
+)
 
 PASSED = 0
 FAILED: list[str] = []
+
+
+#: The case currently running, so every verdict names where it came from.
+#: R1580 — without it a failure label like "and the last value it saw" does not
+#: say which case produced it, and a case that RAISES is reported in a different
+#: vocabulary from one that merely fails. One vocabulary, one prefix.
+CURRENT = ""
 
 
 def check(cond: bool, label: str) -> None:
@@ -40,8 +66,8 @@ def check(cond: bool, label: str) -> None:
     if cond:
         PASSED += 1
     else:
-        FAILED.append(label)
-        print(f"  FAIL {label}")
+        FAILED.append(f"{CURRENT}: {label}" if CURRENT else label)
+        print(f"  FAIL {FAILED[-1]}")
 
 
 def spawn(script: str) -> subprocess.Popen:
@@ -181,17 +207,314 @@ def test_reporting_does_not_raise() -> None:
         check(False, f"reporting: teardown raised {exc!r}")
 
 
-def main() -> int:
-    for fn in (
-        test_cooperative,
-        test_ignores_sigterm,
-        test_grandchild,
-        test_already_exited,
-        test_survivor_is_reported,
-        test_reporting_does_not_raise,
+# ---------------------------------------------------------------------------
+# R1580 — the wire. `request` is what every demo line goes through, and its
+# hardest rule is one R1552 wrote down as a hazard: a server-initiated frame
+# must be KEPT, because discarding it loses somebody's subscription stream.
+# ---------------------------------------------------------------------------
+
+
+class FakePipe:
+    """Stands in for the child's stdin: records what the harness wrote."""
+
+    def __init__(self) -> None:
+        self.written: list[str] = []
+
+    def write(self, text: str) -> None:
+        self.written.append(text)
+
+    def flush(self) -> None:
+        pass
+
+
+class FakeProc:
+    """A child that is alive unless told otherwise."""
+
+    pid = -3
+
+    def __init__(self, returncode: int | None = None) -> None:
+        self.stdin = FakePipe()
+        self.returncode = returncode
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+
+def wired(returncode: int | None = None) -> RpcSubprocess:
+    """An `RpcSubprocess` attached to a fake pipe rather than a binary.
+
+    Built through `__init__` so the object under test is the real one; only the
+    two attributes that touch the OS are replaced. `ensure_build=False` because
+    constructing one must not shell out to cargo.
+    """
+    tf = RpcSubprocess("nonexistent-example", ensure_build=False, request_timeout=0.4)
+    tf._proc = FakeProc(returncode)  # type: ignore[assignment]
+    return tf
+
+
+def deliver(tf: RpcSubprocess, frame: dict) -> None:
+    tf._inbox.put(json.dumps(frame))
+
+
+def sent(tf: RpcSubprocess) -> list[dict]:
+    return [json.loads(line) for line in tf._proc.stdin.written]  # type: ignore[union-attr]
+
+
+def test_request_matches_its_own_id() -> None:
+    tf = wired()
+    deliver(tf, {"jsonrpc": "2.0", "id": 999, "result": "somebody else's"})
+    deliver(tf, {"jsonrpc": "2.0", "id": 1, "result": "mine"})
+    reply = tf.request("scene/probe")
+    check(reply is not None and reply.result == "mine",
+          "request: answers with the frame carrying its own id")
+    check(sent(tf)[0]["method"] == "scene/probe", "request: sends the method")
+    check("params" not in sent(tf)[0],
+          "request: omits params entirely when none were given")
+
+
+def test_request_keeps_notifications() -> None:
+    # R1552's own warning, as an assertion: a frame with a `method` and no `id`
+    # is a subscription stream, not noise. `tools/rpc_verify.py` resolving on
+    # the first matching id and DISCARDING the rest is what the wire form was
+    # chosen to survive.
+    tf = wired()
+    deliver(tf, {"jsonrpc": "2.0", "method": "scene/advanced", "params": {"n": 1}})
+    deliver(tf, {"jsonrpc": "2.0", "id": 1, "result": "ok"})
+    reply = tf.request("scene/probe")
+    check(reply is not None and reply.result == "ok",
+          "notifications: the answer still arrives past a notification")
+    kept = tf.notifications()
+    check(len(kept) == 1 and kept[0]["method"] == "scene/advanced",
+          "notifications: the stream frame is KEPT, not dropped")
+    check(tf.notifications("scene/advanced") == kept,
+          "notifications: filtering by method finds it")
+    check(tf.notifications("other") == [],
+          "notifications: and does not find one that is not there")
+
+
+def test_request_raises_the_surfaces_error() -> None:
+    tf = wired()
+    deliver(tf, {"jsonrpc": "2.0", "id": 1,
+                 "error": {"code": -32005, "message": "refused", "data": "why"}})
+    try:
+        tf.request("scene/act")
+        check(False, "error: an error frame must raise")
+    except RpcError as exc:
+        check(exc.code == -32005 and exc.message == "refused" and exc.data == "why",
+              "error: the code, the message and the payload all survive")
+
+
+def test_request_times_out_naming_the_call() -> None:
+    tf = wired()
+    try:
+        tf.request("scene/never")
+        check(False, "timeout: a silent surface must raise")
+    except RpcError as exc:
+        check("scene/never" in str(exc) and "id=1" in str(exc),
+              "timeout: the refusal names the method and the id")
+
+
+def test_request_on_a_dead_child_says_so() -> None:
+    tf = wired(returncode=101)
+    try:
+        tf.request("scene/probe")
+        check(False, "dead child: must raise rather than block")
+    except RpcError as exc:
+        check("101" in str(exc), "dead child: the exit code is reported")
+
+
+def test_notify_sends_no_id_and_does_not_wait() -> None:
+    tf = wired()
+    reply = tf.request("scene/tick", {"seconds": 0.016}, notify=True)
+    frame = sent(tf)[0]
+    check(reply is None, "notify: answers nothing")
+    check("id" not in frame, "notify: carries no id, so nothing can answer it")
+    check(frame["params"] == {"seconds": 0.016}, "notify: params travel")
+
+
+def test_drain_reads_without_sending() -> None:
+    tf = wired()
+    deliver(tf, {"jsonrpc": "2.0", "method": "scene/advanced"})
+    drained = tf.drain_notifications()
+    check(len(drained) == 1, "drain: collects a frame with no request in flight")
+    check(sent(tf) == [], "drain: and sends nothing to do it")
+
+
+# ---------------------------------------------------------------------------
+# R1580 — the clock. `wait_until` is where [[zero-flake-policy]] is actually
+# enforced: every demo that observes a post-action state goes through it.
+# ---------------------------------------------------------------------------
+
+
+def test_wait_until_returns_the_value() -> None:
+    seen = []
+
+    def predicate():
+        seen.append(1)
+        return "ready" if len(seen) >= 3 else None
+
+    got = wait_until(predicate, timeout=2.0, interval=0.001, desc="ready")
+    check(got == "ready", "wait_until: returns the truthy value, not just True")
+    check(len(seen) == 3, "wait_until: stops polling once it is satisfied")
+
+
+def test_wait_until_polls_once_even_with_no_budget() -> None:
+    # The predicate is evaluated BEFORE the deadline is consulted, so an
+    # already-true condition never fails on a zero budget. A loop written the
+    # other way round makes every demo's first check load-dependent.
+    check(wait_until(lambda: "now", timeout=0.0, interval=0.001) == "now",
+          "wait_until: a condition already true needs no budget")
+
+
+def test_wait_until_reports_what_it_last_saw() -> None:
+    try:
+        wait_until(lambda: 0, timeout=0.01, interval=0.001, desc="the panel opens")
+        check(False, "wait_until: must raise when the budget runs out")
+    except AssertionError as exc:
+        text = str(exc)
+        check("the panel opens" in text, "wait_until: the message carries the desc")
+        check("last=0" in text, "wait_until: and the last value it saw")
+        check("0.01s" in text, "wait_until: and the budget it spent")
+
+
+def test_wait_until_honours_its_interval() -> None:
+    calls = []
+    try:
+        wait_until(lambda: calls.append(1), timeout=0.12, interval=0.04)
+    except AssertionError:
+        pass
+    # 0.12s at 0.04s apart is ~4 polls. A loop ignoring `interval` spins
+    # thousands of times and would burn a CI core per waiting demo.
+    check(1 <= len(calls) <= 12,
+          f"wait_until: polls at the stated interval (saw {len(calls)})")
+
+
+# ---------------------------------------------------------------------------
+# R1580 — the readers, against literal scenes. `find_by_tag` DESCENDS a
+# container and a scroll and must NOT descend a Text's `content`, which is a
+# string; an access tree is FLAT and is scanned instead.
+# ---------------------------------------------------------------------------
+
+
+def test_find_by_tag_descends_the_right_things() -> None:
+    scene = {
+        "type": "Container", "tag": "root",
+        "children": [
+            {"type": "Text", "tag": "label", "content": "not a child"},
+            {"type": "Scroll", "tag": "scroll",
+             "content": {"type": "Container", "tag": "deep", "children": []}},
+        ],
+    }
+    check(find_by_tag(scene, "root") is scene, "find_by_tag: finds the root itself")
+    check((find_by_tag(scene, "label") or {}).get("content") == "not a child",
+          "find_by_tag: descends Container.children")
+    check(find_by_tag(scene, "deep") is not None,
+          "find_by_tag: descends Scroll.content")
+    check(find_by_tag(scene, "absent") is None,
+          "find_by_tag: answers None rather than raising")
+    check(find_by_tag("not a node", "root") is None,
+          "find_by_tag: a non-dict is not a scene")
+
+
+def test_access_node_by_tag_scans_a_flat_list() -> None:
+    tree = {"nodes": [{"tag": "a", "role": "button"}, {"tag": "b"}]}
+    check((access_node_by_tag(tree, "a") or {}).get("role") == "button",
+          "access_node_by_tag: finds a node in the flat list")
+    check(access_node_by_tag(tree, "c") is None,
+          "access_node_by_tag: absent is None")
+    check(access_node_by_tag({}, "a") is None,
+          "access_node_by_tag: an empty reply has no nodes")
+
+
+def test_assert_eq_names_both_sides() -> None:
+    assert_eq(1, 1, "equal values pass")
+    check(True, "assert_eq: equal values do not raise")
+    try:
+        assert_eq("got", "want", "the readout")
+        check(False, "assert_eq: unequal values must raise")
+    except AssertionError as exc:
+        text = str(exc)
+        check("the readout" in text and "'want'" in text and "'got'" in text,
+              "assert_eq: the message carries the label and both values")
+
+
+# ---------------------------------------------------------------------------
+# R1580 — the injectors and the boot gate.
+# ---------------------------------------------------------------------------
+
+
+def test_key_argument_rules() -> None:
+    tf = wired()
+    for label, call in (
+        ("an empty name", lambda: tf.key(at=(1.0, 1.0), name="")),
+        ("both a point and a path", lambda: tf.key(at=(1.0, 1.0), path="t", name="a")),
+        ("neither a point nor a path", lambda: tf.key(name="a")),
     ):
-        fn()
-    print(f"[harness] {PASSED} passed, {len(FAILED)} failed")
+        try:
+            call()
+            check(False, f"key: {label} must be refused")
+        except ValueError:
+            check(True, f"key: {label} is refused")
+
+    # R882.1 — a real key RELEASE carries no cursor, so it needs no position.
+    deliver(tf, {"jsonrpc": "2.0", "id": 1, "result": None})
+    tf.key(name="Shift", state="up")
+    frame = sent(tf)[-1]
+    check(frame["params"] == {"key": "Shift", "state": "up"},
+          "key: a release is positionless and says so")
+
+
+def test_assume_built_gate_reads_the_value_not_the_presence() -> None:
+    # R1333 — presence-checking made `PINION_ASSUME_BUILT=0` DISABLE the
+    # rebuild, the opposite of what setting `0` means.
+    for value, expect_build in (("1", False), ("0", True), (None, True)):
+        previous = os.environ.get("PINION_ASSUME_BUILT")
+        if value is None:
+            os.environ.pop("PINION_ASSUME_BUILT", None)
+        else:
+            os.environ["PINION_ASSUME_BUILT"] = value
+        try:
+            tf = RpcSubprocess("nonexistent-example")
+            check(tf.ensure_build is expect_build,
+                  f"boot gate: PINION_ASSUME_BUILT={value!r} -> build={expect_build}")
+        finally:
+            if previous is None:
+                os.environ.pop("PINION_ASSUME_BUILT", None)
+            else:
+                os.environ["PINION_ASSUME_BUILT"] = previous
+
+
+def main() -> int:
+    # R1580 — the population is DERIVED from this module, not listed.
+    #
+    # It was a hand-written tuple, which is the shape
+    # [[debt-focus-sweep-population-is-curated]] is about one file over: a case
+    # added and not registered does not fail, it does not exist. Definition
+    # order is preserved (`globals()` is insertion-ordered), so the report reads
+    # top to bottom.
+    cases = [
+        (name, fn)
+        for name, fn in list(globals().items())
+        if name.startswith("test_") and callable(fn)
+    ]
+    if not cases:
+        print("[harness] the case scan found nothing — it is broken, not clean")
+        return 1
+    global CURRENT
+    for name, fn in cases:
+        CURRENT = name
+        # R1580 — a case that RAISES is a failed case, not a dead suite. Before
+        # this, an exception escaping any helper under test took the summary
+        # line with it, so the other twenty-one cases reported nothing at all —
+        # which is how a single broken helper hides every other verdict. Found
+        # by a counterfactual: making `wait_until` consult its deadline before
+        # its predicate turned this file silent instead of red.
+        try:
+            fn()
+        except BaseException as exc:  # noqa: BLE001 — a raise IS the verdict
+            check(False, f"raised {exc!r}")
+    CURRENT = ""
+    print(f"[harness] {len(cases)} case(s): {PASSED} passed, {len(FAILED)} failed")
     if FAILED:
         for label in FAILED:
             print(f"  - {label}")
