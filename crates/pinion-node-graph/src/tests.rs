@@ -791,6 +791,89 @@ fn an_interface_carries_the_socket_type_that_crossed() {
 }
 
 #[test]
+fn a_chain_longer_than_the_recursion_cap_stops_and_says_so() {
+    // The cap exists so a pathological document degrades instead of taking the
+    // host process down with a stack overflow. A cap nothing tests is a cap
+    // nobody can rely on, and this is the direction the other tests never go.
+    let mut document = Document::new("deep");
+    let source = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+        .unwrap();
+    let mut previous = source;
+    for step in 0..600 {
+        let next = document
+            .add_node(ROOT, NodeBody::Kind(Op::Add), step, 0)
+            .unwrap();
+        document
+            .connect(ROOT, Socket::new(previous, 0), Socket::new(next, 0))
+            .unwrap();
+        previous = next;
+    }
+    let mut evaluator = document.evaluator();
+    let value = evaluator.outputs(ROOT, previous);
+    assert!(
+        evaluator.truncated(),
+        "the walk hit the cap and must say so rather than folding it into the \
+         value it returns"
+    );
+    assert_eq!(value.len(), 1, "the answer is still the right SHAPE");
+
+    // …and a chain that fits is not truncated, so the flag is not simply on.
+    let mut shallow = Document::new("shallow");
+    let one = shallow
+        .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+        .unwrap();
+    let mut evaluator = shallow.evaluator();
+    assert_eq!(number(&evaluator.outputs(ROOT, one)), Some(1));
+    assert!(!evaluator.truncated());
+}
+
+#[test]
+fn a_cyclic_document_that_arrived_from_elsewhere_is_caught_and_does_not_hang() {
+    // `connect` refuses cycles, so this state is unreachable through the API —
+    // which is exactly why the guard needs a document that did NOT come through
+    // it. Serde is the door such a document actually arrives by.
+    // The link is RE-POINTED rather than added: a second link into one input
+    // is an over-fed input, not a cycle, because `link_into` answers with the
+    // first — which is a fact this test found by asserting the wrong thing
+    // first and being told the value was still 5.
+    let f = fixture();
+    let mut wire = serde_json::to_value(&f.document).unwrap();
+    let links = wire["trees"][0]["links"].as_array_mut().unwrap();
+    let feeding = links
+        .iter_mut()
+        .find(|l| l["to"]["node"] == f.add.0 && l["to"]["port"] == 0)
+        .expect("the fixture wires add's first input");
+    feeding["from"] = serde_json::json!({"node": f.add, "port": 0});
+    let corrupt: Document<Op> = serde_json::from_value(wire).unwrap();
+
+    assert!(
+        corrupt
+            .validate()
+            .contains(&Violation::Cycle { tree: ROOT }),
+        "validate names the cycle: {:?}",
+        corrupt.validate()
+    );
+    // The honest answer for a value that depends on itself is "no value" — and
+    // arriving at it at all is the assertion: an evaluator without the
+    // re-entrancy guard does not return from this call.
+    let mut evaluator = corrupt.evaluator();
+    assert_eq!(
+        evaluator.outputs(ROOT, f.add),
+        vec![None],
+        "evaluation terminates rather than recurring forever"
+    );
+    // …and it terminates because the RE-ENTRANCY guard caught it, not because
+    // the depth cap did. Without this line the two guards shadow each other:
+    // removing the re-entrancy check leaves the same value, reached 512 frames
+    // later, and the test would pass for the wrong reason.
+    assert!(
+        !evaluator.truncated(),
+        "a cycle is caught where it closes, not by running out of depth"
+    );
+}
+
+#[test]
 fn a_document_survives_a_round_trip_through_its_wire_form() {
     let mut f = fixture();
     let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
