@@ -31266,6 +31266,38 @@
         "Nothing measures a demo's headroom, so the next gate that boots a population will cross 180s the same silent way; a sweep that reported each demo's elapsed against the budget would make the approach visible"
       ]
     },
+    "R1576.2": {
+      "decision_summary": "R1576.2 §5.12 — THE SWEEP REPORTS EACH DEMO ELAPSED AGAINST ITS BUDGET, ON A PASS. R1576.1 fixed the demo that crossed the 180s cliff and left the cliff itself unlit: on success the sweep discarded the captured output, so the only demo timing anyone ever saw was the one `timeout` printed while killing it. `r1570_1` passed one run and was killed the next at 186.8s, and no green log had ever said it was near. `run_demo` already prints its own elapsed; this lifts that number onto the sweep line and marks anything past half the budget. Written with NO single quotes and no apostrophes, because the whole runner is one single-quoted shell string — a sed or awk program cannot be written there at all, which is what broke the first draft and is now recorded beside the code that works around it.",
+      "changes_bullets": [
+        "The sweep line becomes `PASS 46.32s`, and `PASS 186.83s ** past half the 180s budget` for one approaching the cap",
+        "Parsed with a bracket-free grep and bash parameter expansion; a demo that prints no timing degrades to the bare `PASS` it printed before"
+      ],
+      "verification_bullets": [
+        "Exercised over the real sweep: three demos report 17.26s / 14.32s / 14.23s where they used to report a bare PASS",
+        "The marker is proven not dead code by driving the exact expression with synthetic values: 46.32 quiet, 186.83 marked, 91.00 marked, 90.00 quiet (half is not PAST half), and no timing at all falls back to `PASS`"
+      ],
+      "impact_refs": [
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The comparison truncates to whole seconds, which is coarse only at budgets of a few seconds and exact at the 180s this gate uses"
+      ],
+      "publishable_decision_summary": "R1576.2 §5.12 — THE SWEEP REPORTS EACH DEMO ELAPSED AGAINST ITS BUDGET, ON A PASS. R1576.1 fixed the demo that crossed the 180s cliff and left the cliff itself unlit: on success the sweep discarded the captured output, so the only demo timing anyone ever saw was the one `timeout` printed while killing it. `r1570_1` passed one run and was killed the next at 186.8s, and no green log had ever said it was near. `run_demo` already prints its own elapsed; this lifts that number onto the sweep line and marks anything past half the budget. Written with NO single quotes and no apostrophes, because the whole runner is one single-quoted shell string — a sed or awk program cannot be written there at all, which is what broke the first draft and is now recorded beside the code that works around it.",
+      "publishable_changes_bullets": [
+        "The sweep line becomes `PASS 46.32s`, and `PASS 186.83s ** past half the 180s budget` for one approaching the cap",
+        "Parsed with a bracket-free grep and bash parameter expansion; a demo that prints no timing degrades to the bare `PASS` it printed before"
+      ],
+      "publishable_verification_bullets": [
+        "Exercised over the real sweep: three demos report 17.26s / 14.32s / 14.23s where they used to report a bare PASS",
+        "The marker is proven not dead code by driving the exact expression with synthetic values: 46.32 quiet, 186.83 marked, 91.00 marked, 90.00 quiet (half is not PAST half), and no timing at all falls back to `PASS`"
+      ],
+      "publishable_impact_refs": [
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The comparison truncates to whole seconds, which is coarse only at budgets of a few seconds and exact at the 180s this gate uses"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

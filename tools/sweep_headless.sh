@@ -140,11 +140,30 @@ runner='
       # is. Detect the marker and tally SKIP distinctly so the headline cannot
       # hide vacuous coverage. Non-fatal (a dev box legitimately lacks some
       # deps); the summary keeps the gap visible instead of hidden.
+      # R1576.1 — report a demo OWN elapsed against the budget, on a PASS.
+      # Until this round "$out" was discarded on success, so the only demo
+      # timing anyone ever saw was the one printed by timeout killing it: the
+      # budget was a cliff with no approach. r1570_1 crossed it in CI at
+      # 186.8s having passed the run before, and no green log had said it was
+      # anywhere near. run_demo already prints "[demo] PASS (<n>s)"; this
+      # lifts that number onto the sweep line and marks anything past half the
+      # budget, so the NEXT one is seen creeping rather than reported as a
+      # hang. (No single quotes below on purpose — this whole runner is one
+      # single-quoted string, so a sed or awk program cannot be written here
+      # at all, and neither can an apostrophe. Bash parameter expansion and a
+      # bracket-free grep are what is available.)
+      secs="$(printf "%s\n" "$out" | grep -o "PASS ([0-9.]*s)" | tail -1)"
+      secs="${secs#PASS (}"; secs="${secs%s)}"
+      near=""
+      if [ -n "$secs" ] && [ "${secs%%.*}" -gt $((budget / 2)) ] 2>/dev/null; then
+        near=" ** past half the ${budget}s budget"
+      fi
+      if [ -n "$secs" ]; then secs=" ${secs}s"; fi
       if echo "$out" | grep -q "SKIP"; then
         skip_count=$((skip_count + 1)); skipped="$skipped $(basename "$f")"
-        echo "PASS (skipped a phase)"
+        echo "PASS (skipped a phase)$secs$near"
       else
-        passed=$((passed + 1)); echo "PASS"
+        passed=$((passed + 1)); echo "PASS$secs$near"
       fi
     else
       rc="$?"
