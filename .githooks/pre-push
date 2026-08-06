@@ -58,6 +58,8 @@ hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$hook_dir/lib/commit-msg-lint.sh"
 # shellcheck source=SCRIPTDIR/lib/ci-status.sh
 source "$hook_dir/lib/ci-status.sh"
+# shellcheck source=SCRIPTDIR/lib/consumer-tests.sh
+source "$hook_dir/lib/consumer-tests.sh"
 # R1507 — the pinned gate tool is resolved by this hook, not by PATH.
 # shellcheck source=SCRIPTDIR/lib/mnemosyne-tool.sh
 source "$hook_dir/lib/mnemosyne-tool.sh"
@@ -84,6 +86,15 @@ fi
 echo "pre-push: demo harness lifecycle tests ..." >&2
 if ! python3 "$repo_root/tools/test_rpc_verify.py" >&2; then
     echo "pre-push: the demo harness failed its own tests" >&2
+    exit 1
+fi
+
+# R1582 — the blast-radius computation the consumer gate rests on, checked
+# against a synthetic workspace so its assertions state the graph they are
+# about. A gate whose arithmetic nothing verifies is the shape R1522 fixed for
+# the tally: the report ran, the tool's own selftest never did.
+if ! python3 "$repo_root/tools/blast_radius.py" --selftest >&2; then
+    echo "pre-push: the blast-radius computation failed its own tests" >&2
     exit 1
 fi
 
@@ -151,6 +162,18 @@ if [[ -n "$base_sha" && ! "$base_sha" =~ ^0+$ ]] &&
     base_age="$(( $(date +%s) - base_committed ))"
 fi
 check_base_ci_coverage "$base_sha" "$push_branch" "pre-push" "$base_age"
+
+# --- R1582. The tests of the packages this PUSH can break -------------------
+#
+# Repeated here for the reason every other gate is: an amend, a rebase or a
+# `--no-verify` commit must not be able to publish a state pre-commit would
+# have refused. Warm, so the second run costs seconds (measured 1.4s for eight
+# already-built packages).
+if [[ -n "$base_sha" && ! "$base_sha" =~ ^0+$ ]]; then
+    if ! consumer_test_gate "pre-push" "$repo_root" range "$base_sha..HEAD"; then
+        exit 1
+    fi
+fi
 
 mnemosyne_resolve
 echo "pre-push: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2

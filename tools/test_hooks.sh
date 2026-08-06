@@ -32,6 +32,8 @@ source "$repo_root/.githooks/lib/mnemosyne-tool.sh"
 source "$repo_root/.githooks/lib/target-budget.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/phase-b-tally.sh
 source "$repo_root/.githooks/lib/phase-b-tally.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/consumer-tests.sh
+source "$repo_root/.githooks/lib/consumer-tests.sh"
 
 pass=0
 fail=0
@@ -384,6 +386,144 @@ ok "a non-numeric answer is unknown, not a count" \
 ok "and an unknown count is reported as unaskable rather than as zero" \
    "$(with_run_count 'Usage: gh api' check_base_ci_coverage abcdef1234 main \
         test 9999 | grep -c 'could not ask')" \
+   "1"
+
+# ---------------------------------------------------------------------------
+# R1582 — consumer_test_gate: the tests of what a change can BREAK
+#
+# The decision, with `cargo` and the radius tool stubbed. What is under test is
+# WHICH branch it takes and what it tells the developer, not cargo's verdict.
+# ---------------------------------------------------------------------------
+
+# A fake repo root whose `tools/blast_radius.py` answers a fixed package list
+# and whose `cargo` answers a fixed exit code. `$1` is the newline-separated
+# radius (`-` = the tool itself fails), `$2` the cargo exit code.
+stub_radius_repo() {
+    local radius="$1" cargo_rc="$2" dir
+    dir="$(mktemp_tracked)"
+    mkdir -p "$dir/tools" "$dir/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        if [[ "$radius" == "-" ]]; then
+            echo 'exit 1'
+        else
+            printf 'cat <<%s\n%s\n%s\n' "EOF_R" "$radius" "EOF_R"
+        fi
+    } >"$dir/tools/blast_radius.py"
+    chmod +x "$dir/tools/blast_radius.py"
+    {
+        echo '#!/usr/bin/env bash'
+        echo '[[ "$1" == "test" ]] || exit 1'
+        echo "exit $cargo_rc"
+    } >"$dir/bin/cargo"
+    chmod +x "$dir/bin/cargo"
+    printf '%s' "$dir"
+}
+
+# `$1` radius, `$2` cargo exit code, `$3` cap, `$4` skip-flag posture (`-` unset).
+# Echoes `<exit code>|<stderr>`; every case therefore states the environment it
+# is asserting about, the R1500 rule. Split with `rc_of` / `msg_of` rather than
+# `cut`, which is line-oriented and would hand back the whole of every stderr
+# line after the first.
+with_radius() {
+    local radius="$1" cargo_rc="$2" cap="$3" skip="$4" dir out rc
+    dir="$(stub_radius_repo "$radius" "$cargo_rc")"
+    # `python3 <script>` must reach the stub, so the subshell gets a python3
+    # that execs the script it is handed. SCOPED to the subshell: an earlier
+    # draft exported it at file scope and hijacked python3 for the whole suite,
+    # turning the tally's own cases red — the same "a stub wider than what it
+    # stands in for tests the stub" trap `stub_gh` was written to avoid, one
+    # level out.
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'script="$1"; shift; exec "$script" "$@"'
+    } >"$dir/bin/python3"
+    chmod +x "$dir/bin/python3"
+    # shellcheck disable=SC2030,SC2031
+    (
+        if [[ "$skip" == "-" ]]; then
+            unset PINION_SKIP_CONSUMER_TESTS
+        else
+            export PINION_SKIP_CONSUMER_TESTS="$skip"
+        fi
+        export CONSUMER_TEST_CAP="$cap"
+        PATH="$dir/bin:$PATH"
+        # The lib runs `python3 tools/blast_radius.py`; the stub is executable
+        # and starts with a shebang, so point python3 at a passthrough.
+        out="$(consumer_test_gate test "$dir" staged 2>&1)"
+        rc=$?
+        printf '%s|%s' "$rc" "$out"
+    )
+}
+
+rc_of() { local both="$1"; printf '%s' "${both%%|*}"; }
+msg_of() { local both="$1"; printf '%s' "${both#*|}"; }
+
+ok "an empty radius runs nothing" \
+   "$(msg_of "$(with_radius "" 0 12 -)" | grep -c "no package's behaviour changed")" \
+   "1"
+
+ok "a small radius is tested here" \
+   "$(msg_of "$(with_radius $'leaf\nmid' 0 12 -)" | grep -c '2 package(s) can be affected — testing them here')" \
+   "1"
+
+ok "and passes when the consumers pass" \
+   "$(rc_of "$(with_radius $'leaf\nmid' 0 12 -)")" \
+   "0"
+
+# The whole point: a consumer's FAILING tests stop the commit.
+ok "a failing consumer refuses" \
+   "$(rc_of "$(with_radius $'leaf\nmid' 1 12 -)")" \
+   "1"
+
+ok "and says it was a consumer, not the edited crate" \
+   "$(msg_of "$(with_radius $'leaf\nmid' 1 12 -)" | grep -c 'DEPENDS on this change')" \
+   "1"
+
+ok "and hands over the command to reproduce it" \
+   "$(msg_of "$(with_radius $'leaf\nmid' 1 12 -)" | grep -c 'cargo test -p leaf -p mid')" \
+   "1"
+
+# Over the cap the radius is REPORTED, never silently dropped — the failure
+# mode this whole file exists to prevent is a check that stops happening.
+ok "a radius over the cap is reported and left to CI" \
+   "$(msg_of "$(with_radius $'a\nb\nc' 0 2 -)" | grep -c 'over the local cap')" \
+   "1"
+
+ok "and names the command anyway" \
+   "$(msg_of "$(with_radius $'a\nb\nc' 0 2 -)" | grep -c 'cargo test -p a -p b -p c')" \
+   "1"
+
+ok "an over-cap radius does not refuse" \
+   "$(rc_of "$(with_radius $'a\nb\nc' 1 2 -)")" \
+   "0"
+
+# Exactly at the cap is INSIDE it: the bound is "at or below", and an
+# off-by-one here silently drops the largest radius the gate can afford.
+ok "a radius exactly at the cap is still tested" \
+   "$(rc_of "$(with_radius $'a\nb' 1 2 -)")" \
+   "1"
+
+# Fail-open on infrastructure absence, loudly — lib/ci-status.sh's posture.
+ok "a radius that cannot be computed continues" \
+   "$(rc_of "$(with_radius "-" 0 12 -)")" \
+   "0"
+
+ok "and says it could not compute it" \
+   "$(msg_of "$(with_radius "-" 0 12 -)" | grep -c 'could not compute')" \
+   "1"
+
+# The escape hatch, and only for the exact value.
+ok "the skip flag skips" \
+   "$(rc_of "$(with_radius $'leaf\nmid' 1 12 1)")" \
+   "0"
+
+ok "and says so rather than going quiet" \
+   "$(msg_of "$(with_radius $'leaf\nmid' 1 12 1)" | grep -c 'PINION_SKIP_CONSUMER_TESTS=1')" \
+   "1"
+
+ok "the skip flag is not armed by any other value" \
+   "$(rc_of "$(with_radius $'leaf\nmid' 1 12 0)")" \
    "1"
 
 # ---------------------------------------------------------------------------

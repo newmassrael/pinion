@@ -54,6 +54,8 @@ cd "$repo_root"
 hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib/mnemosyne-tool.sh
 source "$hook_dir/lib/mnemosyne-tool.sh"
+# shellcheck source=SCRIPTDIR/lib/consumer-tests.sh
+source "$hook_dir/lib/consumer-tests.sh"
 mnemosyne_resolve
 
 echo "pre-commit: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2
@@ -90,4 +92,16 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(rs|scxml)$'; 
         echo "pre-commit: validate-code-refs found hallucination-class citations" >&2
         exit 1
     fi
+fi
+
+# 4. R1582 — the tests of the packages this change can BREAK.
+#
+#    "Test the crates this round touched" means the crates whose BEHAVIOUR
+#    changed, and reading it as "the files I edited" is how R1497 and R1511
+#    each shipped a broken consumer past a green gate. The radius is computed
+#    from `cargo metadata` rather than remembered; see lib/consumer-tests.sh
+#    for the cost measurement that decides when it runs here and when it is
+#    reported and left to CI.
+if ! consumer_test_gate "pre-commit" "$repo_root" staged; then
+    exit 1
 fi

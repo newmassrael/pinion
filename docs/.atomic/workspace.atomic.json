@@ -31592,6 +31592,54 @@
         "scene/access is not window-routable, registered as debt-scene-access-is-not-window-routable; until it is, a multi-window AT tree is checkable only from Rust"
       ]
     },
+    "R1582": {
+      "decision_summary": "R1582 §5.16 — WHICH PACKAGES A CHANGE CAN BREAK IS A COMPUTATION, NOT A THING TO REMEMBER. The standing local rule is \"test the crates this round touched\", and the defect lives in the reading: touched means the crates whose BEHAVIOUR changed, consumers included. R1497 tested pinion-runtime and broke pinion-shell; R1499 wrote the lesson down; R1511 then retired a focus ring in pinion-widget-paint, ran the three crates it had edited, and committed examples/hello-dialog asserting that very ring. Every gate was green because clippy --all-targets COMPILES a test and does not run it. A lesson recorded twice and re-broken twice is a computation nobody had written. tools/blast_radius.py is that computation and it found a live instance the moment it existed: R1578 edited pinion-graph and tested three of the five packages in its radius. The gate runs the radius when it is affordable and reports it with its command when it is not, and where that line falls was measured rather than chosen.",
+      "changes_bullets": [
+        "tools/blast_radius.py answers, from cargo metadata, the packages that own a change plus every workspace package depending on them transitively; dev-dependencies count, because a change that breaks only a consumer's test harness still breaks that consumer's tests",
+        "The nested-package rule is explicit: the LONGEST matching directory wins, so a package inside another package's directory is attributed to itself",
+        ".githooks/lib/consumer-tests.sh runs that radius in pre-commit and again in pre-push, the second warm, so an amend or a --no-verify commit cannot publish what pre-commit would have refused",
+        "The cap is stated in packages and justified in time: cargo metadata is 0.2s, a warm eight-package run 1.4s, and a real cold five-package radius 9.7s, so linking is the cost and it scales with the radius. At roughly two seconds of link per consumer, twelve is under half a minute -- smaller than the clippy the hook already pays for. pinion-core's radius is 237 packages and belongs to CI",
+        "Over the cap the radius is REPORTED with its cargo test line rather than dropped, because a check that goes quiet is the failure this whole file exists to prevent",
+        "PINION_SKIP_CONSUMER_TESTS=1 is the escape, armed by that exact value only, and it announces itself",
+        "pre-push runs blast_radius.py --selftest, the shape R1522 fixed for the tally: a gate whose own arithmetic nothing verifies"
+      ],
+      "verification_bullets": [
+        "16 new assertions in tools/test_hooks.sh (106 total) plus 10 in the radius tool's own selftest, which runs against a SYNTHETIC workspace so its assertions state the graph they are about instead of inheriting today's tree",
+        "Eight counterfactuals, all caught with zero coverage gaps: a failing consumer no longer refusing, the over-cap radius going quiet, the cap off by one, a failed computation read as an empty radius, the skip flag armed by any value, the radius stopping at direct consumers, dev-dependencies dropped, and the shortest directory prefix winning",
+        "THE TOOL FOUND A LIVE MISS ON ITS FIRST RUN: R1578's radius is five packages and that round tested three. Running the two it missed found them green -- which is luck, and the point is that nothing had said so",
+        "A stub written for these tests hijacked python3 for the whole suite and turned the tally's own cases red; the stub is now scoped to the subshell that uses it, which is the same trap stub_gh was written to avoid one level out"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "The second axis of this debt is untouched and stays open in the same file: an #[ignore]d test is run by no local gate either, and 40 of the 47 in this tree need a real GPU, so \"always run --ignored\" is the wrong prescription",
+        "The cap means a core-crate change is still reported rather than covered locally; that is the deliberate boundary with CI, not an omission"
+      ],
+      "publishable_decision_summary": "R1582 §5.16 — WHICH PACKAGES A CHANGE CAN BREAK IS A COMPUTATION, NOT A THING TO REMEMBER. The standing local rule is \"test the crates this round touched\", and the defect lives in the reading: touched means the crates whose BEHAVIOUR changed, consumers included. R1497 tested pinion-runtime and broke pinion-shell; R1499 wrote the lesson down; R1511 then retired a focus ring in pinion-widget-paint, ran the three crates it had edited, and committed examples/hello-dialog asserting that very ring. Every gate was green because clippy --all-targets COMPILES a test and does not run it. A lesson recorded twice and re-broken twice is a computation nobody had written. tools/blast_radius.py is that computation and it found a live instance the moment it existed: R1578 edited pinion-graph and tested three of the five packages in its radius. The gate runs the radius when it is affordable and reports it with its command when it is not, and where that line falls was measured rather than chosen.",
+      "publishable_changes_bullets": [
+        "tools/blast_radius.py answers, from cargo metadata, the packages that own a change plus every workspace package depending on them transitively; dev-dependencies count, because a change that breaks only a consumer's test harness still breaks that consumer's tests",
+        "The nested-package rule is explicit: the LONGEST matching directory wins, so a package inside another package's directory is attributed to itself",
+        ".githooks/lib/consumer-tests.sh runs that radius in pre-commit and again in pre-push, the second warm, so an amend or a --no-verify commit cannot publish what pre-commit would have refused",
+        "The cap is stated in packages and justified in time: cargo metadata is 0.2s, a warm eight-package run 1.4s, and a real cold five-package radius 9.7s, so linking is the cost and it scales with the radius. At roughly two seconds of link per consumer, twelve is under half a minute -- smaller than the clippy the hook already pays for. pinion-core's radius is 237 packages and belongs to CI",
+        "Over the cap the radius is REPORTED with its cargo test line rather than dropped, because a check that goes quiet is the failure this whole file exists to prevent",
+        "PINION_SKIP_CONSUMER_TESTS=1 is the escape, armed by that exact value only, and it announces itself",
+        "pre-push runs blast_radius.py --selftest, the shape R1522 fixed for the tally: a gate whose own arithmetic nothing verifies"
+      ],
+      "publishable_verification_bullets": [
+        "16 new assertions in tools/test_hooks.sh (106 total) plus 10 in the radius tool's own selftest, which runs against a SYNTHETIC workspace so its assertions state the graph they are about instead of inheriting today's tree",
+        "Eight counterfactuals, all caught with zero coverage gaps: a failing consumer no longer refusing, the over-cap radius going quiet, the cap off by one, a failed computation read as an empty radius, the skip flag armed by any value, the radius stopping at direct consumers, dev-dependencies dropped, and the shortest directory prefix winning",
+        "THE TOOL FOUND A LIVE MISS ON ITS FIRST RUN: R1578's radius is five packages and that round tested three. Running the two it missed found them green -- which is luck, and the point is that nothing had said so",
+        "A stub written for these tests hijacked python3 for the whole suite and turned the tally's own cases red; the stub is now scoped to the subshell that uses it, which is the same trap stub_gh was written to avoid one level out"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The second axis of this debt is untouched and stays open in the same file: an #[ignore]d test is run by no local gate either, and 40 of the 47 in this tree need a real GPU, so \"always run --ignored\" is the wrong prescription",
+        "The cap means a core-crate change is still reported rather than covered locally; that is the deliberate boundary with CI, not an omission"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
