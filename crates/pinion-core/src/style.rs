@@ -11,6 +11,8 @@
 //! `taffy` flexbox/grid integration is explicitly carry-forward
 //! (§5.3 R20 caveat) and *not* part of this module.
 
+use std::num::NonZeroU32;
+
 /// 8-bit-per-channel sRGB color with separate alpha.
 ///
 /// v0 §5.3 lock: `Color { r, g, b, a: u8 }` is the typed replacement
@@ -2805,6 +2807,102 @@ pub enum StrokeCap {
     Square,
 }
 
+/// R1575 §5.3 — the repeating on/off rhythm a [`Stroke`] is drawn with.
+///
+/// ## Qt reference: `QPen::setDashPattern` / `setDashOffset`
+///
+/// Qt takes a `QList<qreal>` of alternating on/off lengths plus a `qreal`
+/// offset. Three things here are deliberately not that shape:
+///
+/// - **The lengths are pixels, not multiples of the pen width.** Qt's dash
+///   pattern is documented in units of the pen's width, so widening a line
+///   from 1 to 3 silently triples its dash geometry and a caller who wanted
+///   "4 on, 4 off" has to divide by a width it may not own. Here the numbers
+///   are the geometry: the same [`Dash`] draws the same rhythm at every width.
+/// - **A malformed pattern is unrepresentable.** `setDashPattern` accepts an
+///   odd-length list (Qt answers with a runtime `qWarning` and ignores it) and
+///   an all-zero one. `on` and `off` are [`NonZeroU32`], so a dash that draws
+///   nothing, or draws solid while claiming to be dashed, is not a value.
+/// - **The offset is canonical.** It is reduced modulo the period on
+///   construction, so two dashes that paint identically compare equal — the
+///   same reason [`crate::widgets::index_runs`] keeps its runs non-adjacent.
+///   Qt keeps whatever `qreal` it was handed, so a Qt pen carrying offset 12
+///   and one carrying offset 2 over a period of 10 are different values that
+///   draw the same line.
+///
+/// ## Why it is a declaration and not a painting detail
+///
+/// The forcing consumer is a graph drawn in two layers — links that were
+/// *authored* against links that were *observed* — where solid-versus-dashed
+/// **is** the distinction being communicated. That makes the dash a fact about
+/// the scene rather than a flourish over it, so it travels the §2 #7 wire like
+/// any other declaration and an agent reads which layer a link belongs to
+/// without looking at pixels. A `QPen` lives inside a paint call; nothing can
+/// ask a Qt scene which of its edges are dashed.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dash {
+    /// Pixels of ink per period.
+    pub on: NonZeroU32,
+    /// Pixels of gap per period.
+    pub off: NonZeroU32,
+    /// Pixels the pattern is shifted along the path, always `< on + off`.
+    ///
+    /// Held canonical by every constructor, so this field is a *representative*
+    /// of the shift rather than the number the caller happened to pass.
+    pub offset: u32,
+}
+
+impl Dash {
+    /// A dash of `on` ink and `off` gap pixels, unshifted.
+    #[must_use]
+    pub const fn new(on: NonZeroU32, off: NonZeroU32) -> Self {
+        Self { on, off, offset: 0 }
+    }
+
+    /// The conventional dashed rhythm: 6px on, 4px off.
+    pub const DASHED: Self = Self::new(
+        NonZeroU32::new(6).expect("6 is non-zero"),
+        NonZeroU32::new(4).expect("4 is non-zero"),
+    );
+
+    /// The conventional dotted rhythm: 1px on, 3px off — sparser than
+    /// [`Self::DASHED`] so the two read distinctly at the same width, the
+    /// same separation [`UnderlineStyle`] draws for its two SGR 4:x forms.
+    pub const DOTTED: Self = Self::new(
+        NonZeroU32::new(1).expect("1 is non-zero"),
+        NonZeroU32::new(3).expect("3 is non-zero"),
+    );
+
+    /// The pattern's period in pixels — `on + off`.
+    #[must_use]
+    pub const fn period(self) -> u32 {
+        self.on.get() + self.off.get()
+    }
+
+    /// Builder: shift the pattern along the path by `px` pixels.
+    ///
+    /// Canonicalised modulo [`Self::period`], which is what makes a marching-
+    /// ants animation a *finite* set of values: advancing one pixel per frame
+    /// cycles through exactly `period` distinct dashes and then repeats, so the
+    /// paint scene a running animation produces is drawn from a bounded
+    /// vocabulary rather than from an ever-growing float.
+    #[must_use]
+    pub const fn with_offset(mut self, px: u32) -> Self {
+        self.offset = px % self.period();
+        self
+    }
+
+    /// Builder: advance the existing offset by `px` pixels — one animation
+    /// step. `advanced_by(period())` is the identity, by construction.
+    #[must_use]
+    pub const fn advanced_by(self, px: u32) -> Self {
+        // `offset` is already `< period`, so the sum cannot overflow for any
+        // reasonable step and the modulo restores the invariant.
+        self.with_offset(self.offset + px % self.period())
+    }
+}
+
 /// Stroke description for [`PathNode`](crate::scene::PathNode). Width
 /// is in pixels matching the [`Rect`](crate::scene::Rect) coordinate
 /// space.
@@ -2814,17 +2912,35 @@ pub struct Stroke {
     pub color: Color,
     pub width: u32,
     pub cap: StrokeCap,
+    /// R1575 — the dash rhythm, or `None` for a solid stroke.
+    ///
+    /// `None` rather than a `Dash` meaning "solid" because solid is not a
+    /// rhythm: there is no period, no offset, and no animation step. Qt spells
+    /// the same distinction with a `Qt::PenStyle` enum that has both `SolidLine`
+    /// and `CustomDashLine` arms *plus* a separate pattern list, so a Qt pen can
+    /// hold a dash pattern that its style makes inert — two fields that
+    /// disagree. Here there is one.
+    pub dash: Option<Dash>,
 }
 
 impl Stroke {
-    /// Default stroke: given colour, given width, [`StrokeCap::Butt`].
+    /// Default stroke: given colour, given width, [`StrokeCap::Butt`],
+    /// solid.
     #[must_use]
     pub const fn new(color: Color, width: u32) -> Self {
         Self {
             color,
             width,
             cap: StrokeCap::Butt,
+            dash: None,
         }
+    }
+
+    /// Builder: draw this stroke with a dash rhythm.
+    #[must_use]
+    pub const fn with_dash(mut self, dash: Dash) -> Self {
+        self.dash = Some(dash);
+        self
     }
 
     /// Builder: override the cap style.

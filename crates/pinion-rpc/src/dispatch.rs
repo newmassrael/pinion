@@ -5577,14 +5577,39 @@ fn stroke_cap_to_json(cap: pinion_core::style::StrokeCap) -> Value {
     Value::String(name.to_string())
 }
 
+/// R1575 §5.49 — wire serialization for [`pinion_core::style::Dash`].
+///
+/// `null` is the solid stroke, which is why this is not an enum of named
+/// styles: an agent asking "is this link drawn dashed?" gets a yes/no from the
+/// field's presence, and one asking "how?" reads the same numbers the caller
+/// declared. Qt publishes neither — a `QPen` is an argument to a paint call,
+/// so a Qt scene cannot be asked which of its edges are dashed at all, and the
+/// only way to find out is to rasterize and look.
+///
+/// `period` is derived rather than left for the client to add up, because it
+/// is what an animation's frame count is modulo and what tells a reader that
+/// `offset` is already reduced.
+fn dash_to_json(dash: pinion_core::style::Dash) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("on".to_string(), Value::Number(dash.on.get().into()));
+    obj.insert("off".to_string(), Value::Number(dash.off.get().into()));
+    obj.insert("offset".to_string(), Value::Number(dash.offset.into()));
+    obj.insert("period".to_string(), Value::Number(dash.period().into()));
+    Value::Object(obj)
+}
+
 /// R55.G.11 §5.49 — wire serialization for `Stroke`. Surfaces colour,
-/// width, and cap policy so AI clients can verify a path's ink stroke
-/// without inspecting pixels.
+/// width, cap policy and (R1575) dash rhythm so AI clients can verify a
+/// path's ink stroke without inspecting pixels.
 fn stroke_to_json(stroke: pinion_core::style::Stroke) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("color".to_string(), color_to_json(stroke.color));
     obj.insert("width".to_string(), Value::Number(stroke.width.into()));
     obj.insert("cap".to_string(), stroke_cap_to_json(stroke.cap));
+    obj.insert(
+        "dash".to_string(),
+        stroke.dash.map_or(Value::Null, dash_to_json),
+    );
     Value::Object(obj)
 }
 

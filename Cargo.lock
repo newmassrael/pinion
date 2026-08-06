@@ -2663,6 +2663,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-graph-diff"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-grid-filter"
 version = "0.0.1"
 dependencies = [

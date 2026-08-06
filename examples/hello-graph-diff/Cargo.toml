@@ -1,0 +1,35 @@
+[package]
+name = "hello-graph-diff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1575 §5.3 §5.50 two-layer link graph — the links a user AUTHORED against the links a source REPORTED, with the difference derived rather than maintained and drawn as a Stroke dash (the R1575 primitive); every link's layer, and the dash it is painted with, is readable over the §7 wire"
+publish = false
+
+[[bin]]
+name = "hello-graph-diff"
+path = "src/main.rs"
+
+[dependencies]
+# §5.3 scene primitives + the R1575 `Dash` this binding is the forcing
+# consumer of.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+# R1575 §5.50: build-time codegen for the `HelloGraphDiffRenderer` Vello
+# wrapper. Identical pattern to hello-topology.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

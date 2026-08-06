@@ -3391,6 +3391,36 @@ fn path_point(p: PathPoint) -> KurboPoint {
     KurboPoint::new(f64::from(p.x), f64::from(p.y))
 }
 
+/// R1575 §5.16 — lower a pinion [`pinion_core::style::Stroke`] to the kurbo
+/// stroke vello rasterizes: width, caps, and the dash rhythm.
+///
+/// The dash is handed to kurbo as the two-element pattern `[on, off]` in the
+/// same pixel space as the width, which is what makes
+/// [`Dash`](pinion_core::style::Dash)'s pixel units true of the drawn line
+/// rather than of a declaration nobody honours.
+///
+/// **Vello dashes on the CPU** (`vello-0.9.0/src/scene.rs:415-437`): a
+/// non-empty `dash_pattern` sends the path through `kurbo::dash` and encodes
+/// the resulting segments individually. Two consequences worth naming rather
+/// than discovering. It is *exact* — the same dasher pinion would have written
+/// by hand, so a dashed line is deterministic and the `headless_screenshot`
+/// pixel witness stays stable, which is what the R1399 underline helper
+/// avoided kurbo dashes to protect and no longer needs to. And it *costs*: a
+/// dashed stroke encodes one path segment per dash rather than per curve, so
+/// R1556's `last.draw.path_segments` census rises with the dash count. That is
+/// the honest number — the dashes really are separate geometry — and it is why
+/// a marching-ants animation is a measurable choice rather than a free one.
+fn to_kurbo_stroke(stroke: pinion_core::style::Stroke) -> Stroke {
+    let base = Stroke::new(f64::from(stroke.width)).with_caps(to_kurbo_cap(stroke.cap));
+    match stroke.dash {
+        None => base,
+        Some(dash) => base.with_dashes(
+            f64::from(dash.offset),
+            [f64::from(dash.on.get()), f64::from(dash.off.get())],
+        ),
+    }
+}
+
 /// R721 §5.16 — map a pinion [`StrokeCap`] to a Vello [`KurboCap`] 1:1.
 fn to_kurbo_cap(cap: StrokeCap) -> KurboCap {
     match cap {
@@ -3551,7 +3581,7 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
         && stroke.width > 0
         && stroke.color != Color::TRANSPARENT
     {
-        let kurbo_stroke = Stroke::new(f64::from(stroke.width)).with_caps(to_kurbo_cap(stroke.cap));
+        let kurbo_stroke = to_kurbo_stroke(stroke);
         out.stroke(
             &kurbo_stroke,
             local_transform,
