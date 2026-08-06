@@ -19,6 +19,10 @@ path = "src/main.rs"
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R1574 §5.38 — the Switch painter. This binding hand-rolled its track and
+# knob (as eleven others did); the lift moved the tag, the focus stop, the
+# accessible name and the M3 role mapping into one place.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 # R653 §5.16 — `#[pinion_derive::widget(...)]` attribute macro emits
 # the WidgetCore + WidgetA11y + WidgetView forwarding trio. R653-new
 # substrate axes used here: `state_flags(checked = bool_field(1))` for

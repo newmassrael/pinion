@@ -40,6 +40,7 @@ use pinion_core::{
 };
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::switch::{SwitchStyle, view_switch};
 
 // R46.5 codegen output — `HelloThemeRenderer` + matching error +
 // async `new` + sync `render` / `resize`. Same pattern as every
@@ -51,12 +52,6 @@ vello_renderer_impl!(HelloThemeRenderer, HelloThemeRendererError);
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 300;
 
-const TRACK_W: u32 = 64;
-const TRACK_H: u32 = 32;
-const TRACK_RADIUS: u32 = 16;
-const TRACK_PAD: u32 = 4;
-const KNOB_SIZE: u32 = 24;
-const KNOB_RADIUS: u32 = 12;
 const ROW_GAP: u32 = 14;
 
 const TITLE_FONT_PX: u32 = 18;
@@ -217,44 +212,25 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
-    let knob_fill = match state {
-        ToggleState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
-        _ if on => theme.resolve(ColorRole::OnAccent),
-        _ => theme.resolve(ColorRole::Outline),
-    };
-    let track_fill = match (state, on) {
-        (ToggleState::Idle | ToggleState::Hover | ToggleState::Pressed, false) => {
-            theme.resolve(ColorRole::SurfaceContainerHighest)
-        }
-        (_, true) => theme.resolve(ColorRole::Accent),
-        (ToggleState::Disabled, false) => theme.resolve(ColorRole::SurfaceContainerHighest),
-    };
-    let knob_justify = if on {
-        JustifyContent::End
-    } else {
-        JustifyContent::Start
-    };
-    let knob = Scene::Box(
-        BoxNode::new(
-            Rect::default(),
-            BoxStyle::filled(knob_fill).with_corner_radius(KNOB_RADIUS),
-        )
-        .with_layout(LayoutStyle::new().with_size(Size::px(KNOB_SIZE, KNOB_SIZE))),
-    );
-    let toggle = Scene::Container(
-        ContainerNode::new(vec![knob])
-            .with_tag(TOGGLE_TAG)
-            .with_aria_label("Theme mode")
-            .with_style(BoxStyle::filled(track_fill).with_corner_radius(TRACK_RADIUS))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_focusable(true)
-                    .flex(FlexDirection::Row)
-                    .with_justify(knob_justify)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(TRACK_W, TRACK_H))
-                    .with_padding(Rect::new(TRACK_PAD, TRACK_PAD, TRACK_PAD, TRACK_PAD)),
-            ),
+    // R1574 — the track, the knob, the M3 role mapping, the tag, the focus stop
+    // and the accessible name are `pinion_widget_paint::switch`'s. This binding
+    // was one of the two that genuinely hand-rolled an M3 switch (the other was
+    // `hello-toggle`); the rest of the `role = Switch` class paints a labelled
+    // chip, which is a different widget.
+    //
+    // Note what the lift CHANGED here, deliberately: this binding's own hover
+    // and pressed arms resolved to the resting base — a hover on the old
+    // `hello-theme` switch painted nothing — because its `match` collapsed
+    // Idle/Hover/Pressed into one arm. Going through the shared
+    // `state_layer` gives it the same 8% / 12% overlay every other control in
+    // the tree has, which is the drift a per-binding copy accumulates.
+    let toggle = view_switch(
+        TOGGLE_TAG,
+        state,
+        on,
+        &theme,
+        &SwitchStyle::m3(),
+        "Theme mode",
     );
 
     let status_str = if on { "Dark mode" } else { "Light mode" };

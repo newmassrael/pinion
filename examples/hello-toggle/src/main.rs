@@ -18,17 +18,15 @@
 //! [`use_theme("app")`](pinion_core::use_theme) palette; flipping the
 //! Off/On sidecar drives a [`ThemeProvider::set_mode`](pinion_core::theme::ThemeProvider::set_mode) swap so the
 //! demo's "Dark mode" label becomes semantically accurate — On really
-//! is dark mode. The Material 3 Switch role mapping is the canonical
-//! source:
+//! is dark mode.
 //!
-//! - Track Off — [`ColorRole::SurfaceContainerHighest`] (M3 chip surface).
-//! - Track On — [`ColorRole::Accent`] (M3 primary).
-//! - Thumb Off — [`ColorRole::Outline`] (M3 outline).
-//! - Thumb On — [`ColorRole::OnAccent`] (M3 onPrimary).
-//! - Hover / Pressed — [`Color::lerp`] toward
-//!   [`ColorRole::OnSurface`] at the M3 state-layer overlay weights
-//!   (0.08 hover, 0.12 pressed), in linear sRGB space per
-//!   [[color-lerp-linear-space]] (R51.151).
+//! R1574 — the Material 3 Switch role mapping (track Off / On, thumb
+//! Off / On, and the hover / pressed state-layer overlay) used to be
+//! spelled out here and computed inline below. It is
+//! [`pinion_widget_paint::switch`]'s now, and this binding was one of
+//! exactly **two** in the tree that genuinely hand-rolled it — see that
+//! module's doc for the census that corrected the debt note from twelve
+//! consumers to two.
 //!
 //! Every other framework primitive (App lifecycle, `RenderState`,
 //! `dispatch_rpc`, stdin RPC reader, `InputRouter` wiring, intent
@@ -46,14 +44,15 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 #[cfg(test)]
 use pinion_core::Theme;
 use pinion_core::intent::Intent;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetStateName, use_theme};
+use pinion_core::{ColorRole, Command, Frame, Scene, ThemeMode, WidgetStateName, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::switch::{SwitchStyle, view_switch};
 
 // pinion-forge codegen output. Defines `pub struct HelloToggleRenderer`
 // + `pub enum HelloToggleRendererError` + async `new<W: Into<wgpu::
@@ -71,17 +70,6 @@ vello_renderer_impl!(HelloToggleRenderer, HelloToggleRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 220;
-// Track is a 64×32 rounded pill (radius 16 = half height = full
-// pill). Padding 4 around the inner area gives a 24-px-tall inner
-// strip that exactly matches the 24×24 knob, so the knob is
-// vertically centered by AlignItems::Center without manual offset
-// math.
-const TRACK_W: u32 = 64;
-const TRACK_H: u32 = 32;
-const TRACK_RADIUS: u32 = 16;
-const TRACK_PAD: u32 = 4;
-const KNOB_SIZE: u32 = 24;
-const KNOB_RADIUS: u32 = 12;
 // Gap between "Dark mode" label, track, and status line in the root
 // flex column — matches the macOS / iOS system-settings vertical
 // rhythm (~16 px between related controls).
@@ -89,19 +77,6 @@ const ROW_GAP: u32 = 16;
 
 const LABEL_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 12;
-
-/// Material 3 state-layer overlay weights (linear-sRGB lerp toward
-/// [`ColorRole::OnSurface`]). M3 specifies 8 % for hover and 12 % for
-/// pressed; pinion's [`Color::lerp`] is the §5.27 linear-space path
-/// so the result matches the M3 perceptual intent without a separate
-/// alpha-compositing pass.
-const HOVER_OVERLAY_T: f32 = 0.08;
-const PRESSED_OVERLAY_T: f32 = 0.12;
-/// Disabled treatment — fade the role color toward [`ColorRole::Surface`]
-/// by half. M3 specifies a 12 % opacity disabled overlay; without an
-/// alpha pipeline yet, a midpoint lerp toward the surface produces a
-/// comparable "washed out" tone in both palettes.
-const DISABLED_OVERLAY_T: f32 = 0.50;
 
 /// Root-owner cache key for this binary's [`ThemeProvider`](pinion_core::theme::ThemeProvider). Shared
 /// between the [`view`] fn (reactive read) and
@@ -160,75 +135,21 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     // overlay direction for hover / pressed modulation.
     let on_surface = theme.resolve(ColorRole::OnSurface);
 
-    // Track fill — encodes the (state, value) cross product through
-    // the M3 Switch role mapping. Off sits on the inactive container
-    // surface; On sits on the accent. Hover / Pressed lerp toward the
-    // on-surface overlay color at the M3 state-layer weights, in
-    // linear sRGB space per [[color-lerp-linear-space]] (R51.151).
-    // Disabled fades the base role half-way toward Surface so the
-    // chip reads as washed-out in both palettes.
-    let track_base = if on {
-        theme.resolve(ColorRole::Accent)
-    } else {
-        theme.resolve(ColorRole::SurfaceContainerHighest)
-    };
-    let track_fill: Color = match state {
-        ToggleState::Idle => track_base,
-        ToggleState::Hover => track_base.lerp(on_surface, HOVER_OVERLAY_T),
-        ToggleState::Pressed => track_base.lerp(on_surface, PRESSED_OVERLAY_T),
-        ToggleState::Disabled => {
-            track_base.lerp(theme.resolve(ColorRole::Surface), DISABLED_OVERLAY_T)
-        }
-    };
-    // Knob fill — M3 Switch thumb mapping: outline (Off) / on-accent
-    // (On); disabled fades the base toward the muted on-surface so
-    // the thumb reads as inactive without disappearing.
-    let knob_base = if on {
-        theme.resolve(ColorRole::OnAccent)
-    } else {
-        theme.resolve(ColorRole::Outline)
-    };
-    let knob_fill: Color = if matches!(state, ToggleState::Disabled) {
-        knob_base.lerp(theme.resolve(ColorRole::OnSurfaceMuted), DISABLED_OVERLAY_T)
-    } else {
-        knob_base
-    };
-    // The animation-free "snap" form: Off positions the knob via
-    // JustifyContent::Start, On via JustifyContent::End. Tween /
-    // spring transitions are a §5.x carry — the framework needs a
-    // time source on the view-fn before that can land.
-    let knob_justify = if on {
-        JustifyContent::End
-    } else {
-        JustifyContent::Start
-    };
-    let knob = Scene::Box(
-        BoxNode::new(
-            Rect::default(),
-            BoxStyle::filled(knob_fill).with_corner_radius(KNOB_RADIUS),
-        )
-        .with_layout(LayoutStyle::new().with_size(Size::px(KNOB_SIZE, KNOB_SIZE))),
-    );
-    let track = Scene::Container(
-        ContainerNode::new(vec![knob])
-            .with_tag("main_toggle")
-            // R51.69 §5.40 — explicit accessible-name (WAI-ARIA
-            // `aria-label`). The visible "Dark mode" caption sits as
-            // a sibling of the track for layout reasons, so the
-            // scene-walk name derivation cannot reach it; the
-            // override pins the AT-exposed name without a duplicate
-            // literal in `access_node`.
-            .with_aria_label("Dark mode")
-            .with_style(BoxStyle::filled(track_fill).with_corner_radius(TRACK_RADIUS))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_focusable(true)
-                    .flex(FlexDirection::Row)
-                    .with_justify(knob_justify)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(TRACK_W, TRACK_H))
-                    .with_padding(Rect::new(TRACK_PAD, TRACK_PAD, TRACK_PAD, TRACK_PAD)),
-            ),
+    // R1574 — the track, the knob, their M3 role mapping, the state-layer
+    // overlay, the knob's justification, the tag, the focus stop and the
+    // accessible name are all `pinion_widget_paint::switch`'s now. This binding
+    // had every one of them inline, and so did eleven others; R1570.1 measured
+    // the cost when it had to repeat `.with_focusable(true)` in ten of them.
+    let track = view_switch(
+        "main_toggle",
+        state,
+        on,
+        &theme,
+        &SwitchStyle::m3(),
+        // The visible "Dark mode" caption is a SIBLING of the track (the row
+        // puts the label beside the control), so the scene-walk name derivation
+        // cannot reach it and the name has to be stated here.
+        "Dark mode",
     );
     let label = Scene::Text(TextNode::styled(
         "Dark mode",
@@ -525,7 +446,7 @@ mod a11y_tests {
     /// matches `target`. Used by the R57.X.toggle theme cascade
     /// tests so they do not pin the exact tree shape — a future
     /// layout refactor of `view` does not produce a flaky failure.
-    fn scene_contains_fill(scene: &Scene, target: Color) -> bool {
+    fn scene_contains_fill(scene: &Scene, target: pinion_core::Color) -> bool {
         match scene {
             Scene::Container(node) => {
                 node.style.fill == target
