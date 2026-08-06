@@ -395,9 +395,47 @@ AXES = [
         #     <kbd>Tab</kbd> between N editors is a binding's vocabulary
         #     rather than the focus ring's. That is the price of the one-focus
         #     design above, stated rather than hidden.
-        "judged_at": 1571,
-        "completion": 97,
-        "evidence_snapshot": {"example-name": 27, "round-axis": 4},
+        #
+        # R1577 RE-JUDGED **DOWN**, 97 -> 95, demanded by the tool (rd 4 -> 6 =
+        # +50%, R1575 and R1577 both declaring `dcc`). A decrease is the first
+        # in this series, and it is the point: the round CORRECTS the
+        # measurement as much as it moves it.
+        #
+        # This axis names three widget families, and one of them is
+        # "node-graph editor substrate (visual scripting / material graph)".
+        # At 97 that third was credited as substantially done while the whole
+        # node MODEL lived inside a 9,075-line example as a flat
+        # `Vec<GraphNode>` plus a `Vec<Edge>` — so an application wanting a
+        # node graph had to COPY it, which is a fork, and **node groups did
+        # not exist at all**. A flat vector cannot hold a node that is a
+        # graph, so the single largest capability a node editor has was not
+        # missing-and-planned, it was inexpressible.
+        #
+        # R1577 closes that (`pinion-graph::group` + `pinion-node-graph`:
+        # re-usable definitions, instances, an interface DERIVED from the
+        # selection boundary, nesting acyclicity, an edit path, and evaluation
+        # that descends and keys its memo by instance), and R1575 gave the
+        # graph its authored/observed layers. Both are real gains. They do not
+        # cover the correction, because the same round ran the measurement the
+        # 97 never had: a census against `~/blender-ref` at `8cf50599` — 91
+        # operators, 66 keymap entries — names ELEVEN gaps in editor
+        # capability, and R1577 closes ONE. Copy/paste, duplicate,
+        # collapse/mute/hide, the richer selection vocabulary (lasso, circle,
+        # linked-from/to), link mute and detach, `insert_offset`, `find`,
+        # `resize`, `view_selected` and `swap` are all absent. And the
+        # substrate has ONE consumer: `hello-node-editor` still holds its own
+        # model, so the tree now carries TWO
+        # ([[debt-two-node-graph-models]]).
+        #
+        # Weighing the families rather than the round: property grid ~98 and
+        # data grid ~98 (R1532 / R1544 / R1555 / R1571 took those deep), node
+        # graph ~90 after this round against a Blender-class reference. That
+        # averages ~95, and 95 is what is recorded. The lesson is R1519's own,
+        # one axis over: a completion nobody checked against a reference is
+        # not a measurement, and the check is what moved this one DOWN.
+        "judged_at": 1577,
+        "completion": 95,
+        "evidence_snapshot": {"example-name": 29, "round-axis": 6},
     },
     {
         "key": "modelview",
