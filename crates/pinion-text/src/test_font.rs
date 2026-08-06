@@ -139,7 +139,7 @@ mod tests {
     /// why. R1570.5's lesson — a derived population is only as wide as what it
     /// derives from — so the population is derived from the source and only the
     /// *budget* is written down.
-    const HOST_SUBJECT_SITES: usize = 10;
+    const HOST_SUBJECT_SITES: usize = 11;
 
     #[test]
     fn r1573_no_test_shapes_through_the_host_without_saying_so() {

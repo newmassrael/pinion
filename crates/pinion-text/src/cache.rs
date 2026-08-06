@@ -1955,7 +1955,14 @@ mod tests {
         // dependent assertion R1453 calls a flake. The demo runs it explicitly
         // under its own font-less config, which is where the claim is true and
         // where it is worth checking.
-        let mut cache = crate::test_font::own_font_cache();
+        //
+        // R1573 — the host path deliberately, and emphatically: this asserts a
+        // property of the PLATFORM database, so an own-fonts cache — which
+        // never probes and answers `NotProbed` forever — would make the
+        // assertion unsatisfiable. R1573's blanket migration did exactly that
+        // and no local gate could see it, because `#[ignore]` keeps this out of
+        // `cargo test -p pinion-text --lib`; only the demo runs it.
+        let mut cache = LayoutCache::new();
         assert_eq!(
             cache.probe_system_fonts(),
             SystemFontStatus::Unavailable,
