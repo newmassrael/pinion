@@ -75,16 +75,63 @@
 //! [`select`](GridEditState::select) / [`step`](GridEditState::step)), and one
 //! commit arc that serves all five forms.
 //!
-//! ## Scope (honest boundaries)
+//! ## R1571 — an editor's persistence is a property of the editor
 //!
-//! **One editor at a time** — Qt's *transient* editor, which is the default
-//! and the only one `EditTrigger` opens. Qt's `openPersistentEditor(index)`
-//! keeps N editors open simultaneously; that needs N independent text-edit
-//! states, and [`use_text_edit_state`]
-//! is keyed by `&'static str`. It is a property of the **view**, not of the
-//! delegate this round closes, and it is recorded as a remaining item of the
-//! DCC axis rather than built here on speculation about its shape.
+//! R1544 and R1555 both closed with the same remaining item: Qt's
+//! `openPersistentEditor(index)` keeps N editors open at once, and this held
+//! one. R1555 also wrote down the prescription — widen
+//! [`use_text_edit_state`]'s `&'static str` key so a per-cell buffer can be
+//! cached at a runtime id, which [`Owner::cache`] has accepted since R685.C.
+//!
+//! **That prescription is wrong, and building it is how you find out.**
+//! [`Owner::cache`] has `cache`, `cache_contains` and `cache_get_by_str` and
+//! **no removal of any kind**: a slot lives until its owner drops. Keying an
+//! editor's buffer by its cell would therefore retain one `TextEditState` per
+//! cell *ever edited*, for the life of the window — unbounded growth on the
+//! million-row models this axis is named for, and exactly the class R1550 built
+//! `scene/memory` to see. An editor's buffer has to die with the editor, so the
+//! buffers belong to the **editor set**, not to the owner's cache.
+//!
+//! What the set needs instead follows from a fact about *this* framework rather
+//! than about Qt: there is exactly **one keyboard focus**. Qt can afford N live
+//! `QLineEdit`s because each editor is a real widget with its own focus; here
+//! only the editor that holds the keyboard can be typed into, so only it needs
+//! a live buffer. Every other open editor's in-flight text is **parked** in the
+//! latch ([`EditBuffer::Parked`]) and swapped back into the field when focus
+//! returns to it. One field tag, one focus stop, one composition target — the
+//! keystroke, IME and clipboard machinery is untouched — and the editor set is
+//! plain data that can be windowed, enumerated and published.
+//!
+//! ### Past Qt 6.11
+//!
+//! - **The set is enumerable.** `QAbstractItemViewPrivate::persistent` is a
+//!   private `QSet<QWidget *>` and the only public question is
+//!   `isPersistentEditorOpen(index)` — one index at a time, so a Qt view cannot
+//!   be asked *what* it has open; you must already know in order to ask.
+//!   [`GridEditState::editors`] answers with the whole set, and
+//!   `scene/grid_editors` puts it on the wire.
+//! - **Focus is data.** Which open editor has the keyboard is
+//!   [`OpenEditors::focused`]. In Qt it is `QApplication::focusWidget()`
+//!   reverse-mapped through the private `indexEditorHash` — that is, not
+//!   answerable through any public API of the view.
+//! - **<kbd>Escape</kbd> reverts a persistent editor.**
+//!   `QStyledItemDelegate::eventFilter` emits `closeEditor(editor,
+//!   RevertModelCache)`, and `QAbstractItemView::closeEditor` early-returns for
+//!   a persistent editor — so in Qt <kbd>Escape</kbd> on one does **nothing at
+//!   all**, the typed text stays, and the original is unrecoverable.
+//!   [`GridEditState::cancel`] restores the seed and leaves the editor open.
+//! - **The cost is windowed.** A persistent editor outside the painted window
+//!   contributes no scene node and keeps its in-flight value.
+//!   `QAbstractItemView::updateEditorGeometries()` walks *every* editor on
+//!   every scroll, so N persistent editors on a virtualized model are N live
+//!   widgets repositioned per scroll event whether or not one of them is on
+//!   screen.
+//! - **A cell has at most one editor, by construction.** Qt keeps an
+//!   index → widget hash and a separate persistence set, and `edit()` reuses
+//!   whatever the hash holds; here [`OpenEditors`] is keyed by the cell and
+//!   rejects a second entry for it, at construction and again on deserialize.
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use crate::cell_value::{CellEdit, CellKind, CellValue, EditorForm};
@@ -301,28 +348,84 @@ pub enum EndEditHint {
     EditPreviousItem,
 }
 
+/// R1571 §5.27 — whether an editor survives a commit and an <kbd>Escape</kbd>:
+/// Qt's `QAbstractItemViewPrivate::persistent` membership.
+///
+/// A **property of the editor**, which is what makes "a cell has at most one
+/// editor" true by construction. Qt models the same fact as a second
+/// collection — an index → widget hash plus a `QSet<QWidget *>` of the ones
+/// that survive — so the two can disagree about an editor that is in one and
+/// not the other, and `openPersistentEditor` on an index that already has a
+/// transient editor quietly *promotes* that widget by inserting it into the
+/// set.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum EditorPersistence {
+    /// Closed by a successful commit and by <kbd>Escape</kbd>, and replaced
+    /// when another cell opens one — Qt's default editor, the only kind an
+    /// [`EditTrigger`] opens. At most one is open at a time.
+    Transient,
+    /// Stays open across commits and <kbd>Escape</kbd> until
+    /// [`GridEditState::close_persistent`] — Qt's `openPersistentEditor`.
+    /// Any number may be open.
+    Persistent,
+}
+
+impl EditorPersistence {
+    /// The wire token, for the introspection surface.
+    #[must_use]
+    pub fn wire_token(self) -> &'static str {
+        match self {
+            EditorPersistence::Transient => "transient",
+            EditorPersistence::Persistent => "persistent",
+        }
+    }
+
+    /// Parse a [`wire_token`](Self::wire_token). `None` for an unknown token.
+    #[must_use]
+    pub fn from_wire(token: &str) -> Option<Self> {
+        match token {
+            "transient" => Some(EditorPersistence::Transient),
+            "persistent" => Some(EditorPersistence::Persistent),
+            _ => None,
+        }
+    }
+
+    /// Both arms, in wire order — the census a round-trip test walks.
+    pub const ALL: [EditorPersistence; 2] =
+        [EditorPersistence::Transient, EditorPersistence::Persistent];
+}
+
 /// R1555 §5.27 — **where** an open editor's in-flight value lives.
 ///
-/// A function of the editor's [`EditorForm`], and the reason it has to be
-/// stated: the forms whose buffer is text ([`EditorForm::buffer_is_text`]) put
-/// the value the user is producing in the inline field's
-/// [`TextEditState`](crate::widgets::text_edit::TextEditState), because that is
-/// the state the caret, the selection, the IME preedit and the clipboard
-/// already act on. A toggle and a selector have no text at all, so for them the
-/// latch holds the value.
+/// A function of the editor's [`EditorForm`] and — since R1571 — of whether it
+/// holds the keyboard. The forms whose buffer is text
+/// ([`EditorForm::buffer_is_text`]) put the value the user is producing in the
+/// inline field's [`TextEditState`](crate::widgets::text_edit::TextEditState),
+/// because that is the state the caret, the selection, the IME preedit and the
+/// clipboard already act on. A toggle and a selector have no text at all, so
+/// for them the latch holds the value.
 ///
-/// Qt has the same split and states it nowhere: a `QLineEdit` editor's in-flight
-/// value is its text and a `QComboBox` editor's is its current index, and
-/// `setModelData` reaches each through a `qobject_cast` the delegate author has
-/// to get right. Here it is one exhaustive answer per form, so the latch cannot
-/// look for the value in the half that does not hold it.
+/// Qt has the first split and states it nowhere: a `QLineEdit` editor's
+/// in-flight value is its text and a `QComboBox` editor's is its current index,
+/// and `setModelData` reaches each through a `qobject_cast` the delegate author
+/// has to get right. Here it is one exhaustive answer per form, so the latch
+/// cannot look for the value in the half that does not hold it.
+///
+/// R1571 adds the second split, and it exists because this framework has one
+/// keyboard focus where Qt has one focusable widget per editor: a text-buffered
+/// editor that does **not** hold the field parks its text here instead.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum EditBuffer {
-    /// The inline field's buffer is the authority — [`EditorForm::Field`],
-    /// [`EditorForm::Stepper`], and the hex half of [`EditorForm::Swatch`].
-    Text,
+    /// The inline field's buffer is the authority — a text-buffered form
+    /// ([`EditorForm::Field`], [`EditorForm::Stepper`], and the hex half of
+    /// [`EditorForm::Swatch`]) that currently holds the keyboard. At most one
+    /// editor in a [`OpenEditors`] is in this state, and it is the focused one.
+    Live,
+    /// A text-buffered form that does **not** hold the keyboard: its in-flight
+    /// text, parked until focus returns to it.
+    Parked(String),
     /// The latch holds the in-flight value — [`EditorForm::Toggle`] and
-    /// [`EditorForm::Selector`].
+    /// [`EditorForm::Selector`], focused or not, because neither has any text.
     Value(CellValue),
 }
 
@@ -348,8 +451,11 @@ pub struct OpenEditor {
     /// can tell an untouched editor from an edited one, and so a delegate's
     /// editor can render the original beside the in-flight value.
     seed: CellValue,
-    /// Where the in-flight value lives, from [`EditorForm::buffer_is_text`].
+    /// Where the in-flight value lives, from [`EditorForm::buffer_is_text`]
+    /// and — R1571 — from whether this editor holds the keyboard.
     buffer: EditBuffer,
+    /// R1571 — whether a commit or an <kbd>Escape</kbd> closes it.
+    persistence: EditorPersistence,
 }
 
 impl OpenEditor {
@@ -357,6 +463,31 @@ impl OpenEditor {
     #[must_use]
     pub fn seed(&self) -> &CellValue {
         &self.seed
+    }
+
+    /// R1571 — whether a commit or an <kbd>Escape</kbd> closes this editor
+    /// (Qt: whether the view's private `persistent` set contains its widget).
+    #[must_use]
+    pub fn persistence(&self) -> EditorPersistence {
+        self.persistence
+    }
+
+    /// R1571 — whether this editor's buffer **is** the inline field, which is
+    /// true exactly when it is the focused text-buffered editor.
+    #[must_use]
+    pub fn holds_the_field(&self) -> bool {
+        matches!(self.buffer, EditBuffer::Live)
+    }
+
+    /// R1571 — the parked in-flight text of a text-buffered editor that does
+    /// not hold the keyboard. `None` for the focused one (read it through
+    /// [`GridEditState::text`]) and for the latch-buffered forms.
+    #[must_use]
+    pub fn parked_text(&self) -> Option<&str> {
+        match &self.buffer {
+            EditBuffer::Parked(text) => Some(text),
+            EditBuffer::Live | EditBuffer::Value(_) => None,
+        }
     }
 
     /// The editor kind: the keystroke gate
@@ -380,9 +511,222 @@ impl OpenEditor {
     #[must_use]
     pub fn pending(&self) -> Option<&CellValue> {
         match &self.buffer {
-            EditBuffer::Text => None,
+            EditBuffer::Live | EditBuffer::Parked(_) => None,
             EditBuffer::Value(value) => Some(value),
         }
+    }
+}
+
+/// R1571 §5.27 — every editor a grid has open, and which of them holds the
+/// keyboard: Qt's `indexEditorHash` and its `persistent` subset, as one value.
+///
+/// # The invariants, and why they are the type's rather than the caller's
+///
+/// 1. **At most one editor per cell**, sorted by [`CellIndex`] — so
+///    [`OpenEditors::get`] is a decision rather than a first-match, and two
+///    editors cannot end up racing for one cell's keystrokes.
+/// 2. **At most one [`EditorPersistence::Transient`] editor** — Qt maintains
+///    this by having `edit()` close the previous one, which is a convention its
+///    data structure does not hold it to.
+/// 3. **`focused` names a member, or nothing** — so "the focused editor" is
+///    never a dangling index into a set that has closed it. This is the
+///    argument [`OpenEditor`] itself makes about its own three fields, one
+///    level up.
+/// 4. **The focused editor holds the shared field exactly when its form is
+///    text-buffered** — *both* directions. One is obvious: the field is a
+///    single shared buffer, so an unfocused editor claiming it would be reading
+///    somebody else's typing. The converse is the one a counterfactual found
+///    missing at R1571, and it is the load-bearing half: with only the first
+///    rule, "nobody holds the field" satisfies every check while the focused
+///    editor's cell still *paints* one, so that cell's tag would show a buffer
+///    belonging to no editor. Stating it both ways makes the paint's question
+///    ("does this editor own the field") and the state's ("who has the
+///    keyboard") one fact rather than two that agree until they do not.
+///
+/// All four are re-checked on **deserialize** ([`OpenEditors::from_parts`]), so
+/// a restored session or a hand-written `intervene` payload cannot reach a
+/// state the constructors refuse to build — R1561's rule for `IndexRuns`,
+/// applied to a set whose members are richer.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "OpenEditorsParts", into = "OpenEditorsParts")]
+pub struct OpenEditors {
+    /// Sorted by [`OpenEditor::index`], at most one entry per cell.
+    open: Vec<OpenEditor>,
+    /// The cell whose editor holds the keyboard; always a member of `open`.
+    focused: Option<CellIndex>,
+}
+
+/// The serde form of [`OpenEditors`] — the two fields, before validation.
+///
+/// A separate type rather than `#[serde(deny_unknown_fields)]` on the real one
+/// because the invariants are *between* the fields: no derive can say "this
+/// index names a member of that vector".
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct OpenEditorsParts {
+    /// The open editors, in any order — [`OpenEditors::from_parts`] sorts them.
+    pub open: Vec<OpenEditor>,
+    /// The focused cell.
+    pub focused: Option<CellIndex>,
+}
+
+/// Why a [`OpenEditorsParts`] is not a valid [`OpenEditors`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenEditorsError {
+    /// Two editors name the same cell.
+    DuplicateCell(CellIndex),
+    /// More than one [`EditorPersistence::Transient`] editor.
+    TwoTransientEditors,
+    /// `focused` names a cell with no open editor.
+    FocusOnNothing(CellIndex),
+    /// The shared inline field's owner is not the focused text-buffered
+    /// editor: either an unfocused editor claims it, or the focused
+    /// text-buffered one does not hold it.
+    FieldOwnerIsNotTheFocus(CellIndex),
+}
+
+impl core::fmt::Display for OpenEditorsError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            OpenEditorsError::DuplicateCell(at) => {
+                write!(f, "two editors open on cell {}_{}", at.row, at.col)
+            }
+            OpenEditorsError::TwoTransientEditors => {
+                write!(f, "more than one transient editor is open")
+            }
+            OpenEditorsError::FocusOnNothing(at) => {
+                write!(
+                    f,
+                    "focus names cell {}_{}, which has no editor",
+                    at.row, at.col
+                )
+            }
+            OpenEditorsError::FieldOwnerIsNotTheFocus(at) => write!(
+                f,
+                "cell {}_{} is not the shared field's owner but is recorded as one, \
+                 or is its owner and is not recorded as one",
+                at.row, at.col
+            ),
+        }
+    }
+}
+
+impl std::error::Error for OpenEditorsError {}
+
+impl From<OpenEditors> for OpenEditorsParts {
+    fn from(editors: OpenEditors) -> Self {
+        Self {
+            open: editors.open,
+            focused: editors.focused,
+        }
+    }
+}
+
+impl TryFrom<OpenEditorsParts> for OpenEditors {
+    type Error = OpenEditorsError;
+
+    fn try_from(parts: OpenEditorsParts) -> Result<Self, Self::Error> {
+        OpenEditors::from_parts(parts.open, parts.focused)
+    }
+}
+
+impl OpenEditors {
+    /// Build from the two fields, checking every invariant the type's doc
+    /// states. The one constructor, so the deserialize path and the verbs below
+    /// cannot enforce different rules.
+    ///
+    /// # Errors
+    ///
+    /// [`OpenEditorsError`], naming the cell responsible where there is one.
+    pub fn from_parts(
+        mut open: Vec<OpenEditor>,
+        focused: Option<CellIndex>,
+    ) -> Result<Self, OpenEditorsError> {
+        open.sort_by_key(|e| e.index);
+        if let Some(dup) = open.windows(2).find(|w| w[0].index == w[1].index) {
+            return Err(OpenEditorsError::DuplicateCell(dup[0].index));
+        }
+        if open
+            .iter()
+            .filter(|e| e.persistence == EditorPersistence::Transient)
+            .count()
+            > 1
+        {
+            return Err(OpenEditorsError::TwoTransientEditors);
+        }
+        if let Some(at) = focused
+            && !open.iter().any(|e| e.index == at)
+        {
+            return Err(OpenEditorsError::FocusOnNothing(at));
+        }
+        for editor in &open {
+            // Both directions — see invariant 4. `should_hold` is the whole
+            // rule, written once, so a transition cannot satisfy half of it.
+            let should_hold =
+                focused == Some(editor.index) && editor.seed.kind().editor_form().buffer_is_text();
+            if editor.holds_the_field() != should_hold {
+                return Err(OpenEditorsError::FieldOwnerIsNotTheFocus(editor.index));
+            }
+        }
+        Ok(Self { open, focused })
+    }
+
+    /// How many editors are open — Qt has no accessor at all for this, since
+    /// the set it would count is private.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.open.len()
+    }
+
+    /// Whether no editor is open.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.open.is_empty()
+    }
+
+    /// The editor open on `index`, or `None` — Qt's `isPersistentEditorOpen`
+    /// generalized to both persistences, and answering with the editor rather
+    /// than with a bool.
+    #[must_use]
+    pub fn get(&self, index: CellIndex) -> Option<&OpenEditor> {
+        self.open
+            .binary_search_by_key(&index, |e| e.index)
+            .ok()
+            .map(|i| &self.open[i])
+    }
+
+    /// Whether `index` has an editor open.
+    #[must_use]
+    pub fn contains(&self, index: CellIndex) -> bool {
+        self.get(index).is_some()
+    }
+
+    /// Every open editor, in [`CellIndex`] order.
+    pub fn iter(&self) -> impl Iterator<Item = &OpenEditor> {
+        self.open.iter()
+    }
+
+    /// The editors whose cells are in `rows` — the **window** a paint pass
+    /// needs, so an editor outside it costs nothing to draw.
+    ///
+    /// The property Qt cannot have: its persistent editors are `QWidget`s that
+    /// exist and are repositioned by `updateEditorGeometries()` whether or not
+    /// their row is on screen.
+    pub fn in_rows(&self, rows: Range<usize>) -> impl Iterator<Item = &OpenEditor> {
+        self.open
+            .iter()
+            .filter(move |e| rows.contains(&e.index.row))
+    }
+
+    /// The editor holding the keyboard, or `None`.
+    #[must_use]
+    pub fn focused(&self) -> Option<&OpenEditor> {
+        self.focused.and_then(|at| self.get(at))
+    }
+
+    /// The cell whose editor holds the keyboard.
+    #[must_use]
+    pub fn focused_index(&self) -> Option<CellIndex> {
+        self.focused
     }
 }
 
@@ -456,16 +800,60 @@ impl CommitOutcome {
     }
 }
 
+/// R1571 §5.27 — what [`GridEditState::open_persistent`] did: Qt's
+/// `openPersistentEditor`, which returns `void`.
+///
+/// There is no failure arm, and its absence is the argument R1544 made about
+/// the transient path, now on this one: the call takes a [`CellEdit`], which
+/// only the model produces and which it produces `None` for on a cell it will
+/// not edit — so "a persistent editor open on a read-only cell" is not a state
+/// the types can express. Qt's `openPersistentEditor` reaches
+/// `QStyledItemDelegate::createEditor`, which consults `QItemEditorFactory` and
+/// **never looks at `flags() & Qt::ItemIsEditable`**: it opens a live editor on
+/// a read-only cell, the user types into it, `setModelData` calls a `setData`
+/// that returns `false`, and nothing anywhere reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenOutcome {
+    /// A new persistent editor opened on a cell that had none.
+    Opened,
+    /// The cell's [`EditorPersistence::Transient`] editor was **promoted**,
+    /// keeping whatever the user had already typed into it. Qt reaches the same
+    /// end by a different route: `QAbstractItemViewPrivate::editor()` hands back
+    /// the widget already in its hash and `openPersistentEditor` inserts that
+    /// widget into the persistence set — an outcome it cannot report.
+    Promoted,
+    /// The cell already had a persistent editor; nothing changed, and in
+    /// particular its in-flight value was **not** reseeded from the model.
+    AlreadyOpen,
+}
+
+impl OpenOutcome {
+    /// The wire token, for the introspection surface.
+    #[must_use]
+    pub fn wire_token(self) -> &'static str {
+        match self {
+            OpenOutcome::Opened => "opened",
+            OpenOutcome::Promoted => "promoted",
+            OpenOutcome::AlreadyOpen => "already_open",
+        }
+    }
+}
+
 /// R1544 §5.27 — the grid's editing latch and trigger gate: the half of Qt's
 /// editing decomposition that belongs to `QAbstractItemView`.
 ///
 /// Created once through [`use_grid_edit`] and shared by the binding's
 /// `External` (which mutates it) and the view / a11y tree (which read it)
 /// through the same `Rc` — the [`ScrollState`](crate::widgets::scroll::ScrollState)
-/// pattern. Reading [`open`](Self::open) inside a view-fn auto-subscribes, so
-/// opening an editor repaints exactly like a scroll-offset change.
+/// pattern. Reading [`editors`](Self::editors) inside a view-fn auto-subscribes,
+/// so opening an editor repaints exactly like a scroll-offset change.
 ///
-/// The in-flight text is **not** held here. It lives in the
+/// R1571 — the latch became a **set** ([`OpenEditors`]), because Qt's
+/// `openPersistentEditor` keeps N editors open at once. The invariants that set
+/// maintains are stated on it; every verb below rebuilds it through one private
+/// publisher that re-checks all four.
+///
+/// The **focused** editor's in-flight text is **not** held here. It lives in the
 /// [`TextEditState`](crate::widgets::text_edit::TextEditState) of the inline
 /// field the editor paints, keyed by [`field_tag`](Self::field_tag), because
 /// that is the state the caret, the selection, the IME preedit and the
@@ -487,7 +875,8 @@ pub struct GridEditState {
     /// construction is also the shape every other state substrate here has:
     /// the `Rc` is captured once, in the scope that owns it.
     field: Rc<crate::widgets::text_edit::TextEditState>,
-    open: Signal<Option<OpenEditor>>,
+    /// R1571 — every open editor, and which one holds the field.
+    editors: Signal<OpenEditors>,
     triggers: Signal<EditTriggers>,
 }
 
@@ -509,7 +898,7 @@ impl GridEditState {
             tag: None,
             field_tag,
             field: use_text_edit_state(field_tag),
-            open: Signal::new(None),
+            editors: Signal::new(OpenEditors::default()),
             triggers: Signal::new(EditTriggers::DEFAULT),
         }
     }
@@ -535,48 +924,97 @@ impl GridEditState {
         self.field_tag
     }
 
-    /// The open editor, or `None` when the grid is not editing. Reading this
-    /// in a view-fn subscribes it to open / close.
+    /// R1571 — every open editor and which of them holds the keyboard. Reading
+    /// this in a view-fn subscribes it to every open / close / focus move.
     #[must_use]
-    pub fn open(&self) -> Option<OpenEditor> {
-        self.open.get()
+    pub fn editors(&self) -> OpenEditors {
+        self.editors.get()
     }
 
-    /// The cell an editor is open on — [`open`](Self::open) narrowed to the
-    /// question the paint layer asks once per painted cell.
+    /// The editor open on `index`, or `None` — the question the paint layer
+    /// asks once per painted cell.
+    #[must_use]
+    pub fn editor_at(&self, index: CellIndex) -> Option<OpenEditor> {
+        self.editors.get().get(index).cloned()
+    }
+
+    /// The editor holding the keyboard, or `None` when nothing is focused.
+    ///
+    /// R1571 renamed this from `open`: with N editors, "the open editor" is not
+    /// a thing, and the one every keystroke verb below acts on is the focused
+    /// one.
+    #[must_use]
+    pub fn focused(&self) -> Option<OpenEditor> {
+        self.editors.get().focused().cloned()
+    }
+
+    /// The cell whose editor holds the keyboard — [`focused`](Self::focused)
+    /// narrowed to its index.
     #[must_use]
     pub fn editing(&self) -> Option<CellIndex> {
-        self.open.get().map(|e| e.index)
+        self.editors.get().focused_index()
     }
 
-    /// Whether an editor is open on `index`.
+    /// Whether an editor — of either persistence — is open on `index`.
     #[must_use]
     pub fn is_editing(&self, index: CellIndex) -> bool {
-        self.editing() == Some(index)
+        self.editors.get().contains(index)
     }
 
-    /// The open editor's kind — the [`edit_field_keymap`](crate::input::edit_field_keymap)
-    /// keystroke gate's argument. `None` when not editing.
+    /// R1571 — whether a **persistent** editor is open on `index`: Qt's
+    /// `QAbstractItemView::isPersistentEditorOpen`, which is the only question
+    /// Qt's private editor set answers.
+    #[must_use]
+    pub fn is_persistent_editor_open(&self, index: CellIndex) -> bool {
+        self.editors
+            .get()
+            .get(index)
+            .is_some_and(|e| e.persistence() == EditorPersistence::Persistent)
+    }
+
+    /// R1571 — whether the editor on `index` holds the keyboard.
+    #[must_use]
+    pub fn is_focused(&self, index: CellIndex) -> bool {
+        self.editors.get().focused_index() == Some(index)
+    }
+
+    /// The focused editor's kind — the
+    /// [`edit_field_keymap`](crate::input::edit_field_keymap) keystroke gate's
+    /// argument. `None` when nothing is focused.
     #[must_use]
     pub fn kind(&self) -> Option<CellKind> {
-        self.open.get().map(|e| e.kind())
+        self.focused().map(|e| e.kind())
     }
 
-    /// R1555 — the open editor's form (Qt `QItemEditorFactory`'s answer for the
-    /// cell's datum). `None` when not editing.
+    /// R1555 — the focused editor's form (Qt `QItemEditorFactory`'s answer for
+    /// the cell's datum). `None` when nothing is focused.
     #[must_use]
     pub fn form(&self) -> Option<EditorForm> {
-        self.open.get().map(|e| e.form())
+        self.focused().map(|e| e.form())
     }
 
     /// The in-flight editor text: the inline field's live buffer, **not** the
-    /// seed. Empty when no editor is open.
+    /// seed. Empty when no editor holds the keyboard.
     #[must_use]
     pub fn text(&self) -> String {
-        if self.open.get().is_none() {
+        if self.editors.get().focused().is_none() {
             return String::new();
         }
         self.field.text()
+    }
+
+    /// R1571 — the in-flight text of the editor on `index`, whichever buffer
+    /// holds it: the live field for the focused one, the parked string for the
+    /// rest. `None` when `index` has no editor or its form has no text.
+    #[must_use]
+    pub fn text_at(&self, index: CellIndex) -> Option<String> {
+        let editors = self.editors.get();
+        let editor = editors.get(index)?;
+        match editor.parked_text() {
+            Some(parked) => Some(parked.to_string()),
+            None if editor.holds_the_field() => Some(self.field.text()),
+            None => None,
+        }
     }
 
     /// R1555 §5.27 — the in-flight state: whether an editor is open and whether
@@ -586,17 +1024,35 @@ impl GridEditState {
     /// know which half a form uses: a text-buffered form is parsed back out of
     /// the inline field through [`CellKind::parse`], and a
     /// latch-buffered one answers with the value it holds.
+    ///
+    /// R1571 — three halves rather than two, because a text-buffered editor
+    /// that does not hold the keyboard reads its text back out of the latch.
     #[must_use]
     pub fn state(&self) -> EditState {
-        let Some(editor) = self.open.get() else {
+        match self.editors.get().focused_index() {
+            Some(at) => self.state_at(at),
+            None => EditState::Closed,
+        }
+    }
+
+    /// R1571 — [`state`](Self::state) for a named cell, so an unfocused
+    /// editor's in-flight value is readable without focusing it first.
+    #[must_use]
+    pub fn state_at(&self, index: CellIndex) -> EditState {
+        let editors = self.editors.get();
+        let Some(editor) = editors.get(index) else {
             return EditState::Closed;
         };
-        match editor.pending() {
-            Some(value) => EditState::Value(value.clone()),
-            None => match editor.kind().parse(&self.field.text()) {
-                Some(value) => EditState::Value(value),
-                None => EditState::Malformed,
-            },
+        if let Some(value) = editor.pending() {
+            return EditState::Value(value.clone());
+        }
+        let text = match editor.parked_text() {
+            Some(parked) => parked.to_string(),
+            None => self.field.text(),
+        };
+        match editor.kind().parse(&text) {
+            Some(value) => EditState::Value(value),
+            None => EditState::Malformed,
         }
     }
 
@@ -614,10 +1070,22 @@ impl GridEditState {
     /// silently.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
-        let Some(editor) = self.open.get() else {
+        match self.editors.get().focused_index() {
+            Some(at) => self.is_dirty_at(at),
+            None => false,
+        }
+    }
+
+    /// R1571 — [`is_dirty`](Self::is_dirty) for a named cell. The question a
+    /// binding asks of *every* open editor before closing a document, which is
+    /// unaskable in Qt for the reason above, N times over.
+    #[must_use]
+    pub fn is_dirty_at(&self, index: CellIndex) -> bool {
+        let editors = self.editors.get();
+        let Some(editor) = editors.get(index) else {
             return false;
         };
-        match self.state() {
+        match self.state_at(index) {
             EditState::Closed => false,
             EditState::Malformed => true,
             EditState::Value(value) => &value != editor.seed(),
@@ -652,24 +1120,197 @@ impl GridEditState {
     /// [`EditorForm`]. A toggle or a selector holds its in-flight value in the
     /// latch, and its field buffer is **cleared**, so nothing can read a
     /// previous edit's text as this editor's value.
+    ///
+    /// R1571 — a cell that already has a **persistent** editor is *focused*
+    /// rather than reopened, so a trigger on it does not discard what the user
+    /// has already typed there. Qt reaches the same behaviour through
+    /// `QAbstractItemViewPrivate::editor()`, which hands back the widget its
+    /// hash already holds instead of asking the delegate for a new one. Any
+    /// other transient editor is closed, discarding its buffer — this is what
+    /// it has always done, and a binding that wants Qt's commit-on-focus-out
+    /// runs that first (`blur_committing_field_extra`).
     pub fn begin(&self, index: CellIndex, edit: &CellEdit) {
-        let buffer = if edit.form().buffer_is_text() {
+        if self.is_persistent_editor_open(index) {
+            let _focused = self.focus_editor(index);
+            return;
+        }
+        let prev = self.editors.get();
+        // Read before `seed_field` overwrites it, so the departing editor parks
+        // what the user actually typed rather than this editor's seed.
+        let live = self.field.text();
+        let mut open: Vec<OpenEditor> = prev
+            .iter()
+            .filter(|e| e.index != index && e.persistence != EditorPersistence::Transient)
+            .cloned()
+            .collect();
+        let _handed = hand_over_field(&mut open, &live, None);
+        let buffer = self.seed_field(edit);
+        open.push(OpenEditor {
+            index,
+            seed: edit.value().clone(),
+            buffer,
+            persistence: EditorPersistence::Transient,
+        });
+        self.store_editors(open, Some(index));
+    }
+
+    /// Publish a rebuilt editor set.
+    ///
+    /// The **one** place [`OpenEditors::from_parts`]'s verdict is consumed, and
+    /// therefore the only place its `expect` lives. Every verb above hands over
+    /// a set built from a valid one by a single structural step — adding a
+    /// cell, removing one, moving the shared field — and `from_parts` re-checks
+    /// all four invariants, so a step that broke one fails here loudly instead
+    /// of shipping a set whose paint and whose keystroke routing disagree.
+    ///
+    /// Private, because the proof obligation is this module's: no caller can
+    /// build a `Vec<OpenEditor>` to hand in, so the panic is unreachable from
+    /// outside and belongs on no public method's `# Panics` section.
+    ///
+    /// # Panics
+    ///
+    /// If a verb in this module built a set that breaks an [`OpenEditors`]
+    /// invariant — a bug here, never a caller's.
+    fn store_editors(&self, open: Vec<OpenEditor>, focused: Option<CellIndex>) {
+        self.editors.set(
+            OpenEditors::from_parts(open, focused)
+                .expect("a grid edit verb rebuilds its set from an already valid one"),
+        );
+    }
+
+    /// The buffer a freshly opened editor starts with, and the field mutation
+    /// that goes with it. The one place a seed is written, so the field and the
+    /// latch cannot disagree about which of them holds the value.
+    fn seed_field(&self, edit: &CellEdit) -> EditBuffer {
+        if edit.form().buffer_is_text() {
             let text = edit.text();
             let chars = text.chars().count();
             // `set_text` clears the selection, so the whole-buffer select has
             // to follow it — the ordering is load-bearing and a test pins it.
             self.field.set_text(text);
             self.field.set_selection(0, chars);
-            EditBuffer::Text
+            EditBuffer::Live
         } else {
             self.field.set_text(String::new());
             EditBuffer::Value(edit.value().clone())
-        };
-        self.open.set(Some(OpenEditor {
-            index,
-            seed: edit.value().clone(),
-            buffer,
-        }));
+        }
+    }
+
+    /// R1571 §5.27 — open a **persistent** editor on `index`: Qt's
+    /// `QAbstractItemView::openPersistentEditor`.
+    ///
+    /// It takes the keyboard, because that is what a caller opening an editor
+    /// means and because Qt's own `openPersistentEditor` shows the widget in a
+    /// state ready to receive input. Every other open editor keeps its
+    /// in-flight value, parked.
+    ///
+    /// See [`OpenOutcome`] for what the three answers mean and for what Qt
+    /// answers instead (`void`).
+    pub fn open_persistent(&self, index: CellIndex, edit: &CellEdit) -> OpenOutcome {
+        let prev = self.editors.get();
+        match prev.get(index).map(OpenEditor::persistence) {
+            Some(EditorPersistence::Persistent) => OpenOutcome::AlreadyOpen,
+            Some(EditorPersistence::Transient) => {
+                let live = self.field.text();
+                let mut open: Vec<OpenEditor> = prev.iter().cloned().collect();
+                for editor in &mut open {
+                    if editor.index == index {
+                        editor.persistence = EditorPersistence::Persistent;
+                    }
+                }
+                self.hand_the_field_to(&mut open, &live, index);
+                self.store_editors(open, Some(index));
+                OpenOutcome::Promoted
+            }
+            None => {
+                let live = self.field.text();
+                let mut open: Vec<OpenEditor> = prev.iter().cloned().collect();
+                let _handed = hand_over_field(&mut open, &live, None);
+                let buffer = self.seed_field(edit);
+                open.push(OpenEditor {
+                    index,
+                    seed: edit.value().clone(),
+                    buffer,
+                    persistence: EditorPersistence::Persistent,
+                });
+                self.store_editors(open, Some(index));
+                OpenOutcome::Opened
+            }
+        }
+    }
+
+    /// Hand the shared field to the editor on `index` and write the field to
+    /// match: the paired half of [`hand_over_field`], which owns the latch side
+    /// but must not touch the field from inside a set-building pass.
+    fn hand_the_field_to(&self, open: &mut [OpenEditor], live: &str, index: CellIndex) {
+        match hand_over_field(open, live, Some(index)) {
+            // `seed` is the R878 "replace the buffer and park the caret at the
+            // end" pair — see `focus_editor`'s doc for why this is not a
+            // select-all the way a fresh open is.
+            Some(text) => self.field.seed(text),
+            None => self.field.set_text(String::new()),
+        }
+    }
+
+    /// R1571 §5.27 — close the editor on `index` whatever its persistence:
+    /// Qt's `QAbstractItemView::closePersistentEditor`, widened to the
+    /// transient kind because "close this cell's editor" is one question.
+    ///
+    /// Returns whether one was open. Its in-flight value is **discarded** — the
+    /// caller commits first if it wants it, which is the same order Qt's
+    /// `closePersistentEditor` imposes (it deletes the widget, taking the text
+    /// with it, and reports nothing).
+    ///
+    /// When the closed editor held the keyboard, focus moves to no editor
+    /// rather than to an arbitrary survivor: which one a user meant next is not
+    /// a fact this state has.
+    #[must_use]
+    pub fn close_persistent(&self, index: CellIndex) -> bool {
+        let prev = self.editors.get();
+        if !prev.contains(index) {
+            return false;
+        }
+        if prev.focused_index() == Some(index) {
+            self.field.set_text(String::new());
+        }
+        let open: Vec<OpenEditor> = prev.iter().filter(|e| e.index != index).cloned().collect();
+        let focused = prev.focused_index().filter(|at| *at != index);
+        self.store_editors(open, focused);
+        true
+    }
+
+    /// R1571 §5.27 — close every open editor, discarding every in-flight value.
+    /// The model-reset path: Qt destroys its editor widgets when the rows under
+    /// them go away, and reports nothing about what was lost.
+    pub fn close_all(&self) {
+        self.field.set_text(String::new());
+        self.editors.set(OpenEditors::default());
+    }
+
+    /// R1571 §5.27 — give the editor on `index` the keyboard, parking the
+    /// previously focused editor's text and restoring this one's.
+    ///
+    /// Returns whether it moved — `false` when `index` has no editor. Focusing
+    /// the already-focused editor is a no-op that answers `true`.
+    ///
+    /// The restored buffer's caret lands at the **end** with nothing selected,
+    /// where [`begin`](Self::begin) selects the whole seed. The difference is
+    /// the point: a fresh editor is type-to-replace, and an editor you are
+    /// coming back to holds work the next keystroke must not erase.
+    #[must_use]
+    pub fn focus_editor(&self, index: CellIndex) -> bool {
+        let prev = self.editors.get();
+        if !prev.contains(index) {
+            return false;
+        }
+        if prev.focused_index() == Some(index) {
+            return true;
+        }
+        let live = self.field.text();
+        let mut open: Vec<OpenEditor> = prev.iter().cloned().collect();
+        self.hand_the_field_to(&mut open, &live, index);
+        self.store_editors(open, Some(index));
+        true
     }
 
     /// R1555 §5.27 — flip an open [`EditorForm::Toggle`] editor's in-flight
@@ -688,17 +1329,32 @@ impl GridEditState {
     /// commits it — the same arc every other form has.
     #[must_use]
     pub fn toggle(&self) -> bool {
-        let Some(editor) = self.open.get() else {
+        let editors = self.editors.get();
+        let Some(editor) = editors.focused() else {
             return false;
         };
         let Some(CellValue::Bool(current)) = editor.pending() else {
             return false;
         };
-        self.open.set(Some(OpenEditor {
-            buffer: EditBuffer::Value(CellValue::Bool(!current)),
-            ..editor
-        }));
+        self.set_focused_buffer(&EditBuffer::Value(CellValue::Bool(!current)));
         true
+    }
+
+    /// Replace the focused editor's buffer, leaving the set's shape and its
+    /// focus alone — the one write path the three gesture verbs share, so none
+    /// of them can rebuild the set and lose a sibling editor.
+    fn set_focused_buffer(&self, buffer: &EditBuffer) {
+        let prev = self.editors.get();
+        let Some(at) = prev.focused_index() else {
+            return;
+        };
+        let mut open: Vec<OpenEditor> = prev.iter().cloned().collect();
+        for editor in &mut open {
+            if editor.index == at {
+                editor.buffer = buffer.clone();
+            }
+        }
+        self.store_editors(open, Some(at));
     }
 
     /// R1555 §5.27 — set an open [`EditorForm::Selector`] editor's in-flight
@@ -712,7 +1368,8 @@ impl GridEditState {
     /// rather than a rejected write.
     #[must_use]
     pub fn select(&self, selected: usize) -> bool {
-        let Some(editor) = self.open.get() else {
+        let editors = self.editors.get();
+        let Some(editor) = editors.focused() else {
             return false;
         };
         let Some(CellValue::Choice { options, .. }) = editor.pending() else {
@@ -721,11 +1378,10 @@ impl GridEditState {
         if selected >= options.len() {
             return false;
         }
-        let buffer = EditBuffer::Value(CellValue::Choice {
+        self.set_focused_buffer(&EditBuffer::Value(CellValue::Choice {
             selected,
             options: options.clone(),
-        });
-        self.open.set(Some(OpenEditor { buffer, ..editor }));
+        }));
         true
     }
 
@@ -742,7 +1398,8 @@ impl GridEditState {
     /// fighting over the selection.
     #[must_use]
     pub fn step(&self, delta: i64) -> bool {
-        let Some(editor) = self.open.get() else {
+        let editors = self.editors.get();
+        let Some(editor) = editors.focused() else {
             return false;
         };
         if editor.form() != EditorForm::Stepper {
@@ -769,10 +1426,42 @@ impl GridEditState {
         true
     }
 
-    /// Abandon the edit, discarding the in-flight text — <kbd>Escape</kbd>,
-    /// Qt's `closeEditor(editor, RevertModelCache)` on a write-through model.
+    /// Abandon the focused edit — <kbd>Escape</kbd>, Qt's
+    /// `closeEditor(editor, RevertModelCache)` on a write-through model.
+    ///
+    /// R1571 — what "abandon" means follows from the editor's persistence, and
+    /// this is where Qt's own decomposition breaks down. A **transient** editor
+    /// closes, discarding its in-flight text, as it always has. A
+    /// **persistent** one is *reverted to its seed and stays open*, because
+    /// closing it would be a second, undeclared way for `openPersistentEditor`
+    /// to be undone.
+    ///
+    /// Qt does neither: `QStyledItemDelegate::eventFilter` emits
+    /// `closeEditor(editor, RevertModelCache)`, and
+    /// `QAbstractItemView::closeEditor` checks `d->persistent.contains(editor)`
+    /// and **returns without touching it** — so <kbd>Escape</kbd> on a Qt
+    /// persistent editor does nothing at all, the typed text stays on screen,
+    /// and the original value is unrecoverable from the view.
     pub fn cancel(&self) {
-        self.close();
+        let prev = self.editors.get();
+        let Some(editor) = prev.focused().cloned() else {
+            return;
+        };
+        match editor.persistence() {
+            EditorPersistence::Transient => {
+                let _closed = self.close_persistent(editor.index);
+            }
+            EditorPersistence::Persistent => {
+                let reverted = self.seed_field(&CellEdit::from(editor.seed().clone()));
+                let mut open: Vec<OpenEditor> = prev.iter().cloned().collect();
+                for open_editor in &mut open {
+                    if open_editor.index == editor.index {
+                        open_editor.buffer = reverted.clone();
+                    }
+                }
+                self.store_editors(open, Some(editor.index));
+            }
+        }
     }
 
     /// Write the in-flight **value** back through `set` and, **if the model
@@ -791,19 +1480,55 @@ impl GridEditState {
     /// its own validation. A toggle and a selector reach this path with the same
     /// shape, which is what lets one commit arc serve all five forms.
     pub fn commit_with(&self, set: impl FnOnce(CellIndex, &CellValue) -> bool) -> CommitOutcome {
-        let Some(editor) = self.open.get() else {
+        match self.editors.get().focused_index() {
+            Some(at) => self.commit_at_with(at, set),
+            None => CommitOutcome::NotEditing,
+        }
+    }
+
+    /// R1571 — [`commit_with`](Self::commit_with) for a named cell, so an
+    /// editor that does not hold the keyboard can be written through without
+    /// being focused first. The "save every open editor" verb, which in Qt
+    /// means iterating a private hash you cannot reach.
+    ///
+    /// A **transient** editor closes on a successful write, as it always has. A
+    /// **persistent** one stays open, and the committed value becomes its new
+    /// seed — so [`is_dirty_at`](Self::is_dirty_at) is `false` immediately
+    /// after. Qt leaves the widget's text alone and keeps no record of what the
+    /// editor was seeded with, so there is nothing there for a second commit to
+    /// compare against.
+    pub fn commit_at_with(
+        &self,
+        index: CellIndex,
+        set: impl FnOnce(CellIndex, &CellValue) -> bool,
+    ) -> CommitOutcome {
+        let prev = self.editors.get();
+        let Some(editor) = prev.get(index).cloned() else {
             return CommitOutcome::NotEditing;
         };
-        let value = match self.state() {
+        let value = match self.state_at(index) {
             EditState::Closed => return CommitOutcome::NotEditing,
             EditState::Malformed => return CommitOutcome::Malformed,
             EditState::Value(value) => value,
         };
-        if !set(editor.index, &value) {
+        if !set(index, &value) {
             return CommitOutcome::Refused;
         }
-        self.close();
-        CommitOutcome::Committed(editor.index)
+        match editor.persistence() {
+            EditorPersistence::Transient => {
+                let _closed = self.close_persistent(index);
+            }
+            EditorPersistence::Persistent => {
+                let mut open: Vec<OpenEditor> = prev.iter().cloned().collect();
+                for open_editor in &mut open {
+                    if open_editor.index == index {
+                        open_editor.seed = value.clone();
+                    }
+                }
+                self.store_editors(open, prev.focused_index());
+            }
+        }
+        CommitOutcome::Committed(index)
     }
 
     /// Honour an [`EndEditHint`] by opening an editor on the next / previous
@@ -854,13 +1579,89 @@ impl GridEditState {
         false
     }
 
-    /// Clear the latch and the field buffer. The one place the editor closes,
-    /// so a close cannot leave the previous edit's text in the buffer for the
-    /// next open to inherit.
-    fn close(&self) {
-        self.open.set(None);
-        self.field.set_text(String::new());
+    /// R1571 §5.27 — the open editors whose cells lie in `rows`, paired with
+    /// the model's edit role for each, as the **paint window** needs them.
+    ///
+    /// A helper here rather than in each binding because it is the seam that
+    /// makes N editors cost what the window costs: an editor on a row that is
+    /// not painted contributes nothing to the scene, and Qt has no equivalent
+    /// at all — its persistent editors are `QWidget`s that exist and are
+    /// repositioned by `updateEditorGeometries()` on every scroll whether or
+    /// not their row is on screen.
+    ///
+    /// An editor whose cell the model no longer edits is **dropped from the
+    /// answer** rather than painted against a stale seed: a model can turn a
+    /// cell read-only under an open editor, and the honest paint for that is
+    /// the display path. It stays *open* — closing it here would make a paint
+    /// pass mutate state, which is exactly the §6.3 purity the view-fn rests
+    /// on.
+    #[must_use]
+    pub fn open_cells(
+        &self,
+        rows: Range<usize>,
+        edit_at: impl Fn(CellIndex) -> Option<CellEdit>,
+    ) -> Vec<OpenCell> {
+        let editors = self.editors.get();
+        let focused = editors.focused_index();
+        editors
+            .in_rows(rows)
+            .filter_map(|editor| {
+                Some(OpenCell {
+                    focused: focused == Some(editor.index),
+                    edit: edit_at(editor.index)?,
+                    editor: editor.clone(),
+                })
+            })
+            .collect()
     }
+}
+
+/// R1571 §5.27 — one open editor as a paint pass receives it: the editor, the
+/// model's edit role for its cell, and whether it holds the keyboard.
+///
+/// The third field is the one that cannot be derived from the first two: a
+/// latch-buffered form's buffer is [`EditBuffer::Value`] whether or not it is
+/// focused, so "does this editor own the caret" has to be carried.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenCell {
+    /// The editor itself — its index, seed, form, persistence and parked text.
+    pub editor: OpenEditor,
+    /// The model's `Qt::EditRole` answer for that cell, re-asked this frame.
+    pub edit: CellEdit,
+    /// Whether this editor holds the shared inline field, and so the caret,
+    /// the selection and the IME preedit.
+    pub focused: bool,
+}
+
+/// Move the shared inline field's ownership between editors, on the **latch**
+/// side only.
+///
+/// The single author of [`EditBuffer::Live`], which is what makes invariant 4
+/// of [`OpenEditors`] hold: whoever holds the field is parked with `live` (the
+/// field's text, read before any of this), and `to` — if it is a text-buffered
+/// member — takes it.
+///
+/// Answers with the text the field should now contain, or `None` when the
+/// arriving editor is latch-buffered (or absent), in which case the field is
+/// cleared. The field itself is written by
+/// [`GridEditState::hand_the_field_to`]: a function that both rebuilds the set
+/// and mutates a signal would be doing two things one of its callers does not
+/// want (`begin` seeds the field from the model instead).
+fn hand_over_field(open: &mut [OpenEditor], live: &str, to: Option<CellIndex>) -> Option<String> {
+    for editor in open.iter_mut() {
+        if editor.holds_the_field() {
+            editor.buffer = EditBuffer::Parked(live.to_string());
+        }
+    }
+    let index = to?;
+    let editor = open.iter_mut().find(|e| e.index == index)?;
+    let EditBuffer::Parked(text) = &editor.buffer else {
+        // A latch-buffered form has no text and never claims the field.
+        return None;
+    };
+    let text = text.clone();
+    editor.buffer = EditBuffer::Live;
+    Some(text)
 }
 
 /// R1544 §5.27 — the shared [`GridEditState`] for `key`, created on first use
@@ -888,7 +1689,7 @@ pub fn use_grid_edit(key: &'static str, field_tag: &'static str) -> Rc<GridEditS
         tag: Some(key),
         field_tag,
         field,
-        open: Signal::new(None),
+        editors: Signal::new(OpenEditors::default()),
         triggers: Signal::new(EditTriggers::DEFAULT),
     })
 }
@@ -976,9 +1777,9 @@ mod tests {
     fn begin_seeds_the_field_and_selects_it_whole() {
         with_owner(|| {
             let state = GridEditState::new("t.begin");
-            assert_eq!(state.open(), None);
+            assert_eq!(state.focused(), None);
             state.begin(CellIndex::new(3, 1), &text(CellKind::Text, "Bravo"));
-            let open = state.open().expect("open");
+            let open = state.focused().expect("open");
             assert_eq!(open.index, CellIndex::new(3, 1));
             assert_eq!(open.kind(), CellKind::Text);
             assert_eq!(open.seed(), &CellValue::Text("Bravo".into()));
@@ -1006,9 +1807,9 @@ mod tests {
                 !state.begin_on(EditTrigger::AnyKeyPressed, at, &edit),
                 "type-to-replace is not in Qt's default set"
             );
-            assert_eq!(state.open(), None, "a refused trigger opens nothing");
+            assert_eq!(state.focused(), None, "a refused trigger opens nothing");
             assert!(state.begin_on(EditTrigger::DoubleClicked, at, &edit));
-            assert!(state.open().is_some());
+            assert!(state.focused().is_some());
             state.cancel();
             state.set_triggers(EditTriggers::NONE);
             assert!(
@@ -1018,7 +1819,7 @@ mod tests {
             assert!(
                 {
                     state.begin(at, &edit);
-                    state.open().is_some()
+                    state.focused().is_some()
                 },
                 "the programmatic open bypasses the gate (Qt `edit(index)`)"
             );
@@ -1032,7 +1833,7 @@ mod tests {
             state.begin(CellIndex::new(1, 1), &text(CellKind::Text, "seed"));
             use_text_edit_state("t.cancel").set_text("typed".to_string());
             state.cancel();
-            assert_eq!(state.open(), None);
+            assert_eq!(state.focused(), None);
             assert_eq!(
                 use_text_edit_state("t.cancel").text(),
                 "",
@@ -1057,7 +1858,7 @@ mod tests {
                 CommitOutcome::Refused,
                 "a refused write names its refusal"
             );
-            assert_eq!(state.open().map(|e| e.index), Some(at), "still editing");
+            assert_eq!(state.focused().map(|e| e.index), Some(at), "still editing");
             assert_eq!(
                 state.text(),
                 "999",
@@ -1076,7 +1877,7 @@ mod tests {
                 Some(CellValue::Int(999)),
                 "R1555 — the model is handed the parsed DATUM, not the buffer"
             );
-            assert_eq!(state.open(), None, "an accepted write closes the editor");
+            assert_eq!(state.focused(), None, "an accepted write closes the editor");
         });
     }
 
@@ -1130,7 +1931,7 @@ mod tests {
                 extent,
                 sparse_edit
             ));
-            assert_eq!(state.open().map(|e| e.index), Some(CellIndex::new(0, 2)));
+            assert_eq!(state.focused().map(|e| e.index), Some(CellIndex::new(0, 2)));
             // From the LAST cell, forward wraps to the first.
             assert!(state.advance(
                 CellIndex::new(2, 2),
@@ -1138,7 +1939,7 @@ mod tests {
                 extent,
                 sparse_edit
             ));
-            assert_eq!(state.open().map(|e| e.index), Some(CellIndex::new(0, 0)));
+            assert_eq!(state.focused().map(|e| e.index), Some(CellIndex::new(0, 0)));
             // Backward from the first wraps to the last.
             assert!(state.advance(
                 CellIndex::new(0, 0),
@@ -1146,7 +1947,7 @@ mod tests {
                 extent,
                 sparse_edit
             ));
-            assert_eq!(state.open().map(|e| e.index), Some(CellIndex::new(2, 2)));
+            assert_eq!(state.focused().map(|e| e.index), Some(CellIndex::new(2, 2)));
             // (0,2) backward is (0,0), not the read-only (0,1).
             assert!(state.advance(
                 CellIndex::new(0, 2),
@@ -1154,7 +1955,7 @@ mod tests {
                 extent,
                 sparse_edit
             ));
-            assert_eq!(state.open().map(|e| e.index), Some(CellIndex::new(0, 0)));
+            assert_eq!(state.focused().map(|e| e.index), Some(CellIndex::new(0, 0)));
         });
     }
 
@@ -1170,7 +1971,7 @@ mod tests {
                 GridExtent::new(4, 4),
                 |_| None
             ));
-            assert_eq!(state.open(), None);
+            assert_eq!(state.focused(), None);
         });
     }
 
@@ -1200,7 +2001,7 @@ mod tests {
                 GridExtent::new(0, 0),
                 sparse_edit
             ));
-            assert_eq!(state.open(), None);
+            assert_eq!(state.focused(), None);
         });
     }
 
@@ -1217,7 +2018,7 @@ mod tests {
                 GridExtent::new(3, 3),
                 |i| { (i == only).then(|| text(CellKind::Text, "v")) }
             ));
-            assert_eq!(state.open().map(|e| e.index), Some(only));
+            assert_eq!(state.focused().map(|e| e.index), Some(only));
         });
     }
 
@@ -1262,7 +2063,7 @@ mod tests {
             let state = GridEditState::new("t.toggle");
             let at = CellIndex::new(1, 1);
             state.begin(at, &CellEdit::from(CellValue::Bool(false)));
-            let open = state.open().expect("open");
+            let open = state.focused().expect("open");
             assert_eq!(open.form(), EditorForm::Toggle);
             assert_eq!(open.pending(), Some(&CellValue::Bool(false)));
             assert_eq!(
@@ -1282,7 +2083,7 @@ mod tests {
             // mis-click on a Qt check column is already committed. Escape
             // reverts here.
             state.cancel();
-            assert_eq!(state.open(), None);
+            assert_eq!(state.focused(), None);
             assert_eq!(state.state(), EditState::Closed);
         });
     }
@@ -1402,7 +2203,7 @@ mod tests {
                  of committing a value the user did not type"
             );
             assert!(state.is_dirty(), "a malformed buffer is unsaved work");
-            assert_eq!(state.open().map(|e| e.index), Some(at), "still editing");
+            assert_eq!(state.focused().map(|e| e.index), Some(at), "still editing");
             assert_eq!(CommitOutcome::Malformed.committed(), None);
             assert_eq!(CommitOutcome::Committed(at).committed(), Some(at));
         });
@@ -1414,7 +2215,7 @@ mod tests {
             let state = GridEditState::new("t.swatch");
             let red = crate::style::Color::from_hex("#ff0000").expect("hex");
             state.begin(CellIndex::new(0, 0), &CellEdit::from(CellValue::Color(red)));
-            let open = state.open().expect("open");
+            let open = state.focused().expect("open");
             assert_eq!(open.form(), EditorForm::Swatch);
             assert_eq!(
                 open.pending(),
@@ -1468,8 +2269,434 @@ mod tests {
                     "{kind:?} — an untouched open-and-commit does not change \
                      the datum (Qt's default double editor rounds to 2 decimals)"
                 );
-                assert_eq!(state.open(), None);
+                assert_eq!(state.focused(), None);
             }
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1571 §5.27 — N editors, and persistence as a property of one
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1571_persistence_round_trips_every_arm() {
+        for persistence in EditorPersistence::ALL {
+            assert_eq!(
+                EditorPersistence::from_wire(persistence.wire_token()),
+                Some(persistence),
+            );
+        }
+        assert_eq!(EditorPersistence::from_wire("sticky"), None);
+        assert_eq!(OpenOutcome::Opened.wire_token(), "opened");
+        assert_eq!(OpenOutcome::Promoted.wire_token(), "promoted");
+        assert_eq!(OpenOutcome::AlreadyOpen.wire_token(), "already_open");
+    }
+
+    #[test]
+    fn r1571_the_owner_cache_never_releases_a_runtime_key() {
+        // The finding that decides where an editor's buffer lives, stated as a
+        // property rather than as an argument. R1555's audit prescribed keying
+        // one `TextEditState` per cell into `Owner::cache` — which has accepted
+        // runtime ids since R685.C — and the cache has `cache`,
+        // `cache_contains` and `cache_get_by_str` and **no removal of any
+        // kind**, so every slot outlives every handle to it. On the models this
+        // axis is named for that is one buffer per cell ever edited, for the
+        // life of the window.
+        let owner = Owner::new();
+        let keys: Vec<String> = (0..64).map(|i| format!("r1571.buffer#{i}")).collect();
+        for key in &keys {
+            drop(owner.cache(key.clone(), crate::widgets::text_edit::TextEditState::new));
+        }
+        let retained = keys
+            .iter()
+            .filter(|key| {
+                owner.cache_contains::<crate::widgets::text_edit::TextEditState>((*key).clone())
+            })
+            .count();
+        assert_eq!(
+            retained,
+            keys.len(),
+            "every runtime-keyed slot outlived its handle — which is why an \
+             editor's buffer lives in the editor set, not in the owner's cache"
+        );
+    }
+
+    #[test]
+    fn r1571_a_persistent_editor_survives_a_commit_and_is_reseeded() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.commit");
+            let at = CellIndex::new(2, 1);
+            assert_eq!(
+                state.open_persistent(at, &text(CellKind::Text, "seed")),
+                OpenOutcome::Opened
+            );
+            assert!(state.is_persistent_editor_open(at));
+            assert!(state.is_focused(at));
+            use_text_edit_state("t.p.commit").set_text("typed".to_string());
+            assert!(state.is_dirty_at(at));
+
+            let mut written = None;
+            assert_eq!(
+                state.commit_at_with(at, |_, v| {
+                    written = Some(v.clone());
+                    true
+                }),
+                CommitOutcome::Committed(at)
+            );
+            assert_eq!(written, Some(CellValue::Text("typed".into())));
+            assert!(
+                state.is_persistent_editor_open(at),
+                "Qt's persistent editor survives commitData, and so does this one"
+            );
+            assert!(
+                !state.is_dirty_at(at),
+                "the committed value is the new seed — Qt keeps no seed at all, \
+                 so a second commit there has nothing to compare against"
+            );
+            assert_eq!(state.text_at(at).as_deref(), Some("typed"));
+        });
+    }
+
+    #[test]
+    fn r1571_escape_reverts_a_persistent_editor_and_closes_a_transient_one() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.escape");
+            let persistent = CellIndex::new(0, 0);
+            let transient = CellIndex::new(1, 0);
+            assert_eq!(
+                state.open_persistent(persistent, &text(CellKind::Text, "keep")),
+                OpenOutcome::Opened
+            );
+            use_text_edit_state("t.p.escape").set_text("scribble".to_string());
+            // Past Qt: `QAbstractItemView::closeEditor` returns early for a
+            // persistent editor, so Escape there does nothing at all and the
+            // original value cannot be recovered from the view.
+            state.cancel();
+            assert!(state.is_persistent_editor_open(persistent), "still open");
+            assert_eq!(state.text_at(persistent).as_deref(), Some("keep"));
+            assert!(!state.is_dirty_at(persistent));
+
+            state.begin(transient, &text(CellKind::Text, "gone"));
+            assert_eq!(state.editors().len(), 2);
+            state.cancel();
+            assert!(!state.is_editing(transient), "a transient editor closes");
+            assert_eq!(state.editors().len(), 1);
+            assert_eq!(
+                state.editing(),
+                None,
+                "closing the focused editor focuses nothing, rather than \
+                 guessing which survivor the user meant"
+            );
+        });
+    }
+
+    #[test]
+    fn r1571_each_editor_parks_its_own_text_and_gets_it_back() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.park");
+            let a = CellIndex::new(0, 0);
+            let b = CellIndex::new(5, 2);
+            assert_eq!(
+                state.open_persistent(a, &text(CellKind::Text, "a")),
+                OpenOutcome::Opened
+            );
+            use_text_edit_state("t.p.park").set_text("alpha".to_string());
+            assert_eq!(
+                state.open_persistent(b, &text(CellKind::Text, "b")),
+                OpenOutcome::Opened
+            );
+            use_text_edit_state("t.p.park").set_text("bravo".to_string());
+
+            // Both in-flight values exist at once, which is the whole point:
+            // one lives in the shared field, the other is parked.
+            assert_eq!(state.text_at(a).as_deref(), Some("alpha"));
+            assert_eq!(state.text_at(b).as_deref(), Some("bravo"));
+            assert_eq!(
+                state.state_at(a),
+                EditState::Value(CellValue::Text("alpha".into()))
+            );
+            assert!(state.is_dirty_at(a) && state.is_dirty_at(b));
+
+            let editors = state.editors();
+            assert_eq!(editors.len(), 2);
+            assert_eq!(editors.focused_index(), Some(b));
+            assert_eq!(
+                editors.iter().filter(|e| e.holds_the_field()).count(),
+                1,
+                "exactly one editor owns the shared buffer"
+            );
+            assert_eq!(
+                editors.get(a).and_then(OpenEditor::parked_text),
+                Some("alpha")
+            );
+
+            assert!(state.focus_editor(a));
+            assert_eq!(state.text(), "alpha", "the parked text came back");
+            let field = use_text_edit_state("t.p.park");
+            assert_eq!(
+                field.caret(),
+                5,
+                "the caret lands at the end — an editor you are returning to \
+                 holds work the next keystroke must not erase"
+            );
+            assert_eq!(field.selection_range(), None);
+            assert_eq!(state.text_at(b).as_deref(), Some("bravo"), "b parked");
+            assert!(state.focus_editor(a), "focusing the focused one is a no-op");
+            assert!(
+                !state.focus_editor(CellIndex::new(9, 9)),
+                "a cell with no editor cannot take the keyboard"
+            );
+        });
+    }
+
+    #[test]
+    fn r1571_a_second_transient_editor_replaces_the_first_but_not_a_persistent_one() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.replace");
+            let first = CellIndex::new(0, 0);
+            let second = CellIndex::new(1, 0);
+            let kept = CellIndex::new(2, 0);
+            assert_eq!(
+                state.open_persistent(kept, &text(CellKind::Text, "kept")),
+                OpenOutcome::Opened
+            );
+            state.begin(first, &text(CellKind::Text, "one"));
+            state.begin(second, &text(CellKind::Text, "two"));
+            assert!(!state.is_editing(first), "one transient editor at a time");
+            assert!(state.is_editing(second));
+            assert!(
+                state.is_persistent_editor_open(kept),
+                "a persistent editor is not what `edit(index)` replaces"
+            );
+            assert_eq!(state.editors().len(), 2);
+
+            // A trigger on a cell that already has a persistent editor focuses
+            // it rather than reseeding — Qt's `editor()` hands back the widget
+            // its hash already holds.
+            assert!(state.focus_editor(second));
+            use_text_edit_state("t.p.replace").set_text("edited".to_string());
+            assert!(state.focus_editor(kept));
+            use_text_edit_state("t.p.replace").set_text("in progress".to_string());
+            assert!(state.focus_editor(second));
+            state.begin(kept, &text(CellKind::Text, "kept"));
+            assert_eq!(
+                state.text_at(kept).as_deref(),
+                Some("in progress"),
+                "the user's typing survived the trigger"
+            );
+            assert!(state.is_focused(kept));
+        });
+    }
+
+    #[test]
+    fn r1571_open_persistent_promotes_a_transient_editor_and_is_idempotent() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.promote");
+            let at = CellIndex::new(3, 3);
+            state.begin(at, &text(CellKind::Text, "seed"));
+            use_text_edit_state("t.p.promote").set_text("half typed".to_string());
+            assert_eq!(
+                state.open_persistent(at, &text(CellKind::Text, "seed")),
+                OpenOutcome::Promoted,
+                "Qt reaches the same end by inserting the existing widget into \
+                 its persistence set — an outcome `void` cannot report"
+            );
+            assert!(state.is_persistent_editor_open(at));
+            assert_eq!(
+                state.text_at(at).as_deref(),
+                Some("half typed"),
+                "promotion keeps the in-flight value"
+            );
+            assert_eq!(
+                state.open_persistent(at, &text(CellKind::Text, "different")),
+                OpenOutcome::AlreadyOpen
+            );
+            assert_eq!(
+                state.text_at(at).as_deref(),
+                Some("half typed"),
+                "an already-open editor is not reseeded from the model"
+            );
+            assert_eq!(state.editors().len(), 1);
+        });
+    }
+
+    #[test]
+    fn r1571_commit_writes_an_editor_that_does_not_hold_the_keyboard() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.remote");
+            let a = CellIndex::new(1, 1);
+            let b = CellIndex::new(2, 2);
+            state.open_persistent(a, &CellEdit::from(CellValue::Int(1)));
+            use_text_edit_state("t.p.remote").set_text("41".to_string());
+            state.open_persistent(b, &CellEdit::from(CellValue::Int(2)));
+
+            let mut written = Vec::new();
+            assert_eq!(
+                state.commit_at_with(a, |at, v| {
+                    written.push((at, v.clone()));
+                    true
+                }),
+                CommitOutcome::Committed(a),
+                "the 'save every open editor' verb — a private hash in Qt"
+            );
+            assert_eq!(written, vec![(a, CellValue::Int(41))]);
+            assert!(state.is_focused(b), "committing a is not focusing a");
+
+            // A malformed parked buffer is named, and the model is never asked.
+            assert!(state.focus_editor(a));
+            use_text_edit_state("t.p.remote").set_text("4x".to_string());
+            assert!(state.focus_editor(b));
+            let mut asked = false;
+            assert_eq!(
+                state.commit_at_with(a, |_, _| {
+                    asked = true;
+                    true
+                }),
+                CommitOutcome::Malformed
+            );
+            assert!(!asked);
+            assert_eq!(
+                state.commit_at_with(CellIndex::new(7, 7), |_, _| true),
+                CommitOutcome::NotEditing
+            );
+        });
+    }
+
+    #[test]
+    fn r1571_open_cells_is_windowed_and_skips_a_cell_the_model_stopped_editing() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.window");
+            for row in [0usize, 4, 40, 400] {
+                state.open_persistent(CellIndex::new(row, 0), &text(CellKind::Text, "v"));
+            }
+            assert_eq!(state.editors().len(), 4);
+            let window = state.open_cells(0..8, |i| Some(text(CellKind::Text, &i.row.to_string())));
+            assert_eq!(
+                window
+                    .iter()
+                    .map(|c| c.editor.index.row)
+                    .collect::<Vec<_>>(),
+                vec![0, 4],
+                "an editor outside the painted rows costs the paint nothing — \
+                 Qt repositions every persistent editor on every scroll"
+            );
+            assert!(window.iter().filter(|c| c.focused).count() <= 1);
+            // The model turning a cell read-only under an open editor: the
+            // honest paint is the display path, and the editor STAYS open —
+            // making a paint pass close it would be a §6.3 purity violation.
+            let narrowed =
+                state.open_cells(0..8, |i| (i.row != 0).then(|| text(CellKind::Text, "v")));
+            assert_eq!(narrowed.len(), 1);
+            assert!(state.is_persistent_editor_open(CellIndex::new(0, 0)));
+        });
+    }
+
+    #[test]
+    fn r1571_the_set_rejects_every_state_its_invariants_forbid() {
+        use EditorPersistence::{Persistent, Transient};
+        let editor = |row: usize, persistence: EditorPersistence, buffer: EditBuffer| OpenEditor {
+            index: CellIndex::new(row, 0),
+            seed: CellValue::Text("s".into()),
+            buffer,
+            persistence,
+        };
+        let at = |row: usize| CellIndex::new(row, 0);
+
+        assert_eq!(
+            OpenEditors::from_parts(
+                vec![
+                    editor(1, Persistent, EditBuffer::Parked(String::new())),
+                    editor(1, Persistent, EditBuffer::Parked(String::new())),
+                ],
+                None,
+            ),
+            Err(OpenEditorsError::DuplicateCell(at(1)))
+        );
+        assert_eq!(
+            OpenEditors::from_parts(
+                vec![
+                    editor(1, Transient, EditBuffer::Parked(String::new())),
+                    editor(2, Transient, EditBuffer::Parked(String::new())),
+                ],
+                None,
+            ),
+            Err(OpenEditorsError::TwoTransientEditors)
+        );
+        assert_eq!(
+            OpenEditors::from_parts(vec![], Some(at(3))),
+            Err(OpenEditorsError::FocusOnNothing(at(3)))
+        );
+        assert_eq!(
+            OpenEditors::from_parts(
+                vec![
+                    editor(1, Persistent, EditBuffer::Live),
+                    editor(2, Persistent, EditBuffer::Live),
+                ],
+                Some(at(2)),
+            ),
+            Err(OpenEditorsError::FieldOwnerIsNotTheFocus(at(1))),
+            "an unfocused editor claiming the shared field"
+        );
+        // The converse half of invariant 4, which a counterfactual found
+        // missing: nobody holding the field satisfies the first direction while
+        // the focused editor's cell still paints one.
+        assert_eq!(
+            OpenEditors::from_parts(
+                vec![editor(2, Persistent, EditBuffer::Parked("x".into()))],
+                Some(at(2)),
+            ),
+            Err(OpenEditorsError::FieldOwnerIsNotTheFocus(at(2))),
+            "a focused text-buffered editor that does NOT hold the field"
+        );
+
+        // Sorted by construction, whatever order the caller supplied.
+        let ok = OpenEditors::from_parts(
+            vec![
+                editor(9, Persistent, EditBuffer::Parked("z".into())),
+                editor(2, Persistent, EditBuffer::Live),
+            ],
+            Some(at(2)),
+        )
+        .expect("valid");
+        assert_eq!(
+            ok.iter().map(|e| e.index.row).collect::<Vec<_>>(),
+            vec![2, 9]
+        );
+        assert_eq!(ok.get(at(9)).and_then(OpenEditor::parked_text), Some("z"));
+        assert!(ok.get(at(3)).is_none());
+
+        // R1561's rule: the wire cannot smuggle in a state the constructors
+        // refuse to build.
+        let json = serde_json::to_string(&ok).expect("serialize");
+        assert_eq!(
+            serde_json::from_str::<OpenEditors>(&json).expect("round trip"),
+            ok
+        );
+        let forged = json.replace("\"row\":9", "\"row\":2");
+        assert!(
+            serde_json::from_str::<OpenEditors>(&forged).is_err(),
+            "a forged payload with two editors on one cell is rejected, not \
+             silently kept"
+        );
+    }
+
+    #[test]
+    fn r1571_close_all_drops_every_editor_and_its_buffer() {
+        with_owner(|| {
+            let state = GridEditState::new("t.p.reset");
+            for row in 0..32 {
+                state.open_persistent(CellIndex::new(row, 0), &text(CellKind::Text, "v"));
+            }
+            assert_eq!(state.editors().len(), 32);
+            state.close_all();
+            assert!(state.editors().is_empty());
+            assert_eq!(state.editing(), None);
+            assert_eq!(
+                use_text_edit_state("t.p.reset").text(),
+                "",
+                "the shared field is cleared with the set that owned it"
+            );
+            assert!(!state.close_persistent(CellIndex::new(0, 0)));
         });
     }
 }

@@ -2708,6 +2708,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     handle_scene_scroll_state(runtime_owner, request.params.as_ref()),
                     HandlerKind::Read,
                 ),
+                "scene/grid_editors" => (
+                    handle_scene_grid_editors(runtime_owner, request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
                 "scene/set_scroll_offset" => (
                     handle_scene_set_scroll_offset(runtime_owner, request.params.as_ref()),
                     HandlerKind::Mutate,
@@ -6932,6 +6936,29 @@ fn handle_scene_scroll_state(
     // `&str`, no `Box::leak` bridge needed.
     match scroll_state(runtime_owner, tag) {
         Ok(outcome) => scroll_state_outcome_to_json(&outcome),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
+    }
+}
+
+/// R1571 §5.27 — `scene/grid_editors` typed handler, read-only. Returns the
+/// whole open-editor set of the [`GridEditState`](pinion_core::widgets::grid_edit::GridEditState)
+/// bound at `params.tag` — see [`crate::grid_editors`] for the wire shape and
+/// for why Qt's `QAbstractItemView` cannot answer this.
+///
+/// `params.tag` is required for the reason `scene/scroll_state`'s is: every
+/// grid owns its own state under a distinct key, so there is no default.
+fn handle_scene_grid_editors(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let params_value = require_params(params)?;
+    let tag = read_required_tag(params_value)?;
+    match crate::grid_editors::grid_editors(runtime_owner, tag) {
+        Ok(outcome) => serde_json::to_value(&outcome).map_err(|e| {
+            RpcError::internal_error(format!(
+                "scene/grid_editors: failed to serialize outcome: {e}",
+            ))
+        }),
         Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }

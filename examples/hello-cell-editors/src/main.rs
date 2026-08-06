@@ -287,14 +287,15 @@ const COUNT_COL: usize = 2;
 fn status_bar(theme: &Theme, selected: Option<usize>) -> Scene {
     let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
     let sel = selected.map_or_else(|| "none".to_string(), |i| i.to_string());
-    let editing = edit.open().map_or_else(
+    let editing = edit.focused().map_or_else(
         || "none".to_string(),
         |e| {
             format!(
-                "{}_{} {} \"{}\"",
+                "{}_{} {} {} \"{}\"",
                 e.index.row,
                 e.index.col,
                 e.form().name(),
+                e.persistence().wire_token(),
                 in_flight_text(&edit)
             )
         },
@@ -302,7 +303,8 @@ fn status_bar(theme: &Theme, selected: Option<usize>) -> Scene {
     let text = Scene::Text(
         TextNode::styled(
             format!(
-                "selected {sel} \u{00B7} editing {editing} \u{00B7} commit {}",
+                "selected {sel} \u{00B7} editing {editing} \u{00B7} open {} \u{00B7} commit {}",
+                edit.editors().len(),
                 use_outcome().get()
             ),
             Rect::default(),
@@ -351,23 +353,22 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let style = table_style();
     let overlay = use_overlay().get();
     let edit_state = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
-    let open = edit_state.open();
-    let open_edit = open.as_ref().map(|e| CellEdit::from(e.seed()));
-    let editing = open
-        .as_ref()
-        .zip(open_edit.as_ref())
-        .map(|(e, edit)| GridEditing {
-            open: e.index,
-            edit,
-            field_tag: EDIT_FIELD_TAG,
-            field,
-            // The latch-buffered forms' in-flight value. A toggle that has been
-            // flipped but not committed must paint the flip, not the seed.
-            pending: e.pending(),
-            // No column delegate: the datum's kind picks the editor, which is
-            // the factory half this binding exists to exercise.
-            editor: None,
-        });
+    // R1571 — every open editor, paired with the model's edit role for its
+    // cell, re-asked from this frame's overlay. `0..N` is the whole model
+    // rather than the painted window because the cost is the SET's size, not
+    // the model's: `open_cells` walks the open editors and filters them, so a
+    // grid with none allocates an empty vector and a grid with three walks
+    // three — where Qt's `updateEditorGeometries()` walks every persistent
+    // editor on every scroll whether or not its row is on screen.
+    let open_cells = edit_state.open_cells(0..N, |i| edit_role(i, &overlay));
+    let editing = (!open_cells.is_empty()).then(|| GridEditing {
+        open: &open_cells,
+        field_tag: EDIT_FIELD_TAG,
+        field,
+        // No column delegate: the datum's kind picks the editor, which is
+        // the factory half this binding exists to exercise.
+        editor: None,
+    });
 
     let grid = view_virtual_table(
         TABLE_TAG,
@@ -463,6 +464,68 @@ fn begin_at_current(trigger: EditTrigger, forward: Option<(&mut Scene, &str, Mod
     true
 }
 
+/// R1571 — toggle a **persistent** editor on `at`: Qt's
+/// `openPersistentEditor` / `closePersistentEditor` pair, reached from a real
+/// gesture.
+///
+/// Opening is the one editor verb the framework cannot offer over the wire on
+/// its own, and the reason is R1544's: it needs a [`CellEdit`], which only the
+/// **model** produces and which it produces `None` for on a cell it will not
+/// edit. Closing and focusing need no model, so `scene/grid_editors` publishes
+/// the set and this binding owns the opening — the same division Qt has, where
+/// `openPersistentEditor` is a method on the view that reaches the delegate.
+///
+/// The outcome is recorded so a driver can tell an open from a promotion from a
+/// no-op, which `void openPersistentEditor(const QModelIndex &)` cannot.
+/// The overlay and the outcome readout are **passed in**, not resolved here:
+/// this runs on the `External`'s send arc as well as from `apply_key`, and that
+/// arc has no ambient [`Owner`] — the hazard [`GridEditState::new`]'s own doc
+/// records, and which cost this round one panicking demo run.
+fn toggle_persistent(
+    edit: &Rc<GridEditState>,
+    overlay: &Rc<Signal<BTreeMap<usize, CellValue>>>,
+    outcome: &Rc<Signal<String>>,
+    at: CellIndex,
+) -> bool {
+    if edit.is_persistent_editor_open(at) {
+        let closed = edit.close_persistent(at);
+        outcome.set("closed".to_string());
+        pinion_core::focus_request::request(TABLE_TAG);
+        return closed;
+    }
+    let Some(role) = edit_role(at, &overlay.get()) else {
+        // Qt opens a live editor here, the user types into it, and the write is
+        // dropped in silence: `createEditor` never consults
+        // `flags() & Qt::ItemIsEditable`.
+        outcome.set("not_editable".to_string());
+        return false;
+    };
+    let open_outcome = edit.open_persistent(at, &role);
+    outcome.set(open_outcome.wire_token().to_string());
+    if role.form().buffer_is_text() {
+        pinion_core::focus_request::request(EDIT_FIELD_TAG);
+    } else {
+        pinion_core::focus_request::request(TABLE_TAG);
+    }
+    true
+}
+
+/// R1571 — commit **every** open editor, in cell order, and report how many
+/// landed: the "save the sheet" verb a grid full of persistent editors needs.
+///
+/// In Qt this is a walk over `QAbstractItemViewPrivate::indexEditorHash`, which
+/// is private — so an application that opens N persistent editors has no way to
+/// ask its own view what to commit.
+fn commit_every_open_editor(edit: &Rc<GridEditState>) -> usize {
+    let cells: Vec<CellIndex> = edit.editors().iter().map(|e| e.index).collect();
+    let landed = cells
+        .iter()
+        .filter(|at| edit.commit_at_with(**at, commit_cell).committed().is_some())
+        .count();
+    use_outcome().set(format!("committed {landed}/{}", cells.len()));
+    landed
+}
+
 /// Record a commit's outcome and, when it landed, hand focus back to the grid.
 fn finish_commit(edit: &Rc<GridEditState>) -> CommitOutcome {
     let outcome = edit.commit_with(commit_cell);
@@ -532,7 +595,7 @@ fn editing_key(
                 edit_role(i, &overlay)
             });
             if advanced {
-                if let Some(open) = edit.open() {
+                if let Some(open) = edit.focused() {
                     use_current().set(Some(open.index));
                     if open.form().buffer_is_text() {
                         pinion_core::focus_request::request(EDIT_FIELD_TAG);
@@ -581,8 +644,9 @@ impl WidgetCore for CellEditorsView {
         edit.set_triggers(EditTriggers::DEFAULT.with(EditTrigger::AnyKeyPressed));
         let current = use_current();
         let overlay = use_overlay();
+        let outcome = use_outcome();
         Box::new(
-            VirtualSelectExternal::new(N).on_grid_gesture(move |key, event, _modifiers| {
+            VirtualSelectExternal::new(N).on_grid_gesture(move |key, event, modifiers| {
                 // R1555 — one observer, every sub-key. The step affordances are
                 // the reason the hook takes the decoded key: `EditorStep`
                 // carries a direction no `CellIndex` could.
@@ -601,6 +665,32 @@ impl WidgetCore for CellEditorsView {
                     | GridSendKey::Corner => return,
                 };
                 {
+                    // R1571 — the persistent-editor gesture. Qt drives
+                    // `openPersistentEditor` from application code with no
+                    // gesture of its own; a DCC grid needs one, and a modified
+                    // activation is the ordinary place for "and keep it open".
+                    if is_activation_event(event) && modifiers.command_key() {
+                        current.set(Some(index));
+                        let _toggled = toggle_persistent(&edit, &overlay, &outcome, index);
+                        return;
+                    }
+                    // R1571 — a plain click on a cell that already has an
+                    // editor gives that editor the keyboard rather than
+                    // starting a new edit. Qt gets this for free, because a
+                    // persistent editor is a focusable `QWidget` sitting in the
+                    // cell's rect and the click never reaches the view at all.
+                    // Here the editors are state, so the view routes it.
+                    if is_activation_event(event) && edit.is_editing(index) {
+                        current.set(Some(index));
+                        if edit.focus_editor(index)
+                            && edit
+                                .editor_at(index)
+                                .is_some_and(|e| e.form().buffer_is_text())
+                        {
+                            pinion_core::focus_request::request(EDIT_FIELD_TAG);
+                        }
+                        return;
+                    }
                     let was_current = current.get() == Some(index);
                     let trigger = if event == "DoubleClick" {
                         EditTrigger::DoubleClicked
@@ -660,7 +750,24 @@ impl WidgetCore for CellEditorsView {
         modifiers: Modifiers,
     ) -> bool {
         let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
-        if let Some(open) = edit.open() {
+        // R1571 — the persistent-editor chords, ahead of every other gate
+        // because they must reach the grid whichever editor holds the field
+        // (Qt's `openPersistentEditor` is likewise callable at any time).
+        if modifiers.command_key() {
+            match key {
+                "e" | "E" => {
+                    return toggle_persistent(
+                        &edit,
+                        &use_overlay(),
+                        &use_outcome(),
+                        current_cell(),
+                    );
+                }
+                "s" | "S" => return commit_every_open_editor(&edit) > 0,
+                _ => {}
+            }
+        }
+        if let Some(open) = edit.focused() {
             // Which surface owns the keyboard follows from the form's buffer:
             // the field owns it when the field HOLDS the in-flight value.
             if open.form().buffer_is_text() {
@@ -776,14 +883,19 @@ impl WidgetA11y for CellEditorsView {
         mark_grid_editability(&mut nodes, TABLE_TAG, &window, 0..NCOLS, |c| {
             edit_role(c, &overlay).is_some()
         });
-        // R1555 — the open editor, announced with the role its FORM has.
-        if let Some(open) = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG).open() {
+        // R1555 — an open editor is announced with the role its FORM has.
+        // R1571 — every open editor, not just the focused one: with N open, an
+        // assistive technology that heard about one of them would be describing
+        // a grid that is not on screen. `attach_cell_editor` is orphan-free, so
+        // an editor whose row is windowed out emits nothing and needs no filter
+        // here.
+        for editor in use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG).editors().iter() {
             attach_cell_editor(
                 &mut nodes,
                 TABLE_TAG,
-                open.index,
-                open.form(),
-                HEADERS[open.index.col.min(NCOLS - 1)],
+                editor.index,
+                editor.form(),
+                HEADERS[editor.index.col.min(NCOLS - 1)],
             );
         }
         nodes

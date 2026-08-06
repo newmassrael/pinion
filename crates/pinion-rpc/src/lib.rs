@@ -28,6 +28,7 @@ pub mod export_pdf;
 pub mod focus;
 pub mod font;
 pub mod frame_timings;
+pub mod grid_editors;
 pub mod intents;
 pub mod intervene;
 pub mod invoke;

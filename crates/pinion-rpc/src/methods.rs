@@ -120,6 +120,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/dry_run", MethodOcc::Read),
     ("scene/export_pdf", MethodOcc::Read),
     ("scene/frame_timings", MethodOcc::Read),
+    ("scene/grid_editors", MethodOcc::Read),
     ("scene/hover", MethodOcc::Mutate),
     ("scene/hover_file", MethodOcc::Mutate),
     ("scene/hover_file_cancel", MethodOcc::Mutate),

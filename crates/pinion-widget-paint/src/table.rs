@@ -44,6 +44,7 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::cell_selection::GridSelection;
 use pinion_core::widgets::column_widths::{columns_width_before, visible_columns};
+use pinion_core::widgets::grid_edit::OpenCell;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::text_field::TextFieldState;
@@ -938,16 +939,18 @@ struct RowPane<'a> {
     /// because it exists here *for* them: the built-in painter takes its
     /// colour from the row's already-resolved `fg`.
     theme: &'a Theme,
-    /// R1544 — the open editor, **already narrowed to this row and already
-    /// resolved**: `Some` only when [`GridEditing::open`]'s row is the row
-    /// this pane is painting, and its painter is the one the column's editor
+    /// R1544 — the open editors, **already narrowed to this row and already
+    /// resolved**: the members of [`GridEditing::open`] whose row is the one
+    /// this pane is painting, each with the painter its column's editor
     /// delegate answered with.
     ///
     /// Narrowed and resolved by the caller rather than re-derived per cell for
     /// the reason `GridRender::painters` resolves the display delegates once
-    /// per pane: neither answer can vary within the row, so asking per cell
-    /// repeats one answer once per column.
-    editing: Option<CellEditorSlot<'a>>,
+    /// per pane. R1571 made it a slice rather than an `Option`: with N editors
+    /// open a row can host several — a property row with two editable columns
+    /// is the ordinary case — and an **empty** slice is the same statement the
+    /// `None` was, at the same cost.
+    editing: &'a [CellEditorSlot<'a>],
 }
 
 /// The header band: one clickable `columnheader` cell per column ([
@@ -1434,13 +1437,15 @@ fn data_row(
             // the editor widget in its rect. The column's editor delegate is
             // consulted only here, so a grid that is not editing never asks
             // for one (Qt calls `createEditor` at open time, not per paint).
-            let painted = if let Some(slot) = pane.editing.filter(|e| e.col == col) {
+            let painted = if let Some(slot) = pane.editing.iter().find(|e| e.col == col) {
                 let edit_render = CellEditRender {
                     cell: &render,
-                    edit: slot.edit,
+                    edit: &slot.cell.edit,
                     field_tag: slot.field_tag,
                     field: slot.field,
-                    pending: slot.pending,
+                    pending: slot.cell.editor.pending(),
+                    focused: slot.cell.focused,
+                    parked: slot.cell.editor.parked_text(),
                 };
                 slot.paint
                     .map_or_else(|| cell_editor(&edit_render), |paint| paint(&edit_render))
@@ -1659,7 +1664,7 @@ pub fn view_table(
                 // (`VirtualTableData` is the virtualized grid's carrier), for
                 // the same reason it exposes no delegate: it is the R707
                 // fixed-row table, and editing is a Model/View axis.
-                editing: None,
+                editing: &[],
             },
             style,
         ));
@@ -1991,6 +1996,21 @@ pub struct CellEditRender<'a> {
     /// is the **seed** — what the editor opened with — and a toggle that has
     /// been flipped but not committed must paint the flip, not the seed.
     pub pending: Option<&'a CellValue>,
+    /// R1571 — whether this editor holds the keyboard, and so the shared inline
+    /// field named by [`Self::field_tag`].
+    ///
+    /// The framework has one keyboard focus where Qt has one focusable
+    /// `QWidget` per editor, so with N editors open only one of them can be
+    /// typed into. A painter must branch on this: the focused editor paints the
+    /// live field (caret, selection, IME preedit), and the rest paint
+    /// [`Self::parked`].
+    pub focused: bool,
+    /// R1571 — the in-flight text of a **text-buffered** editor that does not
+    /// hold the field ([`OpenEditor::parked_text`](pinion_core::widgets::grid_edit::OpenEditor::parked_text)).
+    ///
+    /// `None` for the focused editor (its text is in the field) and for the
+    /// latch-buffered forms (which have no text at all).
+    pub parked: Option<&'a str>,
 }
 
 impl CellEditRender<'_> {
@@ -2008,28 +2028,34 @@ impl CellEditRender<'_> {
     }
 }
 
-/// R1544 §5.27 — the open editor, and everything needed to paint it.
+/// R1544 §5.27 — the open editors, and everything needed to paint them.
 ///
-/// One bundle on [`VirtualTableData`] rather than four parallel fields,
-/// because they are only meaningful together: `None` **is** "no editor is
-/// open", which also means the per-column editor delegate is consulted only
+/// One bundle on [`VirtualTableData`] rather than parallel fields, because they
+/// are only meaningful together: `None` **is** "this grid hosts no editors at
+/// all", which also means the per-column editor delegate is consulted only
 /// while editing — matching Qt, where `createEditor` is called when an edit
 /// starts and never during an ordinary paint.
+///
+/// R1571 — [`Self::open`] became a **slice**, because Qt's
+/// `openPersistentEditor` keeps N editors open at once. The binding narrows it
+/// to the painted rows through
+/// [`GridEditState::open_cells`](pinion_core::widgets::grid_edit::GridEditState::open_cells),
+/// so an editor outside the window costs this pass nothing — where Qt's
+/// `updateEditorGeometries()` repositions every persistent editor on every
+/// scroll whether or not its row is on screen.
 #[derive(Clone, Copy)]
 pub struct GridEditing<'a> {
-    /// The cell whose editor is open, from
-    /// [`GridEditState::editing`](pinion_core::widgets::grid_edit::GridEditState::editing).
-    pub open: CellIndex,
-    /// The model's [`CellEdit`] for that cell — its `Qt::EditRole` answer.
-    pub edit: &'a CellEdit,
+    /// R1571 — every open editor whose cell may be painted, with the model's
+    /// edit role and its focus already resolved
+    /// ([`GridEditState::open_cells`](pinion_core::widgets::grid_edit::GridEditState::open_cells)).
+    ///
+    /// An **empty** slice is the same statement as `editing: None` and costs
+    /// the same: nothing in this grid is being edited right now.
+    pub open: &'a [OpenCell],
     /// The inline field's `use_text_edit_state` key.
     pub field_tag: &'static str,
     /// The inline field widget's statechart snapshot and caret byte.
     pub field: (TextFieldState, u32),
-    /// R1555 — the in-flight value of a latch-buffered form, from
-    /// [`OpenEditor::pending`](pinion_core::widgets::grid_edit::OpenEditor::pending).
-    /// `None` for the text-buffered forms — see [`CellEditRender::pending`].
-    pub pending: Option<&'a CellValue>,
     /// Per-**column** editor delegates (Qt
     /// `QAbstractItemView::setItemDelegateForColumn`, editing half):
     /// `editor(col)` returns the [`CellEditorPainter`] for that column, or
@@ -2047,10 +2073,8 @@ impl core::fmt::Debug for GridEditing<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GridEditing")
             .field("open", &self.open)
-            .field("edit", self.edit)
             .field("field_tag", &self.field_tag)
             .field("field", &self.field)
-            .field("pending", &self.pending)
             .field("editor", &self.editor.map(|_| "<fn>"))
             .finish()
     }
@@ -2085,14 +2109,7 @@ pub fn text_cell_editor(c: &CellEditRender<'_>) -> Scene {
         field_h: cell.height.saturating_sub(EDITOR_INSET_PX * 2),
         ..crate::text_field::TextFieldStyle::m3_filled()
     };
-    let field = crate::text_field::view_field(
-        c.field_tag,
-        c.field.0,
-        c.field.1,
-        cell.theme,
-        &field_style,
-        "",
-    );
+    let field = editor_field_node(c, &field_style);
     Scene::Container(
         ContainerNode::new(vec![field])
             .with_tag(cell.tag.to_string())
@@ -2201,6 +2218,68 @@ fn editor_shell(cell: &CellRender<'_>, children: Vec<Scene>) -> Scene {
     )
 }
 
+/// R1571 §5.27 — the text half of an editor: the **shared inline field** when
+/// this editor holds the keyboard, and a static box holding its parked text
+/// when it does not.
+///
+/// This framework has one keyboard focus where Qt has one focusable `QWidget`
+/// per editor, so with N editors open exactly one of them owns the field's
+/// buffer, its caret, its selection and its IME preedit. Painting
+/// [`view_field`](crate::text_field::view_field) for an unfocused editor would
+/// draw the *focused* editor's text under this cell's tag — one buffer read
+/// through two addresses — which is the defect
+/// [`EditBuffer::Parked`](pinion_core::widgets::grid_edit::EditBuffer::Parked)
+/// exists to make unrepresentable.
+///
+/// The picture matches Qt's: an unfocused `QLineEdit` shows its own text with
+/// no caret. What differs is the cost, and that is the point — an editor here
+/// is state, so an unfocused one is a text node rather than a live widget.
+///
+/// The three text-buffered forms share it ([`text_cell_editor`],
+/// [`stepper_cell_editor`], [`swatch_cell_editor`]) so none of them can be the
+/// one that forgets to branch.
+fn editor_field_node(c: &CellEditRender<'_>, style: &crate::text_field::TextFieldStyle) -> Scene {
+    let cell = c.cell;
+    // The branch is on [`Self::parked`] — the BUFFER — rather than on
+    // [`Self::focused`], and the difference is not cosmetic. `parked.is_none()`
+    // *is* "this editor owns the shared buffer"; `focused` is "this editor has
+    // the keyboard". `OpenEditors`' fourth invariant makes them equivalent, and
+    // a counterfactual at R1571 showed what branching on the second one costs
+    // when they come apart: the field renders under this cell's tag holding
+    // text that belongs to no editor at all.
+    let Some(parked) = c.parked else {
+        return crate::text_field::view_field(
+            c.field_tag,
+            c.field.0,
+            c.field.1,
+            cell.theme,
+            style,
+            "",
+        );
+    };
+    let label = Scene::Text(TextNode::styled(
+        parked,
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(style.font_size_px)
+            .with_fg(cell.theme.resolve(ColorRole::OnSurface)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![label])
+            .with_style(
+                BoxStyle::filled(cell.theme.resolve(ColorRole::SurfaceContainerHighest))
+                    .with_corner_radius(style.field_corner),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(style.field_w, style.field_h))
+                    .with_padding(Rect::new(style.field_pad, 0, style.field_pad, 0)),
+            ),
+    )
+}
+
 /// The width left for an editor's content inside [`editor_shell`], after the
 /// cell's horizontal padding and `reserved` px of affordances.
 fn editor_content_w(cell: &CellRender<'_>, reserved: u32) -> u32 {
@@ -2259,14 +2338,7 @@ pub fn swatch_cell_editor(c: &CellEditRender<'_>) -> Scene {
         field_h: cell.height.saturating_sub(EDITOR_INSET_PX * 2),
         ..crate::text_field::TextFieldStyle::m3_filled()
     };
-    let field = crate::text_field::view_field(
-        c.field_tag,
-        c.field.0,
-        c.field.1,
-        cell.theme,
-        &field_style,
-        "",
-    );
+    let field = editor_field_node(c, &field_style);
     editor_shell(
         cell,
         vec![chip, crate::spacer::spacer(cell.style.cell_pad_x, 1), field],
@@ -2290,14 +2362,7 @@ pub fn stepper_cell_editor(c: &CellEditRender<'_>) -> Scene {
         field_h: cell.height.saturating_sub(EDITOR_INSET_PX * 2),
         ..crate::text_field::TextFieldStyle::m3_filled()
     };
-    let field = crate::text_field::view_field(
-        c.field_tag,
-        c.field.0,
-        c.field.1,
-        cell.theme,
-        &field_style,
-        "",
-    );
+    let field = editor_field_node(c, &field_style);
     let arrows = Scene::Container(
         ContainerNode::new(vec![
             step_arrow(c, true, cell.height),
@@ -2458,14 +2523,14 @@ pub fn selector_cell_editor(c: &CellEditRender<'_>) -> Scene {
 struct CellEditorSlot<'a> {
     /// The absolute column whose cell is being edited.
     col: usize,
-    /// The model's `Qt::EditRole` answer for that cell.
-    edit: &'a CellEdit,
+    /// R1571 — the open editor and the model's `Qt::EditRole` answer for its
+    /// cell, as [`GridEditState::open_cells`](pinion_core::widgets::grid_edit::GridEditState::open_cells)
+    /// resolved them.
+    cell: &'a OpenCell,
     /// The inline field's `use_text_edit_state` key.
     field_tag: &'static str,
     /// The inline field widget's statechart snapshot and caret byte.
     field: (TextFieldState, u32),
-    /// R1555 — the in-flight value of a latch-buffered form.
-    pending: Option<&'a CellValue>,
     /// The column's editor painter, or `None` for the [`cell_editor`] factory.
     paint: Option<CellEditorPainter<'a>>,
 }
@@ -3584,20 +3649,26 @@ impl<'d> GridRender<'_, 'd> {
     /// [`Self::painters`] applies to the column axis. A grid that is not
     /// editing answers `None` here and every cell takes the display path with
     /// one comparison against a `None`, not a per-cell index equality.
-    fn editing_in_row(&self, row: usize) -> Option<CellEditorSlot<'d>> {
-        let editing = self.data.editing.filter(|e| e.open.row == row)?;
-        Some(CellEditorSlot {
-            col: editing.open.col,
-            edit: editing.edit,
-            field_tag: editing.field_tag,
-            field: editing.field,
-            pending: editing.pending,
-            // Qt calls `createEditor` when the edit opens, not on every
-            // paint; resolving here means the column's editor delegate is
-            // asked once per painted row of the editing row — which is once,
-            // because a row is painted once.
-            paint: editing.editor.and_then(|pick| pick(editing.open.col)),
-        })
+    fn editing_in_row(&self, row: usize) -> Vec<CellEditorSlot<'d>> {
+        let Some(editing) = self.data.editing else {
+            return Vec::new();
+        };
+        editing
+            .open
+            .iter()
+            .filter(|cell| cell.editor.index.row == row)
+            .map(|cell| CellEditorSlot {
+                col: cell.editor.index.col,
+                cell,
+                field_tag: editing.field_tag,
+                field: editing.field,
+                // Qt calls `createEditor` when the edit opens, not on every
+                // paint; resolving here means the column's editor delegate is
+                // asked once per painted row of an editing row — which is
+                // once, because a row is painted once.
+                paint: editing.editor.and_then(|pick| pick(cell.editor.index.col)),
+            })
+            .collect()
     }
 
     fn render_unsplit(
@@ -3651,6 +3722,7 @@ impl<'d> GridRender<'_, 'd> {
                 let selected_cells = cell_ink(selection, source, span.clone());
                 let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
                 let row_tag = GridTag::data_row(self.tag, source);
+                let editing = self.editing_in_row(source);
                 data_row(
                     self.tag,
                     source,
@@ -3666,7 +3738,7 @@ impl<'d> GridRender<'_, 'd> {
                         decorations: &decos,
                         selected_cells: &selected_cells,
                         theme: self.theme,
-                        editing: self.editing_in_row(source),
+                        editing: &editing,
                     },
                     self.style,
                 )
@@ -3786,6 +3858,7 @@ impl<'d> GridRender<'_, 'd> {
             // never emit a duplicate strip tag (per-cell `_{col}` tags stay
             // unique by absolute column).
             let frow_tag = GridTag::frozen_data_row(self.tag, source);
+            let editing = self.editing_in_row(source);
             data_row(
                 self.tag,
                 source,
@@ -3802,7 +3875,7 @@ impl<'d> GridRender<'_, 'd> {
                     decorations: &decos,
                     selected_cells: &selected_cells,
                     theme: self.theme,
-                    editing: self.editing_in_row(source),
+                    editing: &editing,
                 },
                 self.style,
             )
@@ -3816,6 +3889,7 @@ impl<'d> GridRender<'_, 'd> {
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
             let selected_cells = cell_ink(selection, source, abs.clone());
             let row_tag = GridTag::data_row(self.tag, source);
+            let editing = self.editing_in_row(source);
             data_row(
                 self.tag,
                 source,
@@ -3831,7 +3905,7 @@ impl<'d> GridRender<'_, 'd> {
                     decorations: &decos,
                     selected_cells: &selected_cells,
                     theme: self.theme,
-                    editing: self.editing_in_row(source),
+                    editing: &editing,
                 },
                 self.style,
             )

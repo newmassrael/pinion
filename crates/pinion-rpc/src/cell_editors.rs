@@ -57,10 +57,20 @@
 //!
 //! Which cell is being edited *right now*. That is a property of a binding's
 //! [`GridEditState`](pinion_core::widgets::grid_edit::GridEditState), not of the
-//! factory, and it already reaches the wire two ways — the painted editor is in
-//! `scene/snapshot` and the latch is in the binding's `ExternalIntrospect`
-//! slots. Publishing it a third time from here would be one fact with three
-//! spellings that can disagree.
+//! factory.
+//!
+//! **R1571 correction.** This paragraph used to end "and it already reaches the
+//! wire two ways — the painted editor is in `scene/snapshot` and the latch is in
+//! the binding's `ExternalIntrospect` slots; publishing it a third time from
+//! here would be one fact with three spellings that can disagree". That was true
+//! of *one transient* editor and does not survive N of them. With
+//! `openPersistentEditor`, an editor on a row outside the painted window is in
+//! no snapshot at all — it paints nothing — and *which* open editor holds the
+//! keyboard is a property of the set rather than of any painted node. Neither is
+//! derivable from the paint, so [`crate::grid_editors`] is a **first** spelling,
+//! not a third. It is still not published from *here*: this method answers about
+//! the factory, which is a property of the framework, and that one answers about
+//! one grid's state, which needs a tag.
 
 use pinion_a11y::editor_role;
 use pinion_core::CellKind;

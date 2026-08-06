@@ -319,9 +319,72 @@ AXES = [
         #     R1549 recorded for scrollbar arrows.
         #   * a selector's open list and a swatch's HSV picker are the
         #     binding's overlays; the factory ships the closed states.
-        "judged_at": 1555,
-        "completion": 95,
-        "evidence_snapshot": {"example-name": 27, "round-axis": 3},
+        #
+        # ---- R1571 re-judgment, 95 -> 97, demanded by the round count going
+        # 3 -> 4. It closes `openPersistentEditor` — the item R1544's list and
+        # R1555's list BOTH named, and the last of the three R1544 left.
+        #
+        # It also CORRECTS R1555's own prescription above, and the correction
+        # is the round's finding: widening `use_text_edit_state`'s key would
+        # have been wrong. `Owner::cache` has `cache`, `cache_contains` and
+        # `cache_get_by_str` and **no removal of any kind**, so a per-cell
+        # buffer would be retained for every cell ever edited, for the life of
+        # the window — unbounded growth on the models the Model/View axis is
+        # named for, the class R1550 built `scene/memory` to see. An editor's
+        # buffer has to die with the editor, so the buffers live in the editor
+        # SET (`OpenEditors`), and what that set needs follows from a fact
+        # about this framework rather than about Qt: there is exactly ONE
+        # keyboard focus, where Qt has one focusable `QWidget` per editor. Only
+        # the focused editor holds the shared inline field; every other open
+        # editor's text is PARKED in the latch.
+        #
+        # Persistence is a property OF THE EDITOR rather than a second
+        # collection, which is what makes "a cell has at most one editor" true
+        # by construction — Qt keeps an index->widget hash plus a separate
+        # `QSet<QWidget *>` and reconciles them by convention.
+        #
+        # Five things past Qt 6.11, all read over the wire by
+        # `r1571_editor_persistence_is_a_property.py`: the set is ENUMERABLE
+        # (`scene/grid_editors`; Qt's only public question is
+        # `isPersistentEditorOpen(index)`, one index at a time, so you must
+        # already know the answer to ask); FOCUS IS DATA (in Qt,
+        # `QApplication::focusWidget()` reverse-mapped through a private hash);
+        # <kbd>Escape</kbd> REVERTS a persistent editor and keeps it open
+        # (`QAbstractItemView::closeEditor` returns early for one, so Escape
+        # there does nothing at all and the original is unrecoverable); each
+        # editor's in-flight value and DIRTY flag are readable WITHOUT focusing
+        # it (Qt keeps no record of what `setEditorData` seeded); and the COST
+        # IS WINDOWED (an editor outside the painted rows contributes no scene
+        # node and keeps its value, where `updateEditorGeometries()` walks
+        # every persistent editor on every scroll).
+        #
+        # A counterfactual found a real defect and the fix is the design: the
+        # set's fourth invariant was stated one-directionally ("at most one
+        # live buffer and it belongs to the focused editor"), which "nobody
+        # holds the field" satisfies while the focused editor's cell still
+        # paints one. Stated both ways, and the paint now branches on the
+        # BUFFER rather than on a second `focused` flag.
+        #
+        # +2 and not more, and what remains is audited at R1571:
+        #   * ADOPTION is unchanged — six bindings still hand-roll a cell edit
+        #     latch and none of them uses the grid's cell path; per-binding
+        #     domain work, not seam work.
+        #   * the two absences R1555 listed still stand: no date/time
+        #     `CellKind` (`QDate` / `QTime` / `QDateTime`, `QMetaType::UInt`),
+        #     and the step arrows do not auto-repeat.
+        #   * `scene/grid_editors` is READ-ONLY. Closing and focusing need no
+        #     model and could be framework verbs; opening cannot be one,
+        #     because it needs a `CellEdit` only the model produces (R1544) —
+        #     an honest split, and the write half is the named next slice.
+        #   * `setIndexWidget` / `indexWidget` — Qt's arbitrary widget in a
+        #     cell, distinct from an editor — has no analogue here.
+        #   * an open editor is not its own keyboard focus stop, so
+        #     <kbd>Tab</kbd> between N editors is a binding's vocabulary
+        #     rather than the focus ring's. That is the price of the one-focus
+        #     design above, stated rather than hidden.
+        "judged_at": 1571,
+        "completion": 97,
+        "evidence_snapshot": {"example-name": 27, "round-axis": 4},
     },
     {
         "key": "modelview",

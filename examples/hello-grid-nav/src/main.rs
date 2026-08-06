@@ -354,7 +354,7 @@ fn status_bar(
     // public equivalent: `isPersistentEditorOpen` covers only the persistent
     // kind, and a transient editor's buffer lives inside an opaque QWidget.
     let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
-    let editing = edit.open().map_or_else(
+    let editing = edit.focused().map_or_else(
         || "none".to_string(),
         // R1555 — the FORM is in the readout too, so `scene/snapshot` alone
         // answers "which editor did this cell's datum open".
@@ -410,31 +410,22 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // from the same snapshot of the model.
     let overlay = use_overlay().get();
     let edit_state = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
-    let open = edit_state.open();
-    // The latch holds the seed as a datum; the paint contract wants a
-    // `CellEdit`. Rebuilt here rather than stored twice, and bound to a local so
-    // the borrow the painter takes outlives the call.
-    let open_edit = open.as_ref().map(|e| CellEdit::from(e.seed()));
+    // R1571 — the open editors, each paired with the model's edit role for its
+    // cell, re-asked from this frame's overlay. This binding opens only the
+    // *transient* kind, so the answer holds at most one member;
+    // `hello-cell-editors` is the consumer of the persistent half.
+    let open_cells = edit_state.open_cells(0..N, |i| edit_role(i, &overlay));
     // Qt `setItemDelegateForColumn`, editing half: the bounded column opens an
     // editor that states its bound; every other column takes the built-in
     // field.
     let pick_editor =
         |col: usize| (col == SCORE_COL).then_some(&score_editor as CellEditorPainter<'_>);
-    let editing = open
-        .as_ref()
-        .zip(open_edit.as_ref())
-        .map(|(e, edit)| GridEditing {
-            open: e.index,
-            edit,
-            field_tag: EDIT_FIELD_TAG,
-            field,
-            // R1555 — `None` for every column here: `Text` and `Int` are both
-            // text-buffered forms, so their in-flight value is the inline
-            // field's own buffer. `hello-cell-editors` is the consumer that
-            // exercises the latch-buffered half.
-            pending: e.pending(),
-            editor: Some(&pick_editor),
-        });
+    let editing = (!open_cells.is_empty()).then(|| GridEditing {
+        open: &open_cells,
+        field_tag: EDIT_FIELD_TAG,
+        field,
+        editor: Some(&pick_editor),
+    });
 
     let grid = view_virtual_table(
         TABLE_TAG,
@@ -583,7 +574,7 @@ fn editing_key(
             edit.advance(from, hint, GridExtent::new(N, NCOLS), |i| {
                 edit_role(i, &overlay)
             });
-            match edit.open() {
+            match edit.focused() {
                 Some(open) => use_current().set(Some(open.index)),
                 // Nothing editable to advance to: the edit is done, so focus
                 // goes back to the grid rather than to a closed field.
@@ -725,7 +716,7 @@ impl WidgetCore for GridNavView {
         // R1544 — an open editor owns the keyboard, and it owns focus too
         // (the editor is a real `TextField` sibling), so this dispatches on
         // the same focused tag every other multi-stop binding does.
-        if let Some(open) = edit.open() {
+        if let Some(open) = edit.focused() {
             if focused == Some(EDIT_FIELD_TAG) {
                 return editing_key(scene, &edit, open.kind(), key, modifiers);
             }
@@ -831,7 +822,7 @@ impl WidgetA11y for GridNavView {
         // R1555 §5.40 — the open editor is announced with the role its form
         // has, from the same latch the paint dispatches on. Qt reaches a role
         // by accident of which widget its factory constructed.
-        if let Some(open) = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG).open() {
+        if let Some(open) = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG).focused() {
             pinion_a11y::attach_cell_editor(
                 &mut nodes,
                 TABLE_TAG,
@@ -1064,7 +1055,7 @@ mod tests {
             let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
             use_current().set(Some(CellIndex::new(0, INDEX_COL)));
             assert!(!begin_at_current(EditTrigger::EditKeyPressed, None));
-            assert_eq!(edit.open(), None);
+            assert_eq!(edit.focused(), None);
         });
     }
 
@@ -1092,7 +1083,7 @@ mod tests {
             // Correcting it in place commits.
             use_text_edit_state(EDIT_FIELD_TAG).set_text("50".to_string());
             assert_eq!(edit.commit_with(commit_cell), CommitOutcome::Committed(at));
-            assert_eq!(edit.open(), None);
+            assert_eq!(edit.focused(), None);
             assert_eq!(cell_text(at, &use_overlay().get()), "50");
             // R1555 — a malformed buffer never reaches the model at all, so the
             // two failures a binding must tell apart are told apart.

@@ -864,6 +864,46 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "GridEditorCell",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("row", WireTy::Integer, None),
+                WireField::new("col", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "GridEditorEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("row", WireTy::Integer, None),
+                WireField::new("col", WireTy::Integer, None),
+                WireField::new("persistence", WireTy::String, None),
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("form", WireTy::String, None),
+                WireField::new("focused", WireTy::Boolean, None),
+                WireField::new("dirty", WireTy::Boolean, None),
+                WireField::new("malformed", WireTy::Boolean, None),
+                // Null exactly when `malformed` — one `EditState` read decides
+                // both, so the pair cannot disagree.
+                WireField::new("value", WireTy::String, None).nullable(),
+                WireField::new("seed", WireTy::String, None),
+            ],
+        },
+    },
+    WireType {
+        name: "GridEditorsOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("field_tag", WireTy::String, None),
+                WireField::new("count", WireTy::Integer, None),
+                WireField::new("focused", WireTy::Object, Some("GridEditorCell")).nullable(),
+                WireField::new("editors", WireTy::Array, Some("GridEditorEntry")),
+            ],
+        },
+    },
+    WireType {
         name: "GridFidelityView",
         shape: WireShape::Object {
             fields: &[
