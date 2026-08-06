@@ -81,6 +81,107 @@ ci_verdict_from_listing() {
     printf 'unknown\n'
 }
 
+# How long after a push GitHub is still allowed not to have scheduled a run.
+#
+# Two pushes in quick succession legitimately leave the first one without a run
+# for a few seconds. Past this, "no run" stops being "not yet".
+CI_SCHEDULING_GRACE_SECONDS=180
+
+# Echo how many workflow runs GitHub holds for `sha`, or `unknown`.
+#
+# `gh api` rather than `gh run list`: the plain-text listing has no SHA column
+# (STATUS, CONCLUSION, TITLE, WORKFLOW, BRANCH, EVENT, ID, ELAPSED, AGE), so the
+# question "does THIS commit have a run" cannot be asked of it at all. `--jq` is
+# gh's own embedded filter, not the external `jq` this host lacks.
+#
+# Anything that is not a run of digits becomes `unknown`, so a gh that answers
+# with usage text, an error object or nothing at all cannot be read as a count.
+ci_run_count_for_sha() {
+    local sha="$1" out
+    command -v gh >/dev/null 2>&1 || { printf 'unknown\n'; return 0; }
+    if ! out="$(gh api "repos/:owner/:repo/actions/runs?head_sha=$sha&per_page=1" \
+                    --jq '.total_count' 2>/dev/null)"; then
+        printf 'unknown\n'
+        return 0
+    fi
+    out="${out//[$'\t\r\n ']/}"
+    if [[ "$out" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$out"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+# Report whether the commit being pushed ONTO has any CI run of its own.
+#
+# ## Why this is a second question
+#
+# `check_last_ci_run` reads the branch's last *completed* run. That answers
+# "was the last thing CI judged broken", and it silently assumes the last thing
+# CI judged is the thing you are building on. Measured here on 2026-08-06, it
+# was not:
+#
+#   * `ae377e0c`, pushed 21:38:23Z — `actions/runs?head_sha=` answered `0`, and
+#     still answered `0` forty-five minutes later.
+#   * `a8249cd7`, pushed 21:41:16Z — `0` at 21:45, then a `push`-event run
+#     created at **22:11:17Z**, half an hour after the push that caused it.
+#
+# The workflow was active, its trigger matched, the repo is public so no
+# spending limit applies, and the neighbouring pushes got runs within seconds.
+#
+# The first reading of this was "GitHub scheduled none". Re-measuring corrected
+# it to "one was half an hour late and one had not arrived", which changes the
+# prescription: a lag is not a failure, so the honest report is that the base
+# has no run OF ITS OWN and the verdict above therefore describes an earlier
+# commit. **A run's absence and a run's success are different facts**, and the
+# gate could not tell them apart — the R1470 shape one level up: not a check
+# that reports red, a check that stopped happening.
+#
+# ## Why it does not refuse
+#
+# Because the fact is real and the cause is not ours. Nothing here makes GitHub
+# schedule a run, the lag above shows a pending run is a normal state, and this
+# file's own rule is that "cannot verify" must not become "cannot publish".
+# What was wrong was the SILENCE. So this speaks, and prints the command that
+# resolves it now rather than in half an hour.
+#
+# Returns 0 always.
+check_base_ci_coverage() {
+    local sha="$1" branch="$2" label="$3" age_seconds="${4:-}"
+
+    if [[ -z "$sha" || "$sha" =~ ^0+$ ]]; then
+        echo "$label: no base on $branch yet — no CI coverage to check" >&2
+        return 0
+    fi
+
+    local count
+    count="$(ci_run_count_for_sha "$sha")"
+    local short="${sha:0:8}"
+
+    if [[ "$count" == "unknown" ]]; then
+        echo "$label: could not ask whether $short has a CI run — continuing" >&2
+        return 0
+    fi
+    if [[ "$count" -gt 0 ]]; then
+        echo "$label: base $short has $count CI run(s) of its own" >&2
+        return 0
+    fi
+
+    if [[ "$age_seconds" =~ ^[0-9]+$ ]] &&
+       (( age_seconds < CI_SCHEDULING_GRACE_SECONDS )); then
+        echo "$label: base $short has no CI run yet (${age_seconds}s old) —" \
+             "probably not scheduled yet" >&2
+        return 0
+    fi
+
+    echo "$label: base $short has NO CI run of its own" >&2
+    echo "$label:   so any verdict above is about an EARLIER commit" >&2
+    echo "$label:   a run's absence and a run's success are different facts" >&2
+    echo "$label:   scheduling can lag — measured 30 min here on 2026-08-06" >&2
+    echo "$label:   schedule one now: gh workflow run ci.yml --ref $branch" >&2
+    return 0
+}
+
 # Gate the push on the last completed run for `branch`.
 #
 # Returns 0 when publishing may proceed, 1 when it must not.

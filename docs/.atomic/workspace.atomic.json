@@ -31438,6 +31438,58 @@
         "hello-node-editor still holds its own node model, which R1577 registered as debt-two-node-graph-models and this round does not change"
       ]
     },
+    "R1579": {
+      "decision_summary": "R1579 §5.16 — A RUN'S ABSENCE AND A RUN'S SUCCESS ARE DIFFERENT FACTS. R1495 made stop-the-line a gate instead of a sentence, and it reads the branch's last COMPLETED run — which silently assumes the last thing CI judged is the thing you are building on. Measured here on 2026-08-06 it was not: ae377e0c was pushed at 21:38:23Z and `actions/runs?head_sha=` answered 0, still 0 forty-five minutes later; a8249cd7 was pushed at 21:41:16Z, answered 0 at 21:45, and got a push-event run created at 22:11:17Z — half an hour after the push that caused it. The gate read the previous commit's green and said nothing, which is the R1470 shape one level up: not a check that reports red, a check that stopped happening. check_base_ci_coverage asks the second question — does the commit being pushed ONTO have a run of its own — and says so when it does not. It reports rather than refuses, and the measurement is what decided that: a pending run is a normal state, so refusing would stop the line with no move available, and this file's own rule is that \"cannot verify\" must not become \"cannot publish\". What was wrong was the silence. The round also corrects the debt census: three files carried `status: open` while their own bodies said CLOSED.",
+      "changes_bullets": [
+        "ci_run_count_for_sha asks GitHub how many workflow runs a commit has, through `gh api --jq` because the plain-text `gh run list` has no SHA column at all — the question cannot be put to the listing this file already parses",
+        "check_base_ci_coverage reports whether the base has a run of its own, names the consequence when it does not (the verdict above is about an earlier commit), and hands over the command that schedules one now",
+        "A scheduling grace distinguishes \"not yet\" from \"not coming\", because two pushes seconds apart legitimately leave the first without a run and crying wolf there trains the reader to ignore the notice that matters",
+        "An answer that is not a run of digits becomes `unknown` rather than a count, so a gh replying with usage text or an error object cannot be read as \"has runs\"",
+        "pre-push passes the remote sha git already feeds it on stdin, so the base being checked is the one being pushed onto rather than a guess",
+        "CENSUS CORRECTION: debt-r1366-provider-slot-type, debt-r1366-audit-findings and debt-r1456-modal-handoff-residue all carried `status: open` while their bodies said CAMPAIGN COMPLETE, cleared, or reassigned. R1574.1 made the census a field lookup; a field lookup is only as true as the field"
+      ],
+      "verification_bullets": [
+        "25 new assertions in tools/test_hooks.sh (91 total), which pre-push runs before trusting the libraries they cover",
+        "Six counterfactuals, all caught with zero coverage gaps: the probe always claiming a run, the grace removed, the grace swallowing an unknown age, the notice no longer relating the verdict to the base, a non-count read as a count, and the check refusing instead of reporting",
+        "The counterfactual driver reported six gaps on its first run and the code was correct: its FAIL detector required whitespace after FAIL where the harness prints a colon. It now cross-checks its own detector against the suite's summary line and refuses to report at all if the two disagree",
+        "The gate was run against the live GitHub API for both real commits, not only against the stub",
+        "THE CLAIM WAS CORRECTED BY RE-MEASURING: the first reading was \"GitHub scheduled no run\", and half an hour later a push-event run existed for one of the two commits. A lag is not a failure, so the wording no longer says GitHub scheduled none, and the notice states only what stays true either way — this base has no run of its own",
+        "A test written in this round was vacuous and was caught before it landed: it claimed to check a non-numeric answer and fed the stub a number, so it asserted the stub rather than the code"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Whether GitHub schedules a run at all is outside this repository; the gate can observe the fact and cannot cause it, which is why it reports",
+        "The grace is 180 seconds against a measured 30-minute lag, so the notice will fire while a run is legitimately pending. That is deliberate — the fact it states (the verdict above is about an earlier commit) is true whether the run is late or absent",
+        "21 debt files remain open after the census correction, and clearing them is the campaign this round opens rather than finishes"
+      ],
+      "publishable_decision_summary": "R1579 §5.16 — A RUN'S ABSENCE AND A RUN'S SUCCESS ARE DIFFERENT FACTS. R1495 made stop-the-line a gate instead of a sentence, and it reads the branch's last COMPLETED run — which silently assumes the last thing CI judged is the thing you are building on. Measured here on 2026-08-06 it was not: ae377e0c was pushed at 21:38:23Z and `actions/runs?head_sha=` answered 0, still 0 forty-five minutes later; a8249cd7 was pushed at 21:41:16Z, answered 0 at 21:45, and got a push-event run created at 22:11:17Z — half an hour after the push that caused it. The gate read the previous commit's green and said nothing, which is the R1470 shape one level up: not a check that reports red, a check that stopped happening. check_base_ci_coverage asks the second question — does the commit being pushed ONTO have a run of its own — and says so when it does not. It reports rather than refuses, and the measurement is what decided that: a pending run is a normal state, so refusing would stop the line with no move available, and this file's own rule is that \"cannot verify\" must not become \"cannot publish\". What was wrong was the silence. The round also corrects the debt census: three files carried `status: open` while their own bodies said CLOSED.",
+      "publishable_changes_bullets": [
+        "ci_run_count_for_sha asks GitHub how many workflow runs a commit has, through `gh api --jq` because the plain-text `gh run list` has no SHA column at all — the question cannot be put to the listing this file already parses",
+        "check_base_ci_coverage reports whether the base has a run of its own, names the consequence when it does not (the verdict above is about an earlier commit), and hands over the command that schedules one now",
+        "A scheduling grace distinguishes \"not yet\" from \"not coming\", because two pushes seconds apart legitimately leave the first without a run and crying wolf there trains the reader to ignore the notice that matters",
+        "An answer that is not a run of digits becomes `unknown` rather than a count, so a gh replying with usage text or an error object cannot be read as \"has runs\"",
+        "pre-push passes the remote sha git already feeds it on stdin, so the base being checked is the one being pushed onto rather than a guess",
+        "CENSUS CORRECTION: debt-r1366-provider-slot-type, debt-r1366-audit-findings and debt-r1456-modal-handoff-residue all carried `status: open` while their bodies said CAMPAIGN COMPLETE, cleared, or reassigned. R1574.1 made the census a field lookup; a field lookup is only as true as the field"
+      ],
+      "publishable_verification_bullets": [
+        "25 new assertions in tools/test_hooks.sh (91 total), which pre-push runs before trusting the libraries they cover",
+        "Six counterfactuals, all caught with zero coverage gaps: the probe always claiming a run, the grace removed, the grace swallowing an unknown age, the notice no longer relating the verdict to the base, a non-count read as a count, and the check refusing instead of reporting",
+        "The counterfactual driver reported six gaps on its first run and the code was correct: its FAIL detector required whitespace after FAIL where the harness prints a colon. It now cross-checks its own detector against the suite's summary line and refuses to report at all if the two disagree",
+        "The gate was run against the live GitHub API for both real commits, not only against the stub",
+        "THE CLAIM WAS CORRECTED BY RE-MEASURING: the first reading was \"GitHub scheduled no run\", and half an hour later a push-event run existed for one of the two commits. A lag is not a failure, so the wording no longer says GitHub scheduled none, and the notice states only what stays true either way — this base has no run of its own",
+        "A test written in this round was vacuous and was caught before it landed: it claimed to check a non-numeric answer and fed the stub a number, so it asserted the stub rather than the code"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Whether GitHub schedules a run at all is outside this repository; the gate can observe the fact and cannot cause it, which is why it reports",
+        "The grace is 180 seconds against a measured 30-minute lag, so the notice will fire while a run is legitimately pending. That is deliberate — the fact it states (the verdict above is about an earlier commit) is true whether the run is late or absent",
+        "21 debt files remain open after the census correction, and clearing them is the campaign this round opens rather than finishes"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

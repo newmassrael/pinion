@@ -93,9 +93,14 @@ trap 'rm -f "$tmp_msg"' EXIT
 
 # git feeds pre-push the ref updates on stdin:
 #   <local ref> <local sha> <remote ref> <remote sha>
+base_sha=""
 while read -r _local_ref local_sha _remote_ref remote_sha; do
     # Branch deletion (local sha all-zero) — nothing to validate.
     [[ "$local_sha" =~ ^0+$ ]] && continue
+
+    # The commit the remote is on right now: the one the CI verdict below is
+    # supposed to be about. R1579 checks that it actually has a run.
+    base_sha="$remote_sha"
 
     if [[ "$remote_sha" =~ ^0+$ ]]; then
         # New ref on the remote — validate only commits not already on any
@@ -128,9 +133,24 @@ fi
 # the build gates because it costs one `gh` call and refusing here saves the
 # two minutes of clippy and rustdoc below. See lib/ci-status.sh for why it
 # fails open on a missing `gh`, and for the override.
-if ! check_last_ci_run "$(git rev-parse --abbrev-ref HEAD)" "pre-push"; then
+push_branch="$(git rev-parse --abbrev-ref HEAD)"
+if ! check_last_ci_run "$push_branch" "pre-push"; then
     exit 1
 fi
+
+# --- R1579. That verdict is about SOME commit; say whether it is this base ---
+#
+# The check above reads the branch's last COMPLETED run and assumes the last
+# thing CI judged is the thing being built on. Measured 2026-08-07: two pushes
+# here produced no workflow run at all, so the gate inherited an older commit's
+# green and said nothing. See lib/ci-status.sh for why this reports rather than
+# refuses.
+base_age=""
+if [[ -n "$base_sha" && ! "$base_sha" =~ ^0+$ ]] &&
+   base_committed="$(git log -1 --format=%ct "$base_sha" 2>/dev/null)"; then
+    base_age="$(( $(date +%s) - base_committed ))"
+fi
+check_base_ci_coverage "$base_sha" "$push_branch" "pre-push" "$base_age"
 
 mnemosyne_resolve
 echo "pre-push: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2

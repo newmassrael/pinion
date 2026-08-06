@@ -159,6 +159,17 @@ stub_gh() {
         # the file verbatim, not this shell's to expand.
         # shellcheck disable=SC2016
         cat <<'STUB_HEAD'
+if [[ "$1" == "api" ]]; then
+    # R1579 — the run-count probe. Answers from PINION_STUB_RUN_COUNT so a
+    # case states the fact it is asserting about; `-` means "gh failed".
+    shift
+    [[ "$1" == repos/:owner/:repo/actions/runs\?head_sha=* ]] || exit 1
+    shift
+    [[ "$1" == "--jq" && "$2" == ".total_count" ]] || exit 1
+    [[ "${PINION_STUB_RUN_COUNT:-0}" == "-" ]] && exit 1
+    echo "${PINION_STUB_RUN_COUNT:-0}"
+    exit 0
+fi
 [[ "$1" == "run" && "$2" == "list" ]] || exit 1
 shift 2
 while (( $# )); do
@@ -268,6 +279,112 @@ ok "no gh on PATH publishes" \
    "$( (unset PINION_PUSH_ON_RED; PATH=/nonexistent; \
         check_last_ci_run main test >/dev/null 2>&1; echo $?) )" \
    "0"
+
+# ---------------------------------------------------------------------------
+# R1579 — check_base_ci_coverage: a run's ABSENCE is not a run's success
+#
+# The defect this closes was observed, not imagined: on 2026-08-06 one push to
+# this repo waited half an hour for its run and another had none forty-five
+# minutes on, while `check_last_ci_run` read an earlier commit's green and
+# passed. Every case below states the run count it is asserting about, so none
+# can inherit another's.
+# ---------------------------------------------------------------------------
+
+# `$1` is the stubbed run count (`-` = gh itself fails). Stderr only: what is
+# under test is what the developer is TOLD.
+with_run_count() {
+    local count="$1"
+    shift
+    # SC2030/SC2031 are the POINT, as they are for `with_stub` above: scoping
+    # the export to this subshell is how one case's stubbed count is kept out
+    # of the next one's.
+    # shellcheck disable=SC2030,SC2031
+    (
+        export PINION_STUB_RUN_COUNT="$count"
+        stub_gh ""
+        { "$@" >/dev/null; } 2>&1
+    )
+}
+
+ok "a base with a run of its own says so" \
+   "$(with_run_count 2 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'has 2 CI run(s) of its own')" \
+   "1"
+
+ok "a base with no run of its own is called out" \
+   "$(with_run_count 0 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'NO CI run of its own')" \
+   "1"
+
+# The whole point: the developer is told the verdict they just read is about a
+# different commit. Without this line the two facts stay conflated.
+ok "and it says the verdict above is about an earlier commit" \
+   "$(with_run_count 0 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'EARLIER commit')" \
+   "1"
+
+ok "and hands over the command that fixes it" \
+   "$(with_run_count 0 check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'gh workflow run ci.yml --ref main')" \
+   "1"
+
+# A push seconds after another legitimately has no run yet. Crying wolf there
+# would train the reader to ignore the notice that matters.
+ok "a base younger than the grace is not called out" \
+   "$(with_run_count 0 check_base_ci_coverage abcdef1234 main test 5 \
+        | grep -c 'NO CI run of its own')" \
+   "0"
+
+ok "a base at the grace boundary IS called out" \
+   "$(with_run_count 0 check_base_ci_coverage abcdef1234 main test \
+        "$CI_SCHEDULING_GRACE_SECONDS" | grep -c 'NO CI run of its own')" \
+   "1"
+
+# An unparseable age must not silently buy the grace.
+ok "an unknown age does not buy the grace" \
+   "$(with_run_count 0 check_base_ci_coverage abcdef1234 main test "" \
+        | grep -c 'NO CI run of its own')" \
+   "1"
+
+# Fail-open, and say so — the same posture the rest of this file takes.
+ok "a gh that fails reports that it could not ask" \
+   "$(with_run_count - check_base_ci_coverage abcdef1234 main test 9999 \
+        | grep -c 'could not ask')" \
+   "1"
+
+ok "and never refuses the push" \
+   "$( (
+        # shellcheck disable=SC2030,SC2031
+        export PINION_STUB_RUN_COUNT=0; stub_gh ""; \
+        check_base_ci_coverage abcdef1234 main test 9999 >/dev/null 2>&1; echo $?) )" \
+   "0"
+
+ok "a first push has no base to check" \
+   "$(with_run_count 0 check_base_ci_coverage 0000000000 main test 9999 \
+        | grep -c 'no base on main yet')" \
+   "1"
+
+# A count that is not a count must not be read as one — a gh answering with
+# usage text or an error object would otherwise pass as "has runs". The first
+# draft of this case fed it `0` and asserted `0`, which is a test of the stub.
+ok "a numeric answer is the count" \
+   "$( (
+        # shellcheck disable=SC2030,SC2031
+        export PINION_STUB_RUN_COUNT=3; stub_gh ""; \
+        ci_run_count_for_sha abcdef1234) )" \
+   "3"
+
+ok "a non-numeric answer is unknown, not a count" \
+   "$( (
+        # shellcheck disable=SC2030,SC2031
+        export PINION_STUB_RUN_COUNT='Usage: gh api'; stub_gh ""; \
+        ci_run_count_for_sha abcdef1234) )" \
+   "unknown"
+
+ok "and an unknown count is reported as unaskable rather than as zero" \
+   "$(with_run_count 'Usage: gh api' check_base_ci_coverage abcdef1234 main \
+        test 9999 | grep -c 'could not ask')" \
+   "1"
 
 # ---------------------------------------------------------------------------
 # commit-msg-lint — the sibling that has been enforcing rules untested
