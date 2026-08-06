@@ -59,6 +59,7 @@
 //! assert_eq!(again.order_changes(&seed), 0);
 //! ```
 
+pub mod group;
 mod layering;
 mod sugiyama;
 

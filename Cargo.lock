@@ -3382,6 +3382,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-node-groups"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-node-graph",
+ "pinion-shell",
+ "serde",
+ "vello",
+]
+
+[[package]]
 name = "hello-number-input"
 version = "0.0.1"
 dependencies = [
@@ -6053,6 +6067,15 @@ dependencies = [
  "pinion-a11y",
  "pinion-core",
  "pinion-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pinion-node-graph"
+version = "0.0.1"
+dependencies = [
+ "pinion-graph",
  "serde",
  "serde_json",
 ]

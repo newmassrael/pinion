@@ -182,6 +182,13 @@ AXES = [
                 # named item — and R1575 declared `dcc`, so the round and its
                 # example were being filed under different answers.
                 "graph-diff",
+                # R1577 — `hello-node-groups`, the binding that composes the
+                # node-system substrate. `node-editor` above is an exact-ish
+                # name rather than a prefix for the node-graph family, so a
+                # second node-graph binding needed its own entry; the tool
+                # reported it UNCLASSIFIED at the very push that added it,
+                # which is the census working.
+                "node-groups",
                 "asset-browser", "file-manager", "undo", "grid-header-menu",
                 "grid-frozen-col", "row-dissect", "hex-dump", "code-fold",
                 "command-palette", "selection-toolbar", "tab-reorder",

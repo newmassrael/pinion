@@ -1,0 +1,23 @@
+[package]
+name = "pinion-node-graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1577 Phase-B node-graph substrate: the MECHANISM of a Blender/Blueprint-class node system, with the taxonomy left to the application. A typed socket model whose structural edits maintain their own invariants (type agreement, one link per input, in-tree acyclicity), re-usable group DEFINITIONS with an interface DERIVED from the selection boundary, instances, nesting acyclicity, an edit path, and a memoised evaluator that descends into groups and keys its memo by instance so two instances of one definition do not share a value. Pure data: no renderer, no reactive runtime, no window."
+publish = false
+
+[dependencies]
+pinion-graph = { path = "../pinion-graph", version = "0.0.1" }
+# A node system saves its document, and a `Signal<T>` payload must be
+# serializable, so the model derives serde rather than leaving every consumer to
+# mirror it.
+serde = { workspace = true }
+
+[dev-dependencies]
+# The document's wire form is a claim, so a test round-trips it.
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
