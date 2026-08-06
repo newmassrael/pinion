@@ -32,6 +32,11 @@
 //!   definition plus one instance, with the interface **derived** from the
 //!   links that cross the boundary. [`Document::instantiate`] places another
 //!   instance; [`Document::ungroup`] inlines one back.
+//! * **Fragments** — [`Document::extract`] lifts a selection out as a
+//!   serializable value carrying the definitions it depends on and the boundary
+//!   it was cut from; [`Document::insert`] puts one anywhere, re-using the
+//!   definitions that are already there; [`Document::duplicate`] is the two in
+//!   one call. Copy, paste and duplicate are call sites of this.
 //! * **Nesting that cannot recurse** — a placement that would make a definition
 //!   contain itself is refused, and the refusal names the containment chain.
 //! * **An edit path** — [`EditPath`], the breadcrumb into nested definitions,
@@ -116,12 +121,16 @@
 //! ```
 
 mod eval;
+mod fragment;
 mod group;
 mod model;
 #[cfg(test)]
 mod tests;
 
 pub use eval::Evaluator;
+pub use fragment::{
+    Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,
+};
 pub use group::{
     EditPath, GroupError, Grouped, NestError, PathEntry, PathError, UngroupError, Ungrouped,
     Violation,

@@ -31370,6 +31370,74 @@
         "The tally did not demand a re-judgment (rd 4 -> 5 = +25%, exactly the band edge), so the DCC completion stays at 97% and this round's advance is absorbed at the next one"
       ]
     },
+    "R1578": {
+      "decision_summary": "R1578 §5.38 §5.52 §5.7 §5.12 §2 #7 — A FRAGMENT OF A GRAPH IS A VALUE. Copy, paste and duplicate look like three editor gestures and are one question: can a piece of a node graph be lifted out and stand on its own? A selection is not a list of nodes — it is nodes, the links BETWEEN them, the links that CROSS its edge, and, when one of those nodes is a group instance, the whole transitive closure of definitions it depends on; lift only the nodes and a pasted group instance points at nothing. So Fragment carries a whole Document, which is not a convenience but what makes it ANSWERABLE — how many nodes, which definitions came with them, which wires were severed, whether it satisfies the invariants, what it evaluates to, and how many bytes it serializes to, all without pasting. Blender's clipboard is a .blend file written to the temp directory, so a paste is the only thing that can be done with it. Document::extract and Document::insert are the whole substrate; clipboard copy, clipboard paste, duplicate, duplicate-keep-inputs and duplicate-linked are call sites of them, which is four of the eleven gaps the Blender census names closed by one concept rather than four verbs.",
+      "changes_bullets": [
+        "pinion_graph::group splits Boundary::derive into a CUT and a collapse: a cut always succeeds because severing a crossing cannot create a cycle, while a collapse routes every crossing through one new vertex and can be refused. R1577 fused the two questions, which is right for a collapse and wrong for every other consumer of the partition",
+        "Fragment carries a Document — root holds the copied nodes, the definitions hold the transitive closure they instance — plus the boundary it was cut from, in the same producer-keyed form a derived group interface uses, because it is the same fact",
+        "Document::extract lifts a selection out without touching the document; Document::insert puts one anywhere; Document::duplicate is the two in one call, and DuplicateError says which half refused",
+        "Crossings::KeepInbound restores the severed inputs, and the asymmetry with the outputs is DERIVED rather than a missing boolean: an output may feed many consumers so an inbound crossing costs the original nothing, while an input takes at most one link so an outbound one would steal the original's connection — so the outbound crossings are published instead",
+        "Definitions::Share matches a carried definition against the destination's by CONTENT and re-uses it, so pasting a group twice leaves one definition and three instances; Definitions::Fork is the deep copy, and both are arguments rather than a user preference",
+        "A recursion is refused by walking the containment relation as it WOULD stand, one prospective edge at a time, so the edge that closes the cycle is the one named — and every check runs before the first mutation, so a refused insertion leaves the document untouched",
+        "The crossings are resolved in the PLAN, against the tree before any copy exists: an address resolved after the copies are placed can find a copy where its own producer used to be",
+        "hello-node-groups gains copy / paste / duplicate and four read slots — clipboard, clipboard_severed, clipboard_bytes, last_insert — supplying only where the value is kept and how the two policy arms are spelled on the wire"
+      ],
+      "verification_bullets": [
+        "27 new unit tests in pinion-node-graph (68 total) and 3 in pinion_graph::group (54 total), every one a hand-written document — no renderer, no window, no pointer",
+        "Eight counterfactuals, ALL caught with zero coverage gaps: the cut reverted to a derive, the crossings resolved after placement, the closure reduced to the direct definitions, the definition matched by NAME as Blender matches it, the recursion check dropped, the type check dropped, the interface-node guard dropped, and the fragment positions left absolute",
+        "tools/demos/r1578_a_fragment_is_a_value.py, 76 assertion sites over the live wire, PASS in 1.9s",
+        "A test written to check the REPORTING of an unrestorable crossing caught a real defect instead: pasting into an emptier tree gave the copy the id its own producer used to have, and the re-attachment wired the copy to itself. The resolution moved into the plan",
+        "Blender measured at 8cf5059963d69eebca8f4e092dc7040ce515e8d3 rather than described: node_copy_local copies a link only when both ends are selected and records the rest nowhere; NODE_OT_clipboard_paste declares one property, offset, so keep_inputs exists on duplicate alone; BKE_main_merge keys candidates on the datablock name and are_ids_from_different_mains_matching returns true on the name alone for two local IDs; node_copy_local reports a node it cannot place, skips it and its links, and finishes",
+        "The counterfactual driver asserts its own anchor appears exactly once, which caught a vacuous counterfactual — and its first version died between applying a patch and restoring, leaving the tree mutated, the exact residue failure R1557 recorded. The restore is now in a finally and hash-checked"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "group_insert and group_separate are still absent: moving a node ACROSS a definition boundary re-derives the interfaces at both ends, which extract plus insert do not do, and it is the next slice on this axis",
+        "The Blender census names eleven gaps; R1577 closed one and R1578 closes four more, leaving collapse/mute/hide, the richer selection vocabulary, link mute and detach, insert_offset, find, resize, view_selected and swap as campaign scope rather than this round's carry",
+        "A fragment names the outside end of a crossing by socket ADDRESS, which is exact going back into the tree it came from and a guess anywhere else; the guess is type-checked and every outcome reported, and carrying a stronger producer identity is the honest next step if a consumer needs one",
+        "The definition match is conservative by construction: two definitions identical up to a renumbering of their nodes are reported as different and a duplicate is added. The other error would silently rebind an instance to a graph that computes something else, which is what matching by name does",
+        "Execution semantics are still inexpressible and no reference census can see it, because Blender is pure dataflow too — that axis is UE Blueprint's",
+        "hello-node-editor still holds its own node model, which R1577 registered as debt-two-node-graph-models and this round does not change"
+      ],
+      "publishable_decision_summary": "R1578 §5.38 §5.52 §5.7 §5.12 §2 #7 — A FRAGMENT OF A GRAPH IS A VALUE. Copy, paste and duplicate look like three editor gestures and are one question: can a piece of a node graph be lifted out and stand on its own? A selection is not a list of nodes — it is nodes, the links BETWEEN them, the links that CROSS its edge, and, when one of those nodes is a group instance, the whole transitive closure of definitions it depends on; lift only the nodes and a pasted group instance points at nothing. So Fragment carries a whole Document, which is not a convenience but what makes it ANSWERABLE — how many nodes, which definitions came with them, which wires were severed, whether it satisfies the invariants, what it evaluates to, and how many bytes it serializes to, all without pasting. Blender's clipboard is a .blend file written to the temp directory, so a paste is the only thing that can be done with it. Document::extract and Document::insert are the whole substrate; clipboard copy, clipboard paste, duplicate, duplicate-keep-inputs and duplicate-linked are call sites of them, which is four of the eleven gaps the Blender census names closed by one concept rather than four verbs.",
+      "publishable_changes_bullets": [
+        "pinion_graph::group splits Boundary::derive into a CUT and a collapse: a cut always succeeds because severing a crossing cannot create a cycle, while a collapse routes every crossing through one new vertex and can be refused. R1577 fused the two questions, which is right for a collapse and wrong for every other consumer of the partition",
+        "Fragment carries a Document — root holds the copied nodes, the definitions hold the transitive closure they instance — plus the boundary it was cut from, in the same producer-keyed form a derived group interface uses, because it is the same fact",
+        "Document::extract lifts a selection out without touching the document; Document::insert puts one anywhere; Document::duplicate is the two in one call, and DuplicateError says which half refused",
+        "Crossings::KeepInbound restores the severed inputs, and the asymmetry with the outputs is DERIVED rather than a missing boolean: an output may feed many consumers so an inbound crossing costs the original nothing, while an input takes at most one link so an outbound one would steal the original's connection — so the outbound crossings are published instead",
+        "Definitions::Share matches a carried definition against the destination's by CONTENT and re-uses it, so pasting a group twice leaves one definition and three instances; Definitions::Fork is the deep copy, and both are arguments rather than a user preference",
+        "A recursion is refused by walking the containment relation as it WOULD stand, one prospective edge at a time, so the edge that closes the cycle is the one named — and every check runs before the first mutation, so a refused insertion leaves the document untouched",
+        "The crossings are resolved in the PLAN, against the tree before any copy exists: an address resolved after the copies are placed can find a copy where its own producer used to be",
+        "hello-node-groups gains copy / paste / duplicate and four read slots — clipboard, clipboard_severed, clipboard_bytes, last_insert — supplying only where the value is kept and how the two policy arms are spelled on the wire"
+      ],
+      "publishable_verification_bullets": [
+        "27 new unit tests in pinion-node-graph (68 total) and 3 in pinion_graph::group (54 total), every one a hand-written document — no renderer, no window, no pointer",
+        "Eight counterfactuals, ALL caught with zero coverage gaps: the cut reverted to a derive, the crossings resolved after placement, the closure reduced to the direct definitions, the definition matched by NAME as Blender matches it, the recursion check dropped, the type check dropped, the interface-node guard dropped, and the fragment positions left absolute",
+        "tools/demos/r1578_a_fragment_is_a_value.py, 76 assertion sites over the live wire, PASS in 1.9s",
+        "A test written to check the REPORTING of an unrestorable crossing caught a real defect instead: pasting into an emptier tree gave the copy the id its own producer used to have, and the re-attachment wired the copy to itself. The resolution moved into the plan",
+        "Blender measured at 8cf5059963d69eebca8f4e092dc7040ce515e8d3 rather than described: node_copy_local copies a link only when both ends are selected and records the rest nowhere; NODE_OT_clipboard_paste declares one property, offset, so keep_inputs exists on duplicate alone; BKE_main_merge keys candidates on the datablock name and are_ids_from_different_mains_matching returns true on the name alone for two local IDs; node_copy_local reports a node it cannot place, skips it and its links, and finishes",
+        "The counterfactual driver asserts its own anchor appears exactly once, which caught a vacuous counterfactual — and its first version died between applying a patch and restoring, leaving the tree mutated, the exact residue failure R1557 recorded. The restore is now in a finally and hash-checked"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "group_insert and group_separate are still absent: moving a node ACROSS a definition boundary re-derives the interfaces at both ends, which extract plus insert do not do, and it is the next slice on this axis",
+        "The Blender census names eleven gaps; R1577 closed one and R1578 closes four more, leaving collapse/mute/hide, the richer selection vocabulary, link mute and detach, insert_offset, find, resize, view_selected and swap as campaign scope rather than this round's carry",
+        "A fragment names the outside end of a crossing by socket ADDRESS, which is exact going back into the tree it came from and a guess anywhere else; the guess is type-checked and every outcome reported, and carrying a stronger producer identity is the honest next step if a consumer needs one",
+        "The definition match is conservative by construction: two definitions identical up to a renumbering of their nodes are reported as different and a duplicate is added. The other error would silently rebind an instance to a graph that computes something else, which is what matching by name does",
+        "Execution semantics are still inexpressible and no reference census can see it, because Blender is pure dataflow too — that axis is UE Blueprint's",
+        "hello-node-editor still holds its own node model, which R1577 registered as debt-two-node-graph-models and this round does not change"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

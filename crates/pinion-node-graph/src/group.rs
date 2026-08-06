@@ -17,7 +17,7 @@ use std::fmt;
 
 use crate::model::{
     Document, InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT,
-    Socket, TreeId,
+    Socket, TreeId, centroid,
 };
 
 /// Canvas gap between a definition's contents and its interface nodes.
@@ -588,23 +588,6 @@ struct GroupPlan<K: NodeKind> {
     interface_outputs: Vec<KindPort<K>>,
     internal: Vec<LinkId>,
     centre: (i32, i32),
-}
-
-/// The integer centre of a set of positions, or the origin when it is empty.
-fn centroid(points: impl Iterator<Item = (i32, i32)>) -> (i32, i32) {
-    let (mut sum_x, mut sum_y, mut count) = (0_i64, 0_i64, 0_i64);
-    for (x, y) in points {
-        sum_x += i64::from(x);
-        sum_y += i64::from(y);
-        count += 1;
-    }
-    if count == 0 {
-        return (0, 0);
-    }
-    (
-        i32::try_from(sum_x / count).unwrap_or(0),
-        i32::try_from(sum_y / count).unwrap_or(0),
-    )
 }
 
 /// One step of the path into the document.

@@ -19,6 +19,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R1577 — the node-system substrate this example exists to compose.
 pinion-node-graph = { path = "../../crates/pinion-node-graph", version = "0.0.1" }
 serde = { workspace = true }
+# R1578 — a fragment's serialized size is published, which is the cheapest proof
+# over the wire that a clipboard entry is a VALUE and not a handle.
+serde_json = { workspace = true }
 # R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
 pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 vello = { workspace = true }

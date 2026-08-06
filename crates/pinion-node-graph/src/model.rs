@@ -384,12 +384,24 @@ impl<K: NodeKind> Document<K> {
         self.trees.get_mut(id.0 as usize)
     }
 
+    /// The id [`Self::add_definition`] would hand out next.
+    ///
+    /// Public to this crate so a plan can name a tree it has not created yet —
+    /// which is what lets an insertion decide, *before mutating anything*,
+    /// whether the definitions it is about to add would close a containment
+    /// cycle. It is the same expression the allocation uses rather than a second
+    /// copy of it, so the two cannot drift.
+    #[must_use]
+    pub(crate) fn next_tree_id(&self) -> TreeId {
+        TreeId(u32::try_from(self.trees.len()).unwrap_or(u32::MAX))
+    }
+
     /// Add an empty group definition and answer its id.
     ///
     /// A definition created this way has no interface and no instances; it
     /// becomes reachable when something instantiates it.
     pub fn add_definition(&mut self, name: impl Into<String>) -> TreeId {
-        let id = TreeId(u32::try_from(self.trees.len()).unwrap_or(u32::MAX));
+        let id = self.next_tree_id();
         self.trees.push(Tree {
             id,
             name: name.into(),
@@ -791,6 +803,28 @@ impl<K: NodeKind> Document<K> {
         }
         Ok(dropped)
     }
+}
+
+/// The integer centre of a set of node positions, or the origin when it is
+/// empty.
+///
+/// A collapse recentres a definition around it and a cut records it as the
+/// fragment's origin; both are "where was this selection", so there is one
+/// answer.
+pub(crate) fn centroid(points: impl Iterator<Item = (i32, i32)>) -> (i32, i32) {
+    let (mut sum_x, mut sum_y, mut count) = (0_i64, 0_i64, 0_i64);
+    for (x, y) in points {
+        sum_x += i64::from(x);
+        sum_y += i64::from(y);
+        count += 1;
+    }
+    if count == 0 {
+        return (0, 0);
+    }
+    (
+        i32::try_from(sum_x / count).unwrap_or(0),
+        i32::try_from(sum_y / count).unwrap_or(0),
+    )
 }
 
 /// Drop links on `node`'s port `index` and slide higher ports down one.

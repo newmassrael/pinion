@@ -6,8 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ConnectError, Document, EditPath, GroupError, InterfaceSide, NestError, NodeBody, NodeId,
-    NodeKind, PathError, Port, ROOT, Socket, TreeId, UngroupError, Violation,
+    ConnectError, Crossings, Definitions, Document, DuplicateError, EditPath, ExtractError,
+    Fragment, GroupError, InsertError, InterfaceSide, NestError, NodeBody, NodeId, NodeKind,
+    PathError, Port, ROOT, Severed, Socket, TreeId, UngroupError, Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -920,4 +921,652 @@ fn a_group_node_is_named_without_the_taxonomy_being_asked() {
         .interface_node(InterfaceSide::Input)
         .unwrap();
     assert_eq!(inside.display_name(), "Group Input");
+}
+
+// ----------------------------------------------------------------- fragments
+//
+// R1578. A fragment is a piece of a graph standing on its own, so every one of
+// these builds one from a hand-written document and asks it questions no
+// clipboard-as-a-file can answer.
+
+/// A document holding one `Sum` definition with two instances, plus the sources
+/// feeding the first.
+struct GroupedDoc {
+    document: Document<Op>,
+    definition: TreeId,
+    /// The first instance, fed by `two` and `three`.
+    instance: NodeId,
+}
+
+fn grouped() -> GroupedDoc {
+    let mut f = fixture();
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    GroupedDoc {
+        document: f.document,
+        definition: made.definition,
+        instance: made.node,
+    }
+}
+
+#[test]
+fn a_cut_records_the_wires_it_severed() {
+    // Copying the middle of `two/three -> add -> sink` severs three wires.
+    // Blender's `node_copy_local` copies a link only when both ends are
+    // selected and records the others nowhere at all.
+    let f = fixture();
+    let cut = f.document.extract(ROOT, &[f.add]).unwrap();
+    assert_eq!(cut.node_count(), 1);
+    assert_eq!(cut.links(), &[] as &[crate::Link]);
+
+    // Two values arrived; each is one crossing, keyed by its producer.
+    let producers: Vec<Socket> = cut.inbound().iter().map(Severed::producer).collect();
+    assert_eq!(
+        producers,
+        vec![Socket::new(f.two, 0), Socket::new(f.three, 0)]
+    );
+    assert_eq!(cut.inbound()[0].consumers(), &[Socket::new(f.add, 0)]);
+
+    // One left.
+    assert_eq!(cut.outbound().len(), 1);
+    assert_eq!(cut.outbound()[0].producer(), Socket::new(f.add, 0));
+    assert_eq!(cut.outbound()[0].consumers(), &[Socket::new(f.sink, 0)]);
+}
+
+#[test]
+fn one_producer_feeding_two_copied_nodes_is_one_crossing() {
+    // The producer keys the crossing, exactly as it keys a group interface
+    // socket: two links, one value.
+    let mut f = fixture();
+    let other = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 200)
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(f.two, 0), Socket::new(other, 0))
+        .unwrap();
+    let cut = f.document.extract(ROOT, &[f.add, other]).unwrap();
+    let from_two: Vec<&Severed> = cut
+        .inbound()
+        .iter()
+        .filter(|s| s.producer() == Socket::new(f.two, 0))
+        .collect();
+    assert_eq!(from_two.len(), 1, "one value, not one per link");
+    assert_eq!(
+        from_two[0].consumers(),
+        &[Socket::new(f.add, 0), Socket::new(other, 0)]
+    );
+}
+
+#[test]
+fn a_selection_a_collapse_would_refuse_can_still_be_copied() {
+    // two -> add -> sink; copying {two, sink} bypasses `add`. A COLLAPSE is
+    // refused because the new vertex would reach itself; a CUT severs the
+    // crossings instead, so there is nothing to refuse. R1577 fused the two
+    // questions into one derivation, and this is the case that separates them.
+    let f = fixture();
+    assert!(matches!(
+        f.document.clone().group(ROOT, &[f.two, f.sink], "no"),
+        Err(GroupError::Bypass { .. })
+    ));
+    let cut = f.document.extract(ROOT, &[f.two, f.sink]).unwrap();
+    assert_eq!(cut.node_count(), 2);
+    assert!(cut.links().is_empty(), "nothing joins them directly");
+    assert_eq!(cut.outbound().len(), 1, "two -> add left the selection");
+    assert_eq!(cut.inbound().len(), 1, "add -> sink entered it");
+}
+
+#[test]
+fn a_cut_leaves_the_document_exactly_as_it_was() {
+    let f = fixture();
+    let before = f.document.clone();
+    let _ = f.document.extract(ROOT, &[f.add, f.two]).unwrap();
+    assert_eq!(f.document, before);
+}
+
+#[test]
+fn an_empty_or_unknown_selection_is_refused_by_name() {
+    let f = fixture();
+    assert_eq!(
+        f.document.extract(ROOT, &[]).unwrap_err(),
+        ExtractError::Empty
+    );
+    assert_eq!(
+        f.document.extract(ROOT, &[NodeId(99)]).unwrap_err(),
+        ExtractError::NoSuchNode(NodeId(99))
+    );
+    assert_eq!(
+        f.document.extract(TreeId(9), &[f.add]).unwrap_err(),
+        ExtractError::NoSuchTree(TreeId(9))
+    );
+}
+
+#[test]
+fn an_interface_node_cannot_be_copied() {
+    // It is a projection of the tree it belongs to, not a thing that travels:
+    // a tree holds at most one per side, which `validate` enforces.
+    let g = grouped();
+    let inside = g
+        .document
+        .tree(g.definition)
+        .unwrap()
+        .interface_node(InterfaceSide::Input)
+        .unwrap()
+        .id;
+    assert_eq!(
+        g.document.extract(g.definition, &[inside]).unwrap_err(),
+        ExtractError::InterfaceNodeSelected(inside)
+    );
+}
+
+#[test]
+fn a_fragment_is_a_document_that_still_answers() {
+    // Blender's clipboard is `copybuffer_nodes.blend` in the temp directory, so
+    // the only thing that can be done with it is a paste.
+    let g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    assert!(cut.validate().is_empty());
+    assert_eq!(cut.node_count(), 1);
+    assert_eq!(cut.source_tree(), ROOT);
+    assert_eq!(cut.definitions().count(), 1, "the group came too");
+    assert_eq!(cut.definitions().next().unwrap().name, "Sum");
+    // And it computes: the carried definition adds its own port defaults.
+    let inner = cut.definitions().next().unwrap().id;
+    let exit = cut
+        .document()
+        .tree(inner)
+        .unwrap()
+        .interface_node(InterfaceSide::Output)
+        .unwrap()
+        .id;
+    assert!(cut.document().evaluate(inner, exit).is_empty());
+}
+
+#[test]
+fn a_fragment_round_trips_through_serde() {
+    owned::<Fragment<Op>>();
+    let g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    let wire = serde_json::to_string(&cut).unwrap();
+    let back: Fragment<Op> = serde_json::from_str(&wire).unwrap();
+    assert_eq!(back, cut);
+    assert_eq!(back.inbound().len(), cut.inbound().len());
+}
+
+#[test]
+fn a_copied_group_instance_brings_the_whole_closure() {
+    // Nest Sum inside Outer, then copy the Outer instance: BOTH definitions must
+    // travel, or the paste lands a group pointing at nothing.
+    let mut g = grouped();
+    let outer = g.document.add_definition("Outer");
+    g.document.instantiate(outer, g.definition, 0, 0).unwrap();
+    let host = g.document.instantiate(ROOT, outer, 600, 600).unwrap();
+
+    let cut = g.document.extract(ROOT, &[host]).unwrap();
+    let names: Vec<&str> = cut.definitions().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, vec!["Sum", "Outer"], "inner-first, and both present");
+    assert!(cut.validate().is_empty(), "no dangling instance");
+}
+
+#[test]
+fn pasting_a_group_twice_leaves_one_definition() {
+    // Sharing is what a group IS: two instances of one definition, so editing
+    // the definition moves both.
+    let mut g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    let before = g.document.tree_count();
+    for _ in 0..2 {
+        let out = g
+            .document
+            .insert(ROOT, &cut, (900, 0), Crossings::Drop, Definitions::Share)
+            .unwrap();
+        assert_eq!(out.definitions_added, vec![]);
+        assert_eq!(out.definitions_reused, vec![g.definition]);
+    }
+    assert_eq!(g.document.tree_count(), before);
+    assert_eq!(g.document.instance_count(g.definition), 3);
+}
+
+#[test]
+fn forking_gives_the_copy_a_definition_of_its_own() {
+    // Blender's `duplicate(linked=false)`, where the arm is chosen by a USER
+    // PREFERENCE (`U.dupflag & USER_DUP_NTREE`) rather than stated at the call.
+    let mut g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    let out = g
+        .document
+        .insert(ROOT, &cut, (900, 0), Crossings::Drop, Definitions::Fork)
+        .unwrap();
+    assert_eq!(out.definitions_added.len(), 1);
+    assert!(out.definitions_reused.is_empty());
+    let forked = out.definitions_added[0];
+    assert_ne!(forked, g.definition);
+
+    // Editing the fork leaves the original alone — the whole point of the arm.
+    g.document
+        .add_node(forked, NodeBody::Kind(Op::Num(41)), 0, 0)
+        .unwrap();
+    assert_eq!(
+        g.document.tree(g.definition).unwrap().node_count(),
+        g.document.tree(forked).unwrap().node_count() - 1
+    );
+    assert!(g.document.validate().is_empty());
+}
+
+#[test]
+fn a_same_named_but_different_definition_is_not_rebound() {
+    // THE case. Blender's paste matches a candidate datablock by NAME
+    // (`BKE_main_merge` keys on `id->name`, and for two local IDs
+    // `are_ids_from_different_mains_matching` returns true on the name alone),
+    // so pasting a group into a file with an unrelated same-named group binds
+    // the instance to the wrong graph. Content matching cannot: the imposter
+    // computes something else, so it is not a match.
+    let g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+
+    let mut other = Document::new("elsewhere");
+    let imposter = other.add_definition("Sum");
+    let lie = other
+        .add_node(imposter, NodeBody::Kind(Op::Num(9000)), 0, 0)
+        .unwrap();
+    other
+        .expose(
+            imposter,
+            InterfaceSide::Output,
+            Port::new("Out", Ty::Number),
+        )
+        .unwrap();
+    let exit = other
+        .add_node(imposter, NodeBody::Interface(InterfaceSide::Output), 200, 0)
+        .unwrap();
+    other
+        .connect(imposter, Socket::new(lie, 0), Socket::new(exit, 0))
+        .unwrap();
+
+    let out = other
+        .insert(ROOT, &cut, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(
+        out.definitions_reused,
+        vec![],
+        "the name is not the identity"
+    );
+    assert_eq!(out.definitions_added.len(), 1);
+    assert_ne!(out.definitions_added[0], imposter);
+
+    // And the pasted instance computes what it computed at home, not 9000.
+    let pasted = out.nodes[0];
+    assert_eq!(number(&other.evaluate(ROOT, pasted)), Some(0));
+    assert!(other.validate().is_empty());
+}
+
+#[test]
+fn a_definition_edited_since_the_copy_is_added_rather_than_silently_reused() {
+    // The fragment is a snapshot. If the original has moved on, re-using it
+    // would paste something other than what was copied.
+    let mut g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    g.document
+        .add_node(g.definition, NodeBody::Kind(Op::Num(1)), 500, 500)
+        .unwrap();
+    let out = g
+        .document
+        .insert(ROOT, &cut, (900, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert!(out.definitions_reused.is_empty());
+    assert_eq!(out.definitions_added.len(), 1);
+}
+
+#[test]
+fn pasting_a_group_inside_itself_is_refused_and_names_the_chain() {
+    // Copy the instance, enter the group, paste: the one recursion an editor
+    // meets by accident.
+    let mut g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    let error = g
+        .document
+        .insert(
+            g.definition,
+            &cut,
+            (0, 0),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        InsertError::Recursion {
+            chain: vec![g.definition]
+        }
+    );
+    assert!(format!("{error}").contains("nest a group inside itself"));
+}
+
+#[test]
+fn a_deeper_recursion_is_refused_too_and_the_chain_is_longer() {
+    // Outer contains Sum. Pasting an Outer instance into Sum closes
+    // Outer -> Sum -> Outer, and the chain names the definition in between —
+    // Blender's `node_group_poll` reports the same flat sentence at any depth.
+    let mut g = grouped();
+    let outer = g.document.add_definition("Outer");
+    g.document.instantiate(outer, g.definition, 0, 0).unwrap();
+    let host = g.document.instantiate(ROOT, outer, 600, 600).unwrap();
+    let cut = g.document.extract(ROOT, &[host]).unwrap();
+    let error = g
+        .document
+        .insert(
+            g.definition,
+            &cut,
+            (0, 0),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        InsertError::Recursion {
+            chain: vec![outer, g.definition]
+        }
+    );
+}
+
+#[test]
+fn a_refused_insert_leaves_the_document_untouched() {
+    // Blender's paste does the opposite: `node_copy_local` reports the node it
+    // cannot place, skips it AND its links, and finishes — so a five-node paste
+    // can land four nodes and a message in a report list.
+    let mut g = grouped();
+    let loose = g
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 900)
+        .unwrap();
+    let cut = g.document.extract(ROOT, &[g.instance, loose]).unwrap();
+    let before = g.document.clone();
+    assert!(
+        g.document
+            .insert(
+                g.definition,
+                &cut,
+                (0, 0),
+                Crossings::Drop,
+                Definitions::Share
+            )
+            .is_err()
+    );
+    assert_eq!(g.document, before, "not one of the two nodes landed");
+}
+
+#[test]
+fn keeping_the_inbound_crossings_refeeds_the_copies() {
+    // Blender's `keep_inputs`, which exists on `NODE_OT_duplicate` only:
+    // `NODE_OT_clipboard_paste` declares one property, `offset`.
+    let f = fixture();
+    let mut document = f.document.clone();
+    let cut = document.extract(ROOT, &[f.add]).unwrap();
+    let out = document
+        .insert(
+            ROOT,
+            &cut,
+            (200, 400),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(out.reattached.len(), 2);
+    assert!(out.unattached.is_empty());
+    let copy = out.nodes[0];
+    assert_eq!(
+        number(&document.evaluate(ROOT, copy)),
+        Some(5),
+        "fed from the same two sources as the original"
+    );
+    // The original kept its own wires: an output feeds any number of consumers.
+    assert_eq!(number(&document.evaluate(ROOT, f.add)), Some(5));
+    assert!(document.validate().is_empty());
+}
+
+#[test]
+fn dropping_the_crossings_leaves_the_copy_on_its_port_defaults() {
+    let f = fixture();
+    let mut document = f.document.clone();
+    let cut = document.extract(ROOT, &[f.add]).unwrap();
+    let out = document
+        .insert(ROOT, &cut, (200, 400), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert!(out.reattached.is_empty());
+    assert!(out.unattached.is_empty(), "nothing was attempted");
+    assert_eq!(number(&document.evaluate(ROOT, out.nodes[0])), Some(0));
+}
+
+#[test]
+fn an_inbound_crossing_that_cannot_be_restored_is_named() {
+    // Paste into a tree where the producing socket is not there. Naming it is
+    // what lets a UI say "two inputs did not come back".
+    //
+    // It is also the case that caught the ordering defect this insertion was
+    // first written with. The crossings name node 0 and node 1; the destination
+    // is EMPTY, so the copy is allocated node 0 — and a re-attachment resolved
+    // after the copies exist finds the copy where its own producer used to be
+    // and wires it to itself. The address space must be read before it is
+    // written to.
+    let f = fixture();
+    let cut = f.document.extract(ROOT, &[f.add]).unwrap();
+    let mut elsewhere = Document::new("elsewhere");
+    let out = elsewhere
+        .insert(
+            ROOT,
+            &cut,
+            (0, 0),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert!(out.reattached.is_empty());
+    assert_eq!(out.unattached.len(), 2);
+    assert_eq!(out.unattached[0].producer(), Socket::new(f.two, 0));
+    assert!(format!("{}", out.unattached[0]).contains("node"));
+    assert_eq!(out.nodes, vec![NodeId(0)], "the copy took the vacant id");
+    assert!(
+        elsewhere.tree(ROOT).unwrap().links().is_empty(),
+        "and nothing wired it to itself"
+    );
+    assert!(elsewhere.validate().is_empty());
+}
+
+#[test]
+fn a_restored_crossing_is_type_checked_before_it_is_wired() {
+    // A fragment names the outside end of a crossing by its socket ADDRESS,
+    // which is exact going home and a guess anywhere else. The guess is checked:
+    // node 0 exists in the destination too, and produces Text.
+    let f = fixture();
+    let cut = f.document.extract(ROOT, &[f.add]).unwrap();
+    let mut elsewhere = Document::new("elsewhere");
+    for _ in 0..2 {
+        elsewhere
+            .add_node(ROOT, NodeBody::Kind(Op::Word("no".to_owned())), 0, 0)
+            .unwrap();
+    }
+    assert_eq!(elsewhere.tree(ROOT).unwrap().node_count(), 2);
+    let out = elsewhere
+        .insert(
+            ROOT,
+            &cut,
+            (0, 0),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert!(
+        out.reattached.is_empty(),
+        "a Text output must not be wired into a Number input"
+    );
+    assert_eq!(out.unattached.len(), 2);
+    assert!(elsewhere.validate().is_empty());
+}
+
+#[test]
+fn the_outbound_crossings_are_published_and_never_restored() {
+    // An input takes at most one link, so restoring an outbound crossing would
+    // displace the original's — the copy would steal the connection. Blender has
+    // `keep_inputs` and no `keep_outputs`, and says nowhere why.
+    let f = fixture();
+    let mut document = f.document.clone();
+    let cut = document.extract(ROOT, &[f.add]).unwrap();
+    assert_eq!(cut.outbound().len(), 1);
+    let out = document
+        .insert(
+            ROOT,
+            &cut,
+            (0, 400),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    let sink_feed = document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.sink, 0))
+        .unwrap();
+    assert_eq!(
+        sink_feed.from,
+        Socket::new(f.add, 0),
+        "the original still feeds the sink"
+    );
+    assert!(!out.nodes.contains(&f.add));
+}
+
+#[test]
+fn inserting_at_the_origin_puts_the_nodes_back_where_they_were() {
+    let f = fixture();
+    let mut document = f.document.clone();
+    let cut = document.extract(ROOT, &[f.two, f.three]).unwrap();
+    let out = document
+        .insert(
+            ROOT,
+            &cut,
+            cut.origin(),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    let placed: Vec<(i32, i32)> = out
+        .nodes
+        .iter()
+        .map(|&id| {
+            let n = document.tree(ROOT).unwrap().node(id).unwrap();
+            (n.x, n.y)
+        })
+        .collect();
+    assert_eq!(placed, vec![(0, 0), (0, 80)]);
+}
+
+#[test]
+fn a_fragment_carrying_an_interface_node_is_refused() {
+    // Not reachable through `extract`; reachable through serde, which is what
+    // `validate` exists for and what this refusal protects.
+    let g = grouped();
+    let inside = g.document.extract(ROOT, &[g.instance]).unwrap();
+    let mut wire = serde_json::to_value(&inside).unwrap();
+    wire["content"]["trees"][0]["nodes"][0]["body"] = serde_json::json!({ "Interface": "Input" });
+    let doctored: Fragment<Op> = serde_json::from_value(wire).unwrap();
+    let mut document = g.document.clone();
+    let before = document.clone();
+    assert_eq!(
+        document
+            .insert(ROOT, &doctored, (0, 0), Crossings::Drop, Definitions::Share)
+            .unwrap_err(),
+        InsertError::InterfaceNodeInFragment(g.instance)
+    );
+    assert_eq!(document, before);
+}
+
+#[test]
+fn duplicate_is_a_cut_and_a_paste_and_says_which_half_refused() {
+    let mut g = grouped();
+    let out = g
+        .document
+        .duplicate(
+            ROOT,
+            &[g.instance],
+            (0, 300),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(out.nodes.len(), 1);
+    assert_eq!(out.definitions_reused, vec![g.definition]);
+    assert_eq!(out.reattached.len(), 2);
+    assert_eq!(number(&g.document.evaluate(ROOT, out.nodes[0])), Some(5));
+
+    let original = g.document.tree(ROOT).unwrap().node(g.instance).unwrap();
+    let copy = g.document.tree(ROOT).unwrap().node(out.nodes[0]).unwrap();
+    assert_eq!((copy.x, copy.y), (original.x, original.y + 300));
+
+    assert_eq!(
+        g.document
+            .duplicate(ROOT, &[], (0, 0), Crossings::Drop, Definitions::Share)
+            .unwrap_err(),
+        DuplicateError::Cut(ExtractError::Empty)
+    );
+}
+
+#[test]
+fn a_copy_evaluates_to_what_the_original_evaluates_to() {
+    // The end-to-end property: a duplicate is a duplicate.
+    let mut f = fixture();
+    let out = f
+        .document
+        .duplicate(
+            ROOT,
+            &[f.two, f.three, f.add],
+            (0, 400),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(out.nodes.len(), 3);
+    assert_eq!(out.links.len(), 2, "the internal wires came too");
+    let copied_add = out.nodes[2];
+    assert_eq!(
+        number(&f.document.evaluate(ROOT, copied_add)),
+        number(&f.document.evaluate(ROOT, f.add))
+    );
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn a_label_survives_the_round_trip() {
+    let mut f = fixture();
+    f.document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(f.add)
+        .unwrap()
+        .label = Some("Total".to_owned());
+    let out = f
+        .document
+        .duplicate(
+            ROOT,
+            &[f.add],
+            (0, 400),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    let copy = f.document.tree(ROOT).unwrap().node(out.nodes[0]).unwrap();
+    assert_eq!(copy.display_name(), "Total");
+}
+
+#[test]
+fn a_fragment_crosses_into_a_document_that_never_had_the_definition() {
+    // The clipboard case: the destination knows nothing of `Sum`.
+    let g = grouped();
+    let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
+    let mut other = Document::new("elsewhere");
+    let out = other
+        .insert(ROOT, &cut, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(out.definitions_added.len(), 1);
+    assert_eq!(other.tree(out.definitions_added[0]).unwrap().name, "Sum");
+    assert!(other.validate().is_empty());
+    assert_eq!(number(&other.evaluate(ROOT, out.nodes[0])), Some(0));
 }

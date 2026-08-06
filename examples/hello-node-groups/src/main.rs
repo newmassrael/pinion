@@ -1,4 +1,5 @@
 //! R1577 §5.38 §5.52 — a Blender-class node system, composed.
+//! R1578 — and its clipboard, which is a `Fragment` held in a signal.
 //!
 //! # What this example is for
 //!
@@ -19,6 +20,10 @@
 //! and its instance counts, the derived interface of each definition, the edit
 //! path, the value at any node, and — the one an editor is judged by — the
 //! **text of the last refusal**, which names the wires that caused it.
+//!
+//! R1578 adds the clipboard to that list: what is held, which wires were
+//! severed to hold it, how many bytes it serializes to, and what the last
+//! insertion did — all readable without pasting.
 
 use std::rc::Rc;
 
@@ -37,7 +42,8 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Document, EditPath, InterfaceSide, NodeBody, NodeId, NodeKind, Port, ROOT, Socket, TreeId,
+    Crossings, Definitions, Document, EditPath, Fragment, Inserted, InterfaceSide, NodeBody,
+    NodeId, NodeKind, Port, ROOT, Severed, Socket, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -225,6 +231,15 @@ struct GroupsState {
     selection: Signal<Vec<NodeId>>,
     /// The text of the last refusal, so the wire can be asked what went wrong.
     refusal: Signal<String>,
+    /// R1578 — the clipboard. A `Fragment` is a value, so holding one is all a
+    /// clipboard is; the substrate owns none of this because *where* a copied
+    /// piece of graph is kept is the application's business (a signal here, a
+    /// system clipboard elsewhere, a palette of snippets in a third place).
+    clipboard: Signal<Option<Fragment<Op>>>,
+    /// What the last insertion did, so the wire can read the outcome an editor
+    /// has to show: which definitions were re-used, and which severed inputs
+    /// did not come back.
+    last_insert: Signal<String>,
 }
 
 impl GroupsState {
@@ -234,6 +249,8 @@ impl GroupsState {
             path: Signal::new(EditPath::root()),
             selection: Signal::new(Vec::new()),
             refusal: Signal::new(String::new()),
+            clipboard: Signal::new(None),
+            last_insert: Signal::new(String::new()),
         }
     }
 
@@ -550,11 +567,73 @@ fn status_line(document: &Document<Op>, state: &GroupsState) -> String {
     let nodes = document
         .tree(tree)
         .map_or(0, pinion_node_graph::Tree::node_count);
+    let held = state.clipboard.get().map_or_else(String::new, |fragment| {
+        format!(", clipboard {}", describe_fragment(&fragment))
+    });
     format!(
-        "{nodes} nodes, {} definitions, {} selected",
+        "{nodes} nodes, {} definitions, {} selected{held}",
         document.tree_count() - 1,
         state.selection.get().len()
     )
+}
+
+/// A fragment in one line: what it holds and what was cut away to get it.
+fn describe_fragment(fragment: &Fragment<Op>) -> String {
+    format!(
+        "{}n/{}d in:{} out:{}",
+        fragment.node_count(),
+        fragment.definitions().count(),
+        fragment.inbound().len(),
+        fragment.outbound().len()
+    )
+}
+
+/// The crossings in the wire's own vocabulary: `"3.0>5.1,5.2"`, producer first.
+fn describe_severed(severed: &[Severed]) -> String {
+    severed
+        .iter()
+        .map(|one| {
+            let consumers: Vec<String> = one
+                .consumers()
+                .iter()
+                .map(|c| format!("{}.{}", c.node.0, c.port))
+                .collect();
+            format!(
+                "{}.{}>{}",
+                one.producer().node.0,
+                one.producer().port,
+                consumers.join(",")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// What an insertion did, as one readable sentence.
+fn describe_insert(out: &Inserted) -> String {
+    let ids = |trees: &[TreeId]| {
+        trees
+            .iter()
+            .map(|t| t.0.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    format!(
+        "nodes:{}|links:{}|added:{}|reused:{}|reattached:{}|unattached:{}",
+        out.nodes.len(),
+        out.links.len(),
+        ids(&out.definitions_added),
+        ids(&out.definitions_reused),
+        out.reattached.len(),
+        describe_severed(&out.unattached)
+    )
+}
+
+/// Where a fragment goes and under which two policies.
+struct Placement {
+    point: (i32, i32),
+    crossings: Crossings,
+    definitions: Definitions,
 }
 
 // --- The RPC surface ----------------------------------------------------------
@@ -697,6 +776,13 @@ impl ExternalIntrospect for GroupsOracle {
                     // Why the last edit did not happen. The field an editor is
                     // judged by, and the one Blender has no analogue for.
                     SchemaField::new("last_refusal", "string"),
+                    // R1578 — the clipboard, as data. Blender's is a .blend
+                    // file in the temp directory, so none of this is askable
+                    // there without pasting first.
+                    SchemaField::new("clipboard", "string"),
+                    SchemaField::new("clipboard_severed", "string"),
+                    SchemaField::new("clipboard_bytes", "int"),
+                    SchemaField::new("last_insert", "string"),
                     // Argument-taking reads.
                     SchemaField::action("node_kind", "string"),
                     SchemaField::action("node_value", "string"),
@@ -709,6 +795,9 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("group", "string"),
                     SchemaField::action("ungroup", "string"),
                     SchemaField::action("instantiate", "string"),
+                    SchemaField::action("copy", "string"),
+                    SchemaField::action("paste", "string"),
+                    SchemaField::action("duplicate", "string"),
                     SchemaField::action("enter", "string"),
                     SchemaField::action("exit", "string"),
                     SchemaField::action("add", "string"),
@@ -759,6 +848,31 @@ impl ExternalIntrospect for GroupsOracle {
                     .join(","),
             )),
             "last_refusal" => Some(IntrospectValue::Text(state.refusal.get())),
+            "clipboard" => {
+                Some(IntrospectValue::Text(state.clipboard.get().map_or_else(
+                    || "empty".to_owned(),
+                    |f| describe_fragment(&f),
+                )))
+            }
+            "clipboard_severed" => Some(IntrospectValue::Text(state.clipboard.get().map_or_else(
+                String::new,
+                |f| {
+                    format!(
+                        "in:{}|out:{}",
+                        describe_severed(f.inbound()),
+                        describe_severed(f.outbound())
+                    )
+                },
+            ))),
+            // A fragment is serializable, which is what makes it a clipboard
+            // and not a handle into this process. Publishing the byte count is
+            // the cheapest proof of that over the wire.
+            "clipboard_bytes" => int(state
+                .clipboard
+                .get()
+                .and_then(|f| serde_json::to_string(&f).ok())
+                .map_or(0, |json| json.len())),
+            "last_insert" => Some(IntrospectValue::Text(state.last_insert.get())),
             _ => None,
         }
     }
@@ -766,7 +880,8 @@ impl ExternalIntrospect for GroupsOracle {
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "trees" | "definitions" | "nodes" | "links" | "valid" | "path" | "depth"
-            | "current_tree" | "selection" | "last_refusal" => Err(InterveneError::ReadOnly),
+            | "current_tree" | "selection" | "last_refusal" | "clipboard" | "clipboard_severed"
+            | "clipboard_bytes" | "last_insert" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -916,8 +1031,128 @@ impl GroupsOracle {
                 state.selection.set(vec![node]);
                 ok(&node.0.to_string())
             }
+            "copy" | "paste" | "duplicate" => self.clipboard(path, args),
             _ => Err(InvokeError::UnknownPath),
         }
+    }
+
+    /// R1578 — copy, paste and duplicate, which are three call sites of one
+    /// substrate operation: lift a piece of the graph out as a value, and put a
+    /// value back in.
+    ///
+    /// The whole of what this application supplies is where the value is *kept*
+    /// and how the two policy arms are spelled on the wire.
+    fn clipboard(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let tree = state.current();
+        let ok = |text: &str| Ok(IntrospectValue::Text(text.to_owned()));
+        match path {
+            "copy" => {
+                let selection = state.selection.get();
+                let fragment = state
+                    .document
+                    .get()
+                    .extract(tree, &selection)
+                    .map_err(|error| {
+                        state.refusal.set(error.to_string());
+                        InvokeError::rejected(error.to_string())
+                    })?;
+                let described = describe_fragment(&fragment);
+                state.clipboard.set(Some(fragment));
+                state.refusal.set(String::new());
+                ok(&described)
+            }
+            "paste" => {
+                let Placement {
+                    point,
+                    crossings,
+                    definitions,
+                } = Self::placement(args)?;
+                let fragment = state
+                    .clipboard
+                    .get()
+                    .ok_or_else(|| InvokeError::rejected("the clipboard is empty"))?;
+                let out = state
+                    .edit(|document| {
+                        document.insert(tree, &fragment, point, crossings, definitions)
+                    })
+                    .map_err(InvokeError::rejected)?;
+                state.selection.set(out.nodes.clone());
+                let described = describe_insert(&out);
+                state.last_insert.set(described.clone());
+                ok(&described)
+            }
+            "duplicate" => {
+                let Placement {
+                    point,
+                    crossings,
+                    definitions,
+                } = Self::placement(args)?;
+                let selection = state.selection.get();
+                let out = state
+                    .edit(|document| {
+                        document.duplicate(tree, &selection, point, crossings, definitions)
+                    })
+                    .map_err(InvokeError::rejected)?;
+                state.selection.set(out.nodes.clone());
+                let described = describe_insert(&out);
+                state.last_insert.set(described.clone());
+                ok(&described)
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
+    /// `"600,300"`, or with either policy named: `"600,300,keep,fork"`.
+    ///
+    /// The two arms are *stated at the call*. Blender's `linked` arm defaults
+    /// from a user preference (`U.dupflag & USER_DUP_NTREE`), so whether an edit
+    /// to the copy also changes the original depends on a setting the gesture
+    /// does not mention.
+    fn placement(arg: &IntrospectValue) -> Result<Placement, InvokeError> {
+        let raw = Self::text(arg)?;
+        let mut point = (0_i32, 0_i32);
+        let mut crossings = Crossings::Drop;
+        let mut definitions = Definitions::Share;
+        let mut coordinates = 0;
+        for piece in raw.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            match piece {
+                "keep" => crossings = Crossings::KeepInbound,
+                "drop" => crossings = Crossings::Drop,
+                "fork" => definitions = Definitions::Fork,
+                "share" => definitions = Definitions::Share,
+                number => {
+                    let value: i32 = number.parse().map_err(|_| {
+                        InvokeError::rejected(format!(
+                            "{number:?} is neither a coordinate nor one of \
+                             keep/drop/fork/share"
+                        ))
+                    })?;
+                    match coordinates {
+                        0 => point.0 = value,
+                        1 => point.1 = value,
+                        _ => {
+                            return Err(InvokeError::rejected("a placement takes two coordinates"));
+                        }
+                    }
+                    coordinates += 1;
+                }
+            }
+        }
+        if coordinates != 2 {
+            return Err(InvokeError::rejected(
+                "a placement needs \"<x>,<y>\", optionally with keep/drop and fork/share",
+            ));
+        }
+        Ok(Placement {
+            point,
+            crossings,
+            definitions,
+        })
     }
 
     /// Navigation, the palette, and the interface edits: the verbs that do not
@@ -1014,6 +1249,12 @@ impl GroupsOracle {
                 state.path.set(EditPath::root());
                 state.selection.set(Vec::new());
                 state.refusal.set(String::new());
+                // The clipboard deliberately SURVIVES: a fragment is a value,
+                // not a view into the document it came from, and outliving the
+                // document is the whole of what makes it a clipboard. The
+                // insertion report does not — it describes edits to a document
+                // that is gone.
+                state.last_insert.set(String::new());
                 ok("reset")
             }
             _ => Err(InvokeError::UnknownPath),

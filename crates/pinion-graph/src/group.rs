@@ -170,38 +170,27 @@ pub struct Boundary {
 }
 
 impl Boundary {
-    /// Derive the boundary of `selected` within a graph of `order` vertices.
+    /// Partition the links about `selected` **without** asking whether the
+    /// selection could be collapsed into one vertex.
     ///
     /// `selected` is read as a set: repeats are ignored and the order carries no
     /// meaning.
     ///
+    /// A cut is always possible where a collapse may not be — copying a
+    /// sub-graph out of a tree severs the crossing links rather than routing
+    /// them through a new vertex, so no cycle can arise and there is nothing to
+    /// refuse. R1577 fused the two questions into [`Self::derive`], which is
+    /// right for a collapse and wrong for every other consumer of the partition;
+    /// R1578 needed the partition alone.
+    ///
     /// # Errors
     ///
-    /// [`Refusal::Empty`] when nothing is selected, [`Refusal::UnknownVertex`]
-    /// when a selection or link index is outside `0..order`, and
-    /// [`Refusal::Bypass`] when collapsing would create a cycle — see the module
-    /// docs for why that last one is a reachability test rather than a local
-    /// one.
-    pub fn derive(order: usize, links: &[Link], selected: &[usize]) -> Result<Self, Refusal> {
-        if selected.is_empty() {
-            return Err(Refusal::Empty);
-        }
-        let mut inside = vec![false; order];
-        for &v in selected {
-            *inside
-                .get_mut(v)
-                .ok_or(Refusal::UnknownVertex { vertex: v, order })? = true;
-        }
-        for link in links {
-            for end in [link.from.vertex, link.to.vertex] {
-                if end >= order {
-                    return Err(Refusal::UnknownVertex { vertex: end, order });
-                }
-            }
-        }
-        if let Some(path) = bypass_path(order, links, &inside) {
-            return Err(Refusal::Bypass { path });
-        }
+    /// [`Refusal::Empty`] when nothing is selected and
+    /// [`Refusal::UnknownVertex`] when a selection or link index is outside
+    /// `0..order`. **Never** [`Refusal::Bypass`] — that arm belongs to
+    /// [`Self::derive`].
+    pub fn cut(order: usize, links: &[Link], selected: &[usize]) -> Result<Self, Refusal> {
+        let inside = membership(order, links, selected)?;
 
         // The producer keys the socket in BOTH directions — the whole rule.
         let mut inputs = Grouping::default();
@@ -222,6 +211,23 @@ impl Boundary {
             internal,
             outside,
         })
+    }
+
+    /// Derive the boundary of `selected` within a graph of `order` vertices,
+    /// for a **collapse**: the partition of [`Self::cut`], plus the check that
+    /// routing every crossing through one new vertex stays acyclic.
+    ///
+    /// # Errors
+    ///
+    /// Everything [`Self::cut`] refuses, and [`Refusal::Bypass`] when collapsing
+    /// would create a cycle — see the module docs for why that last one is a
+    /// reachability test rather than a local one.
+    pub fn derive(order: usize, links: &[Link], selected: &[usize]) -> Result<Self, Refusal> {
+        let inside = membership(order, links, selected)?;
+        if let Some(path) = bypass_path(order, links, &inside) {
+            return Err(Refusal::Bypass { path });
+        }
+        Self::cut(order, links, selected)
     }
 
     /// The group's input sockets, ascending by producer.
@@ -319,6 +325,30 @@ impl fmt::Display for Refusal {
             }
         }
     }
+}
+
+/// Which vertices are inside the selection, with both index ranges checked.
+///
+/// Shared by [`Boundary::cut`] and [`Boundary::derive`] so the two cannot come
+/// to different conclusions about what is in range.
+fn membership(order: usize, links: &[Link], selected: &[usize]) -> Result<Vec<bool>, Refusal> {
+    if selected.is_empty() {
+        return Err(Refusal::Empty);
+    }
+    let mut inside = vec![false; order];
+    for &v in selected {
+        *inside
+            .get_mut(v)
+            .ok_or(Refusal::UnknownVertex { vertex: v, order })? = true;
+    }
+    for link in links {
+        for end in [link.from.vertex, link.to.vertex] {
+            if end >= order {
+                return Err(Refusal::UnknownVertex { vertex: end, order });
+            }
+        }
+    }
+    Ok(inside)
 }
 
 /// Accumulates interface sockets keyed by their producing socket.
@@ -658,6 +688,57 @@ mod tests {
                 .any(|l| l.from.vertex == vertex && inside[l.to.vertex]);
             !(fed_by_selection && feeds_selection)
         })
+    }
+
+    #[test]
+    fn a_cut_partitions_a_selection_a_collapse_would_refuse() {
+        // The very fixture `derive` refuses. Copying {0, 3} out of 0 → 1 → 2 → 3
+        // is perfectly legal — the crossings are severed, not routed through a
+        // new vertex — so the partition must be available without the legality.
+        let links = chain();
+        assert!(Boundary::derive(4, &links, &[0, 3]).is_err());
+        let cut = Boundary::cut(4, &links, &[0, 3]).unwrap();
+        assert_eq!(cut.outputs().len(), 1, "0 → 1 leaves the selection");
+        assert_eq!(cut.outputs()[0].producer(), s(0));
+        assert_eq!(cut.inputs().len(), 1, "2 → 3 enters it");
+        assert_eq!(cut.inputs()[0].producer(), s(2));
+        assert_eq!(cut.internal(), &[] as &[usize]);
+        assert_eq!(cut.outside(), &[1]);
+    }
+
+    #[test]
+    fn a_cut_and_a_derive_agree_whenever_the_derive_succeeds() {
+        // The split must not have changed what a collapse sees. Same partition,
+        // every time both answer.
+        let links = vec![
+            link(s(0), s(1)),
+            link(s(1), s(2)),
+            link(s(2), s(3)),
+            link(s(4), s(5)),
+        ];
+        for selection in [
+            &[1][..],
+            &[1, 2][..],
+            &[2, 3][..],
+            &[0, 1, 2, 3][..],
+            &[4][..],
+        ] {
+            let derived = Boundary::derive(6, &links, selection).unwrap();
+            let cut = Boundary::cut(6, &links, selection).unwrap();
+            assert_eq!(derived, cut, "selection {selection:?}");
+        }
+    }
+
+    #[test]
+    fn a_cut_still_refuses_what_is_not_a_selection_at_all() {
+        assert_eq!(Boundary::cut(3, &[], &[]).unwrap_err(), Refusal::Empty);
+        assert_eq!(
+            Boundary::cut(2, &[], &[5]).unwrap_err(),
+            Refusal::UnknownVertex {
+                vertex: 5,
+                order: 2
+            }
+        );
     }
 
     #[test]
