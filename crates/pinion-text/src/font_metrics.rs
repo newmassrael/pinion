@@ -173,11 +173,14 @@ mod tests {
         // Rounding is UP: a hint that rounded down would clip the last glyph.
         // Recover the fractional width the same way the provider does and check
         // the reported one is its ceiling.
-        let raw = f64::from(
-            crate::test_font::own_font_cache()
-                .layout("report.pdf", &style, None)
-                .width(),
-        );
+        // R1573 — the host path deliberately: `long.width()` came from the
+        // production provider, which shapes through the PLATFORM fonts, so the
+        // raw advance it is compared against has to come from the same place.
+        // Shaping one side with the deterministic fixture and the other with
+        // the host compares two DIFFERENT fonts — which is exactly how this
+        // passed locally and failed on CI (65 vs 62.31).
+        let mut host = LayoutCache::new();
+        let raw = f64::from(host.layout("report.pdf", &style, None).width());
         let reported = f64::from(long.width());
         assert!(
             reported >= raw && reported < raw + 1.0,
