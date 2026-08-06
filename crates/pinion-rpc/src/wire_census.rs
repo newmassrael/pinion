@@ -253,6 +253,17 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "AnchoredOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("declared", WireTy::String, None),
+                WireField::new("display", WireTy::String, None).nullable(),
+                WireField::new("at", WireTy::Array, None).nullable(),
+            ],
+        },
+    },
+    WireType {
         name: "AnimateControlOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("visited", WireTy::Integer, None)],
@@ -485,6 +496,15 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "CoverageOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("id", WireTy::String, None),
+                WireField::new("px", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "CrossWindowDropOutcome",
         shape: WireShape::Object {
             fields: &[
@@ -510,6 +530,8 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("position", WireTy::Array, None).nullable(),
                 WireField::new("declared_size", WireTy::Array, None).nullable(),
                 WireField::new("decorations", WireTy::Boolean, None),
+                WireField::new("display", WireTy::String, None).nullable(),
+                WireField::new("anchored", WireTy::Object, Some("AnchoredOutcome")).nullable(),
             ],
         },
     },
@@ -532,6 +554,54 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireTy::Array,
                 Some("DisabledEntry"),
             )],
+        },
+    },
+    WireType {
+        name: "DisplayAtOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new("display", WireTy::String, None).nullable()],
+        },
+    },
+    WireType {
+        name: "DisplayOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("id", WireTy::String, None),
+                WireField::new("label", WireTy::String, None),
+                WireField::new("bounds", WireTy::Object, Some("DisplayRectOutcome")),
+                WireField::new("scale", WireTy::Number, None),
+                WireField::new("logical_size", WireTy::Object, Some("LogicalSizeOutcome")),
+                WireField::new("refresh_mhz", WireTy::Integer, None).nullable(),
+                WireField::new("primary", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
+        name: "DisplayRectOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("x", WireTy::Integer, None),
+                WireField::new("y", WireTy::Integer, None),
+                WireField::new("w", WireTy::Integer, None),
+                WireField::new("h", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "DisplaysOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("displays", WireTy::Array, Some("DisplayOutcome")),
+                WireField::new("primary", WireTy::String, None).nullable(),
+                WireField::new("fallback", WireTy::String, None).nullable(),
+                WireField::new("bounding_box", WireTy::Object, Some("DisplayRectOutcome"))
+                    .nullable(),
+                WireField::new("covered_px", WireTy::Integer, None),
+                WireField::new("gap_free", WireTy::Boolean, None),
+                WireField::new("at", WireTy::Object, Some("DisplayAtOutcome")).optional(),
+                WireField::new("placement", WireTy::Object, Some("PlacementOutcome")).optional(),
+                WireField::new("anchored", WireTy::Object, Some("AnchoredOutcome")).optional(),
+            ],
         },
     },
     WireType {
@@ -982,6 +1052,15 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "LogicalSizeOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("w", WireTy::Number, None),
+                WireField::new("h", WireTy::Number, None),
+            ],
+        },
+    },
+    WireType {
         name: "MemoryArena",
         shape: WireShape::Object {
             fields: &[
@@ -1112,6 +1191,21 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("kind", WireTy::String, None),
                 WireField::new("payload", WireTy::Any, None),
                 WireField::new("scope_id", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "PlacementOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("home", WireTy::String, None).nullable(),
+                WireField::new("covering", WireTy::Array, Some("CoverageOutcome")),
+                WireField::new("visible_px", WireTy::Integer, None),
+                WireField::new("total_px", WireTy::Integer, None),
+                WireField::new("offscreen_px", WireTy::Integer, None),
+                WireField::new("fully_visible", WireTy::Boolean, None),
+                WireField::new("visible_fraction", WireTy::Number, None),
+                WireField::new("suggestion", WireTy::Array, None).nullable(),
             ],
         },
     },

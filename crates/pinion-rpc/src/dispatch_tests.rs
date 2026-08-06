@@ -2594,6 +2594,8 @@ fn r1087_windows_reports_id_title_and_position() {
             position: None,
             declared_size: Some((880, 600)),
             decorations: true,
+            display: None,
+            anchored: None,
         },
         DeclaredWindow {
             id: "torn-inspector".to_owned(),
@@ -2603,6 +2605,8 @@ fn r1087_windows_reports_id_title_and_position() {
             // R1115 PR-38 — a borderless torn-off panel: the OS draws no
             // chrome so the panel owns its header. Observable as scene-data.
             decorations: false,
+            display: None,
+            anchored: None,
         },
     ];
     let mut ctx =
@@ -2617,11 +2621,12 @@ fn r1087_windows_reports_id_title_and_position() {
                 {
                     "id": "main", "title": "Main", "position": null,
                     "declared_size": [880, 600], "decorations": true,
+                    "display": null, "anchored": null,
                 },
                 {
                     "id": "torn-inspector", "title": "Inspector",
                     "position": [120, 80], "declared_size": [360, 360],
-                    "decorations": false,
+                    "decorations": false, "display": null, "anchored": null,
                 },
             ]
         })),
@@ -2646,6 +2651,8 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
             position: Some((40, 40)),
             declared_size: Some((400, 300)),
             decorations: true,
+            display: None,
+            anchored: None,
         },
         DeclaredWindow {
             id: "intrinsic-popover".to_owned(),
@@ -2653,6 +2660,8 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
             position: None,
             declared_size: None,
             decorations: true,
+            display: None,
+            anchored: None,
         },
     ];
     let mut ctx =
@@ -2667,12 +2676,12 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
                 {
                     "id": "fixed-dialog", "title": "Dialog",
                     "position": [40, 40], "declared_size": [400, 300],
-                    "decorations": true,
+                    "decorations": true, "display": null, "anchored": null,
                 },
                 {
                     "id": "intrinsic-popover", "title": "Popover",
                     "position": null, "declared_size": null,
-                    "decorations": true,
+                    "decorations": true, "display": null, "anchored": null,
                 },
             ]
         })),

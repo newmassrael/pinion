@@ -31122,6 +31122,112 @@
         "THE FAMILY CHECK COSTS ONE ENUMERATION STEP ON EVERY SCANNING CACHE. Measured at nothing here relative to the ~25 ms scan R1447 recorded, but it is not free and was not benchmarked."
       ]
     },
+    "R1575": {
+      "decision_summary": "R1575 §5.3 §5.50 §5.52 — a graph states which of its links it AUTHORED and which it OBSERVED. Stroke could not draw a dash at all, and StrokeCap's doc had called dash patterns carry-forward for ~1550 rounds, so a two-layer diagnostic graph — solid for the links a user drew, dashed for the ones that are not there, dotted for the ones nobody drew — was not a picture this framework could express. An unexpressible drawing shows up as a MISSING PRIMITIVE, not as a missing widget. Entry appended at R1576 after a census found the round had landed with no atomic entry.",
+      "changes_bullets": [
+        "Stroke gains Dash {on, off, offset} in pixels, NonZeroU32 so a dash that draws nothing is unrepresentable, offset canonical modulo the period so two equal-drawing dashes compare equal",
+        "Option<Dash> rather than a Dash meaning solid: Qt keeps Qt::PenStyle and the pattern list separately and they can contradict each other",
+        "examples/hello-graph-diff is the forcing consumer: authored and observed link layers, LinkKind derived from set membership rather than stored, so invoke adopt is one assignment",
+        "scene/snapshot publishes style.stroke.dash, so an agent reads which layer a link is in without rasterizing; a QPen is an argument to a paint call and lives nowhere afterwards"
+      ],
+      "verification_bullets": [
+        "tools/demos/r1575_graph_states_its_layers.py drives the whole arc over RPC, comparing the model's missing_ids against the paint's dashes as two independent readings of one fact",
+        "The example carries 8 unit tests; pinion-core, pinion-rpc, pinion-runtime and the binding are green under clippy pedantic"
+      ],
+      "impact_refs": [
+        "5.3",
+        "5.12",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "The changelog entry for this round was MISSING from the atomic store until R1576's census found it; this entry is that repair, appended out of band, and the round obligation it broke is 1 commit = 1 round = 1 atomic entry",
+        "hello-graph-diff matched no phase_b_tally axis pattern and was reported UNCLASSIFIED for a round; R1576 filed it under dcc, the axis R1575 itself declared",
+        "A dash costs one path segment each, so R1556's last.draw.path_segments rises for a dashed stroke"
+      ],
+      "publishable_decision_summary": "R1575 §5.3 §5.50 §5.52 — a graph states which of its links it AUTHORED and which it OBSERVED. Stroke could not draw a dash at all, and StrokeCap's doc had called dash patterns carry-forward for ~1550 rounds, so a two-layer diagnostic graph — solid for the links a user drew, dashed for the ones that are not there, dotted for the ones nobody drew — was not a picture this framework could express. An unexpressible drawing shows up as a MISSING PRIMITIVE, not as a missing widget. Entry appended at R1576 after a census found the round had landed with no atomic entry.",
+      "publishable_changes_bullets": [
+        "Stroke gains Dash {on, off, offset} in pixels, NonZeroU32 so a dash that draws nothing is unrepresentable, offset canonical modulo the period so two equal-drawing dashes compare equal",
+        "Option<Dash> rather than a Dash meaning solid: Qt keeps Qt::PenStyle and the pattern list separately and they can contradict each other",
+        "examples/hello-graph-diff is the forcing consumer: authored and observed link layers, LinkKind derived from set membership rather than stored, so invoke adopt is one assignment",
+        "scene/snapshot publishes style.stroke.dash, so an agent reads which layer a link is in without rasterizing; a QPen is an argument to a paint call and lives nowhere afterwards"
+      ],
+      "publishable_verification_bullets": [
+        "tools/demos/r1575_graph_states_its_layers.py drives the whole arc over RPC, comparing the model's missing_ids against the paint's dashes as two independent readings of one fact",
+        "The example carries 8 unit tests; pinion-core, pinion-rpc, pinion-runtime and the binding are green under clippy pedantic"
+      ],
+      "publishable_impact_refs": [
+        "5.3",
+        "5.12",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The changelog entry for this round was MISSING from the atomic store until R1576's census found it; this entry is that repair, appended out of band, and the round obligation it broke is 1 commit = 1 round = 1 atomic entry",
+        "hello-graph-diff matched no phase_b_tally axis pattern and was reported UNCLASSIFIED for a round; R1576 filed it under dcc, the axis R1575 itself declared",
+        "A dash costs one path segment each, so R1556's last.draw.path_segments rises for a dashed stroke"
+      ]
+    },
+    "R1576": {
+      "decision_summary": "R1576 §5.16 §5.41 §5.7 §5.12 §2 #7 — A PLACE IS STATED RELATIVE TO A DISPLAY. pinion had no notion of a monitor at all: a census over the whole tree found ZERO references to winit's available_monitors / primary_monitor / MonitorHandle, so WindowSpec::position's own doc described logical pixels in a coordinate space nothing could describe, and three questions were unaskable — how many monitors are there, which one is this window on, and is this window on any of them. The commonest multi-monitor bug in desktop software (restore a saved layout after unplugging a monitor and the window opens where no pixel is) was therefore not merely possible, it was unaskable. The round splits the axis in two and THE SPLIT IS THE ARGUMENT: the geometry is a pure value a test can construct, and the platform read is ~40 lines that do no arithmetic — because a monitor farm is not a thing CI has. Six things past Qt 6.11, each checked against qscreen.h / qguiapplication.h / qwidget.h on this machine.",
+      "changes_bullets": [
+        "pinion_core::display is the PURE half: DisplayTopology + Display + DisplayId + DisplayRect, with exact rectangle-union area by coordinate decomposition, so a mirrored pair counts once and an L-shaped desk's hole is a number",
+        "DisplayTopology::resolve answers for a RECTANGLE — home display, every display touched, visible pixels, offscreen pixels, and the nearest origin that would make it wholly visible",
+        "Anchor is a display id plus a LOGICAL offset into it, and Anchored names the outcome: on_declared, substituted (with BOTH ids), or no_display",
+        "WindowSpec::display re-reads position as an offset into a named display; with_placement is the setter that can also CLEAR it, which a non_exhaustive struct otherwise made unexpressible",
+        "window_placement_moves compares the whole placement, so re-declaring only the display is a move; placement_command is the pure decision of which frame to command in",
+        "user_move_writeback keeps a display-relative declaration RELATIVE, and a drag onto another monitor re-declares the display — the loop that keeps the declaration true of the world",
+        "scene/displays publishes the desk plus three optional derived answers (at, probe, anchor), each ABSENT unless asked for; scene/windows gains display and anchored per window",
+        "pinion_shell::use_displays lets a BINDING name a display, seeded through a ProviderSlot the surface stamps, so in-process code is not below QGuiApplication::screens()"
+      ],
+      "verification_bullets": [
+        "33 unit tests in pinion_core::display over FABRICATED arrangements — side-by-side, L-shaped, mirrored, diagonal, mixed-DPI, headless — because CI has one monitor and a design whose multi-monitor arithmetic lived in the platform layer would be asserted by nobody",
+        "Five counterfactuals, all caught: naive sum for the union (4 tests), placement diff ignoring the display (2), write-back overwriting a relative offset (5), the binding handle never published (the demo's two-reader cross-check), and the command ignoring the display (4)",
+        "The fifth counterfactual is the round's finding: it was BEHAVIOURALLY IDENTICAL on a one-monitor 1x desk, so the decision was extracted into the pure placement_command and pinned against a fabricated mixed-DPI desk",
+        "tools/demos/r1576_a_place_is_relative_to_a_display.py, 84 assertion sites, all relations between published facts so they hold on any desk; six demos reading scene/windows re-run green after the shape change",
+        "The R1539 wire census gate caught the six new response types itself and the -32602 vocabulary gate caught the new refusal word"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "A display's USABLE region (Qt QScreen::availableGeometry) is not modelled: winit exposes no work area and EWMH _NET_WORKAREA is one rectangle for the whole desktop, so it needs a platform probe rather than more geometry",
+        "No hot-plug event: winit 0.30 emits none, so the desk is re-read at each window create and RPC dispatch; a binding that only paints will not see a monitor arrive until then",
+        "Window::current_monitor() is not cross-checked against the derived home display, so the platform's own opinion and this one are never compared",
+        "The OS apply stays HW-gated as every real-window behaviour here is; the DECISION is pinned, the set_outer_position call is not"
+      ],
+      "publishable_decision_summary": "R1576 §5.16 §5.41 §5.7 §5.12 §2 #7 — A PLACE IS STATED RELATIVE TO A DISPLAY. pinion had no notion of a monitor at all: a census over the whole tree found ZERO references to winit's available_monitors / primary_monitor / MonitorHandle, so WindowSpec::position's own doc described logical pixels in a coordinate space nothing could describe, and three questions were unaskable — how many monitors are there, which one is this window on, and is this window on any of them. The commonest multi-monitor bug in desktop software (restore a saved layout after unplugging a monitor and the window opens where no pixel is) was therefore not merely possible, it was unaskable. The round splits the axis in two and THE SPLIT IS THE ARGUMENT: the geometry is a pure value a test can construct, and the platform read is ~40 lines that do no arithmetic — because a monitor farm is not a thing CI has. Six things past Qt 6.11, each checked against qscreen.h / qguiapplication.h / qwidget.h on this machine.",
+      "publishable_changes_bullets": [
+        "pinion_core::display is the PURE half: DisplayTopology + Display + DisplayId + DisplayRect, with exact rectangle-union area by coordinate decomposition, so a mirrored pair counts once and an L-shaped desk's hole is a number",
+        "DisplayTopology::resolve answers for a RECTANGLE — home display, every display touched, visible pixels, offscreen pixels, and the nearest origin that would make it wholly visible",
+        "Anchor is a display id plus a LOGICAL offset into it, and Anchored names the outcome: on_declared, substituted (with BOTH ids), or no_display",
+        "WindowSpec::display re-reads position as an offset into a named display; with_placement is the setter that can also CLEAR it, which a non_exhaustive struct otherwise made unexpressible",
+        "window_placement_moves compares the whole placement, so re-declaring only the display is a move; placement_command is the pure decision of which frame to command in",
+        "user_move_writeback keeps a display-relative declaration RELATIVE, and a drag onto another monitor re-declares the display — the loop that keeps the declaration true of the world",
+        "scene/displays publishes the desk plus three optional derived answers (at, probe, anchor), each ABSENT unless asked for; scene/windows gains display and anchored per window",
+        "pinion_shell::use_displays lets a BINDING name a display, seeded through a ProviderSlot the surface stamps, so in-process code is not below QGuiApplication::screens()"
+      ],
+      "publishable_verification_bullets": [
+        "33 unit tests in pinion_core::display over FABRICATED arrangements — side-by-side, L-shaped, mirrored, diagonal, mixed-DPI, headless — because CI has one monitor and a design whose multi-monitor arithmetic lived in the platform layer would be asserted by nobody",
+        "Five counterfactuals, all caught: naive sum for the union (4 tests), placement diff ignoring the display (2), write-back overwriting a relative offset (5), the binding handle never published (the demo's two-reader cross-check), and the command ignoring the display (4)",
+        "The fifth counterfactual is the round's finding: it was BEHAVIOURALLY IDENTICAL on a one-monitor 1x desk, so the decision was extracted into the pure placement_command and pinned against a fabricated mixed-DPI desk",
+        "tools/demos/r1576_a_place_is_relative_to_a_display.py, 84 assertion sites, all relations between published facts so they hold on any desk; six demos reading scene/windows re-run green after the shape change",
+        "The R1539 wire census gate caught the six new response types itself and the -32602 vocabulary gate caught the new refusal word"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A display's USABLE region (Qt QScreen::availableGeometry) is not modelled: winit exposes no work area and EWMH _NET_WORKAREA is one rectangle for the whole desktop, so it needs a platform probe rather than more geometry",
+        "No hot-plug event: winit 0.30 emits none, so the desk is re-read at each window create and RPC dispatch; a binding that only paints will not see a monitor arrive until then",
+        "Window::current_monitor() is not cross-checked against the derived home display, so the platform's own opinion and this one are never compared",
+        "The OS apply stays HW-gated as every real-window behaviour here is; the DECISION is pinned, the set_outer_position call is not"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

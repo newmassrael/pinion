@@ -1,0 +1,32 @@
+[package]
+name = "hello-displays"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1576 §5.16 §5.41 the desk a window sits on — the attached monitors as data, a window's position measured from a NAMED display so a saved layout survives the desk changing, and the substitution named on the wire when that display is gone"
+publish = false
+
+[[bin]]
+name = "hello-displays"
+path = "src/main.rs"
+
+[dependencies]
+# §5.3 scene primitives + the R1576 `display` module this binding consumes.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.30 paint-side AppShell — and the R1576 `use_displays` handle plus
+# `WindowSpec::display`, which this binding is the forcing consumer of.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+# R1576 §5.50: build-time codegen for the `HelloDisplaysRenderer` Vello wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

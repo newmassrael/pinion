@@ -21,6 +21,7 @@ pub mod commands;
 pub mod cross_window_drop;
 pub mod disabled;
 pub mod dispatch;
+pub mod displays;
 pub mod draw_profile;
 pub mod dry_run;
 pub mod errors;
@@ -91,6 +92,10 @@ pub use dispatch::{
     ACTION_REFUSED, ClickButton, DeclaredWindow, DeferredInput, DispatchContext, DragButton,
     DragPhase, KeyWireState, PacingState, Request, RequestId, Response, RpcError,
     VALUE_OUT_OF_RANGE, dispatch, dispatch_parsed, parse_request, unknown_window_verdict,
+};
+pub use displays::{
+    AnchoredOutcome, CoverageOutcome, DisplayAsk, DisplayAtOutcome, DisplayOutcome,
+    DisplayRectOutcome, DisplaysOutcome, LogicalSizeOutcome, PlacementOutcome, displays,
 };
 pub use dry_run::{DryRunError, dry_run};
 pub use errors::{DATA_DOC, ErrorEntry, RpcErrors, rpc_errors};

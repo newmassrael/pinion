@@ -176,6 +176,12 @@ AXES = [
                 # total go up.
                 "column-reorder", "column-visibility",
                 "cell-editor",
+                # R1576, cleared inline: `hello-graph-diff` (R1575) had no
+                # pattern anywhere and this tool reported it UNCLASSIFIED for a
+                # round. It is a node-graph binding — the axis's own third
+                # named item — and R1575 declared `dcc`, so the round and its
+                # example were being filed under different answers.
+                "graph-diff",
                 "asset-browser", "file-manager", "undo", "grid-header-menu",
                 "grid-frozen-col", "row-dissect", "hex-dump", "code-fold",
                 "command-palette", "selection-toolbar", "tab-reorder",
@@ -1480,11 +1486,50 @@ AXES = [
                 "file-browser", "filedrop", "print", "pdf-export", "tray",
                 "window-", "multi-window", "no-primary", "modal-handoff",
                 "modal-refocus",
+                # R1576 — the DISPLAY the windows sit on. `displays` rather
+                # than `display`, which would be an unbounded prefix over any
+                # future `hello-display-list` AND over words containing it;
+                # the R1560/R1563 finding, applied before it can bite.
+                "displays",
             ]),
         ],
-        "judged_at": 1519,
-        "completion": 58,
-        "evidence_snapshot": {"example-name": 13, "round-axis": 0},
+        # R1576 re-judged 58 -> 63, and the tool demanded it: this axis had
+        # never declared a round, so its first one moved `round-axis` off zero.
+        #
+        # What moved it: the framework had NO NOTION OF A MONITOR AT ALL. A
+        # census over the whole tree found zero references to winit's
+        # `available_monitors` / `primary_monitor` / `MonitorHandle`, so
+        # `WindowSpec::position`'s own doc described "logical pixels, the OS
+        # applies the per-monitor DPI scale" in a coordinate space nothing
+        # could describe, and three questions were unaskable: how many
+        # monitors are there, which one is this window on, and is this window
+        # on any of them.
+        #
+        # R1576 answers all three. `pinion_core::display` is the pure value
+        # (topology, union-area geometry, placement resolution, anchors),
+        # `pinion-shell` supplies it from winit and RESOLVES window placements
+        # through it, `scene/displays` publishes it, and
+        # `WindowSpec::display` makes a position display-relative — so a saved
+        # layout survives the desk changing, and a vanished display is
+        # SUBSTITUTED BY NAME rather than silently.
+        #
+        # ONLY +5, and the reason is this axis's own gate. What "OS-native
+        # integration" is judged short on is Mac/Win native surfaces (native
+        # menus, native print dialogs), which need those OSes' runners and are
+        # untouched. Worth recording that the gate does NOT cover what R1576
+        # did: display enumeration is buildable and testable on Linux, and was
+        # done here. Also still absent, audited at R1576: a display's USABLE
+        # region (Qt `QScreen::availableGeometry`) — winit exposes no work
+        # area and EWMH's `_NET_WORKAREA` is one rectangle for the whole
+        # desktop rather than one per monitor, so it needs a platform probe
+        # rather than more geometry; no hot-plug EVENT (winit 0.30 emits none,
+        # so the desk is re-read at each window create and RPC dispatch and a
+        # binding that only paints will not see a monitor arrive until then);
+        # and `Window::current_monitor()` is not cross-checked against the
+        # derived home display.
+        "judged_at": 1576,
+        "completion": 63,
+        "evidence_snapshot": {"example-name": 14, "round-axis": 1},
     },
     {
         "key": "api",

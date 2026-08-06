@@ -2328,6 +2328,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-displays"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-dnd"
 version = "0.0.1"
 dependencies = [

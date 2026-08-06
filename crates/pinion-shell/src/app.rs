@@ -46,14 +46,59 @@ use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
+use winit::monitor::MonitorHandle;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowId, WindowLevel};
 
 use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
 use crate::{
     AppEvent, RenderState, SizeStrategy, VelloContext, VelloRenderer, WidgetRenderer, WidgetView,
-    WindowSpec,
+    WindowPlacement, WindowSpec,
 };
+use pinion_core::display::{Anchored, DisplayInfo, DisplayRect, DisplayTopology};
+
+/// R1576 §5.16 §5.41 — one winit monitor as a [`DisplayInfo`], field for field.
+///
+/// This function and [`topology_from`] are the **entire** untestable surface of
+/// the display axis: everything a `MonitorHandle` can answer is moved across
+/// with no arithmetic, and every derivation on top of the result lives in
+/// `pinion_core::display`, where an arrangement is an argument a test writes.
+/// A monitor farm is not a thing CI has, so keeping this seam to a move is what
+/// makes the rest of the axis provable.
+///
+/// `refresh_rate_millihertz()` is already an `Option` in winit — the honesty Qt
+/// lacks (`QScreen::refreshRate()` returns `qreal`, so "unknown" arrives as a
+/// real-looking `0`) — and it is carried across as one.
+fn display_info_from(monitor: &MonitorHandle, primary: bool) -> DisplayInfo {
+    let position = monitor.position();
+    let size = monitor.size();
+    DisplayInfo {
+        label: monitor.name(),
+        bounds: DisplayRect::new(position.x, position.y, size.width, size.height),
+        scale_factor: monitor.scale_factor(),
+        refresh_mhz: monitor.refresh_rate_millihertz(),
+        primary,
+    }
+}
+
+/// R1576 §5.16 §5.41 — the desk, from a winit monitor enumeration.
+///
+/// `primary` is compared by winit's own `MonitorHandle` equality rather than by
+/// name, because a name is exactly the thing that is not unique — the reason
+/// [`pinion_core::display::DisplayId`] exists.
+fn topology_from(
+    monitors: impl Iterator<Item = MonitorHandle>,
+    primary: Option<&MonitorHandle>,
+) -> DisplayTopology {
+    DisplayTopology::new(
+        monitors
+            .map(|m| {
+                let is_primary = primary.is_some_and(|p| *p == m);
+                display_info_from(&m, is_primary)
+            })
+            .collect(),
+    )
+}
 
 /// R670.B §5.16 §5.41 — per-window state cluster.
 ///
@@ -652,6 +697,14 @@ impl<V: WidgetView> AppShell<V> {
                         root_owner,
                         std::sync::Arc::new(crate::ProxyQuitSink::new(seed_proxy)),
                     );
+                    // R1576 §5.16 §5.41 §5.23 — the desk a binding reads to
+                    // NAME a display in a `WindowSpec`. Rides the same one
+                    // seeding window as the sinks, so a binding's
+                    // `create_extra_externals` can hold the handle; it starts
+                    // empty and the surface stamps it at every window create
+                    // and RPC dispatch.
+                    crate::displays::DISPLAYS
+                        .provide(root_owner, std::sync::Arc::new(crate::DisplayHandle::new()));
                 },
             ),
             windows: HashMap::new(),
@@ -746,6 +799,119 @@ impl<V: WidgetView> AppShell<V> {
                 Some((slot.spec_id.to_string(), (logical.x, logical.y)))
             })
             .collect()
+    }
+
+    /// R1149 / R1576 §5.51 §5.16 §2 #7 §2 #2 — push the two facts about the
+    /// **desktop outside this process** that an RPC dispatch will read, before
+    /// it reads them.
+    ///
+    /// Both exist because `ShellCore` is backend-agnostic by construction (no
+    /// winit, no wgpu) while these facts belong to the window system, so the
+    /// surface pushes and the substrate reads. Grouped because they are one
+    /// obligation at one moment — "the desktop as it is at the start of this
+    /// dispatch" — and because two separate stamps in the dispatch body is how
+    /// a third one gets added at the wrong point later.
+    ///
+    /// * **Window origins** (R1149): every window's ACTUAL outer origin, so a
+    ///   cross-window resolution during this RPC (a `scene/drag` redock) uses
+    ///   the same real positions the live winit path does. Without it the RPC
+    ///   drain fell back to DECLARED origins (a WM-placed `"main"` at
+    ///   `(0, 0)`), so an agent's RPC drive could not reproduce — let alone
+    ///   diagnose — a live coordinate divergence. Multi-window only: a single
+    ///   window never resolves cross-window.
+    /// * **The display topology** (R1576): the monitors attached right now, for
+    ///   `scene/displays` and for the placement `scene/windows` reports.
+    ///   Stamped per dispatch rather than cached at boot because winit 0.30
+    ///   emits no monitor-change event — a cached desk would have no
+    ///   invalidation signal and would answer confidently with yesterday's
+    ///   arrangement, which is the failure this axis exists to remove.
+    fn stamp_desktop_facts(&self) {
+        if self.windows.len() > 1 {
+            self.stamp_all_window_origins();
+        }
+        self.publish_display_topology(self.display_topology());
+    }
+
+    /// R1576 §5.16 §5.41 — publish one reading of the desk to BOTH readers:
+    /// the substrate (which answers `scene/displays` and resolves
+    /// `scene/windows`' placements) and the binding-facing
+    /// [`crate::use_displays`] handle.
+    ///
+    /// One function because two stamp sites with two readers is four places for
+    /// them to disagree about what the desk is, and "the wire says one thing
+    /// and the binding sees another" is the exact class of defect the whole
+    /// declared-placement design exists to prevent.
+    fn publish_display_topology(&self, topology: DisplayTopology) {
+        self.core.set_display_topology(topology.clone());
+        self.core
+            .root_owner()
+            .run(|| crate::displays::use_display_handle().set(topology));
+    }
+
+    /// R1576 §5.16 §5.41 §2 #7 — the monitors attached **right now**.
+    ///
+    /// Read live from any window rather than cached on the shell, so a monitor
+    /// plugged in mid-session is simply seen. winit 0.30 emits no
+    /// monitor-change event, so a cache here would have no invalidation signal
+    /// at all and would answer confidently with yesterday's desk — the failure
+    /// mode this whole axis exists to remove.
+    ///
+    /// A shell with no window yet (pre-`Resumed`, or a suspended mobile state)
+    /// answers with the empty topology, which every derivation is total on.
+    /// `resume_spec` does not come through here: at create time there is no
+    /// window and the `ActiveEventLoop` is the enumeration source.
+    fn display_topology(&self) -> DisplayTopology {
+        let Some(window) = self.windows.values().find_map(Self::slot_window) else {
+            return DisplayTopology::empty();
+        };
+        topology_from(
+            window.available_monitors(),
+            window.primary_monitor().as_ref(),
+        )
+    }
+
+    /// R1576 §5.16 §5.41 — drive a live window to a declared placement, and
+    /// answer with what became of it.
+    ///
+    /// The two arms differ in the frame they command in, and that is the only
+    /// difference: an absolute placement goes out as a `LogicalPosition`
+    /// exactly as it has since R1087 (byte-identical for every pre-R1576
+    /// binding), while a display-relative one is resolved to an absolute
+    /// **physical** point first, because that is the space the resolution
+    /// happened in and re-dividing it by the window's own scale would
+    /// reintroduce the per-window guess the display axis exists to retire.
+    ///
+    /// The returned [`Anchored`] is what the caller latches and what
+    /// `scene/windows` publishes, so the fact that a named display was
+    /// substituted travels with the move instead of being recomputed by
+    /// someone else later.
+    ///
+    /// The DECISION — which frame, which numbers — is
+    /// [`placement_command`], a pure function, so what this body does is
+    /// exactly one `set_outer_position` call. That split is not tidiness: on a
+    /// single-monitor 1x desk the two frames produce identical numbers, so a
+    /// bug that ignored the display entirely would be invisible to any test
+    /// that could run on this host. Against a fabricated two-panel high-DPI
+    /// desk it is not, and that is where the decision is pinned.
+    fn apply_placement(
+        window: &Window,
+        scale: f64,
+        topology: &DisplayTopology,
+        placement: &WindowPlacement,
+    ) -> (Anchored, (i32, i32)) {
+        let (anchored, command, latch) = placement_command(placement, topology, scale);
+        match command {
+            Some(PlacementCommand::Logical(x, y)) => {
+                window.set_outer_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+            }
+            Some(PlacementCommand::Physical(x, y)) => {
+                window.set_outer_position(PhysicalPosition::new(x, y));
+            }
+            // No displays at all: there is nowhere to put it, and commanding a
+            // position would be inventing one.
+            None => {}
+        }
+        (anchored, latch)
     }
 
     /// R51.38 / R1027 / R1120 §5.35 §5.16 §5.51 — the `CursorMoved` body.
@@ -1250,15 +1416,7 @@ impl<V: WidgetView> AppShell<V> {
                 std::ops::ControlFlow::Continue(reply) => reply,
             }
         };
-        // R1149 §5.51 §2 #7 §2 #2 — stamp every window's ACTUAL outer origin so a
-        // cross-window resolution during this RPC (a `scene/drag` redock) uses the
-        // SAME actual origins the live winit path does. Without it the RPC drain
-        // fell back to DECLARED origins (WM-placed `"main"` at `(0,0)`), so an AI's
-        // RPC drive could NOT reproduce — let alone diagnose — a live coordinate
-        // divergence. Multi-window only (single-window never resolves cross-window).
-        if self.windows.len() > 1 {
-            self.stamp_all_window_origins();
-        }
+        self.stamp_desktop_facts();
         // R890.1 §5.16 §5.49 — no window extraction here at all: the
         // substrate's windowed entry derives the dispatch scope from
         // the request's own `{window: "<id>"}` param through the ONE
@@ -2954,7 +3112,7 @@ impl<V: WidgetView + 'static> AppShell<V> {
         }
         // R1087 §5.16 PR-31 — move pass: a spec present in BOTH old and
         // new whose declared position changed drives the live OS window to
-        // the new logical-pixel position. `window_position_moves` is a TOTAL
+        // the new logical-pixel position. `window_placement_moves` is a TOTAL
         // diff (every same-id position change appears; without it the
         // id-keyed add/drop passes would silently swallow it). The apply
         // here is best-effort: a window with no live arc — a
@@ -2966,19 +3124,30 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // on top writes the position signal each pointer move; this is where
         // each write lands on the real window. (The live move is HW-gated;
         // the diff is unit-tested in `r1087_window_position_move_diff_tests`.)
-        for (spec_id, (x, y)) in window_position_moves(&old_specs, &new_specs) {
+        // R1576 — the topology is read ONCE for the whole pass rather than per
+        // window: it is a platform round-trip, and two windows reconciled in
+        // one pass must not be resolved against two different desks.
+        let placement_moves = window_placement_moves(&old_specs, &new_specs);
+        let topology = if placement_moves.is_empty() {
+            DisplayTopology::empty()
+        } else {
+            self.display_topology()
+        };
+        for (spec_id, placement) in placement_moves {
             if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied() {
                 if let Some(slot) = self.windows.get_mut(&window_id) {
+                    let scale = slot.scale_factor;
                     // Clone the arc first so the immutable `slot_window`
                     // borrow ends before the `last_commanded_position`
                     // mutation below.
                     if let Some(window) = Self::slot_window(slot).cloned() {
-                        window.set_outer_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+                        let (_anchored, commanded) =
+                            Self::apply_placement(&window, scale, &topology, &placement);
                         // R1088 §5.16 PR-31 — latch the commanded position
                         // so the OS `Moved` echo this `set_outer_position`
                         // triggers is recognised + suppressed by
                         // `note_window_moved`, not mistaken for a user drag.
-                        slot.last_commanded_position = Some((x, y));
+                        slot.last_commanded_position = Some(commanded);
                     }
                 }
             }
@@ -3110,8 +3279,14 @@ impl<V: WidgetView + 'static> AppShell<V> {
             // move-pass apply gap for the mobile-lifecycle resume path. The
             // matching `last_commanded_position` latch is stamped on the
             // rebuilt slot below (suppresses the resulting `Moved` echo).
-            if let Some((x, y)) = spec.position {
-                w.set_outer_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+            if let Some(placement) = spec.placement() {
+                // R1576 — a cached window already knows its own scale; a fresh
+                // one does not, hence the two branches. The commanded position
+                // is discarded here because the slot below is rebuilt with its
+                // own latch (unchanged from R1088).
+                let scale = w.scale_factor();
+                let topology = topology_from(w.available_monitors(), w.primary_monitor().as_ref());
+                let _ = Self::apply_placement(&w, scale, &topology, &placement);
             }
             // R1320 §5.16 §5.41 PR-52 — re-apply the declared TITLE + DECORATIONS on a
             // `Suspended(Some)` resume, mirroring the position re-apply above (R1088).
@@ -3133,8 +3308,28 @@ impl<V: WidgetView + 'static> AppShell<V> {
             // `None` — every pre-R1087 spec — leaves placement to the
             // window manager exactly as before (byte-identical). winit
             // applies the per-monitor DPI scale to the logical coords.
-            if let Some((x, y)) = spec.position {
-                attrs = attrs.with_position(LogicalPosition::new(f64::from(x), f64::from(y)));
+            // R1576 §5.16 §5.41 — a spec naming a display re-reads that same
+            // pair as an offset INTO it, resolved against the monitors
+            // attached now, and the window is created at the resulting
+            // absolute PHYSICAL point. A spec naming no display keeps the
+            // logical absolute reading byte-identical.
+            match spec.placement() {
+                Some(placement) if placement.display.is_some() => {
+                    let topology = topology_from(
+                        event_loop.available_monitors(),
+                        event_loop.primary_monitor().as_ref(),
+                    );
+                    if let Some((x, y)) = placement.resolve(&topology).at() {
+                        attrs = attrs.with_position(PhysicalPosition::new(x, y));
+                    }
+                }
+                Some(placement) => {
+                    attrs = attrs.with_position(LogicalPosition::new(
+                        f64::from(placement.offset.0),
+                        f64::from(placement.offset.1),
+                    ));
+                }
+                None => {}
             }
             // R1115 §5.16 §5.51 PR-38 — honour the declared OS chrome. A
             // torn-off dock panel declares `decorations: false` so the OS
@@ -3410,7 +3605,26 @@ impl<V: WidgetView + 'static> AppShell<V> {
         let Some(signal) = self.windows_signal.as_ref() else {
             return;
         };
-        let Some(new_specs) = user_move_writeback(signal.get(), spec_id.as_ref(), logical) else {
+        // R1576 — the topology is read only when a spec actually measures its
+        // position from a display; `user_move_writeback` ignores it otherwise,
+        // so an absolute-placement binding (every pre-R1576 one) pays nothing
+        // per drag event.
+        let needs_topology = signal
+            .get()
+            .iter()
+            .any(|s| s.id.as_ref() == spec_id.as_ref() && s.display.is_some());
+        let topology = if needs_topology {
+            self.display_topology()
+        } else {
+            DisplayTopology::empty()
+        };
+        let Some(new_specs) = user_move_writeback(
+            signal.get(),
+            spec_id.as_ref(),
+            logical,
+            (position.x, position.y),
+            &topology,
+        ) else {
             return;
         };
         // Sync the reconcile cache so the signal write does NOT re-command the OS
@@ -3465,6 +3679,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // shell-side re-entries (suspend / resume cycles read the
         // same memoised `Rc<Signal<..>>` so the Effect install gate
         // below sees the same handle).
+        // R1576 §5.16 §5.41 — publish the desk BEFORE the first window is
+        // created, so a binding that names a display in its own `WindowSpec`
+        // factory (`use_displays()` inside `windows_signal`) has one to read.
+        // The `ActiveEventLoop` is the enumeration source here because there is
+        // no window yet to ask; every later refresh goes through
+        // `stamp_desktop_facts`.
+        self.publish_display_topology(topology_from(
+            event_loop.available_monitors(),
+            event_loop.primary_monitor().as_ref(),
+        ));
         let opt_signal = self.core.root_owner().run(V::windows_signal);
         let specs: Vec<WindowSpec> = match opt_signal.as_ref() {
             Some(signal) => signal.get(),
@@ -4662,19 +4886,25 @@ fn winit_ime_to_composition(
     }
 }
 
-/// R1087 §5.16 §5.41 PR-31 — the pure **move-pass** diff for
+/// R1087 §5.16 §5.41 PR-31, widened R1576 — the pure **move-pass** diff for
 /// [`AppShell::reconcile_windows`]: which already-open windows must have
 /// their OS position reconciled because the binding re-declared a
-/// different [`WindowSpec::position`].
+/// different [`WindowSpec::placement`].
 ///
 /// A window appears here iff its `id` is present in **both** `old` and
 /// `new` (so it is neither an add nor a drop — those passes key on id
-/// alone) AND `new` declares a position (`Some`) that differs from what
-/// `old` declared (`old.position != Some(new_pos)`, which also fires when
-/// `old` left placement to the window manager — `None` → first declared
-/// position). A `new` spec that drops back to `None` is **not** a move:
-/// `set_outer_position` cannot hand a window back to WM auto-placement, so
-/// the declared `None` simply leaves the window where it is.
+/// alone) AND `new` declares a placement (`Some`) that differs from what
+/// `old` declared (which also fires when `old` left placement to the window
+/// manager — `None` → first declared placement). A `new` spec that drops back
+/// to `None` is **not** a move: `set_outer_position` cannot hand a window back
+/// to WM auto-placement, so the declared `None` simply leaves the window where
+/// it is.
+///
+/// R1576 widened the compared value from the raw `position` pair to the whole
+/// [`WindowPlacement`], so **re-declaring the display alone is a move** — the
+/// signal write that sends a torn-off panel to the other monitor. Comparing
+/// only the offset would have made that write a silent no-op, which is the
+/// R1319 defect exactly (a declared axis the reconcile pass could not see).
 ///
 /// Splitting this out of `reconcile_windows` keeps the genuinely-new logic
 /// pure and unit-testable with no winit event loop (the apply —
@@ -4701,18 +4931,82 @@ fn winit_ime_to_composition(
 /// deliberately accepted — N is the window count (a handful), so a map would
 /// be premature; the add/drop passes go `HashSet` only because their set
 /// difference can span many ids.
-fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String, (i32, i32))> {
+/// R1576 §5.16 §5.41 — the frame a declared placement is commanded in.
+///
+/// Two arms because the two placements were resolved in different spaces and
+/// converting either into the other's would lose exactly the precision that
+/// motivated the axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlacementCommand {
+    /// Absolute logical pixels — what `WindowSpec::position` has meant since
+    /// R1087, byte-identical for every window that declares no display. winit
+    /// converts it with the window's own scale factor.
+    Logical(i32, i32),
+    /// Absolute physical pixels, already resolved against the desk. Commanded
+    /// in physical because that is the space the resolution happened in;
+    /// re-dividing by the window's own scale would reintroduce the per-window
+    /// guess the display axis exists to retire.
+    Physical(i32, i32),
+}
+
+/// R1576 §5.16 §5.41 — decide what to command for a declared placement, and
+/// what to latch for the R1088 echo check.
+///
+/// Split out of [`AppShell::apply_placement`] so the decision is testable
+/// without a live winit window, exactly as
+/// [`window_placement_moves`] and [`moved_is_command_echo`] are — and for a
+/// sharper reason than either: on a one-monitor 1x desk the two frames produce
+/// the SAME numbers, so an implementation that ignored the display would pass
+/// every test this machine can run against a real window. The arrangement has
+/// to be an argument for the difference to be visible at all.
+///
+/// Answers `(what the placement resolved to, what to command, what to latch)`.
+/// The command is `None` only on a headless desk, where a display-relative
+/// placement has no position — commanding one would be inventing it.
+fn placement_command(
+    placement: &WindowPlacement,
+    topology: &DisplayTopology,
+    scale: f64,
+) -> (Anchored, Option<PlacementCommand>, (i32, i32)) {
+    let anchored = placement.resolve(topology);
+    if placement.display.is_none() {
+        return (
+            anchored,
+            Some(PlacementCommand::Logical(
+                placement.offset.0,
+                placement.offset.1,
+            )),
+            placement.offset,
+        );
+    }
+    let Some((x, y)) = anchored.at() else {
+        return (anchored, None, placement.offset);
+    };
+    // The echo latch is compared against `Moved`'s LOGICAL reading, so it is
+    // stamped in the units that comparison uses.
+    let logical: LogicalPosition<i32> = PhysicalPosition::new(x, y).to_logical(scale);
+    (
+        anchored,
+        Some(PlacementCommand::Physical(x, y)),
+        (logical.x, logical.y),
+    )
+}
+
+fn window_placement_moves(
+    old: &[WindowSpec],
+    new: &[WindowSpec],
+) -> Vec<(String, WindowPlacement)> {
     let mut moves = Vec::new();
     for spec in new {
-        let Some(new_pos) = spec.position else {
+        let Some(new_placement) = spec.placement() else {
             continue;
         };
         // Only an id present in `old` is a move — an id only in `new` is
-        // an ADD (resume_spec applies its initial position via
-        // `with_position`, not this pass).
+        // an ADD (resume_spec applies its initial placement at create time,
+        // not this pass).
         if let Some(old_spec) = old.iter().find(|o| o.id == spec.id) {
-            if old_spec.position != Some(new_pos) {
-                moves.push((spec.id.as_ref().to_owned(), new_pos));
+            if old_spec.placement().as_ref() != Some(&new_placement) {
+                moves.push((spec.id.as_ref().to_owned(), new_placement));
             }
         }
     }
@@ -4737,7 +5031,7 @@ fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String,
 /// title `resume_spec` applies via `with_title` — nor a drop) AND its title changed.
 ///
 /// Splitting this out of `reconcile_windows` keeps the logic pure and unit-testable
-/// with no winit event loop, exactly as [`window_position_moves`] does; the apply
+/// with no winit event loop, exactly as [`window_placement_moves`] does; the apply
 /// (`Window::set_title`) stays in the imperative reconcile.
 ///
 /// **No write-back twin.** Position closes its declared→actual loop (R1088:
@@ -4746,7 +5040,7 @@ fn window_position_moves(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String,
 /// spec IS the truth. (winit offers no title read-back to converge on anyway — its
 /// X11 `Window::title()` is a stub returning an empty string.)
 ///
-/// O(N²) `find` for the same reason [`window_position_moves`] accepts it: N is the
+/// O(N²) `find` for the same reason [`window_placement_moves`] accepts it: N is the
 /// window count, a handful.
 fn window_title_changes<'a>(old: &[WindowSpec], new: &'a [WindowSpec]) -> Vec<(String, &'a str)> {
     let mut changes = Vec::new();
@@ -4839,32 +5133,109 @@ fn moved_is_command_echo(commanded: Option<(i32, i32)>, logical: (i32, i32)) -> 
 /// WM-managed; one user drag must not silently pin it). A missing id, an
 /// id whose spec has no declared position, or an unchanged position all
 /// return `None` (no emit). Split out (R1091, mirroring `moved_is_command_echo`
-/// and `window_position_moves`) so the conservative-scope filter + the
+/// and `window_placement_moves`) so the conservative-scope filter + the
 /// idempotency skip are unit-tested without a live `Moved` event — the OS
 /// delivery and `signal.set` effect are the only HW-gated parts.
 fn user_move_writeback(
     mut specs: Vec<WindowSpec>,
     spec_id: &str,
     logical: (i32, i32),
+    physical: (i32, i32),
+    topology: &DisplayTopology,
 ) -> Option<Vec<WindowSpec>> {
     let spec = specs
         .iter_mut()
         .find(|s| s.id.as_ref() == spec_id && s.position.is_some())?;
-    if spec.position == Some(logical) {
+    // R1576 — a spec that measures its position from a display must have the
+    // write-back stated in the SAME frame. Overwriting a display-relative
+    // offset with an absolute desktop coordinate would silently change what
+    // the declaration MEANS: the preset would still read "40 in from that
+    // monitor" and would now be pointing at the desktop's origin. So the
+    // absolute reading is kept for an absolute spec and the relative one is
+    // re-derived for a relative spec, off the EXACT physical position winit
+    // reported rather than the per-window logical rounding of it.
+    let Some(declared) = spec.display.clone() else {
+        if spec.position == Some(logical) {
+            return None;
+        }
+        spec.position = Some(logical);
+        return Some(specs);
+    };
+    // Dragging a window onto another monitor re-declares its display: the user
+    // moved it there, and the loop that keeps the declaration true of the world
+    // is the whole reason this write-back exists. A window dragged onto NO
+    // display keeps its declared one, so the offset simply goes negative or
+    // past the edge — which is the honest reading of where it is, and is
+    // recoverable, where re-pointing it at a fallback would quietly lose the
+    // monitor the user chose.
+    let host = topology
+        .display_at(physical.0, physical.1)
+        .or_else(|| topology.get(&declared))?;
+    let scale = host.scale_factor();
+    let to_logical = |v: i64| -> i32 {
+        let scaled = ratio_i64(v, scale);
+        i32::try_from(scaled).unwrap_or(i32::MAX)
+    };
+    let offset = (
+        to_logical(i64::from(physical.0) - host.bounds().left()),
+        to_logical(i64::from(physical.1) - host.bounds().top()),
+    );
+    let host_id = host.id().clone();
+    if spec.position == Some(offset) && spec.display.as_ref() == Some(&host_id) {
         return None;
     }
-    spec.position = Some(logical);
+    spec.position = Some(offset);
+    spec.display = Some(host_id);
     Some(specs)
+}
+
+/// Divide a physical pixel distance by a scale factor, rounding to the nearest
+/// logical pixel. Split out so the two `as` conversions carry one exemption
+/// with one reason rather than four.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "a desktop pixel distance is far below 2^53, and the quotient is clamped into i64's range before the conversion"
+)]
+fn ratio_i64(v: i64, scale: f64) -> i64 {
+    if !scale.is_finite() || scale <= 0.0 {
+        return v;
+    }
+    let q = (v as f64 / scale).round();
+    if q.is_finite() {
+        q.clamp(-(2f64.powi(62)), 2f64.powi(62)) as i64
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
 mod r1087_window_position_move_diff_tests {
-    //! R1087 §5.16 §5.41 PR-31 — the pure `window_position_moves` diff
-    //! that drives `reconcile_windows`'s move pass. Forcing consumer for
-    //! the move logic (the live drag-follow runtime consumer is the next
-    //! PR-31 slice) per the test-as-forcing-consumer discipline.
-    use super::{WindowSpec, window_position_moves};
-    use crate::SizeStrategy;
+    //! R1087 §5.16 §5.41 PR-31, widened R1576 — the pure
+    //! `window_placement_moves` diff that drives `reconcile_windows`'s move
+    //! pass. Forcing consumer for the move logic (the live drag-follow runtime
+    //! consumer is the next PR-31 slice) per the test-as-forcing-consumer
+    //! discipline.
+    use pinion_core::display::DisplayId;
+
+    use super::{WindowSpec, window_placement_moves};
+    use crate::{SizeStrategy, WindowPlacement};
+
+    /// An ABSOLUTE placement — what every pre-R1576 spec declares.
+    fn abs(x: i32, y: i32) -> WindowPlacement {
+        WindowPlacement {
+            display: None,
+            offset: (x, y),
+        }
+    }
+
+    /// A placement measured from a named display.
+    fn on(display: &str, x: i32, y: i32) -> WindowPlacement {
+        WindowPlacement {
+            display: Some(DisplayId::new(display)),
+            offset: (x, y),
+        }
+    }
 
     fn fixed(id: &'static str) -> WindowSpec {
         WindowSpec::new(
@@ -4882,7 +5253,7 @@ mod r1087_window_position_move_diff_tests {
         let a = vec![fixed("main"), fixed("torn-x").with_position(40, 50)];
         // Same lists → the idempotent fast-path never reaches the move
         // pass, but the diff itself must also report nothing.
-        assert_eq!(window_position_moves(&a, &a), Vec::new());
+        assert_eq!(window_placement_moves(&a, &a), Vec::new());
     }
 
     #[test]
@@ -4890,8 +5261,8 @@ mod r1087_window_position_move_diff_tests {
         let old = vec![fixed("main"), fixed("torn-x").with_position(40, 50)];
         let new = vec![fixed("main"), fixed("torn-x").with_position(120, 80)];
         assert_eq!(
-            window_position_moves(&old, &new),
-            vec![("torn-x".to_owned(), (120, 80))]
+            window_placement_moves(&old, &new),
+            vec![("torn-x".to_owned(), abs(120, 80))]
         );
     }
 
@@ -4901,8 +5272,8 @@ mod r1087_window_position_move_diff_tests {
         let old = vec![fixed("main"), fixed("torn-x")];
         let new = vec![fixed("main"), fixed("torn-x").with_position(10, 10)];
         assert_eq!(
-            window_position_moves(&old, &new),
-            vec![("torn-x".to_owned(), (10, 10))]
+            window_placement_moves(&old, &new),
+            vec![("torn-x".to_owned(), abs(10, 10))]
         );
     }
 
@@ -4912,7 +5283,7 @@ mod r1087_window_position_move_diff_tests {
         // a move. The move pass must leave it to the add pass.
         let old = vec![fixed("main")];
         let new = vec![fixed("main"), fixed("torn-x").with_position(10, 10)];
-        assert_eq!(window_position_moves(&old, &new), Vec::new());
+        assert_eq!(window_placement_moves(&old, &new), Vec::new());
     }
 
     #[test]
@@ -4922,7 +5293,7 @@ mod r1087_window_position_move_diff_tests {
         // deliberately not reported as a move.
         let old = vec![fixed("torn-x").with_position(40, 50)];
         let new = vec![fixed("torn-x")];
-        assert_eq!(window_position_moves(&old, &new), Vec::new());
+        assert_eq!(window_placement_moves(&old, &new), Vec::new());
     }
 
     #[test]
@@ -4938,8 +5309,152 @@ mod r1087_window_position_move_diff_tests {
             fixed("c").with_position(5, 5), // unchanged
         ];
         assert_eq!(
-            window_position_moves(&old, &new),
-            vec![("a".to_owned(), (1, 1)), ("b".to_owned(), (2, 2))]
+            window_placement_moves(&old, &new),
+            vec![("a".to_owned(), abs(1, 1)), ("b".to_owned(), abs(2, 2))]
+        );
+    }
+
+    // ── R1576 — the diff compares the whole PLACEMENT, so the display ──
+    //    is a first-class part of "where this window is declared to be".
+
+    #[test]
+    fn r1576_re_declaring_only_the_display_is_a_move() {
+        // ★The signal write that sends a torn-off panel to the other monitor.
+        // Comparing only the offset would make it a silent no-op — the R1319
+        // defect exactly, a declared axis the reconcile pass cannot see.
+        let old = vec![
+            fixed("torn-x")
+                .with_position(40, 50)
+                .with_display(DisplayId::new("left")),
+        ];
+        let new = vec![
+            fixed("torn-x")
+                .with_position(40, 50)
+                .with_display(DisplayId::new("right")),
+        ];
+        assert_eq!(
+            window_placement_moves(&old, &new),
+            vec![("torn-x".to_owned(), on("right", 40, 50))]
+        );
+    }
+
+    #[test]
+    fn r1576_adopting_a_display_changes_what_the_same_offset_means_so_it_is_a_move() {
+        // `(40, 50)` on both sides, but one is a desktop coordinate and the
+        // other is an offset into a monitor. Same numbers, different place.
+        let old = vec![fixed("torn-x").with_position(40, 50)];
+        let new = vec![
+            fixed("torn-x")
+                .with_position(40, 50)
+                .with_display(DisplayId::new("right")),
+        ];
+        assert_eq!(
+            window_placement_moves(&old, &new),
+            vec![("torn-x".to_owned(), on("right", 40, 50))]
+        );
+    }
+
+    #[test]
+    fn r1576_a_display_with_no_position_declares_that_displays_corner() {
+        // "Open it on that monitor" is a complete declaration, and it is a move
+        // for a window that was WM-placed before.
+        let old = vec![fixed("torn-x")];
+        let new = vec![fixed("torn-x").with_display(DisplayId::new("right"))];
+        assert_eq!(
+            window_placement_moves(&old, &new),
+            vec![("torn-x".to_owned(), on("right", 0, 0))]
+        );
+    }
+
+    #[test]
+    fn r1576_an_unchanged_display_relative_spec_is_not_a_move() {
+        let a = vec![
+            fixed("torn-x")
+                .with_position(40, 50)
+                .with_display(DisplayId::new("right")),
+        ];
+        assert_eq!(window_placement_moves(&a, &a), Vec::new());
+    }
+
+    // ── R1576 — what is COMMANDED, against a desk this machine does ────
+    //    not have. On a one-monitor 1x desk the two frames produce the
+    //    same numbers, so these are the only tests that can tell an
+    //    implementation ignoring the display from one honouring it.
+
+    use pinion_core::display::{DisplayInfo, DisplayRect, DisplayTopology};
+
+    use super::{PlacementCommand, placement_command};
+
+    /// A 1x panel with a 2x panel to its right — the arrangement where a
+    /// logical command and a physical one disagree twice over.
+    fn mixed_dpi() -> DisplayTopology {
+        DisplayTopology::new(vec![
+            DisplayInfo::new("left", DisplayRect::new(0, 0, 1000, 1000)).as_primary(),
+            DisplayInfo::new("right", DisplayRect::new(1000, 0, 2000, 2000)).with_scale(2.0),
+        ])
+    }
+
+    #[test]
+    fn r1576_an_absolute_placement_is_commanded_in_logical_pixels_as_it_always_was() {
+        let (anchored, command, latch) = placement_command(&abs(40, 50), &mixed_dpi(), 1.0);
+        assert_eq!(command, Some(PlacementCommand::Logical(40, 50)));
+        assert_eq!(latch, (40, 50), "and latched in the units it was commanded");
+        assert_eq!(
+            anchored.name(),
+            "on_declared",
+            "it landed on the left panel"
+        );
+    }
+
+    #[test]
+    fn r1576_a_display_relative_placement_is_commanded_at_that_displays_own_scale() {
+        // 40 LOGICAL pixels into a 2x panel that starts at x = 1000 is
+        // (1000 + 80, 0 + 80) PHYSICAL — not (1040, 40), and not 40 scaled by
+        // the WINDOW's own factor, which is what winit would do with a logical
+        // command and is the guess this axis exists to retire.
+        let (anchored, command, latch) = placement_command(
+            &on("right", 40, 40),
+            &mixed_dpi(),
+            // The window is still on the 1x panel as this is issued, which is
+            // exactly when the window's own scale is the wrong number to use.
+            1.0,
+        );
+        assert_eq!(command, Some(PlacementCommand::Physical(1080, 80)));
+        assert_eq!(anchored.at(), Some((1080, 80)));
+        assert_eq!(latch, (1080, 80), "latched through the WINDOW's scale of 1");
+    }
+
+    #[test]
+    fn r1576_the_latch_is_logical_because_the_echo_check_is() {
+        // Same command, a window already on the 2x panel: the physical point is
+        // unchanged and the latch halves, because `note_window_moved` compares
+        // against `Moved`'s logical reading through that window's scale.
+        let (_, command, latch) = placement_command(&on("right", 40, 40), &mixed_dpi(), 2.0);
+        assert_eq!(command, Some(PlacementCommand::Physical(1080, 80)));
+        assert_eq!(latch, (540, 40));
+    }
+
+    #[test]
+    fn r1576_a_headless_desk_commands_nothing_rather_than_inventing_a_position() {
+        let (anchored, command, latch) =
+            placement_command(&on("right", 40, 40), &DisplayTopology::empty(), 1.0);
+        assert_eq!(command, None);
+        assert_eq!(anchored.name(), "no_display");
+        assert_eq!(latch, (40, 40), "the latch degrades to the declared offset");
+        // An ABSOLUTE placement still commands: it named no display, so a
+        // headless desk takes nothing away from it.
+        let (_, command, _) = placement_command(&abs(40, 50), &DisplayTopology::empty(), 1.0);
+        assert_eq!(command, Some(PlacementCommand::Logical(40, 50)));
+    }
+
+    #[test]
+    fn r1576_a_vanished_display_is_commanded_on_the_fallback_and_named() {
+        let (anchored, command, _) = placement_command(&on("gone", 40, 40), &mixed_dpi(), 1.0);
+        assert_eq!(anchored.name(), "substituted");
+        assert_eq!(
+            command,
+            Some(PlacementCommand::Physical(40, 40)),
+            "on the fallback (the 1x primary), so the window is reachable"
         );
     }
 }
@@ -5006,7 +5521,8 @@ mod r1319_window_title_change_diff_tests {
         // The two passes are ORTHOGONAL — a floating pane that is dragged AND
         // renamed in the same reconcile must get both applies (a shared "the spec
         // changed" pass would have to pick one).
-        use super::window_position_moves;
+        use super::window_placement_moves;
+        use crate::WindowPlacement;
         let old = vec![titled("torn-x", "console").with_position(10, 10)];
         let new = vec![titled("torn-x", "vim README").with_position(40, 50)];
         assert_eq!(
@@ -5014,8 +5530,14 @@ mod r1319_window_title_change_diff_tests {
             vec![("torn-x".to_owned(), "vim README")]
         );
         assert_eq!(
-            window_position_moves(&old, &new),
-            vec![("torn-x".to_owned(), (40, 50))]
+            window_placement_moves(&old, &new),
+            vec![(
+                "torn-x".to_owned(),
+                WindowPlacement {
+                    display: None,
+                    offset: (40, 50)
+                }
+            )]
         );
     }
 
@@ -5043,7 +5565,7 @@ mod r1319_window_title_change_diff_tests {
         // Sequence: the binding retitles a floating pane (signal write, reconcile not
         // drained yet) → the user drags that window (WM move → write-back). The cache
         // must acknowledge ONLY the position, leaving the title still diffing.
-        use super::{cache_moved_position, window_position_moves};
+        use super::{cache_moved_position, window_placement_moves};
         let cached_before = vec![titled("torn-x", "console").with_position(10, 10)];
         // The signal now carries BOTH the new title and (after the drag) the new
         // position; `last_known_specs` is still the pre-retitle snapshot.
@@ -5051,7 +5573,7 @@ mod r1319_window_title_change_diff_tests {
         cache_moved_position(&mut cache, "torn-x", (40, 50));
         let signal_now = vec![titled("torn-x", "vim README").with_position(40, 50)];
         assert_eq!(
-            window_position_moves(&cache, &signal_now),
+            window_placement_moves(&cache, &signal_now),
             Vec::new(),
             "the user's own drag is acknowledged — no redundant set_outer_position",
         );
@@ -5103,8 +5625,24 @@ mod r1088_moved_echo_tests {
     //! (`user_move_writeback`, R1091) that together gate
     //! `note_window_moved`. The live `Moved` delivery is HW-gated; these are
     //! the testable decision cores.
+    use pinion_core::display::{DisplayId, DisplayInfo, DisplayRect, DisplayTopology};
+
     use super::{WindowSpec, moved_is_command_echo, user_move_writeback};
     use crate::SizeStrategy;
+
+    /// A desk with no monitors — what an absolute-placement spec is resolved
+    /// against, because it never consults the topology at all.
+    fn nodesk() -> DisplayTopology {
+        DisplayTopology::empty()
+    }
+
+    /// Two 1000x1000 panels side by side, the left one primary.
+    fn two_panels() -> DisplayTopology {
+        DisplayTopology::new(vec![
+            DisplayInfo::new("left", DisplayRect::new(0, 0, 1000, 1000)).as_primary(),
+            DisplayInfo::new("right", DisplayRect::new(1000, 0, 1000, 1000)),
+        ])
+    }
 
     fn spec(id: &'static str, pos: Option<(i32, i32)>) -> WindowSpec {
         let s = WindowSpec::new(
@@ -5159,8 +5697,8 @@ mod r1088_moved_echo_tests {
     #[test]
     fn writeback_writes_an_already_positioned_window() {
         let specs = vec![spec("main", None), spec("torn-x", Some((40, 50)))];
-        let out =
-            user_move_writeback(specs, "torn-x", (200, 130)).expect("a positioned window writes");
+        let out = user_move_writeback(specs, "torn-x", (200, 130), (200, 130), &nodesk())
+            .expect("a positioned window writes");
         let torn = out.iter().find(|s| s.id.as_ref() == "torn-x").unwrap();
         assert_eq!(torn.position, Some((200, 130)));
         // The other window is untouched.
@@ -5178,20 +5716,86 @@ mod r1088_moved_echo_tests {
         // Conservative scope: a None (WM-placed) window must NOT be pinned by
         // one user drag → None (no emit).
         let specs = vec![spec("main", None)];
-        assert!(user_move_writeback(specs, "main", (300, 220)).is_none());
+        assert!(user_move_writeback(specs, "main", (300, 220), (300, 220), &nodesk()).is_none());
     }
 
     #[test]
     fn writeback_skips_unchanged_position() {
         // Idempotent: already at the moved position → None (no churn).
         let specs = vec![spec("torn-x", Some((40, 50)))];
-        assert!(user_move_writeback(specs, "torn-x", (40, 50)).is_none());
+        assert!(user_move_writeback(specs, "torn-x", (40, 50), (40, 50), &nodesk()).is_none());
     }
 
     #[test]
     fn writeback_skips_missing_id() {
         let specs = vec![spec("torn-x", Some((40, 50)))];
-        assert!(user_move_writeback(specs, "ghost", (10, 10)).is_none());
+        assert!(user_move_writeback(specs, "ghost", (10, 10), (10, 10), &nodesk()).is_none());
+    }
+
+    // ── R1576 — the write-back keeps a display-relative declaration ────
+    //    RELATIVE. Overwriting the offset with an absolute desktop
+    //    coordinate would leave the preset reading "40 in from that
+    //    monitor" while pointing at the desktop's origin.
+
+    #[test]
+    fn r1576_a_display_relative_window_writes_back_an_offset_not_a_desktop_point() {
+        let specs = vec![spec("torn-x", Some((40, 50))).with_display(DisplayId::new("right"))];
+        // The user dragged it to (1600, 300) on the desktop — 600 in from the
+        // right panel's corner.
+        let out = user_move_writeback(specs, "torn-x", (1600, 300), (1600, 300), &two_panels())
+            .expect("a positioned window writes");
+        let torn = out.iter().find(|s| s.id.as_ref() == "torn-x").unwrap();
+        assert_eq!(torn.position, Some((600, 300)), "relative to its display");
+        assert_eq!(torn.display.as_ref().map(DisplayId::as_str), Some("right"));
+    }
+
+    #[test]
+    fn r1576_dragging_onto_another_monitor_re_declares_the_display() {
+        // ★The loop that keeps the declaration true of the world: the user
+        // moved the window to the other panel, so the preset now says so.
+        let specs = vec![spec("torn-x", Some((600, 300))).with_display(DisplayId::new("right"))];
+        let out = user_move_writeback(specs, "torn-x", (120, 300), (120, 300), &two_panels())
+            .expect("a cross-monitor drag writes");
+        let torn = out.iter().find(|s| s.id.as_ref() == "torn-x").unwrap();
+        assert_eq!(torn.display.as_ref().map(DisplayId::as_str), Some("left"));
+        assert_eq!(torn.position, Some((120, 300)));
+    }
+
+    #[test]
+    fn r1576_a_relative_offset_is_logical_so_a_hidpi_panel_halves_it() {
+        let desk = DisplayTopology::new(vec![
+            DisplayInfo::new("hidpi", DisplayRect::new(0, 0, 2000, 2000))
+                .with_scale(2.0)
+                .as_primary(),
+        ]);
+        let specs = vec![spec("torn-x", Some((0, 0))).with_display(DisplayId::new("hidpi"))];
+        // 200 PHYSICAL pixels in on a 2x panel is 100 LOGICAL pixels in.
+        let out = user_move_writeback(specs, "torn-x", (200, 200), (200, 200), &desk)
+            .expect("a positioned window writes");
+        let torn = out.iter().find(|s| s.id.as_ref() == "torn-x").unwrap();
+        assert_eq!(torn.position, Some((100, 100)));
+    }
+
+    #[test]
+    fn r1576_a_window_dragged_off_every_monitor_keeps_the_display_it_was_told() {
+        // Re-pointing it at a fallback would quietly lose the monitor the user
+        // chose; a negative offset is the honest reading of where it is, and it
+        // is recoverable.
+        let specs = vec![spec("torn-x", Some((40, 50))).with_display(DisplayId::new("right"))];
+        let out = user_move_writeback(specs, "torn-x", (2500, 40), (2500, 40), &two_panels())
+            .expect("a positioned window writes");
+        let torn = out.iter().find(|s| s.id.as_ref() == "torn-x").unwrap();
+        assert_eq!(torn.display.as_ref().map(DisplayId::as_str), Some("right"));
+        assert_eq!(torn.position, Some((1500, 40)));
+    }
+
+    #[test]
+    fn r1576_a_relative_writeback_is_idempotent() {
+        let specs = vec![spec("torn-x", Some((600, 300))).with_display(DisplayId::new("right"))];
+        assert!(
+            user_move_writeback(specs, "torn-x", (1600, 300), (1600, 300), &two_panels()).is_none(),
+            "already there in BOTH the display and the offset"
+        );
     }
 }
 

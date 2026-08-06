@@ -31,7 +31,7 @@
 //! "visibility downgraded" / "module split" are three different
 //! substantive depths of the same encapsulation claim).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -461,6 +461,22 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::take_redraw_request`]; mutation via
     /// [`Self::request_redraw`].
     redraw_requested: bool,
+    /// R1576 §5.16 §5.41 §2 #7 — the monitors attached at the last stamp, or
+    /// `None` when nobody has looked.
+    ///
+    /// Stamped by the winit surface ([`crate::AppShell`]) rather than read
+    /// here, for the reason the whole crate is split this way: `ShellCore` is
+    /// deliberately backend-agnostic (no winit, no wgpu), and the monitor list
+    /// is the window system's. The same shape [`Self::set_live_window_origins`]
+    /// already uses.
+    ///
+    /// `None` is DISTINCT from an empty topology: the first says the surface
+    /// never stamped one (a TUI backend, a fixture, a shell before its first
+    /// window), the second says somebody looked and there are no monitors. The
+    /// wire keeps that distinction — `scene/displays` refuses with
+    /// `DisplayTopologyUnavailable` for the first and answers with an empty
+    /// list for the second.
+    display_topology: RefCell<Option<pinion_core::display::DisplayTopology>>,
 
     /// (R1193 §5.16 §5.28 §5.39) The per-window shell-side state store — one
     /// [`WindowState`] per window, keyed by canonical
@@ -821,6 +837,7 @@ impl<V: WidgetView> ShellCore<V> {
             access_emit_initial: true,
             last_access_focus: None,
             redraw_requested: false,
+            display_topology: RefCell::new(None),
             window_states: HashMap::new(),
             cross_preview_target: None,
             text_select_drag: None,
@@ -3035,6 +3052,23 @@ impl<V: WidgetView> ShellCore<V> {
     /// handles); delegates to the runtime core.
     pub fn set_live_window_origins(&self, origins: Vec<(String, (f64, f64))>) {
         self.core.set_live_window_origins(origins);
+    }
+
+    /// R1576 §5.16 §5.41 §2 #7 — stamp the monitors attached right now.
+    ///
+    /// [`crate::AppShell`] calls this at RPC dispatch entry (it holds the winit
+    /// handles); the substrate is backend-agnostic and never reads the window
+    /// system itself. The same seam [`Self::set_live_window_origins`] uses.
+    pub fn set_display_topology(&self, topology: pinion_core::display::DisplayTopology) {
+        *self.display_topology.borrow_mut() = Some(topology);
+    }
+
+    /// R1576 — the stamped topology, or `None` when the surface never stamped
+    /// one. See the [`Self::set_display_topology`] doc for why the two are
+    /// distinct facts.
+    #[must_use]
+    pub fn display_topology(&self) -> Option<pinion_core::display::DisplayTopology> {
+        self.display_topology.borrow().clone()
     }
 
     /// R1148 §5.51 §5.16 → R1151 — the stamped ACTUAL client origin of `window_id`
@@ -5870,6 +5904,13 @@ impl<V: WidgetView> ShellCore<V> {
         // nothing.
         let declared_windows =
             (request.method == "scene/windows").then(|| self.declared_window_specs());
+        // R1576 §5.16 §5.41 §2 #7 — the desk, for the two methods that resolve
+        // a placement against it. Gated on the method so every other dispatch
+        // pays nothing, exactly as the declared-window set is.
+        let display_topology =
+            matches!(request.method.as_str(), "scene/displays" | "scene/windows")
+                .then(|| self.display_topology())
+                .flatten();
         // R1099 §5.51 §2 #7 PR-33 — pre-resolve the cross-window drop here (the
         // only place with `&self` access to every window's paint scene, before
         // the borrow split below; Scene is not Clone so it cannot be deferred
@@ -6315,6 +6356,11 @@ impl<V: WidgetView> ShellCore<V> {
             // (resolved above, only for `scene/windows`).
             if let Some(windows) = declared_windows {
                 ctx = ctx.with_declared_windows(windows);
+            }
+            // R1576 §5.16 §5.41 §2 #7 — the desk `scene/displays` publishes and
+            // `scene/windows` resolves each declared placement against.
+            if let Some(topology) = display_topology {
+                ctx = ctx.with_display_topology(topology);
             }
             if let Some(drop) = cross_window_drop {
                 ctx = ctx.with_cross_window_drop(drop);
@@ -7130,9 +7176,29 @@ impl<V: WidgetView> ShellCore<V> {
             Some(sig) => sig.get(),
             None => V::windows(),
         });
+        // R1576 — resolved against the monitors attached right now, so
+        // `anchored` reports what the declaration MEANS today rather than a
+        // stored copy that could disagree with it. `None` (no stamp) leaves
+        // every window's `anchored` null: nobody looked, so nothing is claimed.
+        let topology = self.display_topology();
         specs
             .into_iter()
             .map(|spec| pinion_rpc::DeclaredWindow {
+                // R1576 §5.16 §5.41 — the DECLARED display and what became of
+                // the declaration. Derived here rather than stored, so the
+                // report cannot become a stale second copy of where the window
+                // is (the one-fact-one-source argument R1575 records).
+                display: spec.display.as_ref().map(|d| d.as_str().to_owned()),
+                anchored: topology
+                    .as_ref()
+                    .zip(spec.placement())
+                    .map(|(topology, placement)| {
+                        let declared = placement.display.clone().unwrap_or_else(|| {
+                            pinion_core::display::DisplayId::new(crate::ABSOLUTE_PLACEMENT)
+                        });
+                        let anchor = pinion_core::display::Anchor::new(declared, placement.offset);
+                        pinion_rpc::AnchoredOutcome::from((&anchor, placement.resolve(topology)))
+                    }),
                 id: spec.id.into_owned(),
                 title: spec.title,
                 position: spec.position,

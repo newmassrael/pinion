@@ -56,12 +56,14 @@ use std::borrow::Cow;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use pinion_core::display::{Anchor, Anchored, DisplayId, DisplayTopology};
 use pinion_core::{Intent, Scene, Signal, WidgetCore};
 use vello::Scene as VelloScene;
 use vello::peniko::Color as PenikoColor;
 use winit::window::Window;
 
 mod app;
+pub mod displays;
 pub mod executor;
 pub mod headless_screenshot;
 mod substrate;
@@ -82,6 +84,7 @@ pub mod window_control;
 pub mod test_fixtures;
 
 pub use app::{AppShell, ShellConfig, run, run_with_config, run_with_handlers};
+pub use displays::{DISPLAYS, DisplayHandle, use_display_handle, use_displays};
 // R-PR47 §5.7 — re-export the winit-free transport seam so a consumer can
 // name the `on_rpc_ingress` hook argument without a direct pinion-rpc dep.
 pub use executor::{
@@ -887,6 +890,40 @@ pub struct WindowSpec {
     /// window, never a surprise borderless one).
     #[serde(default = "windowspec_decorations_default")]
     pub decorations: bool,
+    /// R1576 §5.16 §5.41 — the **display** this window's
+    /// [`position`](Self::position) is measured from.
+    ///
+    /// `None` (every pre-R1576 window, byte-identical) means `position` is an
+    /// absolute logical coordinate in the virtual desktop, which is what it has
+    /// always been. `Some(id)` re-reads that same pair as a **logical offset
+    /// into the named display**, resolved through
+    /// [`pinion_core::display::DisplayTopology::anchor`] against the monitors
+    /// that are actually attached right now.
+    ///
+    /// That reinterpretation is the whole point, and it is what a **layout
+    /// preset** needs to be worth saving. An absolute coordinate means
+    /// something different the moment the monitors are rearranged and means
+    /// nothing at all once one is unplugged — which is why a restored Qt
+    /// layout so often opens off-screen: `QWidget::saveGeometry()` stores
+    /// absolute geometry in an opaque `QByteArray`, and `restoreGeometry` has
+    /// nowhere to record that it had to put the window somewhere else. Here
+    /// "second monitor, 40 logical pixels in" survives the desk changing, and
+    /// when that monitor is gone the substitution onto the fallback display is
+    /// **reported** — `scene/windows` publishes the
+    /// [`pinion_core::display::Anchored`] outcome by name.
+    ///
+    /// A LIVE, reconcilable axis, like [`position`](Self::position) /
+    /// [`title`](Self::title) and unlike [`strategy`](Self::strategy): honoured
+    /// at create and on a same-id change by `reconcile_windows`'s placement
+    /// pass, so moving a window to another monitor is a signal write.
+    ///
+    /// Declaring a display with **no** `position` is meaningful and common —
+    /// "open on that monitor" — and lands at that display's top-left corner.
+    ///
+    /// `#[serde(default)]` so every wire form written before this field
+    /// existed deserializes to `None`, the absolute reading.
+    #[serde(default)]
+    pub display: Option<DisplayId>,
 }
 
 /// Serde default for [`WindowSpec::decorations`] — `true` (OS-decorated),
@@ -913,6 +950,7 @@ impl WindowSpec {
             strategy,
             position: None,
             decorations: windowspec_decorations_default(),
+            display: None,
         }
     }
 
@@ -936,6 +974,7 @@ impl WindowSpec {
             strategy,
             position: None,
             decorations: windowspec_decorations_default(),
+            display: None,
         }
     }
 
@@ -985,6 +1024,153 @@ impl WindowSpec {
         self.title = title.into();
         self
     }
+
+    /// R1576 §5.16 §5.41 — measure this window's
+    /// [`position`](Self::position) from the named display rather than from the
+    /// virtual desktop's origin. See [`display`](Self::display).
+    ///
+    /// Chains either way round with [`with_position`](Self::with_position), and
+    /// stands alone: `.with_display(id)` with no position opens the window at
+    /// that display's top-left corner.
+    #[must_use]
+    pub fn with_display(mut self, display: DisplayId) -> Self {
+        self.display = Some(display);
+        self
+    }
+
+    /// R1576 §5.16 §5.41 — write the window's whole declared place at once, or
+    /// clear it.
+    ///
+    /// The setter half of [`placement`](Self::placement), and the only way to
+    /// go BACK to a window-manager-placed window or to drop a display
+    /// declaration: `WindowSpec` is `#[non_exhaustive]`, so an out-of-crate
+    /// binding cannot reach the fields with a struct update, and
+    /// [`with_position`](Self::with_position) /
+    /// [`with_display`](Self::with_display) can only ever add. A layout preset
+    /// that includes "unplaced" — a real preset, and the state every window
+    /// boots in — was otherwise unexpressible.
+    ///
+    /// `None` clears both fields, because they are one declaration: leaving a
+    /// stale display behind a cleared position would mean "measured from that
+    /// monitor, from nowhere in particular".
+    #[must_use]
+    pub fn with_placement(mut self, placement: Option<WindowPlacement>) -> Self {
+        if let Some(p) = placement {
+            self.display = p.display;
+            self.position = Some(p.offset);
+        } else {
+            self.display = None;
+            self.position = None;
+        }
+        self
+    }
+
+    /// The placement this spec declares, or `None` when it leaves the window to
+    /// the window manager exactly as every pre-R1087 spec does.
+    ///
+    /// One accessor rather than two field reads, because the two fields are one
+    /// declaration: a spec with a display and no position declares the
+    /// display's corner, and a spec with neither declares nothing. Making that
+    /// rule a function is what keeps the create path and the reconcile pass
+    /// from disagreeing about which specs are placed — the R1319 class of
+    /// defect, where a doc promised a forwarding that happened at exactly one
+    /// of two sites.
+    #[must_use]
+    pub fn placement(&self) -> Option<WindowPlacement> {
+        match (&self.display, self.position) {
+            (None, None) => None,
+            (display, position) => Some(WindowPlacement {
+                display: display.clone(),
+                offset: position.unwrap_or((0, 0)),
+            }),
+        }
+    }
+}
+
+/// R1576 §5.16 §5.41 — a window's declared place, with the frame it is measured
+/// in.
+///
+/// The pair [`WindowSpec::display`] + [`WindowSpec::position`] means one of two
+/// things, and this type is that disjunction made explicit so no reader has to
+/// re-derive it:
+///
+/// * `display: None` — `offset` is an **absolute** logical coordinate in the
+///   virtual desktop. Every pre-R1576 window.
+/// * `display: Some(id)` — `offset` is a logical distance **into that display**,
+///   and where it lands depends on which monitors are attached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowPlacement {
+    /// The display the offset is measured from, or `None` for absolute.
+    pub display: Option<DisplayId>,
+    /// Logical pixels: absolute, or in from the named display's corner.
+    pub offset: (i32, i32),
+}
+
+impl WindowPlacement {
+    /// Resolve against the monitors attached right now.
+    ///
+    /// An absolute placement is [`Anchored::OnDeclared`] against whichever
+    /// display actually contains it, so the *reported* display of a window is
+    /// derived from geometry in both cases and a caller never has to ask which
+    /// kind of placement produced it. An absolute placement on no display at
+    /// all reports [`Anchored::NoDisplay`] — it has a position, but naming a
+    /// display for it would be a lie.
+    #[must_use]
+    pub fn resolve(&self, topology: &DisplayTopology) -> Anchored {
+        let Some(display) = &self.display else {
+            let physical = absolute_logical_to_physical(topology, self.offset);
+            return match topology.display_at(physical.0, physical.1) {
+                Some(d) => Anchored::OnDeclared {
+                    display: d.id().clone(),
+                    at: physical,
+                },
+                None => Anchored::NoDisplay {
+                    declared: DisplayId::new(ABSOLUTE_PLACEMENT),
+                },
+            };
+        };
+        topology.anchor(&Anchor::new(display.clone(), self.offset))
+    }
+}
+
+/// The pseudo-id an ABSOLUTE placement reports when it lands on no display.
+///
+/// [`Anchored::NoDisplay`] carries the name that was asked for, and an absolute
+/// placement asked for none — so it names the *frame* instead. A word rather
+/// than an empty string, because an empty id would be indistinguishable from a
+/// display the platform failed to name.
+pub const ABSOLUTE_PLACEMENT: &str = "<absolute>";
+
+/// Convert an absolute LOGICAL desktop coordinate into physical pixels.
+///
+/// Logical-to-physical is per display and this coordinate is not yet on one, so
+/// the scale used is the display containing the *unscaled* point when there is
+/// one, else the fallback display's, else `1.0`. That is the same guess winit
+/// makes for `set_outer_position(LogicalPosition)` — it converts with the
+/// window's own current scale — and it is stated here rather than hidden,
+/// because it is the reason [`WindowSpec::display`] exists: a display-relative
+/// placement needs no guess at all.
+fn absolute_logical_to_physical(topology: &DisplayTopology, logical: (i32, i32)) -> (i32, i32) {
+    let scale = topology
+        .display_at(logical.0, logical.1)
+        .or_else(|| topology.fallback())
+        .map_or(1.0, pinion_core::display::Display::scale_factor);
+    let apply = |v: i32| -> i32 {
+        let scaled = f64::from(v) * scale;
+        if scaled.is_finite() {
+            // Clamped into range before the conversion, so the cast cannot
+            // truncate to a different number.
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "clamped into i32's range on the line above"
+            )]
+            let clamped = scaled.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i64;
+            i32::try_from(clamped).unwrap_or(i32::MAX)
+        } else {
+            0
+        }
+    };
+    (apply(logical.0), apply(logical.1))
 }
 
 /// (R1107.1 §5.16 §5.41 §5.51) Is a window with `window_id` currently declared

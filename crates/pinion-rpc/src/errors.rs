@@ -93,6 +93,7 @@ const VOCABULARY_32602: &[&str] = &[
     "InterveneTypeMismatch",
     "IntrospectionOptedOut",
     "InvokeTypeMismatch",
+    "MalformedDisplayAsk",
     "MalformedPrefix",
     "NoExternalAtPath",
     "PathIsAReadSlot",
@@ -150,9 +151,11 @@ fn entries() -> Vec<ErrorEntry> {
                  is never free application prose, which is what data_is_prose \
                  records. Two shapes widen it without changing the word: an \
                  opt-in with_origin request answers an OBJECT whose `reason` \
-                 holds the word beside the surface that refused (R1485), and a \
-                 window-prefix failure answers the word with the offending id \
-                 appended after a colon",
+                 holds the word beside the surface that refused (R1485), and \
+                 two failures answer the word with the offending name appended \
+                 after a colon — a window prefix that did not resolve, and a \
+                 malformed scene/displays parameter, which names the parameter \
+                 path (R1576). Both stay matchable by prefix",
                 false,
                 true,
             ),
@@ -336,6 +339,11 @@ mod tests {
             include_str!("invoke.rs"),
             include_str!("intervene.rs"),
             include_str!("path.rs"),
+            // R1576 — `scene/displays`' own refusal. The scan's population is
+            // a list, so a module emitting a new word is invisible to this
+            // gate until it is added here; the round that adds the word adds
+            // the file, and the reverse direction below then keeps both true.
+            include_str!("displays.rs"),
         ] {
             for line in src.lines() {
                 let trimmed = line.trim_start();
@@ -359,6 +367,10 @@ mod tests {
                 // `meaning` tells a client to match it by prefix.
                 if line.contains("\"UnknownWindow: {requested:?}") {
                     emitted.push("UnknownWindow");
+                }
+                // R1576 — the same `format!` shape, one module over.
+                if line.contains("\"MalformedDisplayAsk: {name}") {
+                    emitted.push("MalformedDisplayAsk");
                 }
             }
         }

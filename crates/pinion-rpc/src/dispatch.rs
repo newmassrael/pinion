@@ -28,6 +28,9 @@
 use std::borrow::Cow;
 
 use pinion_a11y::{AccessFocus, AccessNode};
+use pinion_core::display::DisplayTopology;
+
+use crate::displays::AnchoredOutcome;
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{IntrospectValue, RawJson};
 use pinion_core::input::{GesturePhase, PointerButton, PointerEdge, PointerKind};
@@ -671,6 +674,19 @@ pub struct DispatchContext<'a> {
     /// list ("the binding declares no windows"). Resolved only for the
     /// `scene/windows` method, so every other dispatch pays nothing.
     pub declared_windows: Option<Vec<DeclaredWindow>>,
+    /// R1576 §5.16 §5.41 §2 #7 — the monitors attached right now, read by the
+    /// embedder from the window system before dispatch (the
+    /// [`Self::declared_windows`] by-value pattern).
+    ///
+    /// Consumed by `scene/displays`, and by `scene/windows` to resolve each
+    /// declared window's placement against the desk that actually exists.
+    /// `None` means the embedder did not read one — a fixture, or a shell with
+    /// no window yet — and is deliberately DISTINCT from
+    /// [`DisplayTopology::empty`], which is a real headless desk: the first
+    /// says nobody looked, the second says somebody looked and there are no
+    /// monitors. Resolved only for the methods that need it, so every other
+    /// dispatch pays no platform round-trip.
+    pub display_topology: Option<DisplayTopology>,
     /// R1099 §5.51 §2 #7 PR-33 — the cross-window drop the embedder resolved
     /// for THIS request's absolute cursor (the `scene/cross_window_drop`
     /// READ). [`pinion_core::scene::Scene`] is not `Clone`, so the shell
@@ -1456,6 +1472,34 @@ pub struct DeclaredWindow {
     /// not merely where it sits. Declared intent (read at create), not a live
     /// OS read-back. The SSOT is `pinion_shell::WindowSpec::decorations`.
     pub decorations: bool,
+    /// R1576 §5.16 §5.41 §2 #7 — the display this window's
+    /// [`position`](Self::position) is measured from, or `null` when it is an
+    /// absolute virtual-desktop coordinate (every pre-R1576 window).
+    ///
+    /// The DECLARED display, so it reads back exactly what a layout preset
+    /// wrote — including a display that is not attached, which is the whole
+    /// case worth reporting. What actually happened to it is
+    /// [`anchored`](Self::anchored).
+    pub display: Option<String>,
+    /// R1576 §5.16 §5.41 §2 #7 — where this window's declared placement lands
+    /// on the monitors attached right now, and whether it landed where it
+    /// asked.
+    ///
+    /// `null` for a window that declares no placement at all (WM-placed — the
+    /// typical `"main"`), which is distinct from a placement that resolved to
+    /// nowhere: the first declares nothing, the second declares something the
+    /// desk cannot honour.
+    ///
+    /// The three `kind`s are the whole story a restored layout needs:
+    /// `on_declared` (the display is here), `substituted` (it is not, and the
+    /// window went to the fallback — **both** ids are reported), `no_display`
+    /// (there are no monitors). Qt's `restoreGeometry` returns a bare `bool`
+    /// and has no channel for any of it.
+    ///
+    /// Derived from the declaration and the live topology each dispatch, never
+    /// stored — so it cannot become a second, stale copy of where the window
+    /// is (R1575's "one fact, one source" argument).
+    pub anchored: Option<AnchoredOutcome>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -1502,6 +1546,7 @@ impl<'a> DispatchContext<'a> {
             auto_repeat_holds: Vec::new(),
             pacing_state: None,
             declared_windows: None,
+            display_topology: None,
             cross_window_drop: None,
             unknown_window: None,
         }
@@ -1878,6 +1923,15 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// Builder: install the monitors attached right now (R1576 §5.16 §5.41
+    /// §2 #7). Consumed by `scene/displays` and by `scene/windows`; absent ->
+    /// `DisplayTopologyUnavailable`.
+    #[must_use]
+    pub fn with_display_topology(mut self, topology: DisplayTopology) -> Self {
+        self.display_topology = Some(topology);
+        self
+    }
+
     /// Builder: install the embedder's pre-resolved cross-window drop for the
     /// dispatch (R1099 §5.51 §2 #7 PR-33). Consumed by
     /// `scene/cross_window_drop`. Absent on bindings the shell did not resolve
@@ -2098,6 +2152,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // R1087 §5.16 §5.41 §2 #7 — declared-window set; same single-consumer
     // take. `scene/windows` is the only reader; owned (carries a `Vec`).
     let declared_windows = ctx.declared_windows.take();
+    let display_topology = ctx.display_topology.take();
     let cross_window_drop = ctx.cross_window_drop.take();
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
@@ -2663,6 +2718,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 "rpc/methods" => (handle_rpc_methods(), HandlerKind::Read),
                 "rpc/schema" => (handle_rpc_schema(), HandlerKind::Read),
                 "scene/windows" => (handle_scene_windows(declared_windows), HandlerKind::Read),
+                "scene/displays" => (
+                    handle_scene_displays(display_topology.as_ref(), request.params.as_ref()),
+                    HandlerKind::Read,
+                ),
                 "scene/cross_window_drop" => (
                     handle_scene_cross_window_drop(cross_window_drop, request.params.as_ref()),
                     HandlerKind::Read,
@@ -3757,6 +3816,31 @@ fn handle_scene_pacing_state(state: Option<PacingState>) -> Result<Value, RpcErr
 /// [`DeclaredWindow`] — declared, not a live OS-position read-back),
 /// satisfying §2 #7 for the position state the binding's tear-off reducer
 /// produces.
+/// R1576 §5.16 §5.41 §2 #7 — `scene/displays`: the desk, plus whatever derived
+/// answer the request asked for.
+///
+/// An empty topology is a real headless desk and answers normally; a `None`
+/// topology means nobody looked, which is a different fact and is refused with
+/// its own token rather than being reported as "no monitors" — the R1537 rule
+/// that absence is stated rather than published as a zero.
+fn handle_scene_displays(
+    topology: Option<&DisplayTopology>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(topology) = topology else {
+        return Err(
+            RpcError::invalid_params("display topology unavailable for this dispatch")
+                .with_data_string("DisplayTopologyUnavailable"),
+        );
+    };
+    // Parsed BEFORE the answer is built: a malformed ask must be a refusal, and
+    // answering with the bare topology would look like a successful call whose
+    // missing key the client reads as an answer.
+    let ask = crate::displays::DisplayAsk::parse(params)?;
+    serde_json::to_value(crate::displays::displays(topology, &ask))
+        .map_err(|e| RpcError::internal_error(format!("scene/displays: serialize: {e}")))
+}
+
 fn handle_scene_windows(windows: Option<Vec<DeclaredWindow>>) -> Result<Value, RpcError> {
     let Some(windows) = windows else {
         return Err(

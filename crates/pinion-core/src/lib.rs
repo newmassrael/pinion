@@ -35,6 +35,7 @@ pub mod command;
 pub mod composite_tag;
 pub mod contrast;
 pub mod directory;
+pub mod display;
 pub mod event;
 pub mod external;
 pub mod file_dialog;

@@ -225,6 +225,7 @@ members = [
     "examples/hello-market-map",
     "examples/hello-elevation-trace",
     "examples/hello-node-editor",
+    "examples/hello-displays",
     "examples/hello-graph-diff",
     "examples/hello-topology",
     "examples/hello-slider-discrete",

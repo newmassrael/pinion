@@ -113,6 +113,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc)] = &[
     ("scene/commands", MethodOcc::Read),
     ("scene/cross_window_drop", MethodOcc::Read),
     ("scene/disabled", MethodOcc::Read),
+    ("scene/displays", MethodOcc::Read),
     ("scene/double_click", MethodOcc::Mutate),
     ("scene/drag", MethodOcc::Mutate),
     ("scene/draw_profile", MethodOcc::Read),
