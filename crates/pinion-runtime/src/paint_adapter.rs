@@ -2481,12 +2481,81 @@ fn box_line_metrics(cell: KurboRect) -> (f64, f64, f64, f64, f64) {
     (xm, ym, lw, hw, d)
 }
 
+/// R1572 §5.41 — where a filled band of thickness `t` about `c` actually sits
+/// once it is snapped to the pixel grid: the centre of the band that starts at
+/// `(c - t / 2.0).round()` and is `t` tall.
+///
+/// The **one** answer to "where is this line", and the reason it has to be one:
+/// [`box_arm_rects`] snapped its bands so abutting cells tile without a
+/// hairline, while [`paint_box_drawing`]'s rounded corners were stroked about
+/// the *unsnapped* `xm` / `ym` straight out of [`box_line_metrics`]. Where an
+/// arc met a straight neighbour the two centre lines differed by up to half a
+/// pixel — an antialiasing seam rather than a gap, so connectivity was right
+/// and the pixels were not. Two derivations of one fact, which is the shape
+/// this repo keeps paying for.
+///
+/// A band now starts at `snapped_line_centre(c, t) - t / 2.0` — identical to
+/// the `(c - t / 2.0).round()` the arms already used, and a test pins the
+/// equality — and a stroke of width `t` centred here covers exactly that span,
+/// so the two cannot drift.
+///
+/// Diagonals need none of this and are **not** a defect, which R1181's own
+/// debt note got wrong by grouping them with the arcs: a diagonal is stroked
+/// corner to corner, its endpoints are the cell corners its neighbours share
+/// exactly, and no `BoxGlyph` pairs a diagonal with a straight arm — they are
+/// separate variants, so the two never meet at a mid-line to disagree about.
+fn snapped_line_centre(c: f64, t: f64) -> f64 {
+    (c - t / 2.0).round() + t / 2.0
+}
+
+/// R1572 §5.41 — how far past the junction centre one **rail** runs, signed in
+/// units of the rail half-separation `d`.
+///
+/// R1181 used one uniform answer — "when *any* arm is double, *every* arm
+/// overshoots by `d`" — which is this function with both branches collapsed
+/// into the middle one. That is why the mixed single/double glyphs grew stubs
+/// (`╒` `╓` `╞` `╡` `╥` `╨` …: a rail poking out past the perpendicular line it
+/// should have stopped at) and why `╔` and `╬` came out with their corners
+/// filled in rather than open.
+///
+/// The rule that produces every canonical form instead:
+///
+/// * A rail of a **double** arm, facing a side where **another double arm
+///   attaches**, stops at the **near** perpendicular line (`-d`). This is the
+///   break that opens `╬` into four elbows, interrupts the inner rail of `╠`,
+///   and gives `╔` its inner corner.
+/// * Every other rail runs to the **far** perpendicular line: `+d` when the
+///   perpendicular axis is double, `0` when it is a single line through the
+///   centre. This is what keeps `║`, `╫` and `╪` continuous, and what makes a
+///   single arm meeting a double one stop exactly at the outer rail.
+///
+/// A single line is never broken — only a double arm's rails are — because the
+/// break exists to keep two parallel rails legible where a third line crosses
+/// them, and a lone line has nothing to stay legible against.
+fn rail_reach(rail_is_double: bool, facing: u8, perpendicular_double: bool, d: f64) -> f64 {
+    if rail_is_double && facing == BOX_WEIGHT_DOUBLE {
+        -d
+    } else if perpendicular_double {
+        d
+    } else {
+        0.0
+    }
+}
+
+/// The arm-weight code for a double line, as [`BoxGlyph::Arms`] spells it.
+/// Named because [`rail_reach`] and [`box_arm_rects`] both test against it and
+/// a bare `3` beside `1` (light) and `2` (heavy) reads as a count.
+const BOX_WEIGHT_DOUBLE: u8 = 3;
+
 /// R1180 §5.41 — the filled rectangles for a [`BoxGlyph::Arms`] glyph (the
 /// straight / junction / double / dashed family). Each present arm runs from
-/// its cell edge to the centre cross; when any arm is `double` every arm
-/// overshoots the centre by the rail half-separation so the central rail box
-/// stays connected, and double arms draw two parallel rails. Integer-snapped
-/// bands keep abutting cells gap-free.
+/// its cell edge toward the centre cross, and double arms draw two parallel
+/// rails. Integer-snapped bands ([`snapped_line_centre`]) keep abutting cells
+/// gap-free.
+///
+/// R1572 — how far each **rail** reaches past the centre is
+/// [`rail_reach`], asked per rail rather than once per glyph. See its doc for
+/// the rule and for what the R1181 uniform overshoot rendered wrongly.
 ///
 /// R1181 — returns a stack `([KurboRect; 8], count)` (zero heap allocation in
 /// the per-frame paint loop, matching the [`block_element_rects`] sibling). The
@@ -2535,46 +2604,109 @@ fn box_arm_rects(
         return (rects, n);
     }
 
-    let any_double = up == 3 || down == 3 || left == 3 || right == 3;
-    let over = if any_double { d } else { 0.0 };
-    let push_h = |rects: &mut [KurboRect; 8], n: &mut usize, xa: f64, xb: f64, w: u8| {
-        if w == 3 {
+    // Which axis carries two rails, and therefore where the perpendicular
+    // arms' FAR line sits. Asked per axis rather than per glyph, because a
+    // mixed junction has one of each.
+    let h_double = left == BOX_WEIGHT_DOUBLE || right == BOX_WEIGHT_DOUBLE;
+    let v_double = up == BOX_WEIGHT_DOUBLE || down == BOX_WEIGHT_DOUBLE;
+
+    let push_h = |rects: &mut [KurboRect; 8], n: &mut usize, w: u8, to_right: bool| {
+        // A horizontal band's extent toward the centre, from its rail reach.
+        let span = |reach: f64| {
+            if to_right {
+                (xm - reach, x1)
+            } else {
+                (x0, xm + reach)
+            }
+        };
+        if w == BOX_WEIGHT_DOUBLE {
             for off in [-d, d] {
-                let yt = (ym + off - lw / 2.0).round();
+                // A rail above the centre faces the `up` arm; one below faces
+                // `down`. That side is what decides whether it breaks.
+                let facing = if off < 0.0 { up } else { down };
+                let (xa, xb) = span(rail_reach(true, facing, v_double, d));
+                let yt = snapped_line_centre(ym + off, lw) - lw / 2.0;
                 rects[*n] = KurboRect::new(xa, yt, xb, yt + lw);
                 *n += 1;
             }
         } else if w > 0 {
             let t = if w == 2 { hw } else { lw };
-            let yt = (ym - t / 2.0).round();
+            let (xa, xb) = span(rail_reach(false, 0, v_double, d));
+            let yt = snapped_line_centre(ym, t) - t / 2.0;
             rects[*n] = KurboRect::new(xa, yt, xb, yt + t);
             *n += 1;
         }
     };
-    let push_v = |rects: &mut [KurboRect; 8], n: &mut usize, ya: f64, yb: f64, w: u8| {
-        if w == 3 {
+    let push_v = |rects: &mut [KurboRect; 8], n: &mut usize, w: u8, to_down: bool| {
+        let span = |reach: f64| {
+            if to_down {
+                (ym - reach, y1)
+            } else {
+                (y0, ym + reach)
+            }
+        };
+        if w == BOX_WEIGHT_DOUBLE {
             for off in [-d, d] {
-                let xt = (xm + off - lw / 2.0).round();
+                let facing = if off < 0.0 { left } else { right };
+                let (ya, yb) = span(rail_reach(true, facing, h_double, d));
+                let xt = snapped_line_centre(xm + off, lw) - lw / 2.0;
                 rects[*n] = KurboRect::new(xt, ya, xt + lw, yb);
                 *n += 1;
             }
         } else if w > 0 {
             let t = if w == 2 { hw } else { lw };
-            let xt = (xm - t / 2.0).round();
+            let (ya, yb) = span(rail_reach(false, 0, h_double, d));
+            let xt = snapped_line_centre(xm, t) - t / 2.0;
             rects[*n] = KurboRect::new(xt, ya, xt + t, yb);
             *n += 1;
         }
     };
-    push_h(&mut rects, &mut n, x0, xm + over, left);
-    push_h(&mut rects, &mut n, xm - over, x1, right);
-    push_v(&mut rects, &mut n, y0, ym + over, up);
-    push_v(&mut rects, &mut n, ym - over, y1, down);
+    push_h(&mut rects, &mut n, left, false);
+    push_h(&mut rects, &mut n, right, true);
+    push_v(&mut rects, &mut n, up, false);
+    push_v(&mut rects, &mut n, down, true);
     (rects, n)
+}
+
+/// R1572 §5.41 — the centre path a [`BoxGlyph::Arc`] is stroked along: in from
+/// the horizontal edge, a quadratic through the corner, out to the vertical
+/// edge.
+///
+/// **A pure function for the same reason [`box_arm_rects`] is one**, and R1572
+/// learnt why the hard way: the arc's geometry was built inline inside
+/// [`paint_box_drawing`], so a test could assert everything about
+/// [`snapped_line_centre`] and still not see whether the *painter* used it — a
+/// counterfactual that reverted the painter to the raw metric centre passed
+/// every assertion. A derivation that only the painter calls is a derivation no
+/// test can hold it to. Now the painter strokes exactly what this returns, so
+/// asserting on the path is asserting on the ink.
+///
+/// The centre is [`snapped_line_centre`], not the raw `xm` / `ym` out of
+/// [`box_line_metrics`]: a straight arm's filled band is snapped to the pixel
+/// grid, so an arc stroked about the unsnapped centre met its neighbour half a
+/// pixel off and left an antialiasing seam.
+fn box_arc_path(down: bool, right: bool, cell: KurboRect) -> BezPath {
+    let (xm, ym, lw, ..) = box_line_metrics(cell);
+    let cx = snapped_line_centre(xm, lw);
+    let cy = snapped_line_centre(ym, lw);
+    let r = (cell.width().min(cell.height()) * BOX_ARC_RADIUS_FRACTION).max(1.0);
+    let hx_edge = if right { cell.x1 } else { cell.x0 };
+    let hx_inner = if right { cx + r } else { cx - r };
+    let vy_edge = if down { cell.y1 } else { cell.y0 };
+    let vy_inner = if down { cy + r } else { cy - r };
+    let mut path = BezPath::new();
+    path.move_to((hx_edge, cy));
+    path.line_to((hx_inner, cy));
+    // Quadratic through the sharp corner rounds the bend.
+    path.quad_to((cx, cy), (cx, vy_inner));
+    path.line_to((cx, vy_edge));
+    path
 }
 
 /// R1180 §5.41 — paint a [`BoxGlyph`] in `brush`: straight/junction families as
 /// filled rectangles ([`box_arm_rects`]), rounded corners as a quarter
-/// quadratic curve, and diagonals as corner-to-corner strokes.
+/// quadratic curve ([`box_arc_path`]), and diagonals as corner-to-corner
+/// strokes.
 fn paint_box_drawing(
     out: &mut VelloScene,
     origin: Affine,
@@ -2596,19 +2728,14 @@ fn paint_box_drawing(
             }
         }
         BoxGlyph::Arc { down, right } => {
-            let (xm, ym, lw, ..) = box_line_metrics(cell);
-            let r = (cell.width().min(cell.height()) * BOX_ARC_RADIUS_FRACTION).max(1.0);
-            let hx_edge = if right { cell.x1 } else { cell.x0 };
-            let hx_inner = if right { xm + r } else { xm - r };
-            let vy_edge = if down { cell.y1 } else { cell.y0 };
-            let vy_inner = if down { ym + r } else { ym - r };
-            let mut path = BezPath::new();
-            path.move_to((hx_edge, ym));
-            path.line_to((hx_inner, ym));
-            // Quadratic through the sharp corner rounds the bend.
-            path.quad_to((xm, ym), (xm, vy_inner));
-            path.line_to((xm, vy_edge));
-            out.stroke(&Stroke::new(lw), origin, brush, None, &path);
+            let (.., lw, _, _) = box_line_metrics(cell);
+            out.stroke(
+                &Stroke::new(lw),
+                origin,
+                brush,
+                None,
+                &box_arc_path(down, right, cell),
+            );
         }
         BoxGlyph::Diagonal { slash, backslash } => {
             let (.., lw, _, _) = box_line_metrics(cell);
@@ -7479,6 +7606,309 @@ mod tests {
         assert_eq!(count(3, 3, 3, 3, 0), 8);
         // ┄ triple dash: three dash segments.
         assert_eq!(count(0, 0, 1, 1, 3), 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R1572 §5.41 — the two non-canonical render spots R1181 left
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1572_a_snapped_band_is_the_snapped_centre_and_nothing_moved() {
+        // The equality that makes `snapped_line_centre` a *lift* rather than a
+        // change: every band `box_arm_rects` already drew was
+        // `(c - t/2).round()`, and it is now derived from the centre the arc is
+        // stroked about. If these ever differ, the seam is back.
+        for c in [0.0, 7.5, 8.0, 8.25, 8.5, 8.75, 16.0, 23.5] {
+            for t in [1.0, 2.0, 3.0, 4.0] {
+                let centre = snapped_line_centre(c, t);
+                assert!(
+                    (centre - t / 2.0 - (c - t / 2.0).round()).abs() < 1e-9,
+                    "band top for c={c} t={t} is unchanged",
+                );
+                assert!(
+                    (snapped_line_centre(centre, t) - centre).abs() < 1e-9,
+                    "and snapping is idempotent, so the arc cannot drift by \
+                     being snapped twice",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn r1572_the_arc_is_stroked_about_the_band_a_straight_arm_fills() {
+        // Asserted on the PATH THE PAINTER STROKES, not on `snapped_line_centre`
+        // itself: a counterfactual that reverted the painter to the raw metric
+        // centre passed every assertion the earlier shape made, because none of
+        // them looked at what the painter used. `box_arc_path` exists so this
+        // test and the ink are the same geometry.
+        let cells = [
+            KurboRect::new(0.0, 0.0, 16.0, 16.0),
+            KurboRect::new(0.0, 0.0, 9.0, 21.0),
+            KurboRect::new(3.0, 5.0, 14.0, 24.0),
+            KurboRect::new(0.0, 0.0, 11.0, 23.0),
+        ];
+        // The seam only exists on cells where the raw centre and the snapped
+        // band centre actually differ; without one of those in the set the
+        // assertions below would hold for the unfixed code too.
+        let offset_cells = cells
+            .iter()
+            .filter(|cell| {
+                let (_, ym, lw, ..) = box_line_metrics(**cell);
+                (snapped_line_centre(ym, lw) - ym).abs() > 1e-9
+            })
+            .count();
+        assert!(
+            offset_cells > 0,
+            "at least one cell where the two centres DIFFER, else this test \
+             cannot tell the fixed code from the unfixed one",
+        );
+
+        for cell in cells {
+            // The band a straight ─ actually fills in this cell.
+            let (rects, n) = box_arm_rects(0, 0, 1, 1, 0, cell);
+            assert!(n >= 1);
+            let band = rects[0];
+            let band_centre = f64::midpoint(band.y0, band.y1);
+            // The arc's first point is its horizontal end, on the cell edge.
+            let path = box_arc_path(true, true, cell);
+            let PathEl::MoveTo(start) = path.elements()[0] else {
+                panic!("an arc path opens with a MoveTo");
+            };
+            assert!(
+                (start.y - band_centre).abs() < 1e-9,
+                "the arc meets its straight neighbour on the SAME centre line \
+                 in {cell:?} (arc {}, band {band_centre})",
+                start.y,
+            );
+            // And the vertical half, against the vertical band.
+            let (vrects, vn) = box_arm_rects(1, 1, 0, 0, 0, cell);
+            assert!(vn >= 1);
+            let vband_centre = f64::midpoint(vrects[0].x0, vrects[0].x1);
+            let last = path.elements().last().copied().expect("a closing LineTo");
+            let PathEl::LineTo(end) = last else {
+                panic!("an arc path closes with a LineTo");
+            };
+            assert!(
+                (end.x - vband_centre).abs() < 1e-9,
+                "and on the vertical axis too in {cell:?}",
+            );
+        }
+    }
+
+    /// The rails a glyph emits, as `(x0, y0, x1, y1)` tuples rounded to the
+    /// nearest 1e-6 so a comparison reads as geometry rather than as floats.
+    fn arms(up: u8, down: u8, left: u8, right: u8, cell: KurboRect) -> Vec<KurboRect> {
+        let (rects, n) = box_arm_rects(up, down, left, right, 0, cell);
+        rects[..n].to_vec()
+    }
+
+    #[test]
+    fn r1572_a_mixed_junction_grows_no_stub_past_the_line_it_meets() {
+        // R1181's uniform "any arm double => every arm overshoots by d" left a
+        // rail poking out past the perpendicular line it should have stopped
+        // at. Six glyphs had it; each one is checked at its own geometry.
+        let cell = KurboRect::new(0.0, 0.0, 16.0, 16.0);
+        let (xm, ym, lw, _, d) = box_line_metrics(cell);
+        assert!(
+            d > lw / 2.0,
+            "the stub was only visible because d exceeds lw/2"
+        );
+
+        // ╒ down single + right double: the rails must start AT the vertical,
+        // not `d` to the left of it.
+        for r in arms(0, 1, 0, 3, cell) {
+            if r.width() > r.height() {
+                assert!(
+                    r.x0 >= xm - 1e-9,
+                    "╒ rail starts at the vertical, not left of it (got {})",
+                    r.x0
+                );
+            }
+        }
+        // ╞ vertical single + right double — same rule, with the vertical a
+        // through-line rather than a corner.
+        for r in arms(1, 1, 0, 3, cell) {
+            if r.width() > r.height() {
+                assert!(r.x0 >= xm - 1e-9, "╞ rail starts at the vertical");
+            }
+        }
+        // ╡ the mirror: the left rails must end AT the vertical.
+        for r in arms(1, 1, 3, 0, cell) {
+            if r.width() > r.height() {
+                assert!(r.x1 <= xm + 1e-9, "╡ rail ends at the vertical");
+            }
+        }
+        // ╥ down double + horizontal single: the two verticals hang FROM the
+        // horizontal line, they do not poke up through it.
+        for r in arms(0, 3, 1, 1, cell) {
+            if r.height() > r.width() {
+                assert!(
+                    r.y0 >= ym - 1e-9,
+                    "╥ rail hangs from the line (got {})",
+                    r.y0
+                );
+            }
+        }
+        // ╨ the mirror.
+        for r in arms(3, 0, 1, 1, cell) {
+            if r.height() > r.width() {
+                assert!(r.y1 <= ym + 1e-9, "╨ rail rises to the line");
+            }
+        }
+        // ╓ down double + right single: the single horizontal still reaches the
+        // OUTER vertical rail, because that is the far line it must close on.
+        let horizontals: Vec<_> = arms(0, 3, 0, 1, cell)
+            .into_iter()
+            .filter(|r| r.width() > r.height())
+            .collect();
+        assert_eq!(horizontals.len(), 1);
+        assert!(
+            (horizontals[0].x0 - (xm - d)).abs() < 1e-9,
+            "╓ single arm runs to the outer rail — the far line, not the near",
+        );
+    }
+
+    #[test]
+    fn r1572_a_double_corner_is_open_and_a_double_cross_is_four_elbows() {
+        let cell = KurboRect::new(0.0, 0.0, 16.0, 16.0);
+        let (xm, ym, _, _, d) = box_line_metrics(cell);
+        let covers = |r: &KurboRect, x: f64, y: f64| {
+            r.x0 - 1e-9 <= x && x <= r.x1 + 1e-9 && r.y0 - 1e-9 <= y && y <= r.y1 + 1e-9
+        };
+
+        // ╔ — the outer corner closes, the inner corner is a right angle at
+        // (xm+d, ym+d). R1181 ran BOTH rails of each arm to the outer line,
+        // which filled the corner in.
+        let tl = arms(0, 3, 0, 3, cell);
+        assert_eq!(tl.len(), 4, "two rails per arm");
+        assert!(
+            tl.iter().any(|r| covers(r, xm - d, ym - d)),
+            "╔ outer corner is closed",
+        );
+        assert!(
+            !tl.iter().any(|r| covers(r, xm, ym)),
+            "╔ the corner's interior is OPEN — the inner rails start at the \
+             inner lines, so nothing paints between the two pairs. R1181 ran \
+             both rails of each arm to the OUTER line, which filled it in; the \
+             single-line `┌` above deliberately does cover this point, which is \
+             the contrast that makes the two forms different glyphs",
+        );
+
+        // ╬ — every rail is broken, leaving four elbows around an open centre.
+        // R1181 drew four full-length lines (a `#` with continuous rails).
+        let cross = arms(3, 3, 3, 3, cell);
+        assert_eq!(cross.len(), 8);
+        for r in &cross {
+            assert!(
+                !covers(r, xm, ym),
+                "no rail of ╬ crosses the centre — the four elbows leave it open",
+            );
+        }
+        // Each of the four rails is genuinely interrupted: the up and down
+        // pieces of one vertical rail do not touch.
+        let verticals: Vec<_> = cross.iter().filter(|r| r.height() > r.width()).collect();
+        assert_eq!(verticals.len(), 4);
+        for x in [xm - d, xm + d] {
+            let mut same_rail: Vec<_> = verticals
+                .iter()
+                .filter(|r| {
+                    f64::midpoint(r.x0, r.x1) > x - 0.5 && f64::midpoint(r.x0, r.x1) < x + 0.5
+                })
+                .collect();
+            same_rail.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+            assert_eq!(same_rail.len(), 2, "one rail, two pieces");
+            assert!(
+                same_rail[0].y1 < same_rail[1].y0 - 1e-9,
+                "the rail at x={x} is BROKEN, not continuous",
+            );
+        }
+    }
+
+    #[test]
+    fn r1572_a_tee_breaks_only_the_rail_the_branch_attaches_to() {
+        // ╠ — the outer (left) rail runs the full height; the inner (right) one
+        // is interrupted where the branch leaves. R1181 drew both continuous,
+        // so the branch appeared to be welded onto an unbroken line.
+        let cell = KurboRect::new(0.0, 0.0, 16.0, 16.0);
+        let (xm, _, _, _, d) = box_line_metrics(cell);
+        let tee = arms(3, 3, 0, 3, cell);
+        assert_eq!(tee.len(), 6, "2 rails up + 2 down + 2 right");
+        let rail_pieces = |x: f64| {
+            let mut v: Vec<KurboRect> = tee
+                .iter()
+                .filter(|r| r.height() > r.width())
+                .filter(|r| (f64::midpoint(r.x0, r.x1) - x).abs() < 0.5 + 1e-9)
+                .copied()
+                .collect();
+            v.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+            v
+        };
+        let outer = rail_pieces(xm - d);
+        assert_eq!(outer.len(), 2);
+        assert!(
+            outer[0].y1 >= outer[1].y0 - 1e-9,
+            "╠ outer rail is CONTINUOUS — nothing attaches on its side",
+        );
+        let inner = rail_pieces(xm + d);
+        assert_eq!(inner.len(), 2);
+        assert!(
+            inner[0].y1 < inner[1].y0 - 1e-9,
+            "╠ inner rail is BROKEN where the double branch attaches",
+        );
+
+        // ╫ — a SINGLE horizontal crossing a double vertical breaks nothing.
+        // The break exists to keep two parallel rails legible against a third
+        // line; a lone line has nothing to stay legible against.
+        let single_cross = arms(3, 3, 1, 1, cell);
+        for x in [xm - d, xm + d] {
+            let mut v: Vec<KurboRect> = single_cross
+                .iter()
+                .filter(|r| r.height() > r.width())
+                .filter(|r| (f64::midpoint(r.x0, r.x1) - x).abs() < 0.5 + 1e-9)
+                .copied()
+                .collect();
+            v.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+            assert_eq!(v.len(), 2);
+            assert!(
+                v[0].y1 >= v[1].y0 - 1e-9,
+                "╫ rail at x={x} stays continuous"
+            );
+        }
+    }
+
+    #[test]
+    fn r1572_every_pure_single_and_pure_double_line_still_tiles_gap_free() {
+        // The property the snapped bands exist for, re-checked after the reach
+        // rewrite: a through-line spans its whole cell, so abutting cells leave
+        // no hairline. Both weights, both axes, and the heavy arm too.
+        let cell = KurboRect::new(0.0, 0.0, 16.0, 16.0);
+        for (up, down, left, right, horizontal) in [
+            (0, 0, 1, 1, true),
+            (0, 0, 2, 2, true),
+            (0, 0, 3, 3, true),
+            (1, 1, 0, 0, false),
+            (2, 2, 0, 0, false),
+            (3, 3, 0, 0, false),
+        ] {
+            let rs = arms(up, down, left, right, cell);
+            let rails = if left == 3 || up == 3 { 4 } else { 2 };
+            assert_eq!(rs.len(), rails);
+            let (lo, hi) = if horizontal {
+                (
+                    rs.iter().map(|r| r.x0).fold(f64::INFINITY, f64::min),
+                    rs.iter().map(|r| r.x1).fold(f64::NEG_INFINITY, f64::max),
+                )
+            } else {
+                (
+                    rs.iter().map(|r| r.y0).fold(f64::INFINITY, f64::min),
+                    rs.iter().map(|r| r.y1).fold(f64::NEG_INFINITY, f64::max),
+                )
+            };
+            assert!(
+                (lo - 0.0).abs() < 1e-9 && (hi - 16.0).abs() < 1e-9,
+                "({up},{down},{left},{right}) spans its cell edge to edge",
+            );
+        }
     }
 }
 

@@ -3730,6 +3730,132 @@ mod tests {
         );
     }
 
+    /// R1572 §5.41 — the two non-canonical render spots R1181 registered as
+    /// debt, checked in **ink** rather than in geometry, because both claims are
+    /// about pixels:
+    ///
+    /// 1. **A rounded corner meets a straight neighbour with no seam.** The
+    ///    straight arm's band is snapped to the pixel grid and the arc used to
+    ///    be stroked about the unsnapped centre, so the join showed an
+    ///    antialiasing dip — never a gap, which is why R1181's connectivity
+    ///    guard above could not see it. A dip is a *partially* covered pixel, so
+    ///    this asserts FULL coverage along the join, which is the thing a
+    ///    half-pixel offset cannot produce.
+    /// 2. **A double-line corner leaves its interior unpainted.** `╔` is an open
+    ///    right angle between two rail pairs; R1181 ran both rails of each arm
+    ///    to the outer line, filling it in.
+    ///
+    /// Font-independent: every pixel read here is synthesised geometry, never a
+    /// shaped glyph.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r1572_arc_joins_without_a_seam_and_a_double_corner_stays_open() {
+        use pinion_core::cell_metric::CellMetric;
+        use pinion_core::scene::{Rect, Scene, TextGridNode};
+        use pinion_core::style::Color;
+        use pinion_core::term_grid::{GridBuffer, TermCell, TermColor};
+        use pinion_runtime::paint_adapter::{FragmentCache, to_vello_cached};
+        use pinion_text::LayoutCache;
+
+        // 20 is chosen, not arbitrary: `box_line_metrics` gives it an ODD line
+        // width (`round(20/8) == 3`), which is the only case where the snapped
+        // band centre and the raw metric centre differ — `c - t/2` lands on a
+        // half-pixel. On a cell with an even line width the seam does not exist
+        // and this guard would be vacuous. `r1572_arc_joins_across_the_seam`'s
+        // own first assertion pins that the chosen cell really is such a case.
+        const CW: u32 = 20;
+        const CH: u32 = 20;
+        let metric = CellMetric::new(CW, CH).expect("non-zero cell metric");
+        let fg = TermColor::Rgb(Color::rgb(255, 255, 255));
+        let bg = TermColor::Rgb(Color::rgb(0, 0, 0));
+        let g = |s: &str| TermCell::new(s.to_owned(), fg, bg);
+        // Row 0: ╭── (a rounded corner followed by two straight runs).
+        // Row 1: ╔══ (a double corner followed by two double runs).
+        let buffer = GridBuffer::new(3, 2)
+            .with_row(0, vec![g("\u{256D}"), g("\u{2500}"), g("\u{2500}")])
+            .with_row(1, vec![g("\u{2554}"), g("\u{2550}"), g("\u{2550}")]);
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        let (w, h) = (CW * 3, CH * 2);
+        node.rect = Rect::new(0, 0, w, h);
+        let scene = Scene::TextGrid(node);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot
+            .render_to_rgba8(&vello, w, h, vello::peniko::Color::BLACK)
+            .expect("render");
+        let lum = |x: u32, y: u32| -> u8 { rgba8[((y * w + x) * 4) as usize] };
+
+        // ── (1) the arc's horizontal run joins its straight neighbour ─────
+        //
+        // The seam is at the cell boundary x = CW. Compare the FULLY covered
+        // rows on each side of it: the last column of the arc's cell (inside its
+        // straight stub) against the first column of the pure straight cell. A
+        // half-pixel offset does not open a gap — it moves the band by half a
+        // pixel, so the fully-covered set shrinks by a row and the two edges
+        // pick up partial coverage instead. That is the seam, in ink.
+        let solid_rows = |x: u32| -> Vec<u32> { (0..CH).filter(|&y| lum(x, y) > 250).collect() };
+        let arc_side = solid_rows(CW - 1);
+        let straight_side = solid_rows(CW + 1);
+        assert!(
+            !straight_side.is_empty(),
+            "the straight run is solid ink somewhere in its column",
+        );
+        assert_eq!(
+            arc_side,
+            straight_side,
+            "the arc's stub and its straight neighbour cover the SAME rows at \
+             the seam (x={} vs x={}). R1181 stroked the arc about the unsnapped \
+             centre, half a pixel off the band the neighbour fills",
+            CW - 1,
+            CW + 1,
+        );
+
+        // ── (2) the double corner's inner rails start at the inner lines ──
+        //
+        // `╔` occupies row 1. The probe is NOT the cell centre: that point is
+        // background under R1181's rule too, so a guard placed there passes
+        // against the defect (measured — the counterfactual that restored the
+        // uniform overshoot left it green). The discriminating point is on the
+        // INNER VERTICAL RAIL, in the gap between the two horizontal rails: the
+        // canonical corner has nothing there because the inner vertical begins
+        // at the inner horizontal, while the uniform overshoot ran it all the
+        // way up to the outer one.
+        //
+        // `box_line_metrics` on a 20px cell: centre 10, rail half-separation
+        // `d == lw == 3`, so the inner rail band is x ∈ [12, 15] and the gap
+        // between the horizontal rails is y ∈ (9, 12).
+        let (probe_x, probe_y) = (CW / 2 + 4, CH + CH / 2);
+        assert!(
+            lum(probe_x, probe_y) < 60,
+            "╔'s inner vertical rail starts at the INNER horizontal rail (got \
+             {} at x={probe_x}, y={probe_y}); R1181 ran both rails of each arm \
+             to the outer line, which paints this gap and fills the corner in",
+            lum(probe_x, probe_y),
+        );
+        // And the outer corner really is drawn, so the assertion above is not
+        // passing because nothing was painted at all.
+        let outer_ink = (0..CH)
+            .flat_map(|dy| (0..CW).map(move |dx| (dx, CH + dy)))
+            .filter(|&(x, y)| lum(x, y) > 200)
+            .count();
+        assert!(
+            outer_ink > 20,
+            "╔ is painted (only {outer_ink} bright pixels in its cell)",
+        );
+    }
+
     /// The label box's `(x, width)` on the render target, and the
     /// `[Start, Center, End]` ink spans measured inside it — each span being
     /// `(min_x, max_x, width)`.
