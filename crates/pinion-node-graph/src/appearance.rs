@@ -56,11 +56,26 @@ pub struct Appearance {
     /// An authored width in the application's own units — the units `x` and `y`
     /// are already in — or `None` for whatever width the application gives a
     /// node of this kind. Blender's `NODE_OT_resize`.
-    ///
-    /// Only the width: a node's height is a function of how many ports it draws,
-    /// and Blender's `resize` is horizontal for the same reason.
     #[serde(default)]
     pub width: Option<u32>,
+    /// An authored height, in the same units, or `None` for the height the
+    /// application derives (R1595).
+    ///
+    /// `Option` rather than absent, and that is the whole of what it says: an
+    /// ordinary node's height is a **function of how many ports it draws**, so
+    /// `None` is the right answer there and authoring one would be a second
+    /// statement free to disagree with the first. A [`NodeBody::Frame`] has no
+    /// ports, so its height is a fact about the canvas and nothing derives it —
+    /// which is exactly the case R1589 recorded as the reason this field was
+    /// missing.
+    ///
+    /// Blender carries both on every node (`bNode::width`, `bNode::height`) with
+    /// no such distinction, and its `NODE_OT_resize` is horizontal-only for
+    /// ordinary nodes by convention rather than by anything in the model.
+    ///
+    /// [`NodeBody::Frame`]: crate::NodeBody::Frame
+    #[serde(default)]
+    pub height: Option<u32>,
 }
 
 impl Default for Appearance {
@@ -73,6 +88,7 @@ impl Default for Appearance {
             show_options: true,
             show_preview: false,
             width: None,
+            height: None,
         }
     }
 }

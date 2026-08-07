@@ -32416,6 +32416,50 @@
         "debt-two-node-graph-models: after R1593 and R1594 the crate can express everything hello-node-editor's model does. What remains is the migration itself — 9,186 lines plus 9,094 of tests against its own types — and it is now scope, not capability."
       ]
     },
+    "R1595": {
+      "decision_summary": "R1595 §5.38 §5.52 — A FRAME HAS A HEIGHT, and the migration is MEASURED rather than estimated. Appearance::height is the last of the three crate gaps that made debt-two-node-graph-models a capability problem rather than a scope one. R1589 recorded both the absence and its reason: an ordinary node's height is a FUNCTION of how many ports it draws, so authoring one would be a second statement free to disagree with the first — while a NodeBody::Frame has no ports at all, so its height is a fact about the canvas that nothing derives. Option<u32> is what says exactly that, and it is why the field is an Option rather than absent. Blender carries bNode::width and bNode::height on every node with no such distinction, and its NODE_OT_resize is horizontal-only for ordinary nodes by convention rather than by anything in its model. The second half of the round is the measurement the next session needs: parsing main.rs's function bodies by brace depth rather than grepping, 147 of 344 functions (43%) touch the model, across 9,186 lines plus a 9,094-line test file written against its own types.",
+      "changes_bullets": [
+        "Appearance::height, with the Option stating why an ordinary node has none",
+        "The migration is measured by parsing, not estimated: 147 of 344 functions, 43%",
+        "An eight-step execution plan recorded in the debt file, in dependency order",
+        "The one POLICY decision named: the example queries cycles after the fact, the crate refuses before"
+      ],
+      "verification_bullets": [
+        "173 crate tests, all green, and the one Appearance struct literal in the suite was enumerated by the compiler rather than found by hand — which is the property adding a field to a public struct is supposed to have.",
+        "The measurement is a parse, not a grep: function bodies are cut by brace depth from each `fn`, so a model identifier inside one function is not attributed to its neighbour. A substring census over the file would have counted 350 occurrences and said nothing about how many call sites must change.",
+        "Gates: cargo fmt --all --check, clippy -D pedantic, cargo doc --document-private-items, phase_b_tally --selftest."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "THE MIGRATION ITSELF IS NOT DONE, and this round says so with a number rather than a feeling. A half-migration cannot exist — a model cannot be half-replaced — so it is one dedicated session, and the honest thing was to scope it precisely rather than start it with too little room and leave a broken tree. Nothing here is committed that is not green.",
+        "The three blockers are all gone: R1593 (a directed type relation), R1594 (a value authored on a node's port), R1595 (a frame's height). What remains is scope.",
+        "Appearance still has no `shrink` (Blender's NODE_FRAME_SHRINK, a frame that auto-fits its contents). It is derivable by the application from its members' bounds, which R1589 already placed on the application side, so it is a stated limit rather than a gap — and the flagship example's frames are explicitly sized, so nothing forces it."
+      ],
+      "publishable_decision_summary": "R1595 §5.38 §5.52 — A FRAME HAS A HEIGHT, and the migration is MEASURED rather than estimated. Appearance::height is the last of the three crate gaps that made debt-two-node-graph-models a capability problem rather than a scope one. R1589 recorded both the absence and its reason: an ordinary node's height is a FUNCTION of how many ports it draws, so authoring one would be a second statement free to disagree with the first — while a NodeBody::Frame has no ports at all, so its height is a fact about the canvas that nothing derives. Option<u32> is what says exactly that, and it is why the field is an Option rather than absent. Blender carries bNode::width and bNode::height on every node with no such distinction, and its NODE_OT_resize is horizontal-only for ordinary nodes by convention rather than by anything in its model. The second half of the round is the measurement the next session needs: parsing main.rs's function bodies by brace depth rather than grepping, 147 of 344 functions (43%) touch the model, across 9,186 lines plus a 9,094-line test file written against its own types.",
+      "publishable_changes_bullets": [
+        "Appearance::height, with the Option stating why an ordinary node has none",
+        "The migration is measured by parsing, not estimated: 147 of 344 functions, 43%",
+        "An eight-step execution plan recorded in the debt file, in dependency order",
+        "The one POLICY decision named: the example queries cycles after the fact, the crate refuses before"
+      ],
+      "publishable_verification_bullets": [
+        "173 crate tests, all green, and the one Appearance struct literal in the suite was enumerated by the compiler rather than found by hand — which is the property adding a field to a public struct is supposed to have.",
+        "The measurement is a parse, not a grep: function bodies are cut by brace depth from each `fn`, so a model identifier inside one function is not attributed to its neighbour. A substring census over the file would have counted 350 occurrences and said nothing about how many call sites must change.",
+        "Gates: cargo fmt --all --check, clippy -D pedantic, cargo doc --document-private-items, phase_b_tally --selftest."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "THE MIGRATION ITSELF IS NOT DONE, and this round says so with a number rather than a feeling. A half-migration cannot exist — a model cannot be half-replaced — so it is one dedicated session, and the honest thing was to scope it precisely rather than start it with too little room and leave a broken tree. Nothing here is committed that is not green.",
+        "The three blockers are all gone: R1593 (a directed type relation), R1594 (a value authored on a node's port), R1595 (a frame's height). What remains is scope.",
+        "Appearance still has no `shrink` (Blender's NODE_FRAME_SHRINK, a frame that auto-fits its contents). It is derivable by the application from its members' bounds, which R1589 already placed on the application side, so it is a stated limit rather than a gap — and the flagship example's frames are explicitly sized, so nothing forces it."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

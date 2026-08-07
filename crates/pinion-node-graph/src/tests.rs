@@ -2899,6 +2899,7 @@ fn what_a_node_looks_like_cannot_change_what_the_graph_computes() {
             show_options: false,
             show_preview: true,
             width: Some(1),
+            height: Some(2),
         },
     ];
     for look in looks {
