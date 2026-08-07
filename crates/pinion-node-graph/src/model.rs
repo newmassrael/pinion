@@ -107,28 +107,128 @@ pub(crate) struct Sink {
     pub muted: bool,
 }
 
+/// What crosses a port: a value, or control (R1599).
+///
+/// A node graph has **two** kinds of edge and they obey opposite laws. This is
+/// the one declaration that tells them apart, and it is an enum rather than a
+/// flag beside the type because control is *not a value* — so a control port has
+/// no type at all, and there is no slot left over to hold a meaningless one.
+///
+/// **Unreal spells the same distinction as a string in the type slot.** An
+/// execution pin there is an ordinary `UEdGraphPin` whose
+/// `PinType.PinCategory` happens to equal the `FName` `"exec"`
+/// (`UEdGraphSchema_K2::PC_Exec`), so "is this pin control?" is a string
+/// comparison — written out **40 times** across `Editor` and `Runtime` at
+/// 5.8.1, beside the 70 uses of the `IsExecPin` helper that exists for it. A
+/// site that forgets is not a compile error there; here every read of a port's
+/// type has to say what it does about control, which is why this round changed
+/// the field's type instead of adding one next to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Flow<T, V> {
+    /// A value of the application's socket type. This crate only ever asks
+    /// whether one can cross into another ([`NodeKind::conversion`]).
+    Value {
+        /// The application's socket type.
+        ty: T,
+        /// The value this port carries when nothing else supplies one — the
+        /// "pin default" of Blender and Blueprint.
+        ///
+        /// On an **input** that means no link. On an **output** it means the
+        /// kind computed nothing there, which is what lets a source node
+        /// declare its resting constant here (R1594) instead of the taxonomy
+        /// carrying a payload it can never be asked to change. Either way the
+        /// node's own [`Node::values`] takes precedence, because a port's
+        /// *type* is the kind's and its *value* is the node's.
+        ///
+        /// Retained while the port is wired, because wiring hides an authored
+        /// value rather than discarding it.
+        default: Option<V>,
+    },
+    /// Control: the edge says *when*, never *what*.
+    ///
+    /// No type and no resting value, and both absences are structural — there
+    /// is no field here to put one in.
+    Control,
+}
+
+impl<T, V> Flow<T, V> {
+    /// The socket type, or `None` for a control port.
+    pub const fn value_type(&self) -> Option<&T> {
+        match self {
+            Self::Value { ty, .. } => Some(ty),
+            Self::Control => None,
+        }
+    }
+
+    /// The resting value, or `None` for a control port or a port without one.
+    pub const fn default_value(&self) -> Option<&V> {
+        match self {
+            Self::Value { default, .. } => default.as_ref(),
+            Self::Control => None,
+        }
+    }
+
+    /// Whether this port carries control.
+    pub const fn is_control(&self) -> bool {
+        matches!(self, Self::Control)
+    }
+
+    /// How many links a port carrying this may hold on `side` — the whole
+    /// reason the two flows are one declaration.
+    ///
+    /// |             | input      | output     |
+    /// |-------------|------------|------------|
+    /// | **Value**   | at most 1  | unbounded  |
+    /// | **Control** | unbounded  | at most 1  |
+    ///
+    /// The table is the **duality**, not two conventions that happen to
+    /// differ. A value has one producer and many readers: asking where a value
+    /// came from must have exactly one answer, while any number of consumers
+    /// may read it. A control transfer has one successor and many predecessors:
+    /// after *this* runs, exactly one thing runs next, while any number of
+    /// paths may converge on the same next thing. That is `def`/`use` against
+    /// `terminator`/`predecessors` — the same duality SSA draws, and the reason
+    /// a control-flow graph has join points where a dataflow graph has fan-out.
+    ///
+    /// Unreal derives the same two rules and writes them as two independent
+    /// booleans one line apart, each naming the *other* flow to exclude it
+    /// (`EdGraphSchema_K2.cpp`, 5.8.1):
+    ///
+    /// ```text
+    /// bBreakExistingDueToExecOutput = IsExecPin(*OutputPin) && OutputPin->LinkedTo.Num() > 0;
+    /// bBreakExistingDueToDataInput  = !IsExecPin(*InputPin) && InputPin->LinkedTo.Num() > 0;
+    /// ```
+    pub const fn multiplicity(&self, side: Side) -> Multiplicity {
+        match (self, side) {
+            (Self::Value { .. }, Side::Input) | (Self::Control, Side::Output) => Multiplicity::One,
+            (Self::Value { .. }, Side::Output) | (Self::Control, Side::Input) => Multiplicity::Many,
+        }
+    }
+}
+
+/// How many links one port may hold (R1599).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Multiplicity {
+    /// At most one. A second link **displaces** the first, and the displaced
+    /// one is reported so the replacement is undoable.
+    One,
+    /// Any number.
+    Many,
+}
+
 /// One socket in a node's signature.
 ///
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Port<T, V> {
     /// Human-facing name. Not an identity — ports are addressed by index.
     pub name: String,
-    /// The application's socket type. This crate only ever asks whether a
-    /// value can cross from one to another ([`NodeKind::conversion`]).
-    pub ty: T,
-    /// The value this port carries when nothing else supplies one — the "pin
-    /// default" of Blender and Blueprint.
+    /// What crosses this port: a value of the application's socket type, or
+    /// **control** (R1599).
     ///
-    /// On an **input** that means no link. On an **output** it means the kind
-    /// computed nothing there, which is what lets a source node declare its
-    /// resting constant here (R1594) instead of the taxonomy carrying a payload
-    /// it can never be asked to change. Either way the node's own
-    /// [`Node::values`] takes precedence, because a port's *type* is the kind's
-    /// and its *value* is the node's.
-    ///
-    /// Retained while the port is wired, because wiring hides an authored value
-    /// rather than discarding it.
-    pub default: Option<V>,
+    /// One field and not two, because a port's flow and a port's type are not
+    /// independent facts that could disagree — control is not a value, so a
+    /// control port has no type, and that is what the enum says.
+    pub flow: Flow<T, V>,
     /// Whether a value may pass through this port while its node is **bypassed**
     /// (R1587). `true` for an ordinary port.
     ///
@@ -172,20 +272,64 @@ pub(crate) const fn yes() -> bool {
 }
 
 impl<T, V> Port<T, V> {
-    /// A port with a name, a type, and no default.
+    /// A **value** port with a name, a type, and no default.
     pub fn new(name: impl Into<String>, ty: T) -> Self {
         Self {
             name: name.into(),
-            ty,
-            default: None,
+            flow: Flow::Value { ty, default: None },
             passthrough: true,
         }
     }
 
+    /// A **control** port with a name (R1599).
+    ///
+    /// No type and no default, because control is not a value. The name is
+    /// still the port's own — Unreal names them too (`Then`, `Else`, `Loop
+    /// Body`, `Completed`), and a control port that could not be named would
+    /// leave a two-way branch with two indistinguishable arms.
+    pub fn control(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            flow: Flow::Control,
+            passthrough: true,
+        }
+    }
+
+    /// The socket type, or `None` for a control port.
+    pub const fn value_type(&self) -> Option<&T> {
+        self.flow.value_type()
+    }
+
+    /// The resting value, or `None` for a control port or a port without one.
+    pub const fn default_value(&self) -> Option<&V> {
+        self.flow.default_value()
+    }
+
+    /// Whether this port carries control.
+    pub const fn is_control(&self) -> bool {
+        self.flow.is_control()
+    }
+
+    /// How many links this port may hold on `side` — see
+    /// [`Flow::multiplicity`].
+    pub const fn multiplicity(&self, side: Side) -> Multiplicity {
+        self.flow.multiplicity(side)
+    }
+
     /// The same port carrying a resting value.
+    ///
+    /// **A control port has no resting value and this does nothing to one.**
+    /// That is not a silent swallow but the only honest arm: control is not a
+    /// value, so there is no field in [`Flow::Control`] to write, and a
+    /// panic would turn an authoring slip into a crash in a crate that refuses
+    /// everything else by value. The stored model therefore cannot hold a
+    /// control port with a default at all — which is the guarantee, and it is
+    /// structural rather than documented.
     #[must_use]
     pub fn with_default(mut self, value: V) -> Self {
-        self.default = Some(value);
+        if let Flow::Value { default, .. } = &mut self.flow {
+            *default = Some(value);
+        }
         self
     }
 
@@ -405,10 +549,110 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
             Conversion::Refused
         }
     }
+
+    /// Where this kind hands control on, given its resolved inputs (R1599).
+    ///
+    /// Asked only of a node that has control outputs, and answered in terms of
+    /// their port indices. A node with none is a **pure** node: it is never in
+    /// an execution trace at all, it is pulled when someone reads its value,
+    /// and this is not asked of it.
+    ///
+    /// # The default is a behaviour, not a silence
+    ///
+    /// [`Control::FallThrough`] hands control to *every* control output, in
+    /// port order. R1594's audit recorded that a third provided-default
+    /// extension point on this trait "would be worth resisting", and the reason
+    /// this one earns its place is that its default is not "say nothing" like
+    /// [`Self::conversion`]'s and [`Self::value_type`]'s — it is the canonical
+    /// answer, and it is the answer for almost every node there is:
+    ///
+    /// * a node with **one** control output means "then continue", and writes
+    ///   nothing;
+    /// * a node with **several** is a *sequence* — run the first to completion,
+    ///   then the next — and writes nothing either.
+    ///
+    /// That second one is worth stating against the reference. Unreal's
+    /// `Sequence` node is a whole `UK2Node_ExecutionSequence` class plus an
+    /// `FKCHandler_ExecutionSequence` compile handler, which finds its own
+    /// output pins by testing whether each pin's name *starts with the string*
+    /// `"Then"` and carries the standing admission
+    /// `//@TODO: Sort the pins by the number appended to the pin!` — so there,
+    /// the order control leaves a Sequence by is the order its pins happen to
+    /// sit in the array, and the node's own author noted that this is not the
+    /// order the user is reading off the screen. Here the order **is** the port
+    /// order, because that is the only order a signature has.
+    ///
+    /// Only a *branch* overrides: it picks among its outputs by looking at what
+    /// arrived.
+    fn control(&self, inputs: &[Option<Self::Value>]) -> Control {
+        let _ = inputs;
+        Control::FallThrough
+    }
+}
+
+/// Where a node hands control on (R1599).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Control {
+    /// Every control output, in port order — see [`NodeKind::control`].
+    FallThrough,
+    /// Exactly these control outputs, in this order.
+    ///
+    /// Empty means control stops here, which is what an exit node answers.
+    /// Indices that are not control outputs of this node are **named** in
+    /// [`Step::ignored`](crate::Step::ignored) rather than dropped, because a
+    /// taxonomy whose branch quietly does nothing is the hardest kind of bug to
+    /// see in a graph.
+    Take(Vec<u32>),
+}
+
+impl Control {
+    /// Hand control to exactly one output.
+    #[must_use]
+    pub fn to(port: u32) -> Self {
+        Self::Take(vec![port])
+    }
+
+    /// Stop here: hand control to nothing.
+    #[must_use]
+    pub const fn halt() -> Self {
+        Self::Take(Vec::new())
+    }
 }
 
 /// A [`Port`] specialised to one taxonomy.
 pub type KindPort<K> = Port<<K as NodeKind>::Type, <K as NodeKind>::Value>;
+
+/// Whether and how what leaves `from` may enter `to` (R1599).
+///
+/// **The one question every derivation in this crate asks about a pair of
+/// ports.** Before this round the question was `NodeKind::conversion` over two
+/// socket types, which could not be asked at all once a port might carry
+/// control instead of a value — so the flow check and the type check are the
+/// same call, for the same reason R1593 made legality and conversion one
+/// declaration: two checks that must agree are one check written twice.
+///
+/// * control into control is [`Conversion::Direct`] — control is not a value,
+///   so there is nothing to convert and nothing to ask the taxonomy;
+/// * value into value defers to [`NodeKind::conversion`], unchanged;
+/// * **the two never mix**, which is what stops an execution wire from feeding
+///   a number.
+///
+/// Unreal reaches the last of those three through the type system it shares
+/// with data: an exec pin's `PinCategory` is the `FName` `"exec"`, so
+/// `ArePinsCompatible` refuses exec-to-float the same way it refuses
+/// float-to-object — by comparing category strings. It works, and it is why
+/// `PC_Exec` has to be excluded by name from promotion, from default values,
+/// from the type-tree the editor offers, and from the dependency sort, each in
+/// its own place.
+pub fn crossing<K: NodeKind>(from: &KindPort<K>, to: &KindPort<K>) -> Conversion<K::Value> {
+    match (&from.flow, &to.flow) {
+        (Flow::Control, Flow::Control) => Conversion::Direct,
+        (Flow::Value { ty: out, .. }, Flow::Value { ty: into, .. }) => K::conversion(out, into),
+        (Flow::Control, Flow::Value { .. }) | (Flow::Value { .. }, Flow::Control) => {
+            Conversion::Refused
+        }
+    }
+}
 
 /// Which half of its tree's interface an interface node materialises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -1199,7 +1443,7 @@ impl<K: NodeKind> Document<K> {
         let sink = self.signature(tree, to.node)?;
         let out = source.outputs.get(from.port as usize)?;
         let input = sink.inputs.get(to.port as usize)?;
-        Some(K::conversion(&out.ty, &input.ty))
+        Some(crossing::<K>(out, input))
     }
 
     /// The crossing along an existing link, which is what its value went
@@ -1227,7 +1471,7 @@ impl<K: NodeKind> Document<K> {
     ///
     /// The value a port *carries* is not the same question: see
     /// [`Evaluator::inputs`](crate::Evaluator::inputs), which prefers a link and
-    /// falls back to this and then to the kind's own [`Port::default`].
+    /// falls back to this and then to the kind's own [`Port::default_value`].
     ///
     /// The port must exist in the node's **signature**, so this refuses on a
     /// group instance whose definition has no such port exactly as it does on an
@@ -1261,12 +1505,18 @@ impl<K: NodeKind> Document<K> {
                 port,
                 arity: u32::try_from(ports.len()).unwrap_or(u32::MAX),
             })?;
+        // R1599 — control is not a value, so a control port has nowhere to put
+        // one. Checked before the taxonomy is asked anything, because this arm
+        // holds even for a taxonomy that declines to classify its values.
+        let Some(declared_ty) = declared.value_type() else {
+            return Err(PortValueError::NotAValuePort { port });
+        };
         if let Some(found) = K::value_type(&value)
-            && found != declared.ty
+            && found != *declared_ty
         {
             return Err(PortValueError::WrongType {
                 port,
-                expected: declared.ty.clone(),
+                expected: declared_ty.clone(),
                 found,
             });
         }
@@ -1348,29 +1598,79 @@ impl<K: NodeKind> Document<K> {
                 socket: to,
                 arity: u32::try_from(in_ports.len()).unwrap_or(u32::MAX),
             })?;
-        // R1593 — the relation is directed and the taxonomy declares it, so a
-        // scalar may broadcast into a colour while the colour never narrows
-        // back. The default `crossing` is equality, which is what this was.
-        if K::conversion(&source.ty, &sink.ty).is_refused() {
-            return Err(ConnectError::TypeMismatch {
-                from,
-                from_type: source.ty.clone(),
-                to,
-                to_type: sink.ty.clone(),
+        // `crossing` is the ONE authority on whether the pair may be wired —
+        // R1593's directed type relation, widened by R1599 to cover the flow —
+        // and the match below only chooses which refusal to *name*. Stating the
+        // mixed-flow rule here as well would be a second copy free to disagree
+        // with it, which is what a counterfactual on `crossing`'s mixed arm
+        // found: the refusal held with that arm removed, because this site was
+        // deciding it independently.
+        if crossing::<K>(source, sink).is_refused() {
+            return Err(match (source.value_type(), sink.value_type()) {
+                (Some(out), Some(into)) => ConnectError::TypeMismatch {
+                    from,
+                    from_type: out.clone(),
+                    to,
+                    to_type: into.clone(),
+                },
+                // Exactly one end carries control: two control ports cross
+                // directly and are never refused, so that pair cannot arrive
+                // here — asserted by `r1599_control_to_control_is_the_one_pair_
+                // with_no_type_question`.
+                (source_type, _) => ConnectError::FlowMismatch {
+                    from,
+                    to,
+                    control_end: if source_type.is_none() {
+                        Side::Output
+                    } else {
+                        Side::Input
+                    },
+                },
             });
         }
         if from.node == to.node {
             return Err(ConnectError::SelfLink(from.node));
         }
-        if let Some(path) = self.path_between(tree, to.node, from.node) {
+        // R1599 — **only a value link may not close a cycle.** A cycle through
+        // control links is not a contradiction, it is a LOOP: the thing every
+        // real execution graph is built to express. So the acyclicity check
+        // walks the data plane alone, and a control cycle is legal here and
+        // reported by `Document::control_loops` rather than refused.
+        //
+        // Unreal reaches the same split and states it in a comment on the
+        // predicate that implements it — `FKismetCompilerContext::
+        // PinIsImportantForDependancies` returns `PinCategory != PC_Exec`,
+        // "the execution wires do not form data dependencies, they are only
+        // important for final scheduling and that is handled thru gotos". What
+        // it does NOT do is notice a control cycle: an execution loop with no
+        // exit compiles, and is caught by counting iterations at run time
+        // (`EBlueprintExceptionType::InfiniteLoop`).
+        let closes_a_data_cycle = source.value_type().is_some();
+        if closes_a_data_cycle && let Some(path) = self.data_path_between(tree, to.node, from.node)
+        {
             return Err(ConnectError::WouldCycle { path });
         }
+
+        // R1599 — which end has to give way is the port's own limit, and the
+        // two flows put it on opposite ends: a value INPUT takes one producer,
+        // a control OUTPUT takes one successor.
+        let crowded = if sink.multiplicity(Side::Input) == Multiplicity::One {
+            Some(Side::Input)
+        } else if source.multiplicity(Side::Output) == Multiplicity::One {
+            Some(Side::Output)
+        } else {
+            None
+        };
 
         // The tree exists: `signature` above resolved through it twice.
         let Some(host) = self.trees.get_mut(tree.0 as usize) else {
             return Err(ConnectError::NoSuchNode(from));
         };
-        let displaced = host.links.iter().find(|l| l.to == to).copied();
+        let displaced = match crowded {
+            Some(Side::Input) => host.links.iter().find(|l| l.to == to).copied(),
+            Some(Side::Output) => host.links.iter().find(|l| l.from == from).copied(),
+            None => None,
+        };
         if let Some(displaced) = displaced {
             host.links.retain(|l| l.id != displaced.id);
         }
@@ -1531,13 +1831,52 @@ impl<K: NodeKind> Document<K> {
         id
     }
 
-    /// A dependency path from `start` to `goal` inside one tree, following
-    /// links forwards, or `None` when `goal` is unreachable.
+    /// Whether a link carries control, decided by the port it leaves (R1599).
+    ///
+    /// One end is enough: [`Self::connect`] refuses a mixed pair and
+    /// [`Violation::TypeMismatch`](crate::Violation::TypeMismatch) reports one that arrived from a file, so a
+    /// link whose two ends disagree is already named as malformed and does not
+    /// need a second opinion here.
+    fn link_is_control(&self, tree: TreeId, link: &Link) -> bool {
+        self.signature(tree, link.from.node)
+            .and_then(|s| s.outputs.get(link.from.port as usize).map(Port::is_control))
+            .unwrap_or(false)
+    }
+
+    /// Which nodes each node reaches, on one plane of the graph (R1599).
+    fn successors_on(&self, tree: TreeId, control: bool) -> BTreeMap<NodeId, Vec<NodeId>> {
+        let mut successors: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        let Some(host) = self.tree(tree) else {
+            return successors;
+        };
+        for link in &host.links {
+            if self.link_is_control(tree, link) == control {
+                successors
+                    .entry(link.from.node)
+                    .or_default()
+                    .push(link.to.node);
+            }
+        }
+        successors
+    }
+
+    /// A **dependency** path from `start` to `goal` inside one tree, following
+    /// value links forwards, or `None` when `goal` is unreachable.
     ///
     /// Reported by [`Self::connect`] so a refused wire says which existing
     /// wires would have closed the loop.
+    ///
+    /// R1599 — value links only, and the name says so. A path through a control
+    /// link is not a dependency: it says the two nodes run in an order, not that
+    /// one's value is built out of the other's. Following both planes here is
+    /// what would make an ordinary execution loop unauthorable.
     #[must_use]
-    pub fn path_between(&self, tree: TreeId, start: NodeId, goal: NodeId) -> Option<Vec<NodeId>> {
+    pub fn data_path_between(
+        &self,
+        tree: TreeId,
+        start: NodeId,
+        goal: NodeId,
+    ) -> Option<Vec<NodeId>> {
         let host = self.tree(tree)?;
         if start == goal {
             return Some(vec![start]);
@@ -1546,7 +1885,11 @@ impl<K: NodeKind> Document<K> {
         let mut queue = std::collections::VecDeque::from([start]);
         let mut seen = std::collections::BTreeSet::from([start]);
         while let Some(current) = queue.pop_front() {
-            for link in host.links.iter().filter(|l| l.from.node == current) {
+            for link in host
+                .links
+                .iter()
+                .filter(|l| l.from.node == current && !self.link_is_control(tree, l))
+            {
                 let next = link.to.node;
                 if next == goal {
                     let mut path = vec![goal, current];
@@ -1595,18 +1938,49 @@ impl<K: NodeKind> Document<K> {
     /// the process validating it: the components of size two or more are the
     /// cycles, and a one-node component is on a cycle exactly when it links to
     /// itself. `None` when the tree is not in the document.
+    ///
+    /// R1599 — **value links only.** A control link says the two nodes run in
+    /// an order, not that one's value is built out of the other's, so a control
+    /// loop is not a dependency cycle and is answered by
+    /// [`Self::control_loops`] instead.
     #[must_use]
     pub fn cycle_nodes(&self, tree: TreeId) -> Vec<NodeId> {
+        self.on_a_cycle(tree, false)
+    }
+
+    /// Which nodes of `tree` lie **on a control loop**, ascending (R1599).
+    ///
+    /// The same derivation as [`Self::cycle_nodes`], on the other plane — and
+    /// the opposite verdict. A cycle through value links is a contradiction, so
+    /// [`Self::connect`] refuses to author one and [`Self::validate`] reports
+    /// one that arrived from a file. A cycle through **control** links is a
+    /// LOOP: an ordinary, intended thing that every execution graph is built to
+    /// express, so it is authorable, it is not a violation, and this is how you
+    /// ask which nodes are in it.
+    ///
+    /// **Nothing in Unreal answers this.** An execution loop there compiles —
+    /// exec pins are excluded from the dependency sort by
+    /// `PinIsImportantForDependancies`, so no `Dependency cycle detected` can
+    /// fire for one — and a loop with no exit is discovered at *run time*, by a
+    /// counter (`GMaximumScriptLoopIterations`) raising
+    /// `EBlueprintExceptionType::InfiniteLoop` after the fact, in a build that
+    /// may be shipping. The nodes are named here before it runs, statically.
+    ///
+    /// Empty for a tree with no control loop, so `control_loops(tree).is_empty()`
+    /// is the yes-or-no reading and no second walk is needed to get it.
+    #[must_use]
+    pub fn control_loops(&self, tree: TreeId) -> Vec<NodeId> {
+        self.on_a_cycle(tree, true)
+    }
+
+    /// The shared derivation behind [`Self::cycle_nodes`] and
+    /// [`Self::control_loops`]: which nodes are reachable from themselves on
+    /// one plane.
+    fn on_a_cycle(&self, tree: TreeId, control: bool) -> Vec<NodeId> {
         let Some(host) = self.tree(tree) else {
             return Vec::new();
         };
-        let mut successors: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
-        for link in &host.links {
-            successors
-                .entry(link.from.node)
-                .or_default()
-                .push(link.to.node);
-        }
+        let successors = self.successors_on(tree, control);
         let mut state = Tarjan::default();
         for node in host.nodes.keys() {
             if !state.index.contains_key(node) {
@@ -1960,8 +2334,15 @@ pub struct Removed {
 pub struct Connected {
     /// The link created.
     pub link: LinkId,
-    /// The link that was on the consuming socket and had to go, if there was
-    /// one.
+    /// The link that had to go, if there was one.
+    ///
+    /// **Which end it was displaced from depends on what the ports carry**
+    /// (R1599): a value input takes one producer, so wiring it again displaces
+    /// the link that was there; a control output takes one successor, so wiring
+    /// *it* again displaces instead. Reporting it is what makes either
+    /// replacement undoable — Unreal performs the same displacement from the
+    /// same two cases (`CONNECT_RESPONSE_BREAK_OTHERS_A`/`_B`) and
+    /// `TryCreateConnection` answers a bare `bool`, so what it broke is gone.
     pub displaced: Option<Link>,
 }
 
@@ -1987,6 +2368,16 @@ pub enum PortValueError<T> {
         /// The type the value turned out to be.
         found: T,
     },
+    /// The port carries **control**, which is not a value (R1599).
+    ///
+    /// Refused with its own arm rather than through [`Self::WrongType`],
+    /// because there is no type to report as expected: a control port has
+    /// none. It is also the one refusal here a taxonomy that declines to
+    /// classify its values is still held to.
+    NotAValuePort {
+        /// The port.
+        port: PortRef,
+    },
 }
 
 impl<T: fmt::Debug> fmt::Display for PortValueError<T> {
@@ -2004,6 +2395,9 @@ impl<T: fmt::Debug> fmt::Display for PortValueError<T> {
                 f,
                 "port {port} takes {expected:?}, and that value is {found:?}"
             ),
+            Self::NotAValuePort { port } => {
+                write!(f, "port {port} carries control, which is not a value")
+            }
         }
     }
 }
@@ -2116,6 +2510,20 @@ pub enum ConnectError<T> {
         /// What it expects.
         to_type: T,
     },
+    /// One end carries **control** and the other a value (R1599).
+    ///
+    /// Its own arm rather than a [`Self::TypeMismatch`] with a missing type,
+    /// because the two refusals are different facts and an author fixes them
+    /// differently: a type mismatch means find a conversion, a flow mismatch
+    /// means you have wired an execution pin to a number.
+    FlowMismatch {
+        /// The producing socket.
+        from: Socket,
+        /// The consuming socket.
+        to: Socket,
+        /// Which end carries control — the other carries a value.
+        control_end: Side,
+    },
     /// Both ends are on one node.
     SelfLink(NodeId),
     /// The link would close a dependency cycle; the existing path that would
@@ -2139,6 +2547,17 @@ impl<T: fmt::Debug> fmt::Display for ConnectError<T> {
                 to,
                 to_type,
             } => write!(f, "{from} carries {from_type:?}, {to} expects {to_type:?}"),
+            Self::FlowMismatch {
+                from,
+                to,
+                control_end,
+            } => {
+                let (control, value) = match control_end {
+                    Side::Output => (from, to),
+                    Side::Input => (to, from),
+                };
+                write!(f, "{control} carries control and {value} carries a value")
+            }
             Self::SelfLink(node) => write!(f, "node {} cannot feed itself", node.0),
             Self::WouldCycle { path } => {
                 f.write_str("that link would close a cycle: ")?;

@@ -657,9 +657,12 @@ fn port_scenes(
         Scene::Box(
             BoxNode::new(
                 Rect::new(upx(px - PORT / 2), upx(py - PORT / 2), upx(PORT), upx(PORT)),
-                BoxStyle::filled(theme.resolve(match declared.ty {
-                    Ty::Colour => ColorRole::Accent,
-                    Ty::Amount => ColorRole::OnSurfaceMuted,
+                BoxStyle::filled(theme.resolve(match declared.value_type() {
+                    Some(Ty::Colour) => ColorRole::Accent,
+                    Some(Ty::Amount) => ColorRole::OnSurfaceMuted,
+                    // R1599 — this taxonomy declares no control port; the arm
+                    // exists because the model now admits one.
+                    None => ColorRole::Outline,
                 })),
             )
             .with_tag(format!(
@@ -1738,7 +1741,9 @@ impl GroupsOracle {
                         InterfaceSide::Input => sig.inputs,
                         InterfaceSide::Output => sig.outputs,
                     };
-                    ports.get(socket.port as usize).map(|p| p.ty.name())
+                    ports
+                        .get(socket.port as usize)
+                        .map(|p| p.value_type().map_or("control", |t| t.name()))
                 })
                 .unwrap_or("?")
         };
@@ -2557,7 +2562,11 @@ fn describe(ports: &[Port<Ty, Val>]) -> String {
         .iter()
         .map(|p| {
             let off = if p.passthrough { "" } else { "(off)" };
-            format!("{}:{}{off}", p.name, p.ty.name())
+            format!(
+                "{}:{}{off}",
+                p.name,
+                p.value_type().map_or("control", |t| t.name())
+            )
         })
         .collect::<Vec<_>>()
         .join(",")

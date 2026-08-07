@@ -6018,9 +6018,13 @@ fn r1227_frame_persists_and_paints_behind() {
         coord.add_frame().unwrap();
         // Persistence: the frame round-trips through the current-schema blob.
         let json = coord.serialized_json();
+        // R1599 — read off the constant rather than a literal. A hand-written
+        // number here was a SECOND source of truth for the version, and it went
+        // stale the moment the shape changed; the gate that now forces the bump
+        // is `r1599_the_persisted_shape_cannot_change_without_the_version`.
         assert!(
-            json.contains("\"schema_version\":8"),
-            "schema bumped to 8 (R1596 — the blob is a Document)"
+            json.contains(&format!("\"schema_version\":{PERSISTED_SCHEMA_VERSION}")),
+            "the blob carries the schema version it was written at"
         );
         assert!(json.contains("Comment 1"), "the frame is in the blob");
         coord.document.set(Graph::new("material"));
@@ -6396,13 +6400,21 @@ fn r1235_reroute_is_a_typed_passthrough_adopting_the_wire_type() {
         // its ports are declared by its own body and cannot disagree with it.
         let signature = signature_of(&coord.graph(), rid).expect("a signature");
         assert_eq!(
-            signature.inputs.iter().map(|p| p.ty).collect::<Vec<_>>(),
-            vec![PortType::Float],
+            signature
+                .inputs
+                .iter()
+                .map(|p| p.value_type().copied())
+                .collect::<Vec<_>>(),
+            vec![Some(PortType::Float)],
             "the input port adopts the wire's type (not a hardcoded Vector)"
         );
         assert_eq!(
-            signature.outputs.iter().map(|p| p.ty).collect::<Vec<_>>(),
-            vec![PortType::Float],
+            signature
+                .outputs
+                .iter()
+                .map(|p| p.value_type().copied())
+                .collect::<Vec<_>>(),
+            vec![Some(PortType::Float)],
             "the output port adopts the wire's type"
         );
         assert!(
@@ -7849,7 +7861,7 @@ fn r1257_sources_carry_an_authorable_constant_others_do_not() {
         if is_source(&graph, id) {
             assert_eq!(
                 source_const(&graph, id),
-                signature.outputs[0].default.clone(),
+                signature.outputs[0].default_value().cloned(),
                 "{} rests at the output type default",
                 node.title(),
             );
@@ -8372,8 +8384,17 @@ fn r1258_rejects_multiple_wires_into_one_input() {
         forced
             .validate()
             .iter()
-            .any(|v| matches!(v, Violation::OverfedInput { .. })),
-        "named as an over-fed input: {:?}",
+            // R1599 renamed this: the limit is a port's own multiplicity, and
+            // a CONTROL output has it too, so the violation is named for the
+            // rule rather than for the one side that used to be its only case.
+            .any(|v| matches!(
+                v,
+                Violation::Overlinked {
+                    side: Side::Input,
+                    ..
+                }
+            )),
+        "named as an over-linked input: {:?}",
         forced.validate()
     );
 }
@@ -9043,4 +9064,38 @@ fn r1598_swap_refuses_what_it_cannot_name() {
             "a frame's body is the crate's"
         );
     });
+}
+
+#[test]
+fn r1599_the_persisted_shape_cannot_change_without_the_version() {
+    // The gate under the standing "bump PERSISTED_SCHEMA_VERSION" rule, which
+    // until now was prose no commit gate read -- R1597 reshaped this very blob
+    // and the version stayed at 7 until an end-of-session audit caught it.
+    //
+    // The sample must be STRUCTURALLY COMPLETE rather than minimal: the shape
+    // that changed in R1599 lives in a tree's `interface`, which only a
+    // document with a group definition has, so a bare graph would have hashed
+    // identically before and after and the gate would have said nothing.
+    let mut graph = default_graph();
+    let ids: Vec<NodeId> = graph.tree(TREE).unwrap().nodes().map(|n| n.id).collect();
+    graph
+        .group(TREE, &ids[..1], "Pinned")
+        .expect("a definition, so the persisted blob carries an interface");
+    assert!(
+        graph
+            .definitions()
+            .any(|tree| !tree.interface().inputs().is_empty()
+                || !tree.interface().outputs().is_empty()),
+        "the sample carries at least one interface port, which is what R1599 \
+         reshaped -- without this the digest could not see the change"
+    );
+    pinion_core::test_fixtures::assert_persisted_shape(
+        "hello-node-editor SerializedGraph",
+        PERSISTED_SCHEMA_VERSION,
+        &SerializedGraph {
+            schema_version: PERSISTED_SCHEMA_VERSION,
+            graph,
+        },
+        PERSISTED_SHAPE_HISTORY,
+    );
 }

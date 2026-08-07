@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
     Conversion, Document, InterfaceSide, NodeBody, NodeId, NodeKind, PortRef, Socket, TreeId,
+    crossing,
 };
 
 /// How deep the walk may recurse before it gives up.
@@ -121,7 +122,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
             t.interface()
                 .inputs()
                 .iter()
-                .map(|port| port.default.clone())
+                .map(|port| port.default_value().cloned())
                 .collect()
         });
         Descent {
@@ -190,7 +191,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
                     .get(route.input as usize)
                     .zip(signature.outputs.get(route.output as usize))
                     .map_or(Conversion::Refused, |(input, out)| {
-                        K::conversion(&input.ty, &out.ty)
+                        crossing::<K>(input, out)
                     });
                 if let Some(slot) = passed.get_mut(route.output as usize) {
                     *slot = inputs
@@ -265,7 +266,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
                     signature
                         .outputs
                         .get(index)
-                        .and_then(|declared| declared.default.clone())
+                        .and_then(|declared| declared.default_value().cloned())
                 });
             }
         }
@@ -324,7 +325,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 None => self
                     .document
                     .port_value(descent.tree, node, PortRef::input(socket.port))
-                    .or(port.default.as_ref())
+                    .or(port.default_value())
                     .cloned(),
             });
         }

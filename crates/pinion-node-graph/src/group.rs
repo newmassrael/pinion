@@ -17,8 +17,8 @@ use std::fmt;
 
 use crate::frame::{Orphaned, parents_of};
 use crate::model::{
-    Document, InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, PortRef,
-    ROOT, Side, Socket, Tree, TreeId, centroid,
+    Document, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,
+    NodeKind, PortRef, ROOT, Side, Socket, Tree, TreeId, centroid, crossing,
 };
 use crate::numbering::Numbering;
 
@@ -875,12 +875,21 @@ pub enum Violation {
         /// The link.
         link: LinkId,
     },
-    /// Two links feed one input.
-    OverfedInput {
+    /// A socket holds more links than its [`Multiplicity`] allows (R1599).
+    ///
+    /// Which sockets those are is not a fixed side: a **value input** takes at
+    /// most one link and a **control output** takes at most one link, and the
+    /// two are the opposite ends of a link. Named for the rule rather than for
+    /// one of its two cases, because before this round only the first case
+    /// existed and the name said so (`OverfedInput`).
+    Overlinked {
         /// The tree it is in.
         tree: TreeId,
-        /// The input taking more than one link.
+        /// The socket holding too many.
         socket: Socket,
+        /// Which side of its node the socket is on — which, with what the port
+        /// carries, is what made the limit one.
+        side: Side,
     },
     /// A link joins two ports of different types.
     TypeMismatch {
@@ -1028,11 +1037,21 @@ impl<K: NodeKind> Document<K> {
                         node: node.id,
                         port: *port,
                     }),
+                    // R1599 — a CONTROL port carries no value at all, so any
+                    // authored value on one is wrong, and that is decidable
+                    // without asking the taxonomy anything. It is the one arm
+                    // a taxonomy that declines to classify its values can still
+                    // be held to.
+                    Some(declared) if declared.is_control() => Some(Violation::MistypedPortValue {
+                        tree: tree.id,
+                        node: node.id,
+                        port: *port,
+                    }),
                     // A taxonomy that declines to classify its own values says
                     // nothing here rather than condemning every one of them:
                     // `value_type` is a provided default whose answer is `None`.
                     Some(declared) => K::value_type(value)
-                        .filter(|held| *held != declared.ty)
+                        .filter(|held| Some(held) != declared.value_type())
                         .map(|_| Violation::MistypedPortValue {
                             tree: tree.id,
                             node: node.id,
@@ -1085,7 +1104,7 @@ impl<K: NodeKind> Document<K> {
     pub fn validate(&self) -> Vec<Violation> {
         let mut found = Vec::new();
         for tree in self.trees() {
-            let mut fed: BTreeMap<Socket, usize> = BTreeMap::new();
+            let mut fed: BTreeMap<(Socket, Side), usize> = BTreeMap::new();
             for link in tree.links() {
                 let (Some(source), Some(sink)) = (
                     self.signature(tree.id, link.from.node),
@@ -1107,19 +1126,40 @@ impl<K: NodeKind> Document<K> {
                     });
                     continue;
                 };
-                if K::conversion(&out.ty, &inp.ty).is_refused() {
+                // R1599 — one question covers the type relation AND the flow:
+                // a value never crosses into control and control never into a
+                // value, and between two values it is the taxonomy's own
+                // directed relation.
+                if crossing::<K>(out, inp).is_refused() {
                     found.push(Violation::TypeMismatch {
                         tree: tree.id,
                         link: link.id,
                     });
                 }
-                *fed.entry(link.to).or_default() += 1;
+                *fed.entry((link.to, Side::Input)).or_default() += 1;
+                *fed.entry((link.from, Side::Output)).or_default() += 1;
             }
-            for (socket, count) in fed {
-                if count > 1 {
-                    found.push(Violation::OverfedInput {
+            for ((socket, side), count) in fed {
+                // R1599 — the limit is the port's own, and it inverts with what
+                // the port carries: one producer for a value, one successor for
+                // control. A socket whose limit is `Many` is never in breach.
+                let limit = self
+                    .signature(tree.id, socket.node)
+                    .and_then(|s| {
+                        let ports = match side {
+                            Side::Input => s.inputs,
+                            Side::Output => s.outputs,
+                        };
+                        ports
+                            .get(socket.port as usize)
+                            .map(|p| p.multiplicity(side))
+                    })
+                    .unwrap_or(Multiplicity::Many);
+                if limit == Multiplicity::One && count > 1 {
+                    found.push(Violation::Overlinked {
                         tree: tree.id,
                         socket,
+                        side,
                     });
                 }
             }

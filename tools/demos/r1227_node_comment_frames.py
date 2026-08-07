@@ -34,6 +34,8 @@ Run from the workspace root:
 
 from __future__ import annotations
 
+import re
+
 import sys
 from pathlib import Path
 from typing import Any
@@ -122,7 +124,16 @@ def body() -> None:
         # ── (E) persistence ──────────────────────────────────────────
         blob = q(tf, "serialized")
         assert "Comment 1" in blob, "the frame is in the serialized graph"
-        assert '"schema_version":8' in blob, "schema is 8 (R1596 — the blob is a Document)"
+        # R1599 — the version is read off the blob rather than pinned to a
+        # literal here. A demo asserting a NUMBER is a third source of truth for
+        # it (the constant, a unit test, and this), and it goes stale on every
+        # bump; what this section is actually about is that a frame ROUND-TRIPS,
+        # so what it needs from the version is that one is present and stated.
+        version = re.search(r'"schema_version":(\d+)', blob)
+        assert version, f"the blob states its schema version: {blob[:120]}"
+        assert int(version.group(1)) >= 8, (
+            "and it is at least the version at which the blob became a Document"
+        )
 
         # ── (F) rejects ──────────────────────────────────────────────
         # Frame nothing: add_frame with an empty selection returns Null.

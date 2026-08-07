@@ -48,7 +48,9 @@
 //! [`Rewired::severed`]. Blender removes the same links and reports nothing at
 //! all — `node_internal_relink` returns `void`.
 
-use crate::model::{Document, EditError, Link, LinkId, NodeId, NodeKind, Socket, TreeId};
+use crate::model::{
+    Document, EditError, KindPort, Link, LinkId, NodeId, NodeKind, Socket, TreeId, crossing,
+};
 
 /// One value's way through a node that is not computing: which input the value
 /// arrives on, which output it leaves by, and whether it is changed on the way.
@@ -207,8 +209,17 @@ impl<K: NodeKind> Document<K> {
         // to either the one that validates a link or the one that converts a
         // value, so what a muted node passes through there can disagree with
         // what a wire in the same position would have carried.
-        let eligible = |input: &crate::model::Port<K::Type, K::Value>, ty: &K::Type| {
-            input.passthrough && K::conversion(&input.ty, ty).is_allowed()
+        // R1599 — "the types agree" widened to "what leaves one may enter the
+        // other", which is the same question once a port may carry CONTROL.
+        // The rule does not change and does not need to: a bypassed node is the
+        // identity as far as its signature allows, so control now passes
+        // through a bypassed node exactly as a value does, and a control output
+        // can be fed only by a control input because `crossing` refuses the
+        // mixed pair. Unreal's muted-node equivalent has no such unification —
+        // `get_internal_link_type_priority` is a table over data socket types
+        // and exec is simply not in it.
+        let eligible = |input: &crate::model::Port<K::Type, K::Value>, out: &KindPort<K>| {
+            input.passthrough && crossing::<K>(input, out).is_allowed()
         };
         for (index, out) in signature.outputs.iter().enumerate() {
             let output = u32::try_from(index).unwrap_or(u32::MAX);
@@ -222,10 +233,10 @@ impl<K: NodeKind> Document<K> {
                     .inputs
                     .iter()
                     .enumerate()
-                    .filter(|(_, input)| eligible(input, &out.ty))
+                    .filter(|(_, input)| eligible(input, out))
                     .min_by_key(|(at, input)| {
                         (
-                            u8::from(K::conversion(&input.ty, &out.ty).converts()),
+                            u8::from(crossing::<K>(input, out).converts()),
                             u8::from(*at != index),
                             *at,
                         )
@@ -233,7 +244,7 @@ impl<K: NodeKind> Document<K> {
                     .map(|(at, input)| Route {
                         output,
                         input: u32::try_from(at).unwrap_or(u32::MAX),
-                        converts: K::conversion(&input.ty, &out.ty).converts(),
+                        converts: crossing::<K>(input, out).converts(),
                     })
             } else {
                 None

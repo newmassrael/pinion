@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 use crate::frame::{Orphaned, parents_of};
 use crate::model::{
     Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Sink, Socket,
-    Tree, TreeId, centroid,
+    Tree, TreeId, centroid, crossing,
 };
 use crate::numbering::Numbering;
 
@@ -767,7 +767,7 @@ impl<K: NodeKind> Document<K> {
         ) else {
             return false;
         };
-        K::conversion(&out.ty, &input.ty).is_allowed()
+        crossing::<K>(out, input).is_allowed()
     }
 
     /// Apply a validated plan. Nothing here can fail.

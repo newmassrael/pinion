@@ -32,12 +32,12 @@ fn r1577_grouping_the_mix_derives_three_in_and_one_out() {
         interface
             .inputs()
             .iter()
-            .map(|p| (p.name.as_str(), p.ty))
+            .map(|p| (p.name.as_str(), p.value_type().copied()))
             .collect::<Vec<_>>(),
         vec![
-            ("Base", Ty::Colour),
-            ("Blend", Ty::Colour),
-            ("Factor", Ty::Amount),
+            ("Base", Some(Ty::Colour)),
+            ("Blend", Some(Ty::Colour)),
+            ("Factor", Some(Ty::Amount)),
         ]
     );
     assert_eq!(interface.outputs().len(), 1);

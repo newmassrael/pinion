@@ -434,7 +434,23 @@ const STORAGE_KEY: &str = "node_graph.state";
 // blob would fail to deserialize anyway, and the bump is what makes that a
 // stated rejection ("this file is older than this editor") rather than an
 // incidental one that reads like a corrupt file.
-const PERSISTED_SCHEMA_VERSION: u32 = 8;
+// R1599 -> 9: `Port`'s type and resting value moved inside `Flow`, because a
+// CONTROL port has neither. The tree's `interface` stores ports, so every
+// document holding a group definition changed shape. Enforced now rather than
+// remembered: `PERSISTED_SHAPE_HISTORY` below is checked by
+// `pinion_core::test_fixtures::assert_persisted_shape`, so a shape change
+// cannot reach a commit without a new version.
+const PERSISTED_SCHEMA_VERSION: u32 = 9;
+
+/// R1599 — the append-only `(version, digest)` ledger the persistence gate
+/// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
+/// is append-only and why both columns must stay unique.
+///
+/// The ledger **opens at 9**, which is this round. Versions 1-8 predate the
+/// gate and no digest of them was ever taken, so there is none to record —
+/// writing one now would be inventing a measurement rather than reporting one.
+#[cfg(test)]
+const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[(9, 0xcf24_4e33_beee_b4c5)];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -634,6 +650,11 @@ impl PortType {
         }
     }
 
+    /// R1599 — the ink for a port that carries no value. Blueprint draws its
+    /// execution pins as plain white arrows for the same reason: the pin's
+    /// colour is the type's, and control has none.
+    const CONTROL_INK: Color = Color::rgb(0xF2, 0xF2, 0xF2);
+
     /// The wire-form / display token — the `input_types` CSV element and the
     /// `(<n>/<m>)` palette label has no use for it, but the AI-first
     /// `query node.<id>.input_types` does.
@@ -812,7 +833,7 @@ impl NodeKind for MaterialOp {
     /// R1596 — a **source computes nothing**, and answering `None` is what makes
     /// its constant the same mechanism every other authored port value uses: the
     /// crate fills an output the kind left empty from [`Node::values`], else from
-    /// this kind's own [`Port::default`]. Before this round the source arms
+    /// this kind's own [`Port::default_value`]. Before this round the source arms
     /// returned the type default here AND the node stored an `output_const`
     /// beside it — one fact in two places, which is the shape R1594 named.
     fn evaluate(&self, inputs: &[Option<CellValue>]) -> Vec<Option<CellValue>> {
@@ -1109,14 +1130,25 @@ fn signature_of(graph: &Graph, id: NodeId) -> Option<Signature<MaterialOp>> {
     graph.signature(TREE, id)
 }
 
+/// R1599 — what a port with no socket type is called in a readout. This
+/// example's taxonomy declares none, and the constant exists because the model
+/// admits one, so a control port would read as itself rather than as `?`.
+const CONTROL_PORT: &str = "control";
+
 /// R1596 — the declared type of one of node `id`'s input ports.
 fn input_type(graph: &Graph, id: NodeId, port: usize) -> Option<PortType> {
-    signature_of(graph, id)?.inputs.get(port).map(|p| p.ty)
+    signature_of(graph, id)?
+        .inputs
+        .get(port)
+        .and_then(|p| p.value_type().copied())
 }
 
 /// R1596 — the declared type of one of node `id`'s output ports.
 fn output_type(graph: &Graph, id: NodeId, port: usize) -> Option<PortType> {
-    signature_of(graph, id)?.outputs.get(port).map(|p| p.ty)
+    signature_of(graph, id)?
+        .outputs
+        .get(port)
+        .and_then(|p| p.value_type().copied())
 }
 
 /// R899 / R1596 — the literal an unconnected input port carries: what has been
@@ -1126,7 +1158,11 @@ fn output_type(graph: &Graph, id: NodeId, port: usize) -> Option<PortType> {
 /// the port types; the crate splits that into the kind's declaration and the
 /// node's override, so a node only carries what an author actually changed.
 fn input_default(graph: &Graph, id: NodeId, port: usize) -> Option<CellValue> {
-    let declared = signature_of(graph, id)?.inputs.get(port)?.default.clone();
+    let declared = signature_of(graph, id)?
+        .inputs
+        .get(port)?
+        .default_value()
+        .cloned();
     graph
         .port_value(TREE, id, PortRef::input(uport(port)))
         .cloned()
@@ -1139,7 +1175,11 @@ fn source_const(graph: &Graph, id: NodeId) -> Option<CellValue> {
     if !is_source(graph, id) {
         return None;
     }
-    let declared = signature_of(graph, id)?.outputs.first()?.default.clone();
+    let declared = signature_of(graph, id)?
+        .outputs
+        .first()?
+        .default_value()
+        .cloned();
     graph
         .port_value(TREE, id, PortRef::output(0))
         .cloned()
@@ -1267,7 +1307,9 @@ fn graph_invariants_hold(graph: &Graph) -> bool {
 /// resolves a wire target here.
 fn first_compatible_input(kind: usize, from: PortType) -> Option<usize> {
     let &(_, op) = PALETTE.get(kind)?;
-    op.inputs().iter().position(|p| from.is_assignable_to(p.ty))
+    op.inputs()
+        .iter()
+        .position(|p| p.value_type().is_some_and(|to| from.is_assignable_to(*to)))
 }
 
 /// R1220 — the [`PALETTE`] kinds a pin-drop from an output of type `from` may
@@ -2222,7 +2264,7 @@ fn csv_ids(ids: impl Iterator<Item = u32>) -> String {
 fn port_types_csv(ports: &[Port<PortType, CellValue>]) -> String {
     ports
         .iter()
-        .map(|p| p.ty.name())
+        .map(|p| p.value_type().map_or(CONTROL_PORT, |t| t.name()))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -7438,7 +7480,12 @@ fn view_output_ports(
     let id = node.id;
     let mut out = Vec::new();
     for (j, port) in signature.outputs.iter().enumerate() {
-        let ty = port.ty;
+        // R1599 — this taxonomy declares no control port, so `value_type` is
+        // always answered here; skipping rather than unwrapping is what keeps
+        // that a fact about the taxonomy instead of an assumption in the paint.
+        let Some(&ty) = port.value_type() else {
+            continue;
+        };
         if j == 0 {
             if let Some(val) = source_const(graph, id) {
                 if edit.target == Some(EditTarget::SourceConst(id)) {
@@ -7546,7 +7593,8 @@ fn view_node(
             format!("{GRAPH_TAG}#iport_{id}_{i}"),
             0,
             port_row_top(i),
-            port.ty.color(),
+            port.value_type()
+                .map_or(PortType::CONTROL_INK, |t| t.color()),
             zoom,
         ));
         // R899 — an *unconnected* input port shows its literal default value
@@ -7942,7 +7990,10 @@ fn detail_rows(graph: &Graph, node: &Node<MaterialOp>) -> Vec<DetailRow> {
     for (port, declared) in inputs.iter().enumerate() {
         rows.push(DetailRow {
             key: format!("in_{port}"),
-            label: format!("In {port} · {}", declared.ty.name()),
+            label: format!(
+                "In {port} · {}",
+                declared.value_type().map_or(CONTROL_PORT, |t| t.name())
+            ),
             value: input_default(graph, id, port).map_or_else(String::new, |v| v.display()),
             target: EditTarget::PortDefault { node: id, port },
         });

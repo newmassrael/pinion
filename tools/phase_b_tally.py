@@ -189,6 +189,12 @@ AXES = [
                 # reported it UNCLASSIFIED at the very push that added it,
                 # which is the census working.
                 "node-groups",
+                # R1599 — `hello-node-flow`, the control-plane binding. Added
+                # with the round rather than after it: `node-groups` needed its
+                # own entry at R1577 for the same reason (`node-editor` is an
+                # exact-ish name, not a prefix for the family), and the tool
+                # reported that one UNCLASSIFIED at the very push that added it.
+                "node-flow",
                 "asset-browser", "file-manager", "undo", "grid-header-menu",
                 "grid-frozen-col", "row-dissect", "hex-dump", "code-fold",
                 "command-palette", "selection-toolbar", "tab-reorder",

@@ -1383,3 +1383,149 @@ mod r995_text_grid_facts_tests {
         assert_eq!(facts(0, 3), TextGridCellFacts::default(), "row past height");
     }
 }
+
+/// R1599 — the gate under the standing rule *"bump `PERSISTED_SCHEMA_VERSION`
+/// when the persistence schema changes"*.
+///
+/// # Why this exists
+///
+/// That rule lived only in prose — a line in a project checklist that no
+/// commit gate read. R1597 reshaped a binding's whole persisted blob (six
+/// parallel fields collapsed into one `Document`, every key changed) and the
+/// version stayed put until an end-of-session audit noticed. Nothing before
+/// that could notice: it compiles, and the tests pass, because **the symptom is
+/// on a user's disk** — an old blob is read as a corrupt file rather than as an
+/// old file, and a change that only *adds* fields with `#[serde(default)]` is
+/// worse still, because the old blob loads silently and is then wrong.
+///
+/// R1582 already recorded the general form of the fix: a prose warning is not a
+/// gate. This is the gate.
+///
+/// # How it forces the bump
+///
+/// `history` is an **append-only** ledger of `(version, digest)` pairs, where
+/// the digest is over the serialized bytes of a representative value. The
+/// assertion is fourfold, and it is the combination that has no way out:
+///
+/// 1. today's digest must equal the **last** entry's — so any shape change goes
+///    red until the ledger is appended to;
+/// 2. the last entry's version must equal the live constant — so the append
+///    must state the version that is actually shipping;
+/// 3. no version may appear twice — so the append cannot reuse the old number;
+/// 4. no digest may appear twice — so a shape cannot be quietly reverted onto a
+///    different version, and the ledger stays a real history.
+///
+/// Together: change the shape, and the only way back to green is a new pair
+/// whose version is one nobody has used, which is the bump.
+///
+/// # Panics
+///
+/// With a message naming which of the four it was, and the digest to append.
+pub fn assert_persisted_shape<T: serde::Serialize>(
+    label: &str,
+    live_version: u32,
+    sample: &T,
+    history: &[(u32, u64)],
+) {
+    let bytes = serde_json::to_vec(sample).expect("the persisted sample serializes");
+    let digest = fnv1a64(&bytes);
+
+    let (last_version, last_digest) = *history.last().unwrap_or_else(|| {
+        panic!("{label}: the shape history is empty; append ({live_version}, {digest:#018x})")
+    });
+
+    let mut seen_versions = std::collections::BTreeSet::new();
+    let mut seen_digests = std::collections::BTreeSet::new();
+    for (version, entry) in history {
+        assert!(
+            seen_versions.insert(*version),
+            "{label}: schema version {version} appears twice in the shape \
+             history — a new shape needs a NEW version, which is the bump this \
+             gate exists to force"
+        );
+        assert!(
+            seen_digests.insert(*entry),
+            "{label}: digest {entry:#018x} appears twice in the shape history — \
+             two versions cannot have the same persisted shape"
+        );
+    }
+
+    assert_eq!(
+        last_version, live_version,
+        "{label}: the newest shape-history entry is version {last_version} but \
+         PERSISTED_SCHEMA_VERSION is {live_version} — they must move together"
+    );
+    assert_eq!(
+        digest,
+        last_digest,
+        "{label}: the persisted shape CHANGED (now {digest:#018x}, history ends \
+         at {last_digest:#018x}).\n\
+         Bump PERSISTED_SCHEMA_VERSION to {} and append ({}, {digest:#018x}) to \
+         the shape history.\n\
+         An old blob on a user's disk cannot be read by this build; the version \
+         is what tells them so instead of reporting a corrupt file.",
+        live_version + 1,
+        live_version + 1
+    );
+}
+
+/// FNV-1a, 64-bit. A digest rather than a hash map's hasher because it must be
+/// **stable across processes and releases** — `DefaultHasher` explicitly is
+/// not, so a pinned value computed with it would rot silently.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+#[cfg(test)]
+mod persisted_shape_gate {
+    use super::assert_persisted_shape;
+
+    /// The gate's own counterfactual: it must go RED for each of the four ways
+    /// a shape change can be smuggled past a version. A gate nobody has watched
+    /// fail is a gate nobody knows works.
+    #[test]
+    fn r1599_the_gate_catches_every_way_around_it() {
+        let sample = ("shape", 1_u32);
+        let digest = {
+            let bytes = serde_json::to_vec(&sample).unwrap();
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            for byte in &bytes {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            hash
+        };
+
+        // The honest case passes.
+        assert_persisted_shape("t", 3, &sample, &[(3, digest)]);
+
+        let red = |version: u32, history: &[(u32, u64)]| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                assert_persisted_shape("t", version, &sample, history);
+            }))
+            .is_err()
+        };
+        assert!(
+            red(3, &[(3, digest ^ 1)]),
+            "a changed shape must go red -- this is the whole gate"
+        );
+        assert!(
+            red(4, &[(3, digest)]),
+            "a version that moved without the ledger must go red"
+        );
+        assert!(
+            red(3, &[(3, digest ^ 1), (3, digest)]),
+            "reusing a version number must go red: the append IS the bump"
+        );
+        assert!(
+            red(3, &[(2, digest), (3, digest)]),
+            "two versions with one shape must go red"
+        );
+        assert!(red(3, &[]), "an empty ledger must go red");
+    }
+}

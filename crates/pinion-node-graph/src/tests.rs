@@ -9,11 +9,12 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Appearance, Carried, ConnectError, Conversion, Crossings, Definitions, Document,
+    Appearance, Carried, ConnectError, Control, Conversion, Crossings, Definitions, Document,
     DuplicateError, EditError, EditPath, Extent, ExtractError, Fragment, GroupError, Grow,
-    InsertError, InterfaceSide, Layered, NestError, Node, NodeBody, NodeId, NodeKind, Organic,
-    Orphaned, ParentError, PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError,
-    Route, SelectError, Severed, Sharing, Side, Socket, TreeId, UngroupError, Violation,
+    InsertError, InterfaceSide, Layered, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind,
+    Organic, Orphaned, ParentError, PathError, Port, PortRef, PortValueError, ROOT, Reach,
+    RepartitionError, Route, RunError, SelectError, Severed, Sharing, Side, Socket, Stop, TreeId,
+    UngroupError, Violation, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -830,8 +831,8 @@ fn an_interface_carries_the_socket_type_that_crossed() {
         .unwrap();
     let made = document.group(ROOT, &[shout], "Louder").unwrap();
     let interface = document.tree(made.definition).unwrap().interface();
-    assert_eq!(interface.inputs()[0].ty, Ty::Text);
-    assert_eq!(interface.outputs()[0].ty, Ty::Text);
+    assert_eq!(interface.inputs()[0].value_type(), Some(&Ty::Text));
+    assert_eq!(interface.outputs()[0].value_type(), Some(&Ty::Text));
     assert_eq!(
         document.evaluator().input(ROOT, Socket::new(again, 0)),
         Some(Val::Text("HI".to_owned()))
@@ -926,7 +927,12 @@ fn a_cyclic_document_that_arrived_from_elsewhere_is_caught_and_does_not_hang() {
 ///
 /// There is deliberately no API for this, so the test uses the door such a
 /// document actually comes in by rather than a back one opened for testing.
-fn force_link(document: &Document<Op>, from: Socket, to: Socket) -> Document<Op> {
+fn force_link<K>(document: &Document<K>, from: Socket, to: Socket) -> Document<K>
+where
+    K: NodeKind + Serialize + serde::de::DeserializeOwned,
+    K::Type: Serialize + serde::de::DeserializeOwned,
+    K::Value: Serialize + serde::de::DeserializeOwned,
+{
     let mut wire = serde_json::to_value(document).unwrap();
     let next = wire["trees"][0]["next_link"].as_u64().unwrap();
     wire["trees"][0]["links"]
@@ -2529,13 +2535,17 @@ fn blender_internal_link(
 ) -> Option<u32> {
     let signature = document.signature(tree, node)?;
     let host = document.tree(tree)?;
-    let out_ty = signature.outputs.get(output as usize)?.ty;
+    let out_ty = *signature.outputs.get(output as usize)?.value_type()?;
     let mut selected: Option<u32> = None;
     let mut selected_priority = -1_i32;
     let mut selected_is_linked = false;
     for (index, input) in signature.inputs.iter().enumerate() {
         let port = u32::try_from(index).unwrap_or(u32::MAX);
-        let priority = if input.ty == out_ty { 4 } else { -1 };
+        let priority = if input.value_type() == Some(&out_ty) {
+            4
+        } else {
+            -1
+        };
         if priority < 0 {
             continue;
         }
@@ -3761,9 +3771,40 @@ fn a_port_declaration_survives_serialization() {
             .no_passthrough()
             .passthrough
     );
-    let old = r#"{"name":"Value","ty":"Number","default":null}"#;
-    let parsed: Port<Ty, Val> = serde_json::from_str(old).expect("a pre-R1587 port still reads");
+    // R1599 CHANGED THIS, and the change is the point. A port's type and its
+    // resting value moved inside `Flow`, because a CONTROL port has neither and
+    // leaving two fields it must not use would be exactly Unreal's defect in a
+    // different spelling — there, exec-ness is the string "exec" sitting in the
+    // type slot.
+    //
+    // That reshapes the persisted form, so a pre-R1599 port must NOT read: an
+    // old document has to arrive as "older than this reader" rather than be
+    // silently filled in with defaults. Asserting the REFUSAL is what makes the
+    // schema-version bump meaningful — a shape change nothing can detect is the
+    // failure mode `debt-persisted-schema-bump-is-prose-only` records, where the
+    // symptom appears only on a user's disk.
+    let pre_r1599 = r#"{"name":"Value","ty":"Number","default":null}"#;
+    let refused = serde_json::from_str::<Port<Ty, Val>>(pre_r1599);
+    assert!(
+        refused.is_err(),
+        "a pre-R1599 port must be refused, not filled in: {refused:?}"
+    );
+
+    // The R1587 forward-compatibility that DOES still hold: `passthrough` is an
+    // addition with a default, so a port written before it reads and takes part.
+    let without_passthrough = r#"{"name":"Value","flow":{"Value":{"ty":"Number","default":null}}}"#;
+    let parsed: Port<Ty, Val> =
+        serde_json::from_str(without_passthrough).expect("a port with no passthrough field reads");
     assert!(parsed.passthrough, "and takes part, as it did before");
+
+    // A control port round-trips, and carries neither of the two things a value
+    // port carries.
+    let control: Port<Ty, Val> = Port::control("Then");
+    let back: Port<Ty, Val> =
+        serde_json::from_str(&serde_json::to_string(&control).unwrap()).unwrap();
+    assert_eq!(back, control);
+    assert_eq!(back.value_type(), None);
+    assert_eq!(back.default_value(), None);
 }
 
 // ------------------------------------------------------------------- frames
@@ -7159,4 +7200,917 @@ fn r1598_a_lone_port_lands_wherever_it_fits() {
         "so the wire that fed it survived"
     );
     assert!(two.validate().is_empty());
+}
+
+// ------------------------------------------------- the control plane (R1599)
+//
+// Every claim about Unreal below is stated as a HELPER reproducing its rule
+// over this crate's types, so a divergence is asserted rather than described —
+// the discipline R1577 and R1584 set. Source facts are from a 5.8.1 tree
+// (`Engine/Build/Build.version`: 5.8.1, `BranchName: UE5`).
+
+/// A taxonomy with both flows, so a control graph is expressible at all.
+///
+/// `Tally` and `Const` are **pure**: no control ports, never in a trace, pulled
+/// when read. Everything else is on the control plane.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+enum Flo {
+    /// No control input, so it is an entry. Blueprint's Event node.
+    Start,
+    /// One in, one out: the ordinary statement.
+    Step(String),
+    /// One in, N out — Blueprint's `Sequence`, and it overrides NOTHING.
+    Sequence(usize),
+    /// One in, two out, choosing by its data input. Blueprint's `Branch`.
+    Branch,
+    /// One in, none out.
+    End,
+    /// Pure: a constant.
+    Const(i64),
+    /// Pure: adds.
+    Tally,
+}
+
+impl NodeKind for Flo {
+    type Type = Ty;
+    type Value = Val;
+
+    fn name(&self) -> String {
+        match self {
+            Self::Start => "Start".into(),
+            Self::Step(label) => format!("Step:{label}"),
+            Self::Sequence(n) => format!("Sequence:{n}"),
+            Self::Branch => "Branch".into(),
+            Self::End => "End".into(),
+            Self::Const(n) => format!("Const:{n}"),
+            Self::Tally => "Tally".into(),
+        }
+    }
+
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        match self {
+            Self::Start | Self::Const(_) => Vec::new(),
+            Self::Step(_) | Self::Sequence(_) | Self::End => vec![Port::control("In")],
+            // The control input FIRST and the datum second, which is Blueprint's
+            // own layout for Branch (Exec, then Condition).
+            Self::Branch => vec![Port::control("In"), Port::new("Condition", Ty::Number)],
+            Self::Tally => vec![Port::new("A", Ty::Number), Port::new("B", Ty::Number)],
+        }
+    }
+
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        match self {
+            Self::Start => vec![Port::control("Then")],
+            Self::Step(_) => vec![Port::control("Then"), Port::new("Out", Ty::Number)],
+            Self::Sequence(n) => (0..*n)
+                .map(|i| Port::control(format!("Then {i}")))
+                .collect(),
+            Self::Branch => vec![Port::control("True"), Port::control("False")],
+            Self::End => Vec::new(),
+            Self::Const(_) | Self::Tally => vec![Port::new("Out", Ty::Number)],
+        }
+    }
+
+    fn evaluate(&self, inputs: &[Option<Val>]) -> Vec<Option<Val>> {
+        let number = |i: usize| inputs.get(i).and_then(Option::as_ref).and_then(Val::number);
+        match self {
+            Self::Start | Self::End => Vec::new(),
+            // Slot 0 is the control output and carries nothing.
+            Self::Step(label) => vec![
+                None,
+                Some(Val::Number(i64::try_from(label.len()).unwrap_or(0))),
+            ],
+            Self::Sequence(n) => vec![None; *n],
+            Self::Branch => vec![None, None],
+            Self::Const(n) => vec![Some(Val::Number(*n))],
+            Self::Tally => vec![number(0).zip(number(1)).map(|(a, b)| Val::Number(a + b))],
+        }
+    }
+
+    fn control(&self, inputs: &[Option<Val>]) -> Control {
+        match self {
+            // The ONLY override in this taxonomy. Everything else — including a
+            // three-way Sequence — takes the provided default.
+            Self::Branch => {
+                let truthy = inputs
+                    .get(1)
+                    .and_then(Option::as_ref)
+                    .and_then(Val::number)
+                    .is_some_and(|n| n != 0);
+                Control::to(u32::from(!truthy))
+            }
+            _ => Control::FallThrough,
+        }
+    }
+}
+
+/// Unreal's connection response, `UEdGraphSchema_K2::CanCreateConnection` at
+/// 5.8.1 (`EdGraphSchema_K2.cpp`), the two lines that decide which end gives
+/// way:
+///
+/// ```text
+/// bBreakExistingDueToExecOutput = IsExecPin(*OutputPin) && OutputPin->LinkedTo.Num() > 0;
+/// bBreakExistingDueToDataInput  = !IsExecPin(*InputPin) && InputPin->LinkedTo.Num() > 0;
+/// ```
+///
+/// Two independent booleans, each naming the *other* flow to exclude it.
+fn unreal_breaks_at(output_is_exec: bool, input_is_exec: bool) -> Option<Side> {
+    if output_is_exec {
+        Some(Side::Output)
+    } else if !input_is_exec {
+        Some(Side::Input)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn r1599_multiplicity_is_the_duality_and_unreal_derives_the_same_two_rules() {
+    let value: Port<Ty, Val> = Port::new("v", Ty::Number);
+    let control: Port<Ty, Val> = Port::control("c");
+
+    // The 2x2 table, stated.
+    assert_eq!(value.multiplicity(Side::Input), Multiplicity::One);
+    assert_eq!(value.multiplicity(Side::Output), Multiplicity::Many);
+    assert_eq!(control.multiplicity(Side::Input), Multiplicity::Many);
+    assert_eq!(control.multiplicity(Side::Output), Multiplicity::One);
+
+    // It is a DUALITY, not two conventions: transposing both axes is the
+    // identity. A value has one producer and many readers; a control transfer
+    // has one successor and many predecessors.
+    for side in [Side::Input, Side::Output] {
+        let other = match side {
+            Side::Input => Side::Output,
+            Side::Output => Side::Input,
+        };
+        assert_eq!(
+            value.multiplicity(side),
+            control.multiplicity(other),
+            "the table transposes exactly"
+        );
+    }
+
+    // And it agrees with Unreal's on both cells that a link can actually
+    // occupy. The mixed pairs are deliberately NOT compared, and the reason is
+    // a divergence rather than a gap: `unreal_breaks_at` answers for them,
+    // because there those two booleans are evaluated for pairs that cannot
+    // connect — an exec pin is kept away from a float pin somewhere else
+    // entirely, by `ArePinsCompatible` comparing pin-category strings. Here the
+    // flow check is the FIRST thing `connect` does, so a mixed pair never
+    // reaches a multiplicity question at all; the case below asserts that.
+    for (out_exec, in_exec) in [(false, false), (true, true)] {
+        let source: Port<Ty, Val> = if out_exec {
+            Port::control("o")
+        } else {
+            Port::new("o", Ty::Number)
+        };
+        let sink: Port<Ty, Val> = if in_exec {
+            Port::control("i")
+        } else {
+            Port::new("i", Ty::Number)
+        };
+        let ours = if sink.multiplicity(Side::Input) == Multiplicity::One {
+            Some(Side::Input)
+        } else if source.multiplicity(Side::Output) == Multiplicity::One {
+            Some(Side::Output)
+        } else {
+            None
+        };
+        assert_eq!(
+            ours,
+            unreal_breaks_at(out_exec, in_exec),
+            "flow rule disagrees with Unreal for out_exec={out_exec} in_exec={in_exec}"
+        );
+    }
+}
+
+/// `Start -> a -> b`, plus a spare `Start`-less chain the caller wires.
+struct Flow2 {
+    document: Document<Flo>,
+    start: NodeId,
+}
+
+fn flow_fixture() -> Flow2 {
+    let mut document = Document::new("root");
+    let start = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 0)
+        .unwrap();
+    Flow2 { document, start }
+}
+
+fn step(document: &mut Document<Flo>, label: &str) -> NodeId {
+    document
+        .add_node(ROOT, NodeBody::Kind(Flo::Step(label.to_owned())), 0, 0)
+        .unwrap()
+}
+
+#[test]
+fn r1599_a_control_output_takes_one_successor_and_a_second_displaces_it() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "a");
+    let b = step(&mut document, "b");
+
+    let first = document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    assert!(first.displaced.is_none());
+
+    // The INVERSION: on a value input this would displace the link on the
+    // consumer. Here the producer is the crowded end.
+    let second = document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(b, 0))
+        .unwrap();
+    let displaced = second.displaced.expect("the first successor gave way");
+    assert_eq!(displaced.id, first.link);
+    assert_eq!(displaced.to, Socket::new(a, 0));
+
+    // Unreal displaces here too (`CONNECT_RESPONSE_BREAK_OTHERS_A`/`_B`) and
+    // `TryCreateConnection` answers a bare `bool`, so what it broke is gone.
+    // Reporting it is what makes the replacement undoable.
+    assert_eq!(document.tree(ROOT).unwrap().links().len(), 1);
+    assert!(document.validate().is_empty());
+}
+
+#[test]
+fn r1599_a_control_input_joins_where_a_value_input_replaces() {
+    let mut document = Document::new("root");
+    let end = document
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 0, 0)
+        .unwrap();
+    let mut sources = Vec::new();
+    for _ in 0..3 {
+        let s = document
+            .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 0)
+            .unwrap();
+        let made = document
+            .connect(ROOT, Socket::new(s, 0), Socket::new(end, 0))
+            .unwrap();
+        assert!(
+            made.displaced.is_none(),
+            "a control input JOINS: nothing gives way"
+        );
+        sources.push(s);
+    }
+    assert_eq!(
+        document.tree(ROOT).unwrap().links().len(),
+        3,
+        "three predecessors converge on one successor"
+    );
+    assert!(document.validate().is_empty());
+
+    // The mirror image on the value plane, in the same document: a second
+    // producer on one input displaces the first.
+    let tally = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 0)
+        .unwrap();
+    let two = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(2)), 0, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(one, 0), Socket::new(tally, 0))
+        .unwrap();
+    let replaced = document
+        .connect(ROOT, Socket::new(two, 0), Socket::new(tally, 0))
+        .unwrap();
+    assert!(
+        replaced.displaced.is_some(),
+        "one producer per value input, so the first gave way"
+    );
+}
+
+#[test]
+fn r1599_control_never_mixes_with_a_value_and_the_refusal_names_the_end() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let tally = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    let a = step(&mut document, "a");
+
+    // control output -> value input
+    assert_eq!(
+        document.connect(ROOT, Socket::new(start, 0), Socket::new(tally, 0)),
+        Err(ConnectError::FlowMismatch {
+            from: Socket::new(start, 0),
+            to: Socket::new(tally, 0),
+            control_end: Side::Output,
+        })
+    );
+    // value output -> control input
+    assert_eq!(
+        document.connect(ROOT, Socket::new(tally, 0), Socket::new(a, 0)),
+        Err(ConnectError::FlowMismatch {
+            from: Socket::new(tally, 0),
+            to: Socket::new(a, 0),
+            control_end: Side::Input,
+        })
+    );
+    // Its own arm, not a TypeMismatch with a fabricated type: there is no type
+    // on the control end to report.
+    let refusal = document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(tally, 0))
+        .unwrap_err();
+    assert!(
+        format!("{refusal}").contains("carries control"),
+        "the refusal says which end is control: {refusal}"
+    );
+}
+
+#[test]
+fn r1599_a_control_port_has_no_type_and_no_value_to_author() {
+    let control: Port<Ty, Val> = Port::control("Then");
+    assert_eq!(control.value_type(), None);
+    assert_eq!(control.default_value(), None);
+    assert!(
+        control
+            .clone()
+            .with_default(Val::Number(1))
+            .default_value()
+            .is_none(),
+        "the stored model cannot hold a control port carrying a value"
+    );
+
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    // Refused by its own arm, and BEFORE the taxonomy is asked anything — which
+    // is what makes it hold for a taxonomy that declines to classify values.
+    assert_eq!(
+        document.set_port_value(
+            ROOT,
+            start,
+            PortRef {
+                side: Side::Output,
+                index: 0
+            },
+            Val::Number(1)
+        ),
+        Err(PortValueError::NotAValuePort {
+            port: PortRef {
+                side: Side::Output,
+                index: 0
+            }
+        })
+    );
+}
+
+#[test]
+fn r1599_a_control_cycle_is_a_loop_and_a_value_cycle_is_still_refused() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "a");
+    let b = step(&mut document, "b");
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+
+    // THE ROUND'S CENTRAL ASYMMETRY. `b -> a` closes a cycle, and it is
+    // ACCEPTED, because a cycle through control links is a loop rather than a
+    // contradiction.
+    let closed = document.connect(ROOT, Socket::new(b, 0), Socket::new(a, 0));
+    assert!(closed.is_ok(), "a control loop is authorable: {closed:?}");
+
+    assert!(
+        document.cycle_nodes(ROOT).is_empty(),
+        "and it is NOT a dependency cycle: nothing here is on one"
+    );
+    assert_eq!(
+        document.control_loops(ROOT),
+        {
+            let mut m = vec![a, b];
+            m.sort_unstable();
+            m
+        },
+        "the loop's members are named, statically, before anything runs"
+    );
+    assert!(
+        document.validate().is_empty(),
+        "and it is not a violation: an execution loop is a legal graph"
+    );
+
+    // The value plane keeps its old law, unchanged, in the same document.
+    let x = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    let y = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(x, 0), Socket::new(y, 0))
+        .unwrap();
+    assert!(
+        matches!(
+            document.connect(ROOT, Socket::new(y, 0), Socket::new(x, 0)),
+            Err(ConnectError::WouldCycle { .. })
+        ),
+        "a value cycle is still refused, and still names the path"
+    );
+}
+
+/// Unreal's `FKismetCompilerContext::PinIsImportantForDependancies`
+/// (`KismetCompiler.h`, 5.8.1), commented *"the execution wires do not form
+/// data dependencies, they are only important for final scheduling and that is
+/// handled thru gotos"*:
+///
+/// ```text
+/// return Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec;
+/// ```
+fn unreal_pin_forms_a_dependency(is_exec: bool) -> bool {
+    !is_exec
+}
+
+#[test]
+fn r1599_the_dependency_walk_excludes_control_exactly_as_unreal_does() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "a");
+    let b = step(&mut document, "b");
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+
+    // `a` reaches `b` on the control plane and NOT on the dependency plane.
+    assert!(unreal_pin_forms_a_dependency(false), "a value pin does");
+    assert!(!unreal_pin_forms_a_dependency(true), "an exec pin does not");
+    assert_eq!(
+        document.data_path_between(ROOT, start, b),
+        None,
+        "no dependency path runs along control links"
+    );
+
+    // Wire a real dependency alongside it and the walk finds that one.
+    document
+        .connect(ROOT, Socket::new(a, 1), Socket::new(b, 1))
+        .unwrap_err();
+    let tally = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 1), Socket::new(tally, 0))
+        .unwrap();
+    assert_eq!(
+        document.data_path_between(ROOT, a, tally),
+        Some(vec![a, tally])
+    );
+}
+
+#[test]
+fn r1599_validate_reports_too_many_links_on_either_end() {
+    // Hand-built, because `connect` maintains both limits — which is exactly
+    // why `validate` exists: a document from a file made no such promise.
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "a");
+    let b = step(&mut document, "b");
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    let corrupt = force_link(&document, Socket::new(start, 0), Socket::new(b, 0));
+    assert_eq!(
+        corrupt.validate(),
+        vec![Violation::Overlinked {
+            tree: ROOT,
+            socket: Socket::new(start, 0),
+            side: Side::Output,
+        }],
+        "a control OUTPUT holding two successors is in breach"
+    );
+
+    // The other end of the same rule, on the other plane.
+    let mut values = Document::<Flo>::new("root");
+    let tally = values
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    let one = values
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 0)
+        .unwrap();
+    let two = values
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(2)), 0, 0)
+        .unwrap();
+    values
+        .connect(ROOT, Socket::new(one, 0), Socket::new(tally, 0))
+        .unwrap();
+    let values = force_link(&values, Socket::new(two, 0), Socket::new(tally, 0));
+    assert_eq!(
+        values.validate(),
+        vec![Violation::Overlinked {
+            tree: ROOT,
+            socket: Socket::new(tally, 0),
+            side: Side::Input,
+        }],
+        "a value INPUT holding two producers is in breach"
+    );
+}
+
+#[test]
+fn r1599_entry_points_are_derived_from_the_signature() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "a");
+    let end = document
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 0, 0)
+        .unwrap();
+    let pure = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(7)), 0, 0)
+        .unwrap();
+
+    assert_eq!(
+        document.entry_points(ROOT),
+        vec![start],
+        "a control output and NO control input: nothing can hand control to it"
+    );
+    assert!(!document.entry_points(ROOT).contains(&a));
+    assert!(
+        !document.entry_points(ROOT).contains(&end),
+        "End has no control OUTPUT, so control cannot begin there"
+    );
+    assert!(
+        !document.entry_points(ROOT).contains(&pure),
+        "a pure node is not on the control plane at all"
+    );
+
+    // `a`'s control input is UNWIRED, which makes it unreachable rather than an
+    // entry — a different fact, and one an editor reports differently. Unreal
+    // reaches the same set by node CLASS (UK2Node_Event, UK2Node_FunctionEntry),
+    // so there it is a list of types to know rather than a question to ask.
+    assert!(document.tree(ROOT).unwrap().links().is_empty());
+    assert_eq!(document.entry_points(ROOT), vec![start]);
+}
+
+#[test]
+fn r1599_a_run_is_an_order_and_a_pure_node_is_not_in_it() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "alpha");
+    let b = step(&mut document, "be");
+    let tally = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    let seven = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(7)), 0, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+    // A pure value chain hanging off the control chain.
+    document
+        .connect(ROOT, Socket::new(a, 1), Socket::new(tally, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(seven, 0), Socket::new(tally, 1))
+        .unwrap();
+
+    let run = document.run(ROOT, start, 100).unwrap();
+    assert_eq!(run.trace(), vec![start, a, b]);
+    assert_eq!(run.stop(), Stop::Halted);
+    assert!(
+        !run.trace().contains(&tally) && !run.trace().contains(&seven),
+        "a pure node is PULLED, not run: it is never in a trace"
+    );
+    // ...and its value is still there to be read, which is the other half of
+    // "pulled". `alpha` is 5 letters, plus 7.
+    assert_eq!(
+        document.evaluate(ROOT, tally),
+        vec![Some(Val::Number(12))],
+        "the value plane resolved across a node that DID run"
+    );
+    // The step carries what the node computed, control slots included.
+    let a_step = run.steps().iter().find(|s| s.node == a).unwrap();
+    assert_eq!(
+        a_step.outputs[0], None,
+        "port 0 is control and carries no value"
+    );
+    assert_eq!(a_step.outputs[1], Some(Val::Number(5)));
+    assert_eq!(a_step.taken, vec![0]);
+    assert!(a_step.ignored.is_empty());
+}
+
+#[test]
+fn r1599_a_sequence_runs_each_branch_to_completion_and_needs_no_code() {
+    // Blueprint's Sequence, and `Flo::Sequence` overrides NOTHING: the provided
+    // `NodeKind::control` default hands control to every control output in port
+    // order, and the stack is what makes "in order" mean "to completion".
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let seq = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Sequence(3)), 0, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(seq, 0))
+        .unwrap();
+    // Three branches, each two steps long.
+    let mut heads = Vec::new();
+    for (port, name) in [(0u32, "a"), (1, "b"), (2, "c")] {
+        let first = step(&mut document, name);
+        let second = step(&mut document, name);
+        document
+            .connect(ROOT, Socket::new(seq, port), Socket::new(first, 0))
+            .unwrap();
+        document
+            .connect(ROOT, Socket::new(first, 0), Socket::new(second, 0))
+            .unwrap();
+        heads.push((first, second));
+    }
+
+    let run = document.run(ROOT, start, 100).unwrap();
+    let expected = vec![
+        start, seq, heads[0].0, heads[0].1, heads[1].0, heads[1].1, heads[2].0, heads[2].1,
+    ];
+    assert_eq!(
+        run.trace(),
+        expected,
+        "each branch runs TO COMPLETION before the next begins — Unreal \
+         compiles exactly this as `push X1; goto A` (KCST_PushState)"
+    );
+
+    // PAST UNREAL: the order is the PORT order, so renaming the control ports
+    // cannot change it. `FKCHandler_ExecutionSequence::Compile` finds its own
+    // outputs by testing `PinName.ToString().StartsWith("Then")` and carries the
+    // standing admission `//@TODO: Sort the pins by the number appended to the
+    // pin!` -- so there the order is the pin array's, and a pin the author
+    // renamed is not found at all.
+    let renamed: Vec<String> = Flo::Sequence(3)
+        .outputs()
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    assert_eq!(renamed, vec!["Then 0", "Then 1", "Then 2"]);
+    assert!(
+        Flo::Sequence(3).outputs().iter().all(Port::is_control),
+        "and which outputs are control is a property of the port, not of its NAME"
+    );
+}
+
+#[test]
+fn r1599_a_branch_takes_one_arm_and_the_other_never_runs() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let branch = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Branch), 0, 0)
+        .unwrap();
+    let yes = step(&mut document, "yes");
+    let no = step(&mut document, "no");
+    let condition = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(branch, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(condition, 0), Socket::new(branch, 1))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(branch, 0), Socket::new(yes, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(branch, 1), Socket::new(no, 0))
+        .unwrap();
+
+    let taken = document.run(ROOT, start, 100).unwrap();
+    assert_eq!(taken.trace(), vec![start, branch, yes]);
+    assert!(
+        !taken.trace().contains(&no),
+        "the arm not taken does not run -- which is the thing a dataflow \
+         evaluator cannot express, because there every node HAS a value"
+    );
+
+    // Flip the datum and the trace flips. The choice is a function of what
+    // arrived, resolved through the value plane at the moment control got here.
+    let mut other = document.clone();
+    other.set_kind(ROOT, condition, Flo::Const(0)).unwrap();
+    let flipped = other.run(ROOT, start, 100).unwrap();
+    assert_eq!(flipped.trace(), vec![start, branch, no]);
+}
+
+#[test]
+fn r1599_a_loop_runs_until_the_budget_and_says_so() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "a");
+    let b = step(&mut document, "b");
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(b, 0), Socket::new(a, 0))
+        .unwrap();
+
+    let run = document.run(ROOT, start, 9).unwrap();
+    assert_eq!(run.stop(), Stop::BudgetExhausted);
+    assert_eq!(run.steps().len(), 9);
+    assert_eq!(run.visits(a), 4);
+    assert_eq!(run.visits(b), 4);
+    assert_eq!(run.budget(), 9);
+    assert_eq!(
+        run.trace(),
+        vec![start, a, b, a, b, a, b, a, b],
+        "a node that runs more than once appears more than once"
+    );
+
+    // The loop was nameable BEFORE it ran. Unreal has no equivalent: an exec
+    // loop compiles (exec pins are excluded from the dependency sort), and a
+    // runaway one is discovered at run time by counting to
+    // GMaximumScriptLoopIterations and raising an InfiniteLoop exception.
+    assert_eq!(document.control_loops(ROOT), {
+        let mut m = vec![a, b];
+        m.sort_unstable();
+        m
+    });
+    assert!(document.validate().is_empty());
+}
+
+#[test]
+fn r1599_a_run_names_what_it_could_not_do() {
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let pure = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 0)
+        .unwrap();
+    assert_eq!(
+        document.run(ROOT, pure, 10),
+        Err(RunError::NotOnTheControlPlane(pure))
+    );
+    assert_eq!(
+        document.run(ROOT, NodeId(9999), 10),
+        Err(RunError::NoSuchNode(NodeId(9999)))
+    );
+    assert_eq!(
+        document.run(TreeId(77), start, 10),
+        Err(RunError::NoSuchTree(TreeId(77)))
+    );
+
+    // A group instance on the control plane is REFUSED rather than fallen
+    // through, because falling through would run the graph around the group and
+    // silently skip its body.
+    let a = step(&mut document, "a");
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    let grouped = document
+        .group(ROOT, &[a], "inner")
+        .expect("the step collapses into a definition");
+    let refusal = document.run(ROOT, start, 10);
+    assert_eq!(
+        refusal,
+        Err(RunError::ControlEntersGroup {
+            node: grouped.node,
+            definition: grouped.definition,
+        }),
+        "the boundary is named, not crossed silently"
+    );
+    assert!(
+        format!("{}", refusal.unwrap_err()).contains("does not descend"),
+        "and the refusal says why"
+    );
+}
+
+#[test]
+fn r1599_a_kind_that_names_a_value_port_is_reported_not_obeyed() {
+    /// A taxonomy whose branch is WRONG: it hands control to port 1, which is a
+    /// value output. Silently dropping that would look exactly like a
+    /// deliberate halt, and those are opposite bugs.
+    #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+    struct Confused;
+
+    impl NodeKind for Confused {
+        type Type = Ty;
+        type Value = Val;
+        fn name(&self) -> String {
+            "Confused".into()
+        }
+        fn inputs(&self) -> Vec<Port<Ty, Val>> {
+            Vec::new()
+        }
+        fn outputs(&self) -> Vec<Port<Ty, Val>> {
+            vec![Port::control("Then"), Port::new("Out", Ty::Number)]
+        }
+        fn evaluate(&self, _: &[Option<Val>]) -> Vec<Option<Val>> {
+            vec![None, Some(Val::Number(1))]
+        }
+        fn control(&self, _: &[Option<Val>]) -> Control {
+            Control::Take(vec![1, 4])
+        }
+    }
+
+    let mut document = Document::<Confused>::new("root");
+    let node = document
+        .add_node(ROOT, NodeBody::Kind(Confused), 0, 0)
+        .unwrap();
+    let run = document.run(ROOT, node, 10).unwrap();
+    assert_eq!(run.steps().len(), 1);
+    assert!(run.steps()[0].taken.is_empty());
+    assert_eq!(
+        run.steps()[0].ignored,
+        vec![1, 4],
+        "a value port and a port that does not exist are both NAMED"
+    );
+    assert_eq!(run.stop(), Stop::Halted);
+}
+
+#[test]
+fn r1599_a_bypassed_node_passes_control_through() {
+    // R1586's rule, unchanged and now reaching further: a bypassed node is the
+    // identity as far as its signature allows, and "as far as the signature
+    // allows" now includes the flow. Unreal's muted-node routing has no such
+    // unification -- get_internal_link_type_priority is a table over data
+    // socket types and exec is not in it.
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let a = step(&mut document, "a");
+    let b = step(&mut document, "b");
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+
+    let routing = document.passthrough(ROOT, a).unwrap();
+    assert_eq!(
+        routing.source_of(0),
+        Some(0),
+        "control output 0 is fed by control input 0"
+    );
+    assert!(
+        routing.dropped_outputs().contains(&1),
+        "and the VALUE output has no control input to come from, so it is named \
+         as dropped rather than fed from the wrong plane"
+    );
+
+    let rewired = document.dissolve(ROOT, a).unwrap();
+    assert_eq!(rewired.bridged.len(), 1, "the control wire is carried past");
+    assert_eq!(rewired.bridged[0].from, Socket::new(start, 0));
+    assert_eq!(rewired.bridged[0].to, Socket::new(b, 0));
+    let run = document.run(ROOT, start, 10).unwrap();
+    assert_eq!(run.trace(), vec![start, b]);
+}
+
+#[test]
+fn r1599_control_to_control_is_the_one_pair_with_no_type_question() {
+    // `crossing` answers Direct for two control ports, so `connect`'s refusal
+    // match can never reach its own (None, None) case -- which is what lets
+    // that match name the mixed pair without a fourth arm. Asserted rather than
+    // reasoned: if a future edit made control-to-control refusable, the wire
+    // below would stop connecting.
+    let a: Port<Ty, Val> = Port::control("Then");
+    let b: Port<Ty, Val> = Port::control("In");
+    assert!(matches!(crossing::<Flo>(&a, &b), crate::Conversion::Direct));
+    assert!(
+        crossing::<Flo>(&a, &b).is_allowed(),
+        "control crosses into control with nothing asked of the taxonomy"
+    );
+
+    let Flow2 {
+        mut document,
+        start,
+    } = flow_fixture();
+    let end = document
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 0, 0)
+        .unwrap();
+    assert!(
+        document
+            .connect(ROOT, Socket::new(start, 0), Socket::new(end, 0))
+            .is_ok()
+    );
 }

@@ -173,6 +173,7 @@ mod layout;
 mod model;
 mod numbering;
 mod partition;
+mod run;
 mod select;
 mod swap;
 #[cfg(test)]
@@ -191,11 +192,13 @@ pub use group::{
 };
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use model::{
-    ConnectError, Connected, Conversion, Document, DroppedLink, EditError, Interface,
-    InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, PortRef,
-    PortValueError, ROOT, Removed, Side, Signature, Socket, Tree, TreeId,
+    ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError, Flow,
+    Interface, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,
+    NodeKind, Port, PortRef, PortValueError, ROOT, Removed, Side, Signature, Socket, Tree, TreeId,
+    crossing,
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
+pub use run::{Run, RunError, Step, Stop};
 pub use select::{Grow, Grown, Reach, SelectError};
 pub use swap::{Carried, Swapped};
 

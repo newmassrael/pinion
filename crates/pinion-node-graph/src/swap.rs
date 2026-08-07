@@ -21,7 +21,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    Document, EditError, Link, NodeBody, NodeId, NodeKind, Port, PortRef, Side, TreeId,
+    Document, EditError, KindPort, Link, NodeBody, NodeId, NodeKind, Port, PortRef, Side, TreeId,
+    crossing,
 };
 
 /// One port of the old signature answered by one port of the new one.
@@ -103,12 +104,17 @@ struct Correspondence {
 }
 
 impl Correspondence {
-    /// Match `old` onto `new` for one side, `crosses` deciding whether a value
-    /// may travel from the old port's type to the new one's.
+    /// Match `old` onto `new` for one side, `crosses` deciding whether what
+    /// leaves the old port may enter the new one.
+    ///
+    /// R1599 — the predicate takes the PORTS rather than their types, because a
+    /// control port has no type to hand it. A swap therefore carries a control
+    /// wire across when both ends are control, and never pairs a control port
+    /// with a value one, from the same rule that governs a link.
     fn build<T, V>(
         old: &[Port<T, V>],
         new: &[Port<T, V>],
-        crosses: &impl Fn(&T, &T) -> bool,
+        crosses: &impl Fn(&Port<T, V>, &Port<T, V>) -> bool,
     ) -> Self {
         let mut taken: BTreeMap<u32, u32> = BTreeMap::new();
         let mut claimed: BTreeSet<u32> = BTreeSet::new();
@@ -120,7 +126,7 @@ impl Correspondence {
             let found = new.iter().enumerate().find(|(candidate, other)| {
                 other.name == port.name
                     && !claimed.contains(&at(*candidate))
-                    && crosses(&port.ty, &other.ty)
+                    && crosses(port, other)
             });
             if let Some((candidate, _)) = found {
                 taken.insert(at(index), at(candidate));
@@ -136,7 +142,7 @@ impl Correspondence {
             let Some(other) = new.get(index) else {
                 continue;
             };
-            if crosses(&port.ty, &other.ty) {
+            if crosses(port, other) {
                 taken.insert(at(index), at(index));
                 claimed.insert(at(index));
             }
@@ -156,7 +162,7 @@ impl Correspondence {
                 .iter()
                 .enumerate()
                 .find(|(candidate, other)| {
-                    !claimed.contains(&at(*candidate)) && crosses(&old[0].ty, &other.ty)
+                    !claimed.contains(&at(*candidate)) && crosses(&old[0], other)
                 })
                 .map(|(candidate, _)| at(candidate));
             if let Some(candidate) = found {
@@ -219,7 +225,7 @@ impl<K: NodeKind> Document<K> {
             inputs: kind.inputs(),
             outputs: kind.outputs(),
         };
-        let crosses = |from: &K::Type, to: &K::Type| K::conversion(from, to).is_allowed();
+        let crosses = |from: &KindPort<K>, to: &KindPort<K>| crossing::<K>(from, to).is_allowed();
         let inputs = Correspondence::build(&before.inputs, &after_signature.inputs, &crosses);
         let outputs = Correspondence::build(&before.outputs, &after_signature.outputs, &crosses);
 

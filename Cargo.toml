@@ -230,6 +230,7 @@ members = [
     "examples/hello-graph-diff",
     "examples/hello-topology",
     "examples/hello-node-groups",
+    "examples/hello-node-flow",
     "examples/hello-slider-discrete",
     "examples/hello-slider-labeled",
     "examples/hello-image",
