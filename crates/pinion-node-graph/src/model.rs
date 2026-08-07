@@ -126,13 +126,19 @@ pub struct Port<T, V> {
     ///   shape `node_geo_menu_switch` reaches by answering `nullptr` for every
     ///   output after its first.
     ///
-    /// Blender spells the same declaration `no_mute_links`, and **nothing in
-    /// its tree sets it**: the twelve node types that need to redirect a
-    /// pass-through all register a per-node C callback
-    /// (`internally_linked_input`) instead, because Blender's *default* is a
-    /// static socket-type priority table that cannot produce the identity. This
-    /// crate's default is the identity, so a per-node hook has nothing left to
-    /// express and a per-port declaration is the whole extension point.
+    /// Blender spells the same declaration `no_mute_links` (set through a
+    /// builder named `no_muted_links`) and uses it widely: **42 declarations
+    /// across 17 node files at `8cf50599`, 28 on outputs and 14 on inputs** —
+    /// both ends, which is why one field read from both ends is the right
+    /// shape here too.
+    ///
+    /// It also has a *second* mechanism this crate does not need: eleven node
+    /// types register a per-node C callback, `internally_linked_input`, and
+    /// between them those callbacks compute only the identity (by name or by
+    /// index) and "skip the leading control input". Blender needs a callback to
+    /// reach the identity because its default is a static socket-type priority
+    /// table; this crate's default *is* the identity, so the per-port
+    /// declaration is the whole extension point.
     #[serde(default = "yes")]
     pub passthrough: bool,
 }

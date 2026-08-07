@@ -49,10 +49,13 @@ What this script checks, and why each check discriminates:
   Censused at `8cf50599`, eleven Blender node types register
   `internally_linked_input` and their callbacks compute exactly three things —
   the identity by name (7), the identity by index (1), and "skip the leading
-  control input" (3) — every one of which this crate's default already produces.
-  What is left over is exclusion, which Blender spells `no_mute_links` and
-  **sets on no node type in its tree**. So twelve C callbacks there reduce to
-  one declaration here.
+  control input" (3) — every one of which this crate's default already produces,
+  because that default *is* the identity where Blender's is a static
+  socket-type priority table. What is left over is exclusion, which Blender
+  spells `no_mute_links` and uses in 42 declarations across 17 node files, 28 on
+  outputs and 14 on inputs. So the per-node callback has nothing left to say
+  here, and the per-port declaration — read from both ends, as Blender reads
+  its own — is the whole extension point.
 * **Where a bypass and a dissolve CANNOT agree, the difference is named.** A
   bypass passes an unwired port's declared default on; a dissolve has no link to
   redirect and removes the downstream one. The two are driven on the same node

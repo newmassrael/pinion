@@ -3256,6 +3256,24 @@ const BLENDER_HOOKS: &[(&str, BlenderHook, Option<u32>)] = &[
     ),
 ];
 
+/// Blender's OTHER mechanism, censused after the first pass got it wrong
+/// (R1587.1): `(declarations, on outputs, on inputs)`.
+///
+/// The per-port form is *read* as `no_mute_links` and *set* through a builder
+/// spelled `no_muted_links`, so a grep for the field name finds the two read
+/// sites and none of the users — which is how this round briefly recorded that
+/// no node type declares it. Re-censused at `8cf50599` with the builder's
+/// spelling:
+///
+/// ```text
+/// grep -rhoc "no_muted_links(" source/blender/nodes/   # 42, in 17 files
+/// ```
+///
+/// Both ends are used, which is why one field read from both ends is the shape
+/// this crate ships. The eleven per-node callbacks are the mechanism that has
+/// nothing left to say here, not this one.
+const NO_MUTED_LINKS: (usize, usize, usize) = (42, 28, 14);
+
 /// A node built to order, so a Blender shape can be reproduced as a signature.
 #[derive(Clone, PartialEq, Debug)]
 struct Shaped {
@@ -3370,6 +3388,11 @@ fn our_default_reproduces_every_blender_pass_through_hook() {
     // proportions the grep answered. A row added without a shape, or a shape
     // silently re-attributed, fails here rather than quietly weakening the
     // table above.
+    assert_eq!(
+        NO_MUTED_LINKS.1 + NO_MUTED_LINKS.2,
+        NO_MUTED_LINKS.0,
+        "the sides must account for every declaration"
+    );
     assert_eq!(BLENDER_HOOKS.len(), 11);
     let count =
         |want: fn(&BlenderHook) -> bool| BLENDER_HOOKS.iter().filter(|h| want(&h.1)).count();

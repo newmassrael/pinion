@@ -31966,6 +31966,44 @@
         "Op::Cap is the only consumer in the workspace; hello-node-editor's own taxonomy is untouched, which is the per-binding domain work [[debt-two-node-graph-models]] already names"
       ]
     },
+    "R1587.1": {
+      "decision_summary": "R1587.1 §5.38 — THE ROUND'S OWN CENSUS HAD A SUBSTRING HOLE, AND IT REFUTED A CORRECT NOTE. R1587 reported that Blender declares its per-port pass-through exclusion nowhere: \"no_mute_links is set by no node type in that tree\", used as the argument that the debt note asking for that shape had named the wrong mechanism. The claim is false. Blender READS the field as no_mute_links and SETS it through a builder spelled no_muted_links, one letter apart, so a grep for the field name finds the two read sites in node_tree_update.cc and none of the users. Re-censused at 8cf50599 with the builder's spelling: 42 declarations across 17 node files, 28 on outputs and 14 on inputs — both ends, which is exactly the shape R1587 shipped. So the debt note was right on the point R1587 said it was wrong about, and by count the per-port form (42 in 17 files) is used more widely than the per-node callback (11 node types). What survives untouched is the design and its real argument, because that was derived by READING all eleven callbacks rather than from the miscount: their bodies compute only the identity by name, the identity by index, and \"skip the leading control input\", every one of which this crate's default already produces. The correction is therefore to the round's rhetoric and not to its code — and that is the uncomfortable part worth recording, because a wrong premise that happens to support a right conclusion is the kind that gets believed and then reused.",
+      "changes_bullets": [
+        "Port::passthrough's doc, the demo's header, the ledger row and CLAUDE.md all corrected: Blender uses BOTH mechanisms, 42 per-port declarations across 17 files against 11 per-node callbacks, and the reason this crate needs only the per-port one is what the callbacks compute rather than how many there are",
+        "NO_MUTED_LINKS in the test module records the corrected census as (declarations, on outputs, on inputs) beside BLENDER_HOOKS, with the reproduction command and the two spellings in its doc, and an assertion that the sides account for every declaration",
+        "the debt file debt-passthrough-rule-is-not-overridable withdraws R1587's refutation and keeps the round's real argument, so a later reader meets the correction rather than the claim"
+      ],
+      "verification_bullets": [
+        "pinion-node-graph 114 tests + doc test green, clippy -D pedantic clean, fmt clean; the demo still passes",
+        "The corrected numbers came from a second census run rather than from re-reading the first: grep -rhoc \"no_muted_links(\" over source/blender/nodes gives 42 in 17 files, and walking back from each call to its nearest add_input/add_output splits them 28 output / 14 input",
+        "Moving the census const to module scope was forced by clippy items_after_statements, which put it next to BLENDER_HOOKS where census data belongs"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "Neither census can be re-run by a test: ~/blender-ref is GPL and out of tree, so both are constants with their reproduction commands in the doc. What the tests CAN check is internal consistency (eleven rows, 3/1/7 by shape; 28+14=42), and they now do",
+        "The same read-name / write-name split may hide users of other Blender declarations this project has censused by field name. Nothing was re-run beyond this one"
+      ],
+      "publishable_decision_summary": "R1587.1 §5.38 — THE ROUND'S OWN CENSUS HAD A SUBSTRING HOLE, AND IT REFUTED A CORRECT NOTE. R1587 reported that Blender declares its per-port pass-through exclusion nowhere: \"no_mute_links is set by no node type in that tree\", used as the argument that the debt note asking for that shape had named the wrong mechanism. The claim is false. Blender READS the field as no_mute_links and SETS it through a builder spelled no_muted_links, one letter apart, so a grep for the field name finds the two read sites in node_tree_update.cc and none of the users. Re-censused at 8cf50599 with the builder's spelling: 42 declarations across 17 node files, 28 on outputs and 14 on inputs — both ends, which is exactly the shape R1587 shipped. So the debt note was right on the point R1587 said it was wrong about, and by count the per-port form (42 in 17 files) is used more widely than the per-node callback (11 node types). What survives untouched is the design and its real argument, because that was derived by READING all eleven callbacks rather than from the miscount: their bodies compute only the identity by name, the identity by index, and \"skip the leading control input\", every one of which this crate's default already produces. The correction is therefore to the round's rhetoric and not to its code — and that is the uncomfortable part worth recording, because a wrong premise that happens to support a right conclusion is the kind that gets believed and then reused.",
+      "publishable_changes_bullets": [
+        "Port::passthrough's doc, the demo's header, the ledger row and CLAUDE.md all corrected: Blender uses BOTH mechanisms, 42 per-port declarations across 17 files against 11 per-node callbacks, and the reason this crate needs only the per-port one is what the callbacks compute rather than how many there are",
+        "NO_MUTED_LINKS in the test module records the corrected census as (declarations, on outputs, on inputs) beside BLENDER_HOOKS, with the reproduction command and the two spellings in its doc, and an assertion that the sides account for every declaration",
+        "the debt file debt-passthrough-rule-is-not-overridable withdraws R1587's refutation and keeps the round's real argument, so a later reader meets the correction rather than the claim"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-node-graph 114 tests + doc test green, clippy -D pedantic clean, fmt clean; the demo still passes",
+        "The corrected numbers came from a second census run rather than from re-reading the first: grep -rhoc \"no_muted_links(\" over source/blender/nodes gives 42 in 17 files, and walking back from each call to its nearest add_input/add_output splits them 28 output / 14 input",
+        "Moving the census const to module scope was forced by clippy items_after_statements, which put it next to BLENDER_HOOKS where census data belongs"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Neither census can be re-run by a test: ~/blender-ref is GPL and out of tree, so both are constants with their reproduction commands in the doc. What the tests CAN check is internal consistency (eleven rows, 3/1/7 by shape; 28+14=42), and they now do",
+        "The same read-name / write-name split may hide users of other Blender declarations this project has censused by field name. Nothing was re-run beyond this one"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
