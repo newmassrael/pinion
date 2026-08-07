@@ -31686,6 +31686,66 @@
         "The window scope is a params field while paths use a window[id]/ prefix; the two spellings coexist and nothing publishes which methods take which, which is what let R1581 conclude a capability was missing"
       ]
     },
+    "R1584": {
+      "decision_summary": "R1584 §5.38 §5.52 §2 #7 — A GROUP BOUNDARY IS A PARTITION, AND THE PARTITION MOVES. group CREATES a partition (these nodes inside, the rest outside, the interface derived from what crosses) and ungroup destroys one; neither can MOVE one, and moving one is what an editor does all day. group_insert and group_separate are the two directions of a single operation: a pair (host tree, instance node) names one boundary, a selection names the nodes changing sides, and the interface is re-derived from the partition that results. Re-deriving is the whole job, and it is where Blender stops: measured at 8cf50599, node_group_separate_selected copies the selected nodes into the parent tree, deletes them from the group for the Move arm, and touches the interface not at all — so the group keeps sockets that reach nothing, the separated nodes arrive wired only to each other, and the value that used to flow through them is gone. Here the graph goes on computing what it computed, asserted as a VALUE in both directions rather than as a structure.",
+      "changes_bullets": [
+        "Document::group_insert and Document::group_separate, built on one derivation each: inward the partition is the selection plus the instance, so every check a collapse runs applies unchanged because it IS a collapse of a set that already has one member; outward it is the nodes staying behind MINUS the interface nodes, which is the same statement about the other side of the same partition",
+        "An interface edit is a script rather than an append: ports whose inside end the move leaves unwired are removed (descending, so no surviving index moves under a later removal), new crossings are appended, and a value that already crosses at this instance re-uses its port instead of gaining a second",
+        "Sharing::Shared or Fork is an argument at the call, and Repartitioned reports what the caller cannot see: other_instances counts the instances an edit to a shared definition dragged along, and severed names every link that died anywhere, each with the tree it was in",
+        "Document::unexpose now answers Vec<DroppedLink> rather than Vec<Link>: a link id is unique within one tree and meaningless outside it, and the links worth reporting are exactly the ones in trees the caller was not editing",
+        "Numbering lifted to its own module at its third and fourth consumers (group collapse, fragment cut, both boundary moves), and lifting it found a shared defect: both copies indexed the node map directly, so a document holding a link that names a missing node — which validate exists to report and nothing stops a deserialized document from holding — PANICKED. It is now a refusal that names the link, in all three error types",
+        "hello-node-groups gains group_insert / group_separate / fork and a last_move readout, supplying only WHERE the boundary is: pointed at inward, and the edit path's own last step outward, which is where Blender reads it from too (snode->edittree against ED_node_tree_get(snode, 1))",
+        "Every refusal the example makes now reaches last_refusal: the substrate's arrived through edit which records them, while the application's own — a malformed argument, a boundary that is not there — reached the error frame and nothing else, so the readout could show one kind and not the other"
+      ],
+      "verification_bullets": [
+        "pinion-node-graph 84 unit tests (18 new for R1584) + 1 doctest, clippy -D pedantic clean, cargo doc clean; hello-node-groups builds and its 6 tests pass. Blast radius computed rather than remembered (R1582): cargo test -p hello-node-groups -p pinion-node-graph",
+        "tools/demos/r1584_the_boundary_is_a_partition.py — 8 phases, 78 assertions, PASS in 2.6s over the live RPC wire against the release binary",
+        "The claim is asserted as a VALUE, not a shape: the group's output is read before and after every move, the in-and-back-out round trip is byte-identical, and the premise is pinned to a concrete colour first so the comparison cannot pass by both sides being nothing",
+        "Blender's rule is held as a TEST HELPER and the divergence asserted rather than described: blender_separate reproduces node_group_separate_selected over this crate's types and the same fixture, and the sink it leaves receives NOTHING where ours receives the value; blender_insert_port_count reproduces build_node_set_interface's socket walk and answers 3 where the derivation answers 1",
+        "10 counterfactuals, all caught, each reverted from a hash-verified copy in finally and each build failure raised as an error rather than counted as a catch (R1581). TWO WERE INITIALLY MISSED AND THAT IS THE ROUND'S FINDING: the demo separated a source node with no inputs, so neither the reconnection path nor the dying-input path ran, and the headline claim was untested until a phase was added where values cross BOTH ways",
+        "A boundary round trip preserves the graph's meaning and NOT the port order, found by the demo contradicting its own expectation. It is forced rather than sloppy: other instances address ports by index, so restoring a removed port to its old position would silently rewire every one of them"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52",
+        "5.2",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "hello-node-editor still holds its own Vec<GraphNode> model, so the tree has two node-graph models (registered debt debt-two-node-graph-models). This round widened the crate side of that gap",
+        "Of the Blender node-editor census (91 operators, 66 keymap entries), R1577 closed groups, R1578 closed copy/paste/duplicate/keep_inputs/linked as one concept, and R1584 closes group_insert and group_separate. Six named gaps remain: collapse/hide/mute, the richer selection vocabulary, link mute and detach, insert_offset, find, resize, view_selected, swap_node",
+        "Execution semantics — control flow, side effects, iteration, time — stay inexpressible in evaluate(inputs) -> outputs, and no census against Blender can find that because Blender is pure dataflow too; UE Blueprint is the only reference and its source is account-gated"
+      ],
+      "publishable_decision_summary": "R1584 §5.38 §5.52 §2 #7 — A GROUP BOUNDARY IS A PARTITION, AND THE PARTITION MOVES. group CREATES a partition (these nodes inside, the rest outside, the interface derived from what crosses) and ungroup destroys one; neither can MOVE one, and moving one is what an editor does all day. group_insert and group_separate are the two directions of a single operation: a pair (host tree, instance node) names one boundary, a selection names the nodes changing sides, and the interface is re-derived from the partition that results. Re-deriving is the whole job, and it is where Blender stops: measured at 8cf50599, node_group_separate_selected copies the selected nodes into the parent tree, deletes them from the group for the Move arm, and touches the interface not at all — so the group keeps sockets that reach nothing, the separated nodes arrive wired only to each other, and the value that used to flow through them is gone. Here the graph goes on computing what it computed, asserted as a VALUE in both directions rather than as a structure.",
+      "publishable_changes_bullets": [
+        "Document::group_insert and Document::group_separate, built on one derivation each: inward the partition is the selection plus the instance, so every check a collapse runs applies unchanged because it IS a collapse of a set that already has one member; outward it is the nodes staying behind MINUS the interface nodes, which is the same statement about the other side of the same partition",
+        "An interface edit is a script rather than an append: ports whose inside end the move leaves unwired are removed (descending, so no surviving index moves under a later removal), new crossings are appended, and a value that already crosses at this instance re-uses its port instead of gaining a second",
+        "Sharing::Shared or Fork is an argument at the call, and Repartitioned reports what the caller cannot see: other_instances counts the instances an edit to a shared definition dragged along, and severed names every link that died anywhere, each with the tree it was in",
+        "Document::unexpose now answers Vec<DroppedLink> rather than Vec<Link>: a link id is unique within one tree and meaningless outside it, and the links worth reporting are exactly the ones in trees the caller was not editing",
+        "Numbering lifted to its own module at its third and fourth consumers (group collapse, fragment cut, both boundary moves), and lifting it found a shared defect: both copies indexed the node map directly, so a document holding a link that names a missing node — which validate exists to report and nothing stops a deserialized document from holding — PANICKED. It is now a refusal that names the link, in all three error types",
+        "hello-node-groups gains group_insert / group_separate / fork and a last_move readout, supplying only WHERE the boundary is: pointed at inward, and the edit path's own last step outward, which is where Blender reads it from too (snode->edittree against ED_node_tree_get(snode, 1))",
+        "Every refusal the example makes now reaches last_refusal: the substrate's arrived through edit which records them, while the application's own — a malformed argument, a boundary that is not there — reached the error frame and nothing else, so the readout could show one kind and not the other"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-node-graph 84 unit tests (18 new for R1584) + 1 doctest, clippy -D pedantic clean, cargo doc clean; hello-node-groups builds and its 6 tests pass. Blast radius computed rather than remembered (R1582): cargo test -p hello-node-groups -p pinion-node-graph",
+        "tools/demos/r1584_the_boundary_is_a_partition.py — 8 phases, 78 assertions, PASS in 2.6s over the live RPC wire against the release binary",
+        "The claim is asserted as a VALUE, not a shape: the group's output is read before and after every move, the in-and-back-out round trip is byte-identical, and the premise is pinned to a concrete colour first so the comparison cannot pass by both sides being nothing",
+        "Blender's rule is held as a TEST HELPER and the divergence asserted rather than described: blender_separate reproduces node_group_separate_selected over this crate's types and the same fixture, and the sink it leaves receives NOTHING where ours receives the value; blender_insert_port_count reproduces build_node_set_interface's socket walk and answers 3 where the derivation answers 1",
+        "10 counterfactuals, all caught, each reverted from a hash-verified copy in finally and each build failure raised as an error rather than counted as a catch (R1581). TWO WERE INITIALLY MISSED AND THAT IS THE ROUND'S FINDING: the demo separated a source node with no inputs, so neither the reconnection path nor the dying-input path ran, and the headline claim was untested until a phase was added where values cross BOTH ways",
+        "A boundary round trip preserves the graph's meaning and NOT the port order, found by the demo contradicting its own expectation. It is forced rather than sloppy: other instances address ports by index, so restoring a removed port to its old position would silently rewire every one of them"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52",
+        "5.2",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-node-editor still holds its own Vec<GraphNode> model, so the tree has two node-graph models (registered debt debt-two-node-graph-models). This round widened the crate side of that gap",
+        "Of the Blender node-editor census (91 operators, 66 keymap entries), R1577 closed groups, R1578 closed copy/paste/duplicate/keep_inputs/linked as one concept, and R1584 closes group_insert and group_separate. Six named gaps remain: collapse/hide/mute, the richer selection vocabulary, link mute and detach, insert_offset, find, resize, view_selected, swap_node",
+        "Execution semantics — control flow, side effects, iteration, time — stay inexpressible in evaluate(inputs) -> outputs, and no census against Blender can find that because Blender is pure dataflow too; UE Blueprint is the only reference and its source is account-gated"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

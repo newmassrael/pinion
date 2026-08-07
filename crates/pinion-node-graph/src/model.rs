@@ -253,6 +253,28 @@ impl<K: NodeKind> Interface<K> {
     pub fn is_empty(&self) -> bool {
         self.inputs.is_empty() && self.outputs.is_empty()
     }
+
+    /// The ports on one side, chosen by value rather than by accessor.
+    ///
+    /// [`InterfaceSide`] is the thing that says which half is meant, so the
+    /// translation from it to a port list belongs in one place — R1584 found
+    /// this `match` written out three times, twice here and once in the
+    /// boundary move.
+    #[must_use]
+    pub fn side(&self, side: InterfaceSide) -> &[KindPort<K>] {
+        match side {
+            InterfaceSide::Input => &self.inputs,
+            InterfaceSide::Output => &self.outputs,
+        }
+    }
+
+    /// The same, for modification.
+    pub(crate) fn side_mut(&mut self, side: InterfaceSide) -> &mut Vec<KindPort<K>> {
+        match side {
+            InterfaceSide::Input => &mut self.inputs,
+            InterfaceSide::Output => &mut self.outputs,
+        }
+    }
 }
 
 /// One tree: the root document graph, or a re-usable group definition.
@@ -394,6 +416,19 @@ impl<K: NodeKind> Document<K> {
     #[must_use]
     pub(crate) fn next_tree_id(&self) -> TreeId {
         TreeId(u32::try_from(self.trees.len()).unwrap_or(u32::MAX))
+    }
+
+    /// Copy a tree wholesale and answer the copy's id.
+    ///
+    /// The copy keeps the original's name: a name is not an identity here, so
+    /// two definitions may share one. Blender must rename a copied node group
+    /// (`Sum` becomes `Sum.001`) because an ID's name *is* its key.
+    pub(crate) fn copy_tree(&mut self, source: TreeId) -> Option<TreeId> {
+        let mut copy = self.trees.get(source.0 as usize)?.clone();
+        let id = self.next_tree_id();
+        copy.id = id;
+        self.trees.push(copy);
+        Some(id)
     }
 
     /// Add an empty group definition and answer its id.
@@ -731,10 +766,7 @@ impl<K: NodeKind> Document<K> {
             .trees
             .get_mut(tree.0 as usize)
             .ok_or(EditError::NoSuchTree(tree))?;
-        let ports = match side {
-            InterfaceSide::Input => &mut host.interface.inputs,
-            InterfaceSide::Output => &mut host.interface.outputs,
-        };
+        let ports = host.interface.side_mut(side);
         ports.push(port);
         Ok(u32::try_from(ports.len() - 1).unwrap_or(u32::MAX))
     }
@@ -747,6 +779,12 @@ impl<K: NodeKind> Document<K> {
     /// higher ports slide down by one. A caller doing this by hand would have to
     /// remember every instance in every tree.
     ///
+    /// Each dropped link is answered **with the tree it was in** (R1584). A link
+    /// id is unique within its tree and nowhere else, so a bare [`Link`] here
+    /// named a link the caller could not find again — and these are exactly the
+    /// links that come from *other* trees, which is the whole reason to report
+    /// them.
+    ///
     /// # Errors
     ///
     /// [`EditError::NoSuchTree`] or [`EditError::NoSuchInterfacePort`].
@@ -755,15 +793,12 @@ impl<K: NodeKind> Document<K> {
         tree: TreeId,
         side: InterfaceSide,
         index: u32,
-    ) -> Result<Vec<Link>, EditError> {
+    ) -> Result<Vec<DroppedLink>, EditError> {
         let host = self
             .trees
             .get_mut(tree.0 as usize)
             .ok_or(EditError::NoSuchTree(tree))?;
-        let ports = match side {
-            InterfaceSide::Input => &mut host.interface.inputs,
-            InterfaceSide::Output => &mut host.interface.outputs,
-        };
+        let ports = host.interface.side_mut(side);
         if index as usize >= ports.len() {
             return Err(EditError::NoSuchInterfacePort {
                 tree,
@@ -780,12 +815,17 @@ impl<K: NodeKind> Document<K> {
         if let Some(inside) = inside {
             // An Input node's ports are OUTPUTS, an Output node's are INPUTS.
             let on_source = side == InterfaceSide::Input;
-            dropped.extend(shift_port_links(&mut host.links, inside, on_source, index));
+            dropped.extend(
+                shift_port_links(&mut host.links, inside, on_source, index)
+                    .into_iter()
+                    .map(|link| DroppedLink { tree, link }),
+            );
         }
         // At every instance, the mirror: the group node's inputs are the
         // interface inputs and its outputs are the interface outputs.
         let instance_on_source = side == InterfaceSide::Output;
         for other in &mut self.trees {
+            let host_id = other.id;
             let instances: Vec<NodeId> = other
                 .nodes
                 .values()
@@ -793,12 +833,14 @@ impl<K: NodeKind> Document<K> {
                 .map(|n| n.id)
                 .collect();
             for instance in instances {
-                dropped.extend(shift_port_links(
-                    &mut other.links,
-                    instance,
-                    instance_on_source,
-                    index,
-                ));
+                dropped.extend(
+                    shift_port_links(&mut other.links, instance, instance_on_source, index)
+                        .into_iter()
+                        .map(|link| DroppedLink {
+                            tree: host_id,
+                            link,
+                        }),
+                );
             }
         }
         Ok(dropped)
@@ -898,6 +940,30 @@ pub struct Signature<K: NodeKind> {
     pub inputs: Vec<KindPort<K>>,
     /// The ports values leave from.
     pub outputs: Vec<KindPort<K>>,
+}
+
+/// A link that an edit removed, and the tree it was removed from.
+///
+/// [`LinkId`] is unique within one tree, so a link reported without its tree is
+/// a link the caller cannot address — cannot undo, cannot show, cannot even
+/// look up. The links worth reporting are precisely the ones in trees the caller
+/// was not editing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DroppedLink {
+    /// The tree the link was in.
+    pub tree: TreeId,
+    /// The link itself, as it was.
+    pub link: Link,
+}
+
+impl fmt::Display for DroppedLink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "tree {}: {} -> {}",
+            self.tree.0, self.link.from, self.link.to
+        )
+    }
 }
 
 /// What a successful [`Document::connect`] did.

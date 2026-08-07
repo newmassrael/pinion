@@ -19,9 +19,10 @@ use crate::model::{
     Document, InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT,
     Socket, TreeId, centroid,
 };
+use crate::numbering::Numbering;
 
 /// Canvas gap between a definition's contents and its interface nodes.
-const INTERFACE_GAP: i32 = 220;
+pub(crate) const INTERFACE_GAP: i32 = 220;
 
 /// What collapsing a selection produced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,12 @@ pub enum GroupError {
     /// group would detach it from the interface it exists to express, so the
     /// selection is refused rather than silently narrowed.
     InterfaceNodeSelected(NodeId),
+    /// A link names a node the tree does not hold, so there is no graph to
+    /// derive a boundary from. [`Document::validate`] reports these.
+    Malformed {
+        /// The link.
+        link: LinkId,
+    },
     /// The boundary derivation refused for a reason this crate has no arm for.
     ///
     /// `pinion_graph::group::Refusal` is `#[non_exhaustive]`, so it may grow an
@@ -83,6 +90,9 @@ impl fmt::Display for GroupError {
             Self::Empty => f.write_str("nothing is selected"),
             Self::NoSuchTree(tree) => write!(f, "no tree {}", tree.0),
             Self::NoSuchNode(node) => write!(f, "no node {}", node.0),
+            Self::Malformed { link } => {
+                write!(f, "link {} names a node this tree does not have", link.0)
+            }
             Self::Boundary(reason) => write!(f, "the selection is not groupable: {reason}"),
             Self::InterfaceNodeSelected(node) => write!(
                 f,
@@ -213,36 +223,24 @@ impl<K: NodeKind> Document<K> {
 
         // Map this tree's nodes onto 0..n, which is the contract
         // `pinion-graph` states for every algorithm it offers.
-        let node_of: Vec<NodeId> = host.nodes().map(|n| n.id).collect();
-        let vertex_of: BTreeMap<NodeId, usize> =
-            node_of.iter().enumerate().map(|(i, &n)| (n, i)).collect();
-        let links: Vec<boundary::Link> = host
-            .links()
-            .iter()
-            .map(|l| {
-                boundary::Link::new(
-                    boundary::Socket::new(vertex_of[&l.from.node], l.from.port),
-                    boundary::Socket::new(vertex_of[&l.to.node], l.to.port),
-                )
-            })
-            .collect();
-        let selected: Vec<usize> = chosen.iter().map(|n| vertex_of[n]).collect();
+        let numbering = Numbering::of(host).map_err(|link| GroupError::Malformed { link })?;
+        let selected = numbering
+            .vertices(&chosen)
+            .ok_or(GroupError::NoSuchTree(tree))?;
 
-        let derived =
-            boundary::Boundary::derive(node_of.len(), &links, &selected).map_err(|refusal| {
-                match refusal {
-                    boundary::Refusal::Empty => GroupError::Empty,
-                    boundary::Refusal::Bypass { path } => GroupError::Bypass {
-                        path: path.into_iter().map(|v| node_of[v]).collect(),
-                    },
-                    // `UnknownVertex` is unreachable — the indices were built from
-                    // this tree's own nodes a few lines above — and a future arm is
-                    // unknown, so both are carried verbatim rather than guessed at.
-                    other => GroupError::Boundary(other.to_string()),
-                }
-            })?;
+        let derived = boundary::Boundary::derive(numbering.order(), numbering.links(), &selected)
+            .map_err(|refusal| match refusal {
+            boundary::Refusal::Empty => GroupError::Empty,
+            boundary::Refusal::Bypass { path } => GroupError::Bypass {
+                path: numbering.path(path),
+            },
+            // `UnknownVertex` is unreachable — the indices were built from
+            // this tree's own nodes a few lines above — and a future arm is
+            // unknown, so both are carried verbatim rather than guessed at.
+            other => GroupError::Boundary(other.to_string()),
+        })?;
 
-        let socket_of = |s: boundary::Socket| Socket::new(node_of[s.vertex], s.port);
+        let socket_of = |s: boundary::Socket| numbering.socket(s);
         let inputs: Vec<Crossing> = derived
             .inputs()
             .iter()
@@ -555,7 +553,7 @@ impl<K: NodeKind> Document<K> {
     }
 
     /// One port of one socket, on the side asked for.
-    fn port(&self, tree: TreeId, socket: Socket, side: PortSide) -> Option<KindPort<K>> {
+    pub(crate) fn port(&self, tree: TreeId, socket: Socket, side: PortSide) -> Option<KindPort<K>> {
         let signature = self.signature(tree, socket.node)?;
         let ports = match side {
             PortSide::In => signature.inputs,
@@ -567,7 +565,7 @@ impl<K: NodeKind> Document<K> {
 
 /// Which half of a signature a port is read from.
 #[derive(Clone, Copy)]
-enum PortSide {
+pub(crate) enum PortSide {
     In,
     Out,
 }

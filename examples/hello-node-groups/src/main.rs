@@ -24,6 +24,13 @@
 //! R1578 adds the clipboard to that list: what is held, which wires were
 //! severed to hold it, how many bytes it serializes to, and what the last
 //! insertion did — all readable without pasting.
+//!
+//! R1584 adds the two boundary moves, and with them the fact an editor is
+//! obliged to show and Blender does not: a group definition is *shared*, so
+//! moving a node into one through this instance changes every other instance
+//! too. `last_move` says which ports appeared, which disappeared, which links
+//! died and where, and how many other instances came along — or `fork` first,
+//! and none of them do.
 
 use std::rc::Rc;
 
@@ -43,7 +50,7 @@ use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
     Crossings, Definitions, Document, EditPath, Fragment, Inserted, InterfaceSide, NodeBody,
-    NodeId, NodeKind, Port, ROOT, Severed, Socket, TreeId,
+    NodeId, NodeKind, Port, PortChange, ROOT, Repartitioned, Severed, Sharing, Socket, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -240,6 +247,10 @@ struct GroupsState {
     /// has to show: which definitions were re-used, and which severed inputs
     /// did not come back.
     last_insert: Signal<String>,
+    /// R1584 — what the last boundary move did to the interface, and what it
+    /// cost at the definition's other instances. An editor has to show that
+    /// second part: the user moved a node in one place and changed another.
+    last_move: Signal<String>,
 }
 
 impl GroupsState {
@@ -251,6 +262,7 @@ impl GroupsState {
             refusal: Signal::new(String::new()),
             clipboard: Signal::new(None),
             last_insert: Signal::new(String::new()),
+            last_move: Signal::new(String::new()),
         }
     }
 
@@ -577,6 +589,39 @@ fn status_line(document: &Document<Op>, state: &GroupsState) -> String {
     )
 }
 
+/// A boundary move in one line: which definition, what happened to its
+/// interface, and — the part only this framework answers — who else was changed.
+fn describe_move(out: &Repartitioned<Op>) -> String {
+    let ports = |changes: &[PortChange<Op>]| {
+        changes
+            .iter()
+            .map(|change| {
+                let side = match change.side {
+                    InterfaceSide::Input => "in",
+                    InterfaceSide::Output => "out",
+                };
+                format!("{side}{}:{}", change.index, change.port.name)
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    format!(
+        "def:{}|forked_from:{}|moved:{}|exposed:{}|unexposed:{}|severed:{}|others:{}",
+        out.definition.0,
+        out.forked_from
+            .map_or_else(|| "-".to_owned(), |t| t.0.to_string()),
+        out.moved.len(),
+        ports(&out.exposed),
+        ports(&out.unexposed),
+        out.severed
+            .iter()
+            .map(|dropped| format!("t{}:{}", dropped.tree.0, dropped.link.to))
+            .collect::<Vec<_>>()
+            .join(" "),
+        out.other_instances
+    )
+}
+
 /// A fragment in one line: what it holds and what was cut away to get it.
 fn describe_fragment(fragment: &Fragment<Op>) -> String {
     format!(
@@ -783,6 +828,7 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::new("clipboard_severed", "string"),
                     SchemaField::new("clipboard_bytes", "int"),
                     SchemaField::new("last_insert", "string"),
+                    SchemaField::new("last_move", "string"),
                     // Argument-taking reads.
                     SchemaField::action("node_kind", "string"),
                     SchemaField::action("node_value", "string"),
@@ -795,6 +841,9 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("group", "string"),
                     SchemaField::action("ungroup", "string"),
                     SchemaField::action("instantiate", "string"),
+                    SchemaField::action("group_insert", "string"),
+                    SchemaField::action("group_separate", "string"),
+                    SchemaField::action("fork", "string"),
                     SchemaField::action("copy", "string"),
                     SchemaField::action("paste", "string"),
                     SchemaField::action("duplicate", "string"),
@@ -873,6 +922,7 @@ impl ExternalIntrospect for GroupsOracle {
                 .and_then(|f| serde_json::to_string(&f).ok())
                 .map_or(0, |json| json.len())),
             "last_insert" => Some(IntrospectValue::Text(state.last_insert.get())),
+            "last_move" => Some(IntrospectValue::Text(state.last_move.get())),
             _ => None,
         }
     }
@@ -881,7 +931,7 @@ impl ExternalIntrospect for GroupsOracle {
         match path {
             "trees" | "definitions" | "nodes" | "links" | "valid" | "path" | "depth"
             | "current_tree" | "selection" | "last_refusal" | "clipboard" | "clipboard_severed"
-            | "clipboard_bytes" | "last_insert" => Err(InterveneError::ReadOnly),
+            | "clipboard_bytes" | "last_insert" | "last_move" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -891,12 +941,23 @@ impl ExternalIntrospect for GroupsOracle {
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
-        match path {
+        let outcome = match path {
             "node_kind" | "node_value" | "node_ports" | "interface" | "instances" | "tree_name" => {
                 self.read(path, &args)
             }
             _ => self.verb(path, &args),
+        };
+        // R1584 — every refusal reaches the readout, whoever made it. The
+        // substrate's arrive through `edit`, which records them; the
+        // application's own — a malformed argument, a boundary that is not
+        // there — reached the error frame and nothing else, so `last_refusal`
+        // could show one kind of refusal and not the other. Recording it at the
+        // one dispatch site is what makes "every refusal is showable" a
+        // property of the surface rather than of each verb remembering.
+        if let (Some(state), Err(InvokeError::Rejected(reason))) = (self.state.as_ref(), &outcome) {
+            state.refusal.set(reason.to_string());
         }
+        outcome
     }
 }
 
@@ -1032,8 +1093,80 @@ impl GroupsOracle {
                 ok(&node.0.to_string())
             }
             "copy" | "paste" | "duplicate" => self.clipboard(path, args),
+            "group_insert" | "group_separate" | "fork" => self.boundary(path, args),
             _ => Err(InvokeError::UnknownPath),
         }
+    }
+
+    /// R1584 — the two directions of a boundary move, and the fork that makes
+    /// either of them local.
+    ///
+    /// The whole of what this application supplies is *where the boundary is*.
+    /// Inward it is named by the argument, because the user is looking at the
+    /// host tree and pointing at a group. Outward it is the edit path's own last
+    /// step — the user is inside the group, so the group they are inside IS the
+    /// boundary — which is the same place Blender reads it from
+    /// (`snode->edittree` against `ED_node_tree_get(snode, 1)`), and refusing at
+    /// the root is its "Not inside node group".
+    fn boundary(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let raw = Self::text(args)?;
+        // `"<instance>"`, or with the sharing arm named: `"<instance>,fork"`.
+        // Stated at the call, like R1578's `fork`/`share`, because "does this
+        // also change the group's other users" is not a preference.
+        let mut sharing = Sharing::Shared;
+        let mut address = IntrospectValue::Text(String::new());
+        for piece in raw.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            match piece {
+                "fork" => sharing = Sharing::Fork,
+                "shared" => sharing = Sharing::Shared,
+                other => address = IntrospectValue::Text(other.to_owned()),
+            }
+        }
+        if path == "fork" {
+            let (host, instance) = Self::addressed(&address, state.current())?;
+            let copy = state
+                .edit(|document| document.fork_definition(host, instance))
+                .map_err(InvokeError::rejected)?;
+            return Ok(IntrospectValue::Text(copy.0.to_string()));
+        }
+
+        let selection = state.selection.get();
+        let out = if path == "group_insert" {
+            let host = state.current();
+            let instance = Self::addressed(&address, host)?.1;
+            state
+                .edit(|document| document.group_insert(host, instance, &selection, sharing))
+                .map_err(InvokeError::rejected)?
+        } else {
+            let path_now = state.path.get();
+            let entries = path_now.entries();
+            let (Some(step), Some(above)) = (
+                entries.last().and_then(|entry| entry.via),
+                entries.len().checked_sub(2).and_then(|at| entries.get(at)),
+            ) else {
+                return Err(InvokeError::rejected(
+                    "not inside a group: separate moves nodes out to the tree above",
+                ));
+            };
+            let host = above.tree;
+            let out = state
+                .edit(|document| document.group_separate(host, step, &selection, sharing))
+                .map_err(InvokeError::rejected)?;
+            // The nodes are in the tree above now, so that is where the user is.
+            let mut walked = state.path.get();
+            let _ = walked.exit();
+            state.path.set(walked);
+            out
+        };
+        state.selection.set(out.moved.clone());
+        let described = describe_move(&out);
+        state.last_move.set(described.clone());
+        Ok(IntrospectValue::Text(described))
     }
 
     /// R1578 — copy, paste and duplicate, which are three call sites of one

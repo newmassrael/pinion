@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ConnectError, Crossings, Definitions, Document, DuplicateError, EditPath, ExtractError,
     Fragment, GroupError, InsertError, InterfaceSide, NestError, NodeBody, NodeId, NodeKind,
-    PathError, Port, ROOT, Severed, Socket, TreeId, UngroupError, Violation,
+    PathError, Port, ROOT, RepartitionError, Severed, Sharing, Socket, TreeId, UngroupError,
+    Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -1569,4 +1570,668 @@ fn a_fragment_crosses_into_a_document_that_never_had_the_definition() {
     assert_eq!(other.tree(out.definitions_added[0]).unwrap().name, "Sum");
     assert!(other.validate().is_empty());
     assert_eq!(number(&other.evaluate(ROOT, out.nodes[0])), Some(0));
+}
+
+// ------------------------------------------------- R1584, the boundary moves
+
+/// The fixture, with `add` collapsed into `Sum` and everything named.
+///
+/// `two -> g.0`, `three -> g.1`, `g.0 -> sink.0`, and inside the definition the
+/// `add` node keeps its id, because ids are per tree.
+struct Boundaried {
+    document: Document<Op>,
+    two: NodeId,
+    three: NodeId,
+    add: NodeId,
+    sink: NodeId,
+    definition: TreeId,
+    instance: NodeId,
+}
+
+fn boundaried() -> Boundaried {
+    let mut f = fixture();
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    Boundaried {
+        document: f.document,
+        two: f.two,
+        three: f.three,
+        add: f.add,
+        sink: f.sink,
+        definition: made.definition,
+        instance: made.node,
+    }
+}
+
+/// The value arriving at a socket: what the graph actually delivers there.
+///
+/// The question a user asks after moving a node — "is my result still my
+/// result" — rather than the question the structure answers.
+fn value_into(document: &Document<Op>, tree: TreeId, socket: Socket) -> Option<Val> {
+    let link = document.tree(tree)?.link_into(socket)?;
+    let from = link.from;
+    document
+        .evaluate(tree, from.node)
+        .get(from.port as usize)
+        .cloned()
+        .flatten()
+}
+
+/// Blender's Separate/Move, re-expressed over this crate's types.
+///
+/// `node_group_separate_selected` at `8cf50599`: copy the selected nodes into
+/// the parent tree, and for the Move arm delete them from the group. It does
+/// not touch the interface and does not reconnect anything. Present so the
+/// divergence is *asserted* rather than described — a test that only checked
+/// our own answer could not tell a better rule from an equal one.
+fn blender_separate(
+    document: &mut Document<Op>,
+    host: TreeId,
+    definition: TreeId,
+    instance: NodeId,
+    selection: &[NodeId],
+) {
+    let origin = document
+        .tree(host)
+        .and_then(|t| t.node(instance))
+        .map_or((0, 0), |n| (n.x, n.y));
+    let mut copied = std::collections::BTreeMap::new();
+    for &id in selection {
+        let node = document.tree(definition).unwrap().node(id).unwrap().clone();
+        let fresh = document
+            .add_node(host, node.body, origin.0 + node.x, origin.1 + node.y)
+            .unwrap();
+        copied.insert(id, fresh);
+    }
+    let inner: Vec<crate::Link> = document.tree(definition).unwrap().links().to_vec();
+    for link in inner {
+        if let (Some(&from), Some(&to)) = (copied.get(&link.from.node), copied.get(&link.to.node)) {
+            document
+                .connect(
+                    host,
+                    Socket::new(from, link.from.port),
+                    Socket::new(to, link.to.port),
+                )
+                .unwrap();
+        }
+    }
+    for &id in selection {
+        document.remove_node(definition, id).unwrap();
+    }
+}
+
+/// Blender's Group Insert interface rule, counted rather than performed.
+///
+/// `build_node_set_interface` walks only the sockets of the nodes being moved
+/// and appends one interface socket per value linked to a node outside them. It
+/// never consults the group's existing interface, so a value that already
+/// crosses at this instance gets a second port.
+fn blender_insert_port_count(document: &Document<Op>, tree: TreeId, moving: &[NodeId]) -> usize {
+    let host = document.tree(tree).unwrap();
+    let moved: std::collections::BTreeSet<NodeId> = moving.iter().copied().collect();
+    // Keyed by SIDE as well as socket: a `Socket` says which port, never which
+    // half of the node, so `twin.in0` and `twin.out0` are the same value.
+    let mut sockets = std::collections::BTreeSet::new();
+    for link in host.links() {
+        if moved.contains(&link.to.node) && !moved.contains(&link.from.node) {
+            sockets.insert((InterfaceSide::Input, link.to));
+        }
+        if moved.contains(&link.from.node) && !moved.contains(&link.to.node) {
+            sockets.insert((InterfaceSide::Output, link.from));
+        }
+    }
+    sockets.len()
+}
+
+#[test]
+fn a_node_moved_into_a_group_keeps_what_the_graph_computes() {
+    let mut b = boundaried();
+    assert_eq!(
+        value_into(&b.document, ROOT, Socket::new(b.sink, 0)),
+        Some(Val::Number(5))
+    );
+
+    let out = b
+        .document
+        .group_insert(ROOT, b.instance, &[b.two], Sharing::Shared)
+        .unwrap();
+
+    assert_eq!(out.definition, b.definition);
+    assert_eq!(out.forked_from, None);
+    assert_eq!(out.moved.len(), 1);
+    assert!(b.document.tree(ROOT).unwrap().node(b.two).is_none());
+    assert!(
+        b.document
+            .tree(b.definition)
+            .unwrap()
+            .node(out.moved[0])
+            .is_some()
+    );
+    // The value it used to carry across the boundary is produced inside now, so
+    // the port that carried it is gone rather than left describing nothing.
+    assert_eq!(out.unexposed.len(), 1);
+    assert_eq!(out.unexposed[0].side, InterfaceSide::Input);
+    assert_eq!(out.unexposed[0].port.name, "Augend");
+    assert!(out.exposed.is_empty());
+    assert_eq!(
+        b.document
+            .tree(b.definition)
+            .unwrap()
+            .interface()
+            .inputs()
+            .len(),
+        1
+    );
+    assert_eq!(
+        value_into(&b.document, ROOT, Socket::new(b.sink, 0)),
+        Some(Val::Number(5))
+    );
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn a_value_that_already_crosses_does_not_get_a_second_port() {
+    let mut b = boundaried();
+    // A second adder fed by the same two sources, sending its result on.
+    let twin = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 300)
+        .unwrap();
+    let tail = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 400, 300)
+        .unwrap();
+    for (from, port) in [(b.two, 0), (b.three, 1)] {
+        b.document
+            .connect(ROOT, Socket::new(from, 0), Socket::new(twin, port))
+            .unwrap();
+    }
+    b.document
+        .connect(ROOT, Socket::new(twin, 0), Socket::new(tail, 0))
+        .unwrap();
+
+    // Blender would expose one socket per connected socket of the moved node:
+    // three, two of them duplicating values that already cross here.
+    assert_eq!(blender_insert_port_count(&b.document, ROOT, &[twin]), 3);
+
+    let out = b
+        .document
+        .group_insert(ROOT, b.instance, &[twin], Sharing::Shared)
+        .unwrap();
+
+    // One value is one port: only the twin's own result is new.
+    assert_eq!(out.exposed.len(), 1);
+    assert_eq!(out.exposed[0].side, InterfaceSide::Output);
+    assert!(out.unexposed.is_empty());
+    let interface = b.document.tree(b.definition).unwrap().interface();
+    assert_eq!(interface.inputs().len(), 2);
+    assert_eq!(interface.outputs().len(), 2);
+    assert_eq!(
+        value_into(&b.document, ROOT, Socket::new(b.sink, 0)),
+        Some(Val::Number(5))
+    );
+    assert_eq!(
+        value_into(&b.document, ROOT, Socket::new(tail, 0)),
+        Some(Val::Number(5))
+    );
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn an_insert_through_a_shared_definition_names_what_it_cost_elsewhere() {
+    let mut b = boundaried();
+    let seven = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 400)
+        .unwrap();
+    let eight = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(8)), 0, 480)
+        .unwrap();
+    let twin = b
+        .document
+        .instantiate(ROOT, b.definition, 200, 440)
+        .unwrap();
+    b.document
+        .connect(ROOT, Socket::new(seven, 0), Socket::new(twin, 0))
+        .unwrap();
+    b.document
+        .connect(ROOT, Socket::new(eight, 0), Socket::new(twin, 1))
+        .unwrap();
+    assert_eq!(number(&b.document.evaluate(ROOT, twin)), Some(15));
+
+    let out = b
+        .document
+        .group_insert(ROOT, b.instance, &[b.two], Sharing::Shared)
+        .unwrap();
+
+    // The other instance came along, and the link it lost is named WITH the
+    // tree it was in — a link id means nothing without one.
+    assert_eq!(out.other_instances, 1);
+    assert_eq!(out.severed.len(), 1);
+    assert_eq!(out.severed[0].tree, ROOT);
+    assert_eq!(out.severed[0].link.to, Socket::new(twin, 0));
+    assert_eq!(out.severed[0].link.from, Socket::new(seven, 0));
+    // `seven` is disconnected and `eight` slid down onto the surviving port.
+    assert_eq!(number(&b.document.evaluate(ROOT, twin)), Some(10));
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn a_forked_insert_leaves_the_other_instance_exactly_as_it_was() {
+    let mut b = boundaried();
+    let seven = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 400)
+        .unwrap();
+    let eight = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(8)), 0, 480)
+        .unwrap();
+    let twin = b
+        .document
+        .instantiate(ROOT, b.definition, 200, 440)
+        .unwrap();
+    b.document
+        .connect(ROOT, Socket::new(seven, 0), Socket::new(twin, 0))
+        .unwrap();
+    b.document
+        .connect(ROOT, Socket::new(eight, 0), Socket::new(twin, 1))
+        .unwrap();
+
+    let out = b
+        .document
+        .group_insert(ROOT, b.instance, &[b.two], Sharing::Fork)
+        .unwrap();
+
+    assert_eq!(out.forked_from, Some(b.definition));
+    assert_ne!(out.definition, b.definition);
+    assert_eq!(out.other_instances, 0);
+    assert!(out.severed.is_empty());
+    // The original definition is untouched, and so is the instance using it.
+    assert_eq!(
+        b.document
+            .tree(b.definition)
+            .unwrap()
+            .interface()
+            .inputs()
+            .len(),
+        2
+    );
+    assert_eq!(number(&b.document.evaluate(ROOT, twin)), Some(15));
+    assert_eq!(
+        value_into(&b.document, ROOT, Socket::new(b.sink, 0)),
+        Some(Val::Number(5))
+    );
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn a_group_cannot_be_moved_into_itself() {
+    let mut b = boundaried();
+    let error = b
+        .document
+        .group_insert(ROOT, b.instance, &[b.instance], Sharing::Shared)
+        .unwrap_err();
+    assert_eq!(error, RepartitionError::InstanceSelected(b.instance));
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn moving_a_group_into_a_group_it_contains_names_the_chain() {
+    // `outer` holds an instance of `Sum`; moving `outer` into `Sum` would make
+    // `Sum` contain `outer` contain `Sum`.
+    let mut b = boundaried();
+    let outer = b.document.add_definition("Outer");
+    let nested = b.document.instantiate(outer, b.definition, 0, 0).unwrap();
+    let _ = nested;
+    let placed = b.document.instantiate(ROOT, outer, 600, 400).unwrap();
+
+    let error = b
+        .document
+        .group_insert(ROOT, b.instance, &[placed], Sharing::Shared)
+        .unwrap_err();
+    match error {
+        RepartitionError::Recursion { chain } => {
+            assert_eq!(chain, vec![outer, b.definition]);
+        }
+        other => panic!("expected a recursion refusal, got {other}"),
+    }
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn an_inward_move_that_would_close_a_cycle_is_refused_and_changes_nothing() {
+    // The group feeds `relay`, `relay` feeds `bystander`. Nothing is cyclic —
+    // until `bystander` moves in, and then the group feeds itself through a node
+    // that stayed outside. Blender's own test for this is one hop deep
+    // (`node_group_make_test_selected`: no unselected node may have both an
+    // input from the selection and an output to it), and `relay` has exactly
+    // that, so this case is the one where a one-hop rule and a reachability rule
+    // agree; R1577 covers the two-hop case where they do not.
+    let mut b = boundaried();
+    let relay = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 600, 40)
+        .unwrap();
+    let bystander = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 800, 40)
+        .unwrap();
+    b.document
+        .connect(ROOT, Socket::new(b.instance, 0), Socket::new(relay, 0))
+        .unwrap();
+    b.document
+        .connect(ROOT, Socket::new(relay, 0), Socket::new(bystander, 0))
+        .unwrap();
+    let before = b.document.clone();
+
+    let error = b
+        .document
+        .group_insert(ROOT, b.instance, &[bystander], Sharing::Shared)
+        .unwrap_err();
+    match error {
+        RepartitionError::Bypass { path } => {
+            assert!(
+                path.contains(&relay),
+                "the walk should name the relay: {path:?}"
+            );
+            assert!(path.contains(&bystander), "{path:?}");
+        }
+        other => panic!("expected a bypass refusal, got {other}"),
+    }
+    assert_eq!(b.document, before);
+}
+
+#[test]
+fn a_node_moved_out_of_a_group_keeps_its_wiring_where_blender_loses_it() {
+    let mut ours = boundaried();
+    let out = ours
+        .document
+        .group_separate(ROOT, ours.instance, &[ours.add], Sharing::Shared)
+        .unwrap();
+
+    // The node is in the host tree, fed by what fed the group and feeding what
+    // the group fed. The graph still delivers 5.
+    assert_eq!(out.moved.len(), 1);
+    assert!(
+        ours.document
+            .tree(ROOT)
+            .unwrap()
+            .node(out.moved[0])
+            .is_some()
+    );
+    assert_eq!(
+        value_into(&ours.document, ROOT, Socket::new(ours.sink, 0)),
+        Some(Val::Number(5))
+    );
+    // Every port is gone, because not one of them describes a crossing now.
+    assert_eq!(out.unexposed.len(), 3);
+    let interface = ours.document.tree(ours.definition).unwrap().interface();
+    assert!(interface.is_empty());
+    assert!(ours.document.validate().is_empty());
+
+    // Blender's rule, on the same fixture: the sink is fed by a group that
+    // produces nothing, and the group keeps three sockets that reach nothing.
+    let mut theirs = boundaried();
+    blender_separate(
+        &mut theirs.document,
+        ROOT,
+        theirs.definition,
+        theirs.instance,
+        &[theirs.add],
+    );
+    assert_eq!(
+        value_into(&theirs.document, ROOT, Socket::new(theirs.sink, 0)),
+        None
+    );
+    let stranded = theirs.document.tree(theirs.definition).unwrap().interface();
+    assert_eq!(stranded.inputs().len(), 2);
+    assert_eq!(stranded.outputs().len(), 1);
+}
+
+#[test]
+fn a_node_moved_out_that_still_feeds_the_group_gains_it_an_input() {
+    // Group both adders, then separate the first: its result still has to reach
+    // the second, so it crosses the boundary the other way now.
+    let mut f = fixture();
+    let doubler = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 300, 40)
+        .unwrap();
+    f.document
+        .disconnect(
+            ROOT,
+            f.document
+                .tree(ROOT)
+                .unwrap()
+                .link_into(Socket::new(f.sink, 0))
+                .unwrap()
+                .id,
+        )
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(f.add, 0), Socket::new(doubler, 0))
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(f.add, 0), Socket::new(doubler, 1))
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(doubler, 0), Socket::new(f.sink, 0))
+        .unwrap();
+    let made = f.document.group(ROOT, &[f.add, doubler], "Both").unwrap();
+    assert_eq!(
+        value_into(&f.document, ROOT, Socket::new(f.sink, 0)),
+        Some(Val::Number(10))
+    );
+
+    let out = f
+        .document
+        .group_separate(ROOT, made.node, &[f.add], Sharing::Shared)
+        .unwrap();
+
+    // One value now enters the group where two used to, and the arithmetic is
+    // unchanged.
+    assert_eq!(out.exposed.len(), 1);
+    assert_eq!(out.exposed[0].side, InterfaceSide::Input);
+    assert_eq!(out.unexposed.len(), 2);
+    assert_eq!(
+        value_into(&f.document, ROOT, Socket::new(f.sink, 0)),
+        Some(Val::Number(10))
+    );
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn an_outward_move_that_would_close_a_cycle_is_refused_and_changes_nothing() {
+    // Inside the definition: `head -> middle -> tail -> foot`. Separating the
+    // two in the middle leaves `head` and `foot` fused into one node out in the
+    // host, and the walk between them closes.
+    let mut document = Document::new("root");
+    let head = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(4)), 0, 0)
+        .unwrap();
+    let middle = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 0)
+        .unwrap();
+    let tail = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 400, 0)
+        .unwrap();
+    let foot = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 600, 0)
+        .unwrap();
+    for (from, to) in [(head, middle), (middle, tail), (tail, foot)] {
+        document
+            .connect(ROOT, Socket::new(from, 0), Socket::new(to, 0))
+            .unwrap();
+    }
+    let made = document
+        .group(ROOT, &[head, middle, tail, foot], "Chain")
+        .unwrap();
+    let before = document.clone();
+
+    let error = document
+        .group_separate(ROOT, made.node, &[middle, tail], Sharing::Shared)
+        .unwrap_err();
+    match error {
+        RepartitionError::Bypass { path } => {
+            assert!(path.contains(&middle) && path.contains(&tail), "{path:?}");
+        }
+        other => panic!("expected a bypass refusal, got {other}"),
+    }
+    assert_eq!(document, before);
+}
+
+#[test]
+fn a_separate_through_a_shared_definition_names_what_it_cost_elsewhere() {
+    let mut b = boundaried();
+    let seven = b
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 400)
+        .unwrap();
+    let twin = b
+        .document
+        .instantiate(ROOT, b.definition, 200, 440)
+        .unwrap();
+    b.document
+        .connect(ROOT, Socket::new(seven, 0), Socket::new(twin, 0))
+        .unwrap();
+
+    let out = b
+        .document
+        .group_separate(ROOT, b.instance, &[b.add], Sharing::Shared)
+        .unwrap();
+
+    assert_eq!(out.other_instances, 1);
+    assert_eq!(out.severed.len(), 1);
+    assert_eq!(out.severed[0].tree, ROOT);
+    assert_eq!(out.severed[0].link.from, Socket::new(seven, 0));
+    assert!(b.document.validate().is_empty());
+
+    // The same move on a fork touches nobody else.
+    let mut other = boundaried();
+    let spare = other
+        .document
+        .instantiate(ROOT, other.definition, 200, 440)
+        .unwrap();
+    let forked = other
+        .document
+        .group_separate(ROOT, other.instance, &[other.add], Sharing::Fork)
+        .unwrap();
+    assert_eq!(forked.other_instances, 0);
+    assert!(forked.severed.is_empty());
+    assert_eq!(
+        other
+            .document
+            .tree(other.definition)
+            .unwrap()
+            .interface()
+            .inputs()
+            .len(),
+        2
+    );
+    assert_eq!(number(&other.document.evaluate(ROOT, spare)), Some(0));
+}
+
+#[test]
+fn an_interface_node_cannot_change_sides() {
+    let mut b = boundaried();
+    let entry = b
+        .document
+        .tree(b.definition)
+        .unwrap()
+        .interface_node(InterfaceSide::Input)
+        .unwrap()
+        .id;
+    let error = b
+        .document
+        .group_separate(ROOT, b.instance, &[entry], Sharing::Shared)
+        .unwrap_err();
+    assert_eq!(error, RepartitionError::InterfaceNodeSelected(entry));
+}
+
+#[test]
+fn a_boundary_move_needs_a_boundary() {
+    let mut b = boundaried();
+    let error = b
+        .document
+        .group_insert(ROOT, b.sink, &[b.two], Sharing::Shared)
+        .unwrap_err();
+    assert_eq!(error, RepartitionError::NotAGroup(b.sink));
+    let error = b
+        .document
+        .group_separate(ROOT, b.instance, &[], Sharing::Shared)
+        .unwrap_err();
+    assert_eq!(error, RepartitionError::Empty);
+}
+
+#[test]
+fn forking_a_definition_leaves_the_original_and_its_other_users_alone() {
+    let mut b = boundaried();
+    let twin = b
+        .document
+        .instantiate(ROOT, b.definition, 200, 440)
+        .unwrap();
+    let copy = b.document.fork_definition(ROOT, b.instance).unwrap();
+
+    assert_ne!(copy, b.definition);
+    assert_eq!(b.document.instance_count(b.definition), 1);
+    assert_eq!(b.document.instance_count(copy), 1);
+    // A name is not an identity here, so the copy keeps it. Blender must rename,
+    // because an ID's name IS its key.
+    assert_eq!(
+        b.document.tree(copy).unwrap().name,
+        b.document.tree(b.definition).unwrap().name
+    );
+    // Editing the copy leaves the original's users untouched.
+    b.document
+        .group_insert(ROOT, b.instance, &[b.two], Sharing::Shared)
+        .unwrap();
+    assert_eq!(
+        b.document
+            .tree(b.definition)
+            .unwrap()
+            .interface()
+            .inputs()
+            .len(),
+        2
+    );
+    assert_eq!(b.document.signature(ROOT, twin).unwrap().inputs.len(), 2);
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn a_dropped_link_is_named_with_the_tree_it_was_in() {
+    let mut b = boundaried();
+    let dropped = b
+        .document
+        .unexpose(b.definition, InterfaceSide::Input, 0)
+        .unwrap();
+    // One inside the definition, one at the instance out in the root.
+    let trees: Vec<TreeId> = dropped.iter().map(|d| d.tree).collect();
+    assert!(trees.contains(&ROOT));
+    assert!(trees.contains(&b.definition));
+    assert_eq!(dropped.len(), 2);
+}
+
+#[test]
+fn a_link_naming_a_missing_node_is_refused_rather_than_crashing() {
+    // A document that arrived from a file can hold one; `validate` is what
+    // reports it, and every derivation now refuses rather than indexing a map
+    // that has no such key.
+    let mut f = fixture();
+    let ghost = f
+        .document
+        .push_link(ROOT, Socket::new(NodeId(97), 0), Socket::new(f.sink, 0));
+    assert!(matches!(
+        f.document.validate().first(),
+        Some(Violation::DanglingLink { .. })
+    ));
+    assert_eq!(
+        f.document.group(ROOT, &[f.add], "Sum").unwrap_err(),
+        GroupError::Malformed { link: ghost }
+    );
+    assert_eq!(
+        f.document.extract(ROOT, &[f.add]).unwrap_err(),
+        ExtractError::Malformed { link: ghost }
+    );
 }

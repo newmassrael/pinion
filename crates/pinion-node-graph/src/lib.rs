@@ -32,6 +32,12 @@
 //!   definition plus one instance, with the interface **derived** from the
 //!   links that cross the boundary. [`Document::instantiate`] places another
 //!   instance; [`Document::ungroup`] inlines one back.
+//! * **A boundary that moves** — [`Document::group_insert`] and
+//!   [`Document::group_separate`] change which side of a group a node is on and
+//!   re-derive the interface from the partition that results, reconnecting
+//!   every value whose crossing disappeared. [`Sharing`] says whether the
+//!   definition is edited in place or forked first, and the answer names the
+//!   instances that came along.
 //! * **Fragments** — [`Document::extract`] lifts a selection out as a
 //!   serializable value carrying the definitions it depends on and the boundary
 //!   it was cut from; [`Document::insert`] puts one anywhere, re-using the
@@ -124,6 +130,8 @@ mod eval;
 mod fragment;
 mod group;
 mod model;
+mod numbering;
+mod partition;
 #[cfg(test)]
 mod tests;
 
@@ -136,9 +144,10 @@ pub use group::{
     Violation,
 };
 pub use model::{
-    ConnectError, Connected, Document, EditError, Interface, InterfaceSide, KindPort, Link, LinkId,
-    Node, NodeBody, NodeId, NodeKind, Port, ROOT, Signature, Socket, Tree, TreeId,
+    ConnectError, Connected, Document, DroppedLink, EditError, Interface, InterfaceSide, KindPort,
+    Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, ROOT, Signature, Socket, Tree, TreeId,
 };
+pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 
 /// Re-exported so a consumer can name the boundary derivation this crate's
 /// group operations are built on without adding a second dependency.

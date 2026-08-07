@@ -79,6 +79,7 @@ use crate::model::{
     Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Socket, Tree,
     TreeId, centroid,
 };
+use crate::numbering::Numbering;
 
 /// One value that used to cross a fragment's boundary.
 ///
@@ -280,6 +281,12 @@ pub enum ExtractError {
     /// A selected node materialises the tree's own interface, which is a
     /// projection of that tree and not a thing that can travel.
     InterfaceNodeSelected(NodeId),
+    /// A link names a node the tree does not hold, so there is no graph to cut.
+    /// [`Document::validate`] reports these.
+    Malformed {
+        /// The link.
+        link: crate::model::LinkId,
+    },
     /// The cut refused for a reason this crate has no arm for.
     ///
     /// `pinion_graph::group::Refusal` is `#[non_exhaustive]`; carrying the
@@ -298,6 +305,9 @@ impl fmt::Display for ExtractError {
                 "node {} is this tree's own interface and cannot be copied",
                 node.0
             ),
+            Self::Malformed { link } => {
+                write!(f, "link {} names a node this tree does not have", link.0)
+            }
             Self::Boundary(reason) => write!(f, "the selection cannot be cut: {reason}"),
         }
     }
@@ -379,28 +389,17 @@ impl<K: NodeKind> Document<K> {
         // The same 0..n mapping every `pinion-graph` algorithm states as its
         // contract. A CUT rather than a `derive`: severing the crossings cannot
         // create a cycle, so there is nothing here to refuse.
-        let node_of: Vec<NodeId> = host.nodes().map(|n| n.id).collect();
-        let vertex_of: BTreeMap<NodeId, usize> =
-            node_of.iter().enumerate().map(|(i, &n)| (n, i)).collect();
-        let links: Vec<boundary::Link> = host
-            .links()
-            .iter()
-            .map(|l| {
-                boundary::Link::new(
-                    boundary::Socket::new(vertex_of[&l.from.node], l.from.port),
-                    boundary::Socket::new(vertex_of[&l.to.node], l.to.port),
-                )
-            })
-            .collect();
-        let selected: Vec<usize> = chosen.iter().map(|n| vertex_of[n]).collect();
-        let cut = boundary::Boundary::cut(node_of.len(), &links, &selected).map_err(|refusal| {
-            match refusal {
+        let numbering = Numbering::of(host).map_err(|link| ExtractError::Malformed { link })?;
+        let selected = numbering
+            .vertices(&chosen)
+            .ok_or(ExtractError::NoSuchTree(tree))?;
+        let cut = boundary::Boundary::cut(numbering.order(), numbering.links(), &selected)
+            .map_err(|refusal| match refusal {
                 boundary::Refusal::Empty => ExtractError::Empty,
                 other => ExtractError::Boundary(other.to_string()),
-            }
-        })?;
+            })?;
 
-        let socket_of = |s: boundary::Socket| Socket::new(node_of[s.vertex], s.port);
+        let socket_of = |s: boundary::Socket| numbering.socket(s);
         let severed = |faces: &[boundary::InterfaceSocket]| -> Vec<Severed> {
             faces
                 .iter()
