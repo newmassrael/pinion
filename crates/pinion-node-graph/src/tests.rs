@@ -5147,7 +5147,10 @@ fn the_value_arrives_converted() {
 fn every_accepted_wire_can_carry_a_value() {
     // The property that comes of legality and the conversion being ONE
     // declaration: over the whole relation, `connect` accepts a pair exactly
-    // when a value survives the trip. Blender cannot state this — a shader
+    // when a value survives the trip. Stated over THIS lattice, whose
+    // conversions are total — a taxonomy whose conversion may decline a
+    // particular value is a different case, and has its own test below.
+    // Blender cannot state either — a shader
     // tree's `validate_link` returns `true` for pairs `DataTypeConversions`
     // has no entry for at all, so acceptance there does not entail carriage.
     for (from, to) in LATTICE {
@@ -5458,4 +5461,119 @@ fn a_cut_that_a_broadcast_carried_can_be_re_attached() {
         vec![Some(LVal::Vector([4, 4, 4]))],
         "the pasted node is fed the same broadcast the original was"
     );
+}
+
+/// A taxonomy whose conversion **declines** a particular value.
+///
+/// The [`Conversion::Converted`] arm returns an `Option`, so "no value of this
+/// type may go there" and "this particular value cannot be carried" are
+/// different facts. Without a taxonomy that exercises the second, the arm's
+/// `None` leg would be a declared path nothing walks — and the tree already has
+/// a debt note about exactly that shape of unexercised builder.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum PTy {
+    Small,
+    Big,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum PVal {
+    Small(i8),
+    Big(i64),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum POp {
+    /// A big number that may or may not fit in a small port.
+    Source(i64),
+    /// Takes a small number.
+    Narrow,
+}
+
+impl NodeKind for POp {
+    type Type = PTy;
+    type Value = PVal;
+
+    fn name(&self) -> String {
+        match self {
+            Self::Source(_) => "Source",
+            Self::Narrow => "Narrow",
+        }
+        .to_owned()
+    }
+
+    fn inputs(&self) -> Vec<Port<PTy, PVal>> {
+        match self {
+            Self::Source(_) => Vec::new(),
+            Self::Narrow => vec![Port::new("In", PTy::Small)],
+        }
+    }
+
+    fn outputs(&self) -> Vec<Port<PTy, PVal>> {
+        match self {
+            Self::Source(_) => vec![Port::new("Out", PTy::Big)],
+            Self::Narrow => vec![Port::new("Out", PTy::Small)],
+        }
+    }
+
+    fn evaluate(&self, inputs: &[Option<PVal>]) -> Vec<Option<PVal>> {
+        match self {
+            Self::Source(n) => vec![Some(PVal::Big(*n))],
+            Self::Narrow => vec![inputs.first().cloned().flatten()],
+        }
+    }
+
+    fn conversion(from: &PTy, to: &PTy) -> Conversion<PVal> {
+        match (from, to) {
+            (PTy::Small, PTy::Small) | (PTy::Big, PTy::Big) => Conversion::Direct,
+            // Declared for the pair, and PARTIAL on the value.
+            (PTy::Big, PTy::Small) => Conversion::Converted(|value| match value {
+                PVal::Big(n) => i8::try_from(n).ok().map(PVal::Small),
+                PVal::Small(_) => None,
+            }),
+            (PTy::Small, PTy::Big) => Conversion::Converted(|value| match value {
+                PVal::Small(n) => Some(PVal::Big(i64::from(n))),
+                PVal::Big(_) => None,
+            }),
+        }
+    }
+}
+
+#[test]
+fn a_declared_conversion_may_still_decline_a_value() {
+    let wire = |n: i64| {
+        let mut document = Document::new("root");
+        let source = document
+            .add_node(ROOT, NodeBody::Kind(POp::Source(n)), 0, 0)
+            .unwrap();
+        let narrow = document
+            .add_node(ROOT, NodeBody::Kind(POp::Narrow), 200, 0)
+            .unwrap();
+        let linked = document
+            .connect(ROOT, Socket::new(source, 0), Socket::new(narrow, 0))
+            .is_ok();
+        let arrived = document.evaluator().input(ROOT, Socket::new(narrow, 0));
+        (linked, arrived)
+    };
+
+    // The wire is legal in both cases — legality is a property of the TYPES.
+    assert_eq!(wire(7), (true, Some(PVal::Small(7))));
+    assert_eq!(
+        wire(9_000),
+        (true, None),
+        "the pair converts, this value does not: a different fact from the \
+         wire being illegal, and the evaluator already has a word for it"
+    );
+    // And the document is well formed either way: `validate` asks about types.
+    let mut document = Document::new("root");
+    let source = document
+        .add_node(ROOT, NodeBody::Kind(POp::Source(9_000)), 0, 0)
+        .unwrap();
+    let narrow = document
+        .add_node(ROOT, NodeBody::Kind(POp::Narrow), 200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(source, 0), Socket::new(narrow, 0))
+        .unwrap();
+    assert!(document.validate().is_empty());
 }
