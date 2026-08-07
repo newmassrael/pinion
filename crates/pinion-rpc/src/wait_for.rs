@@ -13,7 +13,6 @@
 use pinion_core::Scene;
 use pinion_core::external::IntrospectValue;
 
-use crate::path::PathError;
 use crate::query::{QueryError, query};
 
 /// Outcome of [`wait_for`].
@@ -33,18 +32,16 @@ pub struct WaitOutcome {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WaitForError {
-    /// Window-prefix parsing failed.
-    Path(PathError),
-    /// Underlying `scene/query` failed.
+    /// Underlying `scene/query` failed — including every way the PATH can
+    /// be wrong, because [`wait_for`] reaches its path through `query`
+    /// rather than resolving one itself.
+    ///
+    /// R1585 removed a `Path(PathError)` arm beside this one: nothing could
+    /// produce it, and its presence was why the wrapper's own name reached
+    /// the wire in place of the cause.
     Query(QueryError),
     /// `max_attempts = 0` is rejected — the caller likely meant 1.
     ZeroAttempts,
-}
-
-impl From<PathError> for WaitForError {
-    fn from(err: PathError) -> Self {
-        WaitForError::Path(err)
-    }
 }
 
 impl From<QueryError> for WaitForError {

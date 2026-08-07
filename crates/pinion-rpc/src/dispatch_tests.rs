@@ -8919,3 +8919,151 @@ fn census_kind_of(node: &SnapshotNode) -> Option<SceneNodeKind> {
         SnapshotNode::Unknown => None,
     }
 }
+
+// ---------------------------------------------- R1585, the window spellings
+
+/// R1585 §5.18 §5.7 §2 #7 — the `window` column of `rpc/methods` is PROVEN,
+/// not parsed.
+///
+/// A source census cannot answer this. Measured while building it: a call
+/// graph keyed by bare function name merges four different `fn parse` —
+/// `displays.rs`, `draw_profile.rs` (twice) and `font.rs` — and one of them
+/// reaches the window-prefix parser, so `font/parse` and `scene/displays`
+/// both come out as path-addressed and neither is. That is the recorded
+/// lesson (a census is a parser, not a regex) meeting a case where even a
+/// parser would need import resolution to help.
+///
+/// So the fact is established by BEHAVIOUR: `/window[]/x` is a syntactically
+/// malformed window prefix, and a method that routes its path argument
+/// through [`crate::path`] answers with the published `EmptyWindowId` word
+/// (`rpc/errors`). One that does not, cannot — it never looks.
+#[test]
+fn r1585_the_window_column_is_what_the_methods_actually_do() {
+    // The prefix is well-formed as a PATH and malformed as a WINDOW, so only
+    // a method that reads it as a window can object to it.
+    const PROBE: &str = "/window[]/anything";
+    let declared: Vec<(&str, bool)> = crate::methods::RPC_METHODS
+        .iter()
+        .map(|(name, _, window)| (*name, matches!(window, crate::methods::MethodWindow::Path)))
+        .collect();
+
+    let mut observed: Vec<(&str, bool)> = Vec::new();
+    for (name, _) in &declared {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": name,
+            // Every spelling a path argument has in this surface, so the
+            // probe reaches the method whichever one it reads.
+            // A SUPERSET of the params this surface takes, so a method
+            // cannot fall out of the probe by rejecting an unrelated
+            // argument before it ever looks at its path. Each key here was
+            // added because a method NAMED it in its refusal.
+            "params": {
+                "path": PROBE, "tag": PROBE, "target": PROBE,
+                "args": null, "value": "probe",
+                // `scene/simulate` carries its path INSIDE a step, so the
+                // probe has to be a well-formed step to reach it at all.
+                "steps": [{"kind": "query", "path": PROBE, "value": "probe"}],
+                "max_attempts": 1, "preview_id": 1, "x": 0, "y": 0,
+            },
+            "id": 1,
+        })
+        .to_string();
+        let mut scene = counted_scene(1);
+        let reply = dispatch_t(&mut scene, &req);
+        // The published word (`rpc/errors`) in the `error.data` SLOT, not
+        // anywhere in the body: `rpc/errors` answers with the whole error
+        // vocabulary, so a substring match credits it with parsing a window
+        // prefix it never sees.
+        let saw_window_error = reply.is_some_and(|body| {
+            serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"]["data"].as_str().map(str::to_owned))
+                .is_some_and(|data| data == "EmptyWindowId")
+        });
+        observed.push((name, saw_window_error));
+    }
+
+    // Non-vacuity: the probe must actually reach something, or an all-false
+    // observation would agree with an all-`Scope` catalog for the wrong
+    // reason.
+    assert!(
+        observed.iter().any(|(_, hit)| *hit),
+        "the probe reached no method at all — it is testing nothing"
+    );
+    let mismatched: Vec<&str> = declared
+        .iter()
+        .zip(&observed)
+        .filter(|((_, want), (_, got))| want != got)
+        .map(|((name, _), _)| *name)
+        .collect();
+    assert!(
+        mismatched.is_empty(),
+        "rpc/methods' window column disagrees with what these methods do \
+         with a malformed window prefix (declared Path but ignores it, or \
+         declared Scope but parses it): {mismatched:?}"
+    );
+}
+
+/// R1585 — the exact call that produced a false debt is now self-correcting.
+#[test]
+fn r1585_a_window_prefix_on_a_method_name_is_corrected() {
+    let mut scene = counted_scene(1);
+    let req = r#"{"jsonrpc":"2.0","method":"window[main]/scene/access","id":1}"#;
+    let body = dispatch_t(&mut scene, req).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(resp["error"]["code"], -32601, "it is still not a method");
+    let data = resp["error"]["data"].as_str().unwrap();
+    assert!(
+        data.contains("\"scene/access\"") && data.contains("params.window"),
+        "the refusal must name the method meant AND the spelling that works: {data}"
+    );
+    assert!(
+        data.contains("\"main\""),
+        "and the window the caller named: {data}"
+    );
+
+    // A prefix over something that is NOT a method gets the plain refusal —
+    // the correction is derived from the catalog, never guessed.
+    let req = r#"{"jsonrpc":"2.0","method":"window[main]/scene/nonesuch","id":2}"#;
+    let body = dispatch_t(&mut scene, req).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        resp["error"]["data"], "window[main]/scene/nonesuch",
+        "no correction is invented for a name that is not a method"
+    );
+
+    // And an ordinary unknown method is untouched.
+    let req = r#"{"jsonrpc":"2.0","method":"scene/nope","id":3}"#;
+    let body = dispatch_t(&mut scene, req).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(resp["error"]["data"], "scene/nope");
+}
+
+/// R1585 — `scene/waitFor` refuses with the CAUSE, the same published word
+/// `scene/query` gives the same failure, rather than with its own wrapper.
+#[test]
+fn r1585_wait_for_refuses_with_the_cause_not_the_wrapper() {
+    let mut scene = counted_scene(1);
+    let probe = "/window[]/anything";
+    let mut reason = |method: &str| -> String {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "method": method,
+            "params": {"path": probe, "target": "x", "max_attempts": 1},
+            "id": 1,
+        })
+        .to_string();
+        let body = dispatch_t(&mut scene, &req).unwrap();
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        resp["error"]["data"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(reason("scene/query"), "EmptyWindowId");
+    assert_eq!(
+        reason("scene/waitFor"),
+        "EmptyWindowId",
+        "one failure, one published word, whichever method meets it"
+    );
+}

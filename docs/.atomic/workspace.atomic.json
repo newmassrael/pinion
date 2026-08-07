@@ -31746,6 +31746,62 @@
         "Execution semantics — control flow, side effects, iteration, time — stay inexpressible in evaluate(inputs) -> outputs, and no census against Blender can find that because Blender is pure dataflow too; UE Blueprint is the only reference and its source is account-gated"
       ]
     },
+    "R1585": {
+      "decision_summary": "R1585 §5.18 §5.7 §2 #7 — A METHOD SAYS HOW A WINDOW IS NAMED TO IT. Two spellings name a window to this dispatcher and they mean different things: params.window is the dispatch SCOPE (whose state answers, type-checked and gated against the live window set before routing) and /window[id]/ is a prefix on a scene PATH (which subtree it runs through). Which method takes which was published nowhere, and the cost is on the record rather than hypothetical: R1581 tried window[main]/scene/access, met a bare -32601 Method not found, and registered a debt saying scene/access could not be asked about a window — it could, and R1583 measured it and withdrew the debt a day later. This round closes the gap from both ends. rpc/methods now carries a per-method window class beside occ, plus a WINDOW_DOC legend on the wire for the same reason OCC_DOC is there; and the unknown-method arm READS that catalog, so the exact call that produced the false debt is now answered with the method meant, the window named, and the spelling that works. The correction is derived, so a method added tomorrow is corrected with no edit here and a name that is not a method after stripping gets no invented advice.",
+      "changes_bullets": [
+        "MethodWindow (scope | path) as a third column of RPC_METHODS, published per entry by rpc/methods, with WINDOW_DOC as its legend — a closed two-word vocabulary an agent can match on rather than prose it must read",
+        "dispatch_parsed's unknown-method arm calls unknown_method_error, which strips a window prefix off the method NAME and, when the remainder is in the catalog, names it and the params.window spelling. Derived from RPC_METHODS, never guessed",
+        "wait_for_error_to_rpc carries the CAUSE instead of the wrapper: wait_for reaches its path through query, so a malformed prefix arrived as Query(Path(EmptyWindowId)) and went out as the bare word \"Query\" — the transport's classification published in place of the fact observed, the class R1565 named one method over. The same failure now yields the same published word through scene/query and scene/waitFor",
+        "WaitForError::Path removed with its From impl: nothing could produce it, and its presence was why the wrapper's own name reached the wire",
+        "wire_census gains MethodWindow and the two new fields, so the R1539 source-parse gate keeps describing the response truly — it caught this shape change itself"
+      ],
+      "verification_bullets": [
+        "pinion-rpc 1148 unit tests (3 new for R1585) + 4 integration, clippy -D pedantic clean, cargo doc clean; pinion-shell / pinion-tui / pinion-cli / pinion-rpc-transport green. The blast radius is 210 packages, over the R1582 cap, so the tool reported the command and CI covers the rest",
+        "tools/demos/r1585_a_method_says_how_a_window_is_named.py — 7 phases, 30 assertions, PASS in 2.4s over the live wire",
+        "THE COLUMN IS PROVEN, NOT PARSED. r1585_the_window_column_is_what_the_methods_actually_do probes every catalogued method with /window[]/anything — a well-formed PATH and a malformed WINDOW — and asserts the published class equals whether the method answers with the published EmptyWindowId word. Non-vacuity is asserted: a probe that reached nothing would agree with an all-scope catalog for the wrong reason",
+        "A SOURCE CENSUS CANNOT ANSWER THIS, measured rather than assumed: a call graph keyed by bare function name merges four different fn parse (displays.rs, draw_profile.rs twice, font.rs) and credits font/parse and scene/displays with reading a window prefix neither sees. Qualifying the call to path::resolve removed one false positive and not those two",
+        "The probe's first draft under-reported by SEVEN methods, each because it rejected an unrelated argument before ever looking at its path — and each named the argument in its refusal, so the probe was completed by reading what it was told. scene/simulate carries its path inside a step; scene/waitFor could not be reached at all until the wrapper defect above was fixed",
+        "A substring match on the reply body reported rpc/errors as path-addressed — it answers with the whole error vocabulary, EmptyWindowId included. Tightened to the error.data SLOT (R1560's boundary-less census trap, met head on)",
+        "7 counterfactuals, all caught, each reverted from a hash-verified copy in finally with build failures raised as errors rather than counted as catches (R1581)"
+      ],
+      "impact_refs": [
+        "5.18",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The window column says whether a method's PATH takes a prefix; it does not say whether a method's ANSWER varies by scope, because that is applied by the embedder (pinion-shell / pinion-tui) before dispatch and cannot be observed from inside pinion-rpc. WINDOW_DOC states the universal instead of implying a per-method fact the surface has not established",
+        "rpc/methods still publishes no per-method param schema, so an agent learns a method exists and how a window is named to it, and not how to call it. R1539's withheld method-to-type binding is the same gap from the other side",
+        "Of the two window spellings, only the path one is now discoverable per method; a client that wants to know which methods CHANGE their answer under a scope must still try it"
+      ],
+      "publishable_decision_summary": "R1585 §5.18 §5.7 §2 #7 — A METHOD SAYS HOW A WINDOW IS NAMED TO IT. Two spellings name a window to this dispatcher and they mean different things: params.window is the dispatch SCOPE (whose state answers, type-checked and gated against the live window set before routing) and /window[id]/ is a prefix on a scene PATH (which subtree it runs through). Which method takes which was published nowhere, and the cost is on the record rather than hypothetical: R1581 tried window[main]/scene/access, met a bare -32601 Method not found, and registered a debt saying scene/access could not be asked about a window — it could, and R1583 measured it and withdrew the debt a day later. This round closes the gap from both ends. rpc/methods now carries a per-method window class beside occ, plus a WINDOW_DOC legend on the wire for the same reason OCC_DOC is there; and the unknown-method arm READS that catalog, so the exact call that produced the false debt is now answered with the method meant, the window named, and the spelling that works. The correction is derived, so a method added tomorrow is corrected with no edit here and a name that is not a method after stripping gets no invented advice.",
+      "publishable_changes_bullets": [
+        "MethodWindow (scope | path) as a third column of RPC_METHODS, published per entry by rpc/methods, with WINDOW_DOC as its legend — a closed two-word vocabulary an agent can match on rather than prose it must read",
+        "dispatch_parsed's unknown-method arm calls unknown_method_error, which strips a window prefix off the method NAME and, when the remainder is in the catalog, names it and the params.window spelling. Derived from RPC_METHODS, never guessed",
+        "wait_for_error_to_rpc carries the CAUSE instead of the wrapper: wait_for reaches its path through query, so a malformed prefix arrived as Query(Path(EmptyWindowId)) and went out as the bare word \"Query\" — the transport's classification published in place of the fact observed, the class R1565 named one method over. The same failure now yields the same published word through scene/query and scene/waitFor",
+        "WaitForError::Path removed with its From impl: nothing could produce it, and its presence was why the wrapper's own name reached the wire",
+        "wire_census gains MethodWindow and the two new fields, so the R1539 source-parse gate keeps describing the response truly — it caught this shape change itself"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-rpc 1148 unit tests (3 new for R1585) + 4 integration, clippy -D pedantic clean, cargo doc clean; pinion-shell / pinion-tui / pinion-cli / pinion-rpc-transport green. The blast radius is 210 packages, over the R1582 cap, so the tool reported the command and CI covers the rest",
+        "tools/demos/r1585_a_method_says_how_a_window_is_named.py — 7 phases, 30 assertions, PASS in 2.4s over the live wire",
+        "THE COLUMN IS PROVEN, NOT PARSED. r1585_the_window_column_is_what_the_methods_actually_do probes every catalogued method with /window[]/anything — a well-formed PATH and a malformed WINDOW — and asserts the published class equals whether the method answers with the published EmptyWindowId word. Non-vacuity is asserted: a probe that reached nothing would agree with an all-scope catalog for the wrong reason",
+        "A SOURCE CENSUS CANNOT ANSWER THIS, measured rather than assumed: a call graph keyed by bare function name merges four different fn parse (displays.rs, draw_profile.rs twice, font.rs) and credits font/parse and scene/displays with reading a window prefix neither sees. Qualifying the call to path::resolve removed one false positive and not those two",
+        "The probe's first draft under-reported by SEVEN methods, each because it rejected an unrelated argument before ever looking at its path — and each named the argument in its refusal, so the probe was completed by reading what it was told. scene/simulate carries its path inside a step; scene/waitFor could not be reached at all until the wrapper defect above was fixed",
+        "A substring match on the reply body reported rpc/errors as path-addressed — it answers with the whole error vocabulary, EmptyWindowId included. Tightened to the error.data SLOT (R1560's boundary-less census trap, met head on)",
+        "7 counterfactuals, all caught, each reverted from a hash-verified copy in finally with build failures raised as errors rather than counted as catches (R1581)"
+      ],
+      "publishable_impact_refs": [
+        "5.18",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The window column says whether a method's PATH takes a prefix; it does not say whether a method's ANSWER varies by scope, because that is applied by the embedder (pinion-shell / pinion-tui) before dispatch and cannot be observed from inside pinion-rpc. WINDOW_DOC states the universal instead of implying a per-method fact the surface has not established",
+        "rpc/methods still publishes no per-method param schema, so an agent learns a method exists and how a window is named to it, and not how to call it. R1539's withheld method-to-type binding is the same gap from the other side",
+        "Of the two window spellings, only the path one is now discoverable per method; a client that wants to know which methods CHANGE their answer under a scope must still try it"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

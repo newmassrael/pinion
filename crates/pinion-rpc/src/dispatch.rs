@@ -3078,8 +3078,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     HandlerKind::Read,
                 ),
                 _ => (
-                    Err(RpcError::new(-32601, "Method not found")
-                        .with_data_string(request.method.clone())),
+                    Err(unknown_method_error(&request.method)),
                     HandlerKind::Read,
                 ),
             };
@@ -6123,13 +6122,57 @@ fn wait_outcome_to_json(outcome: &WaitOutcome) -> Value {
     Value::Object(obj)
 }
 
-fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
-    let variant = match err {
-        WaitForError::Path(inner) => return RpcError::invalid_params(inner.wire_tag()),
-        WaitForError::Query(_) => "Query",
-        WaitForError::ZeroAttempts => "ZeroAttempts",
+/// R1585 §5.18 §5.7 — `-32601`, and when the name is a *known method wearing a
+/// window prefix*, the correction.
+///
+/// A window is named to this dispatcher two ways — `params.window` for the
+/// scope, `/window[<id>]/` for a path — and **neither of them goes on the
+/// method name**. That was not written down anywhere a caller could read, so a
+/// caller tried `window[main]/scene/access`, met a bare "Method not found",
+/// and concluded the capability was absent; a debt was registered against a
+/// method that had taken a window scope all along, and stood for a day before
+/// it was measured.
+///
+/// The refusal now names what the caller meant and how to spell it. The
+/// correction is **derived** — the stripped remainder is looked up in
+/// [`crate::methods::RPC_METHODS`], so a method added tomorrow is corrected
+/// with no edit here, and a name that is not a method after stripping gets the
+/// plain refusal it deserves rather than a guess.
+fn unknown_method_error(method: &str) -> RpcError {
+    let plain = || RpcError::new(-32601, "Method not found").with_data_string(method.to_owned());
+    let prefixed = format!("/{method}");
+    let Ok((Some(window), tail)) = crate::path::split_window_prefix(&prefixed) else {
+        return plain();
     };
-    RpcError::invalid_params(variant)
+    let real = tail.trim_start_matches('/');
+    if !crate::methods::RPC_METHODS
+        .iter()
+        .any(|(name, ..)| *name == real)
+    {
+        return plain();
+    }
+    RpcError::new(-32601, "Method not found").with_data_string(format!(
+        "{method} — a window prefix addresses a PATH, never a method name. \
+         Call {real:?} and name the window {window:?} in params.window \
+         (the dispatch scope); see rpc/methods' window_doc"
+    ))
+}
+
+fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
+    match err {
+        // R1585 — the CAUSE, not the wrapper. `wait_for` reaches its path
+        // through `query`, so a malformed window prefix arrived here as
+        // `Query(Path(EmptyWindowId))` and went out as the bare word
+        // "Query": the transport's classification published in place of the
+        // fact observed, which is the class R1565 named one method over. The
+        // same failure now carries the same published word whether it is met
+        // through `scene/query` or through `scene/waitFor`.
+        WaitForError::Query(inner) => {
+            let fault = query_error_reason(&inner);
+            RpcError::invalid_params(fault.reason)
+        }
+        WaitForError::ZeroAttempts => RpcError::invalid_params("ZeroAttempts"),
+    }
 }
 
 fn handle_scene_screenshot(

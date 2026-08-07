@@ -1099,6 +1099,7 @@ pub const WIRE_TYPES: &[WireType] = &[
             fields: &[
                 WireField::new("name", WireTy::String, None),
                 WireField::new("occ", WireTy::String, Some("MethodOcc")),
+                WireField::new("window", WireTy::String, Some("MethodWindow")),
             ],
         },
     },
@@ -1106,6 +1107,12 @@ pub const WIRE_TYPES: &[WireType] = &[
         name: "MethodOcc",
         shape: WireShape::Enum {
             values: &["read", "mutate"],
+        },
+    },
+    WireType {
+        name: "MethodWindow",
+        shape: WireShape::Enum {
+            values: &["scope", "path"],
         },
     },
     WireType {
@@ -1317,6 +1324,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("methods", WireTy::Array, Some("MethodEntry")),
                 WireField::new("count", WireTy::Integer, None),
                 WireField::new("occ_doc", WireTy::String, None),
+                WireField::new("window_doc", WireTy::String, None),
             ],
         },
     },
