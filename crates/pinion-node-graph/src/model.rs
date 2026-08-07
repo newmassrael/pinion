@@ -106,6 +106,40 @@ pub struct Port<T, V> {
     /// The value used when the port is unlinked. `None` on outputs, and on
     /// inputs that have no meaningful resting value.
     pub default: Option<V>,
+    /// Whether a value may pass through this port while its node is **bypassed**
+    /// (R1587). `true` for an ordinary port.
+    ///
+    /// One declaration, read from both sides, because a pass-through has two
+    /// ends: an INPUT that declares `false` is not a source for any output, and
+    /// an OUTPUT that declares `false` receives nothing and is reported among
+    /// [`Passthrough::dropped_outputs`](crate::Passthrough::dropped_outputs).
+    ///
+    /// Needed for exactly two shapes, and both were found by *measuring* how
+    /// Blender uses its own equivalents rather than by guessing:
+    ///
+    /// * A **control** input that happens to share the data type it selects
+    ///   between — `Switch(Switch: Bool, False: Bool, True: Bool) -> Bool`.
+    ///   The identity rule would pass the *switch* through; declaring the
+    ///   control port `no_passthrough` leaves the first data input, which is
+    ///   what Blender's `node_geo_switch` hook returns.
+    /// * An output whose value is only meaningful while the node computes — the
+    ///   shape `node_geo_menu_switch` reaches by answering `nullptr` for every
+    ///   output after its first.
+    ///
+    /// Blender spells the same declaration `no_mute_links`, and **nothing in
+    /// its tree sets it**: the twelve node types that need to redirect a
+    /// pass-through all register a per-node C callback
+    /// (`internally_linked_input`) instead, because Blender's *default* is a
+    /// static socket-type priority table that cannot produce the identity. This
+    /// crate's default is the identity, so a per-node hook has nothing left to
+    /// express and a per-port declaration is the whole extension point.
+    #[serde(default = "yes")]
+    pub passthrough: bool,
+}
+
+/// `serde` needs a function to default a `bool` to `true`.
+pub(crate) const fn yes() -> bool {
+    true
 }
 
 impl<T, V> Port<T, V> {
@@ -115,6 +149,7 @@ impl<T, V> Port<T, V> {
             name: name.into(),
             ty,
             default: None,
+            passthrough: true,
         }
     }
 
@@ -122,6 +157,16 @@ impl<T, V> Port<T, V> {
     #[must_use]
     pub fn with_default(mut self, value: V) -> Self {
         self.default = Some(value);
+        self
+    }
+
+    /// The same port, kept off the bypass path — see [`Self::passthrough`].
+    ///
+    /// On an input: never a source for a bypassed node's outputs. On an output:
+    /// carries nothing while the node is bypassed.
+    #[must_use]
+    pub fn no_passthrough(mut self) -> Self {
+        self.passthrough = false;
         self
     }
 }

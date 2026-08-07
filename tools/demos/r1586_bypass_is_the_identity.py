@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""R1586 §5.38 §5.52 §2 #7 — a node says how it takes part, and only one of
-those facts is the graph's meaning.
+"""R1586 + R1587 §5.38 §5.52 §2 #7 — a node says how it takes part, and only
+one of those facts is the graph's meaning.
+
+Phase (H2) is R1587: a PORT declares whether a value passes through it, which is
+the one thing the identity rule cannot say on its own. One demo because it is
+one subject.
 
 Taking a stage OUT of a pipeline is half of what an editor does. A node can be
 **bypassed** — it stops computing and the values at its inputs pass through it
@@ -41,6 +45,14 @@ What this script checks, and why each check discriminates:
   `NODE_MUTED` in one `flag` integer, so nothing in its model says which bits
   its evaluator may read. Here every appearance toggle is driven over the wire
   and the evaluated value is asserted unchanged.
+* **R1587: the extension point is a PORT declaration, not a per-node hook.**
+  Censused at `8cf50599`, eleven Blender node types register
+  `internally_linked_input` and their callbacks compute exactly three things —
+  the identity by name (7), the identity by index (1), and "skip the leading
+  control input" (3) — every one of which this crate's default already produces.
+  What is left over is exclusion, which Blender spells `no_mute_links` and
+  **sets on no node type in its tree**. So twelve C callbacks there reduce to
+  one declaration here.
 * **Where a bypass and a dissolve CANNOT agree, the difference is named.** A
   bypass passes an unwired port's declared default on; a dissolve has no link to
   redirect and removes the downstream one. The two are driven on the same node
@@ -319,6 +331,63 @@ def body() -> None:
             SEEDED,
             "H: which is what makes the assertions above discriminating",
         )
+
+        # ── (H2) a PORT says whether a value passes through it (R1587) ──────
+        # The one shape the identity rule gets wrong on its own: a control input
+        # that shares the data type it controls. Blender reaches the same answer
+        # with a per-node C callback (`node_geo_switch`); here it is a
+        # declaration on the port, which is the extension point ELEVEN of
+        # Blender's callbacks turn out not to need, because our default is the
+        # identity rather than a static socket-type priority table.
+        assert_eq(inv(tf, "reset", ""), "reset", "H2: back to the seed")
+        assert_eq(inv(tf, "add", "cap"), "6", "H2: a Cap node")
+        assert_eq(
+            inv(tf, "node_ports", "6"),
+            "in:Ceiling:amount(off),Amount:amount|out:Amount:amount,Clipped:amount(off)",
+            "H2: the DECLARATION is published beside the ports — Blender's own "
+            "no_mute_links is private to the socket declaration and is set by "
+            "no node type in its tree",
+        )
+        cap = through(tf, 6)
+        assert_eq(
+            cap["routes"],
+            "0<-1",
+            "H2: the Ceiling is off the path, so the VALUE passes — the bare "
+            "identity would have passed the ceiling, since both are amounts",
+        )
+        assert_eq(
+            cap["dropped"],
+            "1",
+            "H2: and Clipped carries nothing while the node is not computing, "
+            "which is `node_geo_menu_switch`'s nullptr arm as a declaration",
+        )
+        assert_eq(cap["unreached"], "0", "H2: the Ceiling reaches no output")
+        assert_eq(cap["identity"], "false", "H2: it is not the plain identity")
+
+        # And it is the same derivation the structure uses, driven end to end.
+        assert_eq(inv(tf, "connect", "2.0>6.1"), "linked", "H2: level feeds the cap")
+        assert_eq(
+            inv(tf, "connect", "6.0>3.2"),
+            "linked, displaced 2",
+            "H2: and the cap the mix, displacing the level's own wire — an "
+            "input takes at most one link and the replacement is REPORTED",
+        )
+        assert_eq(inv(tf, "node_value", "6"), "25|0", "H2: 25 under a ceiling of 100")
+        assert_eq(inv(tf, "bypass", "6"), "6=true", "H2: bypass it")
+        assert_eq(
+            inv(tf, "node_value", "6"),
+            "25|null",
+            "H2: the amount passes and Clipped is empty, exactly as declared",
+        )
+        assert_eq(inv(tf, "bypass", "6"), "6=false", "H2: restore")
+        rewired = fields(inv(tf, "dissolve", "6"))
+        assert_eq(
+            rewired["bridged"],
+            "2.0->3.2",
+            "H2: dissolving it bridges the SAME pair the bypass routed — one "
+            "derivation, so the declaration reaches the structure too",
+        )
+        assert_eq(q(tf, "valid"), "ok", "H2: and the document is still sound")
 
         # ── (I) refusals name what was not found ────────────────────────────
         refused(tf, "bypass", "99")

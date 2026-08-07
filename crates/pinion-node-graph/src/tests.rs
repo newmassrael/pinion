@@ -30,6 +30,9 @@ enum Op {
     /// Text in, number out — the one kind whose output NO input can feed, which
     /// is what makes a dropped pass-through reachable on a node that has inputs.
     Measure,
+    /// A limit and a value, both numbers — the shape whose control input shares
+    /// the data type, so the bare identity rule would pass the LIMIT through.
+    Gate,
     /// Two numbers in, two numbers out, exchanged. The one shape where routing
     /// by POSITION and routing by "the lowest input of the right type" give
     /// different answers, so it is what makes the identity rule falsifiable.
@@ -64,6 +67,7 @@ impl NodeKind for Op {
             Self::Split => "Split",
             Self::Shout => "Shout",
             Self::Measure => "Measure",
+            Self::Gate => "Gate",
             Self::Swap => "Swap",
             Self::Sink => "Sink",
         }
@@ -79,6 +83,10 @@ impl NodeKind for Op {
             ],
             Self::Split => vec![Port::new("Value", Ty::Number)],
             Self::Shout | Self::Measure => vec![Port::new("Phrase", Ty::Text)],
+            Self::Gate => vec![
+                Port::new("Limit", Ty::Number).no_passthrough(),
+                Port::new("Value", Ty::Number),
+            ],
             Self::Swap => vec![
                 Port::new("Left", Ty::Number).with_default(Val::Number(-1)),
                 Port::new("Right", Ty::Number).with_default(Val::Number(-2)),
@@ -89,7 +97,9 @@ impl NodeKind for Op {
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Num(_) | Self::Add | Self::Measure => vec![Port::new("Out", Ty::Number)],
+            Self::Num(_) | Self::Add | Self::Measure | Self::Gate => {
+                vec![Port::new("Out", Ty::Number)]
+            }
             Self::Word(_) | Self::Shout => vec![Port::new("Out", Ty::Text)],
             Self::Split => vec![Port::new("Half", Ty::Number), Port::new("Rest", Ty::Number)],
             Self::Swap => vec![
@@ -121,6 +131,7 @@ impl NodeKind for Op {
                 Val::Text(t) => Val::Number(i64::try_from(t.len()).unwrap_or(i64::MAX)),
                 other @ Val::Number(_) => other.clone(),
             })],
+            Self::Gate => vec![number(0).zip(number(1)).map(|(l, v)| Val::Number(v.min(l)))],
             Self::Swap => vec![number(1).map(Val::Number), number(0).map(Val::Number)],
             Self::Sink => Vec::new(),
         }
@@ -3167,4 +3178,321 @@ fn dissolving_an_interface_node_severs_and_says_so() {
         Some(Val::Number(0)),
         "and the graph degrades to the ports' declared defaults"
     );
+}
+
+// ------------------------------------------------------------------- R1587
+// A port says whether a value passes through it.
+
+/// A Blender node type that registers `internally_linked_input`, reduced to the
+/// shape its callback computes.
+///
+/// Censused from `~/blender-ref` at `8cf50599`:
+/// `grep -rln "ntype.internally_linked_input = " source/blender/` answers
+/// **eleven** node types, and between them their callbacks compute exactly
+/// **three** things. Holding the census as a TABLE rather than a paragraph is
+/// what makes "our default already produces this" an assertion.
+///
+/// Eleven rows and three shapes, so this table's strength is three distinct
+/// derivations rather than eleven — which is why the shape counts are asserted
+/// too, and why the pairing (not just output 0) is what each row checks.
+enum BlenderHook {
+    /// `input_by_identifier(output_socket.identifier())` — seven of the twelve,
+    /// under the comment "Internal links should always map corresponding input
+    /// and output sockets". The identity, matched by name.
+    CorrespondingSocket,
+    /// `input_socket(output_socket.index())` — `node_geo_attribute_capture`.
+    /// The identity, matched by index.
+    SameIndex,
+    /// `input_socket(1)` — the three switches, skipping a leading control
+    /// input.
+    FirstDataInput,
+}
+
+/// Every implementor, with the shape it computes and the port index its
+/// callback answers with for output 0.
+const BLENDER_HOOKS: &[(&str, BlenderHook, Option<u32>)] = &[
+    ("node_geo_switch", BlenderHook::FirstDataInput, Some(1)),
+    (
+        "node_geo_index_switch",
+        BlenderHook::FirstDataInput,
+        Some(1),
+    ),
+    ("node_geo_menu_switch", BlenderHook::FirstDataInput, Some(1)),
+    (
+        "node_geo_attribute_capture",
+        BlenderHook::SameIndex,
+        Some(0),
+    ),
+    ("node_geo_bake", BlenderHook::CorrespondingSocket, Some(0)),
+    (
+        "node_geo_closure_to_list",
+        BlenderHook::CorrespondingSocket,
+        Some(0),
+    ),
+    (
+        "node_geo_enable_output",
+        BlenderHook::CorrespondingSocket,
+        Some(0),
+    ),
+    (
+        "node_geo_evaluate_closure",
+        BlenderHook::CorrespondingSocket,
+        Some(0),
+    ),
+    (
+        "node_geo_field_to_grid",
+        BlenderHook::CorrespondingSocket,
+        Some(0),
+    ),
+    (
+        "node_geo_field_to_list",
+        BlenderHook::CorrespondingSocket,
+        Some(0),
+    ),
+    (
+        "node_geo_grid_advect",
+        BlenderHook::CorrespondingSocket,
+        Some(0),
+    ),
+];
+
+/// A node built to order, so a Blender shape can be reproduced as a signature.
+#[derive(Clone, PartialEq, Debug)]
+struct Shaped {
+    ins: Vec<(&'static str, Ty, bool)>,
+    outs: Vec<(&'static str, Ty, bool)>,
+}
+
+impl NodeKind for Shaped {
+    type Type = Ty;
+    type Value = Val;
+    fn name(&self) -> String {
+        "Shaped".to_owned()
+    }
+    fn inputs(&self) -> Vec<Port<Ty, Val>> {
+        self.ins
+            .iter()
+            .map(|&(n, t, through)| {
+                let port = Port::new(n, t);
+                if through { port } else { port.no_passthrough() }
+            })
+            .collect()
+    }
+    fn outputs(&self) -> Vec<Port<Ty, Val>> {
+        self.outs
+            .iter()
+            .map(|&(n, t, through)| {
+                let port = Port::new(n, t);
+                if through { port } else { port.no_passthrough() }
+            })
+            .collect()
+    }
+    fn evaluate(&self, _inputs: &[Option<Val>]) -> Vec<Option<Val>> {
+        vec![None; self.outs.len()]
+    }
+}
+
+fn shaped(
+    ins: &[(&'static str, Ty, bool)],
+    outs: &[(&'static str, Ty, bool)],
+) -> (Document<Shaped>, NodeId) {
+    let mut document = Document::new("root");
+    let node = document
+        .add_node(
+            ROOT,
+            NodeBody::Kind(Shaped {
+                ins: ins.to_vec(),
+                outs: outs.to_vec(),
+            }),
+            0,
+            0,
+        )
+        .unwrap();
+    (document, node)
+}
+
+#[test]
+fn our_default_reproduces_every_blender_pass_through_hook() {
+    // The three shapes, as signatures. `true` = the port takes part.
+    for &(name, ref shape, expected) in BLENDER_HOOKS {
+        let (ins, outs): (Vec<_>, Vec<_>) = match shape {
+            // Switch(Switch: Amount, False: Colour, True: Colour) -> Colour.
+            // The control input's TYPE differs from the data, which is the
+            // ordinary case, and our rule skips it for free.
+            BlenderHook::FirstDataInput => (
+                vec![
+                    ("Switch", Ty::Number, true),
+                    ("False", Ty::Text, true),
+                    ("True", Ty::Text, true),
+                ],
+                vec![("Output", Ty::Text, true)],
+            ),
+            // Capture(Geometry, Value) -> (Geometry, Attribute), paired by
+            // index.
+            BlenderHook::SameIndex => (
+                vec![("Geometry", Ty::Text, true), ("Value", Ty::Number, true)],
+                vec![
+                    ("Geometry", Ty::Text, true),
+                    ("Attribute", Ty::Number, true),
+                ],
+            ),
+            // The same pairing reached by NAME in Blender. Our rule reaches it
+            // by index, and the two agree because a node that pairs its sockets
+            // declares them in one order — which is free to do here.
+            BlenderHook::CorrespondingSocket => (
+                vec![("Geometry", Ty::Text, true), ("Count", Ty::Number, true)],
+                vec![("Geometry", Ty::Text, true), ("Count", Ty::Number, true)],
+            ),
+        };
+        let (document, node) = shaped(&ins, &outs);
+        let through = document.passthrough(ROOT, node).unwrap();
+        assert_eq!(
+            through.source_of(0),
+            expected,
+            "{name}: our default must answer what its callback computes"
+        );
+        // The PAIRING, not just output 0 — otherwise a rule that sent every
+        // output to one input would satisfy two of the three shapes.
+        if matches!(
+            shape,
+            BlenderHook::SameIndex | BlenderHook::CorrespondingSocket
+        ) {
+            assert_eq!(
+                through.source_of(1),
+                Some(1),
+                "{name}: the second pair is paired too"
+            );
+            assert!(through.is_identity(), "{name}: which is what pairing MEANS");
+        }
+    }
+
+    // The census itself, asserted: eleven implementors, three shapes, in the
+    // proportions the grep answered. A row added without a shape, or a shape
+    // silently re-attributed, fails here rather than quietly weakening the
+    // table above.
+    assert_eq!(BLENDER_HOOKS.len(), 11);
+    let count =
+        |want: fn(&BlenderHook) -> bool| BLENDER_HOOKS.iter().filter(|h| want(&h.1)).count();
+    assert_eq!(count(|s| matches!(s, BlenderHook::FirstDataInput)), 3);
+    assert_eq!(count(|s| matches!(s, BlenderHook::SameIndex)), 1);
+    assert_eq!(count(|s| matches!(s, BlenderHook::CorrespondingSocket)), 7);
+}
+
+#[test]
+fn a_control_input_sharing_the_data_type_is_the_first_shape_a_declaration_is_for() {
+    // Blender's Switch supports every socket data type, BOOLEAN included, so
+    // `Switch(Switch: Bool, False: Bool, True: Bool) -> Bool` is a real
+    // configuration — and there the identity rule picks the SWITCH.
+    let control = ("Switch", Ty::Number, true);
+    let (document, node) = shaped(
+        &[
+            control,
+            ("False", Ty::Number, true),
+            ("True", Ty::Number, true),
+        ],
+        &[("Output", Ty::Number, true)],
+    );
+    assert_eq!(
+        document.passthrough(ROOT, node).unwrap().source_of(0),
+        Some(0),
+        "the bare identity passes the CONTROL through, which is not what a \
+         switch means — the case this declaration exists for"
+    );
+
+    // Declared off the path, the first data input is left, which is what
+    // `node_geo_switch`'s callback returns.
+    let (document, node) = shaped(
+        &[
+            ("Switch", Ty::Number, false),
+            ("False", Ty::Number, true),
+            ("True", Ty::Number, true),
+        ],
+        &[("Output", Ty::Number, true)],
+    );
+    let through = document.passthrough(ROOT, node).unwrap();
+    assert_eq!(through.source_of(0), Some(1));
+    assert_eq!(
+        through.unreached_inputs(),
+        &[0, 2],
+        "and the control is named among the inputs nothing reaches"
+    );
+}
+
+#[test]
+fn an_output_can_be_declared_to_carry_nothing_while_bypassed() {
+    // `node_geo_menu_switch` answers `nullptr` for every output after its
+    // first: those values are only meaningful while the node computes. Our rule
+    // would route them on type alone, so the declaration is the second — and
+    // last — shape it is needed for.
+    let (document, node) = shaped(
+        &[("Menu", Ty::Text, false), ("Item", Ty::Number, true)],
+        &[("Value", Ty::Number, true), ("Derived", Ty::Number, false)],
+    );
+    let through = document.passthrough(ROOT, node).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[Route {
+            output: 0,
+            input: 1
+        }]
+    );
+    assert_eq!(
+        through.dropped_outputs(),
+        &[1],
+        "an excluded output is DROPPED, which is the same report an output no \
+         input could feed gets — one fact, one place"
+    );
+}
+
+#[test]
+fn an_excluded_port_is_excluded_in_the_structure_too() {
+    // A declaration that changed the bypass but not the dissolve would be two
+    // rules again, which is the whole thing R1586 exists to avoid.
+    let mut document = Document::new("root");
+    let source = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(4)), 0, 0)
+        .unwrap();
+    let gate = document
+        .add_node(ROOT, NodeBody::Kind(Op::Gate), 100, 0)
+        .unwrap();
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 200, 0)
+        .unwrap();
+    // Gate(Limit: Number [off the path], Value: Number) -> Number
+    document
+        .connect(ROOT, Socket::new(source, 0), Socket::new(gate, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(gate, 0), Socket::new(sink, 0))
+        .unwrap();
+
+    let through = document.passthrough(ROOT, gate).unwrap();
+    assert_eq!(through.source_of(0), Some(1), "the Limit is off the path");
+
+    let rewired = document.dissolve(ROOT, gate).unwrap();
+    assert!(
+        rewired.bridged.is_empty(),
+        "input 1 is unwired, so there is nothing to bridge FROM — and the \
+         structural form agrees with the bypass rather than reaching for the \
+         Limit, which the bypass would not have used either"
+    );
+    assert_eq!(rewired.severed.len(), 1);
+    assert!(document.validate().is_empty());
+}
+
+#[test]
+fn a_port_declaration_survives_serialization() {
+    // The declaration is part of the signature the taxonomy supplies, so it is
+    // re-derived on load rather than stored — but a document written before
+    // R1587 must still read, and the default is "takes part".
+    let port: Port<Ty, Val> = Port::new("Value", Ty::Number);
+    assert!(port.passthrough);
+    assert!(
+        !Port::<Ty, Val>::new("Limit", Ty::Number)
+            .no_passthrough()
+            .passthrough
+    );
+    let old = r#"{"name":"Value","ty":"Number","default":null}"#;
+    let parsed: Port<Ty, Val> = serde_json::from_str(old).expect("a pre-R1587 port still reads");
+    assert!(parsed.passthrough, "and takes part, as it did before");
 }

@@ -174,20 +174,28 @@ impl<K: NodeKind> Document<K> {
         let mut routes: Vec<Route> = Vec::new();
         let mut dropped_outputs = Vec::new();
 
+        // R1587 — a port may declare itself off the bypass path, and the
+        // declaration is read from both ends: an excluded input is never a
+        // source, an excluded output receives nothing.
+        let eligible = |input: &crate::model::Port<K::Type, K::Value>, ty: &K::Type| {
+            input.passthrough && input.ty == *ty
+        };
         for (index, out) in signature.outputs.iter().enumerate() {
             let output = u32::try_from(index).unwrap_or(u32::MAX);
             // The identity first: same index, if the types agree there.
             let same_index = signature
                 .inputs
                 .get(index)
-                .is_some_and(|input| input.ty == out.ty);
-            let chosen = if same_index {
+                .is_some_and(|input| eligible(input, &out.ty));
+            let chosen = if !out.passthrough {
+                None
+            } else if same_index {
                 Some(output)
             } else {
                 signature
                     .inputs
                     .iter()
-                    .position(|input| input.ty == out.ty)
+                    .position(|input| eligible(input, &out.ty))
                     .map(|at| u32::try_from(at).unwrap_or(u32::MAX))
             };
             match chosen {

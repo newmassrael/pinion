@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Document, NodeId, NodeKind, TreeId};
+use crate::model::{Document, NodeId, NodeKind, TreeId, yes};
 
 /// A node's view state.
 ///
@@ -61,11 +61,6 @@ pub struct Appearance {
     /// and Blender's `resize` is horizontal for the same reason.
     #[serde(default)]
     pub width: Option<u32>,
-}
-
-/// `serde` needs a function to default a `bool` to `true`.
-const fn yes() -> bool {
-    true
 }
 
 impl Default for Appearance {

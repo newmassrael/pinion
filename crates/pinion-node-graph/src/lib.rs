@@ -54,7 +54,12 @@
 //!   can feed are **named**. [`Document::dissolve`] and [`Document::detach`]
 //!   apply the same derivation to the structure, so what a bypass does and what
 //!   a delete leaves behind cannot disagree. A [`Link`] can be muted too, which
-//!   is the opposite behaviour and therefore a different word.
+//!   is the opposite behaviour and therefore a different word. A [`Port`] may
+//!   declare itself off that path ([`Port::no_passthrough`]) — the whole
+//!   extension point, because the default *is* the identity: eleven Blender
+//!   node types register a per-node C callback to redirect their pass-through
+//!   and not one of them computes anything this default does not already
+//!   produce.
 //! * **Looks that travel** — [`Appearance`] is what a node looks like, kept in
 //!   the document because a group collapse and a paste move nodes between
 //!   trees, and kept apart from the graph's meaning because only one of the two

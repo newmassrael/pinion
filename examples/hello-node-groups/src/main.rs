@@ -146,6 +146,12 @@ enum Op {
     Mix,
     /// Desaturate towards grey by `t` percent.
     Fade,
+    /// Clamp an amount to a ceiling. R1587 — the one node here whose CONTROL
+    /// input shares the data type it controls, so the bare identity rule would
+    /// pass the ceiling through instead of the value. `Ceiling` declares itself
+    /// off the bypass path, and so does `Clipped`, whose value only means
+    /// anything while the node is computing.
+    Cap,
     /// The sink: its resolved input is the material's result.
     Output,
 }
@@ -158,6 +164,7 @@ impl Op {
             "level" => Self::Level(50),
             "mix" => Self::Mix,
             "fade" => Self::Fade,
+            "cap" => Self::Cap,
             "output" => Self::Output,
             _ => return None,
         })
@@ -174,6 +181,7 @@ impl NodeKind for Op {
             Self::Level(_) => "Level",
             Self::Mix => "Mix",
             Self::Fade => "Fade",
+            Self::Cap => "Cap",
             Self::Output => "Output",
         }
         .to_owned()
@@ -191,6 +199,12 @@ impl NodeKind for Op {
                 Port::new("Colour", Ty::Colour).with_default(Val::Colour([0, 0, 0])),
                 Port::new("Factor", Ty::Amount).with_default(Val::Amount(0)),
             ],
+            Self::Cap => vec![
+                Port::new("Ceiling", Ty::Amount)
+                    .with_default(Val::Amount(100))
+                    .no_passthrough(),
+                Port::new("Amount", Ty::Amount).with_default(Val::Amount(0)),
+            ],
             Self::Output => vec![Port::new("Surface", Ty::Colour)],
         }
     }
@@ -199,6 +213,10 @@ impl NodeKind for Op {
         match self {
             Self::Swatch(_) | Self::Mix | Self::Fade => vec![Port::new("Colour", Ty::Colour)],
             Self::Level(_) => vec![Port::new("Amount", Ty::Amount)],
+            Self::Cap => vec![
+                Port::new("Amount", Ty::Amount),
+                Port::new("Clipped", Ty::Amount).no_passthrough(),
+            ],
             Self::Output => Vec::new(),
         }
     }
@@ -233,6 +251,15 @@ impl NodeKind for Op {
                     towards(c[1]),
                     towards(c[2]),
                 ]))]
+            }
+            Self::Cap => {
+                let (Some(ceiling), Some(amount)) = (amount(0), amount(1)) else {
+                    return vec![None, None];
+                };
+                vec![
+                    Some(Val::Amount(amount.min(ceiling))),
+                    Some(Val::Amount((amount - ceiling).max(0))),
+                ]
             }
             Self::Output => Vec::new(),
         }
@@ -1746,10 +1773,15 @@ fn describe_rewire(out: &Rewired) -> String {
     )
 }
 
+/// `Ceiling:amount(off)` — a port declared off the bypass path is marked, so an
+/// agent reads the DECLARATION beside the derivation `passthrough` answers.
 fn describe(ports: &[Port<Ty, Val>]) -> String {
     ports
         .iter()
-        .map(|p| format!("{}:{}", p.name, p.ty.name()))
+        .map(|p| {
+            let off = if p.passthrough { "" } else { "(off)" };
+            format!("{}:{}{off}", p.name, p.ty.name())
+        })
         .collect::<Vec<_>>()
         .join(",")
 }
