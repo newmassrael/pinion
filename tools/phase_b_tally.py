@@ -459,9 +459,41 @@ AXES = [
         # carries two ([[debt-two-node-graph-models]]). Weighing the families:
         # property grid ~98, data grid ~98, node graph ~92 after this round,
         # which averages ~96.
-        "judged_at": 1584,
-        "completion": 96,
-        "evidence_snapshot": {"example-name": 29, "round-axis": 8},
+        # R1589 re-judgment, 96 -> 97, DEMANDED by the tool (round-axis 8 -> 11,
+        # +38%), and it absorbs THREE rounds: R1586 and R1587 each landed inside
+        # the 25% band and deferred their look.
+        #
+        # All three are the node-graph family, and between them they close the
+        # two largest MODEL gaps the R1577 census named plus the largest gap of
+        # any kind. R1586 — a node says HOW IT TAKES PART: bypass, with
+        # dissolve and detach applying the same derivation to the structure, a
+        # muted LINK named apart from a bypassed NODE because they are opposite
+        # behaviours Blender spells alike, and `Appearance` as a type the
+        # evaluator cannot read (census items 4 and 6, whole). R1587 — a PORT
+        # declares whether a value passes through it, the whole extension point,
+        # chosen by censusing what Blender's eleven per-node callbacks actually
+        # compute. R1589 — a node can BELONG TO A FRAME, which is census item 12
+        # and, by the 2026-08-07 re-measurement against the crate rather than
+        # the example, the heaviest of the five remaining clusters: eight
+        # operators over a concept the crate did not have at all.
+        #
+        # Only +1, and the audit is at R1589 rather than inherited. What remains
+        # on this family is NINE operators and every one of them is an editor
+        # GESTURE over a model that now exists: census item 5 (the richer
+        # selection vocabulary, six of them), 7 (`insert_offset`), 8
+        # (`find_node`), 10 (`view_selected`), with 9 (`resize`) and 11
+        # (`swap_node` / `node_copy_color`) half-done at the model layer. Two
+        # things the census cannot see are larger than all of it: EXECUTION
+        # SEMANTICS are inexpressible in `evaluate(inputs) -> outputs` and
+        # Blender is pure dataflow too, so no comparison against it will ever
+        # surface that; and `hello-node-editor` still holds its own model, so
+        # the tree now carries two node models AND two frame implementations
+        # ([[debt-two-node-graph-models]]). Weighing the families: property grid
+        # ~98, data grid ~98, node graph ~95 after these three rounds, which
+        # averages ~97.
+        "judged_at": 1589,
+        "completion": 97,
+        "evidence_snapshot": {"example-name": 29, "round-axis": 11},
     },
     {
         "key": "modelview",
