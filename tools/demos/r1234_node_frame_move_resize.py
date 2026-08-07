@@ -90,79 +90,105 @@ def body() -> None:
         # ── (B) frame the two left-column nodes (0,1) ────────────────
         select(tf, [0, 1])
         fid = tf.invoke("/external/add_frame", None)
-        assert_eq(fid, 0, "first frame mints id 0")
-        assert_eq(q(tf, "frame.0.contains"), "0,1", "the two framed nodes are inside")
-        fx0 = q(tf, "frame.0.x")
-        fy0 = q(tf, "frame.0.y")
+        # R1596 — a frame IS a node (`NodeBody::Frame`, Blender's NODE_FRAME),
+        # so it mints from the NODE counter: the seed graph holds four, and the
+        # frame is the fifth thing in the tree.
+        assert_eq(fid, 4, "the frame mints the next NODE id")
+        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1", "the two framed nodes are inside")
+        fx0 = q(tf, f"frame.{fid}.x")
+        fy0 = q(tf, f"frame.{fid}.y")
         n0x, n1x, n2x = q(tf, "node.0.x"), q(tf, "node.1.x"), q(tf, "node.2.x")
 
         # ── (C) MOVE x: frame + contents shift, outsider does not ────
-        set_rect(tf, 0, "x", fx0 + 60)
-        assert_eq(q(tf, "frame.0.x"), fx0 + 60, "frame moved right by 60")
+        set_rect(tf, fid, "x", fx0 + 60)
+        assert_eq(q(tf, f"frame.{fid}.x"), fx0 + 60, "frame moved right by 60")
         assert_eq(q(tf, "node.0.x"), n0x + 60, "framed node 0 moved with the frame")
         assert_eq(q(tf, "node.1.x"), n1x + 60, "framed node 1 moved with the frame")
         assert_eq(q(tf, "node.2.x"), n2x, "node 2 (outside the frame) is untouched")
         assert_eq(undo_label(tf), "Move frame", "the move is a single labelled step")
         assert_eq(undo(tf), True, "one undo reverts the whole move")
-        assert_eq(q(tf, "frame.0.x"), fx0, "frame restored")
+        assert_eq(q(tf, f"frame.{fid}.x"), fx0, "frame restored")
         assert_eq(q(tf, "node.0.x"), n0x, "node 0 restored")
         assert_eq(q(tf, "node.1.x"), n1x, "node 1 restored")
         assert_eq(redo(tf), True, "redo the move")
         assert_eq(q(tf, "node.0.x"), n0x + 60, "node 0 re-moved by redo")
         # settle back to the un-moved baseline for the next section.
         assert_eq(undo(tf), True, "undo back to baseline")
-        assert_eq(q(tf, "frame.0.x"), fx0, "frame back at origin")
+        assert_eq(q(tf, f"frame.{fid}.x"), fx0, "frame back at origin")
 
         # ── (D) MOVE y: contents come along on the other axis ────────
         n0y = q(tf, "node.0.y")
-        set_rect(tf, 0, "y", fy0 + 40)
-        assert_eq(q(tf, "frame.0.y"), fy0 + 40, "frame moved down by 40")
+        set_rect(tf, fid, "y", fy0 + 40)
+        assert_eq(q(tf, f"frame.{fid}.y"), fy0 + 40, "frame moved down by 40")
         assert_eq(q(tf, "node.0.y"), n0y + 40, "member moved down with it")
         assert_eq(undo(tf), True, "undo the y-move")
         assert_eq(q(tf, "node.0.y"), n0y, "member y restored")
 
         # ── (E) RESIZE w: grow to swallow the whole graph ────────────
         n0x_b, n0y_b = q(tf, "node.0.x"), q(tf, "node.0.y")
-        set_rect(tf, 0, "w", 800)
-        assert_eq(q(tf, "frame.0.w"), 800, "width grew to 800")
+        set_rect(tf, fid, "w", 800)
+        assert_eq(q(tf, f"frame.{fid}.w"), 800, "width grew to 800")
         assert_eq(q(tf, "node.0.x"), n0x_b, "a resize does not drag node 0 (x)")
         assert_eq(q(tf, "node.0.y"), n0y_b, "a resize does not drag node 0 (y)")
-        assert_eq(q(tf, "frame.0.contains"), "0,1,2,3", "the widened frame holds all four")
+        # ★R1596 — MEMBERSHIP DOES NOT MOVE WITH THE BOX. The editor re-derived
+        # it from the rectangle on every read, so widening the frame silently
+        # adopted the other two nodes and undoing the resize abandoned them
+        # again -- what the frame SAID it held changed with nobody having edited
+        # membership. It is `Node::parent` now (R1589, Blender's model), and
+        # joining is the explicit act `attach` performs.
+        assert_eq(
+            q(tf, f"frame.{fid}.contains"), "0,1",
+            "a resize changes the box, not what the frame holds"
+        )
         assert_eq(undo_label(tf), "Resize frame", "a resize is its own labelled step")
         assert_eq(undo(tf), True, "undo the resize")
-        assert_eq(q(tf, "frame.0.contains"), "0,1", "membership reverts with the size")
+        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1", "and undoing it leaves them alone too")
+        # The geometry DID cover them while the box was wide -- which is the
+        # question a gesture asks, and `attach` is what turns it into membership.
+        set_rect(tf, fid, "w", 800)
+        select(tf, [2, 3])
+        assert_eq(tf.invoke("/external/attach", None), "2,3", "attach names who joined")
+        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1,2,3", "and now it holds all four")
+        select(tf, [2, 3])
+        tf.invoke("/external/detach", None)
+        assert_eq(undo(tf), True, "back to the resize baseline")
+        assert_eq(undo(tf), True, "and past it")
 
         # ── (F) RESIZE clamp: never collapse below the chrome ────────
-        tf.intervene("/external/frame.0.w", 1)
-        wait_until(lambda: True if q(tf, "frame.0.w") == FRAME_MIN else None,
+        tf.intervene(f"/external/frame.{fid}.w", 1)
+        wait_until(lambda: True if q(tf, f"frame.{fid}.w") == FRAME_MIN else None,
                    desc="width clamped to the minimum")
-        assert_eq(q(tf, "frame.0.w"), FRAME_MIN, "width clamped to the minimum")
-        tf.intervene("/external/frame.0.h", 0)
-        wait_until(lambda: True if q(tf, "frame.0.h") == FRAME_MIN else None,
+        assert_eq(q(tf, f"frame.{fid}.w"), FRAME_MIN, "width clamped to the minimum")
+        tf.intervene(f"/external/frame.{fid}.h", 0)
+        wait_until(lambda: True if q(tf, f"frame.{fid}.h") == FRAME_MIN else None,
                    desc="height clamped to the minimum")
-        assert_eq(q(tf, "frame.0.h"), FRAME_MIN, "height clamped to the minimum")
+        assert_eq(q(tf, f"frame.{fid}.h"), FRAME_MIN, "height clamped to the minimum")
 
         # ── (G) rigid group clamp at the world edge ──────────────────
-        # A fresh frame around {0,1} (frame 0 was just shrunk off its nodes).
+        # A fresh frame around {0,1}. R1596 — the first frame still HOLDS them
+        # (membership is `Node::parent`, not a rectangle re-tested on every
+        # read), so they must be detached before a second frame can take them:
+        # `enframe` acts on the OUTERMOST of a selection.
         select(tf, [0, 1])
+        tf.invoke("/external/detach", None)
         fid2 = tf.invoke("/external/add_frame", None)
-        assert_eq(fid2, 1, "second frame mints id 1")
-        assert_eq(q(tf, "frame.1.contains"), "0,1", "it holds nodes 0,1")
-        rel = q(tf, "frame.1.x") - q(tf, "node.0.x")
-        tf.intervene("/external/frame.1.x", 1_000_000)
+        assert fid2 > fid, f"a second frame mints past the first: {fid} -> {fid2}"
+        assert_eq(q(tf, f"frame.{fid2}.contains"), "0,1", "it holds nodes 0,1")
+        rel = q(tf, f"frame.{fid2}.x") - q(tf, "node.0.x")
+        tf.intervene(f"/external/frame.{fid2}.x", 1_000_000)
         wait_until(lambda: True if q(tf, "node.0.x") <= WORLD_MAX_NODE_X else None,
                    desc="node clamped onto the world surface")
         assert q(tf, "node.0.x") <= WORLD_MAX_NODE_X, "node 0 stayed on the world surface"
         assert q(tf, "node.1.x") <= WORLD_MAX_NODE_X, "node 1 stayed on the world surface"
-        assert_eq(q(tf, "frame.1.x") - q(tf, "node.0.x"), rel,
+        assert_eq(q(tf, f"frame.{fid2}.x") - q(tf, "node.0.x"), rel,
                   "the frame->member offset is preserved (rigid group move)")
         # R1240 — the frame's own RIGHT edge stays on-world (no FRAME_PAD overhang).
-        assert q(tf, "frame.1.x") + q(tf, "frame.1.w") <= 2048, "frame right edge on-world"
+        assert q(tf, f"frame.{fid2}.x") + q(tf, f"frame.{fid2}.w") <= 2048, "frame right edge on-world"
 
         # ── (H) rejects ──────────────────────────────────────────────
         type_err = False
         try:
-            tf.intervene("/external/frame.0.w", "wide")
+            tf.intervene(f"/external/frame.{fid}.w", "wide")
         except RpcError:
             type_err = True
         assert type_err, "a non-Int rect value is a typed error"

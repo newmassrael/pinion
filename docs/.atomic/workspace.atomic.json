@@ -85146,6 +85146,46 @@
         "One, registered rather than fixed: the campaign's operator census has never been run as the UNION of the C++ and Python operator sets, so its denominator is unverified. Recorded in debt-blender-census-by-field-name with the procedure. Not fixed here because re-running the census is its own measurement round and would silently change every coverage figure the campaign file states."
       ]
     },
+    "Round 1598.2": {
+      "decision_summary": "Seven pre-existing demos asserted the contracts R1597 changed, and the stop-the-line push gate caught it -- which is the round's finding about process, not about the node graph. R1597 fixed the unit tests and did not compute the blast radius over the DEMOS, even though every one of those seven drives the node editor and the round changed what four of its verbs mean. The lesson R1582 already wrote down (\"a gate, not prose\") was followed for the crates a round touches and not for the demos a round's CONTRACT changes, which is a different axis: `cargo test -p <changed>` cannot see a Python script asserting over the wire.",
+      "changes_bullets": [
+        "r1227_node_comment_frames / r1234_node_frame_move_resize: a frame is a node, so it mints from the node counter -- every hardcoded frame id becomes the id `add_frame` answered. r1234 additionally states the new membership contract: a resize changes the box and NOT what the frame holds, and `attach` is the act that joins, which is the exact opposite of what it asserted before.",
+        "r1236_node_dissolve: `dissolvable` widened from a shape test to losslessness. A Multiply is now lossless (its output routes from input 0) and a SOURCE is the lossy one; the demo reads `dissolve_severs`, then runs the dissolve and asserts exactly the named wire went.",
+        "r1255_node_eval / r1260_node_debugger_reads: a cycle can no longer be AUTHORED, and r1260 records the stronger fact -- it cannot be LOADED either, because `set_graph` runs validate. So this editor can never hold a cyclic graph, where before it accepted the wire and detected the cycle afterwards. The localisation itself is proven where a peer's document can be constructed: the crate's tests and the example's.",
+        "r1258_node_set_graph_validation: three of the violations it drove are now unrepresentable (a per-node port list, a duplicate id, a counter behind its ids), so the demo asserts their ABSENCE from the blob and drives two a peer can still send -- a dangling endpoint and a node claiming a parent that is not there, the second of which the editor's own checker never had.",
+        "r852_node_persist: the blob is a Document, so it carries `trees` / `nodes` / `links`."
+      ],
+      "verification_bullets": [
+        "All 47 demos that drive hello-node-editor were run, not just the seven that failed: 46 PASS. The forty-seventh is r1182_node_edge_autopan, which passed on both re-runs -- the pre-existing flake already registered in memory as a consequence of two R1566 findings (no multi-pass atomic read, no way to stop the clock over the wire). Recorded as another sighting rather than treated as new.",
+        "254 hello-node-editor tests and 202 pinion-node-graph tests green; workspace clippy 0, fmt clean, cargo doc clean."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "One process gap, unfixed and worth naming: the local gate computes blast radius over CRATES (\"test every crate whose behaviour changed\") and there is no equivalent for DEMOS. A round that changes what a verb MEANS breaks scripts that no `cargo test` can see, and the only thing that catches it today is CI or the push gate reading CI. The blast_radius tool exists and runs at push; whether it can be taught to name the demos that drive a changed surface is unmeasured."
+      ],
+      "publishable_decision_summary": "Seven pre-existing demos asserted the contracts R1597 changed, and the stop-the-line push gate caught it -- which is the round's finding about process, not about the node graph. R1597 fixed the unit tests and did not compute the blast radius over the DEMOS, even though every one of those seven drives the node editor and the round changed what four of its verbs mean. The lesson R1582 already wrote down (\"a gate, not prose\") was followed for the crates a round touches and not for the demos a round's CONTRACT changes, which is a different axis: `cargo test -p <changed>` cannot see a Python script asserting over the wire.",
+      "publishable_changes_bullets": [
+        "r1227_node_comment_frames / r1234_node_frame_move_resize: a frame is a node, so it mints from the node counter -- every hardcoded frame id becomes the id `add_frame` answered. r1234 additionally states the new membership contract: a resize changes the box and NOT what the frame holds, and `attach` is the act that joins, which is the exact opposite of what it asserted before.",
+        "r1236_node_dissolve: `dissolvable` widened from a shape test to losslessness. A Multiply is now lossless (its output routes from input 0) and a SOURCE is the lossy one; the demo reads `dissolve_severs`, then runs the dissolve and asserts exactly the named wire went.",
+        "r1255_node_eval / r1260_node_debugger_reads: a cycle can no longer be AUTHORED, and r1260 records the stronger fact -- it cannot be LOADED either, because `set_graph` runs validate. So this editor can never hold a cyclic graph, where before it accepted the wire and detected the cycle afterwards. The localisation itself is proven where a peer's document can be constructed: the crate's tests and the example's.",
+        "r1258_node_set_graph_validation: three of the violations it drove are now unrepresentable (a per-node port list, a duplicate id, a counter behind its ids), so the demo asserts their ABSENCE from the blob and drives two a peer can still send -- a dangling endpoint and a node claiming a parent that is not there, the second of which the editor's own checker never had.",
+        "r852_node_persist: the blob is a Document, so it carries `trees` / `nodes` / `links`."
+      ],
+      "publishable_verification_bullets": [
+        "All 47 demos that drive hello-node-editor were run, not just the seven that failed: 46 PASS. The forty-seventh is r1182_node_edge_autopan, which passed on both re-runs -- the pre-existing flake already registered in memory as a consequence of two R1566 findings (no multi-pass atomic read, no way to stop the clock over the wire). Recorded as another sighting rather than treated as new.",
+        "254 hello-node-editor tests and 202 pinion-node-graph tests green; workspace clippy 0, fmt clean, cargo doc clean."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "One process gap, unfixed and worth naming: the local gate computes blast radius over CRATES (\"test every crate whose behaviour changed\") and there is no equivalent for DEMOS. A round that changes what a verb MEANS breaks scripts that no `cargo test` can see, and the only thing that catches it today is CI or the push gate reading CI. The blast_radius tool exists and runs at push; whether it can be taught to name the demos that drive a changed surface is unmeasured."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

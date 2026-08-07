@@ -126,17 +126,23 @@ def body() -> None:
         assert_eq((a, b), (6, 7), "two Add nodes for the cycle (6, 7)")
         assert_eq(inv(tf, "add_edge", "6,0,6,0"), False, "a self-loop wire is rejected")
         assert_eq(inv(tf, "add_edge", "6,0,7,0"), True, "6 -> 7")
-        assert_eq(inv(tf, "add_edge", "7,0,6,0"), True, "7 -> 6 closes the cycle")
-        assert_eq(q(tf, "node.6.value"), None, "a cycle node is null (uncomputable)")
-        assert_eq(q(tf, "node.7.value"), None, "its partner is null too")
-        assert_eq(q(tf, "eval.acyclic"), False, "the graph is no longer a DAG")
-        # The cycle is a disconnected component; the terminal is untouched.
-        assert_eq(rgb(q(tf, "eval.output")), (0, 48, 0), "a disconnected cycle leaves eval.output intact")
+        # ★R1596 — a cycle can no longer be AUTHORED. The editor's own gate
+        # blocked only a DIRECT self-loop, so two `add_edge` calls could build a
+        # two-hop cycle; `Document::connect` refuses any wire that would close
+        # one and names the path, so the whole class is unreachable by editing
+        # and only a blob from a peer can carry one.
+        edges_before = q(tf, "edge_ids")
+        assert_eq(inv(tf, "add_edge", "7,0,6,0"), False, "the closing wire is REFUSED")
+        assert_eq(q(tf, "edge_ids"), edges_before, "and nothing was wired")
+        assert_eq(q(tf, "eval.acyclic"), True, "so the graph is still a DAG")
+        assert_eq(str(q(tf, "eval.cycle_nodes")), "", "with nobody on a cycle")
+        # The terminal is untouched by the two loose nodes either way.
+        assert_eq(rgb(q(tf, "eval.output")), (0, 48, 0), "the disconnected pair leaves eval.output intact")
 
-        # ── (G) delete a cycle node -> DAG restored ──────────────────
+        # ── (G) delete one of them -> the other computes over its defaults ──
         assert_eq(inv(tf, "delete_node", 6), True, "delete node 6 (and its incident edges)")
-        assert_eq(q(tf, "eval.acyclic"), True, "the DAG is restored")
-        # Node 7 lost its wired in0 -> falls back to its grey default; now computable.
+        assert_eq(q(tf, "eval.acyclic"), True, "still a DAG")
+        # Node 7 lost its wired in0 -> falls back to its grey default.
         assert_eq(node_rgb(tf, 7), (255, 255, 255), "the survivor computes over its defaults again")
 
 

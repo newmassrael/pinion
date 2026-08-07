@@ -61,8 +61,27 @@ def body() -> None:
         # R1241 — the eligibility read (no mutate-to-probe): only the reroute is
         # dissolvable; the read predicts the verb.
         assert_eq(q(tf, f"dissolvable.{rid}"), True, "the reroute reads as dissolvable")
-        assert_eq(q(tf, "dissolvable.2"), False, "Multiply (2 inputs) is not")
-        assert_eq(q(tf, "dissolvable_ids"), str(rid), "only the reroute is enumerated")
+        # ★R1596 — `dissolvable` widened from a SHAPE test ("exactly one wire
+        # in and one out") to LOSSLESSNESS. `Document::dissolve` is the general
+        # form (Blender's NODE_OT_delete_reconnect), so what is worth asking is
+        # no longer *can it* but *does it lose anything* -- and a Multiply
+        # routes its output from input 0, so the wire past it is bridged and
+        # nothing is cut.
+        assert_eq(q(tf, "dissolvable.2"), True, "a Multiply loses nothing either")
+        assert_eq(q(tf, "dissolve_severs.2"), "", "its cut list is empty")
+        # A SOURCE is the lossy one: nothing flows into it, so its output has no
+        # input to be routed from and the wire leaving it dies -- NAMED, where
+        # `node_internal_relink` deletes it and returns void.
+        assert_eq(q(tf, "dissolvable.0"), False, "a source's dissolve is lossy")
+        assert q(tf, "dissolve_severs.0"), "and it names the wire it would cut"
+        # The enumeration follows the widened predicate: every node whose
+        # dissolve costs nothing, which is now the reroute AND the pass-through
+        # compute nodes -- and NOT the sources, whose outgoing wire would die.
+        enumerated = q(tf, "dissolvable_ids").split(",")
+        assert str(rid) in enumerated, f"the reroute is in it: {enumerated}"
+        assert "0" not in enumerated and "1" not in enumerated, (
+            f"and the two sources are not: {enumerated}"
+        )
         assert_eq(dissolve(tf, rid), True, "the reroute dissolves")
         assert_eq(q(tf, "node_count"), 4, "the reroute node is removed")
         assert_eq(q(tf, "edge_count"), 3, "net -1 edge (removed 2, added 1 bridge)")
@@ -92,14 +111,23 @@ def body() -> None:
         wires2 = {q(tf, f"edge.{e}") for e in q(tf, "edge_ids").split(",")}
         assert "1:0->2:1" in wires2, "node1 -> node2.in1 is bridged back"
 
-        # ── (E) the gate: non-passthrough nodes do not dissolve ──────
+        # ── (E) ★ the gate is LOSSLESSNESS, not a shape ──────────────
+        # R1596 — `Document::dissolve` is the general form, so the only thing a
+        # dissolve refuses is a node that is not there. What used to be the
+        # gate ("exactly one hop") is now a QUESTION the caller asks first, and
+        # the answer names the cost.
         assert_eq(q(tf, "node.2.inputs"), 2, "Multiply has two inputs")
-        assert_eq(dissolve(tf, 2), False, "a two-input node has no single hop")
-        assert_eq(dissolve(tf, 0), False, "a source node (no input) does not dissolve")
-        assert_eq(dissolve(tf, 3), False, "a sink node (no output) does not dissolve")
-        assert_eq(dissolve(tf, 99), False, "an unknown id does not dissolve")
-        assert_eq(q(tf, "node_count"), 4, "every rejected dissolve left the graph intact")
-        assert_eq(q(tf, "edge_count"), 3, "edge count intact too")
+        assert_eq(dissolve(tf, 99), False, "an unknown id has no dissolve at all")
+        assert_eq(q(tf, "node_count"), 4, "and left the graph intact")
+        # A source: lossy, and it says which wire dies -- then the operation is
+        # run and exactly that wire is gone, so the prediction is CHECKED.
+        cut = q(tf, "dissolve_severs.0")
+        assert cut and cut in q(tf, "edge_ids").split(","), f"the named wire exists: {cut}"
+        assert_eq(dissolve(tf, 0), True, "a source dissolves -- at a cost it named")
+        assert cut not in q(tf, "edge_ids").split(","), "and cut exactly that wire"
+        assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "one undo restores it")
+        assert_eq(q(tf, "node_count"), 4, "the graph is back")
+        assert_eq(q(tf, "edge_count"), 3, "edge count too")
 
 
 if __name__ == "__main__":

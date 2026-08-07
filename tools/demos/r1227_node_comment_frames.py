@@ -83,33 +83,36 @@ def body() -> None:
         # ── (B) frame the two left-column nodes (0,1) ────────────────
         select(tf, [0, 1])
         fid = add_frame(tf)
-        assert_eq(fid, 0, "first frame mints id 0")
+        # R1596 — a frame IS a node (`NodeBody::Frame`, Blender's NODE_FRAME),
+        # so it mints from the NODE counter: the seed graph holds four, and the
+        # frame is the fifth thing in the tree.
+        assert_eq(fid, 4, "the frame mints the next NODE id")
         assert_eq(q(tf, "frame_count"), 1, "one frame now")
-        assert_eq(q(tf, "frame_ids"), "0", "frame id enumerated")
-        assert_eq(q(tf, "frame.0.title"), "Comment 1", "auto title")
-        assert_eq(q(tf, "frame.0.contains"), "0,1", "the two framed nodes are inside")
+        assert_eq(q(tf, "frame_ids"), str(fid), "frame id enumerated")
+        assert_eq(q(tf, f"frame.{fid}.title"), "Comment 1", "auto title")
+        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1", "the two framed nodes are inside")
         # The rect encloses node 0 (Texture @ graph 40,70) with a margin.
-        assert q(tf, "frame.0.x") <= 40, "left edge left of the framed nodes"
-        assert q(tf, "frame.0.y") <= 70, "top edge above the framed nodes"
-        assert q(tf, "frame.0.w") > 0 and q(tf, "frame.0.h") > 0, "positive extent"
+        assert q(tf, f"frame.{fid}.x") <= 40, "left edge left of the framed nodes"
+        assert q(tf, f"frame.{fid}.y") <= 70, "top edge above the framed nodes"
+        assert q(tf, f"frame.{fid}.w") > 0 and q(tf, f"frame.{fid}.h") > 0, "positive extent"
         # Framing did NOT change the node selection (a separate axis).
         assert_eq(q(tf, "selected_ids"), "0,1", "node selection untouched by framing")
 
         # ── (C) rename the frame; one undo reverts it ────────────────
-        tf.intervene("/external/frame.0.title", "Inputs")
-        wait_until(lambda: True if q(tf, "frame.0.title") == "Inputs" else None,
+        tf.intervene(f"/external/frame.{fid}.title", "Inputs")
+        wait_until(lambda: True if q(tf, f"frame.{fid}.title") == "Inputs" else None,
                    desc="frame renamed to Inputs")
         assert_eq(undo_label(tf), "Rename frame", "rename is its own undo step")
         assert_eq(undo(tf), True, "undo the rename")
-        assert_eq(q(tf, "frame.0.title"), "Comment 1", "title reverted")
+        assert_eq(q(tf, f"frame.{fid}.title"), "Comment 1", "title reverted")
 
         # ── (D) a second frame around ALL nodes; remove + undo ───────
         select(tf, [0, 1, 2, 3])
         fid2 = add_frame(tf)
-        assert_eq(fid2, 1, "second frame mints id 1")
+        assert fid2 > fid, f"a second frame mints past the first: {fid} -> {fid2}"
         assert_eq(q(tf, "frame_count"), 2, "two frames")
-        assert_eq(q(tf, "frame.1.contains"), "0,1,2,3", "the big frame holds all four")
-        assert_eq(tf.invoke("/external/remove_frame", 1), True, "remove the big frame")
+        assert_eq(q(tf, f"frame.{fid2}.contains"), "0,1,2,3", "the big frame holds all four")
+        assert_eq(tf.invoke("/external/remove_frame", fid2), True, "remove the big frame")
         assert_eq(q(tf, "frame_count"), 1, "back to one frame")
         assert_eq(q(tf, "node_count"), 4, "removing a frame keeps the nodes")
         assert_eq(undo_label(tf), "Remove frame", "remove is its own undo step")
@@ -119,7 +122,7 @@ def body() -> None:
         # ── (E) persistence ──────────────────────────────────────────
         blob = q(tf, "serialized")
         assert "Comment 1" in blob, "the frame is in the serialized graph"
-        assert '"schema_version":7' in blob, "schema is 7 (R1257 added output_const)"
+        assert '"schema_version":8' in blob, "schema is 8 (R1596 — the blob is a Document)"
 
         # ── (F) rejects ──────────────────────────────────────────────
         # Frame nothing: add_frame with an empty selection returns Null.
@@ -133,7 +136,7 @@ def body() -> None:
         # demo.
         type_err = False
         try:
-            tf.intervene("/external/frame.0.x", "nope")
+            tf.intervene(f"/external/frame.{fid}.x", "nope")
         except RpcError:
             type_err = True
         assert type_err, "a non-Int rect value is rejected"

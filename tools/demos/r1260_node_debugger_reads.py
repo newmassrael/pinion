@@ -82,28 +82,41 @@ def body() -> None:
         assert_eq(rgb(q(tf, "node.5.resolved_input.0")), (0, 0, 0), "resolved_input shows the Float->Vector broadcast")
         assert_eq(rgb(q(tf, "node.5.resolved_input.1")), (0x80, 0x80, 0x80), "in1 is the unwired grey default")
 
-        # ── (D) a 2-cycle: localise it, and the members read null ────
+        # ── (D) ★ a cycle is UNREACHABLE, by both paths ──────────────
+        # R1596 — this section used to build a 2-cycle with two `add_edge`
+        # calls and then read the localisation back. It cannot: `connect`
+        # refuses any wire that would close a cycle and names the path, and
+        # `set_graph` runs `Document::validate`, which refuses a blob carrying
+        # one. So the editor can no longer hold a cyclic graph AT ALL -- where
+        # before it accepted the wire and detected the cycle afterwards.
+        #
+        # The localisation itself (`Document::cycle_nodes`) is proven where a
+        # peer's document can actually be constructed: the crate's own tests and
+        # this example's, which build one through the wire form. What is
+        # assertable HERE is the guarantee, which is the stronger fact.
         a = inv(tf, "add_node", "Add")
         b = inv(tf, "add_node", "Add")
-        assert_eq((a, b), (6, 7), "two Adds for the cycle")
+        assert_eq((a, b), (6, 7), "two Adds")
         assert_eq(inv(tf, "add_edge", f"{a},0,{b},0"), True, "6 -> 7")
-        assert_eq(inv(tf, "add_edge", f"{b},0,{a},0"), True, "7 -> 6 closes the cycle")
-        assert_eq(q(tf, "eval.acyclic"), False, "no longer a DAG")
-        assert_eq(q(tf, "eval.cycle_nodes"), f"{a},{b}", "cycle_nodes localises EXACTLY the two knots")
-        assert_eq(q(tf, "node.6.value"), None, "a cycle node's value is null")
-        assert_eq(q(tf, "node.7.value"), None, "its partner is null too")
-        assert_eq(q(tf, "node.6.resolved_input.0"), None, "and its resolved input is null")
-        assert_eq(q(tf, "node.7.resolved_input.0"), None, "the partner's too")
-        # The other nodes are NOT falsely reported as on the cycle.
-        assert "0" not in q(tf, "eval.cycle_nodes").split(","), "the Texture source is not on the cycle"
-        assert "5" not in q(tf, "eval.cycle_nodes").split(","), "the disconnected Add(5) is not on the cycle"
-        # Terminal = Multiply(red, grey) = (128,0,0); the disconnected cycle doesn't touch it.
-        assert_eq(rgb(q(tf, "eval.output")), (128, 0, 0), "the disconnected cycle leaves the terminal intact")
+        edges_before = q(tf, "edge_ids")
+        assert_eq(
+            inv(tf, "add_edge", f"{b},0,{a},0"), False,
+            "★ the wire that would close the cycle is REFUSED"
+        )
+        assert_eq(q(tf, "edge_ids"), edges_before, "and nothing was wired")
+        assert_eq(q(tf, "eval.acyclic"), True, "so the graph is still a DAG")
+        assert_eq(q(tf, "eval.cycle_nodes"), "", "and nobody is on a cycle")
 
-        # ── (E) breaking the cycle clears the localisation ───────────
-        assert_eq(inv(tf, "delete_node", a), True, "delete a cycle node (and its incident edges)")
-        assert_eq(q(tf, "eval.cycle_nodes"), "", "cycle_nodes is empty again")
-        assert_eq(q(tf, "eval.acyclic"), True, "the graph is a DAG again")
+        # The other reads are unaffected by the two loose nodes.
+        assert_eq(q(tf, "node.6.resolved_input.0"), q(tf, "node.6.input_default.0"),
+                  "an unwired input resolves its own default")
+        # Terminal = Multiply(red, grey) = (128,0,0); the loose pair doesn't touch it.
+        assert_eq(rgb(q(tf, "eval.output")), (128, 0, 0), "the loose pair leaves the terminal intact")
+
+        # ── (E) deleting one still clears its consumer's wire ────────
+        assert_eq(inv(tf, "delete_node", a), True, "delete node 6 (and its incident edges)")
+        assert_eq(q(tf, "eval.cycle_nodes"), "", "cycle_nodes stays empty")
+        assert_eq(q(tf, "eval.acyclic"), True, "the graph is a DAG")
         # Node 7 lost its wire from 6, so in0 falls back to its grey default —
         # resolvable again (not null).
         assert_eq(rgb(q(tf, "node.7.resolved_input.0")), (0x80, 0x80, 0x80), "node 7 in0 is its grey default again")

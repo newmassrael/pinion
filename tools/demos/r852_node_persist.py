@@ -89,7 +89,11 @@ def body() -> None:
         with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
             blob = tf.query("/external/serialized")
             assert "schema_version" in blob, "serialized is the snapshot JSON"
-            assert '"nodes"' in blob and '"edges"' in blob, "the blob carries the model"
+            # R1596 — the blob is a `Document`: one value holding the trees,
+            # their nodes, their links and the id counters, where the editor
+            # used to write six parallel fields nobody kept consistent.
+            assert '"trees"' in blob, "the blob carries the model"
+            assert '"nodes"' in blob and '"links"' in blob, "with both halves of it"
             assert_eq(ncount(tf), 4, "boot graph for the round-trip")
             tf.invoke("/external/add_node", "Add")
             tf.invoke("/external/add_node", "Color")

@@ -73,50 +73,59 @@ def body() -> None:
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "it still evaluates (grey64)")
 
         # ── (B) a modified but VALID blob is applied ─────────────────
-        renamed = valid.replace('"title":"Texture"', '"title":"Albedo"')
+        # R1596 — a node's user-facing name is `Node::label`, and `None` means
+        # "call it what its body is called", so a never-renamed node carries no
+        # name string at all and a rename to the name it already shows journals
+        # nothing. The node is renamed through the model first, so the string
+        # edit below has something to bite on.
+        tf.intervene("/external/node.0.title", "Albedo")
+        assert_eq(q(tf, "node.0.title"), "Albedo", "the model rename landed")
+        valid = q(tf, "serialized")
+        renamed = valid.replace('"label":"Albedo"', '"label":"Ochre"')
         assert renamed != valid, "the rename edit changed the blob"
         assert_eq(set_graph(tf, renamed), True, "a valid modification is accepted")
-        assert_eq(q(tf, "node.0.title"), "Albedo", "the rename applied")
+        assert_eq(q(tf, "node.0.title"), "Ochre", "the rename applied")
         assert_eq(q(tf, "node.0.op"), "Texture", "op is unchanged by a rename (R1256 identity)")
 
-        # ── (C) a STRUCTURALLY-INVALID blob is rejected ──────────────
-        # Drop one of Multiply's two input ports: a wrong-arity op that would
-        # evaluate to a permanent null. Only Multiply has [Vector,Vector] in the
-        # seed graph, so this edit is unambiguous.
-        bad_arity = renamed.replace('"input_ports":["Vector","Vector"]', '"input_ports":["Vector"]')
-        assert bad_arity != renamed, "the arity edit changed the blob"
-        reject(tf, bad_arity, "a wrong-arity op")
-        assert_eq(q(tf, "node.0.title"), "Albedo", "the graph is unchanged after the reject")
+        # ── (C) ★ three of the old violations are UNREPRESENTABLE ────
+        # R1596 — the editor's blob carried a per-node port list, a flat node
+        # vector and three id counters, so a wrong-arity op, a duplicate id and
+        # a counter behind a stored id were all things a peer could send and a
+        # checker had to catch. A kind DECLARES its ports, a tree keys its nodes
+        # BY id, and the mint counter travels inside the tree -- so none of the
+        # three is a document the type can hold. An invariant that became a
+        # property of the types is stronger than one a checker enforces, because
+        # nothing has to remember to run.
+        assert '"input_ports"' not in renamed, "no per-node port list to disagree with the kind"
+        assert '"next_node_id"' not in renamed, "no counter beside the ids it mints past"
+
+        # ── (D) what a peer CAN still send is rejected, and named ────
+        # A link naming a node that is not there. The blob is a `Document`, so
+        # the links live under the tree beside the nodes.
+        dangling = renamed.replace('"to":{"node":2,"port":0}', '"to":{"node":99,"port":0}')
+        assert dangling != renamed, "the dangling-endpoint edit changed the blob"
+        reject(tf, dangling, "a link naming a node that is not there")
         assert_eq(q(tf, "node_count"), 4, "no nodes were installed from the bad blob")
-        assert_eq(q(tf, "node.2.inputs"), 2, "the surviving Multiply still has 2 inputs")
-        assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "and it still evaluates")
+        assert_eq(q(tf, "node.0.title"), "Ochre", "the graph is unchanged after the reject")
 
-        # A duplicate node id: give the Output node (id 3) id 0 as well. The
-        # node object serializes `"id":N,"title":...` (edges are `"id":N,
-        # "from_node"`), so this edit hits exactly node 3.
-        dup_id = renamed.replace('"id":3,"title"', '"id":0,"title"')
-        assert dup_id != renamed, "the duplicate-id edit changed the blob"
-        reject(tf, dup_id, "a duplicate node id")
-        assert_eq(q(tf, "node_count"), 4, "no duplicate-id graph was installed")
-        assert_eq(q(tf, "node.0.op"), "Texture", "node 0 is still the Texture source")
-
-        # ── (D) an id counter behind a stored id is rejected ─────────
-        stale = renamed.replace('"next_node_id":4', '"next_node_id":1')
-        assert stale != renamed, "the counter edit changed the blob"
-        reject(tf, stale, "a counter behind a stored id")
+        # A node claiming a parent that is not there (R1589's forest), which the
+        # editor's own checker never had at all.
+        orphan = renamed.replace('"parent":null', '"parent":99', 1)
+        assert orphan != renamed, "the parent edit changed the blob"
+        reject(tf, orphan, "a node inside a frame that is not there")
         assert_eq(q(tf, "node_count"), 4, "graph unchanged")
-        assert_eq(q(tf, "node.0.title"), "Albedo", "still the last valid state")
+        assert_eq(q(tf, "node.0.title"), "Ochre", "still the last valid state")
 
         # ── (E) malformed JSON is rejected ───────────────────────────
         reject(tf, "{not json", "malformed JSON")
         reject(tf, '{"schema_version":999}', "a schema mismatch")
         assert_eq(q(tf, "node_count"), 4, "still unchanged after every reject")
-        assert_eq(q(tf, "node.0.title"), "Albedo", "still the last VALID state (B)")
+        assert_eq(q(tf, "node.0.title"), "Ochre", "still the last VALID state (B)")
         assert_eq(q(tf, "eval.acyclic"), True, "the surviving graph is a DAG")
 
         # ── a final valid write proves the path still accepts good input ─
         assert_eq(set_graph(tf, valid), True, "a valid blob is still accepted after the rejects")
-        assert_eq(q(tf, "node.0.title"), "Texture", "restored to the original valid graph")
+        assert_eq(q(tf, "node.0.title"), "Albedo", "restored to the graph (B) started from")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "and it evaluates to the seed terminal")
 
 
