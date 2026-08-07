@@ -26,6 +26,7 @@
 
 use pinion_core::Scene;
 use pinion_core::app::App;
+use pinion_core::region::{Region, RegionError, RegionFit};
 use pinion_core::scene::{HitPath, Rect};
 
 use crate::resolve::lookup_addressed;
@@ -43,12 +44,12 @@ pub struct LocateOutcome {
     pub ancestor_paths: Vec<String>,
 }
 
-/// Successful region-select outcome (§5.32 R39.2). Aggregates all
-/// primitives whose rect intersects the query rect.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Successful region-select outcome (§5.32 R39.2, generalised R1591).
+/// Aggregates every primitive the region covers, and repeats the question.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct LocateRegionOutcome {
-    /// Fully-qualified paths of every intersecting primitive,
-    /// declaration order (DFS pre-order through the scene tree).
+    /// Fully-qualified paths of every covered primitive, declaration order
+    /// (DFS pre-order through the scene tree).
     pub paths: Vec<String>,
     /// Fully-qualified path of the deepest common ancestor — the
     /// longest segment-prefix shared by every entry in `paths`. When
@@ -56,6 +57,15 @@ pub struct LocateRegionOutcome {
     /// (`"/window[<name>]/"`); when `paths` has a single entry, the
     /// ancestor is that entry itself.
     pub common_ancestor: String,
+    /// Which shape the question was asked with — `"rect"`, `"circle"` or
+    /// `"lasso"` (R1591).
+    ///
+    /// Repeated back because a selection's answer is only interpretable
+    /// alongside what was asked, and because Qt's rubber band takes its mode
+    /// from a **view property** that nothing records per selection.
+    pub shape: String,
+    /// Which fit was applied — `"intersects"` or `"contains"` (R1591).
+    pub fit: String,
 }
 
 /// Reasons the typed [`locate`] dispatcher can fail.
@@ -144,16 +154,29 @@ pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
         .ok_or(BboxError::UnknownPath)
 }
 
-/// Resolve a region select against `scene`. Unlike [`locate`], a region
-/// query never errors — an empty intersection returns
-/// [`LocateRegionOutcome`] with empty `paths` and the root as
-/// `common_ancestor`.
+/// R1591 §5.32 §2 #7 — resolve any [`Region`] against `scene` under a
+/// [`RegionFit`].
 ///
-/// Coordinates are in the same viewport-relative logical pixel space
-/// as [`locate`].
-#[must_use]
-pub fn locate_region(scene: &Scene, x: u32, y: u32, w: u32, h: u32) -> LocateRegionOutcome {
-    let hits = scene.hit_test_region(x, y, w, h);
+/// The one region question: a rectangle, a disc and a lasso are
+/// one question, asked from outside the process by something that has no
+/// pointer. Blender answers the same three with three operators, and Qt's
+/// equivalent lives behind a `QPainterPath` that cannot leave the process at
+/// all.
+///
+/// The outcome **repeats what was asked** — see [`LocateRegionOutcome::shape`]
+/// and [`LocateRegionOutcome::fit`].
+///
+/// # Errors
+///
+/// [`RegionError`] for a shape that bounds no area, so a two-point lasso is told
+/// apart from an empty surface. Qt's `items(QPolygonF, ..)` answers both with an
+/// empty `QList`.
+pub fn locate_shape(
+    scene: &Scene,
+    region: &Region,
+    fit: RegionFit,
+) -> Result<LocateRegionOutcome, RegionError> {
+    let hits = scene.hit_test_shape(region, fit)?;
     let window = App::initial_window();
     let window_name = App::window_name(window);
 
@@ -166,10 +189,12 @@ pub fn locate_region(scene: &Scene, x: u32, y: u32, w: u32, h: u32) -> LocateReg
     let common_segments = longest_common_prefix(hits.iter().map(|h| h.segments.as_slice()));
     let common_ancestor = format_path(window_name, &common_segments);
 
-    LocateRegionOutcome {
+    Ok(LocateRegionOutcome {
         paths,
         common_ancestor,
-    }
+        shape: region.kind().to_owned(),
+        fit: fit.to_string(),
+    })
 }
 
 /// Compute the longest segment-wise common prefix across an iterator
@@ -307,7 +332,7 @@ mod tests {
     #[test]
     fn locate_region_disjoint_query_returns_empty_paths_and_root_ancestor() {
         let s = box_at(10, 10, 20, 20);
-        let out = locate_region(&s, 500, 500, 50, 50);
+        let out = locate_shape(&s, &Region::rect(500, 500, 50, 50), RegionFit::Intersects).unwrap();
         assert!(out.paths.is_empty());
         assert!(
             out.common_ancestor.ends_with('/'),
@@ -324,7 +349,7 @@ mod tests {
             200,
             vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
         );
-        let out = locate_region(&s, 0, 0, 200, 200);
+        let out = locate_shape(&s, &Region::rect(0, 0, 200, 200), RegionFit::Intersects).unwrap();
         assert_eq!(out.paths.len(), 3, "container + 2 children");
         assert!(out.paths[0].ends_with('/'));
         assert!(out.paths[1].ends_with("/0"));
@@ -341,7 +366,7 @@ mod tests {
             200,
             vec![box_at(0, 0, 50, 50), box_at(100, 100, 50, 50)],
         );
-        let out = locate_region(&s, 0, 0, 200, 200);
+        let out = locate_shape(&s, &Region::rect(0, 0, 200, 200), RegionFit::Intersects).unwrap();
         // All three entries share the empty prefix (root container),
         // so the common ancestor is the root.
         assert!(out.common_ancestor.ends_with('/'));
@@ -358,7 +383,8 @@ mod tests {
             vec![box_at(10, 10, 20, 20), box_at(50, 50, 20, 20)],
         );
         let outer = container_at(0, 0, 200, 200, vec![inner]);
-        let out = locate_region(&outer, 10, 10, 80, 80);
+        let out =
+            locate_shape(&outer, &Region::rect(10, 10, 80, 80), RegionFit::Intersects).unwrap();
         // 4 entries: outer (empty), inner (0), box0 (0/0), box1 (0/1)
         assert_eq!(out.paths.len(), 4);
         // Common prefix across [], [0], [0,0], [0,1] is [] → root.
@@ -368,7 +394,7 @@ mod tests {
     #[test]
     fn locate_region_uses_tag_in_paths() {
         let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 50, 50, "btn")]);
-        let out = locate_region(&s, 0, 0, 200, 200);
+        let out = locate_shape(&s, &Region::rect(0, 0, 200, 200), RegionFit::Intersects).unwrap();
         assert!(out.paths.iter().any(|p| p.ends_with("/btn")));
     }
 
@@ -422,10 +448,47 @@ mod tests {
     }
 
     #[test]
-    fn locate_region_zero_area_query_returns_empty() {
+    fn locate_region_zero_area_query_is_now_named_rather_than_answered_empty() {
+        // R1591 changed this contract deliberately, and it is the round's own
+        // argument: "your rectangle had no area" and "nothing is there" were the
+        // same answer, so a caller could not tell a bad gesture from an empty
+        // canvas. Qt cannot tell them apart either — `items()` returns a QList.
         let s = box_at(0, 0, 100, 100);
-        let out = locate_region(&s, 50, 50, 0, 0);
-        assert!(out.paths.is_empty(), "zero-area query never intersects");
+        assert_eq!(
+            locate_shape(&s, &Region::rect(50, 50, 0, 0), RegionFit::Intersects),
+            Err(RegionError::Empty)
+        );
+        // The empty ANSWER is still reachable, and now means only itself.
+        let away = locate_shape(&s, &Region::rect(500, 500, 10, 10), RegionFit::Intersects)
+            .expect("a legal region");
+        assert!(away.paths.is_empty());
+        assert_eq!(away.shape, "rect");
+        assert_eq!(away.fit, "intersects");
+    }
+
+    #[test]
+    fn r1591_the_outcome_repeats_what_was_asked() {
+        let s = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![
+                tagged_box_at(10, 10, 20, 20, "near"),
+                tagged_box_at(150, 150, 20, 20, "far"),
+            ],
+        );
+        let disc = Region::circle(20, 20, 30);
+        let out = locate_shape(&s, &disc, RegionFit::Contains).expect("a legal region");
+        assert_eq!(out.shape, "circle");
+        assert_eq!(
+            out.fit, "contains",
+            "PAST QT — the mode a selection used is part of its answer. Qt takes \
+             it from QGraphicsView::rubberBandSelectionMode, a view property \
+             that nothing records per selection"
+        );
+        assert!(out.paths.iter().any(|p| p.ends_with("/near")));
+        assert!(!out.paths.iter().any(|p| p.ends_with("/far")));
     }
 
     #[test]

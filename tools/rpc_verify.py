@@ -937,6 +937,33 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None
         return resp.result
 
+    def locate_region(
+        self,
+        *,
+        shape: str = "rect",
+        fit: str = "intersects",
+        source: str = "state",
+        viewport: Optional[tuple[int, int]] = None,
+        **geometry: Any,
+    ) -> Any:
+        """`scene/locate_region` typed wrapper (R1591 §5.32 §2 #7).
+
+        `shape` picks the region — `"rect"` (`x`/`y`/`w`/`h`), `"circle"`
+        (`cx`/`cy`/`r`) or `"lasso"` (`points=[[x, y], ...]`) — and `fit`
+        picks what "covered" means: `"intersects"` or `"contains"`.
+
+        `source="paint"` asks the PAINTED frame rather than the state
+        tree, which is the only one carrying geometry for a view-fn
+        binding (the same two-scene basis `snapshot` uses).
+        """
+        params: dict[str, Any] = {"shape": shape, "fit": fit, "from": source}
+        params.update(geometry)
+        if viewport is not None:
+            params["viewport"] = {"w": viewport[0], "h": viewport[1]}
+        resp = self.request("scene/locate_region", params)
+        assert resp is not None
+        return resp.result
+
     def cache_stats(self, *, window: Optional[str] = None) -> dict[str, Any]:
         """`scene/cache_stats` typed wrapper (R682.B §5.16 / R883.1).
 

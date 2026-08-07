@@ -1052,6 +1052,22 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "LocateRegionOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("paths", WireTy::Array, None),
+                WireField::new("common_ancestor", WireTy::String, None),
+                // R1591 — the question is repeated in its own answer. A
+                // selection's result is only interpretable alongside the shape
+                // and the fit it was taken with, and Qt records neither: its
+                // rubber-band mode is a VIEW property, so nothing says which
+                // mode a given selection used.
+                WireField::new("shape", WireTy::String, None),
+                WireField::new("fit", WireTy::String, None),
+            ],
+        },
+    },
+    WireType {
         name: "LogicalSizeOutcome",
         shape: WireShape::Object {
             fields: &[

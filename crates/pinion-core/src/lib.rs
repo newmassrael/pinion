@@ -51,6 +51,7 @@ pub mod modal_scope_request;
 pub mod model_index;
 pub mod print;
 pub mod reactive;
+pub mod region;
 pub mod renderer;
 pub mod revision;
 pub mod scene;

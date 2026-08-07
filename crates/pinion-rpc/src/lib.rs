@@ -126,7 +126,7 @@ pub use layout_query::{
     build_layout_node, layout_query, project_layout,
 };
 pub use locate::{
-    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
+    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_shape,
 };
 pub use memory::{MemoryArena, MemoryError, MemoryOutcome, MemoryUnmeasured, memory};
 pub use methods::{MethodEntry, MethodOcc, OCC_DOC, RPC_METHODS, RpcMethods, rpc_methods};

@@ -8965,6 +8965,27 @@ fn probe_params() -> serde_json::Value {
     params.insert("glyph_id".to_owned(), serde_json::json!(1));
     params.insert("font_id".to_owned(), serde_json::json!(1));
     params.insert("bytes".to_owned(), serde_json::json!([0]));
+    // ★R1591 — the eight the census could not see until it normalised
+    // whitespace, plus the three R1591 added. Each is the shape its method's own
+    // refusal asks for; a path-shaped string here would be refused on the VALUE
+    // and the method would never reach its path parse, which is exactly the
+    // `debt-probe-classifies-by-first-refusal` failure this bag exists to avoid.
+    params.insert("delta".to_owned(), serde_json::json!(1.0));
+    params.insert("magnification".to_owned(), serde_json::json!(1.0));
+    params.insert("rotation".to_owned(), serde_json::json!(1.0));
+    params.insert("tilt_x".to_owned(), serde_json::json!(0.0));
+    params.insert("tilt_y".to_owned(), serde_json::json!(0.0));
+    params.insert("with_origin".to_owned(), serde_json::json!(false));
+    params.insert(
+        "points".to_owned(),
+        serde_json::json!([[0, 0], [1, 0], [0, 1]]),
+    );
+    // `from` means an enum to `scene/snapshot` and a POINT to `scene/drag`, so
+    // no single value satisfies both. The enum is the one that lets a method
+    // reach its `path`; `scene/drag` takes no path at all.
+    params.insert("from".to_owned(), serde_json::json!("state"));
+    params.insert("fit".to_owned(), serde_json::json!("intersects"));
+    params.insert("shape".to_owned(), serde_json::json!("rect"));
     params.insert(
         "viewport".to_owned(),
         serde_json::json!({"width": 1, "height": 1}),
@@ -8986,12 +9007,17 @@ const PROBE_PARAM_NAMES: &[&str] = &[
     "by",
     "bytes",
     "codepoint",
+    "fit",
+    "delta",
     "focused",
     "font_id",
     "form",
+    "from",
     "glyph_id",
     "intent",
+    "key",
     "kind",
+    "magnification",
     "max_attempts",
     "path",
     "phase",
@@ -8999,6 +9025,9 @@ const PROBE_PARAM_NAMES: &[&str] = &[
     "replacement",
     "signal_path",
     "state",
+    "points",
+    "rotation",
+    "shape",
     "steps",
     "style",
     "tag",
@@ -9007,6 +9036,9 @@ const PROBE_PARAM_NAMES: &[&str] = &[
     "text",
     "to",
     "ttl_ms",
+    "tilt_x",
+    "tilt_y",
+    "with_origin",
     "value",
     "viewport",
     "x",
@@ -9040,8 +9072,31 @@ fn r1585_1_the_probe_supplies_every_param_the_surface_reads() {
         "the census read nothing — it is testing nothing"
     );
 
+    // ★R1591 — the census reads a WHITESPACE-NORMALISED copy. `rustfmt` breaks
+    // a long chain across lines, so `params\n    .get("from")` is the same call
+    // and a raw substring scan does not see it: measured at R1590's HEAD, this
+    // census found 29 names and MISSED `from`, which `scene/snapshot` and
+    // `scene/drag` both read. Same class as R1587.1 (a field read and written
+    // under two spellings) and R1589 (one word for two operations) — a census
+    // over text is only as good as the text it is willing to see.
     let mut read: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for text in &sources {
+    for source in &sources {
+        let text: String = {
+            let mut out = String::with_capacity(source.len());
+            let mut gap = false;
+            for ch in source.chars() {
+                if ch.is_whitespace() {
+                    gap = true;
+                } else {
+                    if gap && !matches!(ch, '.' | ')' | ',') {
+                        out.push(' ');
+                    }
+                    gap = false;
+                    out.push(ch);
+                }
+            }
+            out
+        };
         let mut rest = text.as_str();
         while let Some(at) = rest.find("params.get(\"") {
             rest = &rest[at + "params.get(\"".len()..];
@@ -9054,7 +9109,7 @@ fn r1585_1_the_probe_supplies_every_param_the_surface_reads() {
         }
     }
     assert!(
-        read.len() >= 25,
+        read.len() >= 30,
         "the census found only {} param names — the pattern has drifted",
         read.len()
     );

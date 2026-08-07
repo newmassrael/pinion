@@ -25,7 +25,7 @@ pub enum OverlayEvent {
     /// Rectangular region selection. Coordinates form the two diagonal
     /// corners; semantically the *normalised* rect (with non-negative
     /// width/height) is what consumers should pass to
-    /// [`pinion_rpc::locate_region`]. The enum stores raw corners so
+    /// [`pinion_rpc::locate_shape`]. The enum stores raw corners so
     /// backends do not need to normalise before lowering.
     Drag { x1: u32, y1: u32, x2: u32, y2: u32 },
     /// Cancel / dismiss the current overlay state. Consumers typically
@@ -40,7 +40,7 @@ pub enum OverlayEvent {
 impl OverlayEvent {
     /// Normalise a [`Self::Drag`] into a top-left + width/height tuple.
     /// Returns the same `(x, y, w, h)` as
-    /// [`pinion_rpc::locate_region`] expects. Other variants return
+    /// [`pinion_rpc::locate_shape`] expects. Other variants return
     /// `None`.
     #[must_use]
     pub fn drag_as_rect(&self) -> Option<(u32, u32, u32, u32)> {

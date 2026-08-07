@@ -30,6 +30,7 @@ use std::time::Duration;
 use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
 use crate::mnemonic::Mnemonic;
+use crate::region::{Region, RegionError, RegionFit};
 use crate::style::{
     Align, BlockFormat, BoxStyle, Color, CursorHint, ImageStyle, LayoutStyle, PathStyle, Size,
     TextStyle, UnderlineStyle,
@@ -1270,8 +1271,41 @@ impl Scene {
     pub fn hit_test_region(&self, x: u32, y: u32, w: u32, h: u32) -> Vec<HitPath> {
         let query = Rect::new(x, y, w, h);
         let mut acc = Vec::new();
-        self.collect_intersections(query, &mut Vec::new(), &mut acc);
+        self.collect_intersections(query, None, (0, 0), &mut Vec::new(), &mut acc);
         acc
+    }
+
+    /// R1591 §5.32 §2 #7 — every primitive a [`Region`] covers, under a
+    /// [`RegionFit`].
+    ///
+    /// The general form of [`Self::hit_test_region`], which is now the
+    /// rectangle-and-touching case of it. A lasso, a circle and a rectangle are
+    /// one question here; Blender answers them with three operators and Qt with
+    /// three `items()` overloads whose mode comes from a view property.
+    ///
+    /// Walks in the same order, translates through [`Scene::Scroll`] the same
+    /// way, and reports the same `bbox` — the node's own rect in the frame it is
+    /// stored in — so a caller mixing the two gets one coordinate convention.
+    ///
+    /// # Errors
+    ///
+    /// [`RegionError`] for a shape that bounds no area, so "your lasso was two
+    /// points" is told apart from "nothing is there".
+    pub fn hit_test_shape(
+        &self,
+        region: &Region,
+        fit: RegionFit,
+    ) -> Result<Vec<HitPath>, RegionError> {
+        region.validate()?;
+        let mut acc = Vec::new();
+        self.collect_intersections(
+            region.bounds(),
+            Some((region, fit)),
+            (0, 0),
+            &mut Vec::new(),
+            &mut acc,
+        );
+        Ok(acc)
     }
 
     /// (§5.32 R39.3 v0) Reverse lookup: walk the scene tree following
@@ -1653,22 +1687,47 @@ impl Scene {
 
     /// Recursive helper for [`Self::hit_test_region`]. Maintains a
     /// segment stack representing the current path from the root.
-    fn collect_intersections(&self, query: Rect, path: &mut Vec<String>, out: &mut Vec<HitPath>) {
+    ///
+    /// R1591 — the walk prunes and descends by the region's **bounding rect**,
+    /// exactly as it always did, and decides whether to *report* a node by the
+    /// precise shape. That split is what makes a rectangular query answer
+    /// byte-for-byte what it answered before this module existed, and it is why
+    /// the descent is gated on the bounds rather than on the fit: a child can be
+    /// contained by a region its parent only touches.
+    ///
+    /// `shift` carries the accumulated `(root-local − here)` offset across
+    /// [`Scene::Scroll`] boundaries, so the precise test always compares the
+    /// node in the region's own coordinate frame. It is signed because content
+    /// scrolled up sits at a negative offset from the window origin.
+    fn collect_intersections(
+        &self,
+        query: Rect,
+        region: Option<(&Region, RegionFit)>,
+        shift: (i64, i64),
+        path: &mut Vec<String>,
+        out: &mut Vec<HitPath>,
+    ) {
         if matches!(self, Scene::Effect(_)) {
             return;
         }
         if !rects_intersect(self.rect(), query) {
             return;
         }
-        out.push(HitPath {
-            segments: path.clone(),
-            bbox: self.rect(),
-        });
+        let reported = match region {
+            None => true,
+            Some((region, fit)) => region.covers_at(self.rect(), shift, fit),
+        };
+        if reported {
+            out.push(HitPath {
+                segments: path.clone(),
+                bbox: self.rect(),
+            });
+        }
         if let Scene::Container(c) = self {
             for (idx, child) in c.children.iter().enumerate() {
                 let seg = child.path_segment_at(idx);
                 path.push(seg);
-                child.collect_intersections(query, path, out);
+                child.collect_intersections(query, region, shift, path, out);
                 path.pop();
             }
         }
@@ -1683,7 +1742,14 @@ impl Scene {
         if let Scene::Scroll(s) = self
             && let Some(translated) = s.translate_query_into_content(query)
         {
-            s.content.collect_intersections(translated, path, out);
+            // The inverse of that translation, accumulated: a content rect plus
+            // this is where it sits in the frame the caller asked in.
+            let inner = (
+                shift.0 + i64::from(s.viewport.x) - i64::from(s.offset_x),
+                shift.1 + i64::from(s.viewport.y) - i64::from(s.offset_y),
+            );
+            s.content
+                .collect_intersections(translated, region, inner, path, out);
         }
     }
 }
@@ -5773,6 +5839,146 @@ mod tests {
         let hits = scene.hit_test_region(0, 0, 50, 50);
         let found = hits.iter().any(|h| h.segments == ["shifted".to_string()]);
         assert!(found, "shifted box must surface at intrinsic-shifted path");
+    }
+
+    // ------------------------------------------------------- R1591 shapes
+
+    #[test]
+    fn r1591_a_rectangular_shape_query_answers_what_hit_test_region_answers() {
+        // The general form must not change the special case. Asserted over a
+        // tree with a container, two leaves and a scroll, so the walk order, the
+        // paths and the bboxes are all compared, not just the count.
+        let inner = tagged_box_at(0, 100, 30, 30, "shifted");
+        let content = container_at(0, 0, 200, 400, vec![inner]);
+        let scrolled =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content).with_offset(0, 100));
+        let scene = container_at(
+            0,
+            0,
+            300,
+            300,
+            vec![scrolled, tagged_box_at(150, 10, 40, 40, "beside")],
+        );
+        for (x, y, w, h) in [
+            (0, 0, 50, 50),
+            (140, 0, 60, 60),
+            (0, 0, 300, 300),
+            (250, 250, 5, 5),
+        ] {
+            let old = scene.hit_test_region(x, y, w, h);
+            let new = scene
+                .hit_test_shape(&Region::rect(x, y, w, h), RegionFit::Intersects)
+                .expect("a non-empty rect is a legal region");
+            assert_eq!(old.len(), new.len(), "({x},{y},{w},{h})");
+            for (a, b) in old.iter().zip(&new) {
+                assert_eq!(a.segments, b.segments);
+                assert_eq!(a.bbox, b.bbox);
+            }
+        }
+    }
+
+    #[test]
+    fn r1591_contains_is_a_different_answer_from_intersects() {
+        let scene = container_at(
+            0,
+            0,
+            300,
+            300,
+            vec![
+                tagged_box_at(10, 10, 20, 20, "small"),
+                tagged_box_at(10, 10, 200, 200, "large"),
+            ],
+        );
+        let region = Region::rect(0, 0, 100, 100);
+        let leaves = |fit| -> Vec<String> {
+            scene
+                .hit_test_shape(&region, fit)
+                .unwrap()
+                .iter()
+                .filter_map(|h| h.segments.last().cloned())
+                .collect()
+        };
+        let touching = leaves(RegionFit::Intersects);
+        assert_eq!(touching, ["small", "large"]);
+        let inside = leaves(RegionFit::Contains);
+        assert_eq!(
+            inside,
+            ["small"],
+            "the large box is only touched, and PAST QT this is a per-query              argument rather than QGraphicsView::rubberBandSelectionMode"
+        );
+    }
+
+    #[test]
+    fn r1591_a_shape_descends_a_scroll_and_is_tested_where_the_caller_drew_it() {
+        // The content box sits at intrinsic (0, 100) and the scroll is offset by
+        // 100, so it paints at window (0, 0). A disc drawn at the WINDOW origin
+        // must find it — which only works if the precise test compares in the
+        // caller's frame rather than the content's.
+        let inner = tagged_box_at(0, 100, 30, 30, "shifted");
+        let content = container_at(0, 0, 200, 400, vec![inner]);
+        let scene =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content).with_offset(0, 100));
+        let found = |region: &Region| {
+            scene
+                .hit_test_shape(region, RegionFit::Intersects)
+                .unwrap()
+                .iter()
+                .any(|h| h.segments == ["shifted".to_string()])
+        };
+        assert!(found(&Region::circle(10, 10, 8)), "drawn where it paints");
+        assert!(
+            !found(&Region::circle(10, 210, 8)),
+            "and NOT where it is stored — without the shift this is the hit"
+        );
+    }
+
+    #[test]
+    fn r1591_a_lasso_selects_what_it_encircles_and_not_its_bounding_box() {
+        // Two boxes on a diagonal. A triangular lasso covers the upper-left one
+        // and leaves the lower-right one out, though the lasso's BOUNDING RECT
+        // holds both — which is what makes this not a rectangle query.
+        let scene = container_at(
+            0,
+            0,
+            300,
+            300,
+            vec![
+                tagged_box_at(10, 10, 20, 20, "upper"),
+                tagged_box_at(160, 160, 20, 20, "lower"),
+            ],
+        );
+        let lasso = Region::lasso([(0, 0), (200, 0), (0, 200)]);
+        assert!(
+            lasso.bounds().w >= 180 && lasso.bounds().h >= 180,
+            "the bounding rect really does hold both"
+        );
+        let hit: Vec<String> = scene
+            .hit_test_shape(&lasso, RegionFit::Contains)
+            .unwrap()
+            .iter()
+            .filter_map(|h| h.segments.last().cloned())
+            .collect();
+        assert_eq!(hit, ["upper"]);
+    }
+
+    #[test]
+    fn r1591_a_degenerate_shape_is_refused_rather_than_answered_with_nothing() {
+        let scene = container_at(0, 0, 300, 300, vec![tagged_box_at(10, 10, 20, 20, "one")]);
+        assert_eq!(
+            scene.hit_test_shape(&Region::lasso([(0, 0), (5, 5)]), RegionFit::Intersects),
+            Err(RegionError::LassoTooShort { vertices: 2 })
+        );
+        assert_eq!(
+            scene.hit_test_shape(&Region::rect(0, 0, 0, 10), RegionFit::Intersects),
+            Err(RegionError::Empty)
+        );
+        // And an empty ANSWER is still an answer, told apart from the above.
+        assert_eq!(
+            scene
+                .hit_test_shape(&Region::circle(2000, 2000, 5), RegionFit::Intersects)
+                .unwrap(),
+            Vec::new()
+        );
     }
 
     #[test]

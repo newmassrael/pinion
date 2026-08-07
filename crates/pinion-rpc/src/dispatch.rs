@@ -29,6 +29,7 @@ use std::borrow::Cow;
 
 use pinion_a11y::{AccessFocus, AccessNode};
 use pinion_core::display::DisplayTopology;
+use pinion_core::region::{Region, RegionFit};
 
 use crate::displays::AnchoredOutcome;
 use pinion_core::event::WheelDelta;
@@ -55,7 +56,7 @@ use crate::intervene::{InterveneError, intervene_from, intervene_shared_from};
 use crate::invoke::{InvokeError, invoke_from, invoke_shared_from};
 use crate::layout_query::{LayoutQueryError, LayoutQueryParams, layout_query};
 use crate::locate::{
-    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_region,
+    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_shape,
 };
 use crate::methods::rpc_methods;
 use crate::origin::{AnswerOrigin, Refusal, SceneSource};
@@ -2799,10 +2800,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     handle_scene_locate(scene, request.params.as_ref()),
                     HandlerKind::Read,
                 ),
-                "scene/locate_region" => (
-                    handle_scene_locate_region(scene, request.params.as_ref()),
-                    HandlerKind::Read,
-                ),
+                "scene/locate_region" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_locate_region(
+                            scene,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/bbox" => (
                     handle_scene_bbox(scene, request.params.as_ref()),
                     HandlerKind::Read,
@@ -7566,8 +7579,81 @@ fn bbox_to_json(r: &pinion_core::scene::Rect) -> Value {
     Value::Object(m)
 }
 
-fn handle_scene_locate_region(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+/// `scene/locate_region` — R1591 §5.32 §2 #7: which primitives a **region**
+/// covers.
+///
+/// The rectangle form (`{x, y, w, h}`) is what this method has always taken and
+/// still means exactly what it meant. `shape` opens the other two, `fit` opens
+/// the other half of "covered", and `from` chooses which scene is asked — the
+/// authoritative state tree, or the painted frame, which is the only one that
+/// carries geometry for a view-fn binding.
+fn handle_scene_locate_region<F>(
+    scene: &Scene,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
     let params = require_params(params)?;
+    let region = parse_region(params)?;
+    let fit = match params
+        .get("fit")
+        .and_then(Value::as_str)
+        .unwrap_or("intersects")
+    {
+        "intersects" => RegionFit::Intersects,
+        "contains" => RegionFit::Contains,
+        other => {
+            return Err(RpcError::invalid_params(format!(
+                "params.fit {other:?} is not \"intersects\" or \"contains\""
+            )));
+        }
+    };
+
+    // The same two-scene basis `scene/snapshot` uses, and for the same reason: a
+    // view-fn binding's STATE scene carries no geometry, so a region query
+    // against it would answer with the zero rect for every node. Preferring the
+    // displayed frame over a fresh render is §2 #7 parity.
+    let painted;
+    let target = match params
+        .get("from")
+        .and_then(Value::as_str)
+        .unwrap_or("state")
+    {
+        "state" => scene,
+        "paint" => {
+            if let Some(frame) = last_paint_scene {
+                frame
+            } else if let Some(producer) = paint_producer {
+                let (w, h) = parse_snapshot_viewport(params)?;
+                painted = (producer)(w, h);
+                &painted
+            } else {
+                return Err(RpcError::invalid_params(
+                    "params.from \"paint\" needs a paint producer or a stored frame",
+                ));
+            }
+        }
+        other => {
+            return Err(RpcError::invalid_params(format!(
+                "params.from {other:?} is not \"state\" or \"paint\""
+            )));
+        }
+    };
+
+    match locate_shape(target, &region, fit) {
+        Ok(outcome) => Ok(locate_region_outcome_to_json(&outcome)),
+        Err(err) => Err(RpcError::invalid_params(err.to_string())),
+    }
+}
+
+/// Parse the region a `scene/locate_region` call is asking about.
+///
+/// `shape` defaults to `"rect"`, so every call written before R1591 keeps its
+/// meaning without naming it.
+fn parse_region(params: &Value) -> Result<Region, RpcError> {
     let read_u32 = |k: &str| -> Result<u32, RpcError> {
         let raw = params.get(k).and_then(Value::as_u64).ok_or_else(|| {
             RpcError::invalid_params(format!("params.{k} missing or not a non-negative integer"))
@@ -7575,13 +7661,48 @@ fn handle_scene_locate_region(scene: &Scene, params: Option<&Value>) -> Result<V
         u32::try_from(raw)
             .map_err(|_| RpcError::invalid_params(format!("params.{k} exceeds u32 range")))
     };
-    let x = read_u32("x")?;
-    let y = read_u32("y")?;
-    let w = read_u32("w")?;
-    let h = read_u32("h")?;
-
-    let outcome = locate_region(scene, x, y, w, h);
-    Ok(locate_region_outcome_to_json(&outcome))
+    let signed = |k: &str| -> Result<i64, RpcError> {
+        params.get(k).and_then(Value::as_i64).ok_or_else(|| {
+            RpcError::invalid_params(format!("params.{k} missing or not an integer"))
+        })
+    };
+    match params
+        .get("shape")
+        .and_then(Value::as_str)
+        .unwrap_or("rect")
+    {
+        "rect" => Ok(Region::rect(
+            read_u32("x")?,
+            read_u32("y")?,
+            read_u32("w")?,
+            read_u32("h")?,
+        )),
+        "circle" => Ok(Region::circle(signed("cx")?, signed("cy")?, read_u32("r")?)),
+        "lasso" => {
+            let raw = params
+                .get("points")
+                .and_then(Value::as_array)
+                .ok_or_else(|| RpcError::invalid_params("params.points missing or not an array"))?;
+            let mut points = Vec::with_capacity(raw.len());
+            for (index, entry) in raw.iter().enumerate() {
+                let pair = entry.as_array().filter(|p| p.len() == 2).ok_or_else(|| {
+                    RpcError::invalid_params(format!("params.points[{index}] is not [x, y]"))
+                })?;
+                let coord = |at: usize| -> Result<i64, RpcError> {
+                    pair[at].as_i64().ok_or_else(|| {
+                        RpcError::invalid_params(format!(
+                            "params.points[{index}][{at}] is not an integer"
+                        ))
+                    })
+                };
+                points.push((coord(0)?, coord(1)?));
+            }
+            Ok(Region::lasso(points))
+        }
+        other => Err(RpcError::invalid_params(format!(
+            "params.shape {other:?} is not \"rect\", \"circle\" or \"lasso\""
+        ))),
+    }
 }
 
 fn locate_region_outcome_to_json(out: &LocateRegionOutcome) -> Value {
@@ -7594,6 +7715,8 @@ fn locate_region_outcome_to_json(out: &LocateRegionOutcome) -> Value {
         "common_ancestor".into(),
         Value::String(out.common_ancestor.clone()),
     );
+    map.insert("shape".into(), Value::String(out.shape.clone()));
+    map.insert("fit".into(), Value::String(out.fit.clone()));
     Value::Object(map)
 }
 
