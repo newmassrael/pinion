@@ -101,8 +101,19 @@ impl fmt::Display for RegionFit {
 /// The shape a region select was drawn with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Region {
-    /// A rectangle. The marquee every canvas starts with.
-    Rect(Rect),
+    /// A rectangle, by its **inclusive** corners. The marquee every canvas
+    /// starts with.
+    ///
+    /// Signed like the other two arms, and that is the whole reason this type
+    /// is not welded to [`Rect`]: R1592's second consumer selects in **graph
+    /// units**, which pan into negative coordinates, and a shape predicate has
+    /// no business knowing what its numbers mean.
+    Rect {
+        /// Top-left, inclusive.
+        min: Point,
+        /// Bottom-right, inclusive.
+        max: Point,
+    },
     /// A disc. Blender's `NODE_OT_select_circle`, and the shape a brush tool
     /// paints a selection with.
     Circle {
@@ -158,10 +169,41 @@ impl fmt::Display for RegionError {
 impl std::error::Error for RegionError {}
 
 impl Region {
-    /// A rectangular region.
+    /// A rectangular region over a painted [`Rect`] — half-open, the way every
+    /// rect on this surface is.
+    ///
+    /// A zero-extent rect makes an EMPTY region, which [`Self::validate`]
+    /// refuses; it is not silently widened to one pixel.
     #[must_use]
-    pub const fn rect(x: u32, y: u32, w: u32, h: u32) -> Self {
-        Self::Rect(Rect::new(x, y, w, h))
+    pub fn rect(x: u32, y: u32, w: u32, h: u32) -> Self {
+        if w == 0 || h == 0 {
+            // No inclusive corner pair describes an empty rect, so the empty
+            // one is spelled as a max BEFORE its min, which `validate` names
+            // and every predicate answers `false` for.
+            return Self::Rect {
+                min: Point::new(i64::from(x), i64::from(y)),
+                max: Point::new(i64::from(x) - 1, i64::from(y) - 1),
+            };
+        }
+        Self::span(
+            i64::from(x),
+            i64::from(y),
+            i64::from(x) + i64::from(w) - 1,
+            i64::from(y) + i64::from(h) - 1,
+        )
+    }
+
+    /// A rectangular region by **inclusive** corners in any integer coordinate
+    /// space, normalised so a drag in any direction is the same region.
+    ///
+    /// The form a world-space marquee wants: graph units, data units, cells —
+    /// whatever the caller's numbers mean.
+    #[must_use]
+    pub fn span(x0: i64, y0: i64, x1: i64, y1: i64) -> Self {
+        Self::Rect {
+            min: Point::new(x0.min(x1), y0.min(y1)),
+            max: Point::new(x0.max(x1), y0.max(y1)),
+        }
     }
 
     /// A circular region.
@@ -186,7 +228,7 @@ impl Region {
     /// rather than folded into an empty answer — see [`RegionError::LassoTooShort`].
     pub fn validate(&self) -> Result<(), RegionError> {
         match self {
-            Self::Rect(r) if r.w == 0 || r.h == 0 => Err(RegionError::Empty),
+            Self::Rect { min, max } if max.x < min.x || max.y < min.y => Err(RegionError::Empty),
             Self::Circle { radius: 0, .. } => Err(RegionError::Empty),
             Self::Lasso(points) if points.len() < 3 => Err(RegionError::LassoTooShort {
                 vertices: points.len(),
@@ -204,9 +246,7 @@ impl Region {
     #[must_use]
     pub fn bounds(&self) -> Rect {
         let (min_x, min_y, max_x, max_y) = match self {
-            Self::Rect(r) => {
-                return *r;
-            }
+            Self::Rect { min, max } => (min.x, min.y, max.x, max.y),
             Self::Circle { centre, radius } => {
                 let r = i64::from(*radius);
                 (centre.x - r, centre.y - r, centre.x + r, centre.y + r)
@@ -248,20 +288,42 @@ impl Region {
         if rect.w == 0 || rect.h == 0 {
             return false;
         }
-        let Some(left) = i64::from(rect.x).checked_add(offset.0) else {
+        let (Some(left), Some(top)) = (
+            i64::from(rect.x).checked_add(offset.0),
+            i64::from(rect.y).checked_add(offset.1),
+        ) else {
             return false;
         };
-        let Some(top) = i64::from(rect.y).checked_add(offset.1) else {
+        self.covers_span(
+            Point::new(left, top),
+            Point::new(left + i64::from(rect.w) - 1, top + i64::from(rect.h) - 1),
+            fit,
+        )
+    }
+
+    /// Whether the box with **inclusive** corners `min..=max` satisfies `fit`.
+    ///
+    /// The general form, in whatever integer space the caller works in — the
+    /// one `Rect`-free entry point, so a world-space marquee asks the same
+    /// question a painted-surface one does. A box whose `max` precedes its
+    /// `min` bounds nothing and is covered by nothing.
+    #[must_use]
+    pub fn covers_span(&self, min: Point, max: Point, fit: RegionFit) -> bool {
+        if max.x < min.x || max.y < min.y {
             return false;
-        };
-        let (right, bottom) = (left + i64::from(rect.w), top + i64::from(rect.h));
+        }
+        let (left, top) = (min.x, min.y);
+        let (right, bottom) = (max.x + 1, max.y + 1);
         match self {
-            Self::Rect(r) => {
-                if r.w == 0 || r.h == 0 {
+            Self::Rect {
+                min: rmin,
+                max: rmax,
+            } => {
+                if rmax.x < rmin.x || rmax.y < rmin.y {
                     return false;
                 }
-                let (rl, rt) = (i64::from(r.x), i64::from(r.y));
-                let (rr, rb) = (rl + i64::from(r.w), rt + i64::from(r.h));
+                let (rl, rt) = (rmin.x, rmin.y);
+                let (rr, rb) = (rmax.x + 1, rmax.y + 1);
                 match fit {
                     RegionFit::Intersects => left < rr && rl < right && top < rb && rt < bottom,
                     RegionFit::Contains => rl <= left && rt <= top && rr >= right && rb >= bottom,
@@ -338,14 +400,8 @@ impl Region {
     #[must_use]
     pub fn holds(&self, point: Point) -> bool {
         match self {
-            Self::Rect(r) => {
-                let (l, t) = (i64::from(r.x), i64::from(r.y));
-                r.w > 0
-                    && r.h > 0
-                    && point.x >= l
-                    && point.x < l + i64::from(r.w)
-                    && point.y >= t
-                    && point.y < t + i64::from(r.h)
+            Self::Rect { min, max } => {
+                point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y
             }
             Self::Circle { centre, radius } => {
                 let r = i64::from(*radius);
@@ -381,7 +437,7 @@ impl Region {
     #[must_use]
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::Rect(_) => "rect",
+            Self::Rect { .. } => "rect",
             Self::Circle { .. } => "circle",
             Self::Lasso(_) => "lasso",
         }
@@ -672,6 +728,63 @@ mod tests {
                 .to_string()
                 .contains("three vertices")
         );
+    }
+
+    #[test]
+    fn r1592_the_predicate_does_not_know_what_its_numbers_mean() {
+        // The second consumer selects in GRAPH units, which pan into negative
+        // coordinates — a space `Rect` cannot hold at all. Same question, same
+        // answers, no surface in sight.
+        let marquee = Region::span(-200, -50, -100, 50);
+        assert!(
+            marquee.covers_span(
+                Point::new(-150, 0),
+                Point::new(-120, 30),
+                RegionFit::Contains
+            ),
+            "a node wholly inside the swept box"
+        );
+        assert!(
+            marquee.covers_span(
+                Point::new(-120, 0),
+                Point::new(-40, 30),
+                RegionFit::Intersects
+            ),
+            "and one the sweep only clipped"
+        );
+        assert!(
+            !marquee.covers_span(
+                Point::new(-120, 0),
+                Point::new(-40, 30),
+                RegionFit::Contains
+            ),
+            "which is not the same answer"
+        );
+        assert!(!marquee.covers_span(Point::new(0, 0), Point::new(10, 10), RegionFit::Intersects));
+
+        // A drag in ANY direction is the same region: the corners normalise.
+        assert_eq!(Region::span(-100, 50, -200, -50), marquee);
+
+        // And the other two shapes work there too, which is what makes a lasso
+        // over a panned canvas expressible at all.
+        let lasso = Region::lasso([(-200, -50), (-100, -50), (-200, 50)]);
+        assert!(lasso.holds(Point::new(-190, -40)));
+        assert!(!lasso.holds(Point::new(-110, 40)), "past the hypotenuse");
+        assert!(Region::circle(-150, 0, 20).holds(Point::new(-140, 0)));
+    }
+
+    #[test]
+    fn r1592_an_empty_rect_is_empty_in_both_spellings() {
+        // The surface spelling and the span spelling have to agree about what
+        // "no area" is, or `validate` would refuse one and accept the other.
+        assert_eq!(Region::rect(5, 5, 0, 3).validate(), Err(RegionError::Empty));
+        assert_eq!(Region::rect(5, 5, 3, 0).validate(), Err(RegionError::Empty));
+        assert!(!Region::rect(5, 5, 0, 3).holds(Point::new(5, 5)));
+        // A ONE-pixel rect is not empty, and is the smallest thing that is not.
+        assert_eq!(Region::rect(5, 5, 1, 1).validate(), Ok(()));
+        assert!(Region::rect(5, 5, 1, 1).holds(Point::new(5, 5)));
+        assert!(!Region::rect(5, 5, 1, 1).holds(Point::new(6, 5)));
+        assert_eq!(Region::rect(5, 5, 1, 1), Region::span(5, 5, 5, 5));
     }
 
     #[test]

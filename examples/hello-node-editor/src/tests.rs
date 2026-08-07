@@ -9040,3 +9040,55 @@ fn r1262_edge_endpoint_variants_share_one_body() {
         "indexed drops it identically",
     );
 }
+
+// ------------------------------------------------------------------ R1592
+
+/// R1592 — a card's far edge is PART OF THE CARD for an area selection.
+///
+/// "Touching counts" has been this marquee's stated rule since R880 (Qt's
+/// rubber band and Unreal's share it) and nothing asserted it: a counterfactual
+/// that narrowed the extent by one unit on each far side passed
+/// `r880_node_marquee_select.py`, because a pointer-driven sweep in screen
+/// pixels cannot land on an exact graph-unit edge. The rule now has a name
+/// ([`card_span`]) and this is the test that can fail.
+#[test]
+fn r1592_a_sweep_that_grazes_a_cards_far_edge_takes_it() {
+    let mut node = eval_node_of(0, NodeOp::Texture, 0, true);
+    node.x = 40;
+    node.y = 70;
+    let (min, max) = card_span(&node);
+    assert_eq!(min, Point::new(40, 70));
+    assert_eq!(
+        max,
+        Point::new(node.right().into(), node.bottom().into()),
+        "the far edge is included rather than the last unit before it"
+    );
+
+    // A sweep whose LEFT edge lands exactly on the card's right edge.
+    let grazing = Region::span(node.right().into(), 0, i64::from(node.right()) + 500, 4000);
+    assert!(
+        grazing.covers_span(min, max, RegionFit::Intersects),
+        "touching counts — this is the assertion the pointer demo cannot make"
+    );
+    // One unit further out and it does not.
+    let clear = Region::span(
+        i64::from(node.right()) + 1,
+        0,
+        i64::from(node.right()) + 500,
+        4000,
+    );
+    assert!(
+        !clear.covers_span(min, max, RegionFit::Intersects),
+        "and the rule stops there, or 'touching' would mean 'nearby'"
+    );
+    // The same on the near edge, so the rule is symmetric.
+    let before = Region::span(0, 0, node.x.into(), 4000);
+    assert!(before.covers_span(min, max, RegionFit::Intersects));
+    assert!(
+        !Region::span(0, 0, i64::from(node.x) - 1, 4000).covers_span(
+            min,
+            max,
+            RegionFit::Intersects
+        )
+    );
+}

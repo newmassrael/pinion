@@ -273,6 +273,7 @@ use pinion_core::external::{
     RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
 };
 use pinion_core::reactive::{Owner, Signal, batch};
+use pinion_core::region::{Point, Region, RegionFit};
 use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
 };
@@ -2727,6 +2728,23 @@ struct MarqueeStart {
     latch: DragLatch,
     /// The press cursor in graph units — the rubber band's fixed corner.
     press_graph: (f64, f64),
+}
+
+/// R1592 — a card's extent for an area selection, as **inclusive** corners in
+/// graph units: `x..=right()`, its far edge INCLUDED.
+///
+/// A card spans `x..right()` everywhere else in this file, so this widens it by
+/// one unit on each far side — deliberately, and it is the "touching counts"
+/// rule this marquee has stated since R880 (Qt's rubber band and Unreal's share
+/// it): a sweep whose edge lands exactly on a card's far edge takes the card.
+/// Before R1592 that rule lived as `n.right() >= x0` inside a filter, where it
+/// read as an off-by-one; here it is a sentence about the card, and the one
+/// place the marquee, the lasso and the circle all get it from.
+fn card_span(node: &GraphNode) -> (Point, Point) {
+    (
+        Point::new(node.x.into(), node.y.into()),
+        Point::new(node.right().into(), node.bottom().into()),
+    )
 }
 
 /// R880.1 — flip `id`'s membership in a node set (the toggle kernel the
@@ -5707,11 +5725,36 @@ impl NodeGraphExternal {
     /// *unions* the hit set in.
     fn apply_marquee(&self, rect: MarqueeRect, mods: Modifiers) {
         let (x0, y0, x1, y1) = rect;
+        self.apply_region(
+            &Region::span(x0.into(), y0.into(), x1.into(), y1.into()),
+            mods,
+        );
+    }
+
+    /// R1592 — apply ANY [`Region`] as an area selection, in **graph units**.
+    ///
+    /// The hit test used to be four inequalities written here. It is now the
+    /// framework predicate (R1591), which is why that type is signed and
+    /// `Rect`-free: a marquee on a panned canvas selects in world coordinates,
+    /// which go negative, and a shape predicate has no business knowing what
+    /// its numbers mean. Migrating it is what made the second shape and the
+    /// second FIT reachable at all — `select_lasso` and `select_circle` are now
+    /// this same call with a different value.
+    ///
+    /// A card's extent is passed as `x..=right()` — its far edge INCLUDED —
+    /// which is the "touching counts" rule this marquee has stated since R880
+    /// and Qt's rubber band shares. Stating it here rather than in an
+    /// inequality is the point: it is now a sentence about the card, not an
+    /// off-by-one in a filter.
+    fn apply_region(&self, region: &Region, mods: Modifiers) {
         let hit: BTreeSet<NodeId> = self
             .nodes
             .get()
             .iter()
-            .filter(|n| n.x <= x1 && n.right() >= x0 && n.y <= y1 && n.bottom() >= y0)
+            .filter(|n| {
+                let (min, max) = card_span(n);
+                region.covers_span(min, max, RegionFit::Intersects)
+            })
             .map(|n| n.id)
             .collect();
         let next = match SelectionChord::from_modifiers(mods) {
@@ -5730,6 +5773,63 @@ impl NodeGraphExternal {
             SelectionChord::Replace => hit,
         };
         self.set_selection(Selection::from_nodes(next));
+    }
+
+    /// R1592 — `select_lasso` / `select_circle`: parse a shape in **graph
+    /// units** and apply it as an area selection.
+    ///
+    /// The whole of what this application supplies is the spelling. The
+    /// geometry, the closure of a lasso, the even-odd interior and the refusal
+    /// of a shape that bounds no area are all
+    /// [`pinion_core::region`], and the selection policy
+    /// is [`Self::apply_region`] — the same one the pointer marquee uses, so a
+    /// lasso and a rubber band cannot disagree about what "selected" means.
+    fn invoke_region_select(
+        &self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(raw) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let number = |token: &str| -> Result<i64, InvokeError> {
+            token
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| InvokeError::rejected(format!("{token:?} is not a number")))
+        };
+        let region = if path == "select_circle" {
+            let parts: Vec<&str> = raw.split(',').collect();
+            let [cx, cy, r] = parts.as_slice() else {
+                return Err(InvokeError::rejected(format!(
+                    "malformed argument {raw:?} (expected \"<x>,<y>,<r>\")"
+                )));
+            };
+            let radius = u32::try_from(number(r)?.max(0)).unwrap_or(u32::MAX);
+            Region::circle(number(cx)?, number(cy)?, radius)
+        } else {
+            let mut points = Vec::new();
+            for pair in raw.split(';').filter(|p| !p.trim().is_empty()) {
+                let (x, y) = pair.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "malformed vertex {pair:?} (expected \"<x>,<y>\")"
+                    ))
+                })?;
+                points.push((number(x)?, number(y)?));
+            }
+            Region::lasso(points)
+        };
+        // Refused rather than answered with zero: "your lasso was two points"
+        // and "the sweep took nothing" are different facts, and only one of
+        // them is the user's mistake.
+        region
+            .validate()
+            .map_err(|err| InvokeError::rejected(err.to_string()))?;
+        self.apply_region(&region, Modifiers::default());
+        let took = self.selection.get().nodes().len();
+        Ok(IntrospectValue::Int(
+            i64::try_from(took).unwrap_or(i64::MAX),
+        ))
     }
 
     /// R879 — the `intervene selected_ids` arm: a CSV of node ids replaces
@@ -6748,6 +6848,13 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::action("dissolve_node", "int"),
     SchemaField::action("dissolve_selected", "json"),
     SchemaField::action("select_all", "json"),
+    // R1592 — Blender's NODE_OT_select_lasso / _circle, in graph units.
+    // `select_lasso "x,y;x,y;..."` (three vertices or more, closed by
+    // derivation); `select_circle "x,y,r"`. Both answer how many nodes the
+    // shape took, and both are the SAME call the marquee makes — a
+    // `pinion_core::region::Region` handed to `apply_region`.
+    SchemaField::action("select_lasso", "string"),
+    SchemaField::action("select_circle", "string"),
     SchemaField::action("nudge", "string"),
     // R948 — align / distribute the selection (no args; the AI-first
     // peer of an editor's align toolbar). Each returns whether the
@@ -7121,6 +7228,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R880 — select every node (the keyboard `Ctrl`+`A` twin).
             // `false` on an empty graph.
             "select_all" => Ok(IntrospectValue::Bool(self.select_all())),
+            // R1592 — an area selection by a shape the pointer cannot draw
+            // over a wire. Blender needs an operator each; here both are one
+            // `Region` value applied by one call.
+            "select_lasso" | "select_circle" => self.invoke_region_select(path, &args),
             // R878 — open the inline rename editor: an `Int` targets that
             // node, `Null` targets the selection (the keyboard `F2` twin).
             // `false` on an unknown id / empty selection (graph unchanged).

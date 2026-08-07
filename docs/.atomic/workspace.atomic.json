@@ -32242,6 +32242,60 @@
         "Params read through a closure with a variable key (scene/locate_region's own w and h) remain invisible to the census, which matches on a literal. Recorded rather than fixed: a census that follows a binding is a parser, and this one is a scan."
       ]
     },
+    "R1592": {
+      "decision_summary": "R1592 §5.32 §5.38 §2 #2 — A SHAPE SELECTS IN THE CALLER'S OWN COORDINATES. R1591 gave the framework a region primitive and left it with one consumer, which is a thing that drifts; hello-node-editor had held its own marquee hit test as four inequalities since R880. Migrating it is this round, and the migration found a real defect in R1591's own design: Region was welded to Rect, an unsigned WINDOW-pixel type, while a node editor's marquee selects in GRAPH units that pan into negative coordinates. A shape predicate has no business knowing what its numbers mean, so Region is signed throughout now and Region::covers_span is its one Rect-free entry point, with Region::rect kept as the surface spelling and Region::span as the world one. That is [[abstraction-needs-second-consumer]] working exactly as it is meant to — the second consumer revealed the type was over-fitted to the first, and it revealed it in the round that added the consumer rather than a year later. What the migration then makes possible is the point: select_lasso and select_circle in hello-node-editor are the SAME call the pointer marquee makes, one Region value handed to one selection policy, where Blender needs an operator and an implementation each. It also CORRECTS R1591's own debt note, which named pinion-chart's brush as the second consumer — measured, that brush is a 1-D RangeSliderExternal x-window with no shape, no rect and no hit test, so the note was wrong about half of what it listed, one round after this project recorded that a debt note's diagnosis is itself an audit target. And it closes a coverage hole three counterfactuals surfaced between them: the marquee's \"touching counts\" rule — stated in prose since R880, and shared with Qt's rubber band — had no test that could fail, because a pointer-driven sweep in screen pixels cannot land on an exact graph-unit edge. The rule now has a name, card_span, and a test at the unit where it is decidable.",
+      "changes_bullets": [
+        "Region is signed throughout: Region::span for world coordinates, Region::rect for the surface, covers_span as the one predicate",
+        "hello-node-editor's apply_marquee becomes apply_region over that predicate; the four inequalities are gone",
+        "select_lasso / select_circle: two Blender operators as one Region value, in graph units, refused by name when degenerate",
+        "card_span names the \"touching counts\" rule the marquee has stated since R880 and nothing asserted",
+        "CORRECTION: R1591's debt note named pinion-chart's brush as a consumer; it is a 1-D range slider, not a region select"
+      ],
+      "verification_bullets": [
+        "8 counterfactuals, each reverted with hash verification. THREE did not do what they were named for and each is a finding. CF-4 narrowed a card's extent by one unit on each far side and PASSED r880_node_marquee_select.py — the demo drives the marquee through a pointer drag in screen pixels, which cannot land on an exact graph-unit edge, so the rule that demo exists to check was unasserted. It is now a unit test on card_span, which can fail. CF-6 was INVALID twice before it compiled (unreachable_code, an unstable attribute position) and then caught. CF-1 through CF-3 and CF-5 were caught first time.",
+        "pinion-core: 3132 tests (2 new for the space-agnostic predicate, asserting selection in negative graph coordinates that Rect cannot hold at all). hello-node-editor: 265 (1 new). pinion-rpc: 1150 plus its four wire-census gates. Every existing test passed unchanged, which is the claim that the migration preserved behaviour.",
+        "Demo: tools/demos/r1592_a_shape_selects_in_graph_units.py, 6 phases, and not one pixel is read: the shapes are stated in the graph's own units and the node positions come from the model through detail.x / detail.y. A triangular lasso is shown to take STRICTLY fewer nodes than its own bounding rectangle, with the cut placed in the WIDEST gap between two consecutive node sums — the first draft used the midpoint of the whole range and landed on the near side of every node, which is a fixture that would have passed by luck.",
+        "r880_node_marquee_select.py and r838_node_editor.py both pass unchanged after a release rebuild, which is the regression proof for the migration.",
+        "Gates: cargo fmt --check, clippy -D pedantic on four packages, cargo doc --document-private-items, validate-workspace, and all six node-editor / node-graph demos."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The lasso and the circle are reachable over RPC and not from the pointer: a lasso GESTURE needs the pointer path captured across a drag, which is a different axis from this one (the region value). The marquee gesture is unchanged and still the only pointer-driven area select.",
+        "pinion-chart is not a consumer of Region and this round says so rather than migrating it. Its brush is a 1-D window over one axis; a 2-D data-space brush would be a real consumer and does not exist yet.",
+        "Region is integer-only. A data-space brush would arrive in floats, and whether the scaling happens before or inside the predicate is the decision that consumer would force.",
+        "The region walk over a scene still tests a node's RECT rather than a PathNode's real outline, unchanged from R1591 and stated there."
+      ],
+      "publishable_decision_summary": "R1592 §5.32 §5.38 §2 #2 — A SHAPE SELECTS IN THE CALLER'S OWN COORDINATES. R1591 gave the framework a region primitive and left it with one consumer, which is a thing that drifts; hello-node-editor had held its own marquee hit test as four inequalities since R880. Migrating it is this round, and the migration found a real defect in R1591's own design: Region was welded to Rect, an unsigned WINDOW-pixel type, while a node editor's marquee selects in GRAPH units that pan into negative coordinates. A shape predicate has no business knowing what its numbers mean, so Region is signed throughout now and Region::covers_span is its one Rect-free entry point, with Region::rect kept as the surface spelling and Region::span as the world one. That is [[abstraction-needs-second-consumer]] working exactly as it is meant to — the second consumer revealed the type was over-fitted to the first, and it revealed it in the round that added the consumer rather than a year later. What the migration then makes possible is the point: select_lasso and select_circle in hello-node-editor are the SAME call the pointer marquee makes, one Region value handed to one selection policy, where Blender needs an operator and an implementation each. It also CORRECTS R1591's own debt note, which named pinion-chart's brush as the second consumer — measured, that brush is a 1-D RangeSliderExternal x-window with no shape, no rect and no hit test, so the note was wrong about half of what it listed, one round after this project recorded that a debt note's diagnosis is itself an audit target. And it closes a coverage hole three counterfactuals surfaced between them: the marquee's \"touching counts\" rule — stated in prose since R880, and shared with Qt's rubber band — had no test that could fail, because a pointer-driven sweep in screen pixels cannot land on an exact graph-unit edge. The rule now has a name, card_span, and a test at the unit where it is decidable.",
+      "publishable_changes_bullets": [
+        "Region is signed throughout: Region::span for world coordinates, Region::rect for the surface, covers_span as the one predicate",
+        "hello-node-editor's apply_marquee becomes apply_region over that predicate; the four inequalities are gone",
+        "select_lasso / select_circle: two Blender operators as one Region value, in graph units, refused by name when degenerate",
+        "card_span names the \"touching counts\" rule the marquee has stated since R880 and nothing asserted",
+        "CORRECTION: R1591's debt note named pinion-chart's brush as a consumer; it is a 1-D range slider, not a region select"
+      ],
+      "publishable_verification_bullets": [
+        "8 counterfactuals, each reverted with hash verification. THREE did not do what they were named for and each is a finding. CF-4 narrowed a card's extent by one unit on each far side and PASSED r880_node_marquee_select.py — the demo drives the marquee through a pointer drag in screen pixels, which cannot land on an exact graph-unit edge, so the rule that demo exists to check was unasserted. It is now a unit test on card_span, which can fail. CF-6 was INVALID twice before it compiled (unreachable_code, an unstable attribute position) and then caught. CF-1 through CF-3 and CF-5 were caught first time.",
+        "pinion-core: 3132 tests (2 new for the space-agnostic predicate, asserting selection in negative graph coordinates that Rect cannot hold at all). hello-node-editor: 265 (1 new). pinion-rpc: 1150 plus its four wire-census gates. Every existing test passed unchanged, which is the claim that the migration preserved behaviour.",
+        "Demo: tools/demos/r1592_a_shape_selects_in_graph_units.py, 6 phases, and not one pixel is read: the shapes are stated in the graph's own units and the node positions come from the model through detail.x / detail.y. A triangular lasso is shown to take STRICTLY fewer nodes than its own bounding rectangle, with the cut placed in the WIDEST gap between two consecutive node sums — the first draft used the midpoint of the whole range and landed on the near side of every node, which is a fixture that would have passed by luck.",
+        "r880_node_marquee_select.py and r838_node_editor.py both pass unchanged after a release rebuild, which is the regression proof for the migration.",
+        "Gates: cargo fmt --check, clippy -D pedantic on four packages, cargo doc --document-private-items, validate-workspace, and all six node-editor / node-graph demos."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The lasso and the circle are reachable over RPC and not from the pointer: a lasso GESTURE needs the pointer path captured across a drag, which is a different axis from this one (the region value). The marquee gesture is unchanged and still the only pointer-driven area select.",
+        "pinion-chart is not a consumer of Region and this round says so rather than migrating it. Its brush is a 1-D window over one axis; a 2-D data-space brush would be a real consumer and does not exist yet.",
+        "Region is integer-only. A data-space brush would arrive in floats, and whether the scaling happens before or inside the predicate is the decision that consumer would force.",
+        "The region walk over a scene still tests a node's RECT rather than a PathNode's real outline, unchanged from R1591 and stated there."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
