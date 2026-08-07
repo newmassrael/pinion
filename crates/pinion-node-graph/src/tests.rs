@@ -3,15 +3,17 @@
 //! Every one of these is a hand-written document: no renderer, no window, no
 //! pointer. That is the property the crate exists to have.
 
+use std::collections::BTreeSet;
+
 use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Appearance, ConnectError, Conversion, Crossings, Definitions, Document, DuplicateError,
-    EditPath, Extent, ExtractError, Fragment, GroupError, Grow, InsertError, InterfaceSide,
-    Layered, NestError, Node, NodeBody, NodeId, NodeKind, Organic, Orphaned, ParentError,
-    PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError, Route, SelectError,
-    Severed, Sharing, Side, Socket, TreeId, UngroupError, Violation,
+    Appearance, Carried, ConnectError, Conversion, Crossings, Definitions, Document,
+    DuplicateError, EditError, EditPath, Extent, ExtractError, Fragment, GroupError, Grow,
+    InsertError, InterfaceSide, Layered, NestError, Node, NodeBody, NodeId, NodeKind, Organic,
+    Orphaned, ParentError, PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError,
+    Route, SelectError, Severed, Sharing, Side, Socket, TreeId, UngroupError, Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -6829,4 +6831,269 @@ fn r1597_a_value_its_port_cannot_hold_is_named_on_a_document_that_arrived() {
         unclassified.validate().is_empty(),
         "silence about a fact the taxonomy declines to state is the honest answer"
     );
+}
+
+// ── R1598 swap: a node changes what it IS, not which node it is ────
+
+#[test]
+fn r1598_a_swap_keeps_the_node_and_everything_addressed_by_it() {
+    // ★ The whole divergence from Blender, whose `NODE_OT_swap_node` creates a
+    // new node and deletes the old one -- so every reference to it dies: a
+    // selection, a saved layout, an undo record, an agent holding the id.
+    let mut f = fixture();
+    let frame = f
+        .document
+        .enframe(ROOT, &[f.add], Some("Stage".to_owned()))
+        .expect("a node to frame")
+        .frame;
+    if let Some(node) = f.document.tree_mut(ROOT).and_then(|t| t.node_mut(f.add)) {
+        node.label = Some("renamed".to_owned());
+        node.appearance.collapsed = true;
+        node.bypassed = true;
+        node.x = 41;
+    }
+
+    let swapped = f
+        .document
+        .set_kind(ROOT, f.add, Op::Swap)
+        .expect("Add and Swap are both application kinds");
+
+    let node = f
+        .document
+        .tree(ROOT)
+        .and_then(|t| t.node(f.add))
+        .expect("★ the node is STILL THERE, under the same id");
+    assert_eq!(node.body, NodeBody::Kind(Op::Swap), "with the new body");
+    assert_eq!(
+        node.label.as_deref(),
+        Some("renamed"),
+        "its rename survived"
+    );
+    assert_eq!(node.x, 41, "its position survived");
+    assert!(node.appearance.collapsed, "its looks survived");
+    assert!(node.bypassed, "and so did how it takes part");
+    assert_eq!(node.parent, Some(frame), "and where it sits on the canvas");
+    assert!(f.document.validate().is_empty(), "the document is sound");
+    assert!(swapped.lossless(), "and nothing was lost: {swapped:?}");
+}
+
+#[test]
+fn r1598_a_port_is_carried_by_name_first_then_by_position() {
+    // `Swap` is (Left, Right) -> (Left, Right); `Add` is (Augend, Addend) ->
+    // (Out). So Add -> Swap has NO name in common on the input side and the
+    // ports line up positionally, which is exactly the case Blender drops
+    // unless someone put both types in one of two hard-coded Python lists.
+    let mut f = fixture();
+    let swapped = f.document.set_kind(ROOT, f.add, Op::Swap).expect("swap");
+    let inputs: Vec<Carried> = swapped
+        .carried
+        .iter()
+        .copied()
+        .filter(|c| c.from.side == Side::Input)
+        .collect();
+    assert_eq!(inputs.len(), 2, "both inputs carried: {swapped:?}");
+    assert!(
+        inputs.iter().all(|c| c.from == c.to && !c.by_name),
+        "by POSITION, and it says so: {inputs:?}"
+    );
+    // Both incoming wires survived, on the ports they were on.
+    let held = f.document.tree(ROOT).expect("root");
+    assert!(
+        held.link_into(Socket::new(f.add, 0)).is_some()
+            && held.link_into(Socket::new(f.add, 1)).is_some(),
+        "★ the wires the user drew survived a swap Blender would drop them on"
+    );
+
+    // And a name match wins over position. `Swap` -> `Swap` is the identity, so
+    // build the discriminating case: a kind whose ports are the SAME names in
+    // the other order would map 0->1, 1->0 by name.
+    let mut document = Document::new("root");
+    let node = document
+        .add_node(ROOT, NodeBody::Kind(Op::Swap), 0, 0)
+        .expect("root tree");
+    let again = document
+        .set_kind(ROOT, node, Op::Swap)
+        .expect("identity swap");
+    assert!(
+        again
+            .carried
+            .iter()
+            .filter(|c| c.from.side == Side::Input)
+            .all(|c| c.by_name),
+        "the same names match by NAME, not by falling through to position: {again:?}"
+    );
+}
+
+#[test]
+fn r1598_what_does_not_survive_is_named_rather_than_dropped() {
+    // ★ Blender drops all of this inside three swallowed exceptions
+    // (`except IndexError`, `except KeyError`, `except (AttributeError,
+    // KeyError, TypeError)`) plus a silent `tree.links.remove` for a link that
+    // turned out invalid -- so "the swap worked" and "the swap worked and cost
+    // you a wire and a typed value" are the same outcome there.
+    let mut f = fixture();
+    // Author a value on the Add's second input, then swap it for a kind with
+    // ONE input: the second port has nowhere to go.
+    f.document
+        .set_port_value(ROOT, f.add, PortRef::input(1), Val::Number(7))
+        .expect("a Number fits a Number port");
+    let swapped = f
+        .document
+        .set_kind(ROOT, f.add, Op::Split)
+        .expect("Split takes one input");
+
+    assert!(!swapped.lossless(), "the swap cost something");
+    assert_eq!(
+        swapped.dropped,
+        vec![PortRef::input(1)],
+        "and NAMES the port that had nowhere to go: {swapped:?}"
+    );
+    assert_eq!(
+        swapped.discarded,
+        vec![PortRef::input(1)],
+        "including the authored value that was on it"
+    );
+    assert_eq!(swapped.severed.len(), 1, "and the wire that fed it");
+    assert_eq!(
+        swapped.severed[0].to,
+        Socket::new(f.add, 1),
+        "the very wire, addressable: {:?}",
+        swapped.severed
+    );
+    // The document is left sound -- no dangling link, no stray value.
+    assert!(
+        f.document.validate().is_empty(),
+        "{:?}",
+        f.document.validate()
+    );
+}
+
+#[test]
+fn r1598_a_port_whose_type_cannot_cross_is_not_carried() {
+    // `Shout` is Text -> Text; `Split` is Number -> (Number, Number). Nothing
+    // can cross, so nothing is carried even though the arities allow it -- the
+    // correspondence is gated by the SAME relation a link is judged by (R1593).
+    let mut document = Document::new("root");
+    let word = document
+        .add_node(ROOT, NodeBody::Kind(Op::Word("hi".to_owned())), 0, 0)
+        .expect("root tree");
+    let shout = document
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 0, 0)
+        .expect("root tree");
+    document
+        .connect(ROOT, Socket::new(word, 0), Socket::new(shout, 0))
+        .expect("Text into Text");
+
+    let swapped = document.set_kind(ROOT, shout, Op::Split).expect("swap");
+    assert!(
+        swapped.carried.is_empty(),
+        "a Text port cannot become a Number one: {swapped:?}"
+    );
+    assert_eq!(swapped.severed.len(), 1, "so the wire is severed and named");
+    assert!(document.validate().is_empty());
+
+    // ★ The paragraph above only exercises the POSITION pass's type gate,
+    // because `Shout`'s "Phrase" and `Split`'s "Value" share no name -- a
+    // counterfactual that removed the gate from the NAME pass passed, which is
+    // how this was found. `Shout` -> `Measure` is the discriminating shape:
+    // "Phrase" matches "Phrase" (Text, crosses) and "Out" matches "Out" while
+    // going Text -> Number, which cannot.
+    let mut named = Document::new("root");
+    let says = named
+        .add_node(ROOT, NodeBody::Kind(Op::Word("hi".to_owned())), 0, 0)
+        .expect("root tree");
+    let loud = named
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 0, 0)
+        .expect("root tree");
+    let heard = named
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 0, 0)
+        .expect("root tree");
+    named
+        .connect(ROOT, Socket::new(says, 0), Socket::new(loud, 0))
+        .expect("Text into Text");
+    named
+        .connect(ROOT, Socket::new(loud, 0), Socket::new(heard, 0))
+        .expect("Text into Text");
+
+    let renamed = named.set_kind(ROOT, loud, Op::Measure).expect("swap");
+    assert_eq!(
+        renamed
+            .carried
+            .iter()
+            .map(|c| (c.from, c.to, c.by_name))
+            .collect::<Vec<_>>(),
+        vec![(PortRef::input(0), PortRef::input(0), true)],
+        "the input carries BY NAME, and the output does not carry at all: {renamed:?}"
+    );
+    assert_eq!(
+        renamed.dropped,
+        vec![PortRef::output(0)],
+        "★ a name match is not enough -- Text cannot become Number"
+    );
+    assert_eq!(
+        renamed.severed.len(),
+        1,
+        "so the downstream wire is severed"
+    );
+    assert!(named.validate().is_empty());
+}
+
+#[test]
+fn r1598_a_structural_body_is_not_the_applications_to_overwrite() {
+    let mut f = fixture();
+    let frame = f
+        .document
+        .enframe(ROOT, &[f.add], Some("Stage".to_owned()))
+        .expect("a node to frame")
+        .frame;
+    assert_eq!(
+        f.document.set_kind(ROOT, frame, Op::Add),
+        Err(EditError::NotAKind {
+            tree: ROOT,
+            node: frame
+        }),
+        "a frame with a signature would be linkable"
+    );
+    assert_eq!(
+        f.document.set_kind(ROOT, NodeId(999), Op::Add),
+        Err(EditError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(999)
+        }),
+    );
+    assert_eq!(
+        f.document.set_kind(TreeId(9), f.add, Op::Add),
+        Err(EditError::NoSuchTree(TreeId(9))),
+    );
+}
+
+#[test]
+fn r1598_a_swap_can_neither_close_a_cycle_nor_overfeed_an_input() {
+    // The property that lets `set_kind` answer no ConnectError: links only ever
+    // move between ports of the SAME node, so the node-to-node edge set can lose
+    // members and never gain one, and the correspondence is injective.
+    let mut f = fixture();
+    let before: BTreeSet<(NodeId, NodeId)> = f
+        .document
+        .tree(ROOT)
+        .expect("root")
+        .links()
+        .iter()
+        .map(|l| (l.from.node, l.to.node))
+        .collect();
+    f.document.set_kind(ROOT, f.add, Op::Swap).expect("swap");
+    let after: BTreeSet<(NodeId, NodeId)> = f
+        .document
+        .tree(ROOT)
+        .expect("root")
+        .links()
+        .iter()
+        .map(|l| (l.from.node, l.to.node))
+        .collect();
+    assert!(
+        after.is_subset(&before),
+        "{after:?} must be within {before:?}"
+    );
+    // No input takes two links, which `validate` states as OverfedInput.
+    assert!(f.document.validate().is_empty());
 }

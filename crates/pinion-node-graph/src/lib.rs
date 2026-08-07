@@ -174,6 +174,7 @@ mod model;
 mod numbering;
 mod partition;
 mod select;
+mod swap;
 #[cfg(test)]
 mod tests;
 
@@ -196,6 +197,7 @@ pub use model::{
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use select::{Grow, Grown, Reach, SelectError};
+pub use swap::{Carried, Swapped};
 
 /// Re-exported so a consumer can name the boundary derivation this crate's
 /// group operations are built on without adding a second dependency.

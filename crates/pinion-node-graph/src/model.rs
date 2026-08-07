@@ -1120,6 +1120,49 @@ impl<K: NodeKind> Document<K> {
     /// The half of [`Self::remove_node`] that [`Self::detach`] also needs, kept
     /// in one place so "which links touch this node" has one definition
     /// (R1586).
+    /// Move `node`'s links onto the ports `moved` names, answering the ones
+    /// that had nowhere to go (R1598).
+    ///
+    /// Lives here because this is the module that mutates a tree's link list,
+    /// and keeping that in one place is what makes "no link can be half-moved"
+    /// a property of the code rather than a convention. The correspondence
+    /// itself is [`swap`](crate::swap)'s.
+    pub(crate) fn remap_node_ports(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        moved: &BTreeMap<PortRef, PortRef>,
+    ) -> Vec<Link> {
+        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+            return Vec::new();
+        };
+        let mut severed = Vec::new();
+        let mut kept = Vec::with_capacity(host.links.len());
+        for mut link in std::mem::take(&mut host.links) {
+            let ends = [
+                (link.from.node == node).then_some((Side::Output, link.from.port)),
+                (link.to.node == node).then_some((Side::Input, link.to.port)),
+            ];
+            let mut survives = true;
+            for (side, index) in ends.into_iter().flatten() {
+                match moved.get(&PortRef { side, index }) {
+                    Some(to) => match side {
+                        Side::Input => link.to.port = to.index,
+                        Side::Output => link.from.port = to.index,
+                    },
+                    None => survives = false,
+                }
+            }
+            if survives {
+                kept.push(link);
+            } else {
+                severed.push(link);
+            }
+        }
+        host.links = kept;
+        severed
+    }
+
     pub(crate) fn unwire_node(&mut self, tree: TreeId, node: NodeId) -> Vec<Link> {
         let Some(host) = self.trees.get_mut(tree.0 as usize) else {
             return Vec::new();
@@ -1980,6 +2023,19 @@ pub enum EditError {
         /// The node that is not in it.
         node: NodeId,
     },
+    /// The node is there, but its body is one this crate owns — a frame, a
+    /// group instance or an interface node — so an application kind cannot be
+    /// written over it (R1598).
+    ///
+    /// A structural body is not the application's to overwrite: a frame with a
+    /// signature would be linkable, and a group instance whose body was replaced
+    /// would leave its definition with no instance to reach it by.
+    NotAKind {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node whose body is structural.
+        node: NodeId,
+    },
     /// No such link in that tree.
     NoSuchLink {
         /// The tree that was searched.
@@ -2010,6 +2066,12 @@ impl fmt::Display for EditError {
             Self::NoSuchLink { tree, link } => {
                 write!(f, "tree {} has no link {}", tree.0, link.0)
             }
+            Self::NotAKind { tree, node } => write!(
+                f,
+                "node {} in tree {} is a frame, a group instance or an interface \
+                 node, whose body this crate owns",
+                node.0, tree.0
+            ),
             Self::NoSuchInterfacePort {
                 tree,
                 side,

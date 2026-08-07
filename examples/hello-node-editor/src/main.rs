@@ -4226,6 +4226,71 @@ impl NodeGraphExternal {
         Ok(IntrospectValue::Int(i64::from(id.0)))
     }
 
+    /// R1598 — swap what a node IS, keeping which node it is (Blender's
+    /// `NODE_OT_swap_node`). Answers what the swap cost, as
+    /// `"<carried>|<severed>|<discarded>"` — three CSVs, so a client can tell
+    /// "it worked" from "it worked and cost you a wire" without a second call.
+    ///
+    /// The node's id survives, which is the whole point: Blender's operator
+    /// creates a new node and deletes the old one, so a selection, a saved
+    /// layout and an agent holding the id all break.
+    fn swap_node(&self, id: NodeId, kind: usize) -> Option<String> {
+        let &(_, op) = PALETTE.get(kind)?;
+        kind_node(&self.graph(), id)?;
+        let mut cost = None;
+        self.edit("Swap node", None, |graph, _| {
+            if let Ok(swapped) = graph.set_kind(TREE, id, op) {
+                cost = Some(format!(
+                    "{}|{}|{}",
+                    swapped
+                        .carried
+                        .iter()
+                        .map(|c| format!("{}>{}", c.from, c.to))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    csv_ids(swapped.severed.iter().map(|l| l.id.0)),
+                    swapped
+                        .discarded
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ));
+            }
+        });
+        cost
+    }
+
+    /// R1598 — the `swap_node` verb arm: `"<node>,<kind name>"`.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::TypeMismatch`] for a non-text argument, and
+    /// [`InvokeError::Rejected`] naming a malformed pair or an unknown kind.
+    fn invoke_swap_node(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(s) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let (node, name) = s.split_once(',').ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "swap_node: malformed argument {s:?} (expected \"<node>,<kind>\")"
+            ))
+        })?;
+        let id =
+            NodeId(node.trim().parse().map_err(|_| {
+                InvokeError::rejected(format!("swap_node: {node:?} is not a node id"))
+            })?);
+        let name = name.trim();
+        let kind = PALETTE
+            .iter()
+            .position(|&(n, _)| n == name)
+            .ok_or_else(|| Self::unknown_kind_reason("swap_node", name))?;
+        Ok(match self.swap_node(id, kind) {
+            Some(cost) => IntrospectValue::Text(cost),
+            None => IntrospectValue::Null,
+        })
+    }
+
     /// R1227 — the `add_frame` verb arm: frame the selection, returning the new
     /// id (`Null` when nothing is selected).
     fn invoke_add_frame(&mut self) -> IntrospectValue {
@@ -6182,6 +6247,8 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     // the frame it is sitting on, or take it out one level. Both answer the CSV
     // of nodes whose frame changed, where Blender's operators report only
     // whether the operator ran at all.
+    // R1598 — swap what a node IS, keeping which node it is.
+    SchemaField::action("swap_node", "string"),
     SchemaField::action("attach", "string"),
     SchemaField::action("detach", "string"),
     SchemaField::action("delete_node", "int"),
@@ -6504,6 +6571,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // id in one round-trip. An unknown kind is Rejected (the graph is
             // unchanged), the AI-first mirror of a clicked palette card.
             "add_node" => self.invoke_add_node(&args),
+            "swap_node" => self.invoke_swap_node(&args),
             "add_edge" => match args {
                 IntrospectValue::Text(s) => {
                     let (fnode, fport, tnode, tport) = parse_quad(&s).ok_or_else(|| {

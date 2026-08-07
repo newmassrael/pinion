@@ -62,6 +62,15 @@ fn graph_with(
     graph
 }
 
+/// The palette index of a kind by name — a fixture names what it means rather
+/// than carrying the index the palette happens to give it.
+fn kind_of(name: &str) -> usize {
+    PALETTE
+        .iter()
+        .position(|&(n, _)| n == name)
+        .unwrap_or_else(|| panic!("no palette kind named {name:?}"))
+}
+
 /// A graph of `(palette kind, x, y)` nodes, ids minted `0..`, then `(from node,
 /// from port, to node, to port)` wires, ids minted `0..`.
 ///
@@ -8928,4 +8937,106 @@ fn r1592_a_sweep_that_grazes_a_cards_far_edge_takes_it() {
             RegionFit::Intersects
         )
     );
+}
+
+// ── R1598 — swap what a node IS, keeping which node it is ─────────
+
+#[test]
+fn r1598_swap_keeps_the_id_and_reports_what_it_cost() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        let stack = use_undo();
+        // Node 2 is the Multiply: two wired Vector inputs, one wired output.
+        let before = coord.edges().len();
+        let cost = coord
+            .swap_node(NodeId(2), kind_of("Add"))
+            .expect("Multiply and Add are both palette kinds");
+        // Multiply and Add share (A, B) -> Out, so everything carries BY NAME.
+        assert_eq!(
+            cost, "in0>in0,in1>in1,out0>out0||",
+            "nothing was lost: {cost}"
+        );
+        assert_eq!(coord.edges().len(), before, "every wire survived");
+        // ★ The id survived, which is what Blender's swap cannot do.
+        assert_eq!(
+            coord.query("node.2.op"),
+            Some(IntrospectValue::Text("Add".to_owned())),
+            "the node at id 2 is an Add now"
+        );
+        assert_eq!(
+            stack.undo_label().as_deref(),
+            Some("Swap node"),
+            "one undoable step"
+        );
+        assert!(stack.undo(), "and it undoes");
+        assert_eq!(
+            coord.query("node.2.op"),
+            Some(IntrospectValue::Text("Multiply".to_owned())),
+        );
+    });
+}
+
+#[test]
+fn r1598_a_swap_that_loses_a_port_names_the_wire_and_the_value() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        // Author a value on Multiply's second input, then swap it for Output,
+        // which has ONE input and no output at all.
+        assert!(apply_set_node_value(
+            &use_graph_handle(),
+            NodeId(2),
+            NodeValueTarget::InputDefault(1),
+            CellValue::Color(Color::rgb(1, 2, 3)),
+        ));
+        let cost = coord
+            .swap_node(NodeId(2), kind_of("Output"))
+            .expect("Output is a palette kind");
+        let (carried, rest) = cost.split_once('|').expect("three fields");
+        let (severed, discarded) = rest.split_once('|').expect("three fields");
+        assert_eq!(
+            carried, "in0>in0",
+            "only the first input has anywhere to go"
+        );
+        assert!(!severed.is_empty(), "the wires that fed the rest are named");
+        assert_eq!(discarded, "in1", "and so is the authored value that died");
+        // The graph is left sound: no dangling wire, no stray value.
+        assert!(
+            graph_invariants_hold(&coord.graph()),
+            "{:?}",
+            coord.graph().validate()
+        );
+    });
+}
+
+#[test]
+fn r1598_swap_refuses_what_it_cannot_name() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        assert_eq!(coord.swap_node(NodeId(99), 0), None, "no such node");
+        assert_eq!(coord.swap_node(NodeId(2), 99), None, "no such kind");
+        // Over the wire the refusals are NAMED rather than answered false.
+        assert_refused_saying(
+            &coord.invoke("swap_node", IntrospectValue::Text("2,Nope".to_owned())),
+            "not a node kind",
+        );
+        assert_refused_saying(
+            &coord.invoke("swap_node", IntrospectValue::Text("nonsense".to_owned())),
+            "malformed argument",
+        );
+        assert_eq!(
+            coord.invoke("swap_node", IntrospectValue::Int(2)),
+            Err(InvokeError::TypeMismatch),
+        );
+        // And a frame is not the application's to overwrite.
+        coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0)])));
+        let frame = coord.add_frame().expect("framed");
+        assert_eq!(
+            coord.swap_node(frame, kind_of("Add")),
+            None,
+            "a frame's body is the crate's"
+        );
+    });
 }
