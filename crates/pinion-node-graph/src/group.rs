@@ -973,11 +973,42 @@ pub enum Violation {
         /// The port it names.
         port: PortRef,
     },
+    /// A node has authored a value its port cannot hold (R1597).
+    ///
+    /// Distinct from [`Violation::StrayPortValue`], which is a value on a port
+    /// that is not there at all: this port exists and the value is the wrong
+    /// kind for it. `Document::set_port_value` refuses exactly this, so it can
+    /// only reach a document that came from a file or a peer — and until this
+    /// existed nothing reported it, so such a node evaluated to no value with
+    /// no explanation.
+    MistypedPortValue {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node holding it.
+        node: NodeId,
+        /// The port it names.
+        ///
+        /// The two socket types are deliberately NOT carried: this enum is not
+        /// generic over the taxonomy, and [`Violation::TypeMismatch`] names a
+        /// link the same way. An address is enough to look both up, and making
+        /// the whole enum generic to inline two values a caller already has
+        /// would reach every consumer of every other variant.
+        port: PortRef,
+    },
 }
 
 impl<K: NodeKind> Document<K> {
-    /// Ports a node has authored a value on that its signature does not have
-    /// (R1594), ascending.
+    /// Every way one node's authored values fail its signature (R1594 / R1597),
+    /// ascending by port.
+    ///
+    /// **Both halves of what `set_port_value` refuses**, because an invariant
+    /// checked only at the edit is not an invariant: a value arrives from a file
+    /// or a peer too. R1594 checked the first half — a value on a port the
+    /// signature does not have — and R1597 added the second, found by migrating
+    /// a consumer whose blob could carry a `Float` on a `Vector` port. Nothing
+    /// coerced it and nothing flagged it, so the node silently evaluated to no
+    /// value at all; a document that cannot be trusted must fail LOUD rather
+    /// than be quietly repaired, which is why this reports rather than converts.
     fn stray_port_values(&self, tree: &Tree<K>, node: &Node<K>) -> Vec<Violation> {
         let Some(signature) = self.signature(tree.id, node.id) else {
             // The node's body names a definition that is gone, which
@@ -985,18 +1016,29 @@ impl<K: NodeKind> Document<K> {
             return Vec::new();
         };
         node.values
-            .keys()
-            .filter(|port| {
-                let arity = match port.side {
-                    Side::Input => signature.inputs.len(),
-                    Side::Output => signature.outputs.len(),
+            .iter()
+            .filter_map(|(port, value)| {
+                let ports = match port.side {
+                    Side::Input => &signature.inputs,
+                    Side::Output => &signature.outputs,
                 };
-                port.index as usize >= arity
-            })
-            .map(|port| Violation::StrayPortValue {
-                tree: tree.id,
-                node: node.id,
-                port: *port,
+                match ports.get(port.index as usize) {
+                    None => Some(Violation::StrayPortValue {
+                        tree: tree.id,
+                        node: node.id,
+                        port: *port,
+                    }),
+                    // A taxonomy that declines to classify its own values says
+                    // nothing here rather than condemning every one of them:
+                    // `value_type` is a provided default whose answer is `None`.
+                    Some(declared) => K::value_type(value)
+                        .filter(|held| *held != declared.ty)
+                        .map(|_| Violation::MistypedPortValue {
+                            tree: tree.id,
+                            node: node.id,
+                            port: *port,
+                        }),
+                }
             })
             .collect()
     }

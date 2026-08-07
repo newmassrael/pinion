@@ -875,6 +875,30 @@ impl<K: NodeKind> Document<K> {
         self.trees.get(id.0 as usize)
     }
 
+    /// Take on `other`'s id frontier, so nothing this document mints from now on
+    /// can collide with an id `other` had already handed out (R1597).
+    ///
+    /// **What it is for is an UNDO that restores a whole document.** Snapshot
+    /// undo is the honest shape for a node editor — Blender's `node_undosys`
+    /// copies the tree per step, and a delta has to enumerate every *kind* of
+    /// thing an edit can touch — but restoring a value restores its mint
+    /// counters with it, so the next `add_node` after an undo would re-issue an
+    /// id the undone state had already used. For an in-process model that is
+    /// harmless; for a surface where an agent, a saved selection or a scene tag
+    /// addresses a node BY id it is not, because the id would silently name a
+    /// different node.
+    ///
+    /// So a stack that restores a document calls this with the state it is
+    /// leaving. Monotonic per tree, and never lowers anything: a document that
+    /// is already ahead is unchanged. Trees `other` does not have are left
+    /// alone, and vice versa — this moves counters, never structure.
+    pub fn advance_ids_from(&mut self, other: &Self) {
+        for (tree, source) in self.trees.iter_mut().zip(other.trees.iter()) {
+            tree.next_node = tree.next_node.max(source.next_node);
+            tree.next_link = tree.next_link.max(source.next_link);
+        }
+    }
+
     /// One tree for modification.
     pub fn tree_mut(&mut self, id: TreeId) -> Option<&mut Tree<K>> {
         self.trees.get_mut(id.0 as usize)

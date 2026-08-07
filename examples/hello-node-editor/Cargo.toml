@@ -20,6 +20,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R1442 — the layered (Sugiyama) layout the `auto_layout` verb runs, lifted out
 # of this example when the live topology view became its second consumer.
 pinion-graph = { path = "../../crates/pinion-graph", version = "0.0.1" }
+# R1596 — the node MODEL: R1577 lifted it out of this example into a crate and
+# left the example on its own copy, so the tree carried two. This is the one.
+pinion-node-graph = { path = "../../crates/pinion-node-graph", version = "0.0.1" }
 # R1537 §5.16 — the emitted renderer owns its wgpu device through
 # pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
 pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }

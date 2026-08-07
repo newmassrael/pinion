@@ -169,6 +169,7 @@ mod eval;
 mod fragment;
 mod frame;
 mod group;
+mod layout;
 mod model;
 mod numbering;
 mod partition;
@@ -187,6 +188,7 @@ pub use group::{
     EditPath, GroupError, Grouped, NestError, PathEntry, PathError, UngroupError, Ungrouped,
     Violation,
 };
+pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use model::{
     ConnectError, Connected, Conversion, Document, DroppedLink, EditError, Interface,
     InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, PortRef,

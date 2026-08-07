@@ -2,9 +2,87 @@ use super::*;
 use pinion_core::scene::ExternalNode;
 use pinion_core::test_fixtures::assert_out_of_range_saying;
 use pinion_core::test_fixtures::assert_refused_saying;
+use pinion_node_graph::Violation;
 
 /// R878 — the idle paint posture (no rename in flight).
 const IDLE_TF: RootState = (TextFieldState::Idle, 0);
+
+// ── R1596 model fixtures ──────────────────────────────────────────
+//
+// A node used to be a struct a test could hand-build with any port list it
+// liked. It is a [`Document`] entry now, so a fixture STATES a graph the way a
+// user could have reached it: palette kinds at positions, then wires. That is
+// the point rather than a cost — a fixture can no longer describe a graph the
+// editor cannot produce, which is how three of these tests used to assert
+// against shapes the invariants forbid.
+
+/// R1596 — the same graph with one more wire, appended through the WIRE FORM so
+/// it can close a cycle.
+///
+/// `connect` refuses a wire that would make the graph cyclic and names the path,
+/// so a cyclic document cannot be built by editing — it only ever arrives from a
+/// peer or a file. Building one the way it actually arrives is what makes the
+/// cycle tests test the reachable case rather than an impossible one.
+fn force_cycle(graph: &Graph, from: NodeId, to: NodeId) -> Graph {
+    let mut wire = serde_json::to_value(graph).expect("a document serializes");
+    let next = wire["trees"][0]["next_link"]
+        .as_u64()
+        .expect("a tree mints link ids");
+    wire["trees"][0]["links"]
+        .as_array_mut()
+        .expect("a tree holds links")
+        .push(serde_json::json!({
+            "id": next,
+            "from": {"node": from.0, "port": 0},
+            "to": {"node": to.0, "port": 0},
+            "muted": false,
+        }));
+    wire["trees"][0]["next_link"] = serde_json::json!(next + 1);
+    serde_json::from_value(wire).expect("the forced document round-trips")
+}
+
+/// R1596 — a graph of palette-kind nodes and wires with values AUTHORED on
+/// named ports (R1594) — what the eval tests used to express by writing an
+/// `input_defaults` vector straight onto a hand-built node.
+///
+/// Authoring goes through `set_port_value`, so a fixture cannot state a value
+/// the port cannot hold: the type gate that protects a live edit protects a test
+/// too, and a test asserting on an impossible graph is worse than no test.
+fn graph_with(
+    nodes: &[(usize, i32, i32)],
+    wires: &[(u32, u32, u32, u32)],
+    values: &[(u32, PortRef, CellValue)],
+) -> Graph {
+    let mut graph = graph_of(nodes, wires);
+    for (node, port, value) in values {
+        graph
+            .set_port_value(TREE, NodeId(*node), *port, value.clone())
+            .expect("the fixture's authored value fits its port");
+    }
+    graph
+}
+
+/// A graph of `(palette kind, x, y)` nodes, ids minted `0..`, then `(from node,
+/// from port, to node, to port)` wires, ids minted `0..`.
+///
+/// Panics on a wire the model refuses, because a fixture that silently drops one
+/// would leave the test asserting about a graph it did not describe.
+fn graph_of(nodes: &[(usize, i32, i32)], wires: &[(u32, u32, u32, u32)]) -> Graph {
+    let mut graph = Graph::new("fixture");
+    for &(kind, x, y) in nodes {
+        add_palette_node(&mut graph, kind, x, y).expect("PALETTE kind in range");
+    }
+    for &(fnode, fport, tnode, tport) in wires {
+        graph
+            .connect(
+                TREE,
+                Socket::new(NodeId(fnode), fport),
+                Socket::new(NodeId(tnode), tport),
+            )
+            .expect("the fixture's wire is one the model accepts");
+    }
+    graph
+}
 
 fn boot_scene() -> Scene {
     // Build the primary from `coordinator()` (in-memory storage) rather than
@@ -422,7 +500,7 @@ fn r898_add_edge_rejects_a_type_incompatible_wire() {
         // (`[Vector, Vector, Float]` in, palette 6) — the typed sources/ops.
         let scalar = coord.add_node(5).expect("Scalar is a valid kind");
         let lerp = coord.add_node(6).expect("Lerp is a valid kind");
-        let before = coord.edges.get().len();
+        let before = coord.edges().len();
         // Float -> Float (Lerp's factor input): exact, accepted.
         assert!(
             coord.add_edge(scalar, 0, lerp, 2),
@@ -441,7 +519,7 @@ fn r898_add_edge_rejects_a_type_incompatible_wire() {
         );
         // Only the two accepted wires were added.
         assert_eq!(
-            coord.edges.get().len(),
+            coord.edges().len(),
             before + 2,
             "exactly the compatible wires landed"
         );
@@ -493,17 +571,15 @@ fn r899_input_port_default_is_typed_by_port_type() {
         let _ = boot_scene();
         let coord = coordinator();
         // Multiply (node 2) input 0 is a Vector port -> a Color default.
-        let n = coord.node_by_id(NodeId(2)).expect("node 2");
         assert!(
-            matches!(n.input_default(0), Some(CellValue::Color(_))),
+            matches!(coord.port_default(NodeId(2), 0), Some(CellValue::Color(_))),
             "Vector input default is a Color"
         );
         // Lerp's input 2 is the Float factor -> a Float default.
         let lerp = coord.add_node(6).expect("Lerp");
-        let l = coord.node_by_id(lerp).expect("lerp");
         assert_eq!(
-            l.input_default(2),
-            Some(&CellValue::Float(0.0)),
+            coord.port_default(lerp, 2),
+            Some(CellValue::Float(0.0)),
             "Float input default is 0.0"
         );
     });
@@ -571,41 +647,27 @@ fn r899_set_port_default_is_undoable() {
         let coord = coordinator();
         let stack = use_undo();
         let red = CellValue::Color(Color::rgb(0xff, 0x00, 0x00));
-        let grey = coord
-            .node_by_id(NodeId(2))
-            .and_then(|n| n.input_default(0).cloned())
-            .expect("default");
+        let grey = coord.port_default(NodeId(2), 0).expect("default");
         assert!(apply_set_node_value(
-            &use_nodes(),
-            &use_undo(),
+            &use_graph_handle(),
             NodeId(2),
             NodeValueTarget::InputDefault(0),
             red.clone()
         ));
         assert_eq!(stack.len(), 1, "a default change is one undo step");
-        assert_eq!(
-            coord.node_by_id(NodeId(2)).unwrap().input_default(0),
-            Some(&red)
-        );
+        assert_eq!(coord.port_default(NodeId(2), 0), Some(red.clone()));
         // Re-setting the same value is a no-op (no extra undo step).
         assert!(apply_set_node_value(
-            &use_nodes(),
-            &use_undo(),
+            &use_graph_handle(),
             NodeId(2),
             NodeValueTarget::InputDefault(0),
             red.clone()
         ));
         assert_eq!(stack.len(), 1, "an unchanged write journals nothing");
         assert!(stack.undo(), "undo restores the prior default");
-        assert_eq!(
-            coord.node_by_id(NodeId(2)).unwrap().input_default(0),
-            Some(&grey)
-        );
+        assert_eq!(coord.port_default(NodeId(2), 0), Some(grey.clone()));
         assert!(stack.redo(), "redo re-applies it");
-        assert_eq!(
-            coord.node_by_id(NodeId(2)).unwrap().input_default(0),
-            Some(&red)
-        );
+        assert_eq!(coord.port_default(NodeId(2), 0), Some(red.clone()));
     });
 }
 
@@ -623,8 +685,7 @@ fn r900_setting_a_nan_float_default_twice_is_idempotent() {
         let nan = CellValue::Float(f64::NAN);
         assert!(
             apply_set_node_value(
-                &use_nodes(),
-                &use_undo(),
+                &use_graph_handle(),
                 lerp,
                 NodeValueTarget::InputDefault(2),
                 nan.clone()
@@ -634,8 +695,7 @@ fn r900_setting_a_nan_float_default_twice_is_idempotent() {
         let after_first = stack.len();
         assert!(
             apply_set_node_value(
-                &use_nodes(),
-                &use_undo(),
+                &use_graph_handle(),
                 lerp,
                 NodeValueTarget::InputDefault(2),
                 nan
@@ -685,9 +745,7 @@ fn r901_port_default_inline_editor_begins_seeds_and_commits() {
         commit_edit(true);
         assert_eq!(use_active_edit().get(), None, "commit leaves edit mode");
         assert_eq!(
-            coord
-                .node_by_id(lerp)
-                .and_then(|n| n.input_default(2).cloned()),
+            coord.port_default(lerp, 2),
             Some(CellValue::Float(0.75)),
             "the typed value parsed and applied",
         );
@@ -703,9 +761,7 @@ fn r901_port_default_inline_editor_begins_seeds_and_commits() {
         );
         assert!(stack.undo());
         assert_eq!(
-            coord
-                .node_by_id(lerp)
-                .and_then(|n| n.input_default(2).cloned()),
+            coord.port_default(lerp, 2),
             Some(CellValue::Float(0.0)),
             "undo restores the prior default",
         );
@@ -764,9 +820,7 @@ fn r901_port_default_commit_parses_color_hex() {
         use_text_edit_state(EDIT_TF_TAG).set_text("#3366cc".to_owned());
         commit_edit(true);
         assert_eq!(
-            coord
-                .node_by_id(lerp)
-                .and_then(|n| n.input_default(0).cloned()),
+            coord.port_default(lerp, 0),
             Some(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc))),
             "the typed hex parsed into the colour default",
         );
@@ -791,9 +845,7 @@ fn r901_malformed_port_default_commit_keeps_prior_value() {
         use_text_edit_state(EDIT_TF_TAG).set_text("abc".to_owned());
         commit_edit(true);
         assert_eq!(
-            coord
-                .node_by_id(lerp)
-                .and_then(|n| n.input_default(2).cloned()),
+            coord.port_default(lerp, 2),
             Some(CellValue::Float(0.0)),
             "a malformed commit keeps the prior default",
         );
@@ -909,7 +961,7 @@ fn r901_begin_edit_default_via_invoke_and_double_click() {
             assert_eq!(
                 intro.invoke(
                     "begin_edit_default",
-                    IntrospectValue::Text(format!("{}.2", lerp.raw()))
+                    IntrospectValue::Text(format!("{}.2", lerp.0))
                 ),
                 Ok(IntrospectValue::Bool(true)),
             );
@@ -924,7 +976,7 @@ fn r901_begin_edit_default_via_invoke_and_double_click() {
             assert_eq!(
                 intro.invoke(
                     "begin_edit_default",
-                    IntrospectValue::Text(format!("{}.9", lerp.raw()))
+                    IntrospectValue::Text(format!("{}.9", lerp.0))
                 ),
                 Ok(IntrospectValue::Bool(false)),
                 "an out-of-range port is rejected",
@@ -951,10 +1003,7 @@ fn r901_begin_edit_default_via_invoke_and_double_click() {
         // Cancel, then a double-click on the pin's default label re-opens it.
         cancel_edit();
         assert_eq!(use_active_edit().get(), None);
-        send(
-            &mut scene,
-            &format!("idefault_{}_2:DoubleClick", lerp.raw()),
-        );
+        send(&mut scene, &format!("idefault_{}_2:DoubleClick", lerp.0));
         assert_eq!(
             use_active_edit().get(),
             card(EditTarget::PortDefault {
@@ -981,9 +1030,7 @@ fn r901_begin_edit_migration_commits_in_flight_across_targets() {
         // Opening a title rename commits the in-flight port default first.
         assert!(coord.begin_rename(NodeId(2)));
         assert_eq!(
-            coord
-                .node_by_id(lerp)
-                .and_then(|n| n.input_default(2).cloned()),
+            coord.port_default(lerp, 2),
             Some(CellValue::Float(1.5)),
             "the in-flight port default committed on migration",
         );
@@ -1225,7 +1272,7 @@ fn r918_panel_edits_title_and_wired_port_default() {
         use_text_edit_state(EDIT_TF_TAG).set_text("Albedo".to_owned());
         commit_edit(true);
         assert_eq!(
-            coord.node_by_id(NodeId(2)).map(|n| n.title.clone()),
+            coord.node_by_id(NodeId(2)).map(|n| n.title()),
             Some("Albedo".to_owned())
         );
         // Node 2 port 0 is wired (edge 0: 0:0->2:0): the CARD rejects it...
@@ -1812,12 +1859,9 @@ fn mem_storage() -> Rc<AppStorage> {
 
 fn coordinator() -> NodeGraphExternal {
     NodeGraphExternal::new(
-        use_nodes(),
-        use_edges(),
+        use_document(),
         use_selection(),
         use_preview(),
-        use_next_edge_id(),
-        use_next_node_id(),
         GraphServices {
             undo: use_undo(),
             storage: mem_storage(),
@@ -1828,8 +1872,6 @@ fn coordinator() -> NodeGraphExternal {
             marquee_rect: use_marquee_rect(),
             node_drag: use_node_drag(),
             pin_create: use_pin_create(),
-            frames: use_frames(),
-            next_frame_id: use_next_frame_id(),
         },
     )
 }
@@ -1920,8 +1962,8 @@ fn r1220_open_commit_autowires_in_one_undo_step() {
         let _ = boot_scene();
         let coord = coordinator();
         let stack = use_undo();
-        let nodes0 = coord.nodes.get().len();
-        let edges0 = coord.edges.get().len();
+        let nodes0 = coord.nodes().len();
+        let edges0 = coord.edges().len();
         // Open from Texture(0) output 0 (Vector).
         assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
         assert!(use_pin_create().get().is_some(), "menu open");
@@ -1932,16 +1974,15 @@ fn r1220_open_commit_autowires_in_one_undo_step() {
         // Commit "Multiply" (kind 2): a node + an auto-wire edge, ONE step.
         let new_id = coord.commit_pin_create_kind(2).expect("commit a candidate");
         assert!(use_pin_create().get().is_none(), "menu closed on commit");
-        assert_eq!(coord.nodes.get().len(), nodes0 + 1, "node added");
-        assert_eq!(coord.edges.get().len(), edges0 + 1, "edge auto-wired");
+        assert_eq!(coord.nodes().len(), nodes0 + 1, "node added");
+        assert_eq!(coord.edges().len(), edges0 + 1, "edge auto-wired");
         let e = coord
-            .edges
-            .get()
+            .edges()
             .into_iter()
-            .find(|e| e.to_node == new_id)
+            .find(|e| e.to.node == new_id)
             .expect("a wire into the new node");
         assert_eq!(
-            (e.from_node, e.from_port, e.to_port),
+            (e.from.node, e.from.port, e.to.port),
             (NodeId(0), 0, 0),
             "auto-wired source(0,0) -> new node's first compatible input"
         );
@@ -1957,9 +1998,9 @@ fn r1220_open_commit_autowires_in_one_undo_step() {
         );
         // One Ctrl+Z removes BOTH the node and its wire (atomic create+wire).
         assert!(stack.undo(), "undo the create");
-        assert_eq!(coord.nodes.get().len(), nodes0, "undo removes the node");
+        assert_eq!(coord.nodes().len(), nodes0, "undo removes the node");
         assert_eq!(
-            coord.edges.get().len(),
+            coord.edges().len(),
             edges0,
             "... and its wire, in the same step"
         );
@@ -2001,11 +2042,11 @@ fn r1220_port_drop_connects_and_reconnect_drop_never_opens_menu() {
         let sink = coord.add_node(4).expect("Output node");
         coord.handle_send("oport_1_0:PointerDown");
         let payload = coord.begin_drag().expect("armed from Color output");
-        let before = coord.edges.get().len();
+        let before = coord.edges().len();
         coord.drag_release(
             &payload,
             Some(DropPoint {
-                tag: format!("node_graph#iport_{}_0", sink.raw()),
+                tag: format!("node_graph#iport_{}_0", sink.0),
                 x_rel: 0.5,
                 y_rel: 0.5,
             }),
@@ -2014,7 +2055,7 @@ fn r1220_port_drop_connects_and_reconnect_drop_never_opens_menu() {
             use_pin_create().get().is_none(),
             "a port drop opens no menu"
         );
-        assert_eq!(coord.edges.get().len(), before + 1, "it connects instead");
+        assert_eq!(coord.edges().len(), before + 1, "it connects instead");
         // A reconnect drag (a wired input pulled loose) dropped on empty canvas
         // cancels — it must NOT open a create menu (reconnect has no source pin
         // to spawn from). Input 2.0 is wired by default_edges (0 -> 2.0).
@@ -2043,7 +2084,7 @@ fn r1411_palette_card_dragged_onto_canvas_instantiates_at_drop_point() {
         let _ = boot_scene();
         let mut coord = coordinator();
         let stack = use_undo();
-        let nodes0 = coord.nodes.get().len();
+        let nodes0 = coord.nodes().len();
         // Press the Scalar palette card (kind 5): begin_drag arms a
         // drag-to-instantiate carrying the node TITLE as its value — the string
         // the shell's generic drag-image follower (R1113) surfaces as the chip
@@ -2064,7 +2105,9 @@ fn r1411_palette_card_dragged_onto_canvas_instantiates_at_drop_point() {
         );
         // The id the drop is about to mint, so the new node is read by identity
         // (not by "the last one") — the position claim cannot alias a reorder.
-        let dropped = NodeId(coord.next_node_id.get());
+        // R1596 — the tree mints, so the id about to be handed out is asked of
+        // the document rather than read off a counter the editor maintained.
+        let dropped = NodeId(coord.next_node_id());
         // Drop on the canvas at 0.75, 0.5: the R1220 pin-drop projection maps
         // that release fraction over GRAPH_TAG to graph (0.75*640, 0.5*420) =
         // (480, 210) at zoom 1 with no pan.
@@ -2077,12 +2120,16 @@ fn r1411_palette_card_dragged_onto_canvas_instantiates_at_drop_point() {
             }),
         );
         assert_eq!(
-            coord.nodes.get().len(),
+            coord.nodes().len(),
             nodes0 + 1,
             "the drop instantiates exactly one node",
         );
         let node = coord.node_by_id(dropped).expect("the dropped node exists");
-        assert_eq!(node.title, "Scalar", "the dropped kind is the pressed card");
+        assert_eq!(
+            node.title(),
+            "Scalar",
+            "the dropped kind is the pressed card"
+        );
         assert_eq!(
             (node.x, node.y),
             (480, 210),
@@ -2096,7 +2143,7 @@ fn r1411_palette_card_dragged_onto_canvas_instantiates_at_drop_point() {
             "the drop is one labelled undo step",
         );
         assert!(stack.undo(), "undo removes the dropped node");
-        assert_eq!(coord.nodes.get().len(), nodes0, "... in a single Ctrl+Z",);
+        assert_eq!(coord.nodes().len(), nodes0, "... in a single Ctrl+Z",);
     });
 }
 
@@ -2105,7 +2152,7 @@ fn r1411_palette_drag_released_off_canvas_instantiates_nothing() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let mut coord = coordinator();
-        let nodes0 = coord.nodes.get().len();
+        let nodes0 = coord.nodes().len();
         // A palette drag that never reaches the canvas (released still over the
         // palette strip, or off-window: `over` is not GRAPH_TAG) adds nothing
         // through the drag path — the drop-point gate. In the live app a
@@ -2123,7 +2170,7 @@ fn r1411_palette_drag_released_off_canvas_instantiates_nothing() {
             }),
         );
         assert_eq!(
-            coord.nodes.get().len(),
+            coord.nodes().len(),
             nodes0,
             "a drag not dropped on the canvas creates no node",
         );
@@ -2132,7 +2179,7 @@ fn r1411_palette_drag_released_off_canvas_instantiates_nothing() {
         let payload = coord.begin_drag().expect("palette press arms a drag");
         coord.drag_release(&payload, None);
         assert_eq!(
-            coord.nodes.get().len(),
+            coord.nodes().len(),
             nodes0,
             "a drag released over no region creates no node",
         );
@@ -2144,21 +2191,21 @@ fn r1411_palette_click_in_place_still_adds_at_the_spawn_point() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let mut coord = coordinator();
-        let nodes0 = coord.nodes.get().len();
+        let nodes0 = coord.nodes().len();
         // A press-release in place (the R849 click-to-add): PointerDown records
         // the Palette(kind) arm, PointerUp on the same card adds the node at the
         // spawn point. R1411 must leave this untouched — the drag path is
         // additive, and the spawn add stays keyed off the release TAG.
-        let spawned = NodeId(coord.next_node_id.get());
+        let spawned = NodeId(coord.next_node_id());
         coord.handle_send("palette_5:PointerDown");
         coord.handle_send("palette_5:PointerUp");
         assert_eq!(
-            coord.nodes.get().len(),
+            coord.nodes().len(),
             nodes0 + 1,
             "a palette click still adds one node",
         );
         let node = coord.node_by_id(spawned).expect("the spawned node exists");
-        assert_eq!(node.title, "Scalar", "the clicked kind");
+        assert_eq!(node.title(), "Scalar", "the clicked kind");
         // The spawn point is the fixed canvas SPAWN_X/SPAWN_Y projection — not a
         // drop point — so it is distinct from the (480, 210) the drag test lands.
         assert_ne!(
@@ -2182,7 +2229,7 @@ fn r1220_filter_narrows_and_highlight_roves_wrapping() {
             coord
                 .commit_pin_create_highlighted()
                 .and_then(|id| coord.node_by_id(id))
-                .map(|n| n.title),
+                .map(|n| n.title()),
             Some("Add".to_owned()),
             "Enter commits the sole filtered candidate"
         );
@@ -2266,7 +2313,7 @@ fn r1220_rpc_surface_open_filter_commit_cancel_and_schema() {
             Ok(IntrospectValue::Bool(true)),
         );
         assert_eq!(menu_candidates(&coord), ["Output"]);
-        let edges0 = coord.edges.get().len();
+        let edges0 = coord.edges().len();
         let Ok(IntrospectValue::Int(id)) = coord.invoke(
             "commit_pin_create",
             IntrospectValue::Text("Output".to_owned()),
@@ -2279,7 +2326,7 @@ fn r1220_rpc_surface_open_filter_commit_cancel_and_schema() {
                 .is_some(),
             "node created"
         );
-        assert_eq!(coord.edges.get().len(), edges0 + 1, "auto-wired");
+        assert_eq!(coord.edges().len(), edges0 + 1, "auto-wired");
         assert_eq!(
             coord.query("pin_create"),
             Some(IntrospectValue::Null),
@@ -2299,7 +2346,7 @@ fn r1220_noncandidate_commit_is_rejected_and_menu_stays_open() {
         let _ = boot_scene();
         let coord = coordinator();
         assert!(coord.open_pin_create(NodeId(0), 0, (500, 300), (500, 300)));
-        let nodes0 = coord.nodes.get().len();
+        let nodes0 = coord.nodes().len();
         // Kind 0 (Texture) has no input — it is not a candidate for any source,
         // so committing it is rejected and the menu stays open (the RPC gate).
         assert_eq!(
@@ -2311,7 +2358,7 @@ fn r1220_noncandidate_commit_is_rejected_and_menu_stays_open() {
             use_pin_create().get().is_some(),
             "menu stays open on a rejected commit"
         );
-        assert_eq!(coord.nodes.get().len(), nodes0, "graph unchanged");
+        assert_eq!(coord.nodes().len(), nodes0, "graph unchanged");
     });
 }
 
@@ -2513,7 +2560,7 @@ fn r839_delete_selected_prefers_the_selected_edge() {
         let coord = coordinator();
         coord.select_edge(Some(EdgeId(0)));
         assert!(coord.delete_selected(), "delete the selected edge");
-        assert_eq!(use_edges().get().len(), 2, "one edge removed");
+        assert_eq!(coord.edges().len(), 2, "one edge removed");
         assert_eq!(use_selection().get(), Selection::None);
     });
 }
@@ -2527,16 +2574,16 @@ fn r841_delete_node_keeps_survivor_ids_stable() {
         assert!(coord.delete_node(NodeId(1)), "delete node id 1");
         // No reindex: Multiply is STILL id 2; its edges keep their ids.
         assert_eq!(
-            coord.node_by_id(NodeId(2)).map(|n| n.title),
+            coord.node_by_id(NodeId(2)).map(|n| n.title()),
             Some("Multiply".to_owned())
         );
         assert!(coord.node_by_id(NodeId(1)).is_none(), "Color is gone");
-        let edges = use_edges().get();
+        let edges = coord.edges();
         assert_eq!(edges.len(), 2, "Color's incident edge dropped");
         assert!(
             edges
                 .iter()
-                .any(|e| e.id == EdgeId(0) && e.from_node == NodeId(0) && e.to_node == NodeId(2))
+                .any(|e| e.id == EdgeId(0) && e.from.node == NodeId(0) && e.to.node == NodeId(2))
         );
         // The selection (Output id 3) is untouched — it did not shift.
         assert_eq!(use_selection().get(), Selection::single(NodeId(3)));
@@ -2547,13 +2594,13 @@ fn r841_delete_node_keeps_survivor_ids_stable() {
 fn r842_dynamic_edge_id_seed_is_derived_from_defaults() {
     // The mint seed must be one past the highest default edge id, derived
     // (not a hand-maintained const) so adding a seed edge can never collide.
-    let max_default = default_edges().iter().map(|e| e.id.raw()).max().unwrap();
+    let max_default = default_edges().iter().map(|e| e.id.0).max().unwrap();
     assert_eq!(first_dynamic_edge_id(), max_default + 1);
     // A freshly minted edge id is distinct from every default edge id.
     Owner::new().run(|| {
         let coord = coordinator();
         assert!(coord.add_edge(NodeId(0), 0, NodeId(3), 0), "add a new edge");
-        let default_ids: Vec<u32> = default_edges().iter().map(|e| e.id.raw()).collect();
+        let default_ids: Vec<u32> = default_edges().iter().map(|e| e.id.0).collect();
         let live_ids = live_edge_ids(&coord);
         let minted: Vec<u32> = live_ids
             .iter()
@@ -2572,7 +2619,7 @@ fn r842_dynamic_edge_id_seed_is_derived_from_defaults() {
 fn r849_first_dynamic_node_id_is_derived_from_defaults() {
     // Mirrors the edge-id seed: one past the highest default node id, derived
     // so adding a seed node can never collide a minted id.
-    let max_default = default_nodes().iter().map(|n| n.id.raw()).max().unwrap();
+    let max_default = default_nodes().iter().map(|n| n.id.0).max().unwrap();
     assert_eq!(first_dynamic_node_id(), max_default + 1);
 }
 
@@ -2592,8 +2639,8 @@ fn r849_add_node_mints_a_fresh_stable_id_selects_it_and_guards_kind() {
             "the new node is selected"
         );
         let n = coord.node_by_id(id).expect("new node present");
-        assert_eq!(n.title, "Multiply");
-        assert_eq!((n.inputs(), n.outputs()), (2, 1));
+        assert_eq!(n.title(), "Multiply");
+        assert_eq!(coord.arity(id), (2, 1));
         // An out-of-range kind adds nothing.
         assert_eq!(coord.add_node(99), None);
         assert_eq!(coord.node_count(), 5);
@@ -2608,10 +2655,7 @@ fn r849_added_node_ids_are_monotonic_never_reused_after_delete() {
         let a = coord.add_node(0).expect("Texture"); // first dynamic id
         assert!(coord.delete_node(a), "remove the just-added node");
         let b = coord.add_node(0).expect("Texture again");
-        assert!(
-            b.raw() > a.raw(),
-            "a deleted id is never reused (monotonic mint)"
-        );
+        assert!(b.0 > a.0, "a deleted id is never reused (monotonic mint)");
     });
 }
 
@@ -2674,7 +2718,7 @@ fn r849_palette_card_release_adds_a_node() {
             "releasing the palette card created a node"
         );
         let id = use_selection().get().node().expect("new node selected");
-        assert_eq!(coord.node_by_id(id).expect("present").title, "Multiply");
+        assert_eq!(coord.node_by_id(id).expect("present").title(), "Multiply");
     });
 }
 
@@ -2872,7 +2916,7 @@ fn r880_select_all_via_invoke_and_ctrl_a() {
         assert!(apply_key_graph(&mut scene, "Escape", Modifiers::empty()));
         assert_eq!(selected_ids_of(&scene), "");
         // The invoke twin answers false on an empty graph.
-        use_nodes().set(Vec::new());
+        use_document().set(Graph::new("material"));
         let node = scene
             .find_external_with_tag_mut(GRAPH_TAG)
             .expect("present");
@@ -3137,19 +3181,11 @@ fn r851_delete_node_undo_restores_node_and_all_incident_edges() {
         // Node 2 (Multiply) is incident to all three seed edges (0, 1, 2).
         assert!(coord.delete_node(NodeId(2)), "delete the central node");
         assert_eq!(coord.node_count(), 3, "node removed");
-        assert_eq!(
-            coord.edges.get().len(),
-            0,
-            "all three incident edges removed"
-        );
+        assert_eq!(coord.edges().len(), 0, "all three incident edges removed");
 
         assert!(stack.undo(), "undo the delete");
         assert_eq!(coord.node_count(), 4, "the node is restored");
-        assert_eq!(
-            coord.edges.get().len(),
-            3,
-            "every incident edge is restored"
-        );
+        assert_eq!(coord.edges().len(), 3, "every incident edge is restored");
         assert_eq!(
             coord.query("edge.0"),
             Some(IntrospectValue::Text("0:0->2:0".to_owned())),
@@ -3158,7 +3194,7 @@ fn r851_delete_node_undo_restores_node_and_all_incident_edges() {
 
         assert!(stack.redo(), "redo the delete");
         assert_eq!(coord.node_count(), 3);
-        assert_eq!(coord.edges.get().len(), 0);
+        assert_eq!(coord.edges().len(), 0);
     });
 }
 
@@ -3170,10 +3206,10 @@ fn r851_connect_and_disconnect_round_trip_through_undo() {
         let stack = use_undo();
         // Disconnect seed edge 1 (1:0 -> 2:1), then undo restores it.
         assert!(coord.remove_edge(EdgeId(1)), "disconnect edge 1");
-        assert_eq!(coord.edges.get().len(), 2);
+        assert_eq!(coord.edges().len(), 2);
         assert_eq!(stack.undo_label().as_deref(), Some("Disconnect"));
         assert!(stack.undo(), "undo the disconnect");
-        assert_eq!(coord.edges.get().len(), 3, "the wire is back");
+        assert_eq!(coord.edges().len(), 3, "the wire is back");
         assert_eq!(
             coord.query("edge.1"),
             Some(IntrospectValue::Text("1:0->2:1".to_owned())),
@@ -3181,16 +3217,16 @@ fn r851_connect_and_disconnect_round_trip_through_undo() {
         );
         // Now re-make a connection and undo it.
         assert!(stack.redo(), "redo the disconnect");
-        assert_eq!(coord.edges.get().len(), 2);
-        let before = coord.edges.get().len();
+        assert_eq!(coord.edges().len(), 2);
+        let before = coord.edges().len();
         assert!(
             coord.add_edge(NodeId(1), 0, NodeId(2), 1),
             "reconnect 1:0 -> 2:1"
         );
-        assert_eq!(coord.edges.get().len(), before + 1);
+        assert_eq!(coord.edges().len(), before + 1);
         assert_eq!(stack.undo_label().as_deref(), Some("Connect"));
         assert!(stack.undo(), "undo the connect");
-        assert_eq!(coord.edges.get().len(), before, "the new wire is gone");
+        assert_eq!(coord.edges().len(), before, "the new wire is gone");
     });
 }
 
@@ -3206,15 +3242,11 @@ fn r851_connect_displacing_a_wire_undo_restores_the_displaced_wire() {
             coord.add_edge(NodeId(1), 0, NodeId(2), 0),
             "connect into an occupied input"
         );
-        assert_eq!(
-            coord.edges.get().len(),
-            3,
-            "one in, one out: count unchanged"
-        );
+        assert_eq!(coord.edges().len(), 3, "one in, one out: count unchanged");
         assert_eq!(coord.query("edge.0"), None, "edge 0 was displaced");
 
         assert!(stack.undo(), "undo the displacing connect");
-        assert_eq!(coord.edges.get().len(), 3);
+        assert_eq!(coord.edges().len(), 3);
         assert_eq!(
             coord.query("edge.0"),
             Some(IntrospectValue::Text("0:0->2:0".to_owned())),
@@ -3239,37 +3271,31 @@ fn r929_reconnect_moves_target_keeps_source_one_undo_step() {
             "seed the wire to reconnect"
         );
         let edge = coord
-            .edges
-            .get()
+            .edges()
             .iter()
             .copied()
-            .find(|e| e.from_node == scalar)
+            .find(|e| e.from.node == scalar)
             .unwrap();
-        let count = coord.edges.get().len();
+        let count = coord.edges().len();
         // Reconnect its target to lerp.0 (Vector; Float broadcasts -> valid).
         assert!(
             coord.reconnect_edge(edge.id, lerp, 0),
             "reconnect to a valid input"
         );
-        assert_eq!(
-            coord.edges.get().len(),
-            count,
-            "a rewire keeps the edge count"
-        );
+        assert_eq!(coord.edges().len(), count, "a rewire keeps the edge count");
         let now = coord
-            .edges
-            .get()
+            .edges()
             .iter()
             .copied()
-            .find(|e| e.from_node == scalar)
+            .find(|e| e.from.node == scalar)
             .unwrap();
         assert_eq!(
-            (now.from_node, now.from_port),
+            (now.from.node, now.from.port),
             (scalar, 0),
             "the source output is preserved"
         );
         assert_eq!(
-            (now.to_node, now.to_port),
+            (now.to.node, now.to.port),
             (lerp, 0),
             "the target moved to the new input"
         );
@@ -3285,26 +3311,25 @@ fn r929_reconnect_moves_target_keeps_source_one_undo_step() {
         // One Ctrl+Z restores the original wiring verbatim (old id + old target).
         assert!(stack.undo(), "undo the reconnect");
         let back = coord
-            .edges
-            .get()
+            .edges()
             .iter()
             .copied()
-            .find(|e| e.from_node == scalar)
+            .find(|e| e.from.node == scalar)
             .unwrap();
         assert_eq!(
-            (back.id, back.to_node, back.to_port),
+            (back.id, back.to.node, back.to.port),
             (edge.id, lerp, 2),
             "the original wire is restored in one step",
         );
         assert!(stack.redo(), "redo re-wires it");
         assert_eq!(
             coord
-                .edges
-                .get()
+                .edges()
                 .iter()
-                .find(|e| e.from_node == scalar)
+                .find(|e| e.from.node == scalar)
                 .unwrap()
-                .to_port,
+                .to
+                .port,
             0,
         );
     });
@@ -3370,51 +3395,48 @@ fn r929_reconnect_displacing_a_wire_undo_restores_both() {
         assert!(coord.add_edge(s1, 0, lerp, 0), "s1 -> lerp.0 (broadcast)");
         assert!(coord.add_edge(s2, 0, lerp, 2), "s2 -> lerp.2 (exact)");
         let e2 = coord
-            .edges
-            .get()
+            .edges()
             .iter()
             .copied()
-            .find(|e| e.from_node == s2)
+            .find(|e| e.from.node == s2)
             .unwrap();
-        let count = coord.edges.get().len();
+        let count = coord.edges().len();
         // Reconnect e2 onto lerp.0 (occupied by s1's wire) -> displaces it.
         assert!(
             coord.reconnect_edge(e2.id, lerp, 0),
             "reconnect onto an occupied input"
         );
         assert_eq!(
-            coord.edges.get().len(),
+            coord.edges().len(),
             count - 1,
             "old e2 + displaced s1 wire removed, one added"
         );
         assert!(
-            !coord.edges.get().iter().any(|e| e.from_node == s1),
+            !coord.edges().iter().any(|e| e.from.node == s1),
             "s1's wire was displaced"
         );
         // One undo restores BOTH the reconnected wire's old target and the displaced wire.
         assert!(stack.undo(), "one undo reverses the whole reconnect");
-        assert_eq!(coord.edges.get().len(), count);
+        assert_eq!(coord.edges().len(), count);
         let s1e = coord
-            .edges
-            .get()
+            .edges()
             .iter()
             .copied()
-            .find(|e| e.from_node == s1)
+            .find(|e| e.from.node == s1)
             .unwrap();
         assert_eq!(
-            (s1e.to_node, s1e.to_port),
+            (s1e.to.node, s1e.to.port),
             (lerp, 0),
             "displaced wire restored"
         );
         let s2e = coord
-            .edges
-            .get()
+            .edges()
             .iter()
             .copied()
-            .find(|e| e.from_node == s2)
+            .find(|e| e.from.node == s2)
             .unwrap();
         assert_eq!(
-            (s2e.to_node, s2e.to_port),
+            (s2e.to.node, s2e.to.port),
             (lerp, 2),
             "reconnected wire restored to its original input"
         );
@@ -3438,10 +3460,7 @@ fn r851_a_new_edit_after_undo_truncates_the_redo_branch() {
         assert!(!stack.can_redo(), "the redo branch was dropped");
         assert_eq!(coord.node_count(), 6, "default 4 + a + c");
         assert!(coord.node_by_id(a).is_some() && coord.node_by_id(c).is_some());
-        assert!(
-            c.raw() > b.raw(),
-            "ids stay monotonic across the truncation"
-        );
+        assert!(c.0 > b.0, "ids stay monotonic across the truncation");
     });
 }
 
@@ -3569,10 +3588,20 @@ fn r852_serialized_query_is_json_with_schema_version_and_model() {
         let json = coord.serialized_json();
         let g: SerializedGraph = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(g.schema_version, PERSISTED_SCHEMA_VERSION);
-        assert_eq!(g.nodes.len(), 4, "the seed nodes serialize");
-        assert_eq!(g.edges.len(), 3, "the seed edges serialize");
-        assert_eq!(g.next_node_id, first_dynamic_node_id(), "counters captured");
-        assert_eq!(g.next_edge_id, first_dynamic_edge_id());
+        assert_eq!(kind_nodes(&g.graph).count(), 4, "the seed nodes serialize");
+        assert_eq!(edges(&g.graph).len(), 3, "the seed edges serialize");
+        // R1596 — the id counters ride INSIDE the document (a tree mints its
+        // own), so a snapshot cannot carry one that disagrees with the ids it
+        // holds. The editor kept three beside the lists and gated a load on each
+        // leading its own ids; that whole class of blob is now unrepresentable.
+        let mut resumed = g.graph.clone();
+        assert_eq!(
+            resumed
+                .add_node(TREE, NodeBody::Kind(MaterialOp::Add), 0, 0)
+                .expect("root tree"),
+            NodeId(first_dynamic_node_id()),
+            "the restored document mints where the seed left off"
+        );
     });
 }
 
@@ -3587,7 +3616,7 @@ fn r852_serialized_round_trips_through_set_graph() {
         assert_eq!(coord.node_count(), 6, "two nodes added");
         assert!(coord.load_json(&snap), "set_graph applies the snapshot");
         assert_eq!(coord.node_count(), 4, "the graph reverted to the snapshot");
-        assert_eq!(coord.edges.get().len(), 3);
+        assert_eq!(coord.edges().len(), 3);
         assert_eq!(
             use_selection().get(),
             Selection::None,
@@ -3650,12 +3679,7 @@ fn r852_set_graph_rejects_malformed_and_version_mismatch() {
         // Valid JSON, wrong schema version.
         let bad = serde_json::to_string(&SerializedGraph {
             schema_version: PERSISTED_SCHEMA_VERSION + 1,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            next_node_id: 0,
-            next_edge_id: 0,
-            frames: Vec::new(),
-            next_frame_id: 0,
+            graph: Graph::new("material"),
         })
         .unwrap();
         assert!(!coord.load_json(&bad), "version mismatch rejected");
@@ -3670,17 +3694,13 @@ fn r852_loaded_counters_resume_monotonic_mint() {
         let a = coord.add_node(2).expect("Multiply"); // id 4, counter -> 5
         assert!(coord.save());
         let b = coord.add_node(0).expect("Texture"); // id 5, counter -> 6
-        assert!(b.raw() > a.raw());
+        assert!(b.0 > a.0);
         assert!(coord.load(), "restore the counter to the saved value");
         // The next mint resumes at the saved counter: id b (the post-save
         // node) was discarded by the load, so reusing its number is correct
         // monotonic-from-the-saved-state, never an id live in the graph.
         let c = coord.add_node(0).expect("Texture");
-        assert_eq!(
-            c.raw(),
-            a.raw() + 1,
-            "next id resumes at the saved next_node_id"
-        );
+        assert_eq!(c.0, a.0 + 1, "next id resumes at the saved next_node_id");
     });
 }
 
@@ -3905,15 +3925,30 @@ fn r856_non_contiguous_moves_do_not_coalesce() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let stack = use_undo();
-        let nodes = use_nodes();
+        // R1596 — one `GraphEdit` replaced the four commands, and contiguity is
+        // now DOCUMENT equality (`self.after == next.before`) rather than a
+        // per-node position pair. Two edits whose states do not meet are two
+        // steps, which is the same rule stated over the whole value.
+        let handle = use_graph_handle();
         let id = NodeId(0);
-        let cmd = |before, after| MoveNodesCmd {
-            nodes: std::rc::Rc::clone(&nodes),
-            moves: vec![(id, before, after)],
-            coalescable: true,
+        let move_to = |x| {
+            handle.edit("Move node", Some(BTreeSet::from([id])), move |graph, _| {
+                if let Some(node) = graph.tree_mut(TREE).and_then(|t| t.node_mut(id)) {
+                    node.x = x;
+                }
+            })
         };
-        stack.push_applied(cmd((0, 0), (100, 0)));
-        stack.push_applied(cmd((200, 0), (300, 0))); // before != prior after
+        assert!(move_to(100), "the first move journals");
+        // Rewrite the document underneath so the next edit's `before` is not the
+        // previous edit's `after` — the non-contiguous case.
+        handle.document.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(node) = next.tree_mut(TREE).and_then(|t| t.node_mut(id)) {
+                node.x = 200;
+            }
+            next
+        });
+        assert!(move_to(300), "the second move journals");
         assert_eq!(stack.len(), 2, "non-contiguous moves do not coalesce");
     });
 }
@@ -4276,7 +4311,7 @@ fn r1183_autopan_rests_at_clamp_and_in_dead_zone() {
         scroll.set_max(100, 100);
         scroll.scroll_to(offset.0, offset.1);
         AutoPan {
-            nodes: Rc::new(Signal::new(default_nodes())),
+            document: Rc::new(Signal::new(default_graph())),
             scroll,
             zoom: Rc::new(Signal::new(1.0)),
             node_drag: Rc::new(RefCell::new(Some(NodeDragStart {
@@ -4375,7 +4410,7 @@ fn r877_frame_all_fits_the_node_bbox() {
         );
         // Every node's projected position lies inside the canvas.
         let (ox, oy) = coord.scroll.offset();
-        for n in &coord.nodes.get() {
+        for n in &coord.nodes() {
             let sx = wpx(n.x, zoom) - ox;
             let sy = wpx(n.y, zoom) - oy;
             assert!(
@@ -4398,8 +4433,7 @@ fn r877_frame_all_on_an_empty_graph_is_a_noop() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let coord = coordinator();
-        coord.nodes.set(Vec::new());
-        coord.edges.set(Vec::new());
+        coord.document.set(Graph::new("material"));
         assert!(!coord.frame_all(), "nothing to frame");
         assert!(
             (coord.zoom.get() - 1.0).abs() < f64::EPSILON,
@@ -4686,7 +4720,7 @@ fn r878_commit_edit_applies_and_journals_one_undo_step() {
         commit_edit(true);
         assert_eq!(use_active_edit().get(), None, "commit leaves rename mode");
         assert_eq!(
-            coord.node_by_id(NodeId(2)).expect("present").title,
+            coord.node_by_id(NodeId(2)).expect("present").title(),
             "Mix",
             "the title is applied",
         );
@@ -4702,13 +4736,13 @@ fn r878_commit_edit_applies_and_journals_one_undo_step() {
         );
         assert!(stack.undo());
         assert_eq!(
-            coord.node_by_id(NodeId(2)).expect("present").title,
+            coord.node_by_id(NodeId(2)).expect("present").title(),
             "Multiply",
             "undo restores"
         );
         assert!(stack.redo());
         assert_eq!(
-            coord.node_by_id(NodeId(2)).expect("present").title,
+            coord.node_by_id(NodeId(2)).expect("present").title(),
             "Mix",
             "redo re-applies"
         );
@@ -4726,7 +4760,7 @@ fn r878_empty_whitespace_or_unchanged_commit_keeps_title_and_journals_nothing() 
         use_text_edit_state(EDIT_TF_TAG).set_text("   ".to_owned());
         commit_edit(false);
         assert_eq!(
-            coord.node_by_id(NodeId(1)).expect("present").title,
+            coord.node_by_id(NodeId(1)).expect("present").title(),
             "Color",
             "whitespace kept"
         );
@@ -4735,7 +4769,10 @@ fn r878_empty_whitespace_or_unchanged_commit_keeps_title_and_journals_nothing() 
         // Unchanged commit: successful no-op, still no undo step.
         assert!(coord.begin_rename(NodeId(1)));
         commit_edit(false);
-        assert_eq!(coord.node_by_id(NodeId(1)).expect("present").title, "Color");
+        assert_eq!(
+            coord.node_by_id(NodeId(1)).expect("present").title(),
+            "Color"
+        );
         assert!(!stack.can_undo(), "an unchanged title journals nothing");
     });
 }
@@ -4802,7 +4839,7 @@ fn r878_begin_rename_migration_commits_the_in_flight_rename() {
         // node 0's typed text first (the Qt item-view discipline).
         assert!(coord.begin_rename(NodeId(1)));
         assert_eq!(
-            coord.node_by_id(NodeId(0)).expect("present").title,
+            coord.node_by_id(NodeId(0)).expect("present").title(),
             "Albedo"
         );
         assert_eq!(use_active_edit().get(), card(EditTarget::Title(NodeId(1))));
@@ -4816,7 +4853,7 @@ fn r878_begin_rename_migration_commits_the_in_flight_rename() {
         use_text_edit_state(EDIT_TF_TAG).set_text("Tint".to_owned());
         assert!(coord.begin_rename(NodeId(1)));
         assert_eq!(
-            coord.node_by_id(NodeId(1)).expect("present").title,
+            coord.node_by_id(NodeId(1)).expect("present").title(),
             "Color",
             "no self-commit"
         );
@@ -4838,7 +4875,7 @@ fn r878_rename_keymap_enter_commits_escape_cancels() {
             Modifiers::empty()
         ));
         assert_eq!(
-            coord.node_by_id(NodeId(3)).expect("present").title,
+            coord.node_by_id(NodeId(3)).expect("present").title(),
             "Result",
             "Enter commits"
         );
@@ -4853,7 +4890,7 @@ fn r878_rename_keymap_enter_commits_escape_cancels() {
             Modifiers::empty()
         ));
         assert_eq!(
-            coord.node_by_id(NodeId(3)).expect("present").title,
+            coord.node_by_id(NodeId(3)).expect("present").title(),
             "Result",
             "Escape cancels"
         );
@@ -4874,7 +4911,7 @@ fn r878_blur_intent_commits_without_restoring_focus() {
         );
         let _ = NodeEditorView::update(IDLE_TF, &intent);
         assert_eq!(
-            coord.node_by_id(NodeId(0)).expect("present").title,
+            coord.node_by_id(NodeId(0)).expect("present").title(),
             "Diffuse",
             "blur commits"
         );
@@ -4999,13 +5036,13 @@ fn r879_delete_selected_multi_is_one_undo_step() {
         use_selection().set(sel_set(&[0, 2]));
         assert!(coord.delete_selected());
         assert_eq!(coord.node_count(), 2, "both nodes gone");
-        assert_eq!(coord.edges.get().len(), 0, "all incident edges gone");
+        assert_eq!(coord.edges().len(), 0, "all incident edges gone");
         assert_eq!(use_selection().get(), Selection::None, "selection pruned");
         assert_eq!(stack.undo_label().as_deref(), Some("Delete 2 nodes"));
         assert_eq!(stack.len(), 1, "ONE journal entry for the whole group");
         assert!(stack.undo());
         assert_eq!(coord.node_count(), 4, "undo restores both nodes");
-        assert_eq!(coord.edges.get().len(), 3, "and every incident edge");
+        assert_eq!(coord.edges().len(), 3, "and every incident edge");
         assert_eq!(use_selection().get(), sel_set(&[0, 2]), "and the selection");
     });
 }
@@ -5563,215 +5600,6 @@ fn r948_layout_verbs_dispatch_and_are_schema_declared() {
 
 // ── R1383 auto-layout (layered / Sugiyama) ────────────────────────
 
-/// A Vector-typed node for the pure `layered_layout` tests. Its stored x/y are
-/// deliberately `(0, 0)` — the layout reads only id / [`GraphNode::height`] /
-/// edges, never the position, so the seeds are structural.
-fn lnode(id: u32, inputs: usize, outputs: usize) -> GraphNode {
-    GraphNode::new(
-        id,
-        "n",
-        0,
-        0,
-        &vec![PortType::Vector; inputs],
-        &vec![PortType::Vector; outputs],
-        NodeOp::Multiply,
-    )
-}
-
-/// An edge `from -> to` (port 0 both ends) with id `eid`.
-fn ledge(eid: u32, from: u32, to: u32) -> Edge {
-    Edge {
-        id: EdgeId(eid),
-        from_node: NodeId(from),
-        from_port: 0,
-        to_node: NodeId(to),
-        to_port: 0,
-    }
-}
-
-/// The column pitch (`NODE_W + LAYER_GAP`) an auto-layout advances per layer.
-const LAYOUT_PITCH: i32 = NODE_W + LAYER_GAP;
-
-/// Whether two `NODE_W`-wide cards' rects overlap (half-open on each axis).
-fn cards_overlap(a: (i32, i32), ha: i32, b: (i32, i32), hb: i32) -> bool {
-    let x_over = a.0 < b.0 + NODE_W && b.0 < a.0 + NODE_W;
-    let y_over = a.1 < b.1 + hb && b.1 < a.1 + ha;
-    x_over && y_over
-}
-
-#[test]
-fn r1383_linear_chain_lays_out_in_forward_columns() {
-    let nodes = [
-        lnode(0, 0, 1),
-        lnode(1, 1, 1),
-        lnode(2, 1, 1),
-        lnode(3, 1, 0),
-    ];
-    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 3)];
-    let out = layered_layout(&nodes, &edges, (0, 0));
-    let x = |id: u32| out[&NodeId(id)].0;
-    assert_eq!(x(0), 0, "the source anchors at origin.x");
-    assert_eq!(x(1), LAYOUT_PITCH, "each hop advances exactly one column");
-    assert_eq!(x(2), 2 * LAYOUT_PITCH);
-    assert_eq!(x(3), 3 * LAYOUT_PITCH);
-    let y = |id: u32| out[&NodeId(id)].1;
-    assert_eq!(y(0), y(3), "single-node columns share the centred y");
-}
-
-#[test]
-fn r1383_diamond_columns_the_middle_pair_without_overlap() {
-    // 0 -> {1, 2} -> 3.
-    let nodes = [
-        lnode(0, 0, 1),
-        lnode(1, 1, 1),
-        lnode(2, 1, 1),
-        lnode(3, 2, 0),
-    ];
-    let edges = [
-        ledge(0, 0, 1),
-        ledge(1, 0, 2),
-        ledge(2, 1, 3),
-        ledge(3, 2, 3),
-    ];
-    let out = layered_layout(&nodes, &edges, (0, 0));
-    let p = |id: u32| out[&NodeId(id)];
-    assert_eq!(p(1).0, p(2).0, "the fan-out pair shares a column");
-    assert!(
-        p(0).0 < p(1).0 && p(1).0 < p(3).0,
-        "the diamond flows forward"
-    );
-    assert_ne!(p(1).1, p(2).1, "the pair is stacked, not co-located");
-    assert!(
-        !cards_overlap(p(1), nodes[1].height(), p(2), nodes[2].height()),
-        "stacked siblings never overlap"
-    );
-}
-
-#[test]
-fn r1383_every_acyclic_edge_flows_forward() {
-    let nodes: Vec<GraphNode> = (0..6).map(|i| lnode(i, 1, 1)).collect();
-    let edges = [
-        ledge(0, 0, 2),
-        ledge(1, 1, 2),
-        ledge(2, 2, 3),
-        ledge(3, 2, 4),
-        ledge(4, 3, 5),
-        ledge(5, 4, 5),
-    ];
-    let out = layered_layout(&nodes, &edges, (10, 20));
-    for e in &edges {
-        let (fx, tx) = (out[&e.from_node].0, out[&e.to_node].0);
-        assert!(
-            fx < tx,
-            "edge {:?}->{:?} must flow forward (x {fx} < {tx})",
-            e.from_node,
-            e.to_node
-        );
-    }
-}
-
-#[test]
-fn r1383_no_two_cards_overlap() {
-    let nodes: Vec<GraphNode> = (0..6).map(|i| lnode(i, 1, 1)).collect();
-    let edges = [
-        ledge(0, 0, 2),
-        ledge(1, 1, 2),
-        ledge(2, 2, 3),
-        ledge(3, 2, 4),
-        ledge(4, 3, 5),
-        ledge(5, 4, 5),
-    ];
-    let out = layered_layout(&nodes, &edges, (0, 0));
-    let h = |id: u32| nodes.iter().find(|n| n.id == NodeId(id)).unwrap().height();
-    for i in 0..6u32 {
-        for j in (i + 1)..6 {
-            assert!(
-                !cards_overlap(out[&NodeId(i)], h(i), out[&NodeId(j)], h(j)),
-                "cards {i} and {j} overlap"
-            );
-        }
-    }
-}
-
-#[test]
-fn r1383_layout_is_deterministic_and_position_independent() {
-    let edges = [
-        ledge(0, 0, 1),
-        ledge(1, 0, 2),
-        ledge(2, 1, 3),
-        ledge(3, 2, 3),
-    ];
-    let a: Vec<GraphNode> = (0..4).map(|i| lnode(i, 1, 1)).collect();
-    // The same graph, but every node parked at a scattered position.
-    let mut b = a.clone();
-    for (k, n) in b.iter_mut().enumerate() {
-        n.x = 999 - i32::try_from(k).unwrap() * 37;
-        n.y = i32::try_from(k).unwrap() * 53;
-    }
-    let la = layered_layout(&a, &edges, (0, 0));
-    let lb = layered_layout(&b, &edges, (0, 0));
-    assert_eq!(
-        la, lb,
-        "the layout reads only structure, never the stored x/y"
-    );
-    assert_eq!(
-        la,
-        layered_layout(&a, &edges, (0, 0)),
-        "identical input -> identical output"
-    );
-}
-
-#[test]
-fn r1383_cycle_does_not_hang_and_places_every_node() {
-    // 0 -> 1 -> 2 -> 0; the 2->0 back-edge is dropped for layering.
-    let nodes = [lnode(0, 1, 1), lnode(1, 1, 1), lnode(2, 1, 1)];
-    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 0)];
-    let out = layered_layout(&nodes, &edges, (0, 0));
-    assert_eq!(out.len(), 3, "every node is placed despite the cycle");
-    let x = |id: u32| out[&NodeId(id)].0;
-    assert!(
-        x(0) < x(1) && x(1) < x(2),
-        "the acyclic spine still flows forward"
-    );
-}
-
-#[test]
-fn r1383_isolated_node_is_a_layer_zero_source() {
-    let nodes = [lnode(0, 0, 0), lnode(1, 0, 1), lnode(2, 1, 0)];
-    let edges = [ledge(0, 1, 2)];
-    let out = layered_layout(&nodes, &edges, (5, 5));
-    assert!(out.contains_key(&NodeId(0)), "the isolated node is placed");
-    assert_eq!(out[&NodeId(0)].0, 5, "an edge-less node sits in layer 0");
-    assert_eq!(out[&NodeId(1)].0, 5, "as does the connected source");
-    assert!(
-        out[&NodeId(2)].0 > out[&NodeId(1)].0,
-        "its consumer is one column to the right"
-    );
-}
-
-#[test]
-fn r1383_barycenter_reduces_crossings() {
-    // layer 0 = {0, 1} (id order 0 above 1); layer 1 = {2, 3} (init [2, 3]).
-    // The edges 0->3 and 1->2 cross until node 3 is lifted above node 2.
-    let nodes = [
-        lnode(0, 0, 1),
-        lnode(1, 0, 1),
-        lnode(2, 1, 0),
-        lnode(3, 1, 0),
-    ];
-    let edges = [ledge(0, 0, 3), ledge(1, 1, 2)];
-    let out = layered_layout(&nodes, &edges, (0, 0));
-    assert_eq!(
-        out[&NodeId(2)].0,
-        out[&NodeId(3)].0,
-        "2 and 3 share layer 1"
-    );
-    assert!(
-        out[&NodeId(3)].1 < out[&NodeId(2)].1,
-        "barycenter lifts node 3 above node 2 so the wires stop crossing"
-    );
-}
-
 #[test]
 fn r1383_auto_layout_tidies_the_graph_in_one_undo_step() {
     Owner::new().run(|| {
@@ -5828,117 +5656,6 @@ fn r1383_auto_layout_is_idempotent_and_needs_two_nodes() {
 }
 
 // ── R1390 force-directed (organic) auto-layout ────────────────────
-
-/// Euclidean distance between two placed nodes' top-left corners.
-fn node_dist(out: &BTreeMap<NodeId, (i32, i32)>, a: u32, b: u32) -> f64 {
-    let pa = out[&NodeId(a)];
-    let pb = out[&NodeId(b)];
-    let dx = f64::from(pa.0 - pb.0);
-    let dy = f64::from(pa.1 - pb.1);
-    (dx * dx + dy * dy).sqrt()
-}
-
-#[test]
-fn r1390_force_layout_places_every_node_anchored_at_origin() {
-    let nodes: Vec<GraphNode> = (0..5).map(|i| lnode(i, 1, 1)).collect();
-    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 3, 4)];
-    let out = force_directed_layout(&nodes, &edges, (30, 40));
-    assert_eq!(out.len(), 5, "every node is placed");
-    let min_x = out.values().map(|p| p.0).min().unwrap();
-    let min_y = out.values().map(|p| p.1).min().unwrap();
-    assert_eq!(min_x, 30, "the relaxed cloud's left edge sits at origin.x");
-    assert_eq!(min_y, 40, "and its top edge at origin.y");
-}
-
-#[test]
-fn r1390_layout_is_deterministic_and_position_independent() {
-    let edges = [
-        ledge(0, 0, 1),
-        ledge(1, 0, 2),
-        ledge(2, 1, 3),
-        ledge(3, 2, 3),
-    ];
-    let a: Vec<GraphNode> = (0..4).map(|i| lnode(i, 1, 1)).collect();
-    // The same graph, but every node parked at a scattered position.
-    let mut b = a.clone();
-    for (k, n) in b.iter_mut().enumerate() {
-        n.x = 777 - i32::try_from(k).unwrap() * 41;
-        n.y = i32::try_from(k).unwrap() * 59;
-    }
-    let la = force_directed_layout(&a, &edges, (0, 0));
-    let lb = force_directed_layout(&b, &edges, (0, 0));
-    assert_eq!(
-        la, lb,
-        "the force layout reads only structure, never the stored x/y"
-    );
-    assert_eq!(
-        la,
-        force_directed_layout(&a, &edges, (0, 0)),
-        "identical input -> identical output"
-    );
-}
-
-#[test]
-fn r1390_edge_pulls_endpoints_closer_than_an_isolated_node() {
-    // 0-1 wired; 2 isolated. The spring holds 0,1 near the ideal length while
-    // repulsion pushes the unattached 2 away from both.
-    let nodes = [lnode(0, 1, 1), lnode(1, 1, 1), lnode(2, 0, 0)];
-    let edges = [ledge(0, 0, 1)];
-    let out = force_directed_layout(&nodes, &edges, (0, 0));
-    let d01 = node_dist(&out, 0, 1);
-    assert!(
-        d01 < node_dist(&out, 0, 2),
-        "the wired pair 0-1 is tighter than 0..isolated-2"
-    );
-    assert!(
-        d01 < node_dist(&out, 1, 2),
-        "and tighter than 1..isolated-2"
-    );
-}
-
-#[test]
-fn r1390_repulsion_separates_every_node() {
-    let nodes: Vec<GraphNode> = (0..6).map(|i| lnode(i, 1, 1)).collect();
-    let edges = [
-        ledge(0, 0, 1),
-        ledge(1, 1, 2),
-        ledge(2, 2, 3),
-        ledge(3, 3, 4),
-        ledge(4, 4, 5),
-    ];
-    let out = force_directed_layout(&nodes, &edges, (0, 0));
-    for i in 0..6u32 {
-        for j in (i + 1)..6 {
-            assert_ne!(
-                out[&NodeId(i)],
-                out[&NodeId(j)],
-                "repulsion keeps nodes {i} and {j} from coinciding"
-            );
-        }
-    }
-}
-
-#[test]
-fn r1390_cycle_does_not_hang_and_places_every_node() {
-    // 0 -> 1 -> 2 -> 0; the undirected springs relax it without a cycle guard.
-    let nodes = [lnode(0, 1, 1), lnode(1, 1, 1), lnode(2, 1, 1)];
-    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 0)];
-    let out = force_directed_layout(&nodes, &edges, (0, 0));
-    assert_eq!(out.len(), 3, "a 3-cycle terminates and places every node");
-}
-
-#[test]
-fn r1390_force_and_layered_are_distinct_arrangements() {
-    // The two modes place the same graph differently — organic vs columned.
-    let nodes: Vec<GraphNode> = (0..4).map(|i| lnode(i, 1, 1)).collect();
-    let edges = [ledge(0, 0, 1), ledge(1, 1, 2), ledge(2, 2, 3)];
-    let force = force_directed_layout(&nodes, &edges, (0, 0));
-    let layered = layered_layout(&nodes, &edges, (0, 0));
-    assert_ne!(
-        force, layered,
-        "force-directed and layered yield different layouts"
-    );
-}
 
 #[test]
 fn r1390_force_layout_tidies_in_one_undo_step_and_reverts() {
@@ -6053,19 +5770,15 @@ fn r1226_cut_wires_removes_only_the_crossed_edges() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let coord = coordinator();
-        assert_eq!(coord.edges.get().len(), 3, "boot: 3 wires");
+        assert_eq!(coord.edges().len(), 3, "boot: 3 wires");
         // A vertical knife at graph-x=200 (between the left column's right
         // edge x=170 and Multiply's left x=250) crosses edges 0 + 1 (into
         // Multiply) but not edge 2 (Multiply -> Output, x in [374,476]).
         let cut = coord.cut_wires((200, 20), (200, 380));
         assert_eq!(cut, vec![EdgeId(0), EdgeId(1)], "edges 0 and 1 are cut");
-        assert_eq!(
-            coord.edges.get().len(),
-            1,
-            "only Multiply -> Output survives"
-        );
+        assert_eq!(coord.edges().len(), 1, "only Multiply -> Output survives");
         assert!(
-            coord.edges.get().iter().any(|e| e.id == EdgeId(2)),
+            coord.edges().iter().any(|e| e.id == EdgeId(2)),
             "edge 2 (past the knife) is untouched"
         );
     });
@@ -6080,14 +5793,10 @@ fn r1226_cut_wires_is_one_undo_step() {
         assert!(!stack.can_undo(), "boot: clean history");
         let cut = coord.cut_wires((200, 20), (200, 380));
         assert_eq!(cut.len(), 2, "two wires cut");
-        assert_eq!(coord.edges.get().len(), 1);
+        assert_eq!(coord.edges().len(), 1);
         assert_eq!(stack.undo_label().as_deref(), Some("Cut wires"));
         assert!(stack.undo(), "one undo restores BOTH cut wires");
-        assert_eq!(
-            coord.edges.get().len(),
-            3,
-            "the whole cut reverts in one step"
-        );
+        assert_eq!(coord.edges().len(), 3, "the whole cut reverts in one step");
         assert!(!stack.can_undo(), "the cut was a single journal entry");
     });
 }
@@ -6101,7 +5810,7 @@ fn r1226_cut_wires_miss_is_a_noop_with_no_undo_entry() {
         // A stroke in empty space (far below every wire) crosses nothing.
         let cut = coord.cut_wires((600, 500), (700, 520));
         assert!(cut.is_empty(), "no wire crossed -> nothing cut");
-        assert_eq!(coord.edges.get().len(), 3, "graph unchanged");
+        assert_eq!(coord.edges().len(), 3, "graph unchanged");
         assert!(!stack.can_undo(), "a no-op cut records no undo entry");
     });
 }
@@ -6142,14 +5851,16 @@ fn r1227_add_frame_encloses_the_selection_only() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let coord = coordinator();
-        assert!(coord.frames.get().is_empty(), "boot: no frames");
+        assert!(coord.frames().is_empty(), "boot: no frames");
         // Frame the two left-column nodes (Texture id0 @ (40,70), Color id1 @ (40,210)).
         coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
         let id = coord.add_frame().expect("framed the selection");
-        assert_eq!(id, FrameId(0), "first frame mints id 0");
-        assert_eq!(coord.frames.get().len(), 1);
+        // R1596 — a frame IS a node, so it mints from the node counter: the seed
+        // graph holds four, and the frame is the fifth thing in the tree.
+        assert_eq!(id, NodeId(4), "the frame mints the next NODE id");
+        assert_eq!(coord.frames().len(), 1);
         let f = coord.frame_by_id(id).unwrap();
-        assert_eq!(f.title, "Comment 1");
+        assert_eq!(f.title(), "Comment 1");
         // The rect encloses both framed nodes with the FRAME_PAD margin.
         assert!(f.x <= 40 - FRAME_PAD, "left margin");
         assert!(
@@ -6157,14 +5868,23 @@ fn r1227_add_frame_encloses_the_selection_only() {
             "top margin + header"
         );
         assert!(f.right() >= 40 + NODE_W + FRAME_PAD, "right margin");
-        let nodes = coord.nodes.get();
-        let by = |id: NodeId| nodes.iter().find(|n| n.id == id).unwrap();
-        assert!(f.contains_node(by(NodeId(0))), "Texture inside");
-        assert!(f.contains_node(by(NodeId(1))), "Color inside");
-        assert!(
-            !f.contains_node(by(NodeId(3))),
-            "far-right Output not inside"
+        // R1596 — membership is a FACT the document maintains (`Node::parent`),
+        // set by `enframe`, not a rectangle re-tested on every read.
+        assert_eq!(
+            coord.graph().members(TREE, id),
+            vec![NodeId(0), NodeId(1)],
+            "the framed selection is what the frame holds"
         );
+        assert!(
+            !coord.graph().members(TREE, id).contains(&NodeId(3)),
+            "far-right Output is not a member"
+        );
+        // And the geometry agrees with it, which is what the gesture asks.
+        let nodes = coord.nodes();
+        let by = |id: NodeId| nodes.iter().find(|n| n.id == id).unwrap().clone();
+        assert!(frame_contains(&f, &by(NodeId(0))), "Texture sits inside");
+        assert!(frame_contains(&f, &by(NodeId(1))), "Color sits inside");
+        assert!(!frame_contains(&f, &by(NodeId(3))), "Output sits outside");
         // Frames are a separate axis — the node selection is untouched.
         assert_eq!(
             coord.selection.get(),
@@ -6180,7 +5900,7 @@ fn r1227_add_frame_with_no_node_selection_is_none() {
         let coord = coordinator();
         coord.set_selection(Selection::None);
         assert!(coord.add_frame().is_none(), "no selection -> no frame");
-        assert!(coord.frames.get().is_empty());
+        assert!(coord.frames().is_empty());
     });
 }
 
@@ -6192,10 +5912,10 @@ fn r1227_add_remove_frame_undo_redo_one_step_each() {
         let stack = use_undo();
         coord.select_all();
         let id = coord.add_frame().unwrap();
-        assert_eq!(coord.frames.get().len(), 1);
+        assert_eq!(coord.frames().len(), 1);
         assert_eq!(stack.undo_label().as_deref(), Some("Add frame"));
         assert!(stack.undo(), "undo the add");
-        assert!(coord.frames.get().is_empty(), "frame gone");
+        assert!(coord.frames().is_empty(), "frame gone");
         assert!(stack.redo(), "redo restores it");
         assert_eq!(
             coord.frame_by_id(id).map(|f| f.id),
@@ -6204,11 +5924,11 @@ fn r1227_add_remove_frame_undo_redo_one_step_each() {
         );
         // remove_frame is its own undo step; the nodes are untouched.
         assert!(coord.remove_frame(id));
-        assert!(coord.frames.get().is_empty());
+        assert!(coord.frames().is_empty());
         assert_eq!(coord.node_count(), 4, "removing a frame keeps the nodes");
         assert_eq!(stack.undo_label().as_deref(), Some("Remove frame"));
         assert!(stack.undo(), "undo the remove restores the frame");
-        assert_eq!(coord.frames.get().len(), 1);
+        assert_eq!(coord.frames().len(), 1);
     });
 }
 
@@ -6219,18 +5939,18 @@ fn r1227_frame_rename_undoable() {
         let mut coord = coordinator();
         coord.select_all();
         let id = coord.add_frame().unwrap();
-        let title_path = format!("frame.{}.title", id.raw());
+        let title_path = format!("frame.{}.title", id.0);
         coord
             .intervene(&title_path, IntrospectValue::Text("Lighting".to_owned()))
             .unwrap();
-        assert_eq!(coord.frame_by_id(id).unwrap().title, "Lighting");
+        assert_eq!(coord.frame_by_id(id).unwrap().title(), "Lighting");
         assert!(use_undo().undo(), "undo the rename");
-        assert_eq!(coord.frame_by_id(id).unwrap().title, "Comment 1");
+        assert_eq!(coord.frame_by_id(id).unwrap().title(), "Comment 1");
         // R1234 — the rect is now writable (move / resize); a non-`Int` value on
         // a rect field is a `TypeMismatch`, not `ReadOnly`.
         assert_eq!(
             coord.intervene(
-                &format!("frame.{}.x", id.raw()),
+                &format!("frame.{}.x", id.0),
                 IntrospectValue::Text("nope".to_owned()),
             ),
             Err(InterveneError::TypeMismatch),
@@ -6256,17 +5976,20 @@ fn r1227_frame_introspection_contains_and_verb_schema() {
         coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
         let id = coord.add_frame().unwrap();
         assert_eq!(coord.query("frame_count"), Some(IntrospectValue::Int(1)));
+        // R1596 — a frame is a NODE, so it mints from the node counter: the
+        // seed graph holds four, and the frame is the fifth thing in the tree.
         assert_eq!(
             coord.query("frame_ids"),
-            Some(IntrospectValue::Text("0".to_owned()))
+            Some(IntrospectValue::Text("4".to_owned()))
         );
         assert_eq!(
-            coord.query(&format!("frame.{}.title", id.raw())),
+            coord.query(&format!("frame.{}.title", id.0)),
             Some(IntrospectValue::Text("Comment 1".to_owned()))
         );
-        // `contains` = the framed node ids (0 and 1) whose centre is inside.
+        // R1596 — `contains` is the RELATION (`Node::parent`) the framing wrote,
+        // not a rectangle re-tested on every read.
         assert_eq!(
-            coord.query(&format!("frame.{}.contains", id.raw())),
+            coord.query(&format!("frame.{}.contains", id.0)),
             Some(IntrospectValue::Text("0,1".to_owned()))
         );
         // The AI-first verbs + read handles are schema-declared.
@@ -6287,23 +6010,21 @@ fn r1227_frame_persists_and_paints_behind() {
         // Persistence: the frame round-trips through the current-schema blob.
         let json = coord.serialized_json();
         assert!(
-            json.contains("\"schema_version\":7"),
-            "schema bumped to 7 (R1257 source output_const)"
+            json.contains("\"schema_version\":8"),
+            "schema bumped to 8 (R1596 — the blob is a Document)"
         );
         assert!(json.contains("Comment 1"), "the frame is in the blob");
-        coord.frames.set(Vec::new());
+        coord.document.set(Graph::new("material"));
         assert!(coord.load_json(&json), "load the snapshot");
-        assert_eq!(
-            coord.frames.get().len(),
-            1,
-            "frame restored from persistence"
-        );
+        assert_eq!(coord.frames().len(), 1, "frame restored from persistence");
         // Paint: the frame's tagged rect is present in the scene.
         let scene = view(IDLE_TF, &Frame::new());
-        assert!(
-            scene.contains_tag(&format!("{GRAPH_TAG}#frame_0")),
-            "the comment frame is painted"
-        );
+        let painted = coord
+            .frames()
+            .first()
+            .map(|f| format!("{GRAPH_TAG}#frame_{}", f.id))
+            .expect("a restored frame");
+        assert!(scene.contains_tag(&painted), "the comment frame is painted");
     });
 }
 
@@ -6315,7 +6036,7 @@ fn r1227_a11y_frame_is_a_labeled_group_child_of_the_canvas() {
         coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
         coord.add_frame().unwrap();
         let a11y = NodeEditorView::access_node(&IDLE_TF, None);
-        let frame_tag = format!("{GRAPH_TAG}#frame_0");
+        let frame_tag = format!("{GRAPH_TAG}#frame_{}", NodeId(4));
         let frame = a11y
             .iter()
             .find(|n| n.tag == frame_tag)
@@ -6356,7 +6077,7 @@ fn r1234_frame_move_carries_contents_as_one_undo_step() {
         // Move the frame right by 60 graph units.
         coord
             .intervene(
-                &format!("frame.{}.x", id.raw()),
+                &format!("frame.{}.x", id.0),
                 IntrospectValue::Int(i64::from(fx0 + 60)),
             )
             .unwrap();
@@ -6413,7 +6134,7 @@ fn r1234_frame_move_is_a_rigid_group_clamp_at_the_world_edge() {
         let start_y = coord.node_by_id(NodeId(0)).unwrap().y;
         coord
             .intervene(
-                &format!("frame.{}.y", id.raw()),
+                &format!("frame.{}.y", id.0),
                 IntrospectValue::Int(i64::from(fy0 + 40)),
             )
             .unwrap();
@@ -6432,7 +6153,7 @@ fn r1234_frame_move_is_a_rigid_group_clamp_at_the_world_edge() {
         let rel = coord.frame_by_id(id).unwrap().x - coord.node_by_id(NodeId(0)).unwrap().x;
         coord
             .intervene(
-                &format!("frame.{}.x", id.raw()),
+                &format!("frame.{}.x", id.0),
                 IntrospectValue::Int(1_000_000),
             )
             .unwrap();
@@ -6458,7 +6179,7 @@ fn r1234_frame_move_is_a_rigid_group_clamp_at_the_world_edge() {
 fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
     Owner::new().run(|| {
         let (mut coord, id) = framed_pair();
-        let contains = format!("frame.{}.contains", id.raw());
+        let contains = format!("frame.{}.contains", id.0);
         assert_eq!(
             coord.query(&contains),
             Some(IntrospectValue::Text("0,1".to_owned())),
@@ -6470,9 +6191,9 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
         );
         // Grow the box wide enough to swallow the whole graph.
         coord
-            .intervene(&format!("frame.{}.w", id.raw()), IntrospectValue::Int(800))
+            .intervene(&format!("frame.{}.w", id.0), IntrospectValue::Int(800))
             .unwrap();
-        assert_eq!(coord.frame_by_id(id).unwrap().w, 800, "width grew");
+        assert_eq!(coord.frame_by_id(id).unwrap().width(), 800, "width grew");
         // A resize never drags nodes.
         assert_eq!(
             coord.node_by_id(NodeId(0)).unwrap().x,
@@ -6489,11 +6210,17 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
             n2.x,
             "node 2 stayed put"
         );
-        // Membership is recomputed lazily: the wider frame now holds all four.
+        // ★R1596 — MEMBERSHIP DOES NOT MOVE. The editor re-derived it from the
+        // rectangle on every read, so widening the box silently adopted two more
+        // nodes and shrinking it abandoned them — what the frame *said* it held
+        // changed with nobody having edited membership at all. It is a stored
+        // relation now (`Node::parent`, R1589, Blender's model), so a resize
+        // changes the box and nothing else, and joining is the explicit act
+        // `attach` performs.
         assert_eq!(
             coord.query(&contains),
-            Some(IntrospectValue::Text("0,1,2,3".to_owned())),
-            "the widened frame swallows every node"
+            Some(IntrospectValue::Text("0,1".to_owned())),
+            "a resize changes the box, not what the frame holds"
         );
         assert_eq!(
             use_undo().undo_label().as_deref(),
@@ -6504,7 +6231,24 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
         assert_eq!(
             coord.query(&contains),
             Some(IntrospectValue::Text("0,1".to_owned())),
-            "membership reverts with the size"
+            "and undoing it leaves membership alone too"
+        );
+        // The nodes ARE inside the widened box geometrically — which is the
+        // question a GESTURE asks, and `attach` is what turns that answer into
+        // membership.
+        coord
+            .intervene(&format!("frame.{}.w", id.0), IntrospectValue::Int(800))
+            .unwrap();
+        coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(2), NodeId(3)])));
+        assert_eq!(
+            coord.attach_selected(),
+            vec![NodeId(2), NodeId(3)],
+            "attach is the act that joins them"
+        );
+        assert_eq!(
+            coord.query(&contains),
+            Some(IntrospectValue::Text("0,1,2,3".to_owned())),
+            "and now the frame holds all four"
         );
     });
 }
@@ -6515,14 +6259,18 @@ fn r1234_frame_resize_clamps_to_the_minimum() {
         let (mut coord, id) = framed_pair();
         // Collapsing below the chrome height clamps to FRAME_MIN, never zero.
         coord
-            .intervene(&format!("frame.{}.w", id.raw()), IntrospectValue::Int(1))
-            .unwrap();
-        assert_eq!(coord.frame_by_id(id).unwrap().w, FRAME_MIN, "width clamped");
-        coord
-            .intervene(&format!("frame.{}.h", id.raw()), IntrospectValue::Int(-9))
+            .intervene(&format!("frame.{}.w", id.0), IntrospectValue::Int(1))
             .unwrap();
         assert_eq!(
-            coord.frame_by_id(id).unwrap().h,
+            coord.frame_by_id(id).unwrap().width(),
+            FRAME_MIN,
+            "width clamped"
+        );
+        coord
+            .intervene(&format!("frame.{}.h", id.0), IntrospectValue::Int(-9))
+            .unwrap();
+        assert_eq!(
+            coord.frame_by_id(id).unwrap().height(),
             FRAME_MIN,
             "height clamped"
         );
@@ -6536,7 +6284,7 @@ fn r1234_frame_geom_type_and_path_errors() {
         // A non-Int rect value is a TypeMismatch (not ReadOnly any more).
         assert_eq!(
             coord.intervene(
-                &format!("frame.{}.w", id.raw()),
+                &format!("frame.{}.w", id.0),
                 IntrospectValue::Text("wide".to_owned()),
             ),
             Err(InterveneError::TypeMismatch),
@@ -6547,13 +6295,13 @@ fn r1234_frame_geom_type_and_path_errors() {
             Err(InterveneError::UnknownPath),
         );
         assert_eq!(
-            coord.intervene(&format!("frame.{}.zz", id.raw()), IntrospectValue::Int(0)),
+            coord.intervene(&format!("frame.{}.zz", id.0), IntrospectValue::Int(0)),
             Err(InterveneError::UnknownPath),
         );
         // A no-op move (same x) journals nothing — the last step is still the add.
         coord
             .intervene(
-                &format!("frame.{}.x", id.raw()),
+                &format!("frame.{}.x", id.0),
                 IntrospectValue::Int(i64::from(coord.frame_by_id(id).unwrap().x)),
             )
             .unwrap();
@@ -6578,23 +6326,23 @@ fn r1235_add_reroute_splices_edge_as_one_undo_step() {
         assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
         assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(4)));
         // The spliced edge is gone; the path now routes node0 -> R -> node2.
-        let edges = coord.edges.get();
+        let edges = coord.edges();
         assert!(
             !edges.iter().any(|e| e.id == EdgeId(0)),
             "the original edge is removed"
         );
         let a_to_r = edges
             .iter()
-            .find(|e| e.from_node == NodeId(0))
+            .find(|e| e.from.node == NodeId(0))
             .expect("node0 -> reroute");
-        assert_eq!(a_to_r.to_node, rid, "node0 now feeds the reroute");
-        assert_eq!(a_to_r.to_port, 0, "into the reroute's only input");
+        assert_eq!(a_to_r.to.node, rid, "node0 now feeds the reroute");
+        assert_eq!(a_to_r.to.port, 0, "into the reroute's only input");
         let r_to_b = edges
             .iter()
-            .find(|e| e.from_node == rid)
+            .find(|e| e.from.node == rid)
             .expect("reroute -> node2");
-        assert_eq!(r_to_b.to_node, NodeId(2), "the reroute feeds node2");
-        assert_eq!(r_to_b.to_port, 0, "into the original input port");
+        assert_eq!(r_to_b.to.node, NodeId(2), "the reroute feeds node2");
+        assert_eq!(r_to_b.to.port, 0, "into the original input port");
         // One undo removes the whole reroute (node + both edges) and restores E0.
         assert_eq!(
             use_undo().undo_label().as_deref(),
@@ -6605,7 +6353,7 @@ fn r1235_add_reroute_splices_edge_as_one_undo_step() {
         assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
         assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
         assert!(
-            coord.edges.get().iter().any(|e| e.id == EdgeId(0)),
+            coord.edges().iter().any(|e| e.id == EdgeId(0)),
             "the original edge is restored"
         );
         assert!(use_undo().redo(), "redo re-splices in one step");
@@ -6624,25 +6372,27 @@ fn r1235_reroute_is_a_typed_passthrough_adopting_the_wire_type() {
         let lerp = coord.add_node(6).expect("Lerp");
         assert!(coord.add_edge(scalar, 0, lerp, 2), "Float -> Float wired");
         let float_edge = coord
-            .edges
-            .get()
+            .edges()
             .iter()
             .copied()
-            .find(|e| e.from_node == scalar)
+            .find(|e| e.from.node == scalar)
             .expect("the float edge")
             .id;
         let rid = coord
             .add_reroute(float_edge)
             .expect("splice the float wire");
         let r = coord.node_by_id(rid).expect("reroute node");
-        assert_eq!(r.title, "Reroute", "titled Reroute");
+        assert_eq!(r.title(), "Reroute", "titled Reroute");
+        // R1596 — a reroute CARRIES the type it routes (`Reroute(PortType)`), so
+        // its ports are declared by its own body and cannot disagree with it.
+        let signature = signature_of(&coord.graph(), rid).expect("a signature");
         assert_eq!(
-            r.input_ports,
+            signature.inputs.iter().map(|p| p.ty).collect::<Vec<_>>(),
             vec![PortType::Float],
             "the input port adopts the wire's type (not a hardcoded Vector)"
         );
         assert_eq!(
-            r.output_ports,
+            signature.outputs.iter().map(|p| p.ty).collect::<Vec<_>>(),
             vec![PortType::Float],
             "the output port adopts the wire's type"
         );
@@ -6707,8 +6457,8 @@ fn r1236_dissolve_reroute_reconnects_the_wire() {
             "net -1 edge (removed 2, added 1 bridge)"
         );
         assert!(coord.node_by_id(rid).is_none(), "the reroute is gone");
-        let bridged = coord.edges.get().iter().any(|e| {
-            e.from_node == NodeId(0) && e.from_port == 0 && e.to_node == NodeId(2) && e.to_port == 0
+        let bridged = coord.edges().iter().any(|e| {
+            e.from.node == NodeId(0) && e.from.port == 0 && e.to.node == NodeId(2) && e.to.port == 0
         });
         assert!(bridged, "node0 -> node2.in0 is reconnected directly");
         // ONE undo restores the whole hop (the reroute + its two edges).
@@ -6720,22 +6470,64 @@ fn r1236_dissolve_reroute_reconnects_the_wire() {
 }
 
 #[test]
-fn r1236_dissolve_requires_exactly_one_in_and_one_out() {
+fn r1236_dissolve_is_general_and_names_what_it_would_cut() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let coord = coordinator();
-        // node2 (Multiply) has TWO incoming edges — an ambiguous bridge.
-        assert!(!coord.dissolve_node(NodeId(2)), "two inputs -> no dissolve");
-        // node0 (Texture) is a source: zero incoming edges.
-        assert!(!coord.dissolve_node(NodeId(0)), "no input -> no dissolve");
-        // node3 (Output) is a sink: zero outgoing edges.
-        assert!(!coord.dissolve_node(NodeId(3)), "no output -> no dissolve");
-        // Unknown id.
+        // ★R1596 — dissolve WIDENED. The editor required exactly one wire in and
+        // one out and refused anything else; `Document::dissolve` (R1586) is the
+        // general form — Blender's `NODE_OT_delete_reconnect` — so the question
+        // worth asking is no longer *can it* but **does it lose anything**.
+        //
+        // node2 (Multiply) has two inputs and one output: it dissolves, and the
+        // one downstream wire it cannot carry is NAMED rather than vanishing.
+        // Measured, not predicted: a Multiply dissolves LOSSLESSLY. Its output
+        // is routed from input 0, whose producer bridges straight to the
+        // downstream consumer, so no wire is cut — what is lost is input 1's
+        // CONTRIBUTION, which is not a severed link and `lossless` does not
+        // claim otherwise. The first draft of this test asserted the opposite
+        // from reasoning; the crate was right and the reasoning was not.
+        assert!(
+            coord.dissolvable(NodeId(2)),
+            "a Multiply routes its output from input 0, so nothing is cut"
+        );
+        assert_eq!(
+            coord.dissolve_severs(NodeId(2)),
+            Some(String::new()),
+            "and the cut list is empty"
+        );
+        assert!(coord.dissolve_node(NodeId(2)), "it dissolves");
+        assert!(coord.node_by_id(NodeId(2)).is_none(), "the node is gone");
+        assert!(use_undo().undo(), "one undo restores it");
+        // node0 (Texture) is a source: nothing flows into it, so its output has
+        // no input to be routed from and the wire leaving it is CUT — named,
+        // where `node_internal_relink` deletes it and returns void so nothing in
+        // Blender can be asked what a reconnect-delete is about to throw away.
+        assert!(
+            !coord.dissolvable(NodeId(0)),
+            "a source's dissolve is lossy"
+        );
+        assert_eq!(
+            coord.dissolve_severs(NodeId(0)),
+            Some("0".to_owned()),
+            "and the wire it cuts is named"
+        );
+        // node3 (Output) is a sink: nothing flows past it, so dissolving it
+        // cuts nothing and is simply a delete. The editor refused this because
+        // its rule was a SHAPE test; losslessness is the honest question and the
+        // answer here is yes.
+        assert!(
+            coord.dissolvable(NodeId(3)),
+            "a sink's dissolve cuts nothing"
+        );
+        assert!(coord.dissolve_node(NodeId(3)), "so it dissolves");
+        assert!(use_undo().undo(), "and one undo restores it");
+        // Unknown id: there is no dissolve at all.
         assert!(
             !coord.dissolve_node(NodeId(99)),
             "unknown id -> no dissolve"
         );
-        // The graph is untouched by every rejected dissolve.
+        // The graph is back where it started.
         assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
         assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
     });
@@ -6839,43 +6631,51 @@ fn r1240_empty_frame_move_keeps_the_whole_rect_on_world() {
         // Shrink the frame so it contains no nodes (an empty annotation).
         coord
             .intervene(
-                &format!("frame.{}.w", id.raw()),
+                &format!("frame.{}.w", id.0),
                 IntrospectValue::Int(i64::from(FRAME_MIN)),
             )
             .unwrap();
         coord
             .intervene(
-                &format!("frame.{}.h", id.raw()),
+                &format!("frame.{}.h", id.0),
                 IntrospectValue::Int(i64::from(FRAME_MIN)),
             )
             .unwrap();
+        // R1596 — shrinking the box does NOT abandon what the frame holds; the
+        // members are a relation, and `detach` is the act that ends it.
+        coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
         assert_eq!(
-            coord.query(&format!("frame.{}.contains", id.raw())),
+            coord.detach_selected(),
+            vec![NodeId(0), NodeId(1)],
+            "detach takes them out"
+        );
+        assert_eq!(
+            coord.query(&format!("frame.{}.contains", id.0)),
             Some(IntrospectValue::Text(String::new())),
-            "the shrunk frame contains nothing"
+            "the frame now holds nothing"
         );
         // Push it far past the right / bottom: the whole RECT must stay on-world
         // (pre-R1240 only the origin was bounded, so the box slid fully off).
         coord
             .intervene(
-                &format!("frame.{}.x", id.raw()),
+                &format!("frame.{}.x", id.0),
                 IntrospectValue::Int(1_000_000),
             )
             .unwrap();
         coord
             .intervene(
-                &format!("frame.{}.y", id.raw()),
+                &format!("frame.{}.y", id.0),
                 IntrospectValue::Int(1_000_000),
             )
             .unwrap();
         let f = coord.frame_by_id(id).unwrap();
         assert!(f.x >= 0 && f.y >= 0, "origin on-world");
         assert!(
-            f.x + f.w <= WORLD,
+            f.x + f.width() <= WORLD,
             "the empty frame's right edge stays on-world"
         );
         assert!(
-            f.y + f.h <= WORLD,
+            f.y + f.height() <= WORLD,
             "the empty frame's bottom edge stays on-world"
         );
     });
@@ -6888,13 +6688,16 @@ fn r1240_populated_frame_right_edge_stays_on_world() {
         let rel = coord.frame_by_id(id).unwrap().x - coord.node_by_id(NodeId(0)).unwrap().x;
         coord
             .intervene(
-                &format!("frame.{}.x", id.raw()),
+                &format!("frame.{}.x", id.0),
                 IntrospectValue::Int(1_000_000),
             )
             .unwrap();
         let f = coord.frame_by_id(id).unwrap();
         // The frame edge stops at the world (no FRAME_PAD overhang past WORLD)...
-        assert!(f.x + f.w <= WORLD, "the frame's right edge stays on-world");
+        assert!(
+            f.x + f.width() <= WORLD,
+            "the frame's right edge stays on-world"
+        );
         // ...and the rigid group is preserved (members carried, still on-world).
         assert!(
             coord.node_by_id(NodeId(0)).unwrap().x <= WORLD - NODE_W,
@@ -6914,25 +6717,49 @@ fn r1241_dissolvable_query_matches_the_verb() {
         let _ = boot_scene();
         let coord = coordinator();
         let rid = coord.add_reroute(EdgeId(0)).unwrap();
-        // The read twin agrees with the gate: only the reroute (1-in/1-out) is
-        // dissolvable; Multiply (2 inputs), a source (0 inputs), unknown are not.
-        assert!(coord.dissolvable(rid), "the reroute is dissolvable");
-        assert!(!coord.dissolvable(NodeId(2)), "Multiply (2 inputs) is not");
-        assert!(!coord.dissolvable(NodeId(0)), "a source (0 inputs) is not");
+        // R1596 — the read twin agrees with the verb, and what it answers is
+        // LOSSLESSNESS: a reroute passes its one value through, a Multiply
+        // cannot pass two through one output, a source has nothing upstream to
+        // bridge from, and an unknown id has no dissolve at all.
+        assert!(coord.dissolvable(rid), "the reroute loses nothing");
+        assert!(
+            coord.dissolvable(NodeId(2)),
+            "nor does a Multiply — its output routes from input 0, so the wire \
+             past it is bridged and nothing is cut"
+        );
+        assert!(
+            !coord.dissolvable(NodeId(0)),
+            "a source has no upstream to bridge from, so its outgoing wire dies"
+        );
         assert!(!coord.dissolvable(NodeId(99)), "an unknown id is not");
+        assert_eq!(
+            coord.dissolve_severs(NodeId(99)),
+            None,
+            "and has no cut list either — absent is absent"
+        );
         // The RPC reads mirror the method.
         assert_eq!(
-            coord.query(&format!("dissolvable.{}", rid.raw())),
+            coord.query(&format!("dissolvable.{}", rid.0)),
             Some(IntrospectValue::Bool(true)),
         );
         assert_eq!(
-            coord.query("dissolvable.2"),
-            Some(IntrospectValue::Bool(false))
+            coord.query("dissolvable.0"),
+            Some(IntrospectValue::Bool(false)),
+            "the source is the lossy one"
         );
+        // Derived, not written down: the reroute splice retired the seed's
+        // edge 0 and minted fresh ones, so the wire leaving the source is
+        // whichever one currently does.
+        let leaving = coord
+            .edges()
+            .iter()
+            .find(|e| e.from.node == NodeId(0))
+            .map(|e| e.id.0)
+            .expect("the source is wired");
         assert_eq!(
-            coord.query("dissolvable_ids"),
-            Some(IntrospectValue::Text(rid.raw().to_string())),
-            "only the reroute is enumerated as dissolvable"
+            coord.query("dissolve_severs.0"),
+            Some(IntrospectValue::Text(leaving.to_string())),
+            "and the read names the wire it would cut"
         );
         // Eligibility predicts the verb: dissolvable -> the verb succeeds -> gone.
         assert!(coord.dissolve_node(rid), "the verb agrees with the read");
@@ -6950,18 +6777,17 @@ fn r1241_dissolve_rejects_a_self_loop_bridge() {
         let m1 = coord.add_node(2).unwrap();
         let m2 = coord.add_node(2).unwrap();
         assert!(coord.add_edge(m1, 0, m2, 0), "m1 -> m2");
-        assert!(
-            coord.add_edge(m2, 0, m1, 0),
-            "m2 -> m1 (a cycle, not a direct loop)"
-        );
-        // m2 has exactly one incident edge each side, but its bridge would be
-        // m1 -> m1 (self-loop) — the one REACHABLE rejection branch.
+        // ★R1596 — the cycle CANNOT BE AUTHORED. The editor's own gate blocked
+        // only a DIRECT self-loop, so a two-hop cycle was constructible and the
+        // dissolve had to defend against bridging one; `Document::connect`
+        // refuses any wire that would close a cycle and names the path, so this
+        // whole class is unreachable by editing and only a peer's blob can carry
+        // one (which `validate` then catches).
         let (n0, e0) = (coord.query("node_count"), coord.query("edge_count"));
         assert!(
-            !coord.dissolvable(m2),
-            "a 2-cycle node's bridge would self-loop"
+            !coord.add_edge(m2, 0, m1, 0),
+            "the wire that would close the cycle is refused"
         );
-        assert!(!coord.dissolve_node(m2), "dissolve is a no-op");
         assert_eq!(coord.query("node_count"), n0, "graph unchanged");
         assert_eq!(coord.query("edge_count"), e0, "graph unchanged");
     });
@@ -6979,7 +6805,7 @@ fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
             "the model flag is set"
         );
         assert_eq!(
-            coord.query(&format!("node.{}.is_reroute", rid.raw())),
+            coord.query(&format!("node.{}.is_reroute", rid.0)),
             Some(IntrospectValue::Bool(true)),
         );
         // A seed op node is NOT a reroute...
@@ -6991,7 +6817,7 @@ fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
         // reroute, and renaming an op node "Reroute" does NOT make it one.
         coord
             .intervene(
-                &format!("node.{}.title", rid.raw()),
+                &format!("node.{}.title", rid.0),
                 IntrospectValue::Text("knot".to_owned()),
             )
             .unwrap();
@@ -7009,7 +6835,7 @@ fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
         // The enumeration finds exactly the reroute.
         assert_eq!(
             coord.query("reroute_ids"),
-            Some(IntrospectValue::Text(rid.raw().to_string())),
+            Some(IntrospectValue::Text(rid.0.to_string())),
         );
     });
 }
@@ -7022,7 +6848,7 @@ fn r1242_reroute_identity_survives_serialize_reload() {
         let rid = coord.add_reroute(EdgeId(0)).unwrap();
         let json = coord.serialized_json();
         // Wipe + reload from the blob; the reroute identity round-trips.
-        coord.nodes.set(Vec::new());
+        coord.document.set(Graph::new("material"));
         assert!(coord.load_json(&json), "reload the snapshot");
         assert!(
             coord.node_by_id(rid).unwrap().is_reroute(),
@@ -7030,7 +6856,7 @@ fn r1242_reroute_identity_survives_serialize_reload() {
         );
         assert_eq!(
             coord.query("reroute_ids"),
-            Some(IntrospectValue::Text(rid.raw().to_string())),
+            Some(IntrospectValue::Text(rid.0.to_string())),
         );
     });
 }
@@ -7065,10 +6891,22 @@ fn r1243_reroute_paints_as_a_compact_knot_not_a_card() {
         // node renders its full NODE_W card — the paint mirrors the model.
         let theme = use_theme(THEME_TAG).theme_animated();
         let no_wired: BTreeSet<usize> = BTreeSet::new();
-        let knot_scene = view_node(&knot, false, None, IDLE_TF, &no_wired, &theme, 1.0);
+        let graph = coord.graph();
+        let knot_scene = view_node(
+            &graph,
+            &knot,
+            false,
+            CardEdit {
+                target: None,
+                field: IDLE_TF,
+            },
+            &no_wired,
+            &theme,
+            1.0,
+        );
         assert_eq!(
             knot_scene.tag(),
-            Some(format!("{GRAPH_TAG}#node_{}", rid.raw()).as_str()),
+            Some(format!("{GRAPH_TAG}#node_{}", rid.0).as_str()),
             "the knot keeps the node tag (so it selects / drags like any node)",
         );
         let Scene::Container(knot_box) = &knot_scene else {
@@ -7088,7 +6926,18 @@ fn r1243_reroute_paints_as_a_compact_knot_not_a_card() {
             knot_box.children.is_empty(),
             "a knot has no header / port rows"
         );
-        let card_scene = view_node(&card, false, None, IDLE_TF, &no_wired, &theme, 1.0);
+        let card_scene = view_node(
+            &graph,
+            &card,
+            false,
+            CardEdit {
+                target: None,
+                field: IDLE_TF,
+            },
+            &no_wired,
+            &theme,
+            1.0,
+        );
         let Scene::Container(card_box) = &card_scene else {
             panic!("an op node renders as a Container, got {card_scene:?}");
         };
@@ -7309,16 +7158,19 @@ fn r1243_reroute_width_flows_through_centre_key_and_contains() {
         );
         // A frame tightly around the knot's dot contains it (its centre sits
         // inside), proving `contains_node` measures the dot, not a phantom card.
-        let tight = CommentFrame {
-            id: FrameId(0),
-            x: knot.x - 2,
-            y: knot.y - 2,
-            w: KNOT_SIZE + 4,
-            h: KNOT_SIZE + 4,
-            title: "F".to_owned(),
-        };
+        // R1596 — a frame is a NODE, so a fixture builds one the way the editor
+        // does: an empty-signature body whose extent is authored.
+        let mut probe = coord.graph();
+        let fid = probe
+            .add_node(TREE, NodeBody::Frame, knot.x - 2, knot.y - 2)
+            .expect("root tree");
+        if let Some(node) = probe.tree_mut(TREE).and_then(|t| t.node_mut(fid)) {
+            node.appearance.width = Some(upx(KNOT_SIZE + 4));
+            node.appearance.height = Some(upx(KNOT_SIZE + 4));
+        }
+        let tight = frame_node(&probe, fid).expect("the frame").clone();
         assert!(
-            tight.contains_node(&knot),
+            frame_contains(&tight, &knot),
             "the dot's centre is inside a tight frame"
         );
     });
@@ -7336,7 +7188,7 @@ fn r1246_double_click_a_knot_is_a_noop() {
         let mut scene = boot_scene();
         let rid = coordinator().add_reroute(EdgeId(0)).expect("splice");
         assert_eq!(query_int(&scene, "node_count"), 5, "the knot is spliced in");
-        send(&mut scene, &format!("node_{}:DoubleClick", rid.raw()));
+        send(&mut scene, &format!("node_{}:DoubleClick", rid.0));
         assert_eq!(
             query_int(&scene, "node_count"),
             5,
@@ -7344,7 +7196,7 @@ fn r1246_double_click_a_knot_is_a_noop() {
         );
         assert_eq!(
             graph_intro(&scene).query("reroute_ids"),
-            Some(IntrospectValue::Text(rid.raw().to_string())),
+            Some(IntrospectValue::Text(rid.0.to_string())),
             "the knot is still there",
         );
         assert_eq!(
@@ -7371,7 +7223,7 @@ fn r1246_begin_rename_on_a_knot_is_refused_every_route() {
             "direct begin_rename refuses a knot"
         );
         assert_eq!(
-            coord.invoke("begin_rename", IntrospectValue::Int(i64::from(rid.raw()))),
+            coord.invoke("begin_rename", IntrospectValue::Int(i64::from(rid.0))),
             Ok(IntrospectValue::Bool(false)),
             "invoke begin_rename <knot> is refused",
         );
@@ -7403,10 +7255,9 @@ fn r1246_begin_edit_default_on_an_unwired_knot_pin_is_refused() {
         let coord = coordinator();
         let rid = coord.add_reroute(EdgeId(0)).expect("splice");
         let in_edge = coord
-            .edges
-            .get()
+            .edges()
             .iter()
-            .find(|e| e.to_node == rid)
+            .find(|e| e.to.node == rid)
             .expect("A->R edge")
             .id;
         assert!(coord.remove_edge(in_edge), "cut the knot's input wire");
@@ -7436,8 +7287,8 @@ fn r1246_dissolve_verb_still_removes_a_knot() {
             Some(IntrospectValue::Int(4)),
             "the knot is gone",
         );
-        let bridged = coord.edges.get().iter().any(|e| {
-            e.from_node == NodeId(0) && e.from_port == 0 && e.to_node == NodeId(2) && e.to_port == 0
+        let bridged = coord.edges().iter().any(|e| {
+            e.from.node == NodeId(0) && e.from.port == 0 && e.to.node == NodeId(2) && e.to.port == 0
         });
         assert!(bridged, "node0 -> node2.in0 is reconnected");
     });
@@ -7479,7 +7330,7 @@ fn r1248_open_pin_create_on_a_knot_uses_its_dot_right_edge() {
         assert_eq!(
             coord.invoke(
                 "open_pin_create",
-                IntrospectValue::Text(format!("{}.0", rid.raw())),
+                IntrospectValue::Text(format!("{}.0", rid.0)),
             ),
             Ok(IntrospectValue::Bool(true)),
             "the create menu opens from a knot's typed output pin",
@@ -7502,19 +7353,6 @@ fn r1248_open_pin_create_on_a_knot_uses_its_dot_right_edge() {
 }
 
 // ── R1255 — dataflow evaluation (the Phase-C entry) ─────────────────────────
-
-/// R1255 — a hand-built node of `op` with `n_in` `Vector` inputs and (for a
-/// non-sink) one `Vector` output, at the origin. Its pin defaults start at the
-/// port-type constant (grey); a test overrides them to author input values.
-fn eval_node_of(id: u32, op: NodeOp, n_in: usize, has_out: bool) -> GraphNode {
-    let inputs = vec![PortType::Vector; n_in];
-    let outputs = if has_out {
-        vec![PortType::Vector]
-    } else {
-        vec![]
-    };
-    GraphNode::new(id, "n", 0, 0, &inputs, &outputs, op)
-}
 
 #[test]
 fn r1255_colour_arithmetic_is_component_wise_and_clamped() {
@@ -7552,45 +7390,82 @@ fn r1255_colour_arithmetic_is_component_wise_and_clamped() {
 
 #[test]
 fn r1255_float_broadcasts_into_a_vector_input_but_never_narrows() {
+    // R1593 / R1596 — the coercion IS the relation now
+    // (`NodeKind::conversion`), so whether a wire is legal and what arrives
+    // along it are one declaration instead of two that could disagree.
+    let cross = |value: CellValue, from, to| {
+        MaterialOp::conversion(&from, &to)
+            .apply(value)
+            .expect("a permitted crossing yields a value")
+    };
     // The only coercion the lattice permits: a scalar Float promotes to a Vector.
     assert_eq!(
-        coerce_to(CellValue::Float(0.5), PortType::Vector),
+        cross(CellValue::Float(0.5), PortType::Float, PortType::Vector),
         CellValue::Color(Color::rgb(128, 128, 128)),
     );
     // An exact-type value passes through unchanged (no coercion).
     let c = CellValue::Color(Color::rgb(10, 20, 30));
-    assert_eq!(coerce_to(c.clone(), PortType::Vector), c);
     assert_eq!(
-        coerce_to(CellValue::Float(0.25), PortType::Float),
+        cross(c.clone(), PortType::Vector, PortType::Vector),
+        c,
+        "an exact match is Direct"
+    );
+    assert_eq!(
+        cross(CellValue::Float(0.25), PortType::Float, PortType::Float),
         CellValue::Float(0.25),
+    );
+    // And the asymmetry: a Vector never narrows back.
+    assert!(
+        !MaterialOp::conversion(&PortType::Vector, &PortType::Float).is_allowed(),
+        "no narrowing — the relation is directed, which is why it is ONE \
+         declaration and not an equality"
     );
 }
 
 #[test]
 fn r1255_source_ops_yield_their_port_type_constant() {
-    // Sources ignore inputs and produce their type default (v1: not authorable).
+    // R1596 — a source COMPUTES nothing: its output is the value authored on
+    // its own port, else the kind's own resting value, and the crate supplies
+    // the fallback where `evaluate` leaves the hole. So the kind answers
+    // `vec![None]` here, and the graph answers the constant.
+    for op in [MaterialOp::Texture, MaterialOp::Color, MaterialOp::Scalar] {
+        assert_eq!(op.evaluate(&[]), vec![None], "a source computes nothing");
+    }
+    let graph = graph_of(&[(0, 0, 0), (1, 0, 0), (5, 0, 0)], &[]);
     assert_eq!(
-        NodeOp::Texture.evaluate(&[]),
+        evaluate(&graph, NodeId(0)),
         Some(PortType::Vector.default_value()),
+        "Texture rests at its Vector default"
     );
     assert_eq!(
-        NodeOp::Color.evaluate(&[]),
+        evaluate(&graph, NodeId(1)),
         Some(PortType::Vector.default_value()),
     );
-    assert_eq!(NodeOp::Scalar.evaluate(&[]), Some(CellValue::Float(0.0)));
+    assert_eq!(evaluate(&graph, NodeId(2)), Some(CellValue::Float(0.0)));
 }
 
 #[test]
 fn r1255_add_evaluates_over_its_pin_defaults_when_unconnected() {
     // An Add node with both inputs UNCONNECTED evaluates its authored pin
     // defaults (the R899 substrate drives the compute) — red + green = yellow.
-    let mut add = eval_node_of(0, NodeOp::Add, 2, true);
-    add.input_defaults = vec![
-        CellValue::Color(Color::rgb(200, 0, 0)),
-        CellValue::Color(Color::rgb(0, 200, 0)),
-    ];
+    let graph = graph_with(
+        &[(3, 0, 0)],
+        &[],
+        &[
+            (
+                0,
+                PortRef::input(0),
+                CellValue::Color(Color::rgb(200, 0, 0)),
+            ),
+            (
+                0,
+                PortRef::input(1),
+                CellValue::Color(Color::rgb(0, 200, 0)),
+            ),
+        ],
+    );
     assert_eq!(
-        evaluate(&[add], &[], NodeId(0)),
+        evaluate(&graph, NodeId(0)),
         Some(CellValue::Color(Color::rgb(200, 200, 0))),
     );
 }
@@ -7598,23 +7473,23 @@ fn r1255_add_evaluates_over_its_pin_defaults_when_unconnected() {
 #[test]
 fn r1255_a_wired_source_propagates_and_overrides_the_pin_default() {
     // Color source (grey) -> Add.in0; Add.in1 keeps a red pin default.
-    let src = eval_node_of(0, NodeOp::Color, 0, true); // outputs grey128
-    let mut add = eval_node_of(1, NodeOp::Add, 2, true);
-    add.input_defaults = vec![
-        CellValue::Color(Color::rgb(255, 255, 255)), // hidden: in0 is wired
-        CellValue::Color(Color::rgb(90, 0, 0)),
-    ];
-    let edges = vec![Edge {
-        id: EdgeId(0),
-        from_node: NodeId(0),
-        from_port: 0,
-        to_node: NodeId(1),
-        to_port: 0,
-    }];
+    let graph = graph_with(
+        &[(1, 0, 0), (3, 0, 0)],
+        &[(0, 0, 1, 0)],
+        &[
+            // hidden: in0 is wired
+            (
+                1,
+                PortRef::input(0),
+                CellValue::Color(Color::rgb(255, 255, 255)),
+            ),
+            (1, PortRef::input(1), CellValue::Color(Color::rgb(90, 0, 0))),
+        ],
+    );
     // in0 = the wired grey (NOT its 255 default), in1 = its red default.
     let grey = 0x80;
     assert_eq!(
-        evaluate(&[src, add], &edges, NodeId(1)),
+        evaluate(&graph, NodeId(1)),
         Some(CellValue::Color(Color::rgb(grey + 90, grey, grey))),
     );
 }
@@ -7622,45 +7497,21 @@ fn r1255_a_wired_source_propagates_and_overrides_the_pin_default() {
 #[test]
 fn r1255_output_sink_reports_the_value_flowing_into_it() {
     // Multiply(grey, grey) -> Output; the sink's "value" is its resolved input.
-    let a = eval_node_of(0, NodeOp::Color, 0, true);
-    let b = eval_node_of(1, NodeOp::Color, 0, true);
-    let mul = eval_node_of(2, NodeOp::Multiply, 2, true);
-    let out = eval_node_of(3, NodeOp::Output, 1, false);
-    let nodes = vec![a, b, mul, out];
-    let edges = vec![
-        Edge {
-            id: EdgeId(0),
-            from_node: NodeId(0),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 0,
-        },
-        Edge {
-            id: EdgeId(1),
-            from_node: NodeId(1),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 1,
-        },
-        Edge {
-            id: EdgeId(2),
-            from_node: NodeId(2),
-            from_port: 0,
-            to_node: NodeId(3),
-            to_port: 0,
-        },
-    ];
+    let graph = graph_of(
+        &[(1, 0, 0), (1, 0, 0), (2, 0, 0), (4, 0, 0)],
+        &[(0, 0, 2, 0), (1, 0, 2, 1), (2, 0, 3, 0)],
+    );
     let expected = CellValue::Color(color_mul(
         Color::rgb(0x80, 0x80, 0x80),
         Color::rgb(0x80, 0x80, 0x80),
     ));
     assert_eq!(
-        evaluate(&nodes, &edges, NodeId(3)),
+        evaluate(&graph, NodeId(3)),
         Some(expected.clone()),
         "Output.value = its input"
     );
     assert_eq!(
-        eval_terminal(&nodes, &edges),
+        eval_terminal(&graph),
         Some(expected),
         "eval.output = the Output sink's input"
     );
@@ -7669,34 +7520,26 @@ fn r1255_output_sink_reports_the_value_flowing_into_it() {
 #[test]
 fn r1255_a_cycle_is_uncomputable_and_detected() {
     // A -> B -> A: both nodes sit on a cycle, so neither evaluates.
-    let a = eval_node_of(0, NodeOp::Add, 1, true);
-    let b = eval_node_of(1, NodeOp::Add, 1, true);
-    let edges = vec![
-        Edge {
-            id: EdgeId(0),
-            from_node: NodeId(0),
-            from_port: 0,
-            to_node: NodeId(1),
-            to_port: 0,
-        },
-        Edge {
-            id: EdgeId(1),
-            from_node: NodeId(1),
-            from_port: 0,
-            to_node: NodeId(0),
-            to_port: 0,
-        },
-    ];
-    let nodes = vec![a, b];
-    assert_eq!(
-        evaluate(&nodes, &edges, NodeId(0)),
-        None,
-        "a cycle node is None"
+    // R1596 — `connect` REFUSES the wire that closes the loop, so a cycle only
+    // ever arrives from a peer. That is a capability the editor's own model did
+    // not have (it accepted the wire and detected the cycle afterwards), and it
+    // is why this fixture goes through the wire form.
+    let mut graph = graph_of(&[(3, 0, 0), (3, 0, 0)], &[(0, 0, 1, 0)]);
+    assert!(
+        graph
+            .connect(TREE, Socket::new(NodeId(1), 0), Socket::new(NodeId(0), 0))
+            .is_err(),
+        "the closing wire is refused up front"
     );
-    assert!(!graph_is_acyclic(&nodes, &edges), "the graph is not a DAG");
+    graph = force_cycle(&graph, NodeId(1), NodeId(0));
+    assert_eq!(evaluate(&graph, NodeId(0)), None, "a cycle node is None");
+    assert!(
+        !graph.cycle_nodes(TREE).is_empty(),
+        "the graph is not a DAG"
+    );
     // The seed graph, by contrast, is a DAG.
     assert!(
-        graph_is_acyclic(&default_nodes(), &default_edges()),
+        default_graph().cycle_nodes(TREE).is_empty(),
         "the seed graph is acyclic"
     );
 }
@@ -7843,64 +7686,76 @@ fn r1256_node_op_read_distinguishes_same_signature_ops() {
 
 #[test]
 fn r1256_is_reroute_is_derived_from_op_at_construction() {
-    // R1259 — `is_reroute()` is a pure derivation of `op == Reroute` (no stored
+    // R1259 — `is_reroute()` is a pure derivation of the node's BODY (no stored
     // field to drift), keyed off the compute identity NOT the title. A Reroute
     // node is a knot; any compute op is not.
-    let knot = GraphNode::new(
-        9,
-        "renamed",
-        0,
-        0,
-        &[PortType::Vector],
-        &[PortType::Vector],
-        NodeOp::Reroute,
+    //
+    // R1596 — a reroute now carries the type it routes as a payload, so a knot
+    // cannot disagree with its own ports; and a rename is `Node::label`, which
+    // `display_name` prefers and nothing else reads.
+    let mut graph = Graph::new("fixture");
+    let knot = graph
+        .add_node(
+            TREE,
+            NodeBody::Kind(MaterialOp::Reroute(PortType::Vector)),
+            0,
+            0,
+        )
+        .expect("root tree");
+    let add = graph
+        .add_node(TREE, NodeBody::Kind(MaterialOp::Add), 0, 0)
+        .expect("root tree");
+    for (id, label) in [(knot, "renamed"), (add, "Reroute")] {
+        graph
+            .tree_mut(TREE)
+            .and_then(|t| t.node_mut(id))
+            .expect("a fresh node")
+            .label = Some(label.to_owned());
+    }
+    let node = |id: NodeId| kind_node(&graph, id).expect("a kind node").0;
+    assert!(
+        node(knot).is_reroute(),
+        "a Reroute body derives is_reroute=true (even with a non-'Reroute' title)"
     );
     assert!(
-        knot.is_reroute(),
-        "op=Reroute derives is_reroute=true (even with a non-'Reroute' title)"
-    );
-    let add = GraphNode::new(
-        9,
-        "Reroute",
-        0,
-        0,
-        &[PortType::Vector],
-        &[PortType::Vector],
-        NodeOp::Add,
-    );
-    assert!(
-        !add.is_reroute(),
-        "op=Add derives is_reroute=false (even titled 'Reroute')"
+        !node(add).is_reroute(),
+        "an Add body derives is_reroute=false (even titled 'Reroute')"
     );
 }
 
 #[test]
 fn r1256_from_palette_matches_the_palette_ssot() {
-    for (kind, &(title, inputs, outputs, op)) in PALETTE.iter().enumerate() {
-        let n = GraphNode::from_palette(kind, 0, 5, 6).expect("in-range kind");
-        assert_eq!(n.title, title, "title from PALETTE");
-        assert_eq!(n.input_ports, inputs, "input ports from PALETTE");
-        assert_eq!(n.output_ports, outputs, "output ports from PALETTE");
-        assert_eq!(n.op, op, "op from PALETTE (no drift)");
+    // R1596 — the palette carries `(title, op)` and NOTHING ELSE: a kind
+    // declares its own ports, so the port lists this row used to carry (and
+    // `node_invariants_hold` used to re-check against every node) cannot drift
+    // because there is nowhere for a second copy to live.
+    let mut graph = Graph::new("fixture");
+    for (kind, &(title, op)) in PALETTE.iter().enumerate() {
+        let id = add_palette_node(&mut graph, kind, 5, 6).expect("in-range kind");
+        let (node, made) = kind_node(&graph, id).expect("a kind node");
+        assert_eq!(node.title(), title, "title from PALETTE");
+        assert_eq!(made, op, "op from PALETTE (no drift)");
+        let signature = signature_of(&graph, id).expect("a signature");
+        assert_eq!(signature.inputs.len(), op.inputs().len(), "inputs from op");
         assert_eq!(
-            n.input_defaults.len(),
-            inputs.len(),
-            "one default per input port"
+            signature.outputs.len(),
+            op.outputs().len(),
+            "outputs from op"
         );
     }
     assert!(
-        GraphNode::from_palette(PALETTE.len(), 0, 0, 0).is_none(),
+        add_palette_node(&mut graph, PALETTE.len(), 0, 0).is_none(),
         "out-of-range kind = None"
     );
     // The seed graph is the palette SSOT too — its op/title cannot drift.
-    let seed = default_nodes();
+    let seed = default_graph();
     assert_eq!(
-        seed.iter().map(|n| n.op).collect::<Vec<_>>(),
+        kind_nodes(&seed).map(|(_, op)| op).collect::<Vec<_>>(),
         vec![
-            NodeOp::Texture,
-            NodeOp::Color,
-            NodeOp::Multiply,
-            NodeOp::Output
+            MaterialOp::Texture,
+            MaterialOp::Color,
+            MaterialOp::Multiply,
+            MaterialOp::Output
         ]
     );
 }
@@ -7911,16 +7766,52 @@ fn r1256_a_mistyped_default_coerces_instead_of_evaluating_null() {
     // (the interactive path constructs matching defaults, but nothing validates
     // an injected graph). R1256 coerces the default branch symmetrically with
     // the wired branch, so the Float broadcasts instead of yielding a silent null.
-    let mut add = eval_node_of(0, NodeOp::Add, 2, true);
-    add.input_defaults = vec![
-        CellValue::Float(1.0),                 // mistyped: a Float on a Vector port
-        CellValue::Color(Color::rgb(0, 0, 0)), // black
-    ];
-    // in0 broadcasts 1.0 -> white; white + black = white.
+    // R1596 — `set_port_value` REFUSES a Float on a Vector port, so this graph
+    // is no longer constructible by editing; it is exactly the blob a peer can
+    // still send. The coercion under test is the same one either way.
+    let mut graph = graph_with(
+        &[(3, 0, 0)],
+        &[],
+        &[(
+            0,
+            PortRef::input(1),
+            CellValue::Color(Color::rgb(0, 0, 0)), // black
+        )],
+    );
+    assert!(
+        graph
+            .set_port_value(TREE, NodeId(0), PortRef::input(0), CellValue::Float(1.0))
+            .is_err(),
+        "a Float cannot be AUTHORED onto a Vector port"
+    );
+    // ★R1596/R1597 — the blob that CAN carry one is REJECTED rather than
+    // silently repaired. R1256 made the editor coerce a mistyped default so it
+    // would not evaluate to a null; migrating onto the crate showed that the
+    // right answer is neither — a document whose authored value its port cannot
+    // hold is a document that came from somewhere untrusted, and the load gate
+    // says so. Coercing would be the model quietly rewriting what a peer sent.
+    graph
+        .tree_mut(TREE)
+        .and_then(|t| t.node_mut(NodeId(0)))
+        .expect("the Add")
+        .values
+        .insert(PortRef::input(0), CellValue::Float(1.0));
+    assert!(
+        !graph_invariants_hold(&graph),
+        "the mistyped value makes the document invalid"
+    );
+    assert!(
+        graph
+            .validate()
+            .iter()
+            .any(|v| matches!(v, Violation::MistypedPortValue { .. })),
+        "named as a mistyped port value: {:?}",
+        graph.validate()
+    );
     assert_eq!(
-        evaluate(&[add], &[], NodeId(0)),
-        Some(CellValue::Color(Color::rgb(255, 255, 255))),
-        "the mistyped Float default coerces (broadcasts), not a null",
+        evaluate(&graph, NodeId(0)),
+        None,
+        "and it evaluates to nothing — which is why the load gate must catch it",
     );
 }
 
@@ -7930,36 +7821,41 @@ fn r1256_a_mistyped_default_coerces_instead_of_evaluating_null() {
 fn r1257_sources_carry_an_authorable_constant_others_do_not() {
     // Texture / Color / Scalar (no inputs, >=1 output) are sources; ops / sink /
     // reroute are not. A source's constant seeds to output port 0's type default.
+    // R1596 — `is_source` is DERIVED from the signature (no inputs, at least one
+    // output) where the editor stored an `Option<CellValue>` whose Some-ness was
+    // the discriminator and whose agreement with the port list an invariant
+    // predicate had to re-check.
+    let mut graph = Graph::new("fixture");
     for kind in 0..PALETTE.len() {
-        let n = GraphNode::from_palette(kind, 0, 0, 0).unwrap();
-        let has_no_inputs = n.input_ports.is_empty();
-        let has_output = !n.output_ports.is_empty();
+        let id = add_palette_node(&mut graph, kind, 0, 0).expect("in-range kind");
+        let signature = signature_of(&graph, id).expect("a signature");
+        let (no_inputs, has_output) = (signature.inputs.is_empty(), !signature.outputs.is_empty());
+        let node = kind_node(&graph, id).expect("a kind node").0.clone();
         assert_eq!(
-            n.is_source(),
-            has_no_inputs && has_output,
+            is_source(&graph, id),
+            no_inputs && has_output,
             "{} is_source",
-            n.title,
+            node.title(),
         );
-        if n.is_source() {
+        if is_source(&graph, id) {
             assert_eq!(
-                n.output_const.as_ref(),
-                Some(&n.output_ports[0].default_value()),
-                "{} seeds its constant to the output type default",
-                n.title,
+                source_const(&graph, id),
+                signature.outputs[0].default.clone(),
+                "{} rests at the output type default",
+                node.title(),
             );
         }
     }
     // A reroute (1 input, 1 output) is a passthrough, not a source.
-    let knot = GraphNode::new(
-        9,
-        "R",
-        0,
-        0,
-        &[PortType::Vector],
-        &[PortType::Vector],
-        NodeOp::Reroute,
-    );
-    assert!(!knot.is_source(), "a reroute is not a source");
+    let knot = graph
+        .add_node(
+            TREE,
+            NodeBody::Kind(MaterialOp::Reroute(PortType::Vector)),
+            0,
+            0,
+        )
+        .expect("root tree");
+    assert!(!is_source(&graph, knot), "a reroute is not a source");
 }
 
 #[test]
@@ -8153,7 +8049,7 @@ fn r1264_source_const_inline_editor_begins_seeds_and_commits() {
         commit_edit(true);
         assert_eq!(use_active_edit().get(), None, "commit leaves edit mode");
         assert_eq!(
-            coord.node_by_id(NodeId(1)).and_then(|n| n.output_const),
+            source_const(&coord.graph(), NodeId(1)),
             Some(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc))),
             "the typed hex parsed into the source constant",
         );
@@ -8174,7 +8070,7 @@ fn r1264_source_const_inline_editor_begins_seeds_and_commits() {
         );
         assert!(stack.undo());
         assert_eq!(
-            coord.node_by_id(NodeId(1)).and_then(|n| n.output_const),
+            source_const(&coord.graph(), NodeId(1)),
             Some(CellValue::Color(Color::rgb(0x80, 0x80, 0x80))),
             "undo restores the prior constant",
         );
@@ -8207,7 +8103,7 @@ fn r1264_source_const_editor_uses_the_typed_keystroke_gate() {
         use_text_edit_state(EDIT_TF_TAG).set_text("0.5".to_owned());
         commit_edit(true);
         assert_eq!(
-            coord.node_by_id(scalar).and_then(|n| n.output_const),
+            source_const(&coord.graph(), scalar),
             Some(CellValue::Float(0.5)),
             "the typed float parsed into the source constant",
         );
@@ -8327,7 +8223,7 @@ fn r1264_malformed_source_const_commit_keeps_prior_value() {
         use_text_edit_state(EDIT_TF_TAG).set_text("nothex".to_owned());
         commit_edit(true);
         assert_eq!(
-            coord.node_by_id(NodeId(1)).and_then(|n| n.output_const),
+            source_const(&coord.graph(), NodeId(1)),
             Some(CellValue::Color(Color::rgb(0x80, 0x80, 0x80))),
             "a malformed commit keeps the prior constant",
         );
@@ -8344,304 +8240,282 @@ fn r1264_malformed_source_const_commit_keeps_prior_value() {
     });
 }
 
-// ── R1258 — set_graph structural validation (trust-boundary hardening) ───────
+// ── R1258 / R1596 — set_graph structural validation (trust boundary) ────────
+//
+// R1596 — the editor kept three predicates of its own (`node_invariants_hold` /
+// `edges_invariants_hold` / `graph_invariants_hold`) checking unique ids, a
+// node's stored port list against its op's canonical shape, per-port default
+// typing, a source's constant, type-assignable wires and one-wire-per-input.
+//
+// Every one of those is now EITHER unrepresentable OR `Document::validate`'s,
+// and telling those two apart is the point of this block: an invariant that
+// became a property of the types is stronger than one a checker enforces,
+// because nothing has to remember to run.
 
-/// A minimal valid two-node graph (a Color source -> Output sink, wired), built
-/// through the honest constructors so every invariant holds; tests then mutate
-/// ONE field to prove the validator catches that specific violation.
-fn valid_pair() -> (Vec<GraphNode>, Vec<Edge>) {
-    let src = GraphNode::from_palette(1, 0, 0, 0).unwrap(); // Color: () -> Vector
-    let out = GraphNode::from_palette(4, 1, 200, 0).unwrap(); // Output: Vector -> ()
-    let edge = Edge {
-        id: EdgeId(0),
-        from_node: NodeId(0),
-        from_port: 0,
-        to_node: NodeId(1),
-        to_port: 0,
-    };
-    (vec![src, out], vec![edge])
+/// A minimal valid two-node graph: a Color source wired into an Output sink.
+fn valid_pair() -> Graph {
+    graph_of(&[(1, 0, 0), (4, 200, 0)], &[(0, 0, 1, 0)])
+}
+
+/// The same graph with one link appended through the WIRE FORM, which is how a
+/// blob from a peer reaches the editor and the only way an invariant violation
+/// can arrive at all.
+fn with_forced_link(graph: &Graph, from: (u32, u32), to: (u32, u32)) -> Graph {
+    let mut wire = serde_json::to_value(graph).expect("a document serializes");
+    let next = wire["trees"][0]["next_link"].as_u64().expect("link ids");
+    wire["trees"][0]["links"]
+        .as_array_mut()
+        .expect("links")
+        .push(serde_json::json!({
+            "id": next,
+            "from": {"node": from.0, "port": from.1},
+            "to": {"node": to.0, "port": to.1},
+            "muted": false,
+        }));
+    wire["trees"][0]["next_link"] = serde_json::json!(next + 1);
+    serde_json::from_value(wire).expect("the forced document round-trips")
 }
 
 #[test]
 fn r1258_a_live_graph_passes_and_round_trips() {
     assert!(
-        graph_invariants_hold(&default_nodes(), &default_edges()),
+        graph_invariants_hold(&default_graph()),
         "the seed graph is valid"
     );
-    let (nodes, edges) = valid_pair();
-    assert!(
-        graph_invariants_hold(&nodes, &edges),
-        "a hand-built valid pair passes"
-    );
-    // The full round-trip through the real load path: serialize a live graph,
-    // then set_graph it back -> accepted (validation never rejects a live graph).
+    assert!(graph_invariants_hold(&valid_pair()), "so is a minimal pair");
     Owner::new().run(|| {
-        let _ = boot_scene();
         let coord = coordinator();
         let blob = coord.serialized_json();
         assert!(
             coord.load_json(&blob),
-            "a serialized live graph reloads (round-trip is total)"
+            "a graph this editor produced always loads back"
         );
     });
 }
 
 #[test]
 fn r1258_rejects_an_ill_typed_edge() {
-    // Scalar (Float out) -> Output (Vector in) is a Float->Vector broadcast, VALID;
-    // but Output has no output, so wire Texture(Vector out) into a Float input to
-    // force a narrowing. Build a Lerp (…, Float factor) and wire a Vector into it.
-    let tex = GraphNode::from_palette(0, 0, 0, 0).unwrap(); // Texture -> Vector
-    let lerp = GraphNode::from_palette(6, 1, 0, 0).unwrap(); // Lerp: [V,V,Float] -> V
-    // Vector -> the Float factor input (port 2): narrowing, NOT assignable.
-    let bad = Edge {
-        id: EdgeId(0),
-        from_node: NodeId(0),
-        from_port: 0,
-        to_node: NodeId(1),
-        to_port: 2,
-    };
+    // Texture (Vector out) into Lerp's input 2 (the Float factor). `connect`
+    // refuses it up front, so it can only arrive from a peer.
+    let mut graph = graph_of(&[(0, 0, 0), (6, 0, 0)], &[]);
     assert!(
-        !graph_invariants_hold(&[tex, lerp], &[bad]),
-        "a Vector->Float edge is rejected"
+        graph
+            .connect(TREE, Socket::new(NodeId(0), 0), Socket::new(NodeId(1), 2))
+            .is_err(),
+        "an ill-typed wire is refused at the edit"
+    );
+    let forced = with_forced_link(&graph, (0, 0), (1, 2));
+    assert!(!graph_invariants_hold(&forced), "and caught on load");
+    assert!(
+        forced.validate().iter().any(|v| matches!(
+            v,
+            Violation::TypeMismatch { tree, .. } if *tree == TREE
+        )),
+        "named as a type mismatch, not a bare false: {:?}",
+        forced.validate()
     );
 }
 
 #[test]
-fn r1258_rejects_a_wrong_arity_op() {
-    // An "Add" with a single input port would evaluate to a permanent null
-    // (req(1)? fails); its op no longer matches the PALETTE shape.
-    let bad_add = GraphNode::new(
-        0,
-        "Add",
-        0,
-        0,
-        &[PortType::Vector],
-        &[PortType::Vector],
-        NodeOp::Add,
+fn r1258_a_wrong_arity_node_is_unrepresentable() {
+    // The editor could build a node whose stored port list disagreed with its
+    // op, and `node_invariants_hold` existed largely to catch that. A kind
+    // DECLARES its ports (R1596), so the two cannot disagree: there is no second
+    // copy to be wrong. The signature is derived on every read.
+    let graph = graph_of(&[(3, 0, 0)], &[]); // Add
+    let signature = signature_of(&graph, NodeId(0)).expect("a signature");
+    assert_eq!(
+        signature.inputs.len(),
+        MaterialOp::Add.inputs().len(),
+        "arity comes from the kind and from nowhere else"
     );
     assert!(
-        !node_invariants_hold(&bad_add),
-        "op arity must match its PALETTE shape"
-    );
-    assert!(
-        !graph_invariants_hold(&[bad_add], &[]),
-        "and the graph is rejected"
+        graph_invariants_hold(&graph),
+        "so there is no arity violation to construct"
     );
 }
 
 #[test]
-fn r1258_rejects_duplicate_ids() {
-    let (mut nodes, edges) = valid_pair();
-    nodes[1].id = NodeId(0); // two nodes share id 0
-    assert!(
-        !graph_invariants_hold(&nodes, &edges),
-        "duplicate node ids are rejected"
-    );
-    let (nodes2, mut edges2) = valid_pair();
-    edges2.push(Edge {
-        id: EdgeId(0),
-        from_node: NodeId(0),
-        from_port: 0,
-        to_node: NodeId(1),
-        to_port: 0,
-    });
-    assert!(
-        !graph_invariants_hold(&nodes2, &edges2),
-        "duplicate edge ids are rejected"
+fn r1258_duplicate_ids_are_unrepresentable() {
+    // A tree keys its nodes and links BY id, so a duplicate is not a graph the
+    // type can hold — where the editor's `Vec<GraphNode>` could carry two of
+    // anything and needed a checker to say so.
+    let mut graph = valid_pair();
+    let again = graph
+        .add_node(TREE, NodeBody::Kind(MaterialOp::Color), 0, 0)
+        .expect("root tree");
+    assert_ne!(again, NodeId(0), "a fresh mint never repeats a live id");
+    assert_eq!(
+        graph.tree(TREE).expect("root").nodes().count(),
+        3,
+        "three nodes, three ids"
     );
 }
 
 #[test]
 fn r1258_rejects_multiple_wires_into_one_input() {
-    // Two sources both wired into Output.in0 — the evaluator's first-match
-    // resolve_input would silently pick one; the validator rejects the ambiguity.
-    let a = GraphNode::from_palette(1, 0, 0, 0).unwrap(); // Color
-    let b = GraphNode::from_palette(1, 1, 0, 0).unwrap(); // Color
-    let out = GraphNode::from_palette(4, 2, 0, 0).unwrap(); // Output
-    let edges = vec![
-        Edge {
-            id: EdgeId(0),
-            from_node: NodeId(0),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 0,
-        },
-        Edge {
-            id: EdgeId(1),
-            from_node: NodeId(1),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 0,
-        },
-    ];
+    // Two producers into one input. `connect` displaces the first rather than
+    // accepting both, so again this can only arrive from a peer.
+    let graph = graph_of(&[(1, 0, 0), (1, 0, 0), (4, 0, 0)], &[(0, 0, 2, 0)]);
+    let forced = with_forced_link(&graph, (1, 0), (2, 0));
+    assert!(!graph_invariants_hold(&forced));
     assert!(
-        !graph_invariants_hold(&[a, b, out], &edges),
-        "one input takes at most one wire"
+        forced
+            .validate()
+            .iter()
+            .any(|v| matches!(v, Violation::OverfedInput { .. })),
+        "named as an over-fed input: {:?}",
+        forced.validate()
     );
 }
 
 #[test]
-fn r1258_rejects_a_mistyped_default_and_bad_endpoints() {
-    // A Float default on a Vector input port (a mistyped blob).
-    let mut node = GraphNode::from_palette(2, 0, 0, 0).unwrap(); // Multiply: [V,V]->V
-    node.input_defaults[0] = CellValue::Float(1.0);
+fn r1258_rejects_a_dangling_endpoint() {
+    let graph = valid_pair();
+    let forced = with_forced_link(&graph, (0, 0), (99, 0));
+    assert!(!graph_invariants_hold(&forced));
     assert!(
-        !node_invariants_hold(&node),
-        "a default must match its port kind"
-    );
-    // An edge to a non-existent node.
-    let (nodes, _) = valid_pair();
-    let dangling = Edge {
-        id: EdgeId(0),
-        from_node: NodeId(0),
-        from_port: 0,
-        to_node: NodeId(99),
-        to_port: 0,
-    };
-    assert!(
-        !graph_invariants_hold(&nodes, &[dangling]),
-        "an edge to an absent node is rejected"
+        forced
+            .validate()
+            .iter()
+            .any(|v| matches!(v, Violation::DanglingLink { .. })),
+        "named as a dangling link: {:?}",
+        forced.validate()
     );
 }
 
 #[test]
-fn r1258_rejects_output_const_and_is_reroute_inconsistency() {
-    // A source with NO output constant (should be Some).
-    let mut src = GraphNode::from_palette(1, 0, 0, 0).unwrap(); // Color source
-    src.output_const = None;
+fn r1258_a_mistyped_port_value_is_refused_at_the_edit_and_named_on_load() {
+    // A Float authored on a Vector port. The edit path refuses it by type; a
+    // value that outlived its PORT is what `validate` reports, and this test
+    // pins the refusal, which is the half a peer cannot get past.
+    let mut graph = graph_of(&[(3, 0, 0)], &[]); // Add: two Vector inputs
     assert!(
-        !node_invariants_hold(&src),
-        "a source must carry an output_const"
+        graph
+            .set_port_value(TREE, NodeId(0), PortRef::input(0), CellValue::Float(1.0))
+            .is_err(),
+        "a Float cannot be authored onto a Vector port"
     );
-    // A compute op WITH an output constant (should be None).
-    let mut op = GraphNode::from_palette(2, 0, 0, 0).unwrap(); // Multiply
-    op.output_const = Some(CellValue::Color(Color::rgb(0, 0, 0)));
     assert!(
-        !node_invariants_hold(&op),
-        "a compute op must not carry an output_const"
+        graph
+            .set_port_value(TREE, NodeId(0), PortRef::input(9), CellValue::Float(1.0))
+            .is_err(),
+        "nor onto a port the signature does not have"
     );
-    // R1259 — is_reroute/op inconsistency is no longer representable: is_reroute
-    // is DERIVED from op (not a stored field), so there is nothing to mutate out
-    // of sync. The `is_reroute() == (op == Reroute)` identity holds by definition.
-    assert_eq!(
-        op.is_reroute(),
-        op.op == NodeOp::Reroute,
-        "is_reroute derives from op"
+    assert!(graph_invariants_hold(&graph), "the graph is untouched");
+}
+
+#[test]
+fn r1258_a_source_constant_cannot_disagree_with_its_node() {
+    // The editor stored `output_const: Option<CellValue>` beside `op`, so a blob
+    // could claim a constant on a compute node or a reroute — one more thing for
+    // a checker to notice. R1594 made an authored value a PORT value, so a node
+    // that has no output port has nowhere to put one, and `is_source` is derived
+    // from the signature rather than from the field's Some-ness.
+    let mut graph = graph_of(&[(4, 0, 0)], &[]); // Output: a sink, no outputs
+    assert!(!is_source(&graph, NodeId(0)), "a sink is not a source");
+    assert!(
+        graph
+            .set_port_value(
+                TREE,
+                NodeId(0),
+                PortRef::output(0),
+                CellValue::Color(Color::rgb(1, 2, 3))
+            )
+            .is_err(),
+        "and cannot be given an output constant, because it has no output port"
     );
 }
 
 #[test]
-fn r1258_load_json_rejects_stale_counters() {
+fn r1258_stale_id_counters_are_unrepresentable() {
+    // The editor carried three monotonic counters in the blob and gated a load
+    // on each leading its own ids. A tree mints from its own counter, which
+    // travels INSIDE the document, so a snapshot cannot disagree with itself.
     Owner::new().run(|| {
-        let _ = boot_scene();
         let coord = coordinator();
-        // A blob whose next_node_id is BEHIND an existing node id -> a later mint
-        // would collide. Hand-edit the counter in the serialized JSON.
-        let blob = coord
-            .serialized_json()
-            .replace("\"next_node_id\":4", "\"next_node_id\":1");
-        assert!(
-            !coord.load_json(&blob),
-            "a counter behind a stored id is rejected"
+        let before = coord.next_node_id();
+        let blob = coord.serialized_json();
+        assert!(coord.load_json(&blob), "the snapshot loads");
+        assert_eq!(
+            coord.next_node_id(),
+            before,
+            "and mints exactly where it left off"
         );
         assert!(
             !coord.load_json("{not valid json"),
-            "malformed JSON is rejected"
+            "malformed JSON is still rejected"
         );
     });
 }
 
 #[test]
 fn r1258_a_reroute_graph_passes_validation() {
-    // A reroute node is NOT a PALETTE kind (its ports are the wire's type), so
-    // it takes the validator's dedicated 1-in/1-out same-type branch — a graph
-    // with one must still round-trip, not be false-rejected.
     Owner::new().run(|| {
-        let _ = boot_scene();
         let coord = coordinator();
-        let rid = coord
-            .add_reroute(EdgeId(0))
-            .expect("splice a reroute into edge 0");
-        assert!(
-            coord.node_by_id(rid).unwrap().is_reroute(),
-            "the knot is a reroute"
-        );
+        coord.add_reroute(EdgeId(0)).expect("splice edge 0");
         let blob = coord.serialized_json();
         assert!(
             coord.load_json(&blob),
-            "a reroute graph is valid and round-trips"
+            "a spliced reroute round-trips through the wire"
         );
-        // And the invariant predicate accepts it directly.
         assert!(
-            graph_invariants_hold(&coord.nodes.get(), &coord.edges.get()),
-            "graph_invariants_hold accepts a reroute node",
+            graph_invariants_hold(&coord.graph()),
+            "and the reloaded graph is valid"
         );
     });
 }
 
-// ── R1259 — session audit-clearance (frames validation + is_reroute derived) ──
+// ── R1259 / R1596 — frames are nodes, so they validate with them ────────────
 
 #[test]
-fn r1259_load_json_validates_frames_and_omits_is_reroute() {
+fn r1259_load_json_validates_frames_and_their_containment() {
     Owner::new().run(|| {
-        let _ = boot_scene();
         let coord = coordinator();
-        coord.select_all();
-        coord
-            .add_frame()
-            .expect("a comment frame around the selection");
+        coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
+        let frame = coord.add_frame().expect("framed the selection");
         let blob = coord.serialized_json();
-        assert!(
-            coord.load_json(&blob),
-            "a graph with a valid frame round-trips"
-        );
-        // R1259 — is_reroute is no longer a stored field (derived from op).
-        assert!(
-            !blob.contains("is_reroute"),
-            "is_reroute is not serialized (derived from op == Reroute)"
-        );
-        // A frame counter behind the stored frame id would collide on the next
-        // add_frame -> rejected (the frames now get the same gate as nodes/edges).
-        let stale = blob.replace("\"next_frame_id\":1", "\"next_frame_id\":0");
-        assert_ne!(stale, blob, "the frame-counter edit changed the blob");
-        assert!(
-            !coord.load_json(&stale),
-            "a frame counter behind a stored frame id is rejected"
-        );
-        // The graph is unchanged after the reject.
+        assert!(blob.contains("Comment 1"), "the frame is in the blob");
+        coord.document.set(Graph::new("material"));
+        assert!(coord.load_json(&blob), "load the snapshot");
+        assert_eq!(coord.frames().len(), 1, "frame restored from persistence");
         assert_eq!(
-            coord.frames.get().len(),
-            1,
-            "still one frame after the reject"
+            coord.graph().members(TREE, frame),
+            vec![NodeId(0), NodeId(1)],
+            "and so is what it holds — containment travels with the document"
         );
-    });
-}
 
-#[test]
-fn r1259_old_blob_with_is_reroute_key_still_loads() {
-    // Backward-compat: a schema-7 blob written before R1259 carries an
-    // "is_reroute" key; serde ignores the now-unknown field and op derives the
-    // truth, so the reroute identity survives the field removal.
-    Owner::new().run(|| {
-        let _ = boot_scene();
-        let coord = coordinator();
-        let rid = coord.add_reroute(EdgeId(0)).expect("splice a reroute");
-        let blob = coord.serialized_json();
-        // Re-introduce the legacy key on the reroute node's object (it serializes
-        // op:"Reroute"); a pre-R1259 blob would have had "is_reroute":true too.
-        let legacy = blob.replace(
-            "\"op\":\"Reroute\"",
-            "\"op\":\"Reroute\",\"is_reroute\":true",
-        );
-        assert_ne!(legacy, blob, "the legacy-key edit changed the blob");
+        // R1596 — a frame is a node, so the checks that used to be about frame
+        // ids are the ones every node gets, PLUS two the editor never had: a
+        // node claiming a parent that is not there, and one claiming a parent
+        // that is not a frame.
+        let mut broken = coord.graph();
+        broken
+            .tree_mut(TREE)
+            .and_then(|t| t.node_mut(NodeId(0)))
+            .expect("Texture")
+            .parent = Some(NodeId(99));
         assert!(
-            coord.load_json(&legacy),
-            "a blob with the legacy is_reroute key still loads"
+            broken
+                .validate()
+                .iter()
+                .any(|v| matches!(v, Violation::DanglingParent { .. })),
+            "a parent that is not in the tree is named: {:?}",
+            broken.validate()
         );
+        let mut not_a_frame = coord.graph();
+        not_a_frame
+            .tree_mut(TREE)
+            .and_then(|t| t.node_mut(NodeId(0)))
+            .expect("Texture")
+            .parent = Some(NodeId(2));
         assert!(
-            coord.node_by_id(rid).unwrap().is_reroute(),
-            "op derives the reroute identity after reload"
+            not_a_frame
+                .validate()
+                .iter()
+                .any(|v| matches!(v, Violation::ParentNotAFrame { .. })),
+            "a container that is not a frame is named: {:?}",
+            not_a_frame.validate()
         );
     });
 }
@@ -8652,85 +8526,52 @@ fn r1259_old_blob_with_is_reroute_key_still_loads() {
 fn r1260_cycle_nodes_localises_only_the_cycle_members() {
     // A 2-cycle A(0) <-> B(1), plus a downstream C(2) fed by B. Only A and B are
     // ON the cycle; C is downstream but NOT on it.
-    let nodes = vec![
-        eval_node_of(0, NodeOp::Add, 2, true),
-        eval_node_of(1, NodeOp::Add, 2, true),
-        eval_node_of(2, NodeOp::Add, 2, true),
-    ];
-    let edges = vec![
-        Edge {
-            id: EdgeId(0),
-            from_node: NodeId(0),
-            from_port: 0,
-            to_node: NodeId(1),
-            to_port: 0,
-        },
-        Edge {
-            id: EdgeId(1),
-            from_node: NodeId(1),
-            from_port: 0,
-            to_node: NodeId(0),
-            to_port: 0,
-        },
-        Edge {
-            id: EdgeId(2),
-            from_node: NodeId(1),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 0,
-        },
-    ];
+    // R1596 — the localisation is `Document::cycle_nodes`, the crate gap that
+    // starting this migration surfaced: `Violation::Cycle` named the TREE, so
+    // this read had no server. Both cycle answers now come off ONE walk, so
+    // "is it acyclic" and "who is on it" cannot disagree.
+    let graph = graph_of(
+        &[(3, 0, 0), (3, 0, 0), (3, 0, 0)],
+        &[(0, 0, 1, 0), (1, 0, 2, 0)],
+    );
+    let looped = force_cycle(&graph, NodeId(1), NodeId(0));
     assert_eq!(
-        cycle_nodes(&nodes, &edges),
+        looped.cycle_nodes(TREE),
         vec![NodeId(0), NodeId(1)],
         "only the cycle members, sorted (C is downstream, not on the cycle)",
     );
     // A self-loop counts as a cycle.
-    let sl = vec![eval_node_of(5, NodeOp::Add, 1, true)];
-    let sl_edge = vec![Edge {
-        id: EdgeId(0),
-        from_node: NodeId(5),
-        from_port: 0,
-        to_node: NodeId(5),
-        to_port: 0,
-    }];
+    let one = graph_of(&[(3, 0, 0)], &[]);
+    let selfloop = force_cycle(&one, NodeId(0), NodeId(0));
     assert_eq!(
-        cycle_nodes(&sl, &sl_edge),
-        vec![NodeId(5)],
+        selfloop.cycle_nodes(TREE),
+        vec![NodeId(0)],
         "a self-loop is a cycle"
     );
     // A DAG has no cycle nodes.
     assert!(
-        cycle_nodes(&default_nodes(), &default_edges()).is_empty(),
+        default_graph().cycle_nodes(TREE).is_empty(),
         "the seed graph has none"
     );
 }
 
 #[test]
 fn r1260_resolved_input_shows_the_wired_value_else_the_default() {
-    let src = eval_node_of(0, NodeOp::Color, 0, true); // grey source
-    let mul = eval_node_of(1, NodeOp::Multiply, 2, true);
-    let edges = vec![Edge {
-        id: EdgeId(0),
-        from_node: NodeId(0),
-        from_port: 0,
-        to_node: NodeId(1),
-        to_port: 0,
-    }];
-    let nodes = vec![src, mul];
+    // Color source -> Multiply.in0; in1 is unwired and rests at its default.
+    let graph = graph_of(&[(1, 0, 0), (2, 0, 0)], &[(0, 0, 1, 0)]);
     let grey = CellValue::Color(Color::rgb(0x80, 0x80, 0x80));
     assert_eq!(
-        resolve_input_value(&nodes, &edges, &nodes[1], 0),
+        resolve_input_value(&graph, NodeId(1), 0),
         Some(grey.clone()),
         "wired input resolves the source"
     );
     assert_eq!(
-        resolve_input_value(&nodes, &edges, &nodes[1], 1),
+        resolve_input_value(&graph, NodeId(1), 1),
         Some(grey),
         "unwired input resolves its default"
     );
     assert_eq!(
-        resolve_input_value(&nodes, &edges, &nodes[1], 9),
+        resolve_input_value(&graph, NodeId(1), 9),
         None,
         "out-of-range port is None"
     );
@@ -8741,18 +8582,9 @@ fn r1260_resolved_input_shows_the_float_to_vector_broadcast() {
     // A Scalar (Float 0.0) wired into an Add's Vector input: resolved_input shows
     // the POST-coercion value (black), not the raw Float -- the exact broadcast
     // an AI would otherwise re-derive by hand.
-    let scalar = GraphNode::from_palette(5, 0, 0, 0).unwrap(); // Scalar -> Float
-    let add = eval_node_of(1, NodeOp::Add, 2, true);
-    let edges = vec![Edge {
-        id: EdgeId(0),
-        from_node: NodeId(0),
-        from_port: 0,
-        to_node: NodeId(1),
-        to_port: 0,
-    }];
-    let nodes = vec![scalar, add];
+    let graph = graph_of(&[(5, 0, 0), (3, 0, 0)], &[(0, 0, 1, 0)]);
     assert_eq!(
-        resolve_input_value(&nodes, &edges, &nodes[1], 0),
+        resolve_input_value(&graph, NodeId(1), 0),
         Some(CellValue::Color(Color::rgb(0, 0, 0))),
         "the Float source broadcast to black at the Vector input",
     );
@@ -8798,7 +8630,11 @@ fn r1260_query_resolved_input_and_localises_a_cycle() {
             Some(IntrospectValue::Text(String::new())),
             "no cycle at boot"
         );
-        // Author a 2-cycle from two fresh Adds (self-loops are rejected by add_edge).
+        // ★R1596 — a cycle CANNOT BE AUTHORED any more. The editor's own gate
+        // blocked only a direct self-loop, so two `add_edge` calls could build a
+        // 2-cycle; `Document::connect` refuses any wire that would close one and
+        // names the path. So the reads below have to be driven from a document
+        // that ARRIVED, which is the only way one can exist.
         let a = match intro.invoke("add_node", IntrospectValue::Text("Add".into())) {
             Ok(IntrospectValue::Int(i)) => i,
             o => panic!("{o:?}"),
@@ -8809,23 +8645,40 @@ fn r1260_query_resolved_input_and_localises_a_cycle() {
         };
         intro
             .invoke("add_edge", IntrospectValue::Text(format!("{a},0,{b},0")))
-            .unwrap();
-        intro
-            .invoke("add_edge", IntrospectValue::Text(format!("{b},0,{a},0")))
-            .unwrap();
+            .expect("the forward wire");
+        assert_eq!(
+            intro.invoke("add_edge", IntrospectValue::Text(format!("{b},0,{a},0"))),
+            Ok(IntrospectValue::Bool(false)),
+            "the wire that would close the cycle is refused"
+        );
         assert_eq!(
             intro.query("eval.acyclic"),
+            Some(IntrospectValue::Bool(true)),
+            "so the graph is still a DAG"
+        );
+    });
+
+    // The cycle reads themselves, over a document built the way one arrives.
+    Owner::new().run(|| {
+        let coord = coordinator();
+        let a = coord.add_node(3).expect("Add");
+        let b = coord.add_node(3).expect("Add");
+        assert!(coord.add_edge(a, 0, b, 0), "the forward wire");
+        let looped = force_cycle(&coord.graph(), b, a);
+        coord.document.set(looped);
+        assert_eq!(
+            coord.query("eval.acyclic"),
             Some(IntrospectValue::Bool(false)),
             "now cyclic"
         );
         assert_eq!(
-            intro.query("eval.cycle_nodes"),
-            Some(IntrospectValue::Text(format!("{a},{b}"))),
+            coord.query("eval.cycle_nodes"),
+            Some(IntrospectValue::Text(format!("{},{}", a.0, b.0))),
             "cycle_nodes localises exactly the two knots",
         );
         // A cycle node's resolved input is null (uncomputable).
         assert_eq!(
-            intro.query(&format!("node.{a}.resolved_input.0")),
+            coord.query(&format!("node.{}.resolved_input.0", a.0)),
             Some(IntrospectValue::Null),
             "a cycle-fed input reads null",
         );
@@ -8842,36 +8695,33 @@ fn r1261_large_graph_paints_the_full_structure_at_scale() {
     // edge for a large chain, no drops / dups from the index change.
     Owner::new().run(|| {
         let _ = boot_scene(); // establishes the theme + reactive scopes
-        let n: u32 = 300;
-        let mut nodes = Vec::new();
-        let mut edges = Vec::new();
-        for i in 0..n {
-            nodes.push(eval_node_of(i, NodeOp::Add, 2, true));
-            if i > 0 {
-                edges.push(Edge {
-                    id: EdgeId(i - 1),
-                    from_node: NodeId(i - 1),
-                    from_port: 0,
-                    to_node: NodeId(i),
-                    to_port: 0,
-                });
+        let n: usize = 300;
+        let mut graph = Graph::new("material");
+        let mut previous: Option<NodeId> = None;
+        for _ in 0..n {
+            let id = add_palette_node(&mut graph, 3, 0, 0).expect("Add");
+            if let Some(from) = previous {
+                graph
+                    .connect(TREE, Socket::new(from, 0), Socket::new(id, 0))
+                    .expect("the chain's wire");
             }
+            previous = Some(id);
         }
         let theme = use_theme(THEME_TAG).theme_animated();
         let sel = BTreeSet::new();
-        let cards = view_node_cards(&nodes, &edges, &sel, None, IDLE_TF, &theme, 1.0);
-        assert_eq!(cards.len(), n as usize, "one card per node at scale");
+        let cards = view_node_cards(&graph, &sel, None, IDLE_TF, &theme, 1.0);
+        assert_eq!(cards.len(), n, "one card per node at scale");
         let tags: BTreeSet<String> = cards
             .iter()
             .filter_map(|c| c.tag().map(str::to_owned))
             .collect();
         assert_eq!(
             tags.len(),
-            n as usize,
+            n,
             "every card carries a distinct node tag (no drops/dups)"
         );
-        let wires = view_edges(&nodes, &edges, None, &theme, 1.0);
-        assert_eq!(wires.len(), (n - 1) as usize, "one wire per edge at scale");
+        let wires = view_edges(&graph, None, &theme, 1.0);
+        assert_eq!(wires.len(), n - 1, "one wire per edge at scale");
     });
 }
 
@@ -8957,47 +8807,36 @@ fn r1261_wired_input_precompute_matches_the_per_node_scan() {
     // The precomputed wired-port map must equal the old per-node edge scan for
     // every node (identical paint input). Multiple wires into distinct ports of
     // one node aggregate; an unwired node maps to the empty set.
-    let nodes = vec![
-        eval_node_of(0, NodeOp::Color, 0, true),
-        eval_node_of(1, NodeOp::Color, 0, true),
-        eval_node_of(2, NodeOp::Lerp, 3, true), // 3 input ports
-    ];
-    let edges = vec![
-        Edge {
-            id: EdgeId(0),
-            from_node: NodeId(0),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 0,
-        },
-        Edge {
-            id: EdgeId(1),
-            from_node: NodeId(1),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 2,
-        },
-    ];
-    for node in &nodes {
+    // Color, Color -> Lerp's inputs 0 and 2 (its input 1 stays unwired).
+    // Color -> Lerp.in0 (Vector) and Scalar -> Lerp.in2 (the Float factor);
+    // Lerp's in1 stays unwired. The fixture goes through `connect`, so a wire
+    // the lattice refuses cannot be stated here at all — the first draft wired a
+    // Color into the Float port and the model said so.
+    let graph = graph_of(
+        &[(1, 0, 0), (5, 0, 0), (6, 0, 0)],
+        &[(0, 0, 2, 0), (1, 0, 2, 2)],
+    );
+    let wires = edges(&graph);
+    for (node, _) in kind_nodes(&graph) {
         let precomputed: BTreeSet<usize> = {
             let mut m: BTreeMap<NodeId, BTreeSet<usize>> = BTreeMap::new();
-            for e in &edges {
-                m.entry(e.to_node).or_default().insert(e.to_port);
+            for e in wires {
+                m.entry(e.to.node).or_default().insert(uidx(e.to.port));
             }
             m.get(&node.id).cloned().unwrap_or_default()
         };
-        let per_node: BTreeSet<usize> = edges
+        let per_node: BTreeSet<usize> = wires
             .iter()
-            .filter(|e| e.to_node == node.id)
-            .map(|e| e.to_port)
+            .filter(|e| e.to.node == node.id)
+            .map(|e| uidx(e.to.port))
             .collect();
-        assert_eq!(precomputed, per_node, "node {} wired set", node.id.raw());
+        assert_eq!(precomputed, per_node, "node {} wired set", node.id.0);
     }
     // Node 2 (Lerp) has ports 0 and 2 wired, not 1.
-    let n2: BTreeSet<usize> = edges
+    let n2: BTreeSet<usize> = wires
         .iter()
-        .filter(|e| e.to_node == NodeId(2))
-        .map(|e| e.to_port)
+        .filter(|e| e.to.node == NodeId(2))
+        .map(|e| uidx(e.to.port))
         .collect();
     assert_eq!(n2, BTreeSet::from([0, 2]), "aggregated wired ports");
 }
@@ -9010,27 +8849,26 @@ fn r1262_edge_endpoint_variants_share_one_body() {
     // both the linear (cold-caller) and indexed (paint) resolves through the ONE
     // `edge_endpoints_via` body, so they produce IDENTICAL anchors for every edge
     // — a port-anchor change can't drift the drawn wire from the hit-test/knife.
-    let nodes = default_nodes();
-    let edges = default_edges();
-    let index: BTreeMap<NodeId, &GraphNode> = nodes.iter().map(|n| (n.id, n)).collect();
-    for e in &edges {
+    let graph = default_graph();
+    let index: BTreeMap<NodeId, &Node<MaterialOp>> =
+        kind_nodes(&graph).map(|(n, _)| (n.id, n)).collect();
+    for e in edges(&graph) {
         assert_eq!(
-            edge_endpoints(&nodes, e),
+            edge_endpoints(&graph, e),
             edge_endpoints_via(|id| index.get(&id).copied(), e),
             "linear and indexed endpoint resolves agree for edge {}",
-            e.id.raw(),
+            e.id.0,
         );
     }
     // A dangling edge drops identically through both.
     let dangling = Edge {
         id: EdgeId(9),
-        from_node: NodeId(99),
-        from_port: 0,
-        to_node: NodeId(0),
-        to_port: 0,
+        from: Socket::new(NodeId(99), 0),
+        to: Socket::new(NodeId(0), 0),
+        muted: false,
     };
     assert_eq!(
-        edge_endpoints(&nodes, &dangling),
+        edge_endpoints(&graph, &dangling),
         None,
         "linear drops a dangling edge"
     );
@@ -9053,10 +8891,9 @@ fn r1262_edge_endpoint_variants_share_one_body() {
 /// ([`card_span`]) and this is the test that can fail.
 #[test]
 fn r1592_a_sweep_that_grazes_a_cards_far_edge_takes_it() {
-    let mut node = eval_node_of(0, NodeOp::Texture, 0, true);
-    node.x = 40;
-    node.y = 70;
-    let (min, max) = card_span(&node);
+    let graph = graph_of(&[(0, 40, 70)], &[]);
+    let node = kind_node(&graph, NodeId(0)).expect("Texture").0;
+    let (min, max) = card_span(node);
     assert_eq!(min, Point::new(40, 70));
     assert_eq!(
         max,

@@ -126,14 +126,14 @@
 //!   beside the pin (a wired port hides it; the value is retained); it is
 //!   AI-read/write (`query`/`intervene node.<id>.input_default.<port>`, typed —
 //!   a colour takes a `#RRGGBB[AA]` hex, the write journals an undoable
-//!   [`SetNodeValueCmd`]). The painted default is **inline-editable on the
+//!   `GraphEdit`). The painted default is **inline-editable on the
 //!   canvas** (R901): a **double-click** on the default opens the shared inline
 //!   field (the same affordance the title rename uses, R878), while the input
 //!   port's *single*-click stays edge-connect (R742); the AI path is the
 //!   `intervene node.<id>.input_default.<port>` write above.
 //! - **Dataflow evaluation** (R1255 — the Phase-C entry): the authored graph is
 //!   now *computed*, not only edited. Each node carries a first-class
-//!   [`NodeOp`] compute identity (the SSOT the evaluator dispatches on — NOT the
+//!   [`MaterialOp`] compute identity (the SSOT the evaluator dispatches on — NOT the
 //!   rewritable title, the R1242 identity lesson generalised); a topological,
 //!   cycle-safe, memoised pass resolves each input (a wired source's output,
 //!   else its R899 pin default), coerces it to the port type (the `Float →
@@ -159,7 +159,7 @@
 //! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
 //!   [`UndoStack`] — the **structural** edits (add node, delete node + its
 //!   incident edges, connect, disconnect) as [`GraphEdit`] deltas, and node
-//!   **moves** (drag / nudge / `intervene .x`) as [`MoveNodesCmd`]s. A drag is
+//!   **moves** (drag / nudge / `intervene .x`) as `GraphEdit`s. A drag is
 //!   recorded as one move at gesture end; a keyboard nudge **burst** coalesces
 //!   to one undo step (the `UndoCommand::merge` hook). `Ctrl+Z` /
 //!   `Ctrl+Shift+Z` (`Ctrl+Y`) and the AI-first [`UndoStackExternal`] drive it.
@@ -208,7 +208,7 @@
 //!   keymap is the lifted [`pinion_core::edit_field_keymap`] SSOT with the
 //!   target's typed [`CellKind`] gate (title = text, a `Float` port = a
 //!   number, a `Vector`/`Color` port = a `#RRGGBB[AA]` hex). A commit journals
-//!   an undoable [`RenameCmd`] / [`SetNodeValueCmd`] through the
+//!   an undoable `GraphEdit` / `GraphEdit` through the
 //!   `apply_rename` / `apply_set_node_value` SSOT — the same path the AI-first
 //!   `intervene node.<id>.title` / `node.<id>.input_default.<port>` (and R1257
 //!   `node.<id>.value` on a source) write-twins drive (`query editing` is the
@@ -240,7 +240,8 @@
 //!   graph into a layered left-to-right (Sugiyama) arrangement — data flows
 //!   forward across columns, vertical order crossing-reduced — in ONE undo step
 //!   through the same `apply_node_moves` SSOT. The AI-first peer of an editor's
-//!   "arrange" command; the pure geometry is `layered_layout` (cycle-broken,
+//!   "arrange" command; the pure geometry is `pinion_node_graph::Layered`
+//!   (cycle-broken,
 //!   longest-path layered, barycenter-ordered, deterministic — it reads only the
 //!   node set + heights + edges, never the current positions).
 //! - **Force layout** (R1390): `invoke force_layout` (no args) relaxes the WHOLE
@@ -249,7 +250,7 @@
 //!   symmetric rest state — in ONE undo step through the same `apply_node_moves`
 //!   SSOT. The organic counterpart to `auto_layout`'s layered tidy (the yEd
 //!   "organic" / Graphviz `neato` mode a pro editor offers beside "arrange");
-//!   the pure geometry is `force_directed_layout` (grid-seeded, fixed-iteration,
+//!   the pure geometry is `pinion_node_graph::Organic` (grid-seeded, fixed-iteration,
 //!   deterministic — it too reads only the node set + edges, never positions).
 
 use std::borrow::Cow;
@@ -292,6 +293,10 @@ use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_extra};
 use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, SelectionChord, WidgetCore};
 use pinion_graph::Sugiyama;
+use pinion_node_graph::{
+    Conversion, Document, Extent, Layered, Link as Edge, LinkId as EdgeId, Node, NodeBody, NodeId,
+    NodeKind, Organic, Port, PortRef, ROOT, Rewired, Side, Signature, Socket, Tree, TreeId,
+};
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::text_field as tf_paint;
@@ -313,40 +318,29 @@ const GRAPH_TAG: &str = "node_graph";
 /// R849 — the "add node" palette: the node kinds a sidebar click (or the
 /// `add_node` RPC verb) can create, as `(title, input_types, output_types,
 /// op)`. A tiny material-graph vocabulary (sources / ops / sink), the same typed
-/// port shapes [`default_nodes`] seeds. R898 — the entries are
+/// port shapes [`default_graph`] seeds. R898 — the entries are
 /// [`PortType`]-typed; the first five keep their pre-R898 indices (0..=4) so
 /// the index-addressed `add_node(kind)` callers are unmoved, and the typed
 /// sources/ops (`Scalar`, `Lerp`) that exercise the type lattice are
-/// *appended* (5, 6). R1255 — a fourth element pins each kind's [`NodeOp`]
+/// *appended* (5, 6). R1255 — a fourth element pins each kind's [`MaterialOp`]
 /// (the compute identity the evaluator keys off), so kind → op lives in this
 /// one SSOT rather than a parallel `match` that could drift from the ordering.
-const PALETTE: &[(&str, &[PortType], &[PortType], NodeOp)] = &[
-    ("Texture", &[], &[PortType::Vector], NodeOp::Texture),
-    ("Color", &[], &[PortType::Vector], NodeOp::Color),
-    (
-        "Multiply",
-        &[PortType::Vector, PortType::Vector],
-        &[PortType::Vector],
-        NodeOp::Multiply,
-    ),
-    (
-        "Add",
-        &[PortType::Vector, PortType::Vector],
-        &[PortType::Vector],
-        NodeOp::Add,
-    ),
-    ("Output", &[PortType::Vector], &[], NodeOp::Output),
+/// R1596 — the ports are gone from this table because a kind declares its own
+/// ([`NodeKind::inputs`] / [`NodeKind::outputs`]). They were here when a node
+/// STORED its port list, and `node_invariants_hold` existed largely to check the
+/// stored list still matched this row.
+const PALETTE: &[(&str, MaterialOp)] = &[
+    ("Texture", MaterialOp::Texture),
+    ("Color", MaterialOp::Color),
+    ("Multiply", MaterialOp::Multiply),
+    ("Add", MaterialOp::Add),
+    ("Output", MaterialOp::Output),
     // R898 — a scalar source: its `Float` output broadcasts into a `Vector`
     // input (accepted) but a `Vector` never narrows into it (rejected).
-    ("Scalar", &[], &[PortType::Float], NodeOp::Scalar),
+    ("Scalar", MaterialOp::Scalar),
     // R898 — a 3-input op whose last input is a `Float` factor, so a
     // `Color`/`Texture` (`Vector`) wired to it is type-rejected.
-    (
-        "Lerp",
-        &[PortType::Vector, PortType::Vector, PortType::Float],
-        &[PortType::Vector],
-        NodeOp::Lerp,
-    ),
+    ("Lerp", MaterialOp::Lerp),
 ];
 
 /// R849 — sidebar width for the node palette. The canvas keeps its
@@ -435,7 +429,12 @@ const STORAGE_KEY: &str = "node_graph.state";
 // is implicitly default-`None`. The uniform
 // gate is the `schema_version` check + R1258 structural validation, not any
 // single field's absence.
-const PERSISTED_SCHEMA_VERSION: u32 = 7;
+// R1596 -> 8: the blob is a `Document` now. Six parallel fields (nodes, edges,
+// frames and three id counters) collapse into one, so EVERY key changed; a v7
+// blob would fail to deserialize anyway, and the bump is what makes that a
+// stated rejection ("this file is older than this editor") rather than an
+// incidental one that reads like a corrupt file.
+const PERSISTED_SCHEMA_VERSION: u32 = 8;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -459,7 +458,7 @@ const PORT_SIZE: i32 = 12;
 const BODY_PAD: i32 = 10;
 
 /// R1243 — a reroute knot's diameter (logical px). A reroute node
-/// ([`GraphNode::is_reroute`]) is a wire-routing passthrough, not a compute op,
+/// ([`NodeGeometry::is_reroute`]) is a wire-routing passthrough, not a compute op,
 /// so it paints as this compact circular dot instead of a full card: no header,
 /// port rows, or inline editors. Its width == height == this, and both its ports
 /// anchor at its centre ([`knot_center`]) — the wire passes straight through the
@@ -568,72 +567,46 @@ fn ppt(x: i32, y: i32) -> PathPoint {
     PathPoint::new(x as f32, y as f32)
 }
 
-// ─── graph model (example-local; lifted at the 2nd consumer) ───────
+// ─── graph model (the taxonomy; the mechanism is `pinion-node-graph`) ──
 
-/// Stable node handle (R841). Minted once at creation, never reused, never
-/// shifted — so an edge / selection / (future) undo record that references a
-/// node survives the deletion of *other* nodes. Positional indices (the R838
-/// model) invalidated every reference on each delete; this is the
-/// `hello-dock-panels-editor` stable-id discipline applied to the graph.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-struct NodeId(u32);
+// R1596 — the model itself is the crate's. Before this round the editor carried
+// its own `Vec<Node<MaterialOp>>` + `Vec<Edge>` beside `pinion-node-graph`, so the tree
+// held TWO node models with two sets of invariants, two evaluators and two
+// notions of what a frame is; R1577 created that duplication by lifting the
+// mechanism out of here, and R1593 (a directed type relation), R1594 (a value
+// authored per node) and R1595 (a frame's height) were the three things the
+// crate could not express that kept it open. What stays here is what this crate
+// deliberately does not have: the taxonomy ([`MaterialOp`]), the socket type
+// lattice ([`PortType`]) and the card geometry ([`NodeGeometry`]).
 
-/// Stable edge handle (R841), same discipline as [`NodeId`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct EdgeId(u32);
+// R1596 — the two stable handles are the crate's, imported under this editor's
+// own vocabulary: a wire is a `Link` there and an "edge" here, and one import
+// makes the two names one type rather than two that must be converted.
+//
+// The editor's own `NodeId` / `EdgeId` were the same shape (a `u32` newtype,
+// minted once, never reused) for the same reason the crate's are: an edge, a
+// selection or an undo record that names a node has to survive the deletion of
+// *other* nodes.
 
-/// R1227 — stable comment-frame handle, same stable-id discipline as
-/// [`NodeId`] / [`EdgeId`] (minted once, never reused).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct FrameId(u32);
-
-impl NodeId {
-    fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-impl EdgeId {
-    fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-impl FrameId {
-    fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-impl core::fmt::Display for NodeId {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl core::fmt::Display for EdgeId {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl core::fmt::Display for FrameId {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+/// R1227 / R1596 — a comment frame is a **node** (`NodeBody::Frame`), so its
+/// handle is a [`NodeId`] and it is minted from the same counter.
+///
+/// That is Blender's model (`NODE_FRAME` is an ordinary node type) and it is
+/// what makes containment a fact the document maintains — `Node::parent`, whose
+/// forest invariants the crate enforces — rather than a rectangle the paint
+/// re-derives membership from every frame.
+type FrameId = NodeId;
 
 /// R898 — a port's data type. The lattice that makes the graph a *typed*
-/// node editor: an edge connects an output to an input only when the
-/// output's type is assignable to the input's (see [`PortType::is_assignable_to`]),
-/// so the canvas rejects an ill-typed wire the way Unreal's blueprint /
-/// material graphs do. Two material-graph types for now (`Float` scalar,
-/// `Vector` colour/vec3). `#[non_exhaustive]` is forward-looking — it would let
-/// a *future downstream crate* add `Exec` / `Bool`, but this example is the only
-/// consumer today, so the attribute is inert here and the lattice
-/// (`is_assignable_to`, `default_value`, `color`) is a closed in-module `match`.
-/// The genuinely-extensible form (the taxonomy the consumer's, the mechanism
-/// shared) is a future crate lift, not today's shape ([[abstraction-needs-second-consumer]]).
+/// node editor: an edge connects an output to an input only when a value can
+/// cross from the output's type to the input's ([`MaterialOp::conversion`]), so
+/// the canvas rejects an ill-typed wire the way Unreal's blueprint / material
+/// graphs do. Two material-graph types (`Float` scalar, `Vector` colour/vec3).
+///
+/// R1596 — the relation is **directed** and is now declared as the conversion
+/// itself, once, in [`NodeKind::conversion`]: `is_assignable_to` was this
+/// example's own half of that answer and the crate held the other, which is the
+/// asymmetry R1593 made expressible at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 enum PortType {
@@ -688,39 +661,57 @@ impl PortType {
     /// always; a scalar `Float` broadcasts up to a `Vector` (the shader-graph
     /// scalar-promote coercion). There is no narrowing (a `Vector` never feeds
     /// a `Float`), so the relation is a strict partial order, not symmetric.
-    const fn is_assignable_to(self, into: PortType) -> bool {
-        // `Float` assigns to `Float` or `Vector` (exact + scalar broadcast);
-        // `Vector` only to `Vector` (no narrowing).
-        matches!(
-            (self, into),
-            (PortType::Float, PortType::Float | PortType::Vector)
-                | (PortType::Vector, PortType::Vector)
-        )
+    ///
+    /// R1596 — **derived** from [`MaterialOp::conversion`] rather than declared
+    /// beside it. Whether a wire is legal and what arrives along it were two
+    /// statements here (this predicate and [`NodeKind::conversion`]) that could disagree;
+    /// R1593 made the crossing one declaration, so this is now its yes-or-no
+    /// reading and the two cannot.
+    fn is_assignable_to(self, into: PortType) -> bool {
+        MaterialOp::conversion(&self, &into).is_allowed()
+    }
+
+    /// R1596 — a port of this type, named and carrying its own resting value.
+    ///
+    /// The kind says what a port *is*; [`Node::values`] says what one node's
+    /// port has been *given* (R1594). Both defaults the editor used to store per
+    /// node — `input_defaults` and `output_const` — are that one mechanism, so
+    /// the seed value lives here and only an authored override lives on a node.
+    fn port(self, name: &str) -> Port<PortType, CellValue> {
+        Port::new(name, self).with_default(self.default_value())
+    }
+
+    /// R1596 — a port of this type whose RESTING value is the type's default.
+    ///
+    /// The same construction as [`port`](Self::port), named apart because on an
+    /// **output** a declared default means "what this node yields when the kind
+    /// computed nothing", which is true of a source and false of everything
+    /// else ([`NodeKind::outputs`]).
+    fn resting(self, name: &str) -> Port<PortType, CellValue> {
+        self.port(name)
     }
 }
 
-/// R1255 §5.38 §5.52 — a node's **compute operation**: its first-class identity
-/// for graph *evaluation*, the compute twin of [`GraphNode::is_reroute`]. The
-/// evaluator keys off this, NOT the freely-rewritable `title` (the R1242 lesson
-/// — a node renamed "Foo" still multiplies), so an evaluator, a
-/// serialize/reload, and an AI enumeration all agree on what a node *does*.
-/// `#[non_exhaustive]` mirrors [`PortType`] as a forward-looking marker. **But
-/// note (R1259 audit)**: [`NodeOp::evaluate`] is a closed `match` *on this enum,
-/// in this module*, so op-taxonomy and eval-mechanism are currently FUSED — a
-/// new op edits the `NodeOp` variant + [`NodeOp::name`] + [`NodeOp::evaluate`] +
-/// a [`PALETTE`] row, and `#[non_exhaustive]` (which only affects downstream
-/// crates) changes nothing in-module. The "taxonomy is the consumer's, mechanism
-/// shared" design is what a *future* trait/registry-dispatched `pinion-node-graph`
-/// crate would provide ([[abstraction-needs-second-consumer]]); it is NOT the
-/// present single-consumer prototype. Set once at construction from the canonical
-/// [`PALETTE`] kind (or [`NodeOp::Reroute`] for a spliced knot); frozen
-/// thereafter, so a later rename never re-keys the compute.
+/// R1255 §5.38 §5.52 / R1596 — a node's **compute operation**, and this
+/// editor's whole half of the node system: the taxonomy.
+///
+/// `pinion-node-graph` supplies the model, the invariants, the groups, the
+/// frames and the evaluator, and asks the application for exactly this — what a
+/// node *is*, what ports it has, what it computes, and how its socket types
+/// relate. The R1259 audit recorded the defect this closes: the op taxonomy and
+/// the evaluation mechanism were FUSED in a closed `match` in this module, and
+/// the doc said the split "is what a future trait/registry-dispatched
+/// `pinion-node-graph` crate would provide". It exists; this is the split.
+///
+/// Identity for evaluation is this op and never the freely-rewritable label (the
+/// R1242 lesson — a node renamed "Foo" still multiplies), which is the rule
+/// [`NodeKind::name`] states for every taxonomy rather than one this example
+/// keeps for itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
-enum NodeOp {
-    /// Source — a texture sample. Its output is the node's authorable
-    /// [`GraphNode::output_const`] (R1257 — an authorable `Vector`, seeded to the
-    /// port-type default), not a computed value.
+enum MaterialOp {
+    /// Source — a texture sample. Its output is the value authored on its own
+    /// output port (R1594), not a computed one.
     Texture,
     /// Source — a constant colour (`Vector`).
     Color,
@@ -735,66 +726,175 @@ enum NodeOp {
     /// `lerp(Vector, Vector, Float) → Vector`: component-wise, factor clamped
     /// to `0..=1`.
     Lerp,
-    /// R1242 — a wire-routing passthrough: its resolved input 0 is forwarded to
-    /// its output unchanged (in-type == out-type).
-    Reroute,
+    /// R1242 — a wire-routing passthrough carrying the type it routes, so a
+    /// knot spliced into a `Float` wire is a `Float` knot.
+    ///
+    /// R1596 — the type is a **payload** because a kind declares its own ports:
+    /// the pre-R1596 model stored a port list per node and a bare `Reroute`
+    /// beside it, and `node_invariants_hold` existed largely to check the two
+    /// agreed. A kind that carries its wire type cannot disagree with itself.
+    Reroute(PortType),
 }
 
-impl NodeOp {
+impl NodeKind for MaterialOp {
+    type Type = PortType;
+    type Value = CellValue;
+
     /// R1256 — the op's canonical, rename-stable identity token (the `Add`/
     /// `Multiply`/... a `query node.<id>.op` reports). This is the AI-legible
     /// answer to "what does this node compute" — needed because the structural
     /// reads cannot distinguish ops that share a signature (`Add` and `Multiply`
     /// are both `(Vector,Vector)→Vector`; `Texture` and `Color` both
-    /// `()→Vector`) and the `title` is freely rewritable. Matches the
-    /// [`PALETTE`] title for a palette op; `Reroute` for a knot.
-    const fn name(self) -> &'static str {
+    /// `()→Vector`) and the label is freely rewritable.
+    fn name(&self) -> String {
         match self {
-            NodeOp::Texture => "Texture",
-            NodeOp::Color => "Color",
-            NodeOp::Multiply => "Multiply",
-            NodeOp::Add => "Add",
-            NodeOp::Output => "Output",
-            NodeOp::Scalar => "Scalar",
-            NodeOp::Lerp => "Lerp",
-            NodeOp::Reroute => "Reroute",
+            MaterialOp::Texture => "Texture",
+            MaterialOp::Color => "Color",
+            MaterialOp::Multiply => "Multiply",
+            MaterialOp::Add => "Add",
+            MaterialOp::Output => "Output",
+            MaterialOp::Scalar => "Scalar",
+            MaterialOp::Lerp => "Lerp",
+            MaterialOp::Reroute(_) => "Reroute",
+        }
+        .to_owned()
+    }
+
+    fn inputs(&self) -> Vec<Port<PortType, CellValue>> {
+        match self {
+            MaterialOp::Texture | MaterialOp::Color | MaterialOp::Scalar => Vec::new(),
+            MaterialOp::Multiply | MaterialOp::Add => {
+                vec![PortType::Vector.port("A"), PortType::Vector.port("B")]
+            }
+            MaterialOp::Output => vec![PortType::Vector.port("In")],
+            MaterialOp::Lerp => vec![
+                PortType::Vector.port("A"),
+                PortType::Vector.port("B"),
+                PortType::Float.port("Factor"),
+            ],
+            MaterialOp::Reroute(ty) => vec![ty.port("In")],
         }
     }
 
-    /// R1255 — compute this op's output from its already-resolved, port-typed
-    /// `inputs` (each coerced to the op's declared input [`PortType`] by
-    /// [`resolve_input`], so a `Vector` input is a [`CellValue::Color`] and a
+    /// R1596 — **only a SOURCE's output declares a resting value.**
+    ///
+    /// R1594's rule covers both sides of a node with one sentence — an authored
+    /// value is what a port carries when nothing else supplies one, and for an
+    /// output that means the kind computed nothing there — so what a kind
+    /// declares on an *output* decides what a node yields when it cannot
+    /// compute. For a source that is the whole point: it computes nothing, ever,
+    /// and its constant is the resting value.
+    ///
+    /// For a COMPUTE op it would be a lie. An `Add` whose inputs do not resolve
+    /// has no value, and giving its output a resting grey would make a node on a
+    /// **cycle** evaluate to a plausible colour instead of to nothing — which is
+    /// exactly the `null` R1260's debugger reads use to localise the cycle. The
+    /// first draft of this migration declared a default on every port and that
+    /// is precisely what happened, caught by `r1255_a_cycle_is_uncomputable`.
+    fn outputs(&self) -> Vec<Port<PortType, CellValue>> {
+        match self {
+            MaterialOp::Texture | MaterialOp::Color => vec![PortType::Vector.resting("Out")],
+            MaterialOp::Scalar => vec![PortType::Float.resting("Out")],
+            MaterialOp::Multiply | MaterialOp::Add | MaterialOp::Lerp => {
+                vec![Port::new("Out", PortType::Vector)]
+            }
+            MaterialOp::Output => Vec::new(),
+            MaterialOp::Reroute(ty) => vec![Port::new("Out", *ty)],
+        }
+    }
+
+    /// R1255 — compute every output from the already-resolved, port-typed
+    /// `inputs` (each converted to the declared [`PortType`] on the way in by
+    /// the crate's evaluator, so a `Vector` input is a [`CellValue::Color`] and a
     /// `Float` input a [`CellValue::Float`]). A `None` slot is an *unresolvable*
-    /// input (a cycle upstream); a compute op that needs it yields `None` (it
-    /// cannot compute from a missing operand). A source op ignores `inputs` and
-    /// yields its constant.
-    fn evaluate(self, inputs: &[Option<CellValue>]) -> Option<CellValue> {
+    /// input (a cycle upstream); a compute op that needs it yields `None`.
+    ///
+    /// R1596 — a **source computes nothing**, and answering `None` is what makes
+    /// its constant the same mechanism every other authored port value uses: the
+    /// crate fills an output the kind left empty from [`Node::values`], else from
+    /// this kind's own [`Port::default`]. Before this round the source arms
+    /// returned the type default here AND the node stored an `output_const`
+    /// beside it — one fact in two places, which is the shape R1594 named.
+    fn evaluate(&self, inputs: &[Option<CellValue>]) -> Vec<Option<CellValue>> {
         // A required input at position `i` (present *and* resolved).
         let req = |i: usize| inputs.get(i).and_then(Option::as_ref);
+        // One match answering the whole output vector, so a kind's ARITY and its
+        // values are one statement. Splitting them ("compute a value, then
+        // decide whether there is a slot for it") made a sink's empty vector and
+        // a source's unresolved slot look like the same `None`, and they are
+        // opposites: a sink has nowhere to put a value, a source has somewhere
+        // and the value is authored rather than computed.
         match self {
-            NodeOp::Texture | NodeOp::Color => Some(PortType::Vector.default_value()),
-            NodeOp::Scalar => Some(PortType::Float.default_value()),
-            NodeOp::Add => Some(CellValue::Color(color_add(
-                as_color(req(0)?)?,
-                as_color(req(1)?)?,
-            ))),
-            NodeOp::Multiply => Some(CellValue::Color(color_mul(
-                as_color(req(0)?)?,
-                as_color(req(1)?)?,
-            ))),
-            NodeOp::Lerp => Some(CellValue::Color(color_lerp(
-                as_color(req(0)?)?,
-                as_color(req(1)?)?,
-                as_float(req(2)?)?,
-            ))),
-            // Passthrough / sink: the resolved input 0 (already the right type).
-            NodeOp::Output | NodeOp::Reroute => req(0).cloned(),
+            // A source computes nothing — its output is the value authored on
+            // its own port (R1594), which the crate supplies where this leaves a
+            // hole.
+            MaterialOp::Texture | MaterialOp::Color | MaterialOp::Scalar => vec![None],
+            MaterialOp::Add => vec![
+                req(0)
+                    .and_then(as_color)
+                    .zip(req(1).and_then(as_color))
+                    .map(|(a, b)| CellValue::Color(color_add(a, b))),
+            ],
+            MaterialOp::Multiply => vec![
+                req(0)
+                    .and_then(as_color)
+                    .zip(req(1).and_then(as_color))
+                    .map(|(a, b)| CellValue::Color(color_mul(a, b))),
+            ],
+            MaterialOp::Lerp => vec![
+                req(0)
+                    .and_then(as_color)
+                    .zip(req(1).and_then(as_color))
+                    .zip(req(2).and_then(as_float))
+                    .map(|((a, b), t)| CellValue::Color(color_lerp(a, b, t))),
+            ],
+            MaterialOp::Reroute(_) => vec![req(0).cloned()],
+            // A sink has no output at all — not an output carrying no value.
+            MaterialOp::Output => Vec::new(),
+        }
+    }
+
+    /// R1594 — which socket type a value is, so an authored one is checked
+    /// against the port it is written to.
+    fn value_type(value: &CellValue) -> Option<PortType> {
+        match value {
+            CellValue::Float(_) => Some(PortType::Float),
+            CellValue::Color(_) => Some(PortType::Vector),
+            // The value substrate carries kinds this lattice has no port for
+            // (text, int, bool); saying so is not the same as guessing.
+            _ => None,
+        }
+    }
+
+    /// R1593 / R1596 — whether and how a value crosses from one socket type to
+    /// another. Exact match passes through unchanged; a scalar `Float`
+    /// broadcasts up to a `Vector` (the shader-graph scalar-promote coercion);
+    /// a `Vector` never narrows back.
+    ///
+    /// **The relation is directed, and that is why it is one declaration.** This
+    /// example is what R1593 was built for: `is_assignable_to` said whether a
+    /// wire was legal and [`NodeKind::conversion`] said what arrived along it, two
+    /// statements over the same asymmetric lattice with nothing tying them
+    /// together — and no *equality* relation can hold an asymmetry, which is why
+    /// the crate could not host this model at all before that round.
+    fn conversion(from: &PortType, to: &PortType) -> Conversion<CellValue> {
+        match (from, to) {
+            (PortType::Float, PortType::Float) | (PortType::Vector, PortType::Vector) => {
+                Conversion::Direct
+            }
+            (PortType::Float, PortType::Vector) => Conversion::Converted(|value| match value {
+                CellValue::Float(f) => Some(CellValue::Color(broadcast_scalar(f))),
+                // A `Float` port holding a non-float is a document that came
+                // from elsewhere; it does not cross rather than crossing wrong.
+                _ => None,
+            }),
+            (PortType::Vector, PortType::Float) => Conversion::Refused,
         }
     }
 }
 
 /// R1255 — the `Color` (`Vector`) payload of `value`, or `None` if it is not a
-/// colour (a defensive guard — [`resolve_input`] coerces to the port type, so a
+/// colour (a defensive guard — [`resolve_input_value`] coerces to the port type, so a
 /// well-typed graph always matches).
 fn as_color(value: &CellValue) -> Option<Color> {
     match value {
@@ -858,93 +958,47 @@ fn broadcast_scalar(f: f64) -> Color {
     Color::rgb(c, c, c)
 }
 
-/// R1255 — coerce `value` to the declared `target` port type. The only coercion
-/// the type lattice permits is `Float → Vector` (the scalar-promote broadcast,
-/// [`broadcast_scalar`]); an exact-type value passes through, and a `Vector`
-/// never narrows to a `Float` (the lattice forbids that wire, so it never
-/// reaches here).
-fn coerce_to(value: CellValue, target: PortType) -> CellValue {
-    match (target, &value) {
-        (PortType::Vector, CellValue::Float(f)) => CellValue::Color(broadcast_scalar(*f)),
-        _ => value,
-    }
+/// R1596 — the material graph as a document.
+///
+/// One `Document` replaces the five reactive cells the editor used to keep
+/// (`use_nodes` / `use_edges` / `use_frames` and two id counters): the crate
+/// mints ids, holds the frames as nodes, and maintains the invariants those
+/// separate cells could only be checked against after the fact.
+type Graph = Document<MaterialOp>;
+
+/// The one tree this editor edits.
+///
+/// Groups are a whole second axis of a node editor and this example is the
+/// *canvas* one — `hello-node-groups` is the binding that composes the crate's
+/// group operations. Naming the tree once means the day this editor grows a
+/// breadcrumb, the change is this constant becoming a signal.
+const TREE: TreeId = ROOT;
+
+/// R1255 — the value that resolves into `node`'s input `port`.
+///
+/// R1596 — one call into the crate's evaluator, which resolves a wired source
+/// (converting it by [`MaterialOp::conversion`]), else the value authored on
+/// this node's port, else the kind's own resting value. The editor used to hold
+/// all three branches plus its own memo and its own on-stack cycle guard.
+fn resolve_input_value(graph: &Graph, node: NodeId, port: usize) -> Option<CellValue> {
+    graph
+        .evaluator()
+        .input(TREE, Socket::new(node, uport(port)))
 }
 
-/// R1255 — resolve the value flowing into `node`'s input `port`: the wired
-/// source output's value (coerced to the port's type) if a source is connected,
-/// else the R899 pin default (already the port's type). `None` when a wired
-/// source is itself unresolvable (a cycle upstream) — the missing value
-/// propagates rather than silently falling back to the default (which would
-/// mask the cycle).
-fn resolve_input(
-    nodes: &[GraphNode],
-    edges: &[Edge],
-    node: &GraphNode,
-    port: usize,
-    cache: &mut BTreeMap<NodeId, Option<CellValue>>,
-    visiting: &mut BTreeSet<NodeId>,
-) -> Option<CellValue> {
-    let target = node.input_type(port)?;
-    // R1256 — coerce BOTH branches to the port type: a palette-built default
-    // already matches, but a `set_graph`/loaded blob can carry a mistyped
-    // default (a `Float` on a `Vector` port), and coercing it symmetrically with
-    // the wired branch keeps the value resolvable instead of a silent `null`.
-    let value = if let Some(edge) = edges
-        .iter()
-        .find(|e| e.to_node == node.id && e.to_port == port)
-    {
-        eval_node(nodes, edges, edge.from_node, cache, visiting)?
-    } else {
-        node.input_default(port).cloned()?
-    };
-    Some(coerce_to(value, target))
-}
-
-/// R1255 §5.38 §5.52 — evaluate node `id`'s output over the graph
-/// `(nodes, edges)`: resolve each input ([`resolve_input`]), then apply the
-/// node's [`NodeOp`]. `None` when a cycle sits in the node's input cone (the
-/// value is undefined) — the on-stack `visiting` set catches the re-entry.
-/// `cache` memoises so a diamond (two paths to one source, like the seed
-/// `Texture`/`Color → Multiply`) evaluates each node once. A sink
-/// ([`NodeOp::Output`]) reports the value flowing INTO it (its resolved input 0)
-/// as its "output". Every palette op has ≤1 output, so an edge's `from_port` is
-/// always 0 and the node's single output is returned.
-fn eval_node(
-    nodes: &[GraphNode],
-    edges: &[Edge],
-    id: NodeId,
-    cache: &mut BTreeMap<NodeId, Option<CellValue>>,
-    visiting: &mut BTreeSet<NodeId>,
-) -> Option<CellValue> {
-    if let Some(cached) = cache.get(&id) {
-        return cached.clone();
+/// R1255 / R1596 — the value node `id` presents.
+///
+/// A node with outputs presents its first one. A **sink** has none, and what it
+/// presents is what flows INTO it — the reading `node.<id>.value` has always
+/// had for an `Output` node, kept here as the app-level derivation it is: the
+/// crate answers "every output" and a sink honestly has zero.
+fn evaluate(graph: &Graph, id: NodeId) -> Option<CellValue> {
+    let mut evaluator = graph.evaluator();
+    let outputs = evaluator.outputs(TREE, id);
+    if outputs.is_empty() {
+        return evaluator.inputs(TREE, id).into_iter().next().flatten();
     }
-    if !visiting.insert(id) {
-        // Re-entered while still on the stack -> a cycle. Uncomputable; do NOT
-        // cache here (the outer frame owns `id`'s real memo entry).
-        return None;
-    }
-    let value = nodes.iter().find(|n| n.id == id).and_then(|node| {
-        // R1257 — a source's output is its authored constant, not a computed
-        // value. (`NodeOp::evaluate`'s source arms remain the type-default
-        // fallback for a hand-built source that somehow lacks a constant.)
-        if let Some(constant) = &node.output_const {
-            return Some(constant.clone());
-        }
-        let inputs: Vec<Option<CellValue>> = (0..node.inputs())
-            .map(|port| resolve_input(nodes, edges, node, port, cache, visiting))
-            .collect();
-        node.op.evaluate(&inputs)
-    });
-    visiting.remove(&id);
-    cache.insert(id, value.clone());
-    value
-}
-
-/// R1255 — evaluate node `id` from a fresh memo (the single-node introspection
-/// entry point behind `query node.<id>.value`).
-fn evaluate(nodes: &[GraphNode], edges: &[Edge], id: NodeId) -> Option<CellValue> {
-    eval_node(nodes, edges, id, &mut BTreeMap::new(), &mut BTreeSet::new())
+    outputs.into_iter().next().flatten()
 }
 
 /// R1260 — an evaluated `CellValue` as its introspection wire form, or
@@ -956,97 +1010,172 @@ fn cell_or_null(value: Option<CellValue>) -> IntrospectValue {
     value.map_or(IntrospectValue::Null, |v| v.to_introspect())
 }
 
-/// R1255 — the graph's terminal value: the resolved input of the [`NodeOp::Output`]
-/// sink (lowest id when several exist, so the read is deterministic). `None`
-/// when there is no `Output` node, or its input cone has a cycle. Behind
-/// `query eval.output`.
-fn eval_terminal(nodes: &[GraphNode], edges: &[Edge]) -> Option<CellValue> {
-    let sink = nodes
-        .iter()
-        .filter(|n| n.op == NodeOp::Output)
-        .min_by_key(|n| n.id.raw())?;
-    evaluate(nodes, edges, sink.id)
+/// R1255 — the graph's terminal value: the resolved input of the
+/// [`MaterialOp::Output`] sink (lowest id when several exist, so the read is
+/// deterministic). `None` when there is no `Output` node, or its input cone has
+/// a cycle. Behind `query eval.output`.
+fn eval_terminal(graph: &Graph) -> Option<CellValue> {
+    let sink = kind_nodes(graph)
+        .filter(|(_, op)| *op == MaterialOp::Output)
+        .map(|(node, _)| node.id)
+        .min()?;
+    evaluate(graph, sink)
 }
 
-/// R1255 — whether the whole graph is a DAG (no dependency cycle). A structural
-/// 3-colour DFS over the `input ← source` dependency edges, independent of the
-/// value semantics: `1` = on the current stack (a back-edge to it is a cycle),
-/// `2` = fully explored. Behind `query eval.acyclic`, so an AI can distinguish a
-/// `null` `value` caused by a cycle from a genuinely absent node.
-fn graph_is_acyclic(nodes: &[GraphNode], edges: &[Edge]) -> bool {
-    fn visit(id: NodeId, edges: &[Edge], state: &mut BTreeMap<NodeId, u8>) -> bool {
-        match state.get(&id) {
-            Some(2) => return true,
-            Some(_) => return false, // back-edge to an on-stack node -> cycle
-            None => {}
-        }
-        state.insert(id, 1);
-        for e in edges.iter().filter(|e| e.to_node == id) {
-            if !visit(e.from_node, edges, state) {
-                return false;
-            }
-        }
-        state.insert(id, 2);
-        true
-    }
-    let mut state: BTreeMap<NodeId, u8> = BTreeMap::new();
-    nodes.iter().all(|n| visit(n.id, edges, &mut state))
-}
-
-/// R1260 — the value that actually RESOLVES into `node`'s input `port` (the
-/// debugger read behind `query node.<id>.resolved_input.<port>`): the wired
-/// source's output **coerced to the port type** if a source is connected, else
-/// the R899 pin default. The eval-internal [`resolve_input`] value, surfaced for
-/// AI introspection — so debugging "why is this grey" no longer requires the AI
-/// to find the edge, read the source's `value`, and re-apply the `Float→Vector`
-/// broadcast by hand. `None` for an out-of-range port or an unresolvable input (a
-/// cycle upstream). Evaluated from a fresh memo (§2 #3 pure).
-fn resolve_input_value(
-    nodes: &[GraphNode],
-    edges: &[Edge],
-    node: &GraphNode,
-    port: usize,
-) -> Option<CellValue> {
-    resolve_input(
-        nodes,
-        edges,
-        node,
-        port,
-        &mut BTreeMap::new(),
-        &mut BTreeSet::new(),
-    )
-}
-
-/// R1260 — the ids of the nodes that lie **ON** a dependency cycle (not merely
-/// downstream of one), sorted, behind `query eval.cycle_nodes`. `eval.acyclic`
-/// says *whether* a cycle exists; this *localises* it, so an AI reading a `null`
-/// `value` can point at the exact knot to break (the visual-scripting-debugger
-/// affordance). A node is on a cycle iff it is reachable from itself along the
-/// `input ← source` dependency edges (a self-loop counts); the `seen` set both
-/// terminates the walk and excludes downstream-of-cycle nodes (which cannot
-/// reach *themselves*).
-fn cycle_nodes(nodes: &[GraphNode], edges: &[Edge]) -> Vec<NodeId> {
-    fn reaches(from: NodeId, target: NodeId, edges: &[Edge], seen: &mut BTreeSet<NodeId>) -> bool {
-        edges.iter().filter(|e| e.to_node == from).any(|e| {
-            e.from_node == target
-                || (seen.insert(e.from_node) && reaches(e.from_node, target, edges, seen))
+/// R1596 — every node of the taxonomy, with its op, ascending by id.
+///
+/// A frame is a node too ([`NodeBody::Frame`]), and every read named `node.*`
+/// on this surface means a node that *computes*. One derivation, so no read has
+/// to remember to filter and none of them can disagree about what a node is.
+fn kind_nodes(graph: &Graph) -> impl Iterator<Item = (&Node<MaterialOp>, MaterialOp)> {
+    graph
+        .tree(TREE)
+        .into_iter()
+        .flat_map(Tree::nodes)
+        .filter_map(|node| match &node.body {
+            NodeBody::Kind(op) => Some((node, *op)),
+            _ => None,
         })
-    }
-    let mut on_cycle: Vec<NodeId> = nodes
-        .iter()
-        .filter(|n| reaches(n.id, n.id, edges, &mut BTreeSet::new()))
-        .map(|n| n.id)
-        .collect();
-    on_cycle.sort_by_key(|id| id.raw());
-    on_cycle
 }
 
-/// R1383 — horizontal gap (graph units) between the layered columns a
-/// [`layered_layout`] pass produces; a column's pitch is [`NODE_W`] + this.
-const LAYER_GAP: i32 = 60;
+/// R1596 — every node of the taxonomy by value, for the readers that need a
+/// slice rather than a stream (the layout metrics, which index by position).
+fn kind_node_vec(graph: &Graph) -> Vec<Node<MaterialOp>> {
+    kind_nodes(graph).map(|(node, _)| node.clone()).collect()
+}
 
-/// R1442 — the layered-layout pass the `auto_layout` verb runs, tuned for this
-/// editor's cards and handed to the shared [`pinion_graph`] solver.
+/// R1596 — the node `id`, when it is one of the taxonomy's.
+fn kind_node(graph: &Graph, id: NodeId) -> Option<(&Node<MaterialOp>, MaterialOp)> {
+    let node = graph.tree(TREE)?.node(id)?;
+    match &node.body {
+        NodeBody::Kind(op) => Some((node, *op)),
+        _ => None,
+    }
+}
+
+/// R1596 — every frame, ascending by id ([`NodeBody::Frame`]).
+fn frame_nodes(graph: &Graph) -> impl Iterator<Item = &Node<MaterialOp>> {
+    graph
+        .tree(TREE)
+        .into_iter()
+        .flat_map(Tree::nodes)
+        .filter(|node| node.is_frame())
+}
+
+/// R1596 — the frame `id`, if `id` names one.
+fn frame_node(graph: &Graph, id: FrameId) -> Option<&Node<MaterialOp>> {
+    graph.tree(TREE)?.node(id).filter(|node| node.is_frame())
+}
+
+/// R1227 / R1596 — the nodes frame `id` holds, as a **fact** rather than a
+/// rectangle test ([`Document::members`], one level).
+///
+/// The editor asked its geometry — "whose centre is inside this box" — on every
+/// read, so a frame silently adopted a node dragged over it and abandoned one
+/// dragged out, and a resize changed what the frame *said* it held with nobody
+/// having edited membership. R1589 made containment a stored relation the
+/// document maintains, which is Blender's `bNode::parent` and the reason
+/// `NODE_OT_join` exists there as an explicit act.
+fn frame_members(graph: &Graph, id: FrameId) -> Vec<Node<MaterialOp>> {
+    let Some(tree) = graph.tree(TREE) else {
+        return Vec::new();
+    };
+    graph
+        .members(TREE, id)
+        .into_iter()
+        .filter_map(|member| tree.node(member).cloned())
+        .collect()
+}
+
+/// R879 — one node's move within a gesture: `(id, before, after)` positions.
+///
+/// A drag / nudge writes positions live and journals the run afterwards, so the
+/// *before* half is what the undo step has to reconstruct and this triple is how
+/// a caller carries it out of the gesture that observed it.
+type NodeMove = (NodeId, (i32, i32), (i32, i32));
+
+/// R1596 — every wire, in insertion order.
+fn edges(graph: &Graph) -> &[Edge] {
+    graph.tree(TREE).map_or(&[], Tree::links)
+}
+
+/// R1596 — the wire `id`.
+fn edge(graph: &Graph, id: EdgeId) -> Option<&Edge> {
+    graph.tree(TREE)?.link(id)
+}
+
+/// R1596 — the signature of node `id`: the ports it presents right now.
+fn signature_of(graph: &Graph, id: NodeId) -> Option<Signature<MaterialOp>> {
+    graph.signature(TREE, id)
+}
+
+/// R1596 — the declared type of one of node `id`'s input ports.
+fn input_type(graph: &Graph, id: NodeId, port: usize) -> Option<PortType> {
+    signature_of(graph, id)?.inputs.get(port).map(|p| p.ty)
+}
+
+/// R1596 — the declared type of one of node `id`'s output ports.
+fn output_type(graph: &Graph, id: NodeId, port: usize) -> Option<PortType> {
+    signature_of(graph, id)?.outputs.get(port).map(|p| p.ty)
+}
+
+/// R899 / R1596 — the literal an unconnected input port carries: what has been
+/// authored on THIS node's port, else the kind's own resting value.
+///
+/// The editor stored a full `input_defaults` vector on every node, seeded from
+/// the port types; the crate splits that into the kind's declaration and the
+/// node's override, so a node only carries what an author actually changed.
+fn input_default(graph: &Graph, id: NodeId, port: usize) -> Option<CellValue> {
+    let declared = signature_of(graph, id)?.inputs.get(port)?.default.clone();
+    graph
+        .port_value(TREE, id, PortRef::input(uport(port)))
+        .cloned()
+        .or(declared)
+}
+
+/// R1257 / R1596 — the constant a **source** node's output emits: the value
+/// authored on output port 0, else the kind's resting value.
+fn source_const(graph: &Graph, id: NodeId) -> Option<CellValue> {
+    if !is_source(graph, id) {
+        return None;
+    }
+    let declared = signature_of(graph, id)?.outputs.first()?.default.clone();
+    graph
+        .port_value(TREE, id, PortRef::output(0))
+        .cloned()
+        .or(declared)
+}
+
+/// R1257 / R1596 — whether node `id` is an authorable **source**: it computes
+/// nothing from anything, so what its output carries is a value someone typed.
+///
+/// **Derived from the signature**, where the editor stored an `output_const:
+/// Option<CellValue>` whose `Some`-ness was the discriminator and whose
+/// consistency with the port list `node_invariants_hold` had to check.
+fn is_source(graph: &Graph, id: NodeId) -> bool {
+    signature_of(graph, id).is_some_and(|s| s.inputs.is_empty() && !s.outputs.is_empty())
+}
+
+/// A port index as the crate spells one.
+fn uport(port: usize) -> u32 {
+    u32::try_from(port).unwrap_or(u32::MAX)
+}
+
+/// A port index as this editor spells one (the inverse of [`uport`]).
+fn uidx(port: u32) -> usize {
+    usize::try_from(port).unwrap_or(usize::MAX)
+}
+
+/// R1383 / R1597 — the arrangement passes the `auto_layout` and `force_layout`
+/// verbs run, tuned for this editor's cards.
+///
+/// R1597 lifted the passes themselves into `pinion-node-graph`
+/// ([`Layered`] / [`Organic`]): the projection from a document to the solver —
+/// which nodes take part, their extents, their links as index pairs, and where a
+/// layer index lands in canvas coordinates — is not application-specific, and it
+/// was living here, so every other node-graph application had to copy it. What
+/// stays here is what genuinely IS this application's: how wide and tall a card
+/// is, and how much air to leave between columns.
 ///
 /// `row_gap` is the vertical clearance between two nodes stacked in one column;
 /// `bend_size` the free-axis extent a long edge's BEND occupies in a column it
@@ -1054,424 +1183,81 @@ const LAYER_GAP: i32 = 60;
 /// never zero, or the compaction could stack two wires on one coordinate); and
 /// `sweeps` the barycenter crossing-reduction pass count, fixed so the layout
 /// always terminates and is deterministic (ZERO-FLAKE).
-const LAYOUT: Sugiyama = Sugiyama {
-    row_gap: 24,
-    bend_size: 12,
-    sweeps: 4,
+const LAYOUT: Layered = Layered {
+    sugiyama: Sugiyama {
+        row_gap: 24,
+        bend_size: 12,
+        sweeps: 4,
+    },
+    // R1383 — horizontal air between two columns. R1597: the COLUMN's own width
+    // is no longer part of this number — a column is as wide as its widest card,
+    // so a row of reroute knots no longer costs a row of full cards.
+    column_gap: 60,
 };
 
+/// R1390 / R1597 — the organic pass: a fixed iteration count so the annealing
+/// always terminates and the arrangement is reproducible (ZERO-FLAKE), and an
+/// ideal spring length of one card plus one gap, so it spaces nodes comparably
+/// to the layered pass.
+const ORGANIC: Organic = Organic {
+    iterations: 200,
+    ideal_length: 190.0,
+};
+
+/// R1597 — how much canvas one card takes, which is the one thing a layout pass
+/// cannot derive for itself: a node's width may be authored
+/// (`Appearance::width`) and its height is a function of the ports THIS editor
+/// chooses to draw.
+fn card_extent(node: &Node<MaterialOp>) -> Extent {
+    Extent::new(node.width(), node.height())
+}
+
 /// R1441 — the edge-crossing count of a fresh layered layout of this graph: the
-/// tidiness metric [`layered_layout`] is judged by, and the reason the long-edge
-/// split is separately observable from the coordinate solver.
+/// tidiness metric [`LAYOUT`] is judged by, and the reason the long-edge split is
+/// separately observable from the coordinate solver.
 ///
 /// Crossings are a property of the ORDER alone, so this reports what the
 /// barycenter sweeps achieved over the PROPER layering — the number the split
-/// improves and the [`pinion_graph`] coordinate solver provably cannot change.
-/// Derived on demand from the current graph rather than cached at the last
-/// `auto_layout`, so it cannot go stale after an edit.
-fn layout_crossings(nodes: &[GraphNode], edges: &[Edge]) -> usize {
-    layout_of(nodes, edges).map_or(0, |(_, layout)| layout.crossings())
+/// improves and the coordinate solver provably cannot change. Derived on demand
+/// from the current graph rather than cached at the last `auto_layout`, so it
+/// cannot go stale after an edit.
+fn layout_crossings(graph: &Graph) -> usize {
+    LAYOUT
+        .run(graph, TREE, (0, 0), card_extent)
+        .quality()
+        .map_or(0, |q| q.crossings)
 }
 
 /// R1441 — `(inner segments, of those drawn straight)` for a fresh layout of this
 /// graph: **the paper's guarantee, published as data**.
 ///
-/// Brandes-Köpf promises that every inner segment — a piece of a long edge with
-/// bends at both ends — lands on one coordinate. That promise is about vertices a
-/// client cannot see (a bend is not a node), so asserting it from node positions
-/// alone is impossible; publishing the count makes it checkable over the wire
-/// (§2 #7) instead of asserted in prose. Both numbers ride together because
-/// "every inner segment is straight" says nothing when a graph has none.
-fn layout_inner_straightness(nodes: &[GraphNode], edges: &[Edge]) -> (usize, usize) {
-    layout_of(nodes, edges).map_or((0, 0), |(_, layout)| layout.inner_segments())
+/// Brandes-Köpf promises every inner segment — a run joining two consecutive
+/// layers with a bend at each end — comes out vertical. Publishing the pair
+/// rather than a ratio means a client can tell "none were straight" from "there
+/// were none", which a single number cannot.
+fn layout_inner_straightness(graph: &Graph) -> (usize, usize) {
+    LAYOUT
+        .run(graph, TREE, (0, 0), card_extent)
+        .quality()
+        .map_or((0, 0), |q| (q.inner_segments, q.straight_inner))
 }
 
-/// R1442 — the graph as the abstract vertices [`pinion_graph`] works on: index
-/// `i` is `ids[i]`, so the solver never sees a [`NodeId`] and mapping an answer
-/// back is an index lookup.
+/// R1258 / R1596 — whether a document upholds every structural invariant.
 ///
-/// A self-loop, and any edge touching an absent node, is dropped here rather
-/// than in the solver, because "absent" is a fact about this editor's model.
-struct GraphIndex {
-    /// The id order the vertex indices follow — ascending, so the mapping is
-    /// stable across calls.
-    ids: Vec<NodeId>,
-    /// Each node's card height, by the same index: the extent the layout has to
-    /// keep clear along the free axis.
-    sizes: Vec<i32>,
-    /// The graph's edges as index pairs.
-    edges: Vec<(usize, usize)>,
-}
-
-/// R1442 — project the model onto [`GraphIndex`]. `None` for an empty graph,
-/// which has no layout to speak of.
-fn graph_index(nodes: &[GraphNode], edges: &[Edge]) -> Option<GraphIndex> {
-    if nodes.is_empty() {
-        return None;
-    }
-    let mut ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
-    ids.sort_by_key(|id| id.raw());
-    let slot: BTreeMap<NodeId, usize> = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
-    let height_of: BTreeMap<NodeId, i32> = nodes.iter().map(|n| (n.id, n.height())).collect();
-    let sizes: Vec<i32> = ids.iter().map(|id| height_of[id]).collect();
-    let mut pairs: Vec<(usize, usize)> = edges
-        .iter()
-        .filter_map(|e| Some((*slot.get(&e.from_node)?, *slot.get(&e.to_node)?)))
-        .collect();
-    // Sorted so the cycle break — which drops whichever edge of a cycle it
-    // reaches last — cannot depend on the order edges were authored in.
-    pairs.sort_unstable();
-    Some(GraphIndex {
-        ids,
-        sizes,
-        edges: pairs,
-    })
-}
-
-/// R1442 — one layered pass over the current graph, with the mapping that reads
-/// it back.
+/// The editor kept three predicates of its own — `node_invariants_hold`,
+/// `edges_invariants_hold`, `graph_invariants_hold` — checking unique ids, a
+/// node's stored port list against its op's canonical shape, per-port default
+/// typing, a source's constant, type-assignable wires and the one-wire-per-input
+/// rule. Every one of those is now either impossible to state (a node has no
+/// stored port list: the kind declares them) or [`Document::validate`]'s, which
+/// also catches four things the editor's never did — a dangling parent, a
+/// container that is not a frame, a containment cycle and a dangling group
+/// instance.
 ///
-/// One definition serves [`layered_layout`] (which places nodes), and
-/// [`layout_crossings`] / [`layout_inner_straightness`] (which only measure), so
-/// a published metric can never describe a different layout than the applied
-/// one. Derived per call rather than cached, so an edit cannot leave it stale.
-fn layout_of(nodes: &[GraphNode], edges: &[Edge]) -> Option<(GraphIndex, pinion_graph::Layout)> {
-    let index = graph_index(nodes, edges)?;
-    let layout = LAYOUT.run(&index.sizes, &index.edges);
-    Some((index, layout))
-}
-
-/// R1383 — a **layered (Sugiyama) auto-layout** of the graph: the pure geometry
-/// the `auto_layout` verb applies. Maps every node id to a target `(x, y)` in
-/// graph units, arranging the graph into left-to-right columns so data flows
-/// forward (a source's column sits left of its consumer's) with a
-/// crossing-reduced vertical order inside each column, anchored at `origin` (the
-/// graph's current top-left, so the tidied graph stays put).
-///
-/// The three classic Sugiyama phases, each deterministic — id-ordered iteration,
-/// stable total-order sorts, integer keys, id tie-breaks — and, crucially, the
-/// algorithm reads only the node *set*, each node's [`GraphNode::height`], and
-/// the edges, **never** the current `x` / `y`, so identical inputs always yield
-/// an identical layout (the pass is idempotent once applied):
-///
-/// 1. **Cycle breaking** — an edge into a node still on the DFS stack is a
-///    *back-edge*, dropped from the layering set. A data-flow graph is usually a
-///    DAG ([`graph_is_acyclic`]), but the model permits a cycle and a layered
-///    form needs an acyclic base.
-/// 2. **Layer assignment** — longest-path layering by Kahn topological order over
-///    the acyclic edges: a source (no acyclic in-edge) is layer 0, every other
-///    node one past its deepest predecessor, so each acyclic edge spans ≥1 layer.
-/// 3. **Proper layering + ordering + coordinates** (R1441) — long edges split
-///    over bends, reordered by [`LAYOUT`]`.sweeps` barycenter sweeps, and given
-///    a within-column coordinate by the **Brandes-Köpf** solver, so an edge runs
-///    straight wherever the ordering allows.
-///
-/// All three phases live in [`pinion_graph`] and work on abstract vertex indices
-/// (R1442 lifted them there when the live topology view became their second
-/// consumer) — this function's remaining job is the MAPPING: layer `l` becomes
-/// the column at `origin.x + l·(NODE_W + LAYER_GAP)`, and the solved centres are
-/// shifted so the topmost real node sits at `origin.y`, keeping the tidied graph
-/// where it was. Comment frames are annotations left where they
-/// are (a full re-layout may orphan a frame from its nodes — the same
-/// nodes-only contract `align_selected` / `distribute_selected` keep).
-fn layered_layout(
-    nodes: &[GraphNode],
-    edges: &[Edge],
-    origin: (i32, i32),
-) -> BTreeMap<NodeId, (i32, i32)> {
-    let Some((index, layout)) = layout_of(nodes, edges) else {
-        return BTreeMap::new();
-    };
-    // The solver's coordinates are relative, and it reports the topmost leading
-    // edge over the REAL vertices — bends excluded, since a bend is a wire and
-    // letting one set the anchor would drift the graph by half a wire.
-    let top = layout.top();
-    index
-        .ids
-        .iter()
-        .enumerate()
-        .map(|(i, &id)| {
-            let column = i32::try_from(layout.layers()[i]).unwrap_or(0);
-            let x = origin.0 + column * (NODE_W + LAYER_GAP);
-            let y = origin.1 + (layout.centres()[i] - index.sizes[i] / 2) - top;
-            (id, (x, y))
-        })
-        .collect()
-}
-
-/// R1390 — the fixed iteration count of the force-directed relaxation. Fixed so
-/// the annealing always terminates and the layout is deterministic (ZERO-FLAKE),
-/// the [`LAYOUT`]`.sweeps` discipline carried to the spring-electrical loop.
-const FORCE_ITERS: usize = 200;
-
-/// R1390 — the ideal edge length: the natural spring rest length a connected pair
-/// settles toward, and the repulsion's length scale. One column pitch (`NODE_W`
-/// 130 + `LAYER_GAP` 60), so the organic layout spaces nodes comparably to the
-/// layered one.
-const FORCE_K: f64 = 190.0;
-
-/// R1390 — the distance floor guarding the inverse-distance repulsion from a
-/// divide-by-zero when two nodes (near-)coincide.
-const FORCE_EPS: f64 = 1.0;
-
-/// R1390 — a **force-directed (Fruchterman–Reingold spring-electrical) organic
-/// layout** of the graph: the pure geometry the `force_layout` verb applies, the
-/// organic counterpart to the layered [`layered_layout`]. Where the layered pass
-/// columns a DAG so data flows forward, this relaxes the graph into a compact,
-/// symmetric cluster — the canonical layout for a cyclic or undirected topology
-/// (yEd "organic", Graphviz `neato`, Gephi ForceAtlas), a second arrangement mode
-/// a pro editor offers beside "tidy".
-///
-/// Every node repels every other by an inverse-distance electrical force
-/// (`k²/d`); every edge pulls its endpoints together by a spring (`d²/k`). Each
-/// step sums those into a per-node displacement, moves the node by at most a
-/// linearly-cooling *temperature*, and repeats — the system anneals to a
-/// low-energy rest state. `k` is [`FORCE_K`], the ideal edge length.
-///
-/// **Deterministic (ZERO-FLAKE), like [`layered_layout`]:** it reads only the
-/// node *set* and the edges — never the current `x` / `y` — seeding from a fixed
-/// grid in id order ([`force_grid_cols`], no trigonometry, so the arithmetic is
-/// `+ − × ÷ √` only and bit-identical across platforms), then running a fixed
-/// [`FORCE_ITERS`] iterations with id-ordered accumulation and integer tie-breaks
-/// ([`force_unit`]). Identical inputs always yield an identical layout, so the
-/// pass is idempotent once applied. The relaxed cloud is finally translated so
-/// its bounding-box top-left sits at `origin` (the graph's current top-left, so
-/// the organic graph stays roughly put), then rounded to graph units.
-fn force_directed_layout(
-    nodes: &[GraphNode],
-    edges: &[Edge],
-    origin: (i32, i32),
-) -> BTreeMap<NodeId, (i32, i32)> {
-    if nodes.is_empty() {
-        return BTreeMap::new();
-    }
-    let mut ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
-    ids.sort_by_key(|id| id.raw());
-    let node_set: BTreeSet<NodeId> = ids.iter().copied().collect();
-
-    // Deterministic grid seed in id order (no trig -> bit-identical across
-    // platforms): distinct positions, so no pair starts coincident.
-    let cols = force_grid_cols(ids.len());
-    let mut pos: BTreeMap<NodeId, (f64, f64)> = ids
-        .iter()
-        .enumerate()
-        .map(|(i, &id)| {
-            let col = f64::from(u32::try_from(i % cols).unwrap_or(0));
-            let row = f64::from(u32::try_from(i / cols).unwrap_or(0));
-            (id, (col * FORCE_K, row * FORCE_K))
-        })
-        .collect();
-
-    // The springs: present, non-self edges (undirected — direction is irrelevant
-    // to an organic layout).
-    let springs: Vec<(NodeId, NodeId)> = edges
-        .iter()
-        .filter(|e| {
-            e.from_node != e.to_node
-                && node_set.contains(&e.from_node)
-                && node_set.contains(&e.to_node)
-        })
-        .map(|e| (e.from_node, e.to_node))
-        .collect();
-
-    let iters_f = f64::from(u32::try_from(FORCE_ITERS).unwrap_or(1)).max(1.0);
-    for iter in 0..FORCE_ITERS {
-        // Linearly-cooling temperature: a full ideal length at first, annealing
-        // toward zero so late steps only fine-tune.
-        let temp = FORCE_K * (1.0 - f64::from(u32::try_from(iter).unwrap_or(0)) / iters_f);
-        let mut disp: BTreeMap<NodeId, (f64, f64)> =
-            ids.iter().map(|&id| (id, (0.0, 0.0))).collect();
-
-        // Repulsion between every unordered id pair (electrical, k²/d).
-        for (ai, &a) in ids.iter().enumerate() {
-            for &b in &ids[ai + 1..] {
-                let (ux, uy, apart) = force_unit(a, pos[&a], b, pos[&b]);
-                let rep = FORCE_K * FORCE_K / apart;
-                {
-                    let d = disp.get_mut(&a).expect("a present");
-                    d.0 += ux * rep;
-                    d.1 += uy * rep;
-                }
-                {
-                    let d = disp.get_mut(&b).expect("b present");
-                    d.0 -= ux * rep;
-                    d.1 -= uy * rep;
-                }
-            }
-        }
-
-        // Attraction along each spring (d²/k), pulling the endpoints together.
-        for &(from, to) in &springs {
-            let (ux, uy, apart) = force_unit(from, pos[&from], to, pos[&to]);
-            let att = apart * apart / FORCE_K;
-            {
-                let d = disp.get_mut(&from).expect("from present");
-                d.0 -= ux * att;
-                d.1 -= uy * att;
-            }
-            {
-                let d = disp.get_mut(&to).expect("to present");
-                d.0 += ux * att;
-                d.1 += uy * att;
-            }
-        }
-
-        // Move each node by its displacement, capped at the temperature.
-        for &id in &ids {
-            let (dx, dy) = disp[&id];
-            let mag = (dx * dx + dy * dy).sqrt();
-            let scale = if mag > temp { temp / mag } else { 1.0 };
-            let p = pos.get_mut(&id).expect("id present");
-            p.0 += dx * scale;
-            p.1 += dy * scale;
-        }
-    }
-
-    // Translate the relaxed cloud so its bounding-box top-left sits at `origin`.
-    let min_x = pos.values().map(|p| p.0).fold(f64::INFINITY, f64::min);
-    let min_y = pos.values().map(|p| p.1).fold(f64::INFINITY, f64::min);
-    ids.iter()
-        .map(|&id| {
-            let (x, y) = pos[&id];
-            (
-                id,
-                (
-                    origin.0 + round_i32(x - min_x),
-                    origin.1 + round_i32(y - min_y),
-                ),
-            )
-        })
-        .collect()
-}
-
-/// R1390 helper — the unit vector pointing from `b` toward `a` and their
-/// distance ([`force_directed_layout`]'s repulsion/attraction direction), the
-/// distance floored at [`FORCE_EPS`]. If the two (near-)coincide the direction
-/// falls back to a deterministic ±x axis by id order, so the force never divides
-/// by zero and the layout stays reproducible.
-fn force_unit(a: NodeId, ap: (f64, f64), b: NodeId, bp: (f64, f64)) -> (f64, f64, f64) {
-    let dx = ap.0 - bp.0;
-    let dy = ap.1 - bp.1;
-    let dist2 = dx * dx + dy * dy;
-    if dist2 > FORCE_EPS * FORCE_EPS {
-        let dist = dist2.sqrt();
-        (dx / dist, dy / dist, dist)
-    } else {
-        let dir = if a.raw() < b.raw() { 1.0 } else { -1.0 };
-        (dir, 0.0, FORCE_EPS)
-    }
-}
-
-/// R1390 helper — the column count of the deterministic grid seed: `ceil(√n)` by
-/// integer search, so the seed is a near-square block (at least one column).
-fn force_grid_cols(n: usize) -> usize {
-    let mut c = 1usize;
-    while c * c < n {
-        c += 1;
-    }
-    c
-}
-
-/// R1258 — the canonical `(input, output)` port shape a compute op must have,
-/// from the [`PALETTE`] SSOT. `None` for [`NodeOp::Reroute`] (a wire-typed
-/// passthrough, not a palette kind — validated as 1-in/1-out same-type instead).
-fn palette_shape(op: NodeOp) -> Option<(&'static [PortType], &'static [PortType])> {
-    PALETTE
-        .iter()
-        .find(|&&(_, _, _, o)| o == op)
-        .map(|&(_, inputs, outputs, _)| (inputs, outputs))
-}
-
-/// R1258 — whether one node's stored fields are self-consistent: the invariants
-/// every construction path upholds, but a `set_graph` / loaded blob (an
-/// *untrusted* input on the §2 #2 AI-first write path) could violate, silently
-/// mis-evaluating. Each check mirrors a construction guarantee: one typed pin
-/// default per input port; a source (and only a source) carries an
-/// `output_const` typed to output port 0 (R1257); and the `op` matches its
-/// canonical port arity (a palette op) or the reroute 1-in/1-out same-type
-/// passthrough — so an `Add` with one input (which would evaluate to a permanent
-/// `null`) is rejected here, not silently accepted. (R1259 — `is_reroute` is no
-/// longer a stored field to cross-check; it is *derived* from `op`.)
-fn node_invariants_hold(node: &GraphNode) -> bool {
-    if node.input_defaults.len() != node.input_ports.len() {
-        return false;
-    }
-    if node
-        .input_defaults
-        .iter()
-        .zip(&node.input_ports)
-        .any(|(d, p)| d.kind() != p.default_value().kind())
-    {
-        return false;
-    }
-    let is_source = node.input_ports.is_empty() && !node.output_ports.is_empty();
-    match &node.output_const {
-        Some(c) => {
-            if !is_source || c.kind() != node.output_ports[0].default_value().kind() {
-                return false;
-            }
-        }
-        None if is_source => return false,
-        None => {}
-    }
-    match palette_shape(node.op) {
-        Some((inputs, outputs)) => {
-            node.input_ports.as_slice() == inputs && node.output_ports.as_slice() == outputs
-        }
-        // Reroute: exactly one input + one output of the same wire type.
-        None => {
-            node.op == NodeOp::Reroute
-                && node.input_ports.len() == 1
-                && node.output_ports.len() == 1
-                && node.input_ports[0] == node.output_ports[0]
-        }
-    }
-}
-
-/// R1258 — whether the edge set is a valid wiring over `nodes`: every edge runs
-/// between existing, in-range, type-assignable ports (the `validate_connection`
-/// gate, applied to an injected graph the interactive gate never saw), and no
-/// input port takes more than one wire (the single-wire rule the evaluator's
-/// first-match `resolve_input` assumes). A self-loop is *allowed* — it is an
-/// eval-safe cycle (`value` = `null`, `eval.acyclic` = `false`), observable, not
-/// silently wrong.
-fn edges_invariants_hold(nodes: &[GraphNode], edges: &[Edge]) -> bool {
-    let node = |id: NodeId| nodes.iter().find(|n| n.id == id);
-    for e in edges {
-        let (Some(src), Some(dst)) = (node(e.from_node), node(e.to_node)) else {
-            return false;
-        };
-        let (Some(from_ty), Some(to_ty)) =
-            (src.output_type(e.from_port), dst.input_type(e.to_port))
-        else {
-            return false;
-        };
-        if !from_ty.is_assignable_to(to_ty) {
-            return false;
-        }
-    }
-    let mut wired_inputs = BTreeSet::new();
-    edges
-        .iter()
-        .all(|e| wired_inputs.insert((e.to_node, e.to_port)))
-}
-
-/// R1258 — whether an injected graph upholds every structural invariant the
-/// interactive editor maintains, so the `load_json` restore path can reject a
-/// malformed `set_graph` blob (graph unchanged, `false`) rather than silently
-/// evaluating it wrong. Checks: unique node / edge ids, per-node consistency
-/// ([`node_invariants_hold`]), and a valid wiring ([`edges_invariants_hold`]).
-/// A serialized *live* graph always passes (round-trip is total).
-fn graph_invariants_hold(nodes: &[GraphNode], edges: &[Edge]) -> bool {
-    let node_ids: BTreeSet<NodeId> = nodes.iter().map(|n| n.id).collect();
-    if node_ids.len() != nodes.len() {
-        return false;
-    }
-    let edge_ids: BTreeSet<u32> = edges.iter().map(|e| e.id.raw()).collect();
-    if edge_ids.len() != edges.len() {
-        return false;
-    }
-    nodes.iter().all(node_invariants_hold) && edges_invariants_hold(nodes, edges)
+/// Kept as a named predicate because `set_graph` is a *gate*: a blob that
+/// arrives over the wire is rejected whole rather than half-loaded.
+fn graph_invariants_hold(graph: &Graph) -> bool {
+    graph.validate().is_empty()
 }
 
 /// R1220 — the first input port index of [`PALETTE`] kind `kind` an output of
@@ -1480,8 +1266,8 @@ fn graph_invariants_hold(nodes: &[GraphNode], edges: &[Edge]) -> bool {
 /// gate [`pin_create_candidates`] filters on, so a returned candidate always
 /// resolves a wire target here.
 fn first_compatible_input(kind: usize, from: PortType) -> Option<usize> {
-    let &(_, input_ports, _, _) = PALETTE.get(kind)?;
-    input_ports.iter().position(|&t| from.is_assignable_to(t))
+    let &(_, op) = PALETTE.get(kind)?;
+    op.inputs().iter().position(|p| from.is_assignable_to(p.ty))
 }
 
 /// R1220 — the [`PALETTE`] kinds a pin-drop from an output of type `from` may
@@ -1502,185 +1288,73 @@ fn pin_create_candidates(from: PortType, filter: &str) -> Vec<usize> {
         .collect()
 }
 
-/// One node: a titled card with typed input ports (left edge) and typed
-/// output ports (right edge), placed at canvas `(x, y)`. Carries a stable
-/// [`NodeId`]. R898 — the ports are [`PortType`]-typed sockets; the arity
-/// (`inputs()` / `outputs()`) is now the *length* of those lists, so the
-/// pre-R898 count-only contract is the degenerate read of the richer model.
-// R899 — no `Eq`: `input_defaults` carries [`CellValue`]s (an `f64` `Float`
-// arm), so the model is `PartialEq` only. Never a set / map key, so `Eq` is
-// not required (the same reason `SerializedGraph` / `GraphDelta` below drop it).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct GraphNode {
-    id: NodeId,
-    title: String,
-    x: i32,
-    y: i32,
-    input_ports: Vec<PortType>,
-    output_ports: Vec<PortType>,
-    /// R899 — the literal default per input port (parallel to `input_ports`),
-    /// used when the port is unconnected (the "pin default value"). Typed by
-    /// the port's [`PortType`]; retained while the port is wired (the Unreal
-    /// model — wiring hides the editor, it does not discard the value).
-    input_defaults: Vec<CellValue>,
-    /// R1255 — the node's **compute identity** for graph evaluation (the SSOT
-    /// the evaluator dispatches on). Set once from the [`PALETTE`] kind (or
-    /// [`NodeOp::Reroute`]) at construction and frozen, NOT re-derived from the
-    /// rewritable `title` — a renamed `Add` still adds ([[abstraction-needs-second-consumer]]
-    /// R1242 identity lesson, generalised from `is_reroute` to every op). Schema
-    /// 6 always serializes it (no serde `default`); a pre-R1255 (schema ≤ 5) blob
-    /// lacks the field and fails to deserialize, so the load falls back to a
-    /// fresh graph — the same outcome as the explicit schema-version reject.
-    op: NodeOp,
-    /// R1257 — for a **source** node (no inputs, ≥1 output, not a reroute) the
-    /// authored constant its output emits: the output-side twin of the R899
-    /// input pin default. `None` for a compute op / sink / reroute (their output
-    /// is *derived*, not authored). Typed by output port 0's [`PortType`]
-    /// (`Vector`→a `Color`, `Float`→an `f64`). The evaluator returns it for a
-    /// source; the AI-first `intervene node.<id>.value` authors it. `Some`
-    /// doubles as the "is an authorable source" discriminator
-    /// ([`GraphNode::is_source`]).
-    ///
-    /// **Serde (R1259 correction)**: unlike `op` (a bare enum that hard-fails
-    /// deserialize when absent), an `Option<CellValue>` is *implicitly*
-    /// `#[serde(default)]` — serde reads a missing field as `None`, it does NOT
-    /// error. So a stale blob is NOT rejected by *this field's* absence (the
-    /// earlier claim was wrong); rejection comes from the schema-version gate
-    /// and, at the same version, from [`node_invariants_hold`], which requires a
-    /// source to carry `Some` and a non-source to carry `None`. That validator
-    /// is the SSOT for this invariant on the `set_graph` write path — not a
-    /// deserialize failure.
-    output_const: Option<CellValue>,
+/// R1596 — the card geometry of a node, which is the application's to know.
+///
+/// R1589 settled where this belongs: a frame's extent needs card geometry, and a
+/// model crate deliberately has none — `Node` carries `x`, `y` and an
+/// `Appearance` whose `width` / `height` are *authored* overrides in "the
+/// application's own units". So the derivation lives here, as an extension trait
+/// on the crate's node, which is what keeps `right()` / `bottom()` one answer
+/// across the paint, the marquee, align, distribute and the frame clamp.
+///
+/// The two arms are the two things a node can be on this canvas: a **frame**,
+/// whose size is authored because nothing derives it, and everything else, whose
+/// size is a function of how many ports it draws.
+trait NodeGeometry {
+    /// Width in graph units.
+    fn width(&self) -> i32;
+    /// Height in graph units.
+    fn height(&self) -> i32;
+    /// Right extent in graph units.
+    fn right(&self) -> i32;
+    /// Bottom extent in graph units.
+    fn bottom(&self) -> i32;
+    /// Whether this node is a wire-routing knot — drawn as a dot, not a card.
+    fn is_reroute(&self) -> bool;
+    /// The name to paint: the rename if there is one, else the kind's.
+    fn title(&self) -> String;
 }
 
-impl GraphNode {
-    fn new(
-        id: u32,
-        title: &str,
-        x: i32,
-        y: i32,
-        inputs: &[PortType],
-        outputs: &[PortType],
-        op: NodeOp,
-    ) -> Self {
-        Self {
-            id: NodeId(id),
-            title: title.to_owned(),
-            x,
-            y,
-            input_ports: inputs.to_vec(),
-            output_ports: outputs.to_vec(),
-            input_defaults: inputs.iter().map(|t| t.default_value()).collect(),
-            op,
-            // R1257 — a source (no inputs, ≥1 output) seeds its output constant
-            // from output port 0's type default (`Vector`→grey, `Float`→0.0),
-            // authorable thereafter via `intervene node.<id>.value`. A compute
-            // op / sink / reroute has no authored constant (`None`).
-            output_const: outputs
-                .first()
-                .filter(|_| inputs.is_empty())
-                .map(|t| t.default_value()),
-        }
-    }
-
-    /// R1242 / R1259 — whether this node is a **reroute** knot (a wire-routing
-    /// passthrough spliced by `add_reroute`), not a compute op. **DERIVED** from
-    /// the [`NodeOp`] compute identity, not a stored field — R1259 dropped the
-    /// redundant serialized `is_reroute: bool` (an audit flagged it as two
-    /// representations of one fact; it was always `== (op == Reroute)`). Old
-    /// blobs' now-unknown `is_reroute` key is ignored on load; `op` derives the
-    /// truth. The paint (compact knot vs card), the `reroute_ids` enumeration,
-    /// and the `node.<id>.is_reroute` read all key off this.
-    fn is_reroute(&self) -> bool {
-        self.op == NodeOp::Reroute
-    }
-
-    /// R1257 — whether this node is an authorable **source** (its output is a
-    /// stored constant, not a derived value). The `intervene node.<id>.value`
-    /// write gate + the `node.<id>.is_source` read.
-    fn is_source(&self) -> bool {
-        self.output_const.is_some()
-    }
-
-    /// R1256 — construct a [`PALETTE`] node of `kind` at `(x, y)` with id `id`,
-    /// reading `(title, ports, op)` from the palette SSOT rather than
-    /// re-spelling them. The single palette-node constructor behind
-    /// [`default_nodes`] / `add_node` / `commit_pin_create_kind`, so a kind's
-    /// title / ports / op live in exactly one place (an audit found
-    /// `default_nodes` hand-spelled `op` literals that could drift from
-    /// `PALETTE`). `None` for an out-of-range kind.
-    fn from_palette(kind: usize, id: u32, x: i32, y: i32) -> Option<Self> {
-        let &(title, inputs, outputs, op) = PALETTE.get(kind)?;
-        Some(Self::new(id, title, x, y, inputs, outputs, op))
-    }
-
-    /// R899 — the literal default of input port `port` (`None` out of range).
-    fn input_default(&self, port: usize) -> Option<&CellValue> {
-        self.input_defaults.get(port)
-    }
-
-    /// Input-port arity — the pre-R898 `inputs` count, now derived from the
-    /// typed list so the RPC `node.<id>.inputs` contract stays byte-stable.
-    fn inputs(&self) -> usize {
-        self.input_ports.len()
-    }
-
-    /// Output-port arity (the derived count twin of [`GraphNode::inputs`]).
-    fn outputs(&self) -> usize {
-        self.output_ports.len()
-    }
-
-    /// The type of input port `port`, if it exists (the `add_edge` type gate).
-    fn input_type(&self, port: usize) -> Option<PortType> {
-        self.input_ports.get(port).copied()
-    }
-
-    /// The type of output port `port`, if it exists.
-    fn output_type(&self, port: usize) -> Option<PortType> {
-        self.output_ports.get(port).copied()
-    }
-
-    /// Port rows = the taller of the two columns (at least one, so a
-    /// source / sink node still has a body).
-    fn rows(&self) -> i32 {
-        irow(self.inputs().max(self.outputs()).max(1))
-    }
-
-    /// R1243 — the node's width in graph units: a reroute knot is a compact
-    /// [`KNOT_SIZE`] dot, every other node the fixed [`NODE_W`] card. The intended
-    /// one home for "how wide is this node" — the horizontal twin of
-    /// [`GraphNode::height`] — so `right()` / `contains_node` / `centre_key` /
-    /// align / distribute / the card paint all measure the knot's dot, not a
-    /// phantom [`NODE_W`]. R1248 caveat (honesty): [`MAX_NODE_X`] deliberately
-    /// keeps the [`NODE_W`]-based clamp bound (a safe conservative bound — a knot
-    /// stays on-world, merely can't reach the far-right 112px band), so it is the
-    /// one width site NOT routed through here.
+impl NodeGeometry for Node<MaterialOp> {
     fn width(&self) -> i32 {
+        if self.is_frame() {
+            return ipx(self.appearance.width.unwrap_or(upx(FRAME_MIN)));
+        }
         if self.is_reroute() { KNOT_SIZE } else { NODE_W }
     }
 
     fn height(&self) -> i32 {
+        if self.is_frame() {
+            // R1595 — a user-sized frame authors a HEIGHT, which is the one
+            // node body whose height nothing derives.
+            return ipx(self.appearance.height.unwrap_or(upx(FRAME_MIN)));
+        }
         if self.is_reroute() {
             // R1243 — a reroute knot is a square dot: no header / port rows /
             // body pad, just the [`KNOT_SIZE`] the width also takes.
-            KNOT_SIZE
-        } else {
-            HEADER_H + self.rows() * PORT_PITCH + BODY_PAD
+            return KNOT_SIZE;
         }
+        let rows = match &self.body {
+            NodeBody::Kind(op) => irow(op.inputs().len().max(op.outputs().len()).max(1)),
+            _ => irow(1),
+        };
+        HEADER_H + rows * PORT_PITCH + BODY_PAD
     }
 
-    /// R880.1 — the card's right extent in graph units. The bounds
-    /// expressions (`x + width()` / `y + height()`) were re-derived at
-    /// three sites (frame_all, the marquee rect-hit, tests); the accessor
-    /// pair is their one home. R1243 — routes through [`GraphNode::width`] so a
-    /// reroute knot's extent is its [`KNOT_SIZE`] dot, not a phantom [`NODE_W`].
     fn right(&self) -> i32 {
         self.x + self.width()
     }
 
-    /// R880.1 — the card's bottom extent in graph units.
     fn bottom(&self) -> i32 {
         self.y + self.height()
+    }
+
+    fn is_reroute(&self) -> bool {
+        matches!(self.body, NodeBody::Kind(MaterialOp::Reroute(_)))
+    }
+
+    fn title(&self) -> String {
+        self.display_name()
     }
 }
 
@@ -1689,7 +1363,9 @@ impl GraphNode {
 /// for an empty set. The one home for the min/max fold that `frame_all` (all
 /// nodes) and `align_selected` (the selection) both need — a divergent fold
 /// would let the two read a node's extent differently ([[ssot-lift-grep-repo-wide-cross-enum]]).
-fn node_bounds<'a>(nodes: impl Iterator<Item = &'a GraphNode>) -> Option<(i32, i32, i32, i32)> {
+fn node_bounds<'a>(
+    nodes: impl Iterator<Item = &'a Node<MaterialOp>>,
+) -> Option<(i32, i32, i32, i32)> {
     let mut bounds: Option<(i32, i32, i32, i32)> = None;
     for n in nodes {
         bounds = Some(match bounds {
@@ -1700,56 +1376,19 @@ fn node_bounds<'a>(nodes: impl Iterator<Item = &'a GraphNode>) -> Option<(i32, i
     bounds
 }
 
-/// A directed connection (output port → input port), addressed by stable
-/// [`NodeId`]s and carrying its own stable [`EdgeId`]. Deleting a node drops
-/// only its incident edges — no other edge's identity changes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Edge {
-    id: EdgeId,
-    from_node: NodeId,
-    from_port: usize,
-    to_node: NodeId,
-    to_port: usize,
-}
-
-/// R1227 — a **comment frame**: a titled, translucent rectangle drawn BEHIND the
-/// nodes to group + label a region of the graph (the Blueprint / material-editor
-/// "comment box"). It owns no graph semantics — it is a pure annotation over
-/// graph units (`x`,`y`,`w`,`h`), created around a node selection and moved with
-/// the nodes it visually contains. Stable [`FrameId`] (R841 discipline), so a
-/// frame reference survives the deletion of others; persisted in the
-/// [`SerializedGraph`] like nodes + edges.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct CommentFrame {
-    id: FrameId,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    title: String,
-}
-
-impl CommentFrame {
-    /// The frame's rect right / bottom edges (graph units).
-    const fn right(&self) -> i32 {
-        self.x + self.w
-    }
-    const fn bottom(&self) -> i32 {
-        self.y + self.h
-    }
-
-    /// Whether node `n`'s CENTRE lies inside this frame's rect — the
-    /// "contained" test the move-with-contents + the `contains` query share, so
-    /// the painted membership and the moved set can never disagree. Centre (not
-    /// full-overlap) is the Blueprint rule: a node belongs to the frame it sits
-    /// in, even if its card slightly overhangs the border.
-    fn contains_node(&self, n: &GraphNode) -> bool {
-        // R1243 — each axis uses the node's own extent (`width()` / `height()`),
-        // so a compact reroute knot's centre is where its dot actually is.
-        let cx = n.x + n.width() / 2;
-        let cy = n.y + n.height() / 2;
-        cx >= self.x && cx <= self.right() && cy >= self.y && cy <= self.bottom()
-    }
+/// R1227 / R1596 — whether node `n`'s CENTRE lies inside `frame`'s rect.
+///
+/// Membership itself is **not** this: a node belongs to the frame its
+/// `Node::parent` names, which the crate maintains as a forest. This is the
+/// geometric question the *gestures* ask — which nodes a fresh frame should
+/// adopt, and which one a dragged node lands in — the Blueprint rule that a node
+/// belongs to the frame it sits in even if its card overhangs the border.
+fn frame_contains(frame: &Node<MaterialOp>, n: &Node<MaterialOp>) -> bool {
+    // R1243 — each axis uses the node's own extent, so a compact reroute knot's
+    // centre is where its dot actually is.
+    let cx = n.x + n.width() / 2;
+    let cy = n.y + n.height() / 2;
+    cx >= frame.x && cx <= frame.right() && cy >= frame.y && cy <= frame.bottom()
 }
 
 /// Live drag preview while a wire is being pulled — from an output port (a
@@ -1856,96 +1495,91 @@ impl Selection {
     }
 }
 
-/// The id new edges mint from: one past the highest [`default_edges`] id.
-/// Derived (not a hand-maintained const) so it can never drift out of sync
-/// with the defaults — adding a seed edge cannot silently collide a minted id.
-fn first_dynamic_edge_id() -> u32 {
-    default_edges()
-        .iter()
-        .map(|e| e.id.raw())
-        .max()
-        .map_or(0, |m| m + 1)
+/// R1596 — the seed graph's nodes / wires, for the tests that state a fact about
+/// the FIRST-PAINT graph.
+///
+/// Derivations over [`default_graph`] rather than the two hand-written lists the
+/// seed used to be, so a test cannot assert against a seed the editor does not
+/// actually start from.
+#[cfg(test)]
+fn default_nodes() -> Vec<Node<MaterialOp>> {
+    kind_node_vec(&default_graph())
 }
 
-/// R849 — the id new nodes mint from: one past the highest [`default_nodes`]
-/// id. Derived (mirroring [`first_dynamic_edge_id`]) so adding a seed node
-/// cannot silently collide a minted id.
+#[cfg(test)]
+fn default_edges() -> Vec<Edge> {
+    edges(&default_graph()).to_vec()
+}
+
+/// R849 / R1596 — the first id a fresh graph will mint, node and wire.
+///
+/// The editor derived these as `max(seed id) + 1` and carried them in two
+/// counters; a tree mints its own, so this asks the seed graph what it will hand
+/// out next. The answer is the same number and it now has one source.
+#[cfg(test)]
 fn first_dynamic_node_id() -> u32 {
-    default_nodes()
-        .iter()
-        .map(|n| n.id.raw())
-        .max()
-        .map_or(0, |m| m + 1)
+    let mut probe = default_graph();
+    let id = probe
+        .add_node(TREE, NodeBody::Frame, 0, 0)
+        .expect("the seed graph has a root tree");
+    id.0
+}
+
+#[cfg(test)]
+fn first_dynamic_edge_id() -> u32 {
+    default_edges().last().map_or(0, |e| e.id.0 + 1)
 }
 
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
-/// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2. R1256 — built from
-/// the `PALETTE` SSOT (`(kind, id, x, y)`) via [`GraphNode::from_palette`], so
-/// the seed's titles / ports / ops cannot drift from the palette.
-fn default_nodes() -> Vec<GraphNode> {
-    // (palette kind, node id, x, y): Texture(0) x Color(1) -> Multiply(2) -> Output(4).
-    [
-        (0, 0, 40, 70),
-        (1, 1, 40, 210),
-        (2, 2, 250, 110),
-        (4, 3, 470, 150),
-    ]
-    .into_iter()
-    .map(|(kind, id, x, y)| GraphNode::from_palette(kind, id, x, y).expect("PALETTE kind in range"))
-    .collect()
+/// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2.
+///
+/// R1596 — built by the crate's own edits, so the seed is exactly the state a
+/// user could have reached by hand: `connect` type-checks each of the three
+/// wires and mints their ids in order, and the id counters the editor used to
+/// derive from this list are the tree's.
+fn default_graph() -> Graph {
+    let mut graph = Graph::new("material");
+    // (palette kind, x, y): Texture(0) x Color(1) -> Multiply(2) -> Output(4).
+    for (kind, x, y) in [(0, 40, 70), (1, 40, 210), (2, 250, 110), (4, 470, 150)] {
+        add_palette_node(&mut graph, kind, x, y).expect("PALETTE kind in range");
+    }
+    for (from, to_node, to_port) in [(0, 2, 0), (1, 2, 1), (2, 3, 0)] {
+        graph
+            .connect(
+                TREE,
+                Socket::new(NodeId(from), 0),
+                Socket::new(NodeId(to_node), to_port),
+            )
+            .expect("the seed graph is well-typed and acyclic");
+    }
+    graph
 }
 
-fn default_edges() -> Vec<Edge> {
-    vec![
-        Edge {
-            id: EdgeId(0),
-            from_node: NodeId(0),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 0,
-        },
-        Edge {
-            id: EdgeId(1),
-            from_node: NodeId(1),
-            from_port: 0,
-            to_node: NodeId(2),
-            to_port: 1,
-        },
-        Edge {
-            id: EdgeId(2),
-            from_node: NodeId(2),
-            from_port: 0,
-            to_node: NodeId(3),
-            to_port: 0,
-        },
-    ]
+/// R1256 / R1596 — add a [`PALETTE`] node of `kind` at `(x, y)`, answering its
+/// fresh id. The single palette-node constructor behind [`default_graph`] /
+/// `add_node` / `commit_pin_create_kind`, so a kind's title and op live in
+/// exactly one place. `None` for an out-of-range kind.
+fn add_palette_node(graph: &mut Graph, kind: usize, x: i32, y: i32) -> Option<NodeId> {
+    let &(title, op) = PALETTE.get(kind)?;
+    let id = graph.add_node(TREE, NodeBody::Kind(op), x, y).ok()?;
+    // The palette's title IS the op's name, so the label stays `None` and
+    // `display_name` answers from the body — a rename is then the only thing
+    // that can make the two differ, which is what a rename means.
+    debug_assert_eq!(title, op.name());
+    Some(id)
 }
 
-/// R852 — the persistable graph snapshot. Carries the nodes, the edges, **and**
-/// the monotonic id counters, so a reload resumes minting where the saved
-/// session left off (a deleted-then-saved id is never handed out again). The
-/// selection is transient UI state and is *not* persisted. `schema_version`
-/// gates the load: a mismatch starts fresh rather than misreading an old layout.
-// R899 — `PartialEq` only (it carries `GraphNode`s with their `CellValue`
-// `input_defaults`); never a set / map key.
+/// R852 / R1596 — the persistable graph snapshot: the schema version and the
+/// [`Document`], whose serde carries the nodes, the wires, the frames, the
+/// authored port values and the id counters together.
+///
+/// The editor's own snapshot carried six parallel fields (nodes, edges, frames
+/// and three id counters) that had to be re-checked against each other on load;
+/// a document is one value, and `Document::validate` is the check.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct SerializedGraph {
     schema_version: u32,
-    nodes: Vec<GraphNode>,
-    edges: Vec<Edge>,
-    next_node_id: u32,
-    next_edge_id: u32,
-    /// R1227 — the comment frames + their id counter. `#[serde(default)]` lets
-    /// the *current* (schema-4) format tolerate a frames-less blob during the
-    /// deserialize step. R1232 — it does NOT forward-load an old save: `load_json`
-    /// rejects any `schema_version != PERSISTED_SCHEMA_VERSION` BEFORE the field
-    /// defaults matter, so a pre-R1227 (schema-3) blob is version-rejected (the
-    /// strict "a foreign document version does not open" contract the 1→2 rename /
-    /// 2→3 semantic bumps established), not migrated to empty frames.
-    #[serde(default)]
-    frames: Vec<CommentFrame>,
-    #[serde(default)]
-    next_frame_id: u32,
+    graph: Graph,
 }
 
 // ─── geometry (window coordinates; canvas == window) ───────────────
@@ -1960,12 +1594,12 @@ fn port_row_top(row: usize) -> i32 {
 /// output port anchor here, so a wire passes straight through the dot (the
 /// Blueprint reroute look). A reroute's `width()` and `height()` are both
 /// [`KNOT_SIZE`], so this is the geometric centre of the painted dot.
-fn knot_center(node: &GraphNode) -> (i32, i32) {
+fn knot_center(node: &Node<MaterialOp>) -> (i32, i32) {
     (node.x + node.width() / 2, node.y + node.height() / 2)
 }
 
 /// Centre of input port `i` of `node`, in window coordinates.
-fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
+fn input_port_center(node: &Node<MaterialOp>, i: usize) -> (i32, i32) {
     if node.is_reroute() {
         // R1243 — a knot has no port rows; every incident wire anchors at its
         // centre, so the drawn wire terminates on the dot.
@@ -1978,7 +1612,7 @@ fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
 }
 
 /// Centre of output port `j` of `node`, in window coordinates.
-fn output_port_center(node: &GraphNode, j: usize) -> (i32, i32) {
+fn output_port_center(node: &Node<MaterialOp>, j: usize) -> (i32, i32) {
     if node.is_reroute() {
         return knot_center(node);
     }
@@ -2195,30 +1829,17 @@ fn corner_rect(a: (f64, f64), b: (f64, f64)) -> MarqueeRect {
 
 // ─── reactive holders (Owner::cache, shared view ↔ coordinator) ────
 
+/// R1596 — the graph: one [`Document`] where the editor kept five cells.
+///
+/// `use_nodes`, `use_edges`, `use_frames`, `use_next_node_id`,
+/// `use_next_edge_id` and `use_next_frame_id` were six reactive holders whose
+/// consistency nobody maintained — a node list that could name a missing edge
+/// target, a counter that could hand out a live id. A document holds all of it
+/// and is the thing `Document::validate` is a statement about.
 #[must_use]
-fn use_nodes() -> Rc<Signal<Vec<GraphNode>>> {
-    let owner = Owner::current().expect("use_nodes requires an active Owner scope");
-    owner.cache("node_graph.nodes", || Signal::new(default_nodes()))
-}
-
-#[must_use]
-fn use_edges() -> Rc<Signal<Vec<Edge>>> {
-    let owner = Owner::current().expect("use_edges requires an active Owner scope");
-    owner.cache("node_graph.edges", || Signal::new(default_edges()))
-}
-
-/// R1227 — the shared comment-frame list (empty at boot; frames are authored,
-/// not seeded), the same `Rc<Signal>` the view fn reads + the coordinator mutates.
-fn use_frames() -> Rc<Signal<Vec<CommentFrame>>> {
-    let owner = Owner::current().expect("use_frames requires an active Owner scope");
-    owner.cache("node_graph.frames", || Signal::new(Vec::new()))
-}
-
-/// R1227 — monotonic [`FrameId`] source (mirrors [`use_next_node_id`]); frames
-/// mint from 0 since the boot graph seeds none.
-fn use_next_frame_id() -> Rc<Cell<u32>> {
-    let owner = Owner::current().expect("use_next_frame_id requires an active Owner scope");
-    owner.cache("node_graph.next_frame_id", || Cell::new(0))
+fn use_document() -> Rc<Signal<Graph>> {
+    let owner = Owner::current().expect("use_document requires an active Owner scope");
+    owner.cache("node_graph.document", || Signal::new(default_graph()))
 }
 
 #[must_use]
@@ -2284,7 +1905,7 @@ enum EditTarget {
     /// row). Panel-only, like [`EditTarget::PosX`].
     PosY(NodeId),
     /// R1264 — editing node `id`'s authored output constant (a **source** node's
-    /// [`GraphNode::output_const`], the output-side twin of the
+    /// [`source_const`], the output-side twin of the
     /// [`EditTarget::PortDefault`] pin default). Card-only: the constant paints
     /// on the source card's output row, which is the only surface hosting the
     /// field. The write funnels through the same [`apply_set_node_value`] /
@@ -2345,25 +1966,9 @@ fn use_active_edit() -> Rc<Signal<Option<ActiveEdit>>> {
     owner.cache("node_graph.editing", || Signal::new(None))
 }
 
-/// Monotonic [`EdgeId`] allocator — persists across view-fn re-runs so a
-/// minted id is never reused (the stable-identity guarantee for new edges).
-#[must_use]
-fn use_next_edge_id() -> Rc<Cell<u32>> {
-    let owner = Owner::current().expect("use_next_edge_id requires an active Owner scope");
-    owner.cache("node_graph.next_edge_id", || {
-        Cell::new(first_dynamic_edge_id())
-    })
-}
-
-/// R849 — the monotonic [`NodeId`] source for newly created nodes (mirrors
-/// [`use_next_edge_id`]). One shared `Cell` per Owner scope so a minted id is
-/// never reused, even across deletes.
-fn use_next_node_id() -> Rc<Cell<u32>> {
-    let owner = Owner::current().expect("use_next_node_id requires an active Owner scope");
-    owner.cache("node_graph.next_node_id", || {
-        Cell::new(first_dynamic_node_id())
-    })
-}
+// R1596 — the three monotonic id `Cell`s are gone: a `Tree` mints node and link
+// ids itself, so a minted id being unique is a property of the model rather than
+// of three counters a save/load path had to carry and re-seed in step.
 
 /// R877 — the canvas zoom (shared coordinator ↔ view): the view fn projects
 /// every world coordinate through it; the coordinator's `Ctrl`+wheel /
@@ -2402,12 +2007,12 @@ fn use_node_drag() -> Rc<RefCell<Option<NodeDragStart>>> {
 /// [`AutoPan::active`].
 fn use_autopan() {
     let owner = Owner::current().expect("use_autopan requires an active Owner scope");
-    let nodes = use_nodes();
+    let document = use_document();
     let scroll = use_canvas_scroll();
     let zoom = use_zoom();
     let node_drag = use_node_drag();
     let _: Rc<AutoPan> = owner.register_animation_once("node_graph.autopan", move || AutoPan {
-        nodes,
+        document,
         scroll,
         zoom,
         node_drag,
@@ -2432,7 +2037,7 @@ fn autopan_axis_can_move(push: f64, offset: i32, max: i32) -> bool {
 /// gripped where, under the cursor now"), so there is no separate cursor holder
 /// to keep in lifecycle-sync.
 struct AutoPan {
-    nodes: Rc<Signal<Vec<GraphNode>>>,
+    document: Rc<Signal<Graph>>,
     scroll: Rc<ScrollState>,
     zoom: Rc<Signal<f64>>,
     node_drag: Rc<RefCell<Option<NodeDragStart>>>,
@@ -2475,7 +2080,7 @@ impl Tickable for AutoPan {
         // motion, here driven by the viewport moving under a stationary cursor.
         let (gx, gy) = cursor_graph_at(&self.scroll, self.zoom.get(), x_rel, y_rel);
         if let Some(start) = self.node_drag.borrow().as_ref() {
-            follow_members(&self.nodes, &start.members, gx, gy);
+            follow_members(&self.document, &start.members, gx, gy);
         }
     }
 
@@ -2614,8 +2219,12 @@ fn csv_ids(ids: impl Iterator<Item = u32>) -> String {
 
 /// R898 — join a port's types into the CSV the `node.<id>.input_types` /
 /// `output_types` queries return ("Vector,Float"; "" for a source / sink).
-fn port_types_csv(ports: &[PortType]) -> String {
-    ports.iter().map(|p| p.name()).collect::<Vec<_>>().join(",")
+fn port_types_csv(ports: &[Port<PortType, CellValue>]) -> String {
+    ports
+        .iter()
+        .map(|p| p.ty.name())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// R901 — `"<node>.<port>"` → (node id, input port). The `begin_edit_default`
@@ -2688,7 +2297,7 @@ struct NodeDragStart {
     /// anchor); grabbing an unselected node drags just it (the Unreal /
     /// QGraphicsView group-move convention). Id-sorted by construction
     /// (selection-set order) so `end_gesture`'s journal entry matches
-    /// [`MoveNodesCmd::merge`]'s same-member ordering.
+    /// `GraphEdit::merge`'s same-member ordering.
     members: Vec<(NodeId, f64, f64, i32, i32)>,
     /// R879 audit fix / R880 — the dead zone: the framework [`DragLatch`]
     /// (the SAME contract predicate the router and the marquee advance).
@@ -2740,7 +2349,7 @@ struct MarqueeStart {
 /// Before R1592 that rule lived as `n.right() >= x0` inside a filter, where it
 /// read as an off-by-one; here it is a sentence about the card, and the one
 /// place the marquee, the lasso and the circle all get it from.
-fn card_span(node: &GraphNode) -> (Point, Point) {
+fn card_span(node: &Node<MaterialOp>) -> (Point, Point) {
     (
         Point::new(node.x.into(), node.y.into()),
         Point::new(node.right().into(), node.bottom().into()),
@@ -2805,121 +2414,57 @@ enum PendingPress {
 
 // ─── reversible structural edit (the UndoCommand) ──────────────────
 
-/// R851 §5.52 — one reversible **structural** graph edit, recorded onto the
-/// shared [`UndoStack`]. A *granular delta* (only the entities that changed),
-/// never a whole-graph snapshot ([[granular-undo-not-snapshot]]): an add carries
-/// its new entities in `added_*`, a delete carries the removed entities (a node
-/// *and* its incident edges) in `removed_*`, and a connect that displaces a wire
-/// (the single-wire input rule) carries both. `redo` removes the `removed_*` and
-/// adds the `added_*`; `undo` is the exact inverse with the sets swapped, so the
-/// stored entities (with their stable ids) round-trip byte-for-byte — a redone
-/// node keeps its original [`NodeId`], a restored edge its [`EdgeId`].
-/// R1241 — the side-effect-free plan a dissolve would apply: the two incident
-/// edges to remove (`A -> id`, `id -> B`) and the bridge endpoints (`A -> B`)
-/// that replace them. Computed by [`dissolve_plan`](NodeGraphExternal::dissolve_plan),
-/// shared by the `dissolvable.<id>` read and the `dissolve_node` mutation so the
-/// two agree by construction (no minted edge id — that is the mutation's job).
-struct DissolvePlan {
-    a_edge: Edge,
-    b_edge: Edge,
-    from_node: NodeId,
-    from_port: usize,
-    to_node: NodeId,
-    to_port: usize,
-}
-
-/// The entity delta of one [`GraphEdit`]: what the edit adds and what it
-/// removes. `add_*` are present *after* the edit but not before; `remove_*` are
-/// present *before* but not after, stored verbatim so `undo` re-inserts them
-/// with their original stable ids. A connect that displaces a wire fills both
-/// (`added_edges` = the new wire, `removed_edges` = the displaced one).
-#[derive(Default)]
-struct GraphDelta {
-    added_nodes: Vec<GraphNode>,
-    added_edges: Vec<Edge>,
-    removed_nodes: Vec<GraphNode>,
-    removed_edges: Vec<Edge>,
-    /// R1227 — comment frames added / removed by this edit (the `add_frame` /
-    /// `remove_frame` structural edits; stored verbatim so undo re-inserts them
-    /// with their original [`FrameId`]).
-    added_frames: Vec<CommentFrame>,
-    removed_frames: Vec<CommentFrame>,
-}
-
+/// R851 §5.52 / R1596 — one reversible edit: the document before it and the
+/// document after, plus the selection each way.
+///
+/// **This replaces four commands** — a granular `GraphEdit` delta, a
+/// `MoveNodesCmd`, a `RenameCmd<T>` and a `SetNodeValueCmd` — and the reason is
+/// not brevity: a delta had to enumerate every *kind* of thing an edit could
+/// touch, and every round that gave the model a new fact had to remember to add
+/// it. R1227 added comment frames and the delta grew two fields; R1594's authored
+/// port values and R1589's containment would each have needed another, and an
+/// edit that forgot one would journal an undo that silently lost it. A document
+/// is one value, so there is nothing to enumerate.
+///
+/// The editor's own note called snapshots the wrong shape
+/// ([[granular-undo-not-snapshot]]), against a model that was a `Vec<GraphNode>`
+/// the whole graph had to be cloned out of by hand. It is also what **Blender**
+/// does — `node_undosys` stores a copy of the tree per step — and what makes an
+/// undo here provably total rather than total-as-far-as-anyone-remembered.
 struct GraphEdit {
-    nodes: Rc<Signal<Vec<GraphNode>>>,
-    edges: Rc<Signal<Vec<Edge>>>,
-    /// R1227 — the frame list, so `add_frame` / `remove_frame` round-trip on the
-    /// same shared undo path as node / edge edits.
-    frames: Rc<Signal<Vec<CommentFrame>>>,
+    document: Rc<Signal<Graph>>,
     selection: Rc<Signal<Selection>>,
     label: Cow<'static, str>,
-    delta: GraphDelta,
+    before: Graph,
+    after: Graph,
     sel_before: Selection,
     sel_after: Selection,
+    /// R856 — the gesture a contiguous run folds along, or `None` for an edit
+    /// that is always its own undo step.
+    ///
+    /// A keyboard nudge burst collapses to one step; a drag (already the whole
+    /// gesture) and every discrete RPC edit do not. The key is what has to
+    /// MATCH for two steps to be one gesture — the moved node set — so nudging
+    /// a different selection starts a fresh step.
+    coalesce: Option<BTreeSet<NodeId>>,
 }
 
 impl GraphEdit {
-    /// Drop `rm_*` by stable id, append `add_*`, then set the selection — the
-    /// shared body of [`redo`](UndoCommand::redo) / [`undo`](UndoCommand::undo)
-    /// with the add / remove roles swapped. The signal writes are gated on a
-    /// non-empty delta so an edge-only edit never reclones the node vector
-    /// (and vice-versa), keeping the repaint minimal.
-    /// Apply the delta in the `redo` direction (`reverse == false`: drop
-    /// `removed_*`, add `added_*`) or its inverse (`reverse == true`), then set
-    /// the selection. Taking the whole [`GraphDelta`] + a direction bit keeps the
-    /// signature within the argument budget as the entity kinds grow (R1227 added
-    /// frames — a per-kind param list would have overflowed).
-    fn apply(&self, delta: &GraphDelta, reverse: bool, sel: Selection) {
-        let (rm_nodes, add_nodes) = if reverse {
-            (&delta.added_nodes, &delta.removed_nodes)
-        } else {
-            (&delta.removed_nodes, &delta.added_nodes)
-        };
-        let (rm_edges, add_edges) = if reverse {
-            (&delta.added_edges, &delta.removed_edges)
-        } else {
-            (&delta.removed_edges, &delta.added_edges)
-        };
-        let (rm_frames, add_frames) = if reverse {
-            (&delta.added_frames, &delta.removed_frames)
-        } else {
-            (&delta.removed_frames, &delta.added_frames)
-        };
-        if !rm_nodes.is_empty() || !add_nodes.is_empty() {
-            self.nodes.set_with(|prev| {
-                let mut next: Vec<GraphNode> = prev
-                    .iter()
-                    .filter(|n| !rm_nodes.iter().any(|r| r.id == n.id))
-                    .cloned()
-                    .collect();
-                next.extend(add_nodes.iter().cloned());
-                next
-            });
-        }
-        if !rm_edges.is_empty() || !add_edges.is_empty() {
-            self.edges.set_with(|prev| {
-                let mut next: Vec<Edge> = prev
-                    .iter()
-                    .copied()
-                    .filter(|e| !rm_edges.iter().any(|r| r.id == e.id))
-                    .collect();
-                next.extend(add_edges.iter().copied());
-                next
-            });
-        }
-        if !rm_frames.is_empty() || !add_frames.is_empty() {
-            self.frames.set_with(|prev| {
-                let mut next: Vec<CommentFrame> = prev
-                    .iter()
-                    .filter(|f| !rm_frames.iter().any(|r| r.id == f.id))
-                    .cloned()
-                    .collect();
-                next.extend(add_frames.iter().cloned());
-                next
-            });
-        }
-        self.selection.set(sel);
+    /// Put the document and the selection into one of the two recorded states.
+    ///
+    /// R1596 — the restored document takes on the id frontier of the state it is
+    /// LEAVING ([`Document::advance_ids_from`]), so an undo never hands a fresh
+    /// node the id an undone one had. A snapshot restores its mint counters
+    /// along with everything else, and the R838 stable-id model is what an
+    /// agent, a saved selection and every scene tag address a node BY — reuse
+    /// would let one id silently name two different nodes across an undo.
+    fn restore(&self, graph: &Graph, sel: &Selection, leaving: &Graph) {
+        let mut next = graph.clone();
+        next.advance_ids_from(leaving);
+        batch(|| {
+            self.document.set(next);
+            self.selection.set(sel.clone());
+        });
     }
 }
 
@@ -2929,25 +2474,109 @@ impl UndoCommand for GraphEdit {
     }
 
     fn redo(&self) {
-        self.apply(&self.delta, false, self.sel_after.clone());
+        self.restore(&self.after, &self.sel_after, &self.before);
     }
 
     fn undo(&self) {
-        self.apply(&self.delta, true, self.sel_before.clone());
+        self.restore(&self.before, &self.sel_before, &self.after);
+    }
+
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
+    }
+
+    /// R856 — fold a contiguous same-gesture edit into this one: keep this
+    /// step's `before` and take the successor's `after`.
+    ///
+    /// Contiguity is checked as *document equality* (`self.after ==
+    /// next.before`), which is the same guard the per-node delta used — every
+    /// caller captures `before` from live state, so a run is contiguous by
+    /// construction and this keeps a future stale-`before` caller from folding a
+    /// run and losing the intermediate state on undo.
+    fn merge(&mut self, next: &dyn UndoCommand) -> bool {
+        let Some(next) = next.as_any().and_then(|a| a.downcast_ref::<GraphEdit>()) else {
+            return false;
+        };
+        let (Some(mine), Some(theirs)) = (self.coalesce.as_ref(), next.coalesce.as_ref()) else {
+            return false;
+        };
+        if mine != theirs || self.after != next.before {
+            return false;
+        }
+        self.after = next.after.clone();
+        self.sel_after = next.sel_after.clone();
+        self.label.clone_from(&next.label);
+        true
     }
 }
 
-/// R853 §5.52 — a reversible node **move** (the position-edit `UndoCommand`,
-/// distinct from the structural [`GraphEdit`]). A move stores only the moved
-/// node's `before` / `after` window position, so undo / redo is an O(1) reposition
-/// — never a graph-wide delta. It opts into the [`UndoCommand`] coalescing hook
-/// (`merge`): a `coalescable` move folds a contiguous same-node move into itself,
-/// so a keyboard nudge **burst** collapses to one undo step (the canonical
-/// editor behaviour). A drag is recorded as one *non*-coalescable move at gesture
-/// end (it is already the whole gesture), so it neither absorbs nor is absorbed
-/// by an adjacent nudge run.
-/// R879 — one journaled member move: `(id, before, after)` window positions.
-type NodeMove = (NodeId, (i32, i32), (i32, i32));
+/// R1596 — everything one reversible edit touches: the document, the selection
+/// it may move, and the history it lands on.
+///
+/// A [`GraphEdit`] restores BOTH holders, so any caller able to change one has
+/// to name the other even when it does not touch it. Bundling them is what lets
+/// the coordinator and the *view-side* commit paths (an inline field's blur,
+/// which has no coordinator to reach through) run the SAME funnel instead of
+/// each carrying its own argument list — the editor kept four command types
+/// partly because a free function could not reach the coordinator's fields.
+#[derive(Clone)]
+struct GraphHandle {
+    document: Rc<Signal<Graph>>,
+    selection: Rc<Signal<Selection>>,
+    undo: Rc<UndoStack>,
+}
+
+/// R1596 — the handle assembled from the shared reactive holders, for the paint
+/// paths that have no [`NodeGraphExternal`] in hand.
+fn use_graph_handle() -> GraphHandle {
+    GraphHandle {
+        document: use_document(),
+        selection: use_selection(),
+        undo: use_undo(),
+    }
+}
+
+impl GraphHandle {
+    /// The document as it stands.
+    fn graph(&self) -> Graph {
+        self.document.get()
+    }
+
+    /// R1596 — the ONE structural mutation path: run `mutate` on a copy of the
+    /// document, journal the before/after pair, and let the undo stack apply it.
+    ///
+    /// `mutate` may change the document, the selection, or both; an edit that
+    /// changes neither is journalled as nothing and answers `false`, which is
+    /// the no-op discipline every one of the four commands this replaced kept
+    /// separately. `coalesce` names the gesture a contiguous run folds along
+    /// ([`GraphEdit::coalesce`]).
+    fn edit(
+        &self,
+        label: impl Into<Cow<'static, str>>,
+        coalesce: Option<BTreeSet<NodeId>>,
+        mutate: impl FnOnce(&mut Graph, &mut Selection),
+    ) -> bool {
+        let before = self.graph();
+        let sel_before = self.selection.get();
+        let mut after = before.clone();
+        let mut sel_after = sel_before.clone();
+        mutate(&mut after, &mut sel_after);
+        if after == before && sel_after == sel_before {
+            return false;
+        }
+        self.undo.record(GraphEdit {
+            document: Rc::clone(&self.document),
+            selection: Rc::clone(&self.selection),
+            label: label.into(),
+            before,
+            after,
+            sel_before,
+            sel_after,
+            coalesce,
+        });
+        true
+    }
+}
 
 /// R948 — which edge / centre line of the selection's bounding box an
 /// `align_*` snaps every selected node to. Horizontal specs move only `x`,
@@ -2963,201 +2592,37 @@ enum AlignSpec {
 }
 
 /// R948 — the axis a `distribute_*` equalises: it spaces the selected nodes'
-/// *centres* evenly along x (`Horizontal`) or y (`Vertical`), holding the two
-/// extreme members fixed (the PowerPoint / Figma "distribute centres" rule).
+/// CENTRES evenly along this axis between the two extreme centres.
 #[derive(Clone, Copy)]
 enum DistributeAxis {
     Horizontal,
     Vertical,
 }
 
-/// R948 — twice a node's centre on `axis` (`2x + width()` h / `2y + height()`
-/// v). Doubling keeps the key an integer so the distribute sort + position math
-/// use a total `Ord` key with no float compare; the `/2` only re-enters at the
-/// final px target. R1243 — both axes read the node's own extent, so a reroute
-/// knot distributes about its dot centre, not a phantom [`NODE_W`].
-fn centre_key(n: &GraphNode, axis: DistributeAxis) -> i32 {
+/// R948 — a node's centre coordinate along `axis` (the distribute sort key +
+/// the spacing target), in graph units.
+fn centre_key(n: &Node<MaterialOp>, axis: DistributeAxis) -> i32 {
+    // The DOUBLED centre (`2x + w`), not `x + w/2`: an integer halving would
+    // lose a unit on every odd extent, and the distribute pass recovers a
+    // position as `(key - extent) / 2`, which is exact only on this form.
     match axis {
         DistributeAxis::Horizontal => 2 * n.x + n.width(),
         DistributeAxis::Vertical => 2 * n.y + n.height(),
     }
 }
 
-/// R879 — generalises the R853 single-node `MoveNodeCmd`: one undo step
-/// holding one `(id, before, after)` per moved member, so a multi-select
-/// drag / nudge is exactly ONE journal entry (the Unreal / Qt group-move
-/// undo shape) while a single-node move is the one-element case.
-struct MoveNodesCmd {
-    nodes: Rc<Signal<Vec<GraphNode>>>,
-    /// `(id, before, after)` per moved node — id-sorted by construction
-    /// (built from the selection's `BTreeSet` order), which `merge`'s
-    /// same-member check relies on.
-    moves: Vec<NodeMove>,
-    coalescable: bool,
-}
-
-/// R1238 — replay a recorded [`NodeMove`] set onto the node signal in the
-/// `to_after` (redo) or `!to_after` (undo) direction, in one write. No clamp
-/// (both ends were captured from already-clamped positions); an absent member is
-/// skipped (a LIFO undo can never reach a move while the node is deleted, but the
-/// write stays total). The ONE home for this reactive reposition loop, shared by
-/// [`MoveNodesCmd::set_all`] (a group move) and [`FrameGeomCmd::set_geom`] (a
-/// move-with-contents) — the 2nd consumer (R1234) that arrived after R853
-/// ([[abstraction-needs-second-consumer]]). Distinct from the coordinator's
-/// [`apply_node_moves`](NodeGraphExternal::apply_node_moves), which *computes +
-/// journals* a fresh move; this only replays an already-recorded one.
-fn replay_node_moves(nodes: &Rc<Signal<Vec<GraphNode>>>, moves: &[NodeMove], to_after: bool) {
-    nodes.set_with(|prev| {
-        let mut next = prev.clone();
-        for (id, before, after) in moves {
-            let pos = if to_after { after } else { before };
-            if let Some(n) = next.iter_mut().find(|n| n.id == *id) {
-                n.x = pos.0;
-                n.y = pos.1;
-            }
-        }
-        next
-    });
-}
-
-impl MoveNodesCmd {
-    /// Set every member to its `before` (`to_after = false`) or `after`
-    /// position (the [`replay_node_moves`] SSOT).
-    fn set_all(&self, to_after: bool) {
-        replay_node_moves(&self.nodes, &self.moves, to_after);
-    }
-}
-
-impl UndoCommand for MoveNodesCmd {
-    fn label(&self) -> Cow<'static, str> {
-        if self.moves.len() == 1 {
-            Cow::Borrowed("Move node")
-        } else {
-            Cow::Owned(format!("Move {} nodes", self.moves.len()))
-        }
-    }
-
-    fn redo(&self) {
-        self.set_all(true);
-    }
-
-    fn undo(&self) {
-        self.set_all(false);
-    }
-
-    fn as_any(&self) -> Option<&dyn core::any::Any> {
-        Some(self)
-    }
-
-    /// Fold a contiguous same-member move into this one: extend each
-    /// `after` to the successor's. Only when both ends are `coalescable`,
-    /// target the identical member list, and are contiguous per member —
-    /// so a drag (non-coalescable) breaks the run on either side, and a
-    /// move of a different selection starts a fresh undo step.
-    fn merge(&mut self, next: &dyn UndoCommand) -> bool {
-        let Some(next) = next.as_any().and_then(|a| a.downcast_ref::<MoveNodesCmd>()) else {
-            return false;
-        };
-        if !(self.coalescable && next.coalescable && self.moves.len() == next.moves.len()) {
-            return false;
-        }
-        // R856 — require same member + contiguity (`self.after ==
-        // next.before`) per element, like the substrate's canonical
-        // `AddCmd::merge`: every current caller captures `before` from live
-        // state, so the run is contiguous by construction, but the guard
-        // keeps a future stale-`before` caller from folding a
-        // non-contiguous run and losing the intermediate position on undo.
-        let foldable = self
-            .moves
-            .iter()
-            .zip(&next.moves)
-            .all(|((id_a, _, after), (id_b, before, _))| id_a == id_b && after == before);
-        if foldable {
-            for (mine, theirs) in self.moves.iter_mut().zip(&next.moves) {
-                mine.2 = theirs.2;
-            }
-            true
-        } else {
-            false
-        }
-    }
-}
-
-/// R1234 §5.52 — a reversible comment-frame **geometry** edit. Two shapes share
-/// it: a *move* translates the frame's rect AND carries every node it contained
-/// by the same delta (the Blueprint "drag the comment box, its contents come
-/// along" contract); a *resize* changes only `w`/`h` with an empty `moves` (the
-/// nodes stay put and the membership is recomputed lazily by
-/// [`CommentFrame::contains_node`]). Stores the frame's `before` / `after` rect
-/// plus one [`NodeMove`] per translated member, so undo / redo is an
-/// O(members) reposition, never a graph-wide delta ([[granular-undo-not-snapshot]]).
-/// Like [`RenameCmd`] (and unlike [`MoveNodesCmd`]) it does NOT coalesce — an
-/// `intervene frame.<id>.x` is a discrete RPC edit, not a keyboard nudge burst,
-/// so every committed geometry edit is its own undo step.
-struct FrameGeomCmd {
-    frames: Rc<Signal<Vec<CommentFrame>>>,
-    nodes: Rc<Signal<Vec<GraphNode>>>,
-    id: FrameId,
-    /// The frame's `(x, y, w, h)` before / after this edit.
-    before: (i32, i32, i32, i32),
-    after: (i32, i32, i32, i32),
-    /// `(id, before, after)` per member node the move carried — empty for a
-    /// resize (which never moves nodes).
-    moves: Vec<NodeMove>,
-    /// "Move frame" / "Resize frame" — set by the caller so the undo label
-    /// names the gesture.
-    label: Cow<'static, str>,
-}
-
-impl FrameGeomCmd {
-    /// Set the frame's rect + every member node to its `after` (`to_after`) or
-    /// `before` position, one write per touched signal (the node write is
-    /// skipped for a resize — an empty `moves`). An absent frame / member is
-    /// skipped: a LIFO undo cannot reach this edit while the entity is deleted,
-    /// but the write stays total ([`MoveNodesCmd::set_all`] discipline).
-    fn set_geom(&self, to_after: bool) {
-        let rect = if to_after { self.after } else { self.before };
-        self.frames.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(f) = next.iter_mut().find(|f| f.id == self.id) {
-                (f.x, f.y, f.w, f.h) = rect;
-            }
-            next
-        });
-        if !self.moves.is_empty() {
-            replay_node_moves(&self.nodes, &self.moves, to_after);
-        }
-    }
-}
-
-impl UndoCommand for FrameGeomCmd {
-    fn label(&self) -> Cow<'static, str> {
-        self.label.clone()
-    }
-
-    fn redo(&self) {
-        self.set_geom(true);
-    }
-
-    fn undo(&self) {
-        self.set_geom(false);
-    }
-}
-
-/// R1234 / R1240 — the feasible one-axis translation `dx` of comment frame
-/// `frame` keeping its whole RECT (`x .. x+w`) AND every member node on the world
-/// surface: the requested delta clamped to an interval `[lo, hi]` that always
-/// contains `0` (the current state is on-world). A *rigid* group clamp — the
-/// frame and its contents move by the SAME delta, so their relative geometry is
-/// preserved even at the world edge (a node can never slide out of the frame it
-/// sits in). R1240 — `hi` bounds the frame's RIGHT edge (`x+w`), not just its
-/// origin, so an empty frame (no members) cannot be pushed off the world and a
-/// populated one no longer overhangs the edge by `FRAME_PAD` — the same on-world
-/// bound [`resize_frame`](NodeGraphExternal::resize_frame) enforces. `hi.max(lo)`
-/// guards a pathologically world-wide frame from an inverted range.
-fn clamp_frame_dx(frame: &CommentFrame, members: &[GraphNode], dx: i32) -> i32 {
+/// R1234 / R1240 / R1596 — the feasible one-axis translation `dx` of frame
+/// `frame` keeping its whole RECT (`x .. right()`) AND every member node on the
+/// world surface: the requested delta clamped to an interval `[lo, hi]` that
+/// always contains `0` (the current state is on-world). A *rigid* group clamp —
+/// the frame and its contents move by the SAME delta, so their relative geometry
+/// is preserved even at the world edge (a node can never slide out of the frame
+/// it sits in). `hi` bounds the frame's RIGHT edge, so an empty frame cannot be
+/// pushed off the world. `hi.max(lo)` guards a pathologically world-wide frame
+/// from an inverted range.
+fn clamp_frame_dx(frame: &Node<MaterialOp>, members: &[Node<MaterialOp>], dx: i32) -> i32 {
     let mut lo = -frame.x;
-    let mut hi = WORLD - frame.x - frame.w;
+    let mut hi = WORLD - frame.right();
     for n in members {
         lo = lo.max(-n.x);
         hi = hi.min(MAX_NODE_X - n.x);
@@ -3165,12 +2630,10 @@ fn clamp_frame_dx(frame: &CommentFrame, members: &[GraphNode], dx: i32) -> i32 {
     dx.clamp(lo, hi.max(lo))
 }
 
-/// R1234 / R1240 — the vertical twin of [`clamp_frame_dx`]: the feasible `dy`
-/// keeping the frame's whole rect (`y .. y+h`) AND every member on-world. `hi`
-/// bounds the frame's BOTTOM edge (`y+h`) so an empty frame stays on the surface.
-fn clamp_frame_dy(frame: &CommentFrame, members: &[GraphNode], dy: i32) -> i32 {
+/// R1234 / R1240 — the vertical twin of [`clamp_frame_dx`].
+fn clamp_frame_dy(frame: &Node<MaterialOp>, members: &[Node<MaterialOp>], dy: i32) -> i32 {
     let mut lo = -frame.y;
-    let mut hi = WORLD - frame.y - frame.h;
+    let mut hi = WORLD - frame.bottom();
     for n in members {
         lo = lo.max(-n.y);
         hi = hi.min(MAX_NODE_Y - n.y);
@@ -3178,136 +2641,12 @@ fn clamp_frame_dy(frame: &CommentFrame, members: &[GraphNode], dy: i32) -> i32 {
     dy.clamp(lo, hi.max(lo))
 }
 
-/// R1232 §5.52 — a titled, id-addressed graph entity a rename undo command
-/// edits. [`GraphNode`] + [`CommentFrame`] are the two consumers: the arrival of
-/// the 2nd unified [`RenameCmd`]/[`apply_rename`] over what were byte-identical
-/// `RenameNodeCmd` + `RenameFrameCmd` copies ([[abstraction-needs-second-consumer]]).
-/// `Serialize`/`Deserialize` are the `Signal<Vec<T>>` write bound.
-trait Titled: Clone + PartialEq + Serialize + serde::de::DeserializeOwned + 'static {
-    type Id: PartialEq + Copy;
-    /// The entity kind for the undo label (`"node"` / `"frame"`).
-    const KIND: &'static str;
-    fn entity_id(&self) -> Self::Id;
-    fn title_ref(&self) -> &str;
-    fn set_title(&mut self, title: String);
-}
-
-impl Titled for GraphNode {
-    type Id = NodeId;
-    const KIND: &'static str = "node";
-    fn entity_id(&self) -> NodeId {
-        self.id
-    }
-    fn title_ref(&self) -> &str {
-        &self.title
-    }
-    fn set_title(&mut self, title: String) {
-        self.title = title;
-    }
-}
-
-impl Titled for CommentFrame {
-    type Id = FrameId;
-    const KIND: &'static str = "frame";
-    fn entity_id(&self) -> FrameId {
-        self.id
-    }
-    fn title_ref(&self) -> &str {
-        &self.title
-    }
-    fn set_title(&mut self, title: String) {
-        self.title = title;
-    }
-}
-
-/// R1232 §5.52 — a reversible **rename** of a [`Titled`] entity by id (the
-/// generic that unified R878 `RenameNodeCmd` + R1227 `RenameFrameCmd` — those
-/// were structurally identical, only the entity type differing, so the 2nd
-/// consumer lifts them). Stores only the `before` / `after` title, so undo /
-/// redo is an O(1) field write, never a graph-wide delta
-/// ([[granular-undo-not-snapshot]]). A rename commits once per editing session
-/// (Enter / blur), so it does NOT opt into the coalescing hook — every committed
-/// rename is its own undo step (Qt's `QUndoStack` rename model).
-struct RenameCmd<T: Titled> {
-    entities: Rc<Signal<Vec<T>>>,
-    id: T::Id,
-    before: String,
-    after: String,
-}
-
-impl<T: Titled> RenameCmd<T> {
-    /// Set the renamed entity's title. A no-op if it is absent (a LIFO undo can
-    /// never reach a rename while the entity is deleted, but the signal write
-    /// stays total either way — the [`MoveNodesCmd::set_all`] discipline).
-    fn set_title(&self, title: &str) {
-        self.entities.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(e) = next.iter_mut().find(|e| e.entity_id() == self.id) {
-                e.set_title(title.to_owned());
-            }
-            next
-        });
-    }
-}
-
-impl<T: Titled> UndoCommand for RenameCmd<T> {
-    fn label(&self) -> Cow<'static, str> {
-        Cow::Owned(format!("Rename {}", T::KIND))
-    }
-
-    fn redo(&self) {
-        self.set_title(&self.after);
-    }
-
-    fn undo(&self) {
-        self.set_title(&self.before);
-    }
-}
-
-/// R1232 — rename [`Titled`] entity `id` undoably (the ONE rename path for both
-/// nodes AND frames): trim, reject an empty / whitespace title or an unknown id
-/// (graph unchanged), no-op (and journal nothing) when the trimmed title already
-/// matches. The interactive commit (Enter / blur via [`commit_edit`]) and the
-/// AI-first `intervene <node|frame>.<id>.title` both land here, so they cannot drift.
-fn apply_rename<T: Titled>(
-    entities: &Rc<Signal<Vec<T>>>,
-    undo: &UndoStack,
-    id: T::Id,
-    title: &str,
-) -> bool {
-    let trimmed = title.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let Some(before) = entities
-        .get()
-        .iter()
-        .find(|e| e.entity_id() == id)
-        .map(|e| e.title_ref().to_owned())
-    else {
-        return false;
-    };
-    if before == trimmed {
-        return true;
-    }
-    let cmd = RenameCmd {
-        entities: Rc::clone(entities),
-        id,
-        before,
-        after: trimmed.to_owned(),
-    };
-    // R1234 — `record` applies the fresh command's forward effect then journals
-    // it; the pre-R1234 `cmd.redo(); push_applied(cmd)` hand-rolled exactly that
-    // ([[use-substrate-not-hand-rolled-equivalent]]). `push_applied` is only for
-    // an edit already applied out-of-band (the drag / keystroke path), not here.
-    undo.record(cmd);
-    true
-}
-
-/// R899 / R1257 — the value slot a [`SetNodeValueCmd`] writes: an input port's
-/// pin default (R899) or a source node's output constant (R1257). The two are
-/// the same undoable "write a typed [`CellValue`] to a node field" edit, so they
-/// share one command rather than two near-identical copies.
+/// R899 / R1257 / R1596 — the value slot an authored-value edit writes.
+///
+/// Both arms are one thing now: a value authored on one of the node's own ports
+/// ([`Node::values`], R1594). The editor stored them in two different fields —
+/// `input_defaults[port]` and `output_const` — and R1594 recorded that those
+/// were "one mechanism's two temporary fields".
 #[derive(Clone, Copy)]
 enum NodeValueTarget {
     /// Input port `n`'s pin default (`node.<id>.input_default.<n>`, R899).
@@ -3316,120 +2655,22 @@ enum NodeValueTarget {
     OutputConst,
 }
 
-/// R899 / R1257 — one reversible edit to a node's typed value slot (a pin
-/// default or a source output constant, per [`NodeValueTarget`]): a per-field,
-/// non-coalescing undo step storing the [`CellValue`] before / after, so
-/// undo / redo restore the exact value.
-///
-/// R900 / R1232 / R1257 — one of the node-editor [`UndoCommand`]s ([`GraphEdit`]
-/// / [`MoveNodesCmd`] / [`RenameCmd`] / this). R1257 folded the former
-/// `SetPortDefaultCmd` and a would-be `SetSourceConstCmd` into this single
-/// command via [`NodeValueTarget`] — they were byte-identical but for the target
-/// field, the same 2nd-consumer lift that produced [`RenameCmd<T>`](RenameCmd)
-/// from the node / frame rename copies. `MoveNodesCmd` genuinely differs
-/// (multi-target + coalescing) and stays distinct; a single `FieldUndoCmd<T>`
-/// over ALL of them would be a behaviour-bifurcating wrong abstraction (R853).
-struct SetNodeValueCmd {
-    nodes: Rc<Signal<Vec<GraphNode>>>,
-    id: NodeId,
-    target: NodeValueTarget,
-    before: CellValue,
-    after: CellValue,
-}
-
-impl SetNodeValueCmd {
-    /// Write the targeted value slot. A no-op if the node / slot is absent (a
-    /// LIFO undo cannot reach it while deleted, but the write stays total — the
-    /// [`RenameCmd::set_title`] discipline).
-    fn set_value(&self, value: &CellValue) {
-        self.nodes.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(n) = next.iter_mut().find(|n| n.id == self.id) {
-                match self.target {
-                    NodeValueTarget::InputDefault(port) => {
-                        if let Some(slot) = n.input_defaults.get_mut(port) {
-                            *slot = value.clone();
-                        }
-                    }
-                    // Only overwrites an existing source constant (`Some`), so a
-                    // non-source node can never gain one through undo/redo.
-                    NodeValueTarget::OutputConst if n.output_const.is_some() => {
-                        n.output_const = Some(value.clone());
-                    }
-                    NodeValueTarget::OutputConst => {}
-                }
-            }
-            next
-        });
+impl NodeValueTarget {
+    /// Which port of the node this names.
+    fn port(self) -> PortRef {
+        match self {
+            NodeValueTarget::InputDefault(port) => PortRef::input(uport(port)),
+            NodeValueTarget::OutputConst => PortRef::output(0),
+        }
     }
-}
 
-impl UndoCommand for SetNodeValueCmd {
-    fn label(&self) -> Cow<'static, str> {
-        Cow::Borrowed(match self.target {
+    /// The undo label for writing it.
+    const fn label(self) -> &'static str {
+        match self {
             NodeValueTarget::InputDefault(_) => "Set port default",
             NodeValueTarget::OutputConst => "Set source value",
-        })
+        }
     }
-
-    fn redo(&self) {
-        self.set_value(&self.after);
-    }
-
-    fn undo(&self) {
-        self.set_value(&self.before);
-    }
-}
-
-/// R899 / R1257 — apply a node value change undoably (the [`apply_rename`]
-/// peer): reject an unknown id / absent slot (graph unchanged, `false`), no-op
-/// (journal nothing) when the value is unchanged, else journal a
-/// [`SetNodeValueCmd`]. The ONE node-value mutation path — the AI-first
-/// `intervene node.<id>.input_default.<port>` (R899) / `intervene node.<id>.value`
-/// (R1257) and the R901 interactive inline editor (via [`apply_edit_commit`])
-/// all land here, so they cannot drift. The caller has already typed the value
-/// ([`CellValue::with_intervene`] for an `intervene`, `CellKind::parse` for the
-/// editor), so a wrong type never reaches the journal.
-fn apply_set_node_value(
-    nodes: &Rc<Signal<Vec<GraphNode>>>,
-    undo: &UndoStack,
-    id: NodeId,
-    target: NodeValueTarget,
-    value: CellValue,
-) -> bool {
-    let before = nodes
-        .get()
-        .into_iter()
-        .find(|n| n.id == id)
-        .and_then(|n| match target {
-            NodeValueTarget::InputDefault(port) => n.input_defaults.get(port).cloned(),
-            NodeValueTarget::OutputConst => n.output_const.clone(),
-        });
-    let Some(before) = before else {
-        return false;
-    };
-    // R900 / R920 — the no-op guard compares by the substrate's NaN-safe value
-    // equality (`CellValue::value_eq`, built on the TOTAL order), not the derived
-    // IEEE `PartialEq`: a `Float` default of `NaN` is `!= NaN` under `==`, so
-    // re-setting it would journal a spurious second undo step. The one home for
-    // "same typed value (NaN-safe)", shared with the property grid's modified
-    // check (R920 lift).
-    if before.value_eq(&value) {
-        return true;
-    }
-    let cmd = SetNodeValueCmd {
-        nodes: Rc::clone(nodes),
-        id,
-        target,
-        before,
-        after: value,
-    };
-    // R1234 — `record` (apply-then-journal) over the hand-rolled `cmd.redo();
-    // push_applied(cmd)` ([[use-substrate-not-hand-rolled-equivalent]]); the
-    // value was NOT applied out-of-band, so this is a `record`, not a
-    // `push_applied` (which is for the eager drag / keystroke path).
-    undo.record(cmd);
-    true
 }
 
 /// R853 / R918 — clamp `(x, y)` into the world bounds and write node `id`'s
@@ -3439,15 +2680,15 @@ fn apply_set_node_value(
 /// journaling single-move funnel) — the ONE place a node's position is clamped
 /// and written.
 fn set_pos_clamped(
-    nodes: &Rc<Signal<Vec<GraphNode>>>,
+    document: &Rc<Signal<Graph>>,
     id: NodeId,
     x: i32,
     y: i32,
 ) -> Option<((i32, i32), (i32, i32))> {
     let mut result = None;
-    nodes.set_with(|prev| {
+    document.set_with(|prev| {
         let mut next = prev.clone();
-        if let Some(node) = next.iter_mut().find(|n| n.id == id) {
+        if let Some(node) = next.tree_mut(TREE).and_then(|tree| tree.node_mut(id)) {
             let before = (node.x, node.y);
             node.x = clamp_node_x(x);
             node.y = clamp_node_y(y);
@@ -3520,13 +2761,18 @@ fn cursor_graph_at(scroll: &ScrollState, zoom: f64, x_rel: f64, y_rel: f64) -> (
 /// scrolled beneath it. The caller owns the reactive [`batch`] (one cascade per
 /// frame).
 fn follow_members(
-    nodes: &Rc<Signal<Vec<GraphNode>>>,
+    document: &Rc<Signal<Graph>>,
     members: &[(NodeId, f64, f64, i32, i32)],
     gx: f64,
     gy: f64,
 ) {
     for &(id, grab_dx, grab_dy, _, _) in members {
-        set_pos_clamped(nodes, id, round_i32(gx + grab_dx), round_i32(gy + grab_dy));
+        set_pos_clamped(
+            document,
+            id,
+            round_i32(gx + grab_dx),
+            round_i32(gy + grab_dy),
+        );
     }
 }
 
@@ -3546,42 +2792,104 @@ fn autopan_push(frac: f64) -> f64 {
 }
 
 /// R918 — commit node `id`'s position to a clamped `(x, y)` and journal it as
-/// one *coalescable* [`MoveNodesCmd`], so a Details-panel `x` edit then `y` edit
+/// one *coalescable* `GraphEdit`, so a Details-panel `x` edit then `y` edit
 /// (or an arrow-nudge burst) fold into a single undo step. An unchanged position
 /// journals nothing (the [`apply_rename`] / [`apply_set_node_value`] no-op
 /// discipline). The ONE position-commit funnel the panel's PosX/PosY inline
 /// editor and the `intervene node.<id>.{x,y}` arm share, so a panel edit and an
 /// RPC move are one undoable mutation path ([[setter-wire-returns-read-outcome]]).
-fn apply_set_pos(
-    nodes: &Rc<Signal<Vec<GraphNode>>>,
-    undo: &UndoStack,
-    id: NodeId,
-    x: i32,
-    y: i32,
-) -> bool {
-    let Some((before, after)) = set_pos_clamped(nodes, id, x, y) else {
+fn apply_set_pos(handle: &GraphHandle, id: NodeId, x: i32, y: i32) -> bool {
+    if handle.graph().tree(TREE).and_then(|t| t.node(id)).is_none() {
+        return false;
+    }
+    handle.edit("Move node", Some(BTreeSet::from([id])), |graph, _| {
+        if let Some(node) = graph.tree_mut(TREE).and_then(|tree| tree.node_mut(id)) {
+            node.x = clamp_node_x(x);
+            node.y = clamp_node_y(y);
+        }
+    });
+    true
+}
+
+/// R878 / R1596 — rename node (or frame) `id` to `text`, journalled as one undo
+/// step. `false` for a blank / whitespace-only title (the node keeps its name)
+/// or an absent id — the value rejection both the inline commit and the
+/// `intervene <thing>.<id>.title` arm report.
+///
+/// A frame is a node, so the pre-R1596 `RenameCmd<T>` generic over two
+/// collections collapses to one function over one document.
+fn apply_rename(handle: &GraphHandle, id: NodeId, text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let Some(node) = handle.graph().tree(TREE).and_then(|t| t.node(id)).cloned() else {
         return false;
     };
-    if before != after {
-        undo.push_applied(MoveNodesCmd {
-            nodes: Rc::clone(nodes),
-            moves: vec![(id, before, after)],
-            coalescable: true,
-        });
+    // R1596 — a frame is a node, so the label is DERIVED from what was renamed
+    // rather than passed in. The editor reached the same two words through a
+    // `RenameCmd<T>` generic over its two separate collections.
+    if node.title() == trimmed {
+        // R878 — a rename to the name it already shows journals nothing. The
+        // check is on the DISPLAYED name, because `label: None` and
+        // `label: Some(the kind's own name)` show the same title and would
+        // otherwise be a document change nobody made.
+        return true;
     }
+    let label = if node.is_frame() {
+        "Rename frame"
+    } else {
+        "Rename node"
+    };
+    handle.edit(label, None, |graph, _| {
+        if let Some(node) = graph.tree_mut(TREE).and_then(|tree| tree.node_mut(id)) {
+            node.label = Some(trimmed.to_owned());
+        }
+    });
     true
+}
+
+/// R1257 / R1596 — write `value` onto one of node `id`'s ports (an unwired
+/// input's default, or a source's output constant), journalled as one undo step.
+///
+/// R1594 made the two the SAME mechanism — [`Node::values`], keyed by a
+/// [`PortRef`] — so the two commands the editor kept are one call whose only
+/// difference is which port [`NodeValueTarget::port`] names. The crate refuses a
+/// value whose type the port cannot hold, which is why this answers a `bool`
+/// rather than assuming.
+fn apply_set_node_value(
+    handle: &GraphHandle,
+    id: NodeId,
+    target: NodeValueTarget,
+    value: CellValue,
+) -> bool {
+    // R900 / R1596 — the no-op guard compares by TOTAL order, so re-authoring
+    // the same value journals nothing even when that value is a NaN. The generic
+    // funnel cannot make this call: it compares whole documents with `PartialEq`,
+    // and `NaN != NaN` there, so a repeat NaN write would look like a change.
+    // Float semantics belong to the value type, which is why the check is here
+    // and `CellValue::value_eq` is what makes it.
+    let carried = match target.port().side {
+        Side::Input => input_default(&handle.graph(), id, uidx(target.port().index)),
+        Side::Output => source_const(&handle.graph(), id),
+    };
+    if carried.is_some_and(|held| held.value_eq(&value)) {
+        // Valid, and nothing to journal — which are two different answers the
+        // caller does not have to tell apart: an `intervene` maps `false` to
+        // `UnknownPath`, so a legitimate re-write must not report one.
+        return true;
+    }
+    handle.edit(target.label(), None, |graph, _| {
+        let _ = graph.set_port_value(TREE, id, target.port(), value);
+    })
 }
 
 /// R901 — the [`CellKind`] of node `node`'s input port `port`'s default, or
 /// `None` when the node / port is absent. Drives the inline editor's keystroke
 /// gate (a `Float` accepts digits / sign / `.`, a `Color` hex digits + `#`)
 /// and its commit parse — the one place a port default's editor type is read.
-fn port_default_kind(nodes: &[GraphNode], node: NodeId, port: usize) -> Option<CellKind> {
-    nodes
-        .iter()
-        .find(|n| n.id == node)?
-        .input_default(port)
-        .map(CellValue::kind)
+fn port_default_kind(graph: &Graph, node: NodeId, port: usize) -> Option<CellKind> {
+    input_default(graph, node, port).map(|v| v.kind())
 }
 
 /// R1264 — the [`CellKind`] of node `node`'s authored output constant, or `None`
@@ -3590,13 +2898,8 @@ fn port_default_kind(nodes: &[GraphNode], node: NodeId, port: usize) -> Option<C
 /// its commit parse (a `Float` source accepts digits / sign / `.`, a `Color`
 /// source hex digits + `#`). Read straight off the stored [`CellValue`], not a
 /// port lookup — the constant *is* the typed value.
-fn source_const_kind(nodes: &[GraphNode], node: NodeId) -> Option<CellKind> {
-    nodes
-        .iter()
-        .find(|n| n.id == node)?
-        .output_const
-        .as_ref()
-        .map(CellValue::kind)
+fn source_const_kind(graph: &Graph, node: NodeId) -> Option<CellKind> {
+    source_const(graph, node).map(|v| v.kind())
 }
 
 /// R901 — commit inline-editor `text` into `target` through the matching
@@ -3607,27 +2910,17 @@ fn source_const_kind(nodes: &[GraphNode], node: NodeId) -> Option<CellKind> {
 /// dispatches by target, shared by the keyboard / blur [`commit_edit`] and the
 /// begin-edit migration (committing a different in-flight target before
 /// opening a new one), so the two can never drift.
-fn apply_edit_commit(
-    nodes: &Rc<Signal<Vec<GraphNode>>>,
-    undo: &UndoStack,
-    target: EditTarget,
-    text: &str,
-) {
+fn apply_edit_commit(handle: &GraphHandle, target: EditTarget, text: &str) {
     match target {
         EditTarget::Title(id) => {
-            let _ = apply_rename(nodes, undo, id, text);
+            let _ = apply_rename(handle, id, text);
         }
         EditTarget::PortDefault { node, port } => {
             if let Some(value) =
-                port_default_kind(&nodes.get(), node, port).and_then(|k| k.parse(text))
+                port_default_kind(&handle.graph(), node, port).and_then(|k| k.parse(text))
             {
-                let _ = apply_set_node_value(
-                    nodes,
-                    undo,
-                    node,
-                    NodeValueTarget::InputDefault(port),
-                    value,
-                );
+                let _ =
+                    apply_set_node_value(handle, node, NodeValueTarget::InputDefault(port), value);
             }
         }
         // R918 — a position edit parses the typed coordinate and routes to the
@@ -3635,19 +2928,19 @@ fn apply_edit_commit(
         // position (no data loss — the `CellKind::Int` keystroke gate already
         // bars non-numeric input, this guards a lone `-` or empty field).
         EditTarget::PosX(id) => {
-            if let (Ok(coord), Some(node)) = (
-                text.trim().parse::<i32>(),
-                nodes.get().into_iter().find(|n| n.id == id),
-            ) {
-                let _ = apply_set_pos(nodes, undo, id, coord, node.y);
+            let graph = handle.graph();
+            if let (Ok(coord), Some((node, _))) =
+                (text.trim().parse::<i32>(), kind_node(&graph, id))
+            {
+                let _ = apply_set_pos(handle, id, coord, node.y);
             }
         }
         EditTarget::PosY(id) => {
-            if let (Ok(coord), Some(node)) = (
-                text.trim().parse::<i32>(),
-                nodes.get().into_iter().find(|n| n.id == id),
-            ) {
-                let _ = apply_set_pos(nodes, undo, id, node.x, coord);
+            let graph = handle.graph();
+            if let (Ok(coord), Some((node, _))) =
+                (text.trim().parse::<i32>(), kind_node(&graph, id))
+            {
+                let _ = apply_set_pos(handle, id, node.x, coord);
             }
         }
         // R1264 — a source-const edit parses by the constant's own [`CellKind`]
@@ -3657,8 +2950,9 @@ fn apply_edit_commit(
         // never drift. A malformed numeric / hex keeps the prior value — the
         // `CellKind::parse` no-data-loss contract.
         EditTarget::SourceConst(id) => {
-            if let Some(value) = source_const_kind(&nodes.get(), id).and_then(|k| k.parse(text)) {
-                let _ = apply_set_node_value(nodes, undo, id, NodeValueTarget::OutputConst, value);
+            if let Some(value) = source_const_kind(&handle.graph(), id).and_then(|k| k.parse(text))
+            {
+                let _ = apply_set_node_value(handle, id, NodeValueTarget::OutputConst, value);
             }
         }
     }
@@ -3714,30 +3008,20 @@ struct GraphServices {
     /// R1220 — the open pin-drop create menu, shared with the view fn's
     /// floating-menu paint ([`use_pin_create`]).
     pin_create: Rc<Signal<Option<PinCreate>>>,
-    /// R1227 — the comment-frame list ([`use_frames`]) + its monotonic id source
-    /// ([`use_next_frame_id`]), bundled here with the other shared holders.
-    frames: Rc<Signal<Vec<CommentFrame>>>,
-    next_frame_id: Rc<Cell<u32>>,
 }
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
 /// (same instances the view fn reads) plus the internal drag latches.
 struct NodeGraphExternal {
-    nodes: Rc<Signal<Vec<GraphNode>>>,
-    edges: Rc<Signal<Vec<Edge>>>,
-    /// R1227 — the comment-frame annotation list + its stable-id source.
-    frames: Rc<Signal<Vec<CommentFrame>>>,
-    next_frame_id: Rc<Cell<u32>>,
+    /// R1596 — the graph: nodes, wires, frames, authored port values and the id
+    /// counters, as one [`Document`]. Six holders before this round.
+    document: Rc<Signal<Graph>>,
     /// The single selection (node | edge | none) — a sum type over stable ids,
     /// so node/edge selection is mutually exclusive AND survives an unrelated
     /// delete (a dangling selection is pruned to `None` by [`validate_after`]
     /// at record time, carried as the edit's `sel_after`).
     selection: Rc<Signal<Selection>>,
     preview: Rc<Signal<Option<Preview>>>,
-    /// Monotonic [`EdgeId`] source for newly-connected wires.
-    next_edge_id: Rc<Cell<u32>>,
-    /// R849 — monotonic [`NodeId`] source for newly created (palette / RPC) nodes.
-    next_node_id: Rc<Cell<u32>>,
     /// R851 — the shared undo history every structural mutation records onto
     /// (the same `Rc` the [`UndoStackExternal`] and the keyboard path reach).
     undo: Rc<UndoStack>,
@@ -3786,23 +3070,15 @@ struct NodeGraphExternal {
 
 impl NodeGraphExternal {
     fn new(
-        nodes: Rc<Signal<Vec<GraphNode>>>,
-        edges: Rc<Signal<Vec<Edge>>>,
+        document: Rc<Signal<Graph>>,
         selection: Rc<Signal<Selection>>,
         preview: Rc<Signal<Option<Preview>>>,
-        next_edge_id: Rc<Cell<u32>>,
-        next_node_id: Rc<Cell<u32>>,
         services: GraphServices,
     ) -> Self {
         Self {
-            nodes,
-            edges,
-            frames: services.frames,
-            next_frame_id: services.next_frame_id,
+            document,
             selection,
             preview,
-            next_edge_id,
-            next_node_id,
             undo: services.undo,
             storage: services.storage,
             zoom: services.zoom,
@@ -3820,16 +3096,82 @@ impl NodeGraphExternal {
         }
     }
 
-    fn node_count(&self) -> usize {
-        self.nodes.get().len()
+    /// The document as it stands.
+    fn graph(&self) -> Graph {
+        self.document.get()
     }
 
-    fn node_by_id(&self, id: NodeId) -> Option<GraphNode> {
-        self.nodes.get().into_iter().find(|n| n.id == id)
+    /// R1596 — the model as the tests read it: three derivations over the one
+    /// document, where they used to read three separate reactive cells.
+    #[cfg(test)]
+    fn nodes(&self) -> Vec<Node<MaterialOp>> {
+        kind_node_vec(&self.graph())
+    }
+
+    /// R1596 — what node `id`'s input port carries when nothing is wired to it:
+    /// the value authored on THIS node's port, else the kind's own.
+    #[cfg(test)]
+    fn port_default(&self, id: NodeId, port: usize) -> Option<CellValue> {
+        input_default(&self.graph(), id, port)
+    }
+
+    /// R1596 — the id the tree will mint next, which is what a gesture test
+    /// needs to name the node a drop is ABOUT to create.
+    #[cfg(test)]
+    fn next_node_id(&self) -> u32 {
+        let mut probe = self.graph();
+        probe
+            .add_node(TREE, NodeBody::Frame, 0, 0)
+            .expect("the editor's tree")
+            .0
+    }
+
+    /// R1596 — node `id`'s `(input, output)` port counts, off its signature.
+    #[cfg(test)]
+    fn arity(&self, id: NodeId) -> (usize, usize) {
+        signature_of(&self.graph(), id).map_or((0, 0), |s| (s.inputs.len(), s.outputs.len()))
+    }
+
+    #[cfg(test)]
+    fn edges(&self) -> Vec<Edge> {
+        edges(&self.graph()).to_vec()
+    }
+
+    #[cfg(test)]
+    fn frames(&self) -> Vec<Node<MaterialOp>> {
+        frame_nodes(&self.graph()).cloned().collect()
+    }
+
+    fn node_count(&self) -> usize {
+        kind_nodes(&self.graph()).count()
+    }
+
+    fn node_by_id(&self, id: NodeId) -> Option<Node<MaterialOp>> {
+        kind_node(&self.graph(), id).map(|(node, _)| node.clone())
+    }
+
+    /// R1596 — the coordinator's three model holders as one [`GraphHandle`], so
+    /// its mutations and the paint paths' run the same funnel.
+    fn handle(&self) -> GraphHandle {
+        GraphHandle {
+            document: Rc::clone(&self.document),
+            selection: Rc::clone(&self.selection),
+            undo: Rc::clone(&self.undo),
+        }
+    }
+
+    /// R1596 — the ONE structural mutation path ([`GraphHandle::edit`]).
+    fn edit(
+        &self,
+        label: impl Into<Cow<'static, str>>,
+        coalesce: Option<BTreeSet<NodeId>>,
+        mutate: impl FnOnce(&mut Graph, &mut Selection),
+    ) -> bool {
+        self.handle().edit(label, coalesce, mutate)
     }
 
     /// R1245 — whether node `id` is a reroute knot (a wire-routing passthrough,
-    /// [`GraphNode::is_reroute`]); a missing id reads `false`. Gates the
+    /// [`NodeGeometry::is_reroute`]); a missing id reads `false`. Gates the
     /// double-click gesture: a knot dissolves, a compute node renames.
     fn is_reroute_node(&self, id: NodeId) -> bool {
         self.node_by_id(id).is_some_and(|n| n.is_reroute())
@@ -3844,7 +3186,7 @@ impl NodeGraphExternal {
         self.selection
             .get()
             .node()
-            .map(|id| format!("node.{}.{field}", id.raw()))
+            .map(|id| format!("node.{}.{field}", id.0))
     }
 
     // ── R877 viewport (pan = scroll offset, zoom = shared Signal) ──
@@ -3909,10 +3251,11 @@ impl NodeGraphExternal {
     /// clamped to the zoom range, and centre it. `false` on an empty
     /// graph (nothing to frame, viewport unchanged).
     fn frame_all(&self) -> bool {
-        let nodes = self.nodes.get();
+        let graph = self.graph();
         // R948 — the union bbox over all nodes (the [`node_bounds`] SSOT, also
         // the selection-bbox source for `align_selected`).
-        let Some((min_x, min_y, max_x, max_y)) = node_bounds(nodes.iter()) else {
+        let Some((min_x, min_y, max_x, max_y)) = node_bounds(kind_nodes(&graph).map(|(n, _)| n))
+        else {
             return false;
         };
         let bw = f64::from((max_x - min_x).max(1));
@@ -3939,45 +3282,44 @@ impl NodeGraphExternal {
         true
     }
 
-    /// R851 — build a [`GraphEdit`] over the shared signals and `record` it onto
-    /// the undo stack. `record` applies the edit forward (its `redo`), so this
-    /// is the single mutation path for every *structural* change — the caller
-    /// supplies the delta + the before / after selection and never touches the
-    /// signals directly ([`UndoStack::record`] semantics).
-    fn record_edit(
-        &self,
-        label: impl Into<Cow<'static, str>>,
-        delta: GraphDelta,
-        sel_before: Selection,
-        sel_after: Selection,
-    ) {
-        self.undo.record(GraphEdit {
-            nodes: Rc::clone(&self.nodes),
-            edges: Rc::clone(&self.edges),
-            frames: Rc::clone(&self.frames),
-            selection: Rc::clone(&self.selection),
-            label: label.into(),
-            delta,
-            sel_before,
-            sel_after,
-        });
-    }
-
-    /// R853/R879 — journal a (multi-)node move onto the undo stack as ONE
-    /// step. The positions are already applied (the live drag / nudge /
-    /// intervene set them), so this `push_applied`s the [`MoveNodesCmd`]
-    /// without re-applying; the stack's coalescing folds a contiguous
-    /// `coalescable` same-member run (a nudge burst) into one step.
-    /// Unmoved members are dropped; an all-unmoved set journals nothing.
+    /// R853/R879/R1596 — journal an already-applied (multi-)node move as ONE
+    /// undo step.
+    ///
+    /// The live drag / nudge / intervene paths write positions straight onto the
+    /// document (one write per frame), so the `after` state is the document as
+    /// it stands and the `before` is reconstructed by putting each moved node
+    /// back — exact, because a move changes nothing else about the document.
+    /// The stack's coalescing then folds a contiguous `coalescable` same-member
+    /// run (a nudge burst) into one step. Unmoved members are dropped; an
+    /// all-unmoved set journals nothing.
     fn record_moves(&self, mut moves: Vec<NodeMove>, coalescable: bool) {
         moves.retain(|(_, before, after)| before != after);
         if moves.is_empty() {
             return;
         }
-        self.undo.push_applied(MoveNodesCmd {
-            nodes: Rc::clone(&self.nodes),
-            moves,
-            coalescable,
+        let after = self.graph();
+        let mut before = after.clone();
+        for &(id, was, _) in &moves {
+            if let Some(node) = before.tree_mut(TREE).and_then(|t| t.node_mut(id)) {
+                (node.x, node.y) = was;
+            }
+        }
+        let label = if moves.len() == 1 {
+            Cow::Borrowed("Move node")
+        } else {
+            Cow::Owned(format!("Move {} nodes", moves.len()))
+        };
+        let members: BTreeSet<NodeId> = moves.iter().map(|&(id, _, _)| id).collect();
+        let selection = self.selection.get();
+        self.undo.push_applied(GraphEdit {
+            document: Rc::clone(&self.document),
+            selection: Rc::clone(&self.selection),
+            label,
+            before,
+            after,
+            sel_before: selection.clone(),
+            sel_after: selection,
+            coalesce: coalescable.then_some(members),
         });
     }
 
@@ -3986,12 +3328,7 @@ impl NodeGraphExternal {
     fn snapshot(&self) -> SerializedGraph {
         SerializedGraph {
             schema_version: PERSISTED_SCHEMA_VERSION,
-            nodes: self.nodes.get(),
-            edges: self.edges.get(),
-            next_node_id: self.next_node_id.get(),
-            next_edge_id: self.next_edge_id.get(),
-            frames: self.frames.get(),
-            next_frame_id: self.next_frame_id.get(),
+            graph: self.graph(),
         }
     }
 
@@ -4006,12 +3343,7 @@ impl NodeGraphExternal {
     /// `QUndoStack` "open clears the stack" model). The single restore path
     /// behind `set_graph` / `load`, so every entry point clears undo identically.
     fn apply_snapshot(&self, g: SerializedGraph) {
-        self.nodes.set(g.nodes);
-        self.edges.set(g.edges);
-        self.frames.set(g.frames);
-        self.next_frame_id.set(g.next_frame_id);
-        self.next_node_id.set(g.next_node_id);
-        self.next_edge_id.set(g.next_edge_id);
+        self.document.set(g.graph);
         self.selection.set(Selection::None);
         self.preview.set(None);
         self.undo.clear();
@@ -4024,12 +3356,19 @@ impl NodeGraphExternal {
     /// R852 — parse + apply a JSON snapshot (the AI-first `set_graph` write, the
     /// inverse of [`serialized_json`](Self::serialized_json)). Rejects malformed
     /// JSON or a schema-version mismatch (`false`, the graph unchanged). R1258 /
-    /// R1259 — also rejects a **structurally-invalid** blob: the nodes + edges
-    /// ([`graph_invariants_hold`]), unique frame ids, and every id counter ahead
-    /// of the ids it mints past (nodes, edges, AND frames). So an untrusted
+    /// R1259 — also rejects a **structurally-invalid** blob. So an untrusted
     /// `set_graph` blob (§2 #2 — RPC is the AI-first write path) fails LOUD
     /// (graph unchanged, the AI sees `false`) rather than silently evaluating an
     /// ill-typed / malformed graph to the wrong value or a permanent `null`.
+    ///
+    /// R1596 — the check is [`Document::validate`], and it is **wider than the
+    /// four the editor listed**: a dangling link, an over-fed input, a wire whose
+    /// types cannot cross, a cycle, a node claiming a parent that is not there or
+    /// is not a frame, a containment cycle, and (for the group axis this editor
+    /// does not yet use) a dangling instance and a recursive definition. The
+    /// editor hand-maintained three id counters and gated a load on each leading
+    /// its own ids; a tree mints from its own counter, so that whole class of
+    /// blob is unrepresentable rather than rejected.
     fn load_json(&self, json: &str) -> bool {
         let Ok(g) = serde_json::from_str::<SerializedGraph>(json) else {
             return false;
@@ -4037,23 +3376,7 @@ impl NodeGraphExternal {
         if g.schema_version != PERSISTED_SCHEMA_VERSION {
             return false;
         }
-        if !graph_invariants_hold(&g.nodes, &g.edges) {
-            return false;
-        }
-        // R1259 — the comment frames ride the same blob and are installed
-        // verbatim by `apply_snapshot`, so they get the same id-uniqueness gate
-        // (an audit found frames were unvalidated: a duplicate `FrameId` or a
-        // lagging counter would collide on the next `add_frame`).
-        let frame_ids: BTreeSet<u32> = g.frames.iter().map(|f| f.id.raw()).collect();
-        if frame_ids.len() != g.frames.len() {
-            return false;
-        }
-        // The monotonic id counters must lead every stored id, so a later mint
-        // never collides with a loaded node / edge / frame.
-        if g.nodes.iter().any(|n| n.id.raw() >= g.next_node_id)
-            || g.edges.iter().any(|e| e.id.raw() >= g.next_edge_id)
-            || g.frames.iter().any(|f| f.id.raw() >= g.next_frame_id)
-        {
+        if !graph_invariants_hold(&g.graph) {
             return false;
         }
         self.apply_snapshot(g);
@@ -4090,7 +3413,7 @@ impl NodeGraphExternal {
     /// callers (`end_gesture` / `nudge_selected` / the `x`,`y` intervene arm)
     /// record the `MoveNodeCmd` once the gesture / keystroke settles.
     fn set_node_pos(&self, id: NodeId, x: i32, y: i32) -> bool {
-        set_pos_clamped(&self.nodes, id, x, y).is_some()
+        set_pos_clamped(&self.document, id, x, y).is_some()
     }
 
     /// R849 — create a new node of [`PALETTE`] kind `kind` at the next cascade
@@ -4109,13 +3432,11 @@ impl NodeGraphExternal {
         // canvas has panned away). R1411 — the step reads the id ABOUT to be
         // minted (`next_node_id` peek == the value `add_node_at` will assign), so
         // the fan-out is bit-identical to before the `add_node_at` extraction.
-        let step = i32::try_from(
-            self.next_node_id
-                .get()
-                .saturating_sub(first_dynamic_node_id()),
-        )
-        .unwrap_or(0)
-            % 8;
+        // R1596 — the cascade counts the nodes that exist rather than peeking at
+        // a counter, which is the same number for a graph that has only grown
+        // and an honest one for a graph nodes have been deleted from (the
+        // counter kept climbing there, so the fan-out drifted off the point).
+        let step = i32::try_from(self.node_count()).unwrap_or(0) % 8;
         let (gx, gy) = self.cursor_graph(
             f64::from(SPAWN_X) / f64::from(WIN_W),
             f64::from(SPAWN_Y) / f64::from(WIN_H),
@@ -4133,22 +3454,16 @@ impl NodeGraphExternal {
     /// node id, or `None` for an out-of-range `kind`.
     fn add_node_at(&self, kind: usize, x: i32, y: i32) -> Option<NodeId> {
         let &(title, ..) = PALETTE.get(kind)?;
-        let id = self.mint_node_id();
-        // R1256 — one palette-node constructor SSOT (derives `is_reroute` from op).
-        let node = GraphNode::from_palette(kind, id.raw(), x, y)?;
-        let sel_before = self.selection.get();
-        // `record` applies the edit forward — pushing the node and selecting it
-        // (the prior direct writes) — so a single Ctrl+Z removes it again.
-        self.record_edit(
-            format!("Add {title}"),
-            GraphDelta {
-                added_nodes: vec![node],
-                ..GraphDelta::default()
-            },
-            sel_before,
-            Selection::single(id),
-        );
-        Some(id)
+        let mut made = None;
+        // `record` applies the edit forward — adding the node and selecting it —
+        // so a single Ctrl+Z removes it again.
+        self.edit(format!("Add {title}"), None, |graph, sel| {
+            if let Some(id) = add_palette_node(graph, kind, x, y) {
+                *sel = Selection::single(id);
+                made = Some(id);
+            }
+        });
+        made
     }
 
     // ── R1220 pin-drop create menu (drag off a pin → typed menu → auto-wire) ──
@@ -4159,8 +3474,7 @@ impl NodeGraphExternal {
     /// open) — every menu path re-derives from here, so a mid-menu delete never
     /// commits against a stale pin.
     fn pin_candidates(&self, pc: &PinCreate) -> Option<(PortType, Vec<usize>)> {
-        let node = self.node_by_id(pc.from_node)?;
-        let from_ty = node.output_type(pc.from_port)?;
+        let from_ty = output_type(&self.graph(), pc.from_node, pc.from_port)?;
         Some((from_ty, pin_create_candidates(from_ty, &pc.filter)))
     }
 
@@ -4178,10 +3492,7 @@ impl NodeGraphExternal {
         at_graph: (i32, i32),
         at_screen: (u32, u32),
     ) -> bool {
-        let Some(node) = self.node_by_id(from_node) else {
-            return false;
-        };
-        let Some(from_ty) = node.output_type(from_port) else {
+        let Some(from_ty) = output_type(&self.graph(), from_node, from_port) else {
             return false;
         };
         if pin_create_candidates(from_ty, "").is_empty() {
@@ -4248,29 +3559,31 @@ impl NodeGraphExternal {
         }
         let target_port = first_compatible_input(kind, from_ty)?;
         let &(title, ..) = PALETTE.get(kind)?;
-        let node_id = self.mint_node_id();
-        // R1256 — one palette-node constructor SSOT (derives `is_reroute` from op).
-        let node = GraphNode::from_palette(kind, node_id.raw(), pc.at_graph.0, pc.at_graph.1)?;
-        let edge = Edge {
-            id: self.mint_edge_id(),
-            from_node: pc.from_node,
-            from_port: pc.from_port,
-            to_node: node_id,
-            to_port: target_port,
-        };
-        let sel_before = self.selection.get();
-        self.record_edit(
-            format!("Add {title} + wire"),
-            GraphDelta {
-                added_nodes: vec![node],
-                added_edges: vec![edge],
-                ..GraphDelta::default()
-            },
-            sel_before,
-            Selection::single(node_id),
-        );
-        self.pin_create.set(None);
-        Some(node_id)
+        let mut made = None;
+        self.edit(format!("Add {title} + wire"), None, |graph, sel| {
+            let Some(id) = add_palette_node(graph, kind, pc.at_graph.0, pc.at_graph.1) else {
+                return;
+            };
+            // The wire is type-checked by the same gate a hand-drawn one is, so
+            // a candidate the menu offered and a wire the canvas accepts cannot
+            // disagree — `first_compatible_input` picked the port off the very
+            // relation `connect` will apply.
+            if graph
+                .connect(
+                    TREE,
+                    Socket::new(pc.from_node, uport(pc.from_port)),
+                    Socket::new(id, uport(target_port)),
+                )
+                .is_ok()
+            {
+                *sel = Selection::single(id);
+                made = Some(id);
+            }
+        });
+        if made.is_some() {
+            self.pin_create.set(None);
+        }
+        made
     }
 
     /// Commit the highlighted candidate (the Enter / click-the-focused-item
@@ -4317,7 +3630,7 @@ impl NodeGraphExternal {
         };
         let candidates: Vec<&str> = cands.into_iter().map(|k| PALETTE[k].0).collect();
         IntrospectValue::Json(serde_json::json!({
-            "from_node": pc.from_node.raw(),
+            "from_node": pc.from_node.0,
             "from_port": pc.from_port,
             "at": { "x": pc.at_graph.0, "y": pc.at_graph.1 },
             "filter": pc.filter,
@@ -4352,35 +3665,31 @@ impl NodeGraphExternal {
         if from_node == to_node {
             return None;
         }
-        let nodes = self.nodes.get();
-        let src = nodes.iter().find(|n| n.id == from_node)?;
-        let dst = nodes.iter().find(|n| n.id == to_node)?;
-        // Out-of-range port = a missing typed socket (the pre-R898 arity reject).
-        let (from_ty, to_ty) = (src.output_type(from_port)?, dst.input_type(to_port)?);
-        // R898 — typed-port validation: the output's type must be assignable to
-        // the destination input's type (exact, or a `Float`->`Vector` scalar
-        // broadcast). A material / blueprint graph rejects an ill-typed wire.
-        if !from_ty.is_assignable_to(to_ty) {
+        let graph = self.graph();
+        let from = Socket::new(from_node, uport(from_port));
+        let to = Socket::new(to_node, uport(to_port));
+        // R1596 — the type gate is the crate's, asked WITHOUT committing:
+        // `Document::conversion` answers what would happen to a value crossing
+        // these two sockets, which is `None` when either port is missing (the
+        // pre-R898 arity reject) and `Refused` when no value may cross. The
+        // editor used to spell this as a predicate of its own beside a coercion
+        // of its own, which is the pair R1593 made one declaration.
+        if graph.conversion(TREE, from, to)?.is_refused() {
             return None;
         }
-        let edges = self.edges.get();
-        let dup = edges.iter().any(|e| {
-            Some(e.id) != ignore
-                && e.from_node == from_node
-                && e.from_port == from_port
-                && e.to_node == to_node
-                && e.to_port == to_port
-        });
+        let dup = edges(&graph)
+            .iter()
+            .any(|e| Some(e.id) != ignore && e.from == from && e.to == to);
         if dup {
             return None;
         }
         // Input single-wire rule: the new wire displaces any existing wire into
-        // the same target input — captured as a removed delta so undo restores it.
+        // the same target input — reported so undo restores it.
         Some(
-            edges
+            edges(&graph)
                 .iter()
                 .copied()
-                .filter(|e| Some(e.id) != ignore && e.to_node == to_node && e.to_port == to_port)
+                .filter(|e| Some(e.id) != ignore && e.to == to)
                 .collect(),
         )
     }
@@ -4394,29 +3703,10 @@ impl NodeGraphExternal {
     /// one SSOT. Each caller's `validate_connection` gate and its `removed` set
     /// are the only differences (R929 factored the validation but left this
     /// commit tail duplicated — the missing half of that lift).
-    /// R1235 — mint the next stable [`EdgeId`], bumping the monotonic counter.
-    /// The one id source shared by [`commit_new_edge`](Self::commit_new_edge)
-    /// (connect / reconnect) and the reroute splice ([`add_reroute`](Self::add_reroute),
-    /// which mints two) — a deleted-then-saved id is never re-handed-out
-    /// (the counter only advances), so a splice + undo leaves no id collision.
-    fn mint_edge_id(&self) -> EdgeId {
-        let id = EdgeId(self.next_edge_id.get());
-        self.next_edge_id.set(id.raw() + 1);
-        id
-    }
-
-    /// R1238 — the [`NodeId`] twin of [`mint_edge_id`](Self::mint_edge_id): mint
-    /// the next stable node id, bumping the monotonic counter. The one node-id
-    /// source shared by [`add_node`](Self::add_node), the pin-drop create
-    /// ([`commit_pin_create_kind`](Self::commit_pin_create_kind)), and the reroute
-    /// splice ([`add_reroute`](Self::add_reroute)) — the 3rd consumer that made the
-    /// lift due (`add_node` still reads `.raw()` afterward for its cascade offset).
-    fn mint_node_id(&self) -> NodeId {
-        let id = NodeId(self.next_node_id.get());
-        self.next_node_id.set(id.raw() + 1);
-        id
-    }
-
+    // R1596 — the two monotonic id `Cell`s are gone: `Document::add_node` and
+    // `Document::connect` mint their own, so "a deleted id is never handed out
+    // again" is a property of the tree rather than of two counters a save / load
+    // path had to carry and re-seed in step.
     fn commit_new_edge(
         &self,
         label: &'static str,
@@ -4424,29 +3714,32 @@ impl NodeGraphExternal {
         from_port: usize,
         to_node: NodeId,
         to_port: usize,
-        removed: Vec<Edge>,
-    ) {
-        let id = self.mint_edge_id();
-        let new_edge = Edge {
-            id,
-            from_node,
-            from_port,
-            to_node,
-            to_port,
-        };
-        let sel_before = self.selection.get();
+        removed: &[Edge],
+    ) -> bool {
         let removed_ids: Vec<EdgeId> = removed.iter().map(|e| e.id).collect();
-        let sel_after = validate_after(sel_before.clone(), &[], &removed_ids);
-        self.record_edit(
-            label,
-            GraphDelta {
-                added_edges: vec![new_edge],
-                removed_edges: removed,
-                ..GraphDelta::default()
-            },
-            sel_before,
-            sel_after,
-        );
+        // R1596 — the CRATE decides whether the wire may exist, and this reports
+        // what it decided. `connect` refuses a type mismatch, a second producer
+        // on one input and a wire that would close a CYCLE, and the last of
+        // those the editor's own gate never had; swallowing the refusal here
+        // would answer `true` for a wire that was never made — which a caller
+        // maps straight onto the `add_edge` verb's wire contract.
+        let mut wired = false;
+        self.edit(label, None, |graph, sel| {
+            for id in &removed_ids {
+                let _ = graph.disconnect(TREE, *id);
+            }
+            wired = graph
+                .connect(
+                    TREE,
+                    Socket::new(from_node, uport(from_port)),
+                    Socket::new(to_node, uport(to_port)),
+                )
+                .is_ok();
+            if wired {
+                *sel = validate_after(sel.clone(), &[], &removed_ids);
+            }
+        });
+        wired
     }
 
     fn add_edge(
@@ -4460,8 +3753,7 @@ impl NodeGraphExternal {
         else {
             return false;
         };
-        self.commit_new_edge("Connect", from_node, from_port, to_node, to_port, replaced);
-        true
+        self.commit_new_edge("Connect", from_node, from_port, to_node, to_port, &replaced)
     }
 
     /// R929 — move an existing edge's **target** to a new input port, keeping
@@ -4474,17 +3766,17 @@ impl NodeGraphExternal {
     /// same input is a no-op `true`; an invalid target (self-loop / mistyped /
     /// missing port / exact duplicate) is a no-op `false`, leaving the edge as
     /// it was. The reconnected wire mints a fresh [`EdgeId`] — a reconnect is a
-    /// new connection, consistent with the remove+add [`GraphDelta`] model.
+    /// new connection, consistent with the remove+add `GraphEdit` model.
     fn reconnect_edge(&self, edge_id: EdgeId, new_to_node: NodeId, new_to_port: usize) -> bool {
-        let Some(old) = self.edges.get().iter().copied().find(|e| e.id == edge_id) else {
+        let Some(old) = edge(&self.graph(), edge_id).copied() else {
             return false;
         };
-        if old.to_node == new_to_node && old.to_port == new_to_port {
+        if old.to == Socket::new(new_to_node, uport(new_to_port)) {
             return true; // dropped back on its own input — nothing changed.
         }
         let Some(replaced) = self.validate_connection(
-            old.from_node,
-            old.from_port,
+            old.from.node,
+            uidx(old.from.port),
             new_to_node,
             new_to_port,
             Some(edge_id),
@@ -4495,13 +3787,12 @@ impl NodeGraphExternal {
         removed.extend(replaced);
         self.commit_new_edge(
             "Reconnect",
-            old.from_node,
-            old.from_port,
+            old.from.node,
+            uidx(old.from.port),
             new_to_node,
             new_to_port,
-            removed,
-        );
-        true
+            &removed,
+        )
     }
 
     /// R1235 — splice a **reroute node** into edge `edge_id`: a typed 1-in /
@@ -4514,62 +3805,38 @@ impl NodeGraphExternal {
     /// edge is removed and the node + its two edges are added together, so a
     /// single `Ctrl`+`Z` undoes the whole reroute. `None` for an unknown edge id.
     fn add_reroute(&self, edge_id: EdgeId) -> Option<NodeId> {
-        let edge = self.edges.get().iter().copied().find(|e| e.id == edge_id)?;
-        let nodes = self.nodes.get();
-        // The wire's type is its SOURCE output's type; both reroute ports take it.
-        let ty = node_ref(&nodes, edge.from_node)?.output_type(edge.from_port)?;
+        let graph = self.graph();
+        let wire = *edge(&graph, edge_id)?;
+        // The wire's type is its SOURCE output's type; both reroute ports take
+        // it, which is what makes the knot a `MaterialOp::Reroute(ty)`.
+        let ty = output_type(&graph, wire.from.node, wire.from.port as usize)?;
         // Centre the reroute on the wire's straight midpoint (graph units — the
         // same space `edge_endpoints` + node positions live in).
-        let (from, to) = edge_endpoints(&nodes, &edge)?;
-        let mid_x = i32::midpoint(from.0, to.0);
-        let mid_y = i32::midpoint(from.1, to.1);
-        let node_id = self.mint_node_id();
-        let mut reroute = GraphNode::new(
-            node_id.raw(),
-            "Reroute",
-            0,
-            0,
-            &[ty],
-            &[ty],
-            NodeOp::Reroute,
-        );
-        // R1259 — `op == NodeOp::Reroute`, so `is_reroute()` derives `true` (no
-        // stored field to set); R1243 — centre the compact knot on the wire
-        // midpoint: `width()`/`height()` are both `KNOT_SIZE` (they key off
-        // `is_reroute()`), so the dot sits exactly on the old wire (the
-        // double-click point).
-        reroute.x = clamp_node_x(mid_x - reroute.width() / 2);
-        reroute.y = clamp_node_y(mid_y - reroute.height() / 2);
-        // Mint the two replacement edges (A -> R, R -> B).
-        let e_in = self.mint_edge_id();
-        let e_out = self.mint_edge_id();
-        let a_to_r = Edge {
-            id: e_in,
-            from_node: edge.from_node,
-            from_port: edge.from_port,
-            to_node: node_id,
-            to_port: 0,
-        };
-        let r_to_b = Edge {
-            id: e_out,
-            from_node: node_id,
-            from_port: 0,
-            to_node: edge.to_node,
-            to_port: edge.to_port,
-        };
-        let sel_before = self.selection.get();
-        self.record_edit(
-            "Insert reroute",
-            GraphDelta {
-                added_nodes: vec![reroute],
-                added_edges: vec![a_to_r, r_to_b],
-                removed_edges: vec![edge],
-                ..GraphDelta::default()
-            },
-            sel_before,
-            Selection::single(node_id),
-        );
-        Some(node_id)
+        let (from, to) = edge_endpoints(&graph, &wire)?;
+        let knot = MaterialOp::Reroute(ty);
+        let mid_x = i32::midpoint(from.0, to.0) - KNOT_SIZE / 2;
+        let mid_y = i32::midpoint(from.1, to.1) - KNOT_SIZE / 2;
+        let mut made = None;
+        self.edit("Insert reroute", None, |graph, sel| {
+            let Ok(id) = graph.add_node(
+                TREE,
+                NodeBody::Kind(knot),
+                clamp_node_x(mid_x),
+                clamp_node_y(mid_y),
+            ) else {
+                return;
+            };
+            // The original wire goes first: its target input takes one link, and
+            // `R -> B` is that link now.
+            let _ = graph.disconnect(TREE, edge_id);
+            let a_to_r = graph.connect(TREE, wire.from, Socket::new(id, 0));
+            let r_to_b = graph.connect(TREE, Socket::new(id, 0), wire.to);
+            if a_to_r.is_ok() && r_to_b.is_ok() {
+                *sel = Selection::single(id);
+                made = Some(id);
+            }
+        });
+        made
     }
 
     /// R1235 — the `add_reroute` verb arm: splice a reroute into edge `<int>`,
@@ -4581,7 +3848,7 @@ impl NodeGraphExternal {
         };
         let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
         Ok(match self.add_reroute(EdgeId(id)) {
-            Some(n) => IntrospectValue::Int(i64::from(n.raw())),
+            Some(n) => IntrospectValue::Int(i64::from(n.0)),
             None => IntrospectValue::Null,
         })
     }
@@ -4627,12 +3894,11 @@ impl NodeGraphExternal {
     /// value is type-checked against the port's kind by
     /// [`CellValue::with_intervene`] (a `Float` takes a float, a `Vector`/`Color`
     /// a `#RRGGBB[AA]` hex), then routed through the `apply_set_node_value` SSOT,
-    /// so the AI write journals the same undoable [`SetNodeValueCmd`] an inline
+    /// so the AI write journals the same undoable `GraphEdit` an inline
     /// editor would. An unknown field / out-of-range port is an `UnknownPath`.
     fn intervene_input_default(
         &mut self,
         id: NodeId,
-        node: &GraphNode,
         field: &str,
         value: IntrospectValue,
     ) -> Result<(), InterveneError> {
@@ -4642,7 +3908,7 @@ impl NodeGraphExternal {
         else {
             return Err(InterveneError::UnknownPath);
         };
-        let Some(current) = node.input_default(port) else {
+        let Some(current) = input_default(&self.graph(), id, port) else {
             return Err(InterveneError::UnknownPath);
         };
         let next = current.with_intervene(value)?;
@@ -4651,8 +3917,7 @@ impl NodeGraphExternal {
         // unreachable, but threading the funnel's success keeps the contract
         // explicit and total rather than silently swallowing a future failure.
         if apply_set_node_value(
-            &self.nodes,
-            &self.undo,
+            &self.handle(),
             id,
             NodeValueTarget::InputDefault(port),
             next,
@@ -4665,29 +3930,22 @@ impl NodeGraphExternal {
 
     /// R1257 — the `intervene node.<id>.value` write path: author a **source**
     /// node's output constant (the output-side twin of
-    /// [`Self::intervene_input_default`]). Gated on [`GraphNode::is_source`] —
+    /// [`Self::intervene_input_default`]). Gated on [`is_source`] —
     /// a compute op / sink / reroute has a *derived* value, so the write is
     /// `ReadOnly`. The value is typed against the source's current constant by
     /// [`CellValue::with_intervene`] (matching output port 0's kind) and routed
     /// through the same `apply_set_node_value` SSOT, so it journals an undoable
-    /// [`SetNodeValueCmd`] just like a pin-default edit.
+    /// `GraphEdit` just like a pin-default edit.
     fn intervene_source_value(
         &mut self,
         id: NodeId,
-        node: &GraphNode,
         value: IntrospectValue,
     ) -> Result<(), InterveneError> {
-        let Some(current) = &node.output_const else {
+        let Some(current) = source_const(&self.graph(), id) else {
             return Err(InterveneError::ReadOnly);
         };
         let next = current.with_intervene(value)?;
-        if apply_set_node_value(
-            &self.nodes,
-            &self.undo,
-            id,
-            NodeValueTarget::OutputConst,
-            next,
-        ) {
+        if apply_set_node_value(&self.handle(), id, NodeValueTarget::OutputConst, next) {
             Ok(())
         } else {
             Err(InterveneError::UnknownPath)
@@ -4697,20 +3955,14 @@ impl NodeGraphExternal {
     /// Remove the edge with stable id `id` (no-op + `false` if absent). R851 —
     /// the edge is stored as a removed delta so undo re-inserts it verbatim.
     fn remove_edge(&self, id: EdgeId) -> bool {
-        let Some(edge) = self.edges.get().iter().copied().find(|e| e.id == id) else {
+        if edge(&self.graph(), id).is_none() {
             return false;
-        };
-        let sel_before = self.selection.get();
-        let sel_after = validate_after(sel_before.clone(), &[], &[id]);
-        self.record_edit(
-            "Disconnect",
-            GraphDelta {
-                removed_edges: vec![edge],
-                ..GraphDelta::default()
-            },
-            sel_before,
-            sel_after,
-        );
+        }
+        self.edit("Disconnect", None, |graph, sel| {
+            if graph.disconnect(TREE, id).is_ok() {
+                *sel = validate_after(sel.clone(), &[], &[id]);
+            }
+        });
         true
     }
 
@@ -4726,32 +3978,24 @@ impl NodeGraphExternal {
     /// §2 #2 note), so the cut is expressed verb-first and the human gesture
     /// (a future canvas stroke) funnels through this same method.
     fn cut_wires(&self, a: (i32, i32), b: (i32, i32)) -> Vec<EdgeId> {
-        let nodes = self.nodes.get();
-        let cut: Vec<Edge> = self
-            .edges
-            .get()
+        let graph = self.graph();
+        let ids: Vec<EdgeId> = edges(&graph)
             .iter()
-            .copied()
             .filter(|e| {
-                edge_endpoints(&nodes, e)
+                edge_endpoints(&graph, e)
                     .is_some_and(|(from, to)| edge_crosses_segment(from, to, a, b))
             })
+            .map(|e| e.id)
             .collect();
-        if cut.is_empty() {
+        if ids.is_empty() {
             return Vec::new();
         }
-        let ids: Vec<EdgeId> = cut.iter().map(|e| e.id).collect();
-        let sel_before = self.selection.get();
-        let sel_after = validate_after(sel_before.clone(), &[], &ids);
-        self.record_edit(
-            "Cut wires",
-            GraphDelta {
-                removed_edges: cut,
-                ..GraphDelta::default()
-            },
-            sel_before,
-            sel_after,
-        );
+        self.edit("Cut wires", None, |graph, sel| {
+            for &id in &ids {
+                let _ = graph.disconnect(TREE, id);
+            }
+            *sel = validate_after(sel.clone(), &[], &ids);
+        });
         ids
     }
 
@@ -4763,7 +4007,7 @@ impl NodeGraphExternal {
     /// palette. Two sites reach for it, and the palette is short and fixed, so
     /// a refusal that prints it turns a typo into a one-look fix.
     fn unknown_kind_reason(action: &str, name: &str) -> InvokeError {
-        let palette: Vec<&str> = PALETTE.iter().map(|&(n, _, _, _)| n).collect();
+        let palette: Vec<&str> = PALETTE.iter().map(|&(n, _)| n).collect();
         InvokeError::rejected(format!(
             "{action}: {name:?} is not a node kind (the palette offers: {})",
             palette.join(", ")
@@ -4820,109 +4064,119 @@ impl NodeGraphExternal {
         let (a, b) = parse_cut_spec(&s)
             .ok_or_else(|| InvokeError::rejected(format!("cut_wires: malformed cut spec {s:?}")))?;
         Ok(IntrospectValue::Text(csv_ids(
-            self.cut_wires(a, b).iter().map(|id| id.raw()),
+            self.cut_wires(a, b).iter().map(|id| id.0),
         )))
     }
 
     // ─── R1227 comment frames ─────────────────────────────────────────
 
-    fn frame_by_id(&self, id: FrameId) -> Option<CommentFrame> {
-        self.frames.get().into_iter().find(|f| f.id == id)
+    fn frame_by_id(&self, id: FrameId) -> Option<Node<MaterialOp>> {
+        frame_node(&self.graph(), id).cloned()
     }
 
     /// R1227 — frame the current node selection: the bounding box of the
     /// selected nodes grown by [`FRAME_PAD`] on every side (plus
     /// [`FRAME_HEADER_H`] on top for the title strip), titled `"Comment N"`. The
     /// canonical Blueprint "comment the selection" create (the RPC `add_frame`
-    /// verb + the future `C` gesture funnel here). Undoable
-    /// (`GraphDelta.added_frames`). `None` when no node is selected (a frame with
-    /// nothing to annotate is not created). The node selection is untouched —
-    /// frames are a separate annotation axis, not part of [`Selection`].
+    /// verb + the future `C` gesture funnel here). Undoable. `None` when no node
+    /// is selected (a frame with nothing to annotate is not created). The node
+    /// selection is untouched — frames are a separate annotation axis, not part
+    /// of [`Selection`].
+    ///
+    /// R1596 — membership becomes a **fact** here ([`Document::enframe`], which
+    /// writes each member's [`Node::parent`]) where the editor re-derived it
+    /// from the rectangle on every read. That is Blender's model
+    /// (`NODE_OT_join`) and it is what makes a member survive a resize: a
+    /// rectangle test silently adopts and abandons nodes as the box is dragged,
+    /// so what the frame *said* it held changed without anyone editing it.
+    /// The **geometry** stays this application's — the crate deliberately has no
+    /// card extent (R1589) — so the padded bounding box is written onto the
+    /// frame node right after the relation is made.
     fn add_frame(&self) -> Option<FrameId> {
-        let sel = self.selection.get().nodes();
-        let nodes = self.nodes.get();
+        let graph = self.graph();
+        let selected = self.selection.get().nodes();
+        let members: Vec<NodeId> = selected.iter().copied().collect();
         // R1230 — the selection's bounding box through the `node_bounds` SSOT
         // (the same fold `align_selected` uses); the pre-R1230 hand-rolled fold
         // here bypassed both `node_bounds` and the `bottom()` accessor.
-        let (left, top, right, bottom) = node_bounds(nodes.iter().filter(|n| sel.contains(&n.id)))?;
+        let (left, top, right, bottom) = node_bounds(
+            kind_nodes(&graph)
+                .map(|(node, _)| node)
+                .filter(|n| selected.contains(&n.id)),
+        )?;
         let x = (left - FRAME_PAD).max(0);
         let y = (top - FRAME_PAD - FRAME_HEADER_H).max(0);
-        let raw = self.next_frame_id.get();
-        self.next_frame_id.set(raw + 1);
-        let id = FrameId(raw);
-        let frame = CommentFrame {
-            id,
-            x,
-            y,
-            w: (right + FRAME_PAD) - x,
-            h: (bottom + FRAME_PAD) - y,
-            title: format!("Comment {}", raw + 1),
-        };
-        let sel = self.selection.get();
-        self.record_edit(
-            "Add frame",
-            GraphDelta {
-                added_frames: vec![frame],
-                ..GraphDelta::default()
-            },
-            sel.clone(),
-            sel,
-        );
-        Some(id)
+        let w = (right + FRAME_PAD) - x;
+        let h = (bottom + FRAME_PAD) - y;
+        // R1596 — numbered by how many frames there ARE, not by a counter that
+        // kept climbing over deletions. The editor's own counter was the id
+        // source too, and ids are now the tree's and shared with nodes, so the
+        // name and the handle are separate facts.
+        let ordinal = frame_nodes(&graph).count() + 1;
+        let mut made = None;
+        self.edit("Add frame", None, |graph, _| {
+            let Ok(enframed) = graph.enframe(TREE, &members, Some(format!("Comment {ordinal}")))
+            else {
+                return;
+            };
+            if let Some(node) = graph
+                .tree_mut(TREE)
+                .and_then(|t| t.node_mut(enframed.frame))
+            {
+                node.x = x;
+                node.y = y;
+                node.appearance.width = Some(upx(w));
+                node.appearance.height = Some(upx(h));
+            }
+            made = Some(enframed.frame);
+        });
+        made
     }
 
     /// R1227 — remove comment frame `id` (the nodes it annotated stay). Undoable
-    /// (`GraphDelta.removed_frames` — one Ctrl+Z restores it with its
-    /// [`FrameId`] + title). `false` for an unknown id.
+    /// (one Ctrl+Z restores it with its [`FrameId`] + title). `false` for an
+    /// unknown id.
+    ///
+    /// R1596 — the members are handed to the frame ABOVE rather than to the
+    /// canvas ([`Document::remove_node`]'s `adopted`), so deleting the middle
+    /// frame of a nest does not strand its contents outside the outer one.
     fn remove_frame(&self, id: FrameId) -> bool {
-        let Some(frame) = self.frame_by_id(id) else {
+        if self.frame_by_id(id).is_none() {
             return false;
-        };
-        let sel = self.selection.get();
-        self.record_edit(
-            "Remove frame",
-            GraphDelta {
-                removed_frames: vec![frame],
-                ..GraphDelta::default()
-            },
-            sel.clone(),
-            sel,
-        );
+        }
+        self.edit("Remove frame", None, |graph, sel| {
+            if graph.remove_node(TREE, id).is_ok() {
+                *sel = validate_after(sel.clone(), &[id], &[]);
+            }
+        });
         true
     }
 
     /// R1234 — move comment frame `id` to a new `x` (`new_x`) and / or `y`
     /// (`new_y`), carrying every node it CURRENTLY contains by the same clamped
-    /// delta as ONE undo step ([`FrameGeomCmd`], label "Move frame"). The
+    /// delta as ONE undo step (`GraphEdit`, label "Move frame"). The
     /// Blueprint move-with-contents contract — the membership is snapshotted at
-    /// the start of the move ([`CommentFrame::contains_node`]), so the moved set
+    /// the start of the move ([`frame_contains`]), so the moved set
     /// is exactly what the paint + the `contains` query show. Nodes outside the
     /// frame are untouched. `false` for an unknown id.
     fn translate_frame(&self, id: FrameId, new_x: Option<i32>, new_y: Option<i32>) -> bool {
-        let Some(frame) = self.frame_by_id(id) else {
+        let graph = self.graph();
+        let Some(frame) = frame_node(&graph, id) else {
             return false;
         };
-        let members: Vec<GraphNode> = self
-            .nodes
-            .get()
-            .iter()
-            .filter(|n| frame.contains_node(n))
-            .cloned()
-            .collect();
-        let dx = clamp_frame_dx(&frame, &members, new_x.map_or(0, |x| x - frame.x));
-        let dy = clamp_frame_dy(&frame, &members, new_y.map_or(0, |y| y - frame.y));
-        let after = (frame.x + dx, frame.y + dy, frame.w, frame.h);
-        let moves: Vec<NodeMove> = members
-            .iter()
-            .map(|n| (n.id, (n.x, n.y), (n.x + dx, n.y + dy)))
-            .collect();
-        self.commit_frame_geom(
-            id,
-            (frame.x, frame.y, frame.w, frame.h),
-            after,
-            moves,
-            "Move frame",
-        )
+        let members: Vec<Node<MaterialOp>> = frame_members(&graph, id);
+        let dx = clamp_frame_dx(frame, &members, new_x.map_or(0, |x| x - frame.x));
+        let dy = clamp_frame_dy(frame, &members, new_y.map_or(0, |y| y - frame.y));
+        if dx == 0 && dy == 0 {
+            return true;
+        }
+        // R1596 — `Document::translate` moves the frame and everything it
+        // CONTAINS, transitively, which is what containment means; the editor
+        // moved one geometric level and a nested frame's own members stayed put.
+        self.edit("Move frame", None, |graph, _| {
+            let _ = graph.translate(TREE, id, dx, dy);
+        });
+        true
     }
 
     /// R1234 — resize comment frame `id` to a new `w` (`new_w`) and / or `h`
@@ -4934,53 +4188,24 @@ impl NodeGraphExternal {
     /// collapsing below its title strip — the deliberate min-size-over-fit
     /// tradeoff.) The origin is fixed and NO node moves: a resize changes which
     /// nodes the frame contains (recomputed lazily by
-    /// [`CommentFrame::contains_node`]), it does not drag them ([`FrameGeomCmd`],
+    /// [`frame_contains`]), it does not drag them (`GraphEdit`,
     /// label "Resize frame"). `false` for an unknown id.
     fn resize_frame(&self, id: FrameId, new_w: Option<i32>, new_h: Option<i32>) -> bool {
-        let Some(frame) = self.frame_by_id(id) else {
+        let graph = self.graph();
+        let Some(frame) = frame_node(&graph, id) else {
             return false;
         };
-        let w = new_w.map_or(frame.w, |w| {
+        let w = new_w.map_or(frame.width(), |w| {
             w.clamp(FRAME_MIN, (WORLD - frame.x).max(FRAME_MIN))
         });
-        let h = new_h.map_or(frame.h, |h| {
+        let h = new_h.map_or(frame.height(), |h| {
             h.clamp(FRAME_MIN, (WORLD - frame.y).max(FRAME_MIN))
         });
-        self.commit_frame_geom(
-            id,
-            (frame.x, frame.y, frame.w, frame.h),
-            (frame.x, frame.y, w, h),
-            Vec::new(),
-            "Resize frame",
-        )
-    }
-
-    /// R1234 — the ONE commit funnel [`Self::translate_frame`] + [`Self::resize_frame`]
-    /// share: build the geometry edit and hand it to [`UndoStack::record`],
-    /// which applies its forward effect then journals it as a single
-    /// [`FrameGeomCmd`] (the same primitive [`apply_rename`] routes through — NOT
-    /// a hand-rolled `cmd.redo(); push_applied`). A no-op edit (rect unchanged,
-    /// every move stationary) journals nothing. Always `true` — the frame was
-    /// validated at the call site.
-    fn commit_frame_geom(
-        &self,
-        id: FrameId,
-        before: (i32, i32, i32, i32),
-        after: (i32, i32, i32, i32),
-        moves: Vec<NodeMove>,
-        label: impl Into<Cow<'static, str>>,
-    ) -> bool {
-        if before == after && moves.iter().all(|(_, b, a)| b == a) {
-            return true;
-        }
-        self.undo.record(FrameGeomCmd {
-            frames: Rc::clone(&self.frames),
-            nodes: Rc::clone(&self.nodes),
-            id,
-            before,
-            after,
-            moves,
-            label: label.into(),
+        self.edit("Resize frame", None, |graph, _| {
+            if let Some(node) = graph.tree_mut(TREE).and_then(|t| t.node_mut(id)) {
+                node.appearance.width = Some(upx(w));
+                node.appearance.height = Some(upx(h));
+            }
         });
         true
     }
@@ -4993,19 +4218,19 @@ impl NodeGraphExternal {
         };
         let kind = PALETTE
             .iter()
-            .position(|&(name, _, _, _)| name == *s)
+            .position(|&(name, _)| name == *s)
             .ok_or_else(|| Self::unknown_kind_reason("add_node", s))?;
         let id = self
             .add_node(kind)
             .ok_or_else(|| InvokeError::rejected("add_node: the graph is at its node limit"))?;
-        Ok(IntrospectValue::Int(i64::from(id.raw())))
+        Ok(IntrospectValue::Int(i64::from(id.0)))
     }
 
     /// R1227 — the `add_frame` verb arm: frame the selection, returning the new
     /// id (`Null` when nothing is selected).
     fn invoke_add_frame(&mut self) -> IntrospectValue {
         match self.add_frame() {
-            Some(id) => IntrospectValue::Int(i64::from(id.raw())),
+            Some(id) => IntrospectValue::Int(i64::from(id.0)),
             None => IntrospectValue::Null,
         }
     }
@@ -5020,31 +4245,69 @@ impl NodeGraphExternal {
             return Err(InvokeError::TypeMismatch);
         };
         let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
-        Ok(IntrospectValue::Bool(self.remove_frame(FrameId(id))))
+        Ok(IntrospectValue::Bool(self.remove_frame(NodeId(id))))
+    }
+
+    /// R1227 / R1596 — the comment-frame verbs, lifted out of
+    /// [`invoke`](ExternalIntrospect::invoke) to keep that dispatch under the
+    /// workspace line ceiling — the same split `query_frame` / `intervene_frame`
+    /// already made for the read and the write.
+    ///
+    /// # Errors
+    ///
+    /// [`InvokeError::TypeMismatch`] for a `remove_frame` argument that is not
+    /// an id.
+    fn invoke_frame(
+        &mut self,
+        verb: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match verb {
+            "add_frame" => Ok(self.invoke_add_frame()),
+            "remove_frame" => self.invoke_remove_frame(args),
+            "attach" => Ok(IntrospectValue::Text(csv_ids(
+                self.attach_selected().iter().map(|id| id.0),
+            ))),
+            // Every caller is the arm that matched these four names, so a fifth
+            // verb reaching here is a dispatch that named it and forgot it.
+            _ => Ok(IntrospectValue::Text(csv_ids(
+                self.detach_selected().iter().map(|id| id.0),
+            ))),
+        }
     }
 
     /// R1227 — the `frame.<id>.<field>` read: the comment-frame rect / title +
-    /// `contains` (the CSV of node ids whose centre lies inside). `None` when the
-    /// path is not a frame path or the id / field is unknown.
+    /// `contains`. `None` when the path is not a frame path or the id / field is
+    /// unknown.
+    ///
+    /// R1596 — `contains` answers the **relation** ([`frame_members`]) where it
+    /// used to answer a rectangle test, and two reads join it: `parent` (the
+    /// frame this frame is inside, so a nest is readable from either end) and
+    /// `contents` (every descendant, which is what a drag actually carries).
+    /// Blender publishes none of the three — `bNode::parent` reaches Python as
+    /// `node.parent` and there is no accessor for a frame's children at all, so
+    /// its own UI code walks every node in the tree comparing pointers.
     fn query_frame(&self, path: &str) -> Option<IntrospectValue> {
         let rest = path.strip_prefix("frame.")?;
         let (id_str, field) = rest.split_once('.')?;
-        let id = FrameId(id_str.parse().ok()?);
-        let frames = self.frames.get();
-        let f = frames.iter().find(|f| f.id == id)?;
+        let id = NodeId(id_str.parse().ok()?);
+        let graph = self.graph();
+        let f = frame_node(&graph, id)?;
         match field {
-            "title" => Some(IntrospectValue::Text(f.title.clone())),
+            "title" => Some(IntrospectValue::Text(f.title())),
             "x" => Some(IntrospectValue::Int(i64::from(f.x))),
             "y" => Some(IntrospectValue::Int(i64::from(f.y))),
-            "w" => Some(IntrospectValue::Int(i64::from(f.w))),
-            "h" => Some(IntrospectValue::Int(i64::from(f.h))),
+            "w" => Some(IntrospectValue::Int(i64::from(f.width()))),
+            "h" => Some(IntrospectValue::Int(i64::from(f.height()))),
             "contains" => Some(IntrospectValue::Text(csv_ids(
-                self.nodes
-                    .get()
-                    .iter()
-                    .filter(|n| f.contains_node(n))
-                    .map(|n| n.id.raw()),
+                graph.members(TREE, id).into_iter().map(|n| n.0),
             ))),
+            "contents" => Some(IntrospectValue::Text(csv_ids(
+                graph.contents(TREE, id).into_iter().map(|n| n.0),
+            ))),
+            "parent" => Some(f.parent.map_or(IntrospectValue::Null, |p| {
+                IntrospectValue::Int(i64::from(p.0))
+            })),
             _ => None,
         }
     }
@@ -5068,10 +4331,11 @@ impl NodeGraphExternal {
         if let Some(rest) = path.strip_prefix("node.") {
             let (id_str, field) = rest.split_once('.')?;
             let id = NodeId(id_str.parse().ok()?);
-            let nodes = self.nodes.get();
-            let node = nodes.iter().find(|n| n.id == id)?;
+            let graph = self.graph();
+            let (node, op) = kind_node(&graph, id)?;
+            let signature = signature_of(&graph, id)?;
             return match field {
-                "title" => Some(IntrospectValue::Text(node.title.clone())),
+                "title" => Some(IntrospectValue::Text(node.title())),
                 "x" => Some(IntrospectValue::Int(i64::from(node.x))),
                 "y" => Some(IntrospectValue::Int(i64::from(node.y))),
                 // R1441 — the card's laid-out height, the twin of the long-standing
@@ -5081,8 +4345,16 @@ impl NodeGraphExternal {
                 // from the port count outside the model would be a second, driftable
                 // definition of it.
                 "h" => Some(IntrospectValue::Int(i64::from(node.height()))),
-                "inputs" => Some(IntrospectValue::Int(int_of(node.inputs()))),
-                "outputs" => Some(IntrospectValue::Int(int_of(node.outputs()))),
+                "inputs" => Some(IntrospectValue::Int(int_of(signature.inputs.len()))),
+                "outputs" => Some(IntrospectValue::Int(int_of(signature.outputs.len()))),
+                // R1596 — the frame this node sits in, or `Null` on the bare
+                // canvas ([`Node::parent`], R1589). Membership is now a fact the
+                // document maintains, so it is readable from the member's end as
+                // well as the frame's — Blender has `node.parent` in Python and
+                // no accessor for the other direction at all.
+                "parent" => Some(node.parent.map_or(IntrospectValue::Null, |p| {
+                    IntrospectValue::Int(i64::from(p.0))
+                })),
                 // R1242 — the reroute discriminator (a first-class model read, not
                 // a title match — a user-renamed knot still reads true, a node
                 // renamed "Reroute" reads false).
@@ -5093,15 +4365,15 @@ impl NodeGraphExternal {
                 // (`input_types`/arity) cannot separate ops that share a
                 // signature, and `title` is rewritable, so an AI enumeration
                 // reads `op` to predict/verify `value`.
-                "op" => Some(IntrospectValue::Text(node.op.name().to_owned())),
+                "op" => Some(IntrospectValue::Text(op.name())),
                 // R1257 — whether this node is an authorable SOURCE (its `value`
                 // is a stored, `intervene`-able constant vs a derived output).
-                "is_source" => Some(IntrospectValue::Bool(node.is_source())),
+                "is_source" => Some(IntrospectValue::Bool(is_source(&graph, id))),
                 // R898 — the typed-port read twins: CSV of the port types in port
                 // order ("" for a source / sink). The arity reads stay the
                 // byte-stable count contract.
-                "input_types" => Some(IntrospectValue::Text(port_types_csv(&node.input_ports))),
-                "output_types" => Some(IntrospectValue::Text(port_types_csv(&node.output_ports))),
+                "input_types" => Some(IntrospectValue::Text(port_types_csv(&signature.inputs))),
+                "output_types" => Some(IntrospectValue::Text(port_types_csv(&signature.outputs))),
                 // R1255 — the node's *evaluated* output value (the compute twin
                 // of the authoring reads above): topo-eval over the graph, an
                 // unconnected input taking its R899 pin default and a source op
@@ -5109,10 +4381,7 @@ impl NodeGraphExternal {
                 // value undefined (distinguish via `eval.acyclic`). A `Float`
                 // reads as a float, a `Vector` (`Color`) as a `{hex,r,g,b,a}`
                 // object — the same wire form as `input_default.<port>`.
-                "value" => {
-                    let edges = self.edges.get();
-                    Some(cell_or_null(evaluate(&nodes, &edges, id)))
-                }
+                "value" => Some(cell_or_null(evaluate(&graph, id))),
                 // R899 — the typed default of an input port (the write twin is
                 // `intervene node.<id>.input_default.<port>`); a `Float` reads as a
                 // float, a `Vector` (`Color`) as a `{hex,r,g,b,a}` object. R1260 —
@@ -5124,18 +4393,15 @@ impl NodeGraphExternal {
                         .strip_prefix("input_default.")
                         .and_then(|p| p.parse::<usize>().ok())
                     {
-                        node.input_default(port).map(CellValue::to_introspect)
+                        input_default(&graph, id, port).map(|v| v.to_introspect())
                     } else if let Some(port) = other
                         .strip_prefix("resolved_input.")
                         .and_then(|p| p.parse::<usize>().ok())
                     {
                         // Out-of-range port -> UnknownPath (`None`); an in-range
                         // input fed by a cycle -> `Null`.
-                        node.input_type(port)?;
-                        let edges = self.edges.get();
-                        Some(cell_or_null(resolve_input_value(
-                            &nodes, &edges, node, port,
-                        )))
+                        input_type(&graph, id, port)?;
+                        Some(cell_or_null(resolve_input_value(&graph, id, port)))
                     } else {
                         None
                     }
@@ -5144,11 +4410,11 @@ impl NodeGraphExternal {
         }
         if let Some(id_str) = path.strip_prefix("edge.") {
             let id = EdgeId(id_str.parse().ok()?);
-            let edges = self.edges.get();
-            let e = edges.iter().find(|e| e.id == id)?;
+            let graph = self.graph();
+            let e = edge(&graph, id)?;
             return Some(IntrospectValue::Text(format!(
                 "{}:{}->{}:{}",
-                e.from_node, e.from_port, e.to_node, e.to_port
+                e.from.node, e.from.port, e.to.node, e.to.port
             )));
         }
         // R1255 — the graph-evaluation reads: pure derived introspection over
@@ -5157,17 +4423,23 @@ impl NodeGraphExternal {
         // `eval.acyclic` tells a client whether a `null` value is a cycle vs a
         // genuinely absent node.
         if let Some(field) = path.strip_prefix("eval.") {
-            let nodes = self.nodes.get();
-            let edges = self.edges.get();
+            let graph = self.graph();
+            // R1596 — both cycle reads come off the crate's ONE derivation
+            // (`Document::cycle_nodes`), so "is it acyclic" and "who is on the
+            // cycle" cannot disagree. The editor had two independent walks — a
+            // DFS colouring for the bool and a second one for the ids — and the
+            // crate could not serve the second at all until R1596, which is what
+            // starting the migration surfaced.
+            let on_cycle = graph.cycle_nodes(TREE);
             return match field {
-                "output" => Some(cell_or_null(eval_terminal(&nodes, &edges))),
-                "acyclic" => Some(IntrospectValue::Bool(graph_is_acyclic(&nodes, &edges))),
+                "output" => Some(cell_or_null(eval_terminal(&graph))),
+                "acyclic" => Some(IntrospectValue::Bool(on_cycle.is_empty())),
                 // R1260 — LOCALISE a cycle: the ids of the nodes ON a cycle
                 // (not merely downstream), so a `null` value points at the knot
                 // to break. Empty for a DAG. R1262 — through the `csv_ids` SSOT
                 // (the 9th id-list-CSV consumer), not a hand-rolled join.
                 "cycle_nodes" => Some(IntrospectValue::Text(csv_ids(
-                    cycle_nodes(&nodes, &edges).iter().map(|id| id.raw()),
+                    on_cycle.iter().map(|id| id.0),
                 ))),
                 _ => None,
             };
@@ -5178,6 +4450,11 @@ impl NodeGraphExternal {
             let id = NodeId(id_str.parse().ok()?);
             return Some(IntrospectValue::Bool(self.dissolvable(id)));
         }
+        // R1596 — WHICH wires a dissolve would cut, beside whether it cuts any.
+        if let Some(id_str) = path.strip_prefix("dissolve_severs.") {
+            let id = NodeId(id_str.parse().ok()?);
+            return self.dissolve_severs(id).map(IntrospectValue::Text);
+        }
         // R1227 — `frame.<id>.<field>` reads.
         self.query_frame(path)
     }
@@ -5186,7 +4463,7 @@ impl NodeGraphExternal {
     /// through the shared [`apply_rename`] SSOT (journaled). `x` / `y` MOVE the
     /// frame + the nodes it contains ([`Self::translate_frame`] — move-with-contents);
     /// `w` / `h` RESIZE the box, origin fixed, nodes untouched ([`Self::resize_frame`]).
-    /// Each rect write journals one [`FrameGeomCmd`]. An unknown id is caught up
+    /// Each rect write journals one `GraphEdit`. An unknown id is caught up
     /// front; a non-`Int` rect value is a `TypeMismatch`.
     fn intervene_frame(
         &mut self,
@@ -5197,14 +4474,14 @@ impl NodeGraphExternal {
             .strip_prefix("frame.")
             .ok_or(InterveneError::UnknownPath)?;
         let (id_str, field) = rest.split_once('.').ok_or(InterveneError::UnknownPath)?;
-        let id = FrameId(id_str.parse().map_err(|_| InterveneError::UnknownPath)?);
+        let id = NodeId(id_str.parse().map_err(|_| InterveneError::UnknownPath)?);
         if self.frame_by_id(id).is_none() {
             return Err(InterveneError::UnknownPath);
         }
         match field {
             "title" => match value {
                 IntrospectValue::Text(t) => {
-                    if apply_rename(&self.frames, &self.undo, id, &t) {
+                    if apply_rename(&self.handle(), id, &t) {
                         Ok(())
                     } else {
                         Err(InterveneError::out_of_range(
@@ -5246,42 +4523,31 @@ impl NodeGraphExternal {
     /// stable ids — the multi-select `Delete` contract). Unknown ids are
     /// skipped; an all-unknown set is a no-op `false`.
     fn delete_nodes(&self, ids: &BTreeSet<NodeId>) -> bool {
-        let removed: Vec<GraphNode> = self
-            .nodes
-            .get()
-            .iter()
-            .filter(|n| ids.contains(&n.id))
-            .cloned()
-            .collect();
-        if removed.is_empty() {
-            return false;
-        }
-        let incident: Vec<Edge> = self
-            .edges
-            .get()
+        let graph = self.graph();
+        let removed_ids: Vec<NodeId> = ids
             .iter()
             .copied()
-            .filter(|e| ids.contains(&e.from_node) || ids.contains(&e.to_node))
+            .filter(|&id| kind_node(&graph, id).is_some())
             .collect();
-        let sel_before = self.selection.get();
-        let removed_ids: Vec<NodeId> = removed.iter().map(|n| n.id).collect();
-        let incident_ids: Vec<EdgeId> = incident.iter().map(|e| e.id).collect();
-        let sel_after = validate_after(sel_before.clone(), &removed_ids, &incident_ids);
-        let label: Cow<'static, str> = if removed.len() == 1 {
+        if removed_ids.is_empty() {
+            return false;
+        }
+        let incident_ids: Vec<EdgeId> = edges(&graph)
+            .iter()
+            .filter(|e| ids.contains(&e.from.node) || ids.contains(&e.to.node))
+            .map(|e| e.id)
+            .collect();
+        let label: Cow<'static, str> = if removed_ids.len() == 1 {
             Cow::Borrowed("Delete node")
         } else {
-            Cow::Owned(format!("Delete {} nodes", removed.len()))
+            Cow::Owned(format!("Delete {} nodes", removed_ids.len()))
         };
-        self.record_edit(
-            label,
-            GraphDelta {
-                removed_nodes: removed,
-                removed_edges: incident,
-                ..GraphDelta::default()
-            },
-            sel_before,
-            sel_after,
-        );
+        self.edit(label, None, |graph, sel| {
+            for &id in &removed_ids {
+                let _ = graph.remove_node(TREE, id);
+            }
+            *sel = validate_after(sel.clone(), &removed_ids, &incident_ids);
+        });
         self.clear_removed_node_interaction(&removed_ids);
         true
     }
@@ -5337,92 +4603,53 @@ impl NodeGraphExternal {
     /// (mints nothing), so the `dissolvable.<id>` READ and the `dissolve_node`
     /// mutation share ONE predicate — the query can never disagree with what the
     /// verb will do ([[setter-wire-returns-read-outcome]]).
-    fn dissolve_plan(&self, id: NodeId) -> Option<DissolvePlan> {
-        let edges = self.edges.get();
-        let incoming: Vec<Edge> = edges.iter().copied().filter(|e| e.to_node == id).collect();
-        let outgoing: Vec<Edge> = edges
-            .iter()
-            .copied()
-            .filter(|e| e.from_node == id)
-            .collect();
-        // Exactly one hop in, one hop out — otherwise the bridge is ambiguous.
-        let ([a_edge], [b_edge]) = (incoming.as_slice(), outgoing.as_slice()) else {
-            return None;
-        };
-        let (from_node, from_port) = (a_edge.from_node, a_edge.from_port);
-        let (to_node, to_port) = (b_edge.to_node, b_edge.to_port);
-        // Self-loop (a multi-hop cycle routed through `id`) — the one REACHABLE
-        // rejection: `validate_connection` blocks only *direct* self-loops, so a
-        // 2-cycle A->id->A is constructible and must not bridge to A->A.
-        if from_node == to_node {
-            return None;
-        }
-        let nodes = self.nodes.get();
-        let ty_a = node_ref(&nodes, from_node)?.output_type(from_port)?;
-        let ty_b = node_ref(&nodes, to_node)?.input_type(to_port)?;
-        // FORWARD-DEFENSIVE, currently unreachable (correctness audit R1237.5):
-        // no palette kind is Vector-in / Float-out, so a dissolvable 1-in/1-out
-        // node can never bridge to a type-mismatch; and the single-wire rule
-        // prevents a pre-existing parallel `A->B` at the freed input. Both go
-        // LIVE the moment a type-converting node kind is added — kept as real
-        // guards (not `unreachable!`) so a future palette stays type-safe.
-        if !ty_a.is_assignable_to(ty_b) {
-            return None;
-        }
-        if edges.iter().any(|e| {
-            e.from_node == from_node
-                && e.from_port == from_port
-                && e.to_node == to_node
-                && e.to_port == to_port
-        }) {
-            return None;
-        }
-        Some(DissolvePlan {
-            a_edge: *a_edge,
-            b_edge: *b_edge,
-            from_node,
-            from_port,
-            to_node,
-            to_port,
-        })
+    fn dissolve_plan(&self, id: NodeId) -> Option<Rewired> {
+        kind_node(&self.graph(), id)?;
+        // §2 #3 — the plan IS the operation, run on a copy. `dissolve` is the
+        // only thing that can say what a dissolve does, so predicting it a
+        // second way is exactly the drift [[setter-wire-returns-read-outcome]]
+        // names; the crate's determinism is what makes the copy authoritative.
+        let mut probe = self.graph();
+        probe.dissolve(TREE, id).ok()
     }
 
-    /// R1241 — whether node `id` can be dissolved (the `dissolvable.<id>` read;
-    /// the AI-first eligibility twin of the `dissolve_node` verb, so an editor can
-    /// gray out / offer "Dissolve" without a mutate-to-probe). Shares the
-    /// [`dissolve_plan`](Self::dissolve_plan) predicate with the mutation.
+    /// R1241 / R1596 — whether dissolving node `id` keeps every value flowing
+    /// (the `dissolvable.<id>` read; the AI-first eligibility twin of the
+    /// `dissolve_node` verb, so an editor can gray out / offer "Dissolve"
+    /// without a mutate-to-probe).
+    ///
+    /// The predicate **widened** this round and the word it answers changed with
+    /// it. The editor's own rule was "exactly one wire in and one out", a shape
+    /// test that refused a two-input node whose dissolve is perfectly
+    /// well-defined; [`Document::dissolve`] is the general form (R1586,
+    /// Blender's `NODE_OT_delete_reconnect`), so what is worth asking is no
+    /// longer *can it* but **does it lose anything** — [`Rewired::lossless`].
     fn dissolvable(&self, id: NodeId) -> bool {
-        self.dissolve_plan(id).is_some()
+        self.dissolve_plan(id).is_some_and(|r| r.lossless())
+    }
+
+    /// R1596 — the wires a dissolve of `id` would CUT, as a CSV of edge ids.
+    ///
+    /// Empty exactly when [`dissolvable`](Self::dissolvable) is true, so the
+    /// boolean and the reason are one derivation read two ways. Blender's
+    /// `node_internal_relink` deletes those links with `node_remove_link` and
+    /// returns `void`, so nothing there can be asked what a reconnect-delete is
+    /// about to throw away — the user finds out by doing it.
+    fn dissolve_severs(&self, id: NodeId) -> Option<String> {
+        let plan = self.dissolve_plan(id)?;
+        Some(csv_ids(plan.severed.iter().map(|link| link.id.0)))
     }
 
     fn dissolve_node(&self, id: NodeId) -> bool {
         let Some(plan) = self.dissolve_plan(id) else {
             return false;
         };
-        let Some(removed_node) = node_ref(&self.nodes.get(), id).cloned() else {
-            return false;
-        };
-        let bridge = Edge {
-            id: self.mint_edge_id(),
-            from_node: plan.from_node,
-            from_port: plan.from_port,
-            to_node: plan.to_node,
-            to_port: plan.to_port,
-        };
-        let sel_before = self.selection.get();
-        let sel_after =
-            validate_after(sel_before.clone(), &[id], &[plan.a_edge.id, plan.b_edge.id]);
-        self.record_edit(
-            "Dissolve node",
-            GraphDelta {
-                removed_nodes: vec![removed_node],
-                removed_edges: vec![plan.a_edge, plan.b_edge],
-                added_edges: vec![bridge],
-                ..GraphDelta::default()
-            },
-            sel_before,
-            sel_after,
-        );
+        let removed_edges: Vec<EdgeId> = plan.removed.iter().map(|link| link.id).collect();
+        self.edit("Dissolve node", None, |graph, sel| {
+            if graph.dissolve(TREE, id).is_ok() {
+                *sel = validate_after(sel.clone(), &[id], &removed_edges);
+            }
+        });
         self.clear_removed_node_interaction(&[id]);
         true
     }
@@ -5438,18 +4665,90 @@ impl NodeGraphExternal {
             .is_some_and(|id| self.dissolve_node(id))
     }
 
+    // ─── R1596 attach / detach (the frame's two gestures) ─────────────
+
+    /// R1596 — the **innermost** frame whose rect holds node `n`'s centre.
+    ///
+    /// Innermost, because a nested frame sits inside its container's rect too,
+    /// so "which frame did I drop this in" has one answer only once depth breaks
+    /// the tie. Blender's `node_find_frame_to_attach` walks its node list from
+    /// the END and takes the first rect hit, which is z-order — so there the
+    /// answer depends on the order frames were created in, and dropping a node
+    /// into an inner frame lands it in the outer one whenever the outer was made
+    /// later.
+    fn frame_under(graph: &Graph, n: &Node<MaterialOp>) -> Option<NodeId> {
+        frame_nodes(graph)
+            .filter(|f| f.id != n.id && frame_contains(f, n))
+            .max_by_key(|f| graph.ancestry(TREE, f.id).len())
+            .map(|f| f.id)
+    }
+
+    /// R1596 — Blender's `NODE_OT_attach`: put each selected node into the frame
+    /// it is sitting on, as one undo step. Answers the nodes that changed frame.
+    ///
+    /// This is where the geometric question ([`frame_contains`]) becomes the
+    /// membership FACT ([`Node::parent`]) — one act, at a moment the user chose,
+    /// rather than a rectangle test re-run on every read. A node dropped on no
+    /// frame is left where it is rather than being detached, because "attach"
+    /// says what it does; taking a node out is [`detach_selected`](Self::detach_selected).
+    ///
+    /// Acts on [`Document::outermost`], so dragging a frame and a node inside it
+    /// does not re-parent the node into a frame the frame itself is landing in.
+    fn attach_selected(&self) -> Vec<NodeId> {
+        let graph = self.graph();
+        let selected: Vec<NodeId> = self.selection.get().nodes().into_iter().collect();
+        let mut moves: Vec<(NodeId, NodeId)> = Vec::new();
+        for id in graph.outermost(TREE, &selected) {
+            let Some(tree) = graph.tree(TREE) else { break };
+            let Some(node) = tree.node(id) else { continue };
+            if let Some(frame) = Self::frame_under(&graph, node) {
+                if node.parent != Some(frame) {
+                    moves.push((id, frame));
+                }
+            }
+        }
+        if moves.is_empty() {
+            return Vec::new();
+        }
+        let attached: Vec<NodeId> = moves.iter().map(|&(id, _)| id).collect();
+        self.edit("Attach to frame", None, |graph, _| {
+            for &(id, frame) in &moves {
+                // A refusal is possible and is not an error here: dropping a
+                // frame onto one of its own descendants would close a cycle, and
+                // the honest outcome is that the drop does not re-parent.
+                let _ = graph.set_parent(TREE, id, Some(frame));
+            }
+        });
+        attached
+    }
+
+    /// R1596 — Blender's `NODE_OT_detach`: take each selected node out of the
+    /// frame immediately containing it, as one undo step. Answers the nodes that
+    /// moved.
+    ///
+    /// **One level** ([`Document::unframe`]), so a node in `Outer > Inner` lands
+    /// in `Outer` and repeating walks out. Blender's operator clears the parent
+    /// outright, so only the all-the-way form is reachable there.
+    fn detach_selected(&self) -> Vec<NodeId> {
+        let selected: Vec<NodeId> = self.selection.get().nodes().into_iter().collect();
+        let mut moved = Vec::new();
+        self.edit("Detach from frame", None, |graph, _| {
+            moved = graph.unframe(TREE, &selected).unwrap_or_default();
+        });
+        moved
+    }
+
     /// Hit-test a window-px click against every wire; the first within
     /// tolerance is the selection candidate (its stable [`EdgeId`]).
     /// R877 — `(px, py)` in graph units (the caller converts the cursor via
     /// [`cursor_graph`](Self::cursor_graph)); the hit halo is screen-constant.
     fn hit_test_edge(&self, px: f64, py: f64) -> Option<EdgeId> {
-        let nodes = self.nodes.get();
+        let graph = self.graph();
         let threshold = f64::from(EDGE_HIT_THRESHOLD) / self.zoom.get();
-        self.edges
-            .get()
+        edges(&graph)
             .iter()
             .find(|e| {
-                edge_endpoints(&nodes, e)
+                edge_endpoints(&graph, e)
                     .is_some_and(|(from, to)| point_near_edge(px, py, from, to, threshold))
             })
             .map(|e| e.id)
@@ -5459,16 +4758,16 @@ impl NodeGraphExternal {
     /// map `target(n)` onto every node in `sel` through the clamped
     /// `set_node_pos`, inside one reactive [`batch`] (so subscribers see one
     /// atomic group move), and journal the net displacement as ONE
-    /// [`MoveNodesCmd`]. `coalescable` folds a contiguous same-member run — true
+    /// `GraphEdit`. `coalescable` folds a contiguous same-member run — true
     /// for an arrow-nudge burst, false for a discrete align / distribute
     /// command. Returns whether any node actually moved (a fully-clamped or
     /// already-in-place run journals nothing and returns `false`). The three
     /// callers differ only in how they compute `target` ([[three-site-internal-duplication-substrate-lift]]).
     fn apply_node_moves(
         &self,
-        sel: &[GraphNode],
+        sel: &[Node<MaterialOp>],
         coalescable: bool,
-        target: impl Fn(&GraphNode) -> (i32, i32),
+        target: impl Fn(&Node<MaterialOp>) -> (i32, i32),
     ) -> bool {
         let mut moves = Vec::with_capacity(sel.len());
         batch(|| {
@@ -5489,11 +4788,11 @@ impl NodeGraphExternal {
     /// The selected nodes, snapshotted by value in id order — the shared
     /// preamble for the move commands (so the bbox / sort math reads a stable
     /// set while `apply_node_moves` mutates the live signal).
-    fn selected_nodes(&self) -> Vec<GraphNode> {
+    fn selected_nodes(&self) -> Vec<Node<MaterialOp>> {
         let members = self.selection.get().nodes();
-        let nodes = self.nodes.get();
-        nodes
-            .iter()
+        let graph = self.graph();
+        kind_nodes(&graph)
+            .map(|(node, _)| node)
             .filter(|n| members.contains(&n.id))
             .cloned()
             .collect()
@@ -5591,7 +4890,7 @@ impl NodeGraphExternal {
 
     /// R1383 — tidy the WHOLE graph into a layered (Sugiyama) left-to-right
     /// arrangement in ONE discrete undo step: data flows forward across columns
-    /// with a crossing-reduced vertical order (see [`layered_layout`]). The
+    /// with a crossing-reduced vertical order (see [`Layered`]). The
     /// AI-first peer of a node editor's "arrange" / "tidy" command (Unreal
     /// Blueprint, Blender, Substance) — no selection needed (it lays out
     /// everything), anchored at the graph's current top-left so the graph stays
@@ -5605,16 +4904,18 @@ impl NodeGraphExternal {
         // A stable snapshot pointer — the live signal is replaced wholesale by
         // `set_node_pos`, so this held copy stays valid while `apply_node_moves`
         // mutates it (the `selected_nodes` stability discipline, no clone needed).
-        let snapshot = self.nodes.get();
+        let graph = self.graph();
+        let snapshot: Vec<Node<MaterialOp>> =
+            kind_nodes(&graph).map(|(node, _)| node.clone()).collect();
         if snapshot.len() < 2 {
             return false;
         }
-        let edges = self.edges.get();
         // Anchor at the current bounding-box top-left (clamped on-world) so the
         // tidied graph occupies roughly the same region it already did.
         let origin =
             node_bounds(snapshot.iter()).map_or((0, 0), |(l, t, _, _)| (l.max(0), t.max(0)));
-        let targets = layered_layout(&snapshot, &edges, origin);
+        let targets = LAYOUT.run(&graph, TREE, origin, card_extent);
+        let targets = targets.positions();
         self.apply_node_moves(&snapshot, false, |n| {
             targets.get(&n.id).copied().unwrap_or((n.x, n.y))
         })
@@ -5622,7 +4923,7 @@ impl NodeGraphExternal {
 
     /// R1390 — relax the WHOLE graph into a **force-directed (organic)**
     /// arrangement in ONE undo step: nodes repel, edges spring them together,
-    /// annealed to a compact symmetric cluster (see [`force_directed_layout`]).
+    /// annealed to a compact symmetric cluster (see [`Organic`]).
     /// The organic counterpart to [`auto_layout`](Self::auto_layout)'s layered
     /// "tidy" — the mode a pro editor offers for a cyclic or undirected topology
     /// (yEd organic, Graphviz neato). No selection needed (it lays out
@@ -5635,14 +4936,16 @@ impl NodeGraphExternal {
         // A stable snapshot pointer — the `auto_layout` discipline: the live
         // signal is replaced wholesale by `set_node_pos`, so this held copy stays
         // valid while `apply_node_moves` mutates it.
-        let snapshot = self.nodes.get();
+        let graph = self.graph();
+        let snapshot: Vec<Node<MaterialOp>> =
+            kind_nodes(&graph).map(|(node, _)| node.clone()).collect();
         if snapshot.len() < 2 {
             return false;
         }
-        let edges = self.edges.get();
         let origin =
             node_bounds(snapshot.iter()).map_or((0, 0), |(l, t, _, _)| (l.max(0), t.max(0)));
-        let targets = force_directed_layout(&snapshot, &edges, origin);
+        let targets = ORGANIC.run(&graph, TREE, origin);
+        let targets = targets.positions();
         self.apply_node_moves(&snapshot, false, |n| {
             targets.get(&n.id).copied().unwrap_or((n.x, n.y))
         })
@@ -5662,7 +4965,7 @@ impl NodeGraphExternal {
         if let Some(active) = self.editing.get() {
             if active.surface == EditSurface::Panel && next.node() != Some(active.target.node()) {
                 let text = self.edit_buffer.text();
-                apply_edit_commit(&self.nodes, &self.undo, active.target, &text);
+                apply_edit_commit(&self.handle(), active.target, &text);
                 self.editing.set(None);
                 self.edit_buffer.set_text(String::new());
             }
@@ -5672,7 +4975,7 @@ impl NodeGraphExternal {
 
     fn select_node(&self, id: Option<NodeId>) {
         let next = id
-            .filter(|id| self.nodes.get().iter().any(|n| n.id == *id))
+            .filter(|id| kind_node(&self.graph(), *id).is_some())
             .map_or(Selection::None, Selection::single);
         self.set_selection(next);
     }
@@ -5682,7 +4985,7 @@ impl NodeGraphExternal {
     /// node-xor-edge rule). Removing the last member collapses to `None`
     /// through the construction funnel. Unknown ids are ignored.
     fn toggle_node(&self, id: NodeId) {
-        if !self.nodes.get().iter().any(|n| n.id == id) {
+        if kind_node(&self.graph(), id).is_none() {
             return;
         }
         let mut set = self.selection.get().nodes();
@@ -5694,7 +4997,7 @@ impl NodeGraphExternal {
     /// has no range to extend, so Shift means "add" — the Unreal graph
     /// convention). Unknown ids are ignored.
     fn add_node_to_selection(&self, id: NodeId) {
-        if !self.nodes.get().iter().any(|n| n.id == id) {
+        if kind_node(&self.graph(), id).is_none() {
             return;
         }
         let mut set = self.selection.get().nodes();
@@ -5706,7 +5009,7 @@ impl NodeGraphExternal {
     /// editor-canvas convention). `false` on an empty graph (nothing to
     /// select, selection unchanged).
     fn select_all(&self) -> bool {
-        let all: BTreeSet<NodeId> = self.nodes.get().iter().map(|n| n.id).collect();
+        let all: BTreeSet<NodeId> = kind_nodes(&self.graph()).map(|(n, _)| n.id).collect();
         if all.is_empty() {
             return false;
         }
@@ -5747,10 +5050,9 @@ impl NodeGraphExternal {
     /// inequality is the point: it is now a sentence about the card, not an
     /// off-by-one in a filter.
     fn apply_region(&self, region: &Region, mods: Modifiers) {
-        let hit: BTreeSet<NodeId> = self
-            .nodes
-            .get()
-            .iter()
+        let graph = self.graph();
+        let hit: BTreeSet<NodeId> = kind_nodes(&graph)
+            .map(|(node, _)| node)
             .filter(|n| {
                 let (min, max) = card_span(n);
                 region.covers_span(min, max, RegionFit::Intersects)
@@ -5853,7 +5155,7 @@ impl NodeGraphExternal {
                 .parse()
                 .map_err(|_| InterveneError::TypeMismatch)?;
             let id = NodeId(raw);
-            if !self.nodes.get().iter().any(|n| n.id == id) {
+            if kind_node(&self.graph(), id).is_none() {
                 return Err(InterveneError::out_of_range(format!(
                     "no node {raw} in this graph"
                 )));
@@ -5867,7 +5169,7 @@ impl NodeGraphExternal {
     /// Select an edge by id (must exist).
     fn select_edge(&self, id: Option<EdgeId>) {
         let next = id
-            .filter(|id| self.edges.get().iter().any(|e| e.id == *id))
+            .filter(|id| edge(&self.graph(), *id).is_some())
             .map_or(Selection::None, Selection::Edge);
         self.set_selection(next);
     }
@@ -5907,7 +5209,7 @@ impl NodeGraphExternal {
         if let Some(prev) = prev {
             if prev.target != target {
                 let text = self.edit_buffer.text();
-                apply_edit_commit(&self.nodes, &self.undo, prev.target, &text);
+                apply_edit_commit(&self.handle(), prev.target, &text);
             }
         }
         self.editing.set(Some(ActiveEdit { target, surface }));
@@ -5923,16 +5225,17 @@ impl NodeGraphExternal {
     /// round-trip inverse of the commit's `CellKind::parse`). `None` when the
     /// node / port is absent (the begin-edit validity gate).
     fn edit_seed_text(&self, target: EditTarget) -> Option<String> {
-        let nodes = self.nodes.get();
-        let node = nodes.iter().find(|n| n.id == target.node())?;
+        let graph = self.graph();
+        let id = target.node();
+        let (node, _) = kind_node(&graph, id)?;
         Some(match target {
-            EditTarget::Title(_) => node.title.clone(),
-            EditTarget::PortDefault { port, .. } => node.input_default(port)?.edit_text(),
+            EditTarget::Title(_) => node.title(),
+            EditTarget::PortDefault { port, .. } => input_default(&graph, id, port)?.edit_text(),
             EditTarget::PosX(_) => node.x.to_string(),
             EditTarget::PosY(_) => node.y.to_string(),
             // R1264 — seed with the source constant's round-trip text (`None`
             // when the node is not a source, the begin-edit validity gate).
-            EditTarget::SourceConst(_) => node.output_const.as_ref()?.edit_text(),
+            EditTarget::SourceConst(_) => source_const(&graph, id)?.edit_text(),
         })
     }
 
@@ -5971,7 +5274,7 @@ impl NodeGraphExternal {
     /// R901.1 wired-port reject guards). A compute op's / sink's `value` is
     /// derived — settable only via wiring, not this editor.
     fn begin_edit_source_value(&self, id: NodeId) -> bool {
-        if !self.nodes.get().iter().any(|n| n.id == id && n.is_source()) {
+        if !is_source(&self.graph(), id) {
             return false;
         }
         self.begin_edit(EditTarget::SourceConst(id), EditSurface::Card)
@@ -6002,10 +5305,9 @@ impl NodeGraphExternal {
     /// predicate that gates the inline editor to the same ports whose default
     /// label paints, so `editing` can never point at an unpainted field.
     fn input_wired(&self, node: NodeId, port: usize) -> bool {
-        self.edges
-            .get()
+        edges(&self.graph())
             .iter()
-            .any(|e| e.to_node == node && e.to_port == port)
+            .any(|e| e.to == Socket::new(node, uport(port)))
     }
 
     /// Pointer `send` wire (the same channel the router and RPC share).
@@ -6258,7 +5560,16 @@ impl NodeGraphExternal {
                         self.node_by_id(id).map(|n| (id, (px, py), (n.x, n.y)))
                     })
                     .collect();
+                let dragged = !moves.is_empty();
                 self.record_moves(moves, false);
+                // R1596 — a node dropped onto a frame JOINS it (Blender runs the
+                // same attach out of its transform's `special_aftertrans_update`).
+                // Only after a real move: a click that grabbed and released in
+                // place must not silently re-parent, and only then can attach be
+                // its own undo step without a stray one behind every click.
+                if dragged {
+                    self.attach_selected();
+                }
             }
         }
         self.reset_gesture();
@@ -6292,7 +5603,7 @@ impl core::fmt::Debug for NodeGraphExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("NodeGraphExternal")
             .field("nodes", &self.node_count())
-            .field("edges", &self.edges.get().len())
+            .field("edges", &edges(&self.graph()).len())
             .field("selection", &self.selection.get())
             .finish_non_exhaustive()
     }
@@ -6436,7 +5747,7 @@ impl External for NodeGraphExternal {
             // cursor + its own grab anchor (zoom/pan-robust, R877); the
             // per-frame writes batch into one atomic group move (the shared
             // [`follow_members`] kernel the auto-pan tick also runs).
-            batch(|| follow_members(&self.nodes, &start.members, gx, gy));
+            batch(|| follow_members(&self.document, &start.members, gx, gy));
         }
     }
 
@@ -6502,12 +5813,11 @@ impl External for NodeGraphExternal {
             // An *unwired* input has no edge to grab — `find` yields `None` and
             // the press stays a non-drag (it never reaches the connect path).
             PendingPress::InputPort(n, i) => {
-                let edge = self
-                    .edges
-                    .get()
-                    .into_iter()
-                    .find(|e| e.to_node == n && e.to_port == i)?;
-                (edge.from_node, edge.from_port, Some(edge.id))
+                let graph = self.graph();
+                let wire = edges(&graph)
+                    .iter()
+                    .find(|e| e.to == Socket::new(n, uport(i)))?;
+                (wire.from.node, uidx(wire.from.port), Some(wire.id))
             }
             _ => return None,
         };
@@ -6658,11 +5968,25 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
         "bool",
         const { &[SchemaArg::open("id", "int")] },
     ),
+    // R1596 — the frame this node sits in, or Null on the bare canvas.
+    SchemaField::parametric(
+        "node.<id>.parent",
+        "int",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
     // R1241 — dissolve-eligibility reads (the twins of the dissolve verb).
     SchemaField::new("dissolvable_ids", "string"),
     SchemaField::parametric(
         "dissolvable.<id>",
         "bool",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1596 — WHICH wires a dissolve would cut, beside whether it cuts any.
+    // Empty exactly when `dissolvable` is true, so the boolean and the reason
+    // are one derivation read two ways.
+    SchemaField::parametric(
+        "dissolve_severs.<id>",
+        "string",
         const { &[SchemaArg::open("id", "int")] },
     ),
     // R1227 — comment-frame introspection: the annotation layer as data.
@@ -6671,6 +5995,20 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::parametric(
         "frame.<id>.title",
         "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    // R1596 — containment read from BOTH ends and at BOTH depths: `contains` is
+    // one level, `contents` everything below it, and `parent` the frame this
+    // frame is inside. Blender exposes `node.parent` to Python and has no
+    // accessor for a frame's children at all.
+    SchemaField::parametric(
+        "frame.<id>.contents",
+        "string",
+        const { &[SchemaArg::open("id", "int")] },
+    ),
+    SchemaField::parametric(
+        "frame.<id>.parent",
+        "int",
         const { &[SchemaArg::open("id", "int")] },
     ),
     SchemaField::parametric(
@@ -6840,6 +6178,12 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     // nothing is selected); `remove_frame` deletes a frame by id.
     SchemaField::action("add_frame", "int"),
     SchemaField::action("remove_frame", "int"),
+    // R1596 — Blender's NODE_OT_attach / NODE_OT_detach: put the selection into
+    // the frame it is sitting on, or take it out one level. Both answer the CSV
+    // of nodes whose frame changed, where Blender's operators report only
+    // whether the operator ran at all.
+    SchemaField::action("attach", "string"),
+    SchemaField::action("detach", "string"),
     SchemaField::action("delete_node", "int"),
     SchemaField::action("delete_selected", "json"),
     // R1236 — dissolve = delete + reconnect through a 1-in/1-out node
@@ -6897,66 +6241,64 @@ impl ExternalIntrospect for NodeGraphExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "node_count" => Some(IntrospectValue::Int(int_of(self.node_count()))),
-            "edge_count" => Some(IntrospectValue::Int(int_of(self.edges.get().len()))),
+            "edge_count" => Some(IntrospectValue::Int(int_of(edges(&self.graph()).len()))),
             "layout_crossings" => Some(IntrospectValue::Int(int_of(layout_crossings(
-                &self.nodes.get(),
-                &self.edges.get(),
+                &self.graph(),
             )))),
             "layout_inner_segments" => Some(IntrospectValue::Int(int_of(
-                layout_inner_straightness(&self.nodes.get(), &self.edges.get()).0,
+                layout_inner_straightness(&self.graph()).0,
             ))),
             "layout_straight_inner" => Some(IntrospectValue::Int(int_of(
-                layout_inner_straightness(&self.nodes.get(), &self.edges.get()).1,
+                layout_inner_straightness(&self.graph()).1,
             ))),
             // CSV of the *current* (possibly sparse after deletes) stable ids —
             // the enumeration handle an AI needs now that addressing is by id.
             "node_ids" => Some(IntrospectValue::Text(csv_ids(
-                self.nodes.get().iter().map(|n| n.id.raw()),
+                kind_nodes(&self.graph()).map(|(n, _)| n.id.0),
             ))),
             "edge_ids" => Some(IntrospectValue::Text(csv_ids(
-                self.edges.get().iter().map(|e| e.id.raw()),
+                edges(&self.graph()).iter().map(|e| e.id.0),
             ))),
             // R1242 — the reroute-knot enumeration (the AI-first "find every
             // reroute" handle a self-hosted editor's cleanup pass needs; the
             // `node.<id>.is_reroute` read is the per-node twin).
             "reroute_ids" => Some(IntrospectValue::Text(csv_ids(
-                self.nodes
-                    .get()
-                    .iter()
-                    .filter(|n| n.is_reroute())
-                    .map(|n| n.id.raw()),
+                kind_nodes(&self.graph())
+                    .filter(|(n, _)| n.is_reroute())
+                    .map(|(n, _)| n.id.0),
             ))),
             // R1227 — the comment-frame enumeration handles (the annotation
             // layer as data, exactly like `node_ids` / `edge_ids`).
-            "frame_count" => Some(IntrospectValue::Int(int_of(self.frames.get().len()))),
+            "frame_count" => Some(IntrospectValue::Int(int_of(
+                frame_nodes(&self.graph()).count(),
+            ))),
             "frame_ids" => Some(IntrospectValue::Text(csv_ids(
-                self.frames.get().iter().map(|f| f.id.raw()),
+                frame_nodes(&self.graph()).map(|f| f.id.0),
             ))),
             // R1241 — the AI-first dissolve-eligibility enumeration: the CSV of
-            // node ids that can be dissolved (1-in / 1-out + a valid bridge), so
-            // an editor can offer "Dissolve" without probing each node. The
-            // `dissolvable.<id>` read is the per-node twin.
+            // node ids a dissolve would not cost anything, so an editor can
+            // offer "Dissolve" without probing each node. The `dissolvable.<id>`
+            // read is the per-node twin.
             "dissolvable_ids" => Some(IntrospectValue::Text(csv_ids(
-                self.nodes
-                    .get()
+                kind_node_vec(&self.graph())
                     .iter()
                     .filter(|n| self.dissolvable(n.id))
-                    .map(|n| n.id.raw()),
+                    .map(|n| n.id.0),
             ))),
             // R879 — `selected` answers the *single*-selection question:
             // an Int only when exactly one node is selected (a multi-set
             // has no unambiguous "the" node — read `selected_ids`).
             "selected" => Some(match self.selection.get().node() {
-                Some(id) => IntrospectValue::Int(i64::from(id.raw())),
+                Some(id) => IntrospectValue::Int(i64::from(id.0)),
                 None => IntrospectValue::Null,
             }),
             // R879 — the multi-select read twin: CSV of the selected node
             // ids in id order ("" when no node selection).
             "selected_ids" => Some(IntrospectValue::Text(csv_ids(
-                self.selection.get().nodes().iter().map(|id| id.raw()),
+                self.selection.get().nodes().iter().map(|id| id.0),
             ))),
             "selected_edge" => Some(match self.selection.get().edge() {
-                Some(id) => IntrospectValue::Int(i64::from(id.raw())),
+                Some(id) => IntrospectValue::Int(i64::from(id.0)),
                 None => IntrospectValue::Null,
             }),
             // R878 — the in-flight inline *rename* target (`Null` when idle or
@@ -6970,7 +6312,7 @@ impl ExternalIntrospect for NodeGraphExternal {
                 Some(ActiveEdit {
                     target: EditTarget::Title(id),
                     ..
-                }) => IntrospectValue::Int(i64::from(id.raw())),
+                }) => IntrospectValue::Int(i64::from(id.0)),
                 _ => IntrospectValue::Null,
             }),
             // R901 / R918 — the in-flight inline edit, the honest generalised
@@ -7112,7 +6454,7 @@ impl ExternalIntrospect for NodeGraphExternal {
                 } else {
                     (node.x, coord)
                 };
-                apply_set_pos(&self.nodes, &self.undo, id, x, y);
+                apply_set_pos(&self.handle(), id, x, y);
                 Ok(())
             }
             // R878 — the write twin of `query node.<id>.title` ([[wire-form-
@@ -7123,7 +6465,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // the node keeps its name.
             "title" => match value {
                 IntrospectValue::Text(t) => {
-                    if apply_rename(&self.nodes, &self.undo, id, &t) {
+                    if apply_rename(&self.handle(), id, &t) {
                         Ok(())
                     } else {
                         Err(InterveneError::out_of_range("a node title cannot be blank"))
@@ -7140,11 +6482,11 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R1257 — `value` is the node's output: authored for a SOURCE
             // (write lands its output constant), derived for a compute op / sink
             // (`ReadOnly`). Read via `query node.<id>.value` for every node.
-            "value" => self.intervene_source_value(id, &node, value),
+            "value" => self.intervene_source_value(id, value),
             // R899 — set an input port's typed default (the write twin of
             // `query node.<id>.input_default.<port>`); routed through the
             // type-checking [`Self::intervene_input_default`] helper.
-            _ => self.intervene_input_default(id, &node, field, value),
+            _ => self.intervene_input_default(id, field, value),
         }
     }
 
@@ -7208,8 +6550,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             "add_reroute" => self.invoke_add_reroute(&args),
             // R1227 — comment-frame verbs (bodies extracted to keep `invoke`
             // within the workspace line ceiling).
-            "add_frame" => Ok(self.invoke_add_frame()),
-            "remove_frame" => self.invoke_remove_frame(&args),
+            "add_frame" | "remove_frame" | "attach" | "detach" => self.invoke_frame(path, &args),
             "delete_node" => match args {
                 IntrospectValue::Int(i) => {
                     let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
@@ -7390,7 +6731,7 @@ impl NodeGraphExternal {
             "commit_pin_create" => {
                 let committed = match args {
                     IntrospectValue::Text(s) => {
-                        match PALETTE.iter().position(|&(name, _, _, _)| name == s) {
+                        match PALETTE.iter().position(|&(name, _)| name == s) {
                             Some(kind) => self.commit_pin_create_kind(kind),
                             None => {
                                 return Some(Err(Self::unknown_kind_reason(
@@ -7404,7 +6745,7 @@ impl NodeGraphExternal {
                     _ => return Some(Err(InvokeError::TypeMismatch)),
                 };
                 committed
-                    .map(|id| IntrospectValue::Int(i64::from(id.raw())))
+                    .map(|id| IntrospectValue::Int(i64::from(id.0)))
                     .ok_or_else(|| {
                         InvokeError::rejected(
                             "commit_pin_create: no pin-create menu is open on a \
@@ -7493,7 +6834,7 @@ fn commit_edit(restore_focus: bool) {
         return;
     };
     let text = use_text_edit_state(EDIT_TF_TAG).text();
-    apply_edit_commit(&use_nodes(), &use_undo(), active.target, &text);
+    apply_edit_commit(&use_graph_handle(), active.target, &text);
     end_edit_mode(restore_focus);
 }
 
@@ -7544,7 +6885,7 @@ fn edit_target_kind(target: EditTarget) -> CellKind {
     match target {
         EditTarget::Title(_) => CellKind::Text,
         EditTarget::PortDefault { node, port } => {
-            port_default_kind(&use_nodes().get(), node, port).unwrap_or(CellKind::Text)
+            port_default_kind(&use_document().get(), node, port).unwrap_or(CellKind::Text)
         }
         // R918 — a position is an integer: the gate accepts digits and a leading
         // sign, the same `CellKind::Int` the data-grid / property-grid use.
@@ -7552,7 +6893,7 @@ fn edit_target_kind(target: EditTarget) -> CellKind {
         // R1264 — a source constant is gated by its own typed kind (a `Float`
         // source accepts digits / sign / `.`, a `Color` source hex digits + `#`).
         EditTarget::SourceConst(id) => {
-            source_const_kind(&use_nodes().get(), id).unwrap_or(CellKind::Text)
+            source_const_kind(&use_document().get(), id).unwrap_or(CellKind::Text)
         }
     }
 }
@@ -7564,14 +6905,14 @@ fn edit_target_kind(target: EditTarget) -> CellKind {
 /// which survives as a degenerate projection over `Title` targets.
 fn active_edit_introspect(active: ActiveEdit) -> IntrospectValue {
     let mut obj = match active.target {
-        EditTarget::Title(id) => serde_json::json!({ "kind": "title", "node": id.raw() }),
+        EditTarget::Title(id) => serde_json::json!({ "kind": "title", "node": id.0 }),
         EditTarget::PortDefault { node, port } => {
-            serde_json::json!({ "kind": "port_default", "node": node.raw(), "port": port })
+            serde_json::json!({ "kind": "port_default", "node": node.0, "port": port })
         }
-        EditTarget::PosX(id) => serde_json::json!({ "kind": "pos_x", "node": id.raw() }),
-        EditTarget::PosY(id) => serde_json::json!({ "kind": "pos_y", "node": id.raw() }),
+        EditTarget::PosX(id) => serde_json::json!({ "kind": "pos_x", "node": id.0 }),
+        EditTarget::PosY(id) => serde_json::json!({ "kind": "pos_y", "node": id.0 }),
         EditTarget::SourceConst(id) => {
-            serde_json::json!({ "kind": "source_value", "node": id.raw() })
+            serde_json::json!({ "kind": "source_value", "node": id.0 })
         }
     };
     obj["surface"] = serde_json::Value::from(match active.surface {
@@ -7816,11 +7157,6 @@ fn view_edge(
     )
 }
 
-/// Look up a node by its stable id within a slice (the view's id→node resolve).
-fn node_ref(nodes: &[GraphNode], id: NodeId) -> Option<&GraphNode> {
-    nodes.iter().find(|n| n.id == id)
-}
-
 /// R1230 / R1262 — resolve edge `e` to its `(from output-port, to input-port)`
 /// centres via a caller-supplied node `lookup`, dropping an edge whose endpoint
 /// node is absent. **The ONE endpoint anchor body** the edge paint
@@ -7833,28 +7169,27 @@ fn node_ref(nodes: &[GraphNode], id: NodeId) -> Option<&GraphNode> {
 /// so [`edge_endpoints`] (linear `node_ref`, the cold callers) and `view_edges`
 /// (a per-paint `BTreeMap` index) share this one body instead of two.
 fn edge_endpoints_via<'a>(
-    lookup: impl Fn(NodeId) -> Option<&'a GraphNode>,
+    lookup: impl Fn(NodeId) -> Option<&'a Node<MaterialOp>>,
     e: &Edge,
 ) -> Option<((i32, i32), (i32, i32))> {
     Some((
-        output_port_center(lookup(e.from_node)?, e.from_port),
-        input_port_center(lookup(e.to_node)?, e.to_port),
+        output_port_center(lookup(e.from.node)?, uidx(e.from.port)),
+        input_port_center(lookup(e.to.node)?, uidx(e.to.port)),
     ))
 }
 
 /// R1230 — resolve edge `e`'s endpoint centres by a linear `node_ref` lookup
 /// (the [`edge_endpoints_via`] SSOT), for the cold callers (hit-test / knife /
 /// reroute) where a per-call O(n) is not a per-frame cost.
-fn edge_endpoints(nodes: &[GraphNode], e: &Edge) -> Option<((i32, i32), (i32, i32))> {
-    edge_endpoints_via(|id| node_ref(nodes, id), e)
+fn edge_endpoints(graph: &Graph, e: &Edge) -> Option<((i32, i32), (i32, i32))> {
+    edge_endpoints_via(|id| graph.tree(TREE).and_then(|tree| tree.node(id)), e)
 }
 
 /// All committed edges, resolved to their port centres. Painted behind the
 /// node cards; the selected edge paints thicker in the highlight colour. Each
 /// edge is tagged by its stable [`EdgeId`].
 fn view_edges(
-    nodes: &[GraphNode],
-    edges: &[Edge],
+    graph: &Graph,
     selected_edge: Option<EdgeId>,
     theme: &Theme,
     zoom: f64,
@@ -7866,8 +7201,9 @@ fn view_edges(
     // O(edges · nodes)). R1262 — the anchor math still routes through the ONE
     // [`edge_endpoints_via`] body (only the lookup differs), so the drawn wire
     // cannot drift from the hit-test / knife on a future port-anchor change.
-    let index: BTreeMap<NodeId, &GraphNode> = nodes.iter().map(|n| (n.id, n)).collect();
-    edges
+    let index: BTreeMap<NodeId, &Node<MaterialOp>> =
+        kind_nodes(graph).map(|(n, _)| (n.id, n)).collect();
+    edges(graph)
         .iter()
         .filter_map(|e| {
             let (from, to) = edge_endpoints_via(|id| index.get(&id).copied(), e)?;
@@ -7981,18 +7317,19 @@ fn node_border(selected: bool, theme: &Theme) -> Border {
 
 /// R1243 — a reroute knot: a compact circular dot painted in its wire's
 /// signature colour, in place of a full node card. A reroute
-/// ([`GraphNode::is_reroute`]) is a wire-routing passthrough, not a compute op,
+/// ([`NodeGeometry::is_reroute`]) is a wire-routing passthrough, not a compute op,
 /// so it carries no header / port rows / inline editors — the wire passes
 /// straight through the dot ([`knot_center`] anchors both ports). Tagged
 /// `#node_{id}` like any node, so it selects / drags / dissolves through the
 /// same paths; a selected knot gains the accent ring every node uses.
-fn view_reroute_knot(node: &GraphNode, selected: bool, theme: &Theme, zoom: f64) -> Scene {
+fn view_reroute_knot(node: &Node<MaterialOp>, selected: bool, theme: &Theme, zoom: f64) -> Scene {
     let size = upx(wpx(KNOT_SIZE, zoom).max(4));
     // The knot wears its wire's signature colour (the pin colour-coding
     // convention); a reroute always has exactly one typed port.
-    let fill = node
-        .output_type(0)
-        .map_or_else(|| theme.resolve(ColorRole::Outline), PortType::color);
+    let fill = match node.body {
+        NodeBody::Kind(MaterialOp::Reroute(ty)) => ty.color(),
+        _ => theme.resolve(ColorRole::Outline),
+    };
     let border = node_border(selected, theme);
     Scene::Container(
         ContainerNode::new(Vec::new())
@@ -8020,20 +7357,22 @@ fn view_reroute_knot(node: &GraphNode, selected: bool, theme: &Theme, zoom: f64)
 /// derived), so only the pins paint. Extracted from [`view_node`] to keep it
 /// under the line ceiling once the source-const branch landed.
 fn view_output_ports(
-    node: &GraphNode,
-    card_edit: Option<EditTarget>,
-    edit_field: RootState,
+    graph: &Graph,
+    node: &Node<MaterialOp>,
+    signature: &Signature<MaterialOp>,
+    edit: CardEdit,
     theme: &Theme,
     zoom: f64,
 ) -> Vec<Scene> {
     let id = node.id;
     let mut out = Vec::new();
-    for (j, ty) in node.output_ports.iter().enumerate() {
+    for (j, port) in signature.outputs.iter().enumerate() {
+        let ty = port.ty;
         if j == 0 {
-            if let Some(val) = &node.output_const {
-                if card_edit == Some(EditTarget::SourceConst(id)) {
+            if let Some(val) = source_const(graph, id) {
+                if edit.target == Some(EditTarget::SourceConst(id)) {
                     out.push(view_pin_edit_field(
-                        edit_field,
+                        edit.field,
                         port_row_top(j),
                         theme,
                         zoom,
@@ -8061,10 +7400,10 @@ fn view_output_ports(
 }
 
 fn view_node(
-    node: &GraphNode,
+    graph: &Graph,
+    node: &Node<MaterialOp>,
     selected: bool,
-    card_edit: Option<EditTarget>,
-    edit_field: RootState,
+    edit: CardEdit,
     wired_inputs: &BTreeSet<usize>,
     theme: &Theme,
     zoom: f64,
@@ -8076,11 +7415,18 @@ fn view_node(
         return view_reroute_knot(node, selected, theme, zoom);
     }
     let id = node.id;
+    // R1596 — the ports come from the document's own signature derivation, the
+    // one `connect` and the evaluator read, rather than from a port list stored
+    // on the node. A card cannot paint a port the model does not have.
+    let signature = signature_of(graph, id).unwrap_or_else(|| Signature {
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+    });
     // R878 — while this node is being renamed, the header swaps its title
     // text for the ONE shared inline rename field (the data-grid
     // title-or-field switch), sized to the header and projected through the
     // zoom like every other world coordinate.
-    let head_inner = if card_edit == Some(EditTarget::Title(id)) {
+    let head_inner = if edit.target == Some(EditTarget::Title(id)) {
         let style = tf_paint::TextFieldStyle {
             field_w: upx(wpx(NODE_W - 8, zoom)),
             field_h: upx(wpx(HEADER_H - 6, zoom)),
@@ -8090,15 +7436,15 @@ fn view_node(
         };
         tf_paint::view_field(
             EDIT_TF_TAG,
-            edit_field.0,
-            edit_field.1,
+            edit.field.0,
+            edit.field.1,
             theme,
             &style,
             "Rename node",
         )
     } else {
         Scene::Text(TextNode::styled(
-            node.title.clone(),
+            node.title(),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(wfont(NODE_TITLE_PX, zoom))
@@ -8124,12 +7470,12 @@ fn view_node(
     // R898 — each port paints in its [`PortType`] signature colour, so a
     // connection's validity (output colour vs input colour) is legible at a
     // glance — the Unreal/Blender colour-coded-pin convention.
-    for (i, ty) in node.input_ports.iter().enumerate() {
+    for (i, port) in signature.inputs.iter().enumerate() {
         children.push(view_port(
             format!("{GRAPH_TAG}#iport_{id}_{i}"),
             0,
             port_row_top(i),
-            ty.color(),
+            port.ty.color(),
             zoom,
         ));
         // R899 — an *unconnected* input port shows its literal default value
@@ -8140,14 +7486,14 @@ fn view_node(
             // R901 — while this port's default is being edited, the pin swaps
             // its static value label for the ONE shared inline field (the
             // header's title-or-field switch, applied to the pin default).
-            if card_edit == Some(EditTarget::PortDefault { node: id, port: i }) {
+            if edit.target == Some(EditTarget::PortDefault { node: id, port: i }) {
                 children.push(view_pin_edit_field(
-                    edit_field,
+                    edit.field,
                     port_row_top(i),
                     theme,
                     zoom,
                 ));
-            } else if let Some(val) = node.input_default(i) {
+            } else if let Some(val) = input_default(graph, id, i) {
                 children.push(view_pin_value_label(
                     format!("{GRAPH_TAG}#idefault_{id}_{i}"),
                     &val.display(),
@@ -8158,7 +7504,9 @@ fn view_node(
             }
         }
     }
-    children.extend(view_output_ports(node, card_edit, edit_field, theme, zoom));
+    children.extend(view_output_ports(
+        graph, node, &signature, edit, theme, zoom,
+    ));
 
     let border = node_border(selected, theme);
     Scene::Container(
@@ -8212,15 +7560,18 @@ fn view_marquee(rect: MarqueeRect, theme: &Theme, zoom: f64) -> Scene {
 
 /// R1227 — one a11y `group` per comment frame, named by its title + the count
 /// of nodes it contains (the annotation reachable to AT, its membership
-/// announced — the same [`CommentFrame::contains_node`] gate the paint + the
-/// `contains` query use). Extracted from `access_node` (line ceiling).
-fn frame_access_nodes(frames: &[CommentFrame], nodes: &[GraphNode]) -> Vec<AccessNode> {
-    frames
-        .iter()
+/// announced — the same [`frame_members`] relation the `contains` query answers
+/// from). Extracted from `access_node` (line ceiling).
+///
+/// R1596 — the count is the FACT, so what an assistive technology hears and what
+/// the wire reports are one derivation; before this round each re-ran the
+/// rectangle test and could disagree with a paint mid-drag.
+fn frame_access_nodes(graph: &Graph) -> Vec<AccessNode> {
+    frame_nodes(graph)
         .map(|f| {
-            let members = nodes.iter().filter(|n| f.contains_node(n)).count();
+            let members = graph.members(TREE, f.id).len();
             AccessNode::new(format!("{GRAPH_TAG}#frame_{}", f.id), AriaRole::Group)
-                .with_name(format!("Comment frame: {} ({members} nodes)", f.title))
+                .with_name(format!("Comment frame: {} ({members} nodes)", f.title()))
         })
         .collect()
 }
@@ -8235,17 +7586,16 @@ fn frame_access_nodes(frames: &[CommentFrame], nodes: &[GraphNode]) -> Vec<Acces
 /// `{w,h}` resizes); a GUI grab-to-move handle stays deferred pending a live
 /// pointer consumer. Tagged `node_graph#frame_<id>` so that gesture (and the
 /// a11y bounds) resolve to the painted rect.
-fn view_frames(frames: &[CommentFrame], zoom: f64) -> Vec<Scene> {
+fn view_frames(graph: &Graph, zoom: f64) -> Vec<Scene> {
     let fill = Color {
         a: FRAME_FILL_ALPHA,
         ..FRAME_COLOR
     };
-    frames
-        .iter()
+    frame_nodes(graph)
         .map(|f| {
             let title = Scene::Text(
                 TextNode::styled(
-                    f.title.clone(),
+                    f.title(),
                     Rect::default(),
                     TextStyle::new()
                         .with_size_px(wfont(NODE_TITLE_PX, zoom))
@@ -8265,8 +7615,8 @@ fn view_frames(frames: &[CommentFrame], zoom: f64) -> Vec<Scene> {
                         LayoutStyle::new()
                             .with_absolute_position(upx(wpx(f.x, zoom)), upx(wpx(f.y, zoom)))
                             .with_size(Size::px(
-                                upx(wpx(f.w, zoom).max(1)),
-                                upx(wpx(f.h, zoom).max(1)),
+                                upx(wpx(f.width(), zoom).max(1)),
+                                upx(wpx(f.height(), zoom).max(1)),
                             ))
                             .with_pointer_transparent(true),
                     ),
@@ -8293,9 +7643,9 @@ fn view_palette(theme: &Theme) -> Scene {
         )
         .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
     ));
-    for (idx, &(title, input_ports, output_ports, _)) in PALETTE.iter().enumerate() {
+    for (idx, &(title, op)) in PALETTE.iter().enumerate() {
         let label = Scene::Text(TextNode::styled(
-            format!("{title} ({}/{})", input_ports.len(), output_ports.len()),
+            format!("{title} ({}/{})", op.inputs().len(), op.outputs().len()),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(13)
@@ -8339,8 +7689,8 @@ fn view_palette(theme: &Theme) -> Scene {
 /// (absolute, OUTSIDE the world scroll, like the title / status chrome), so it
 /// stays put while it is open. `None` when the source pin has gone invalid (an
 /// undo removed its node), matching the coordinator's own re-derivation gate.
-fn view_pin_create_menu(pc: &PinCreate, nodes: &[GraphNode], theme: &Theme) -> Option<Scene> {
-    let from_ty = node_ref(nodes, pc.from_node)?.output_type(pc.from_port)?;
+fn view_pin_create_menu(pc: &PinCreate, graph: &Graph, theme: &Theme) -> Option<Scene> {
+    let from_ty = output_type(graph, pc.from_node, pc.from_port)?;
     let candidates = pin_create_candidates(from_ty, &pc.filter);
     let mut items: Vec<Scene> = Vec::with_capacity(candidates.len() + 1);
     let header = if pc.filter.is_empty() {
@@ -8371,9 +7721,9 @@ fn view_pin_create_menu(pc: &PinCreate, nodes: &[GraphNode], theme: &Theme) -> O
         ));
     }
     for (row, &kind) in candidates.iter().enumerate() {
-        let &(title, input_ports, output_ports, _) = &PALETTE[kind];
+        let (title, op) = PALETTE[kind];
         let label = Scene::Text(TextNode::styled(
-            format!("{title} ({}/{})", input_ports.len(), output_ports.len()),
+            format!("{title} ({}/{})", op.inputs().len(), op.outputs().len()),
             Rect::default(),
             TextStyle::new()
                 .with_size_px(13)
@@ -8493,13 +7843,13 @@ struct DetailRow {
 /// consumer still composes its own *presentation* of that shared data (the panel
 /// paints `label` and `value` as two cells; the a11y joins them into the node
 /// name) — presentation, not row identity, so the byte-matched tag still binds.
-fn detail_rows(node: &GraphNode) -> Vec<DetailRow> {
+fn detail_rows(graph: &Graph, node: &Node<MaterialOp>) -> Vec<DetailRow> {
     let id = node.id;
     let mut rows = vec![
         DetailRow {
             key: "title".to_owned(),
             label: "Title".to_owned(),
-            value: node.title.clone(),
+            value: node.title(),
             target: EditTarget::Title(id),
         },
         DetailRow {
@@ -8515,13 +7865,14 @@ fn detail_rows(node: &GraphNode) -> Vec<DetailRow> {
             target: EditTarget::PosY(id),
         },
     ];
-    for (port, ty) in node.input_ports.iter().enumerate() {
+    let inputs = signature_of(graph, id)
+        .map(|s| s.inputs)
+        .unwrap_or_default();
+    for (port, declared) in inputs.iter().enumerate() {
         rows.push(DetailRow {
             key: format!("in_{port}"),
-            label: format!("In {port} · {}", ty.name()),
-            value: node
-                .input_default(port)
-                .map_or_else(String::new, CellValue::display),
+            label: format!("In {port} · {}", declared.ty.name()),
+            value: input_default(graph, id, port).map_or_else(String::new, |v| v.display()),
             target: EditTarget::PortDefault { node: id, port },
         });
     }
@@ -8535,7 +7886,7 @@ fn detail_rows(node: &GraphNode) -> Vec<DetailRow> {
 /// placeholder — there is no unambiguous "the" node to inspect (the `selected` /
 /// `detail.node` `Null` case made visible).
 fn view_details_panel(
-    nodes: &[GraphNode],
+    graph: &Graph,
     selection: &Selection,
     active: Option<ActiveEdit>,
     edit_field: RootState,
@@ -8558,8 +7909,8 @@ fn view_details_panel(
         .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
     )];
 
-    if let Some(node) = selection.node().and_then(|id| node_ref(nodes, id)) {
-        for row in detail_rows(node) {
+    if let Some((node, _)) = selection.node().and_then(|id| kind_node(graph, id)) {
+        for row in detail_rows(graph, node) {
             items.push(detail_row(
                 &row.key,
                 &row.label,
@@ -8607,6 +7958,19 @@ fn view_details_panel(
 /// state + caret byte (the data-grid `RootState` shape).
 type RootState = (TextFieldState, u32);
 
+/// R1596 — the shared inline field as ONE card sees it.
+///
+/// `target` is the edit in flight **on this card** (`None` once it belongs to
+/// another card — R901: only the hosting card paints the field), and `field` is
+/// the shared posture every card would paint it with. They travel together
+/// because neither is meaningful alone: a posture with no target paints nothing,
+/// and a target with no posture cannot be drawn.
+#[derive(Clone, Copy)]
+struct CardEdit {
+    target: Option<EditTarget>,
+    field: RootState,
+}
+
 /// R899 — the node cards, one per node. Each node's wired input set (the ports
 /// whose default label is hidden because an edge supplies their value — the
 /// single source the paint and the `add_edge` open-port rule share) lowers to a
@@ -8615,8 +7979,7 @@ type RootState = (TextFieldState, u32);
 /// the per-node O(edges) rescan it was (the paint was O(nodes · edges), a
 /// frame-time cost the self-hosted editor cannot afford at large-graph scale).
 fn view_node_cards(
-    nodes: &[GraphNode],
-    edges: &[Edge],
+    graph: &Graph,
     selected: &BTreeSet<NodeId>,
     active: Option<ActiveEdit>,
     edit_field: RootState,
@@ -8629,26 +7992,24 @@ fn view_node_cards(
         .filter(|a| a.surface == EditSurface::Card)
         .map(|a| a.target);
     let mut wired_by_node: BTreeMap<NodeId, BTreeSet<usize>> = BTreeMap::new();
-    for e in edges {
+    for e in edges(graph) {
         wired_by_node
-            .entry(e.to_node)
+            .entry(e.to.node)
             .or_default()
-            .insert(e.to_port);
+            .insert(uidx(e.to.port));
     }
     let no_wires = BTreeSet::new();
-    nodes
-        .iter()
-        .map(|node| {
+    kind_nodes(graph)
+        .map(|(node, _)| {
             let wired_inputs = wired_by_node.get(&node.id).unwrap_or(&no_wires);
-            // R901 — only the card hosting the in-flight edit paints the shared
-            // field (a title or one pin default); every other card paints
-            // statically. `None` once the target's node is a different card.
-            let card_edit = card_edit_target.filter(|t| t.node() == node.id);
             view_node(
+                graph,
                 node,
                 selected.contains(&node.id),
-                card_edit,
-                edit_field,
+                CardEdit {
+                    target: card_edit_target.filter(|t| t.node() == node.id),
+                    field: edit_field,
+                },
                 wired_inputs,
                 theme,
                 zoom,
@@ -8663,8 +8024,7 @@ fn view_node_cards(
 #[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let nodes = use_nodes().get();
-    let edges = use_edges().get();
+    let graph = use_document().get();
     let selection = use_selection().get();
     let selected = selection.nodes();
     let selected_edge = selection.edge();
@@ -8686,16 +8046,16 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let mut world_children: Vec<Scene> = Vec::new();
 
     // R1227 — comment frames sit BEHIND everything (a labelled backdrop wash).
-    world_children.extend(view_frames(&use_frames().get(), zoom));
+    world_children.extend(view_frames(&graph, zoom));
 
     // Edges (behind) → preview wire → node cards (on top).
-    world_children.extend(view_edges(&nodes, &edges, selected_edge, &theme, zoom));
+    world_children.extend(view_edges(&graph, selected_edge, &theme, zoom));
 
     if let Some(p) = preview {
-        if let Some(from_node) = node_ref(&nodes, p.from_node) {
+        if let Some((from_node, _)) = kind_node(&graph, p.from_node) {
             let from = output_port_center(from_node, p.from_port);
             let to =
-                p.to.and_then(|(tn, tp)| Some(input_port_center(node_ref(&nodes, tn)?, tp)))
+                p.to.and_then(|(tn, tp)| Some(input_port_center(kind_node(&graph, tn)?.0, tp)))
                     .unwrap_or(from);
             world_children.push(view_edge(
                 format!("{GRAPH_TAG}#preview"),
@@ -8709,7 +8069,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     }
 
     world_children.extend(view_node_cards(
-        &nodes, &edges, &selected, active, state, &theme, zoom,
+        &graph, &selected, active, state, &theme, zoom,
     ));
 
     // R880 — the live marquee rubber band layers over everything in the
@@ -8753,7 +8113,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     } else if let Some(id) = selected.first() {
         format!(
             "node {}",
-            node_ref(&nodes, *id).map_or("—", |n| n.title.as_str())
+            kind_node(&graph, *id).map_or_else(|| "—".to_owned(), |(n, _)| n.title())
         )
     } else if let Some(e) = selected_edge {
         format!("edge {e}")
@@ -8767,8 +8127,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // R877 — surface the zoom so the viewport state is a visible witness.
     let status = format!(
         "{} nodes · {} edges · selected: {sel_label} · zoom {}% · undo: {}",
-        nodes.len(),
-        edges.len(),
+        kind_nodes(&graph).count(),
+        edges(&graph).len(),
         round_i32(zoom * 100.0),
         undo_label.as_deref().unwrap_or("—"),
     );
@@ -8790,7 +8150,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // child = on top), OUTSIDE the world scroll so it stays put. Reading the
     // Signal subscribes the paint Effect, so open / filter / rove repaints.
     if let Some(pc) = use_pin_create().get() {
-        if let Some(menu) = view_pin_create_menu(&pc, &nodes, &theme) {
+        if let Some(menu) = view_pin_create_menu(&pc, &graph, &theme) {
             children.push(menu);
         }
     }
@@ -8815,7 +8175,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         ContainerNode::new(vec![
             view_palette(&theme),
             canvas,
-            view_details_panel(&nodes, &selection, active, state, &theme),
+            view_details_panel(&graph, &selection, active, state, &theme),
         ])
         .with_layout(
             LayoutStyle::new()
@@ -8839,12 +8199,9 @@ impl WidgetCore for NodeEditorView {
 
     fn create_external() -> Box<dyn External> {
         Box::new(NodeGraphExternal::new(
-            use_nodes(),
-            use_edges(),
+            use_document(),
             use_selection(),
             use_preview(),
-            use_next_edge_id(),
-            use_next_node_id(),
             GraphServices {
                 undo: use_undo(),
                 storage: use_graph_storage(),
@@ -8855,8 +8212,6 @@ impl WidgetCore for NodeEditorView {
                 marquee_rect: use_marquee_rect(),
                 node_drag: use_node_drag(),
                 pin_create: use_pin_create(),
-                frames: use_frames(),
-                next_frame_id: use_next_frame_id(),
             },
         ))
     }
@@ -8951,7 +8306,7 @@ impl WidgetCore for NodeEditorView {
 /// and where it paints. Group-only (no rows) when the selection is not a single
 /// node — the panel shows only its placeholder then.
 fn details_access_nodes(
-    nodes: &[GraphNode],
+    graph: &Graph,
     selection: &Selection,
     active: Option<ActiveEdit>,
     field_state: TextFieldState,
@@ -8963,8 +8318,8 @@ fn details_access_nodes(
         .map(|a| a.target);
     let mut rows_out: Vec<AccessNode> = Vec::new();
     let mut editor: Option<AccessNode> = None;
-    if let Some(node) = selection.node().and_then(|id| node_ref(nodes, id)) {
-        for row in detail_rows(node) {
+    if let Some((node, _)) = selection.node().and_then(|id| kind_node(graph, id)) {
+        for row in detail_rows(graph, node) {
             let tag = format!("{GRAPH_TAG}#detail_{}", row.key);
             group = group.with_child(tag.clone());
             let mut entry = AccessNode::new(tag, AriaRole::Generic)
@@ -9004,8 +8359,7 @@ impl WidgetA11y for NodeEditorView {
     /// role or fan-out relation exists today) — the topology stays reachable
     /// on the RPC axis (`query edge.<i>`) per [[ai-first-rpc-introspection-obligation]].
     fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
-        let nodes = use_nodes().get();
-        let frames = use_frames().get();
+        let graph = use_document().get();
         let selection = use_selection().get();
         let selected = selection.nodes();
         let active = use_active_edit().get();
@@ -9032,10 +8386,7 @@ impl WidgetA11y for NodeEditorView {
         let palette_tags: Vec<String> = (0..PALETTE.len())
             .map(|i| format!("{GRAPH_TAG}#palette_{i}"))
             .collect();
-        let palette_names: Vec<String> = PALETTE
-            .iter()
-            .map(|&(t, _, _, _)| format!("Add {t}"))
-            .collect();
+        let palette_names: Vec<String> = PALETTE.iter().map(|&(t, _)| format!("Add {t}")).collect();
         let controls: Vec<ToolbarControl> = palette_tags
             .iter()
             .zip(&palette_names)
@@ -9058,7 +8409,7 @@ impl WidgetA11y for NodeEditorView {
         // trailing `menu` subtree, so the AT tree advertises it exactly when it
         // paints. Carries `(highlight, candidate kind indices)`.
         let pin_menu = use_pin_create().get().and_then(|pc| {
-            let from_ty = node_ref(&nodes, pc.from_node)?.output_type(pc.from_port)?;
+            let from_ty = output_type(&graph, pc.from_node, pc.from_port)?;
             Some((pc.highlight, pin_create_candidates(from_ty, &pc.filter)))
         });
         // R879 — the canvas owns a multi-selection set; announce it
@@ -9071,12 +8422,12 @@ impl WidgetA11y for NodeEditorView {
                 focused: focused == Some(GRAPH_TAG),
                 ..AccessState::default()
             });
-        for node in &nodes {
+        for (node, _) in kind_nodes(&graph) {
             group = group.with_child(format!("{GRAPH_TAG}#node_{}", node.id));
         }
         // R1227 — the comment frames are also children of the canvas group (a
         // labelled `group` per frame, reachable in the AT tree, not an orphan).
-        for f in &frames {
+        for f in frame_nodes(&graph) {
             group = group.with_child(format!("{GRAPH_TAG}#frame_{}", f.id));
         }
         // R1220 — link the open create menu into the canvas group so its
@@ -9085,15 +8436,15 @@ impl WidgetA11y for NodeEditorView {
             group = group.with_child(format!("{GRAPH_TAG}#{PIN_MENU_SUB}"));
         }
         out.push(group);
-        out.extend(frame_access_nodes(&frames, &nodes));
-        for node in &nodes {
+        out.extend(frame_access_nodes(&graph));
+        for (node, op) in kind_nodes(&graph) {
             let mut entry =
                 AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
                     .with_name(format!(
                         "{} ({} in, {} out)",
-                        node.title,
-                        node.inputs(),
-                        node.outputs()
+                        node.title(),
+                        op.inputs().len(),
+                        op.outputs().len()
                     ))
                     .with_selected(selected.contains(&node.id));
             // R878 / R901 — while this node hosts a *card*-surface inline edit,
@@ -9125,7 +8476,7 @@ impl WidgetA11y for NodeEditorView {
         // R918 — the Details panel subtree (rows + the in-panel editor when a
         // panel edit is in flight).
         out.extend(details_access_nodes(
-            &nodes, &selection, active, state.0, focused,
+            &graph, &selection, active, state.0, focused,
         ));
         // R1220 — the open create menu's `menu` + `menuitem` subtree.
         if let Some((highlight, candidates)) = pin_menu {

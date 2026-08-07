@@ -3,14 +3,15 @@
 //! Every one of these is a hand-written document: no renderer, no window, no
 //! pointer. That is the property the crate exists to have.
 
+use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Appearance, ConnectError, Conversion, Crossings, Definitions, Document, DuplicateError,
-    EditPath, ExtractError, Fragment, GroupError, Grow, InsertError, InterfaceSide, NestError,
-    Node, NodeBody, NodeId, NodeKind, Orphaned, ParentError, PathError, Port, PortRef,
-    PortValueError, ROOT, Reach, RepartitionError, Route, SelectError, Severed, Sharing, Side,
-    Socket, TreeId, UngroupError, Violation,
+    EditPath, Extent, ExtractError, Fragment, GroupError, Grow, InsertError, InterfaceSide,
+    Layered, NestError, Node, NodeBody, NodeId, NodeKind, Organic, Orphaned, ParentError,
+    PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError, Route, SelectError,
+    Severed, Sharing, Side, Socket, TreeId, UngroupError, Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -6218,5 +6219,614 @@ fn an_output_falls_back_the_same_three_ways_an_input_does() {
         document.evaluate(ROOT, resting),
         vec![Some(LVal::Vector([128, 128, 128]))],
         "cleared, the kind's is reached again"
+    );
+}
+
+// ── R1597 layout: a document arranged on a canvas ─────────────────
+
+/// An ordinary card: 130 across, 40 down.
+const CARD: Extent = Extent::new(130, 40);
+
+/// A layered pass with a 60-unit column gap and the shipped solver defaults.
+fn layered() -> Layered {
+    Layered {
+        sugiyama: Sugiyama::default(),
+        column_gap: 60,
+    }
+}
+
+/// A four-node `Number` chain `a -> b -> c -> d`, one wire per hop.
+///
+/// `Split` is the taxonomy's one-in kind whose first output is a `Number`, so a
+/// chain of them type-checks — which is the point: a fixture here states a graph
+/// the model actually accepts, where the pre-R1597 example fixture hand-built
+/// nodes with any port list it liked.
+fn chain4() -> (Document<Op>, Vec<NodeId>) {
+    let mut document = Document::new("root");
+    let ids: Vec<NodeId> = [Op::Num(1), Op::Split, Op::Split, Op::Sink]
+        .into_iter()
+        .map(|op| {
+            document
+                .add_node(ROOT, NodeBody::Kind(op), 0, 0)
+                .expect("root tree")
+        })
+        .collect();
+    for pair in ids.windows(2) {
+        document
+            .connect(ROOT, Socket::new(pair[0], 0), Socket::new(pair[1], 0))
+            .expect("the chain's wire");
+    }
+    (document, ids)
+}
+
+#[test]
+fn r1597_a_chain_lays_out_in_forward_columns() {
+    let (document, ids) = chain4();
+    let placed = layered().run(&document, ROOT, (0, 0), |_| CARD);
+    let x = |id: NodeId| placed.positions()[&id].0;
+
+    assert_eq!(x(ids[0]), 0, "the source anchors at origin.x");
+    let columns: Vec<i32> = ids.iter().map(|&id| x(id)).collect();
+    assert!(
+        columns.windows(2).all(|p| p[0] < p[1]),
+        "data flows forward: {columns:?}"
+    );
+    // Uniform cards, so every hop is the same pitch.
+    assert_eq!(columns, vec![0, 190, 380, 570], "card 130 + gap 60");
+    assert_eq!(
+        placed.quality().map(|q| q.crossings),
+        Some(0),
+        "a chain has nothing to cross"
+    );
+}
+
+#[test]
+fn r1597_a_column_is_as_wide_as_its_widest_node() {
+    let (document, ids) = chain4();
+    // The second node stands in for a wire-routing knot: a quarter of a card.
+    let knot = ids[1];
+    let placed = layered().run(&document, ROOT, (0, 0), |node| {
+        if node.id == knot {
+            Extent::new(30, 40)
+        } else {
+            CARD
+        }
+    });
+    let x = |id: NodeId| placed.positions()[&id].0;
+
+    assert_eq!(x(ids[0]), 0);
+    assert_eq!(x(ids[1]), 130 + 60, "a card column advances by the card");
+    // The knot's OWN column advances by 30, not by a card. This is what
+    // `hello-node-editor`'s fixed `NODE_W + LAYER_GAP` pitch could not express:
+    // it charged every column a full card whatever was in it, so a column of
+    // reroute knots wasted three quarters of its canvas.
+    assert_eq!(
+        x(ids[2]),
+        130 + 60 + 30 + 60,
+        "a knot column advances by the knot"
+    );
+    assert_eq!(
+        x(ids[3]),
+        130 + 60 + 30 + 60 + 130 + 60,
+        "and the column after it is an ordinary one again"
+    );
+}
+
+#[test]
+fn r1597_a_node_wider_than_a_card_widens_its_column() {
+    // The mirror of the knot case, and the one a fixed pitch gets *dangerously*
+    // wrong rather than merely wastefully: a width past the pitch made the card
+    // overhang the next column and overlap whatever sat there.
+    let (document, ids) = chain4();
+    let wide = ids[1];
+    let placed = layered().run(&document, ROOT, (0, 0), |node| {
+        if node.id == wide {
+            Extent::new(400, 40)
+        } else {
+            CARD
+        }
+    });
+    let x = |id: NodeId| placed.positions()[&id].0;
+    assert_eq!(
+        x(ids[2]) - x(ids[1]),
+        400 + 60,
+        "the column clears the whole card"
+    );
+    assert!(
+        x(ids[1]) + 400 <= x(ids[2]),
+        "so the wide card cannot overhang the next column"
+    );
+}
+
+#[test]
+fn r1597_a_frame_is_not_arranged() {
+    let (mut document, ids) = chain4();
+    let frame = document
+        .enframe(ROOT, &[ids[0], ids[1]], Some("Comment".to_owned()))
+        .expect("two nodes to frame")
+        .frame;
+    let placed = layered().run(&document, ROOT, (0, 0), |_| CARD);
+    assert!(
+        !placed.positions().contains_key(&frame),
+        "a frame is canvas annotation, not a stage in the flow — arranging it \
+         by layer index would tear it off the members it annotates"
+    );
+    for id in ids {
+        assert!(placed.positions().contains_key(&id), "{id} was arranged");
+    }
+}
+
+#[test]
+fn r1597_an_empty_tree_places_nothing_and_rates_nothing() {
+    let document: Document<Op> = Document::new("root");
+    let placed = layered().run(&document, ROOT, (0, 0), |_| CARD);
+    assert!(placed.positions().is_empty());
+    assert_eq!(
+        placed.quality(),
+        None,
+        "there is no arrangement to rate, which is not the same as a perfect one"
+    );
+}
+
+#[test]
+fn r1597_layout_is_deterministic_and_idempotent() {
+    let (mut document, ids) = chain4();
+    let first = layered().run(&document, ROOT, (0, 0), |_| CARD);
+    // Apply it, then run again: the pass reads structure and extents, never the
+    // current positions, so the second answer is the first.
+    for (&id, &(x, y)) in first.positions() {
+        let slot = document
+            .tree_mut(ROOT)
+            .and_then(|t| t.node_mut(id))
+            .expect("a placed node");
+        slot.x = x;
+        slot.y = y;
+    }
+    let second = layered().run(&document, ROOT, (0, 0), |_| CARD);
+    assert_eq!(first, second, "applying a layout does not change it");
+
+    // And the organic pass, which anneals from a fixed grid seed for the same
+    // reason.
+    let organic = Organic {
+        iterations: 200,
+        ideal_length: 190.0,
+    };
+    let a = organic.run(&document, ROOT, (0, 0));
+    let b = organic.run(&document, ROOT, (0, 0));
+    assert_eq!(a, b, "the relaxation is reproducible");
+    assert_eq!(
+        a.quality(),
+        None,
+        "an organic pass builds no layering, so it has no layering to rate"
+    );
+    let placed: Vec<NodeId> = a.positions().keys().copied().collect();
+    assert_eq!(placed, ids, "every node took part");
+}
+
+#[test]
+fn r1597_the_arrangement_starts_at_the_origin_on_both_axes() {
+    let (document, _) = chain4();
+    for origin in [(0, 0), (500, 300)] {
+        for placed in [
+            layered().run(&document, ROOT, origin, |_| CARD),
+            Organic {
+                iterations: 200,
+                ideal_length: 190.0,
+            }
+            .run(&document, ROOT, origin),
+        ] {
+            let left = placed
+                .positions()
+                .values()
+                .map(|p| p.0)
+                .min()
+                .expect("nodes");
+            let top = placed
+                .positions()
+                .values()
+                .map(|p| p.1)
+                .min()
+                .expect("nodes");
+            assert_eq!((left, top), origin, "anchored at {origin:?}");
+        }
+    }
+}
+
+#[test]
+fn r1597_a_cyclic_document_lays_out_the_same_whatever_order_its_links_arrived_in() {
+    // ★ This test exists because a counterfactual PASSED, and its FIRST draft
+    // passed a second one — which is the finding. Reversing the projection's
+    // edge order changed nothing, so the sort inherited from the example was
+    // removed; reversing the SOLVER's own successor order then changed nothing
+    // either, because the first fixture (a bare 2-cycle) is degenerate: no
+    // vertex there has two successors whose visit order decides anything.
+    //
+    // The shape below is the smallest one that does. `a` feeds both `b` and
+    // `c`, and `b`/`c` form a loop, so a depth-first walk that descends to `b`
+    // first classifies `c -> b` as the back edge, and one that descends to `c`
+    // first classifies `b -> c` — and those two choices put `b` and `c` in
+    // OPPOSITE columns.
+    //
+    // A cycle cannot be built by `connect` (it refuses, naming the path), so it
+    // only ever arrives in a document from a peer. The two documents here are
+    // the same graph with their links authored in different orders.
+    let build = |c_first: bool| {
+        let mut document = Document::new("root");
+        let a = document
+            .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+            .expect("root tree");
+        let b = document
+            .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+            .expect("root tree");
+        let c = document
+            .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+            .expect("root tree");
+        // The only difference between the two: which of `a`'s two wires was
+        // drawn first.
+        let order = if c_first {
+            [(a, c, 1u32), (a, b, 0), (b, c, 0)]
+        } else {
+            [(a, b, 0u32), (b, c, 0), (a, c, 1)]
+        };
+        for (from, to, port) in order {
+            document
+                .connect(ROOT, Socket::new(from, 0), Socket::new(to, port))
+                .expect("an acyclic wire");
+        }
+        // And the wire that closes the loop, which `connect` refuses.
+        assert!(matches!(
+            document.connect(ROOT, Socket::new(c, 0), Socket::new(b, 1)),
+            Err(ConnectError::WouldCycle { .. })
+        ));
+        (
+            force_link(&document, Socket::new(c, 0), Socket::new(b, 1)),
+            b,
+            c,
+        )
+    };
+
+    let (b_first, b0, c0) = build(false);
+    let (c_first, b1, c1) = build(true);
+    assert_eq!((b0, c0), (b1, c1), "the same graph, both times");
+    assert_eq!(
+        b_first.cycle_nodes(ROOT),
+        c_first.cycle_nodes(ROOT),
+        "and the same cycle in it"
+    );
+
+    let one = layered().run(&b_first, ROOT, (0, 0), |_| CARD);
+    let other = layered().run(&c_first, ROOT, (0, 0), |_| CARD);
+    assert_ne!(
+        one.positions()[&b0],
+        one.positions()[&c0],
+        "the two loop members land in different columns, so this fixture CAN \
+         tell the two cycle breaks apart"
+    );
+    assert_eq!(
+        one.positions(),
+        other.positions(),
+        "which edge the cycle break drops is a property of the graph, not of \
+         the order a peer happened to write its links in"
+    );
+}
+
+/// R1597 — a graph of `(from, to)` index pairs over `n` one-in/one-out nodes,
+/// wired through `Split`'s first output so every hop type-checks.
+///
+/// These properties came from `hello-node-editor`, where they were written
+/// against nodes it hand-built with arbitrary port lists. They belong to the
+/// pass, so they moved with it.
+fn wired(n: usize, hops: &[(usize, usize)]) -> (Document<Op>, Vec<NodeId>) {
+    let mut document = Document::new("root");
+    let ids: Vec<NodeId> = (0..n)
+        .map(|_| {
+            document
+                .add_node(ROOT, NodeBody::Kind(Op::Split), 0, 0)
+                .expect("root tree")
+        })
+        .collect();
+    for &(from, to) in hops {
+        document
+            .connect(ROOT, Socket::new(ids[from], 0), Socket::new(ids[to], 0))
+            .expect("a hop");
+    }
+    (document, ids)
+}
+
+/// Whether two `CARD`-sized boxes overlap (half-open on each axis).
+fn cards_overlap(a: (i32, i32), b: (i32, i32)) -> bool {
+    a.0 < b.0 + CARD.width
+        && b.0 < a.0 + CARD.width
+        && a.1 < b.1 + CARD.height
+        && b.1 < a.1 + CARD.height
+}
+
+#[test]
+fn r1597_a_fan_out_pair_shares_a_column_and_does_not_overlap() {
+    // 0 -> {1, 2} -> 3, the diamond.
+    let (document, ids) = wired(4, &[(0, 1), (0, 2), (1, 3), (2, 3)]);
+    let placed = layered().run(&document, ROOT, (0, 0), |_| CARD);
+    let p = |i: usize| placed.positions()[&ids[i]];
+    assert_eq!(p(1).0, p(2).0, "the fan-out pair shares a column");
+    assert!(
+        p(0).0 < p(1).0 && p(1).0 < p(3).0,
+        "the diamond flows forward"
+    );
+    assert_ne!(p(1).1, p(2).1, "the pair is stacked, not co-located");
+    assert!(!cards_overlap(p(1), p(2)), "stacked siblings never overlap");
+}
+
+#[test]
+fn r1597_every_acyclic_edge_flows_forward_and_no_two_cards_overlap() {
+    let hops = [(0, 2), (1, 2), (2, 3), (2, 4), (3, 5), (4, 5)];
+    let (document, ids) = wired(6, &hops);
+    let placed = layered().run(&document, ROOT, (10, 20), |_| CARD);
+    for (from, to) in hops {
+        let (fx, tx) = (
+            placed.positions()[&ids[from]].0,
+            placed.positions()[&ids[to]].0,
+        );
+        assert!(
+            fx < tx,
+            "hop {from}->{to} must flow forward (x {fx} < {tx})"
+        );
+    }
+    for i in 0..ids.len() {
+        for j in (i + 1)..ids.len() {
+            assert!(
+                !cards_overlap(placed.positions()[&ids[i]], placed.positions()[&ids[j]]),
+                "cards {i} and {j} overlap"
+            );
+        }
+    }
+}
+
+#[test]
+fn r1597_an_edgeless_node_is_a_layer_zero_source() {
+    let (document, ids) = wired(3, &[(1, 2)]);
+    let placed = layered().run(&document, ROOT, (5, 5), |_| CARD);
+    let x = |i: usize| placed.positions()[&ids[i]].0;
+    assert_eq!(x(0), 5, "an edge-less node sits in layer 0");
+    assert_eq!(x(1), 5, "as does the connected source");
+    assert!(x(2) > x(1), "its consumer is one column to the right");
+}
+
+#[test]
+fn r1597_barycenter_reduces_crossings() {
+    // layer 0 = {0, 1}; layer 1 = {2, 3}. The hops 0->3 and 1->2 cross until
+    // node 3 is lifted above node 2.
+    let (document, ids) = wired(4, &[(0, 3), (1, 2)]);
+    let placed = layered().run(&document, ROOT, (0, 0), |_| CARD);
+    let p = |i: usize| placed.positions()[&ids[i]];
+    assert_eq!(p(2).0, p(3).0, "2 and 3 share layer 1");
+    assert!(
+        p(3).1 < p(2).1,
+        "barycenter lifts node 3 above node 2 so the wires stop crossing"
+    );
+    assert_eq!(placed.quality().map(|q| q.crossings), Some(0));
+}
+
+#[test]
+fn r1597_a_cycle_neither_hangs_nor_loses_a_node() {
+    // 0 -> 1 -> 2 -> 0. The closing wire is refused by `connect`, so it arrives
+    // the only way it can: from a peer.
+    let (document, ids) = wired(3, &[(0, 1), (1, 2)]);
+    let looped = force_link(&document, Socket::new(ids[2], 0), Socket::new(ids[0], 0));
+    for placed in [
+        layered().run(&looped, ROOT, (0, 0), |_| CARD),
+        Organic {
+            iterations: 200,
+            ideal_length: 190.0,
+        }
+        .run(&looped, ROOT, (0, 0)),
+    ] {
+        assert_eq!(placed.positions().len(), 3, "every node is placed");
+    }
+    let columns = layered().run(&looped, ROOT, (0, 0), |_| CARD);
+    let x = |i: usize| columns.positions()[&ids[i]].0;
+    assert!(
+        x(0) < x(1) && x(1) < x(2),
+        "the acyclic spine still flows forward"
+    );
+}
+
+#[test]
+fn r1597_a_spring_holds_its_pair_tighter_than_repulsion_holds_a_stranger() {
+    // 0-1 wired, 2 isolated: the spring holds the pair near the ideal length
+    // while repulsion pushes the unattached one away from both.
+    let (document, ids) = wired(3, &[(0, 1)]);
+    let placed = Organic {
+        iterations: 200,
+        ideal_length: 190.0,
+    }
+    .run(&document, ROOT, (0, 0));
+    let apart = |a: usize, b: usize| {
+        let (pa, pb) = (placed.positions()[&ids[a]], placed.positions()[&ids[b]]);
+        f64::from(pa.1 - pb.1).hypot(f64::from(pa.0 - pb.0))
+    };
+    assert!(
+        apart(0, 1) < apart(0, 2),
+        "the wired pair is the tighter one"
+    );
+    assert!(apart(0, 1) < apart(1, 2));
+}
+
+#[test]
+fn r1597_repulsion_keeps_every_node_off_every_other() {
+    let (document, ids) = wired(6, &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]);
+    let placed = Organic {
+        iterations: 200,
+        ideal_length: 190.0,
+    }
+    .run(&document, ROOT, (0, 0));
+    for i in 0..ids.len() {
+        for j in (i + 1)..ids.len() {
+            assert_ne!(
+                placed.positions()[&ids[i]],
+                placed.positions()[&ids[j]],
+                "repulsion keeps nodes {i} and {j} from coinciding"
+            );
+        }
+    }
+}
+
+#[test]
+fn r1597_the_two_passes_are_distinct_arrangements() {
+    let (document, _) = wired(4, &[(0, 1), (1, 2), (2, 3)]);
+    assert_ne!(
+        Organic {
+            iterations: 200,
+            ideal_length: 190.0,
+        }
+        .run(&document, ROOT, (0, 0))
+        .positions(),
+        layered().run(&document, ROOT, (0, 0), |_| CARD).positions(),
+        "organic and layered arrange the same graph differently"
+    );
+}
+
+#[test]
+fn r1597_a_restored_document_does_not_reissue_an_id_the_other_had_used() {
+    // The undo shape this exists for: snapshot `before`, edit, then restore.
+    let before = fixture().document;
+    let mut after = before.clone();
+    let fresh = after
+        .add_node(ROOT, NodeBody::Kind(Op::Num(9)), 0, 0)
+        .expect("root tree");
+
+    // Restoring `before` verbatim would hand `fresh`'s id straight back out.
+    let mut naive = before.clone();
+    assert_eq!(
+        naive
+            .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+            .expect("root tree"),
+        fresh,
+        "a bare restore re-issues the id — which is what this guards"
+    );
+
+    let mut restored = before.clone();
+    restored.advance_ids_from(&after);
+    // The structure is the restored one — only the frontier moved.
+    assert_eq!(
+        restored.tree(ROOT).expect("root").nodes().count(),
+        before.tree(ROOT).expect("root").nodes().count(),
+        "moving counters moves no nodes"
+    );
+    let next = restored
+        .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+        .expect("root tree");
+    assert!(next.0 > fresh.0, "{next} must be past {fresh}");
+    // And it never goes backwards.
+    let mut ahead = after.clone();
+    ahead.advance_ids_from(&before);
+    assert_eq!(
+        ahead
+            .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+            .expect("root tree")
+            .0,
+        fresh.0 + 1,
+        "a document already ahead keeps its own frontier"
+    );
+}
+
+#[test]
+fn r1597_the_link_frontier_advances_too() {
+    let f = fixture();
+    let before = f.document.clone();
+    let mut after = before.clone();
+    let extra = after
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 0)
+        .expect("root tree");
+    let fresh_link = after
+        .connect(ROOT, Socket::new(extra, 0), Socket::new(f.add, 1))
+        .expect("a spare input")
+        .link;
+
+    let mut restored = before.clone();
+    restored.advance_ids_from(&after);
+    // `before`'s Add input 1 is wired, so free it first, then re-wire.
+    let held = restored
+        .tree(ROOT)
+        .expect("root")
+        .links()
+        .iter()
+        .find(|l| l.to == Socket::new(f.add, 1))
+        .map(|l| l.id)
+        .expect("the seeded wire");
+    restored.disconnect(ROOT, held).expect("free the input");
+    let next = restored
+        .connect(ROOT, Socket::new(f.two, 0), Socket::new(f.add, 1))
+        .expect("re-wire")
+        .link;
+    assert!(next.0 > fresh_link.0, "{next} must be past {fresh_link}");
+}
+
+#[test]
+fn r1597_a_value_its_port_cannot_hold_is_named_on_a_document_that_arrived() {
+    // `set_port_value` refuses it, so it can only come from a file or a peer —
+    // and until R1597 nothing reported it, so the node evaluated to no value at
+    // all with no explanation. Found by migrating a consumer whose own blob
+    // could carry exactly this.
+    //
+    // The taxonomy has to CLASSIFY its values for either half to fire:
+    // `value_type` is a provided default answering `None`, and a taxonomy that
+    // declines to classify is not condemned — which is why this uses `LOp`,
+    // the one here that does.
+    let mut document: Document<LOp> = Document::new("root");
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .expect("root tree");
+    assert!(
+        document
+            .set_port_value(ROOT, sum, PortRef::input(0), LVal::Scalar(3))
+            .is_err(),
+        "the edit path refuses a Scalar on a Vector port"
+    );
+    assert!(
+        document.validate().is_empty(),
+        "so the document is still clean"
+    );
+
+    // The shape a peer can send: the value written past the gate.
+    document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(sum))
+        .expect("the Sum")
+        .values
+        .insert(PortRef::input(0), LVal::Scalar(3));
+    assert!(
+        document.validate().contains(&Violation::MistypedPortValue {
+            tree: ROOT,
+            node: sum,
+            port: PortRef::input(0),
+        }),
+        "and now it is NAMED: {:?}",
+        document.validate()
+    );
+
+    // A value the port CAN hold is not a violation.
+    let mut fine: Document<LOp> = Document::new("root");
+    let ok = fine
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .expect("root tree");
+    fine.set_port_value(ROOT, ok, PortRef::input(0), LVal::Vector([1, 2, 3]))
+        .expect("a Vector fits a Vector port");
+    assert!(fine.validate().is_empty());
+
+    // And a taxonomy that does not classify its values is not condemned by
+    // this check — `Op` has no `value_type`, so nothing here can be judged.
+    let mut unclassified = Document::new("root");
+    let add = unclassified
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+        .expect("root tree");
+    unclassified
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(add))
+        .expect("the Add")
+        .values
+        .insert(PortRef::input(0), Val::Text("no".to_owned()));
+    assert!(
+        unclassified.validate().is_empty(),
+        "silence about a fact the taxonomy declines to state is the honest answer"
     );
 }

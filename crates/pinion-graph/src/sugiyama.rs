@@ -78,6 +78,18 @@ impl Sugiyama {
     ///
     /// A self-loop, and any pair naming a vertex outside `0..sizes.len()`, is
     /// skipped: neither can constrain a forward layering.
+    ///
+    /// **The answer is a function of the graph, not of the order `edges` arrives
+    /// in** (R1597): the cycle break walks roots in vertex order over successor
+    /// lists this sorts by target, so re-ordering `edges` cannot change which
+    /// edge of a cycle is dropped, and an acyclic graph has nothing to drop.
+    /// Stated here because a caller would otherwise defend against it — the
+    /// `hello-node-editor` projection canonicalised its own pairs "so the cycle
+    /// break cannot depend on the order links were authored in", which is this
+    /// guarantee restated in a weaker place, and it was carried into
+    /// `pinion-node-graph` before anyone checked whether it was needed. Duplicate
+    /// pairs are the one thing this does not order among themselves, and they
+    /// name the same edge, so no layering can tell them apart.
     #[must_use]
     pub fn run(&self, sizes: &[i32], edges: &[(usize, usize)]) -> Layout {
         self.solve(sizes, edges, &Order::Fresh)
