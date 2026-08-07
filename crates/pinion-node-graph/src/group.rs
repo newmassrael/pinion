@@ -893,6 +893,15 @@ pub enum Violation {
     Cycle {
         /// The tree it is in.
         tree: TreeId,
+        /// Every node that lies **on** the cycle, ascending — not the ones
+        /// merely downstream of it (R1596).
+        ///
+        /// A cycle spoils every value below it, so "which nodes have no value"
+        /// is a much larger set than "which nodes are the knot", and only the
+        /// second one can be acted on. Blender reports a bool for the tree
+        /// (`has_available_link_cycle`) and blames whichever *link* its toposort
+        /// happened to come out of order on.
+        nodes: Vec<NodeId>,
     },
     /// A group instance names a tree that is not in the document.
     DanglingInstance {
@@ -1084,13 +1093,15 @@ impl<K: NodeKind> Document<K> {
                     });
                 }
             }
-            if tree.links().iter().any(|link| {
-                link.from.node == link.to.node
-                    || self
-                        .path_between(tree.id, link.to.node, link.from.node)
-                        .is_some()
-            }) {
-                found.push(Violation::Cycle { tree: tree.id });
+            // R1596 — one derivation answers both halves: whether there is a
+            // cycle at all is whether the localisation is empty, so the two can
+            // never disagree about a tree the way a bool beside a node list can.
+            let on_cycle = self.cycle_nodes(tree.id);
+            if !on_cycle.is_empty() {
+                found.push(Violation::Cycle {
+                    tree: tree.id,
+                    nodes: on_cycle,
+                });
             }
             for node in tree.nodes() {
                 if let NodeBody::Group(definition) = node.body {

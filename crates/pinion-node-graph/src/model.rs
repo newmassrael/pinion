@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::appearance::Appearance;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// A tree in the document: the root, or a re-usable group definition.
@@ -23,6 +23,21 @@ pub struct NodeId(pub u32);
 /// A link, unique within its tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LinkId(pub u32);
+
+// An id reaches a scene tag, a CSV on a wire and a sentence in a refusal, so it
+// has a display form. Without one every consumer reaches through `.0`, which is
+// the one thing the newtype exists to stop — and `Socket` and `PortRef` already
+// have theirs, so this was an inconsistency rather than a decision (R1596).
+macro_rules! displays_as_its_number {
+    ($($id:ty),+ $(,)?) => {$(
+        impl fmt::Display for $id {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    )+};
+}
+displays_as_its_number!(TreeId, NodeId, LinkId);
 
 /// One end of a link: a port index on a node.
 ///
@@ -1485,6 +1500,71 @@ impl<K: NodeKind> Document<K> {
         None
     }
 
+    /// Which nodes of `tree` lie **on** a dependency cycle, ascending (R1596).
+    ///
+    /// A node is on one exactly when it is reachable from itself by following
+    /// links forwards — a self-loop counts. Being merely *downstream* of a cycle
+    /// does not, which is the whole point of the question: an editor showing a
+    /// value that cannot be computed needs the knot to break, not the list of
+    /// everything the knot spoiled.
+    ///
+    /// Empty for an acyclic tree, so `cycle_nodes(tree).is_empty()` is the
+    /// yes-or-no reading and no second walk is needed to get it. Unreachable
+    /// through this crate's API — [`Self::connect`] refuses the wire that would
+    /// close a cycle — and reachable through a document that arrived from a file
+    /// or a peer, which is what [`Self::validate`] is for.
+    ///
+    /// **Blender answers this with a bool and a guess.** `has_available_link_cycle`
+    /// is one flag for the whole tree, and the localisation it does offer is to
+    /// *links*: `update_link_validation` clears `NODE_LINK_VALID` on every link
+    /// whose endpoints came out of the toposort in the wrong order. Which link
+    /// that is is decided by where the toposort happened to start — for a tree
+    /// whose every node is inside the cycle, `update_toposort` restarts "at this
+    /// node which is somewhere in the middle of a loop" in `nodes_by_id` order —
+    /// so the wire Blender blames is a function of the order the nodes were
+    /// created in, not of the cycle. This answer is a property of the graph.
+    ///
+    /// Iterative Tarjan, so an adversarial document cannot overflow the stack of
+    /// the process validating it: the components of size two or more are the
+    /// cycles, and a one-node component is on a cycle exactly when it links to
+    /// itself. `None` when the tree is not in the document.
+    #[must_use]
+    pub fn cycle_nodes(&self, tree: TreeId) -> Vec<NodeId> {
+        let Some(host) = self.tree(tree) else {
+            return Vec::new();
+        };
+        let mut successors: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for link in &host.links {
+            successors
+                .entry(link.from.node)
+                .or_default()
+                .push(link.to.node);
+        }
+        let mut state = Tarjan::default();
+        for node in host.nodes.keys() {
+            if !state.index.contains_key(node) {
+                state.run(*node, &successors);
+            }
+        }
+        let mut found: Vec<NodeId> = state
+            .components
+            .into_iter()
+            .flat_map(|component| {
+                let cyclic = component.len() > 1
+                    || component.first().is_some_and(|&only| {
+                        successors
+                            .get(&only)
+                            .is_some_and(|next| next.contains(&only))
+                    });
+                component.into_iter().filter(move |_| cyclic)
+            })
+            .filter(|node| host.nodes.contains_key(node))
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
     /// Append a port to a tree's interface.
     ///
     /// Appending is always safe: it cannot invalidate an existing port index,
@@ -1605,6 +1685,94 @@ pub(crate) fn centroid(points: impl Iterator<Item = (i32, i32)>) -> (i32, i32) {
         i32::try_from(sum_x / count).unwrap_or(0),
         i32::try_from(sum_y / count).unwrap_or(0),
     )
+}
+
+/// Tarjan's strongly-connected components, run without recursing (R1596).
+///
+/// The explicit call stack is not a style preference: [`Document::cycle_nodes`]
+/// runs on documents that arrived from a file or a peer, and a recursive walk
+/// over one deep enough would take the validating process down with it — which
+/// is the same argument [`crate::Evaluator`] answers with its depth cap.
+#[derive(Default)]
+struct Tarjan {
+    /// Discovery order, and the record of having been visited at all.
+    index: BTreeMap<NodeId, u32>,
+    /// The lowest discovery order reachable from a node's subtree.
+    lowlink: BTreeMap<NodeId, u32>,
+    on_stack: BTreeSet<NodeId>,
+    stack: Vec<NodeId>,
+    next: u32,
+    components: Vec<Vec<NodeId>>,
+}
+
+/// A node with no successors, so the walk reads one slice type either way.
+const NO_SUCCESSORS: &[NodeId] = &[];
+
+impl Tarjan {
+    /// Begin at `root`, following `successors`, adding every component found.
+    fn run(&mut self, root: NodeId, successors: &BTreeMap<NodeId, Vec<NodeId>>) {
+        self.open(root);
+        // Each frame is a node and how far through its successors the walk is.
+        let mut call: Vec<(NodeId, usize)> = vec![(root, 0)];
+        while let Some(&(node, cursor)) = call.last() {
+            let edges = successors.get(&node).map_or(NO_SUCCESSORS, Vec::as_slice);
+            if let Some(&next) = edges.get(cursor) {
+                if let Some(frame) = call.last_mut() {
+                    frame.1 += 1;
+                }
+                if self.index.contains_key(&next) {
+                    // Already visited: it constrains this node's lowlink only
+                    // while it is still on the stack — otherwise it belongs to a
+                    // component already closed, and a cross-edge to one says
+                    // nothing about a cycle through here.
+                    if self.on_stack.contains(&next) {
+                        let reached = Self::at(&self.index, next);
+                        let low = Self::at(&self.lowlink, node).min(reached);
+                        self.lowlink.insert(node, low);
+                    }
+                } else {
+                    self.open(next);
+                    call.push((next, 0));
+                }
+                continue;
+            }
+            call.pop();
+            if Self::at(&self.lowlink, node) == Self::at(&self.index, node) {
+                let mut component = Vec::new();
+                while let Some(member) = self.stack.pop() {
+                    self.on_stack.remove(&member);
+                    component.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                self.components.push(component);
+            }
+            if let Some(&(parent, _)) = call.last() {
+                let low = Self::at(&self.lowlink, parent).min(Self::at(&self.lowlink, node));
+                self.lowlink.insert(parent, low);
+            }
+        }
+    }
+
+    /// Record `node` as reached, at a fresh discovery order.
+    fn open(&mut self, node: NodeId) {
+        self.index.insert(node, self.next);
+        self.lowlink.insert(node, self.next);
+        self.next = self.next.saturating_add(1);
+        self.stack.push(node);
+        self.on_stack.insert(node);
+    }
+
+    /// A discovery order that [`Self::open`] has certainly written.
+    ///
+    /// Every node the walk reads has been opened before it was pushed, so the
+    /// absent case is unreachable; it answers `0` rather than panicking because
+    /// the caller is a validator running on a document nobody has promised
+    /// anything about.
+    fn at(map: &BTreeMap<NodeId, u32>, node: NodeId) -> u32 {
+        map.get(&node).copied().unwrap_or_default()
+    }
 }
 
 /// Drop links on `node`'s port `index` and slide higher ports down one.

@@ -885,10 +885,11 @@ fn a_cyclic_document_that_arrived_from_elsewhere_is_caught_and_does_not_hang() {
     let corrupt: Document<Op> = serde_json::from_value(wire).unwrap();
 
     assert!(
-        corrupt
-            .validate()
-            .contains(&Violation::Cycle { tree: ROOT }),
-        "validate names the cycle: {:?}",
+        corrupt.validate().contains(&Violation::Cycle {
+            tree: ROOT,
+            nodes: vec![f.add]
+        }),
+        "validate names the cycle AND who is on it: {:?}",
         corrupt.validate()
     );
     // The honest answer for a value that depends on itself is "no value" — and
@@ -907,6 +908,230 @@ fn a_cyclic_document_that_arrived_from_elsewhere_is_caught_and_does_not_hang() {
     assert!(
         !evaluator.truncated(),
         "a cycle is caught where it closes, not by running out of depth"
+    );
+}
+
+/// Add a link [`Document::connect`] would refuse, the way a peer's would arrive.
+///
+/// There is deliberately no API for this, so the test uses the door such a
+/// document actually comes in by rather than a back one opened for testing.
+fn force_link(document: &Document<Op>, from: Socket, to: Socket) -> Document<Op> {
+    let mut wire = serde_json::to_value(document).unwrap();
+    let next = wire["trees"][0]["next_link"].as_u64().unwrap();
+    wire["trees"][0]["links"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id": next,
+            "from": {"node": from.node, "port": from.port},
+            "to": {"node": to.node, "port": to.port},
+            "muted": false,
+        }));
+    wire["trees"][0]["next_link"] = serde_json::json!(next + 1);
+    serde_json::from_value(wire).unwrap()
+}
+
+/// Blender's own localisation, as `update_link_validation` performs it.
+///
+/// Held here so the divergence below is **asserted** rather than described: a
+/// link is blamed when its endpoints came out of the toposort in the wrong
+/// order, and `update_toposort` restarts, for a tree with no acyclic start
+/// node, at whichever remaining node comes first in `nodes_by_id` — id order.
+/// So this takes the id-ordered walk Blender takes and answers the links it
+/// would clear `NODE_LINK_VALID` on.
+fn blender_blamed_links(document: &Document<Op>) -> Vec<crate::LinkId> {
+    // `toposort_from_start_node`, depth-first over inputs, emitting a node once
+    // everything it depends on has been emitted; a node already on the path is
+    // skipped, which is what makes a cycle come out in *arrival* order.
+    fn visit(
+        node: NodeId,
+        tree: &crate::Tree<Op>,
+        done: &mut std::collections::BTreeSet<NodeId>,
+        path: &mut Vec<NodeId>,
+        order: &mut Vec<NodeId>,
+    ) {
+        if done.contains(&node) || path.contains(&node) {
+            return;
+        }
+        path.push(node);
+        let feeding: Vec<NodeId> = tree
+            .links()
+            .iter()
+            .filter(|l| l.to.node == node)
+            .map(|l| l.from.node)
+            .collect();
+        for source in feeding {
+            visit(source, tree, done, path, order);
+        }
+        path.pop();
+        done.insert(node);
+        order.push(node);
+    }
+    let tree = document.tree(ROOT).unwrap();
+    let mut order: Vec<NodeId> = Vec::new();
+    let mut done: std::collections::BTreeSet<NodeId> = std::collections::BTreeSet::new();
+    // Start nodes first (nothing feeds out of them is Blender's LeftToRight
+    // test), then the leftovers "somewhere in the middle of a loop", in id order.
+    for node in tree.nodes() {
+        let feeds_anything = tree.links().iter().any(|l| l.from.node == node.id);
+        if !feeds_anything {
+            visit(node.id, tree, &mut done, &mut Vec::new(), &mut order);
+        }
+    }
+    for node in tree.nodes() {
+        visit(node.id, tree, &mut done, &mut Vec::new(), &mut order);
+    }
+    let rank = |id: NodeId| order.iter().position(|&n| n == id).unwrap_or(usize::MAX);
+    tree.links()
+        .iter()
+        .filter(|l| rank(l.from.node) > rank(l.to.node))
+        .map(|l| l.id)
+        .collect()
+}
+
+#[test]
+fn a_cycle_is_localised_to_the_nodes_on_it_and_not_to_what_it_spoiled() {
+    // add -> sink already; wire sink's *output*… sink has none, so build the
+    // loop out of two Adds and hang a third node BELOW it. Downstream of a
+    // cycle is exactly what must NOT be reported.
+    let mut document = Document::new("root");
+    let up = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+        .unwrap();
+    let down = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 0)
+        .unwrap();
+    let after = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 400, 0)
+        .unwrap();
+    let outside = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 200)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(up, 0), Socket::new(down, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(down, 0), Socket::new(after, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(outside, 0), Socket::new(up, 1))
+        .unwrap();
+    // The wire that closes the loop is refused, and the refusal already names
+    // the path — so the cycle only exists in a document that came from a peer.
+    assert!(matches!(
+        document.connect(ROOT, Socket::new(down, 0), Socket::new(up, 0)),
+        Err(ConnectError::WouldCycle { .. })
+    ));
+    let corrupt = force_link(&document, Socket::new(down, 0), Socket::new(up, 0));
+
+    assert_eq!(
+        corrupt.cycle_nodes(ROOT),
+        vec![up, down],
+        "exactly the knot: not `after`, whose value the cycle also destroys, \
+         and not `outside`, which merely feeds it"
+    );
+    assert!(
+        corrupt.validate().contains(&Violation::Cycle {
+            tree: ROOT,
+            nodes: vec![up, down]
+        }),
+        "the violation carries the same localisation: {:?}",
+        corrupt.validate()
+    );
+    // The value IS destroyed downstream, which is what makes "who is on the
+    // cycle" a different question from "who has no value" rather than a
+    // narrower spelling of it.
+    let mut evaluator = corrupt.evaluator();
+    assert_eq!(evaluator.inputs(ROOT, after), vec![None]);
+
+    // Blender's answer to the same document, by its own rule: a bool for the
+    // tree, and a blamed LINK chosen by the order the nodes were created in.
+    let blamed = blender_blamed_links(&corrupt);
+    assert_eq!(
+        blamed.len(),
+        1,
+        "Blender blames one wire of the two-wire loop: {blamed:?}"
+    );
+    let mirrored = force_link(
+        &{
+            // The same graph with the two loop members created in the other
+            // order. Nothing about the cycle changed; only the ids did.
+            let mut swapped = Document::new("root");
+            let first = swapped
+                .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 0)
+                .unwrap();
+            let second = swapped
+                .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+                .unwrap();
+            swapped
+                .connect(ROOT, Socket::new(second, 0), Socket::new(first, 0))
+                .unwrap();
+            swapped
+        },
+        Socket::new(NodeId(0), 0),
+        Socket::new(NodeId(1), 0),
+    );
+    assert_ne!(
+        blender_blamed_links(&mirrored).first().map(|l| l.0),
+        blamed.first().map(|l| l.0),
+        "…and which wire that is moves when only the creation order does, \
+         which is why the localisation here is over NODES and by reachability"
+    );
+    assert_eq!(
+        mirrored.cycle_nodes(ROOT),
+        vec![NodeId(0), NodeId(1)],
+        "this answer does not move: both nodes are on the cycle either way"
+    );
+}
+
+#[test]
+fn a_node_that_feeds_itself_is_on_a_cycle_and_an_acyclic_tree_names_nobody() {
+    let f = fixture();
+    assert!(
+        f.document.cycle_nodes(ROOT).is_empty(),
+        "the fixture is a DAG"
+    );
+    assert!(
+        !f.document
+            .validate()
+            .iter()
+            .any(|v| matches!(v, Violation::Cycle { .. })),
+        "so no violation is raised at all"
+    );
+    // A self-loop is a component of ONE, so it is the case an SCC size test
+    // alone gets wrong — and it is reachable in a real editor (drag a node's
+    // output onto its own input).
+    let loops = force_link(&f.document, Socket::new(f.add, 0), Socket::new(f.add, 1));
+    assert_eq!(loops.cycle_nodes(ROOT), vec![f.add]);
+}
+
+#[test]
+fn localising_a_cycle_does_not_recurse_over_the_document_it_is_handed() {
+    // A chain far deeper than the evaluator's own 512-frame cap: a recursive
+    // walk here would take the process down, and the process doing this walk is
+    // validating something a peer sent.
+    let mut document = Document::new("root");
+    let mut previous = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+        .unwrap();
+    let first = previous;
+    for step in 0..4_000 {
+        let next = document
+            .add_node(ROOT, NodeBody::Kind(Op::Add), step, 0)
+            .unwrap();
+        document
+            .connect(ROOT, Socket::new(previous, 0), Socket::new(next, 0))
+            .unwrap();
+        previous = next;
+    }
+    assert!(document.cycle_nodes(ROOT).is_empty());
+    // …and the same depth with the far end wired back to the near one, so the
+    // walk both descends 4,000 frames AND has a component to close.
+    let corrupt = force_link(&document, Socket::new(previous, 0), Socket::new(first, 0));
+    assert_eq!(
+        corrupt.cycle_nodes(ROOT).len(),
+        4_001,
+        "every node of the ring is on it"
     );
 }
 
