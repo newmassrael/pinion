@@ -6,10 +6,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ConnectError, Crossings, Definitions, Document, DuplicateError, EditPath, ExtractError,
-    Fragment, GroupError, InsertError, InterfaceSide, NestError, NodeBody, NodeId, NodeKind,
-    PathError, Port, ROOT, RepartitionError, Severed, Sharing, Socket, TreeId, UngroupError,
-    Violation,
+    Appearance, ConnectError, Crossings, Definitions, Document, DuplicateError, EditPath,
+    ExtractError, Fragment, GroupError, InsertError, InterfaceSide, NestError, NodeBody, NodeId,
+    NodeKind, PathError, Port, ROOT, RepartitionError, Route, Severed, Sharing, Socket, TreeId,
+    UngroupError, Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -27,6 +27,13 @@ enum Op {
     /// Two numbers in, two numbers out — so multi-output is exercised.
     Split,
     Shout,
+    /// Text in, number out — the one kind whose output NO input can feed, which
+    /// is what makes a dropped pass-through reachable on a node that has inputs.
+    Measure,
+    /// Two numbers in, two numbers out, exchanged. The one shape where routing
+    /// by POSITION and routing by "the lowest input of the right type" give
+    /// different answers, so it is what makes the identity rule falsifiable.
+    Swap,
     Sink,
 }
 
@@ -56,6 +63,8 @@ impl NodeKind for Op {
             Self::Add => "Add",
             Self::Split => "Split",
             Self::Shout => "Shout",
+            Self::Measure => "Measure",
+            Self::Swap => "Swap",
             Self::Sink => "Sink",
         }
         .to_owned()
@@ -69,16 +78,24 @@ impl NodeKind for Op {
                 Port::new("Addend", Ty::Number).with_default(Val::Number(0)),
             ],
             Self::Split => vec![Port::new("Value", Ty::Number)],
-            Self::Shout => vec![Port::new("Phrase", Ty::Text)],
+            Self::Shout | Self::Measure => vec![Port::new("Phrase", Ty::Text)],
+            Self::Swap => vec![
+                Port::new("Left", Ty::Number).with_default(Val::Number(-1)),
+                Port::new("Right", Ty::Number).with_default(Val::Number(-2)),
+            ],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
         }
     }
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Num(_) | Self::Add => vec![Port::new("Out", Ty::Number)],
+            Self::Num(_) | Self::Add | Self::Measure => vec![Port::new("Out", Ty::Number)],
             Self::Word(_) | Self::Shout => vec![Port::new("Out", Ty::Text)],
             Self::Split => vec![Port::new("Half", Ty::Number), Port::new("Rest", Ty::Number)],
+            Self::Swap => vec![
+                Port::new("Left", Ty::Number),
+                Port::new("Right", Ty::Number),
+            ],
             Self::Sink => Vec::new(),
         }
     }
@@ -100,6 +117,11 @@ impl NodeKind for Op {
                 Val::Text(t) => Val::Text(t.to_uppercase()),
                 other @ Val::Number(_) => other.clone(),
             })],
+            Self::Measure => vec![inputs.first().and_then(Option::as_ref).map(|v| match v {
+                Val::Text(t) => Val::Number(i64::try_from(t.len()).unwrap_or(i64::MAX)),
+                other @ Val::Number(_) => other.clone(),
+            })],
+            Self::Swap => vec![number(1).map(Val::Number), number(0).map(Val::Number)],
             Self::Sink => Vec::new(),
         }
     }
@@ -2219,9 +2241,12 @@ fn a_link_naming_a_missing_node_is_refused_rather_than_crashing() {
     // reports it, and every derivation now refuses rather than indexing a map
     // that has no such key.
     let mut f = fixture();
-    let ghost = f
-        .document
-        .push_link(ROOT, Socket::new(NodeId(97), 0), Socket::new(f.sink, 0));
+    let ghost = f.document.push_link(
+        ROOT,
+        Socket::new(NodeId(97), 0),
+        Socket::new(f.sink, 0),
+        false,
+    );
     assert!(matches!(
         f.document.validate().first(),
         Some(Violation::DanglingLink { .. })
@@ -2233,5 +2258,913 @@ fn a_link_naming_a_missing_node_is_refused_rather_than_crashing() {
     assert_eq!(
         f.document.extract(ROOT, &[f.add]).unwrap_err(),
         ExtractError::Malformed { link: ghost }
+    );
+}
+
+// ------------------------------------------------------------------- R1586
+// A node says how it takes part, and only one of those facts is the meaning.
+
+/// Blender's own rule for which input feeds a muted node's output, held here so
+/// the divergence is an **assertion** rather than a description.
+///
+/// `find_internally_linked_input` (`node_tree_update.cc`, `8cf50599`) scans the
+/// inputs per output, keeping the best by a static table of socket-type pairs
+/// and breaking ties by whether the input happens to be **wired**. Our taxonomy
+/// has no implicit conversions, so the table reduces to its diagonal; the
+/// tie-break is the part that carries meaning, and it is reproduced exactly.
+fn blender_internal_link(
+    document: &Document<Op>,
+    tree: TreeId,
+    node: NodeId,
+    output: u32,
+) -> Option<u32> {
+    let signature = document.signature(tree, node)?;
+    let host = document.tree(tree)?;
+    let out_ty = signature.outputs.get(output as usize)?.ty;
+    let mut selected: Option<u32> = None;
+    let mut selected_priority = -1_i32;
+    let mut selected_is_linked = false;
+    for (index, input) in signature.inputs.iter().enumerate() {
+        let port = u32::try_from(index).unwrap_or(u32::MAX);
+        let priority = if input.ty == out_ty { 4 } else { -1 };
+        if priority < 0 {
+            continue;
+        }
+        let is_linked = host.link_into(Socket::new(node, port)).is_some();
+        if !(priority > selected_priority || (is_linked && !selected_is_linked)) {
+            continue;
+        }
+        selected = Some(port);
+        selected_priority = priority;
+        selected_is_linked = is_linked;
+    }
+    selected
+}
+
+#[test]
+fn a_bypassed_node_is_the_identity_as_far_as_its_signature_allows() {
+    let f = fixture();
+    // Add: two Number inputs, one Number output. Output 0 takes input 0.
+    let through = f.document.passthrough(ROOT, f.add).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[Route {
+            output: 0,
+            input: 0
+        }]
+    );
+    assert!(through.is_identity(), "same index, agreeing types");
+    assert_eq!(through.dropped_outputs(), &[] as &[u32]);
+    assert_eq!(
+        through.unreached_inputs(),
+        &[1],
+        "the addend reaches no output and is named as such"
+    );
+}
+
+#[test]
+fn one_input_can_feed_several_outputs_and_the_second_is_not_the_identity() {
+    let mut document = Document::new("root");
+    let split = document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 0, 0)
+        .unwrap();
+    let through = document.passthrough(ROOT, split).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[
+            Route {
+                output: 0,
+                input: 0
+            },
+            Route {
+                output: 1,
+                input: 0
+            },
+        ],
+        "one value in, the same value out of both halves"
+    );
+    assert!(
+        !through.is_identity(),
+        "output 1 has no input 1 to be the identity of"
+    );
+    assert!(through.unreached_inputs().is_empty());
+}
+
+#[test]
+fn an_output_no_input_can_feed_is_named_rather_than_silently_empty() {
+    let mut document = Document::new("root");
+    let measure = document
+        .add_node(ROOT, NodeBody::Kind(Op::Measure), 0, 0)
+        .unwrap();
+    let source = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(7)), 0, 80)
+        .unwrap();
+    let through = document.passthrough(ROOT, measure).unwrap();
+    assert!(
+        through.routes().is_empty(),
+        "Text in cannot become Number out"
+    );
+    assert_eq!(through.dropped_outputs(), &[0]);
+    assert_eq!(through.unreached_inputs(), &[0]);
+    // A source node is the other way in to the same fact: nothing to pass.
+    let through = document.passthrough(ROOT, source).unwrap();
+    assert_eq!(through.dropped_outputs(), &[0]);
+}
+
+#[test]
+fn the_route_is_a_function_of_the_signature_where_blenders_reads_the_wiring() {
+    let mut f = fixture();
+    // Both inputs wired: the two rules agree.
+    assert_eq!(
+        f.document.passthrough(ROOT, f.add).unwrap().source_of(0),
+        Some(0)
+    );
+    assert_eq!(blender_internal_link(&f.document, ROOT, f.add, 0), Some(0));
+
+    // Unwire the FIRST input and change nothing else about the node.
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.disconnect(ROOT, feed).unwrap();
+
+    assert_eq!(
+        f.document.passthrough(ROOT, f.add).unwrap().source_of(0),
+        Some(0),
+        "unchanged: the routing is a property of the signature alone"
+    );
+    assert_eq!(
+        blender_internal_link(&f.document, ROOT, f.add, 0),
+        Some(1),
+        "Blender's linked-tie-break re-routes a DIFFERENT port's value \
+         because this one was unplugged"
+    );
+}
+
+#[test]
+fn the_pass_through_is_derived_and_not_stored() {
+    let mut f = fixture();
+    // Blender materialises this into `node->runtime->internal_links` and keeps a
+    // tree-update pass to notice when the stored answer has gone stale. Here the
+    // answer follows an edit with nothing asked to refresh it.
+    let split = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 300, 200)
+        .unwrap();
+    assert_eq!(
+        f.document.passthrough(ROOT, split).unwrap().routes().len(),
+        2
+    );
+    f.document.remove_node(ROOT, split).unwrap();
+    assert!(
+        f.document.passthrough(ROOT, split).is_none(),
+        "no cached answer survives the node it described"
+    );
+}
+
+#[test]
+fn a_bypassed_node_does_not_compute_and_passes_its_input_on() {
+    let mut f = fixture();
+    let sink_in = Socket::new(f.sink, 0);
+    assert_eq!(
+        f.document.evaluator().input(ROOT, sink_in),
+        Some(Val::Number(5)),
+        "2 + 3 while the adder is doing its job"
+    );
+    f.document.set_bypassed(ROOT, f.add, true).unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, sink_in),
+        Some(Val::Number(2)),
+        "bypassed: the augend passes straight through, unadded"
+    );
+    assert!(
+        f.document.set_bypassed(ROOT, f.add, false).unwrap(),
+        "the verb answers what it was"
+    );
+    assert_eq!(
+        f.document.evaluator().input(ROOT, sink_in),
+        Some(Val::Number(5))
+    );
+}
+
+#[test]
+fn bypassing_and_dissolving_agree_on_every_value_when_the_route_is_wired() {
+    let sink_in = |f: &Fixture| Socket::new(f.sink, 0);
+
+    let mut bypassed = fixture();
+    bypassed
+        .document
+        .set_bypassed(ROOT, bypassed.add, true)
+        .unwrap();
+    let through_bypass = bypassed
+        .document
+        .evaluator()
+        .input(ROOT, sink_in(&bypassed));
+
+    let mut dissolved = fixture();
+    let rewired = dissolved.document.dissolve(ROOT, dissolved.add).unwrap();
+    let through_dissolve = dissolved
+        .document
+        .evaluator()
+        .input(ROOT, sink_in(&dissolved));
+
+    assert_eq!(through_bypass, Some(Val::Number(2)));
+    assert_eq!(
+        through_bypass, through_dissolve,
+        "one derivation, so the non-destructive and destructive forms agree"
+    );
+    assert!(rewired.lossless(), "nothing was reported lost");
+    assert_eq!(rewired.bridged.len(), 1);
+    assert_eq!(rewired.bridged[0].from, Socket::new(dissolved.two, 0));
+    assert_eq!(rewired.bridged[0].to, Socket::new(dissolved.sink, 0));
+    assert_eq!(
+        rewired.removed.len(),
+        3,
+        "both feeds and the outgoing link touched the node"
+    );
+    assert!(dissolved.document.validate().is_empty());
+}
+
+#[test]
+fn where_the_two_cannot_agree_the_dissolve_names_the_difference() {
+    // The routed input is UNWIRED, so a bypass passes its declared default on
+    // and a dissolve has no link to redirect. Blender removes exactly the same
+    // link and reports nothing at all.
+    let unwire = |f: &mut Fixture| {
+        let feed = f
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(f.add, 0))
+            .unwrap()
+            .id;
+        f.document.disconnect(ROOT, feed).unwrap();
+    };
+
+    let mut bypassed = fixture();
+    unwire(&mut bypassed);
+    bypassed
+        .document
+        .set_bypassed(ROOT, bypassed.add, true)
+        .unwrap();
+    assert_eq!(
+        bypassed
+            .document
+            .evaluator()
+            .input(ROOT, Socket::new(bypassed.sink, 0)),
+        Some(Val::Number(0)),
+        "the augend's own declared default passes through"
+    );
+
+    let mut dissolved = fixture();
+    unwire(&mut dissolved);
+    let rewired = dissolved.document.dissolve(ROOT, dissolved.add).unwrap();
+    assert!(rewired.bridged.is_empty());
+    assert_eq!(
+        rewired.severed.len(),
+        1,
+        "the link no value reaches is NAMED, not merely gone"
+    );
+    assert_eq!(rewired.severed[0].to, Socket::new(dissolved.sink, 0));
+    assert!(!rewired.lossless());
+    assert_eq!(
+        dissolved
+            .document
+            .evaluator()
+            .input(ROOT, Socket::new(dissolved.sink, 0)),
+        None,
+        "the sink falls back to its own port, which declares no default"
+    );
+}
+
+#[test]
+fn a_dissolve_bridges_at_any_arity_not_only_one_in_one_out() {
+    let mut f = fixture();
+    // `add` has TWO inputs and one output — the case a one-in-one-out reroute
+    // rule (this tree's own `hello-node-editor` predicate) refuses outright.
+    assert_eq!(f.document.tree(ROOT).unwrap().links().len(), 3);
+    let rewired = f.document.dissolve(ROOT, f.add).unwrap();
+    assert_eq!(rewired.bridged.len(), 1);
+    let links = f.document.tree(ROOT).unwrap().links();
+    assert_eq!(links.len(), 1, "three incident links became one bridge");
+    assert_eq!(links[0].from, Socket::new(f.two, 0));
+    assert!(f.document.tree(ROOT).unwrap().node(f.add).is_none());
+    assert!(f.document.tree(ROOT).unwrap().node(f.three).is_some());
+}
+
+#[test]
+fn a_detach_rewires_around_the_node_and_leaves_it_there() {
+    let mut f = fixture();
+    let rewired = f.document.detach(ROOT, f.add).unwrap();
+    assert_eq!(rewired.bridged.len(), 1);
+    let host = f.document.tree(ROOT).unwrap();
+    assert!(
+        host.node(f.add).is_some(),
+        "the node stays; only its wiring goes"
+    );
+    assert!(
+        host.links()
+            .iter()
+            .all(|l| l.from.node != f.add && l.to.node != f.add),
+        "and it is wired to nothing"
+    );
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+        Some(Val::Number(2)),
+        "the same value a bypass would pass"
+    );
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn a_muted_link_keeps_its_place_and_carries_nothing() {
+    let mut f = fixture();
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    assert!(!f.document.set_link_muted(ROOT, feed, true).unwrap());
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+        Some(Val::Number(3)),
+        "the augend falls back to its declared 0, so 0 + 3"
+    );
+    let host = f.document.tree(ROOT).unwrap();
+    assert_eq!(host.links().len(), 3, "the wire is still there");
+    assert!(
+        host.link_into(Socket::new(f.add, 0)).is_some(),
+        "and still occupies the input, so nothing else may be wired to it"
+    );
+    // Which is why a second wire into that input still DISPLACES the muted one.
+    let other = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(9)), 0, 300)
+        .unwrap();
+    let connected = f
+        .document
+        .connect(ROOT, Socket::new(other, 0), Socket::new(f.add, 0))
+        .unwrap();
+    assert_eq!(connected.displaced.map(|l| l.id), Some(feed));
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+        Some(Val::Number(12)),
+    );
+}
+
+#[test]
+fn a_bridge_is_muted_when_either_link_it_replaces_was() {
+    for (upstream, downstream) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut f = fixture();
+        let feed = f
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(f.add, 0))
+            .unwrap()
+            .id;
+        let out = f
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(f.sink, 0))
+            .unwrap()
+            .id;
+        f.document.set_link_muted(ROOT, feed, upstream).unwrap();
+        f.document.set_link_muted(ROOT, out, downstream).unwrap();
+        let rewired = f.document.dissolve(ROOT, f.add).unwrap();
+        assert_eq!(
+            rewired.bridged[0].muted,
+            upstream || downstream,
+            "a value being stopped goes on being stopped ({upstream}, {downstream})"
+        );
+    }
+}
+
+#[test]
+fn a_bypassed_group_instance_is_not_descended_into() {
+    let mut f = fixture();
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    let sink_in = Socket::new(f.sink, 0);
+    assert_eq!(
+        f.document.evaluator().input(ROOT, sink_in),
+        Some(Val::Number(5))
+    );
+
+    // The instance's signature IS the derived interface, so the same rule that
+    // routes an application node routes this one: output 0 from input 0.
+    let through = f.document.passthrough(ROOT, made.node).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[Route {
+            output: 0,
+            input: 0
+        }]
+    );
+
+    f.document.set_bypassed(ROOT, made.node, true).unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, sink_in),
+        Some(Val::Number(2)),
+        "bypassing a group is the request NOT to run what is inside it"
+    );
+}
+
+#[test]
+fn mutedness_survives_a_collapse_and_an_inline() {
+    let mut f = fixture();
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.set_link_muted(ROOT, feed, true).unwrap();
+    let before = f.document.evaluator().input(ROOT, Socket::new(f.sink, 0));
+    assert_eq!(before, Some(Val::Number(3)));
+
+    // A crossing becomes two links; only the per-consumer half carries the fact.
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+        before,
+        "the graph goes on computing what it computed"
+    );
+
+    // And the inline joins them back into one link that is muted again.
+    f.document.ungroup(ROOT, made.node).unwrap();
+    let host = f.document.tree(ROOT).unwrap();
+    let muted: Vec<_> = host.links().iter().filter(|l| l.muted).collect();
+    assert_eq!(muted.len(), 1, "one muted wire in, one muted wire out");
+    let sink = host
+        .nodes()
+        .find(|n| n.body == NodeBody::Kind(Op::Sink))
+        .unwrap()
+        .id;
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(sink, 0)),
+        before
+    );
+}
+
+#[test]
+fn mutedness_survives_a_cut_and_a_paste() {
+    let mut f = fixture();
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.set_link_muted(ROOT, feed, true).unwrap();
+
+    let cut = f.document.extract(ROOT, &[f.two, f.add]).unwrap();
+    assert_eq!(
+        cut.document()
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .filter(|l| l.muted)
+            .count(),
+        1,
+        "an internal link keeps the fact"
+    );
+
+    // And an inbound crossing that was muted is recorded, so re-attaching it
+    // puts back a wire that stops the value rather than one that carries it.
+    let cut = f.document.extract(ROOT, &[f.add]).unwrap();
+    let inbound: Vec<&Severed> = cut.inbound().iter().collect();
+    let muted_crossings: usize = inbound.iter().map(|s| s.muted_consumers().len()).sum();
+    assert_eq!(muted_crossings, 1);
+    let landed = f
+        .document
+        .insert(
+            ROOT,
+            &cut,
+            (500, 500),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(landed.reattached.len(), 2, "both crossings came back");
+    let host = f.document.tree(ROOT).unwrap();
+    let pasted = landed.nodes[0];
+    assert!(
+        host.link_into(Socket::new(pasted, 0)).unwrap().muted,
+        "the re-attached wire is muted, as the one it reproduces was"
+    );
+    assert!(!host.link_into(Socket::new(pasted, 1)).unwrap().muted);
+}
+
+#[test]
+fn mutedness_survives_a_boundary_move_in_both_directions() {
+    let mut f = fixture();
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.set_link_muted(ROOT, feed, true).unwrap();
+    let before = f.document.evaluator().input(ROOT, Socket::new(f.sink, 0));
+
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    // Move the two-producer INTO the group, then back out again.
+    let inserted = f
+        .document
+        .group_insert(ROOT, made.node, &[f.two], Sharing::Shared)
+        .unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+        before,
+        "moving the boundary did not un-stop a stopped value"
+    );
+    let moved = inserted.moved[0];
+    f.document
+        .group_separate(ROOT, made.node, &[moved], Sharing::Shared)
+        .unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+        before,
+        "nor did moving it back"
+    );
+}
+
+#[test]
+fn a_bypass_and_a_look_travel_with_the_node() {
+    let mut f = fixture();
+    {
+        let node = f.document.tree_mut(ROOT).unwrap().node_mut(f.add).unwrap();
+        node.bypassed = true;
+        node.appearance.collapsed = true;
+        node.appearance.width = Some(140);
+        node.label = Some("bypassed adder".to_owned());
+    }
+
+    // Through a collapse and an inline, which mints a fresh id in another tree.
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    let inside = f
+        .document
+        .tree(made.definition)
+        .unwrap()
+        .nodes()
+        .find(|n| matches!(n.body, NodeBody::Kind(Op::Add)))
+        .unwrap();
+    assert!(
+        inside.bypassed,
+        "a bypass is not a property of the tree it is in"
+    );
+    assert!(inside.appearance.collapsed);
+    assert_eq!(inside.appearance.width, Some(140));
+
+    let inlined = f.document.ungroup(ROOT, made.node).unwrap();
+    let back = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .node(inlined.nodes[0])
+        .unwrap();
+    assert!(back.bypassed);
+    assert!(back.appearance.collapsed);
+    assert_eq!(back.label.as_deref(), Some("bypassed adder"));
+
+    // And through a cut and a paste.
+    let cut = f.document.extract(ROOT, &[inlined.nodes[0]]).unwrap();
+    let landed = f
+        .document
+        .insert(ROOT, &cut, (900, 900), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    let copy = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .node(landed.nodes[0])
+        .unwrap();
+    assert!(copy.bypassed);
+    assert_eq!(copy.appearance.width, Some(140));
+}
+
+#[test]
+fn what_a_node_looks_like_cannot_change_what_the_graph_computes() {
+    let baseline = fixture().document.evaluate(ROOT, fixture().add);
+    // Every appearance field, one at a time and then all together. Blender keeps
+    // all of these in the same `flag` integer as `NODE_MUTED`, so which of them
+    // its evaluator may read is not stated anywhere in its model.
+    let looks: [Appearance; 5] = [
+        Appearance {
+            collapsed: true,
+            ..Appearance::default()
+        },
+        Appearance {
+            hide_unused_ports: true,
+            ..Appearance::default()
+        },
+        Appearance {
+            show_options: false,
+            ..Appearance::default()
+        },
+        Appearance {
+            show_preview: true,
+            ..Appearance::default()
+        },
+        Appearance {
+            collapsed: true,
+            hide_unused_ports: true,
+            show_options: false,
+            show_preview: true,
+            width: Some(1),
+        },
+    ];
+    for look in looks {
+        let mut f = fixture();
+        for id in [f.two, f.three, f.add, f.sink] {
+            f.document
+                .tree_mut(ROOT)
+                .unwrap()
+                .node_mut(id)
+                .unwrap()
+                .appearance = look.clone();
+        }
+        assert_eq!(f.document.evaluate(ROOT, f.add), baseline);
+        assert_eq!(
+            f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+            Some(Val::Number(5))
+        );
+    }
+}
+
+#[test]
+fn hiding_unused_ports_hides_only_the_unwired_ones_and_names_them() {
+    let mut f = fixture();
+    let all = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(all.inputs, vec![0, 1]);
+    assert_eq!(all.outputs, vec![0]);
+    assert_eq!(all.hidden_count(), 0);
+
+    // Free the addend, then ask the node to hide what is unused.
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 1))
+        .unwrap()
+        .id;
+    f.document.disconnect(ROOT, feed).unwrap();
+    f.document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(f.add)
+        .unwrap()
+        .appearance
+        .hide_unused_ports = true;
+
+    let some = f.document.visible_ports(ROOT, f.add).unwrap();
+    assert_eq!(some.inputs, vec![0]);
+    assert_eq!(some.hidden_inputs, vec![1]);
+    assert_eq!(some.outputs, vec![0], "the output is wired to the sink");
+
+    // A muted link still counts as wired: the value is stopped, the wire is not.
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.set_link_muted(ROOT, feed, true).unwrap();
+    assert_eq!(
+        f.document.visible_ports(ROOT, f.add).unwrap().inputs,
+        vec![0]
+    );
+}
+
+#[test]
+fn a_bypass_chain_passes_a_value_through_every_hop() {
+    let mut f = fixture();
+    let first = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 250, 0)
+        .unwrap();
+    let second = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 300, 0)
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(f.two, 0), Socket::new(first, 0))
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(first, 0), Socket::new(second, 0))
+        .unwrap();
+    for id in [first, second] {
+        f.document.set_bypassed(ROOT, id, true).unwrap();
+    }
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(second, 0)),
+        Some(Val::Number(2))
+    );
+    assert_eq!(
+        f.document.evaluate(ROOT, second),
+        vec![Some(Val::Number(2)), Some(Val::Number(2))],
+        "both outputs of the second hop carry the original value"
+    );
+}
+
+#[test]
+fn a_document_that_arrived_from_elsewhere_cannot_be_dissolved_into_a_self_link() {
+    // `connect` refuses a cycle, so a 2-cycle can only arrive from outside. A
+    // bridge across it would land on its own producer; the value has nowhere to
+    // go, so the link is severed like any other nothing reaches.
+    let mut document = Document::new("root");
+    let a = document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 0, 0)
+        .unwrap();
+    let b = document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 100, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+    assert!(
+        document
+            .connect(ROOT, Socket::new(b, 0), Socket::new(a, 0))
+            .is_err()
+    );
+    document.push_link(ROOT, Socket::new(b, 0), Socket::new(a, 0), false);
+
+    let rewired = document.dissolve(ROOT, b).unwrap();
+    assert!(
+        rewired.bridged.is_empty(),
+        "no bridge from a socket to itself"
+    );
+    assert_eq!(rewired.severed.len(), 1);
+    let host = document.tree(ROOT).unwrap();
+    assert!(host.links().is_empty());
+    assert!(host.nodes().all(|n| n.id != b));
+}
+
+#[test]
+fn bypassing_a_node_that_is_not_there_is_refused_by_name() {
+    let mut f = fixture();
+    assert!(f.document.set_bypassed(ROOT, NodeId(97), true).is_err());
+    assert!(f.document.set_bypassed(TreeId(9), f.add, true).is_err());
+    assert!(f.document.dissolve(ROOT, NodeId(97)).is_err());
+    assert!(f.document.detach(TreeId(9), f.add).is_err());
+    assert!(f.document.passthrough(ROOT, NodeId(97)).is_none());
+    assert!(f.document.visible_ports(ROOT, NodeId(97)).is_none());
+}
+
+#[test]
+fn the_identity_rule_is_falsifiable_where_position_and_type_order_disagree() {
+    // Swap has two Number inputs and two Number outputs. "Lowest input of the
+    // right type" would send BOTH outputs to input 0; the identity sends each
+    // output to the input at its own index. This is the only shape that tells
+    // the two rules apart, so without it the rule would be untested rather than
+    // merely unstated.
+    let mut document = Document::new("root");
+    let left = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(10)), 0, 0)
+        .unwrap();
+    let right = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(20)), 0, 80)
+        .unwrap();
+    let swap = document
+        .add_node(ROOT, NodeBody::Kind(Op::Swap), 200, 40)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(left, 0), Socket::new(swap, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(right, 0), Socket::new(swap, 1))
+        .unwrap();
+
+    let through = document.passthrough(ROOT, swap).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[
+            Route {
+                output: 0,
+                input: 0
+            },
+            Route {
+                output: 1,
+                input: 1
+            },
+        ]
+    );
+    assert!(through.is_identity());
+    assert!(through.unreached_inputs().is_empty());
+
+    assert_eq!(
+        document.evaluate(ROOT, swap),
+        vec![Some(Val::Number(20)), Some(Val::Number(10))],
+        "computing, it exchanges them"
+    );
+    document.set_bypassed(ROOT, swap, true).unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, swap),
+        vec![Some(Val::Number(10)), Some(Val::Number(20))],
+        "bypassed, it is the identity — which is what bypassing MEANS"
+    );
+
+    // Blender's rule gives output 1 the FIRST input, because its type-pair
+    // priority is equal for both and its tie-break is linked-ness, which both
+    // satisfy. So a bypassed Swap there emits 10 twice and the right-hand value
+    // vanishes.
+    assert_eq!(blender_internal_link(&document, ROOT, swap, 1), Some(0));
+}
+
+#[test]
+fn a_link_between_two_moved_nodes_keeps_its_mutedness_in_both_directions() {
+    // The crossing case and the CARRIED case are different code paths, and only
+    // this one has both ends of the link among the nodes changing sides. A test
+    // that moves a source node exercises crossings alone and would pass with the
+    // carried path broken — which is how this test came to exist.
+    let mut f = fixture();
+    let feed = f
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(f.add, 0))
+        .unwrap()
+        .id;
+    f.document.set_link_muted(ROOT, feed, true).unwrap();
+
+    // Group the SINK, so `two` and `add` are both outside it and the wire
+    // between them moves whole.
+    let made = f.document.group(ROOT, &[f.sink], "End").unwrap();
+    let inserted = f
+        .document
+        .group_insert(ROOT, made.node, &[f.two, f.add], Sharing::Shared)
+        .unwrap();
+    let inside = f.document.tree(made.definition).unwrap();
+    assert_eq!(
+        inside.links().iter().filter(|l| l.muted).count(),
+        1,
+        "the carried link kept the fact on the way in"
+    );
+
+    let moved = inserted.moved.clone();
+    f.document
+        .group_separate(ROOT, made.node, &moved, Sharing::Shared)
+        .unwrap();
+    assert_eq!(
+        f.document
+            .tree(ROOT)
+            .unwrap()
+            .links()
+            .iter()
+            .filter(|l| l.muted)
+            .count(),
+        1,
+        "and on the way back out"
+    );
+    assert!(f.document.validate().is_empty());
+}
+#[test]
+fn dissolving_an_interface_node_severs_and_says_so() {
+    // `group` and `group_insert` REFUSE an interface node in their selection,
+    // because it projects the tree rather than being content and so cannot
+    // change sides. Deleting one is a different question and is legal — a
+    // definition with no inside-output node is a legal, empty one, and `expose`
+    // makes another. So `dissolve` treats it like any other node, which means
+    // the honest thing to pin is that it degrades rather than corrupts.
+    let mut f = fixture();
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    let entry = f
+        .document
+        .tree(made.definition)
+        .unwrap()
+        .interface_node(InterfaceSide::Input)
+        .unwrap()
+        .id;
+    assert!(matches!(
+        f.document.group(made.definition, &[entry], "x"),
+        Err(GroupError::InterfaceNodeSelected(_))
+    ));
+
+    let out = f.document.dissolve(made.definition, entry).unwrap();
+    assert!(
+        out.bridged.is_empty(),
+        "it has no inputs, so nothing passes"
+    );
+    assert_eq!(out.severed.len(), 2, "and both values it fed are NAMED");
+    assert!(!out.lossless());
+    assert!(
+        f.document.validate().is_empty(),
+        "the document still satisfies every invariant"
+    );
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sink, 0)),
+        Some(Val::Number(0)),
+        "and the graph degrades to the ports' declared defaults"
     );
 }

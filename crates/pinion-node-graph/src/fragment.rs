@@ -76,8 +76,8 @@ use pinion_graph::group as boundary;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Socket, Tree,
-    TreeId, centroid,
+    Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Sink, Socket,
+    Tree, TreeId, centroid,
 };
 use crate::numbering::Numbering;
 
@@ -95,6 +95,8 @@ use crate::numbering::Numbering;
 pub struct Severed {
     producer: Socket,
     consumers: Vec<Socket>,
+    #[serde(default)]
+    muted: Vec<Socket>,
 }
 
 impl Severed {
@@ -108,6 +110,22 @@ impl Severed {
     #[must_use]
     pub fn consumers(&self) -> &[Socket] {
         &self.consumers
+    }
+
+    /// Those consumers whose crossing link was **muted** at the cut (R1586).
+    ///
+    /// Recorded because a re-attachment puts the wire back, and putting back a
+    /// wire that was stopping a value as one that carries it would make a paste
+    /// change what the graph computes.
+    #[must_use]
+    pub fn muted_consumers(&self) -> &[Socket] {
+        &self.muted
+    }
+
+    /// Whether this crossing was muted at `consumer`.
+    #[must_use]
+    pub fn is_muted(&self, consumer: Socket) -> bool {
+        self.muted.contains(&consumer)
     }
 }
 
@@ -403,9 +421,18 @@ impl<K: NodeKind> Document<K> {
         let severed = |faces: &[boundary::InterfaceSocket]| -> Vec<Severed> {
             faces
                 .iter()
-                .map(|face| Severed {
-                    producer: socket_of(face.producer()),
-                    consumers: face.consumers().iter().map(|&c| socket_of(c)).collect(),
+                .map(|face| {
+                    let consumers: Vec<Socket> =
+                        face.consumers().iter().map(|&c| socket_of(c)).collect();
+                    Severed {
+                        muted: consumers
+                            .iter()
+                            .copied()
+                            .filter(|&c| host.link_into(c).is_some_and(|l| l.muted))
+                            .collect(),
+                        producer: socket_of(face.producer()),
+                        consumers,
+                    }
                 })
                 .collect()
         };
@@ -449,12 +476,17 @@ impl<K: NodeKind> Document<K> {
                     x: node.x - origin.0,
                     y: node.y - origin.1,
                     label: node.label.clone(),
+                    bypassed: node.bypassed,
+                    appearance: node.appearance.clone(),
                 },
             );
         }
         for &index in cut.internal() {
             let link = host.links()[index];
-            content.push_link(ROOT, link.from, link.to);
+            // A cut carries the wiring as it was: a muted link is still a link,
+            // and a fragment that quietly unmuted one would paste back a graph
+            // that computes something the original did not (R1586).
+            content.push_link(ROOT, link.from, link.to, link.muted);
         }
 
         Ok(Fragment {
@@ -674,7 +706,10 @@ impl<K: NodeKind> Document<K> {
                         continue;
                     }
                     if self.crossing_types_agree(tree, severed.producer, fragment, consumer) {
-                        landed.push(consumer);
+                        landed.push(Sink {
+                            socket: consumer,
+                            muted: severed.is_muted(consumer),
+                        });
                     }
                 }
                 if landed.is_empty() {
@@ -762,7 +797,7 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
-                slot.label.clone_from(&node.label);
+                slot.adopt_from(node);
             }
             renamed.insert(node.id, fresh);
             nodes.push(fresh);
@@ -779,6 +814,7 @@ impl<K: NodeKind> Document<K> {
                 tree,
                 Socket::new(from, link.from.port),
                 Socket::new(to, link.to.port),
+                link.muted,
             ));
         }
 
@@ -787,15 +823,25 @@ impl<K: NodeKind> Document<K> {
         for (producer, consumers) in &plan.reattach {
             let mut landed = Vec::new();
             for consumer in consumers {
-                if let Some(&node) = renamed.get(&consumer.node) {
-                    landed.push(self.push_link(tree, *producer, Socket::new(node, consumer.port)));
+                if let Some(&node) = renamed.get(&consumer.socket.node) {
+                    landed.push(self.push_link(
+                        tree,
+                        *producer,
+                        Socket::new(node, consumer.socket.port),
+                        consumer.muted,
+                    ));
                 }
             }
             if landed.is_empty() {
                 // The copy itself never landed, so there is nothing to feed.
                 unattached.push(Severed {
                     producer: *producer,
-                    consumers: consumers.clone(),
+                    consumers: consumers.iter().map(|c| c.socket).collect(),
+                    muted: consumers
+                        .iter()
+                        .filter(|c| c.muted)
+                        .map(|c| c.socket)
+                        .collect(),
                 });
             } else {
                 reattached.extend(landed);
@@ -866,7 +912,7 @@ struct InsertPlan {
     reused: Vec<TreeId>,
     /// Producer in the destination -> the fragment's own consumer sockets, for
     /// the crossings that survived the check.
-    reattach: Vec<(Socket, Vec<Socket>)>,
+    reattach: Vec<(Socket, Vec<Sink>)>,
     unattached: Vec<Severed>,
 }
 
@@ -908,11 +954,13 @@ fn copy_tree_body<K: NodeKind>(
                 x: node.x,
                 y: node.y,
                 label: node.label.clone(),
+                bypassed: node.bypassed,
+                appearance: node.appearance.clone(),
             },
         );
     }
     for link in source.links() {
-        destination.push_link(target, link.from, link.to);
+        destination.push_link(target, link.from, link.to, link.muted);
     }
 }
 

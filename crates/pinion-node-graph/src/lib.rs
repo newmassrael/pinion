@@ -47,6 +47,19 @@
 //!   contain itself is refused, and the refusal names the containment chain.
 //! * **An edit path** — [`EditPath`], the breadcrumb into nested definitions,
 //!   including [`EditPath::prune`] for when the document changes underneath it.
+//! * **Bypass** — [`Document::set_bypassed`] takes a node out of the graph's
+//!   *meaning* without taking it out of the graph, and
+//!   [`Document::passthrough`] derives what flows through it: a bypassed node
+//!   is the identity as far as its signature allows, and the outputs no input
+//!   can feed are **named**. [`Document::dissolve`] and [`Document::detach`]
+//!   apply the same derivation to the structure, so what a bypass does and what
+//!   a delete leaves behind cannot disagree. A [`Link`] can be muted too, which
+//!   is the opposite behaviour and therefore a different word.
+//! * **Looks that travel** — [`Appearance`] is what a node looks like, kept in
+//!   the document because a group collapse and a paste move nodes between
+//!   trees, and kept apart from the graph's meaning because only one of the two
+//!   may be read by the evaluator. [`Document::visible_ports`] is the
+//!   derivation a renderer needs and only the document can make.
 //! * **Evaluation** — [`Document::evaluator`], memoised, descending into groups,
 //!   keyed by *instance* so two instances of one definition do not share a
 //!   value.
@@ -126,6 +139,8 @@
 //! assert!(doc.validate().is_empty());
 //! ```
 
+mod appearance;
+mod bypass;
 mod eval;
 mod fragment;
 mod group;
@@ -135,6 +150,8 @@ mod partition;
 #[cfg(test)]
 mod tests;
 
+pub use appearance::{Appearance, VisiblePorts};
+pub use bypass::{Bridge, Passthrough, Rewired, Route};
 pub use eval::Evaluator;
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,

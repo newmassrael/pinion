@@ -25,6 +25,16 @@
 //! severed to hold it, how many bytes it serializes to, and what the last
 //! insertion did — all readable without pasting.
 //!
+//! R1586 adds the other half of an editor's daily work: taking a stage OUT of
+//! the pipeline. A node can be **bypassed** — it stops computing and the values
+//! at its inputs pass through it — or **dissolved**, which does the same thing
+//! to the structure and deletes it. Both read one derivation, so the preview
+//! and the edit cannot disagree; `passthrough.<id>` publishes it, including the
+//! outputs no input can feed, which is the value an author most needs told is
+//! about to disappear. A **link** can be muted, which is the opposite
+//! behaviour — the value stops — and so is a different word here than in
+//! Blender, where both are "mute".
+//!
 //! R1584 adds the two boundary moves, and with them the fact an editor is
 //! obliged to show and Blender does not: a group definition is *shared*, so
 //! moving a node into one through this instance changes every other instance
@@ -44,13 +54,14 @@ use pinion_core::scene::{
     BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
 };
 use pinion_core::style::{
-    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
+    Border, BoxStyle, Color, Dash, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Crossings, Definitions, Document, EditPath, Fragment, Inserted, InterfaceSide, NodeBody,
-    NodeId, NodeKind, Port, PortChange, ROOT, Repartitioned, Severed, Sharing, Socket, TreeId,
+    Crossings, Definitions, Document, EditPath, Fragment, Inserted, InterfaceSide, LinkId,
+    NodeBody, NodeId, NodeKind, Port, PortChange, ROOT, Repartitioned, Rewired, Severed, Sharing,
+    Socket, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -251,6 +262,10 @@ struct GroupsState {
     /// cost at the definition's other instances. An editor has to show that
     /// second part: the user moved a node in one place and changed another.
     last_move: Signal<String>,
+    /// R1586 — what the last dissolve or detach did: what it bridged, and what
+    /// it could not. The second half is the one Blender's `node_internal_relink`
+    /// discards, and it is what tells an author a value has just gone.
+    last_rewire: Signal<String>,
 }
 
 impl GroupsState {
@@ -263,6 +278,7 @@ impl GroupsState {
             clipboard: Signal::new(None),
             last_insert: Signal::new(String::new()),
             last_move: Signal::new(String::new()),
+            last_rewire: Signal::new(String::new()),
         }
     }
 
@@ -356,6 +372,95 @@ fn card_height(ports: (usize, usize)) -> i32 {
 }
 
 /// Where a socket's pin sits, in canvas coordinates.
+/// One port: its pin and its name.
+///
+/// The tag names the port's INDEX IN THE SIGNATURE and not the row it landed
+/// on, because a tag is an address: hiding an unused port moves every later row
+/// up, and a tag derived from the row would then name a different port than it
+/// did a frame ago.
+fn port_scenes(
+    declared: &Port<Ty, Val>,
+    at: (NodeId, u32, bool),
+    (px, py): (i32, i32),
+    (theme, label): (&pinion_core::theme::Theme, Color),
+) -> Vec<Scene> {
+    let (node, port, output) = at;
+    vec![
+        Scene::Box(
+            BoxNode::new(
+                Rect::new(upx(px - PORT / 2), upx(py - PORT / 2), upx(PORT), upx(PORT)),
+                BoxStyle::filled(theme.resolve(match declared.ty {
+                    Ty::Colour => ColorRole::Accent,
+                    Ty::Amount => ColorRole::OnSurfaceMuted,
+                })),
+            )
+            .with_tag(format!(
+                "{VIEW_TAG}.pin.{}.{}.{port}",
+                node.0,
+                if output { "out" } else { "in" }
+            ))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(upx(px - PORT / 2), upx(py - PORT / 2))
+                    .with_size(Size::px(upx(PORT), upx(PORT))),
+            ),
+        ),
+        Scene::Text(
+            TextNode::styled(
+                &declared.name,
+                Rect::default(),
+                TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(
+                        upx(if output { px - 76 } else { px + 10 }),
+                        upx(py - i32::try_from(LABEL_FONT_PX).unwrap_or(12) / 2 - 1),
+                    )
+                    .with_size(Size::px(66, LABEL_FONT_PX + 4)),
+            ),
+        ),
+    ]
+}
+
+/// The routing a bypassed node passes through, drawn across its card.
+///
+/// An output with no route simply has no line reaching it — which is the fact
+/// an author most needs to see, and the one Blender's derivation discards.
+fn passthrough_scenes(
+    document: &Document<Op>,
+    tree: TreeId,
+    node: NodeId,
+    at: (i32, i32),
+    shown: &pinion_node_graph::VisiblePorts,
+    theme: &pinion_core::theme::Theme,
+) -> Vec<Scene> {
+    let Some(through) = document.passthrough(tree, node) else {
+        return Vec::new();
+    };
+    through
+        .routes()
+        .iter()
+        .map(|route| {
+            wire_scene(
+                pin_at(at.0, at.1, position(&shown.inputs, route.input), false),
+                pin_at(at.0, at.1, position(&shown.outputs, route.output), true),
+                theme.resolve(ColorRole::OnSurfaceMuted),
+                format!("{VIEW_TAG}.through.{}.{}", node.0, route.output),
+            )
+        })
+        .collect()
+}
+
+/// Which drawn row a port index landed on, once hidden ports were taken out.
+///
+/// A port's identity is its index in the signature; its *place on screen* is its
+/// place among the ports still drawn. Keeping the two apart is what lets a
+/// collapsed node hide a port without renumbering anything.
+fn position(shown: &[u32], port: u32) -> usize {
+    shown.iter().position(|&p| p == port).unwrap_or(0)
+}
+
 fn pin_at(x: i32, y: i32, index: usize, output: bool) -> (i32, i32) {
     let px = if output {
         x + CARD_W - PORT / 2
@@ -376,7 +481,11 @@ fn node_scene(
     let (ins, outs) = signature.as_ref().map_or((Vec::new(), Vec::new()), |s| {
         (s.inputs.clone(), s.outputs.clone())
     });
-    let height = card_height((ins.len(), outs.len()));
+    // R1586 — which ports are DRAWN is the document's derivation, not this
+    // painter's: `hide_unused_ports` is unanswerable without knowing what is
+    // wired, and only the document knows that.
+    let shown = document.visible_ports(tree, node.id).unwrap_or_default();
+    let height = card_height((shown.inputs.len(), shown.outputs.len()));
     let (x, y) = (node.x, node.y + CANVAS_TOP);
 
     // A group instance is drawn in the container role, so "this node is another
@@ -389,6 +498,8 @@ fn node_scene(
     let label = theme.resolve(ColorRole::OnSurface);
     let outline = theme.resolve(if selected {
         ColorRole::Accent
+    } else if node.bypassed {
+        ColorRole::OnSurfaceMuted
     } else {
         ColorRole::Outline
     });
@@ -421,42 +532,32 @@ fn node_scene(
             ),
         ),
     ];
-    for (side, ports) in [(false, &ins), (true, &outs)] {
-        for (index, port) in ports.iter().enumerate() {
-            let (px, py) = pin_at(x, y, index, side);
-            scenes.push(Scene::Box(
-                BoxNode::new(
-                    Rect::new(upx(px - PORT / 2), upx(py - PORT / 2), upx(PORT), upx(PORT)),
-                    BoxStyle::filled(theme.resolve(match port.ty {
-                        Ty::Colour => ColorRole::Accent,
-                        Ty::Amount => ColorRole::OnSurfaceMuted,
-                    })),
-                )
-                .with_tag(format!(
-                    "{VIEW_TAG}.pin.{}.{}.{index}",
-                    node.id.0,
-                    if side { "out" } else { "in" }
-                ))
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_absolute_position(upx(px - PORT / 2), upx(py - PORT / 2))
-                        .with_size(Size::px(upx(PORT), upx(PORT))),
-                ),
-            ));
-            scenes.push(Scene::Text(
-                TextNode::styled(
-                    &port.name,
-                    Rect::default(),
-                    TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label),
-                )
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_absolute_position(
-                            upx(if side { px - 76 } else { px + 10 }),
-                            upx(py - i32::try_from(LABEL_FONT_PX).unwrap_or(12) / 2 - 1),
-                        )
-                        .with_size(Size::px(66, LABEL_FONT_PX + 4)),
-                ),
+    // A bypassed node draws what passes through it: the routing the substrate
+    // derived, as wires straight across the card. An author sees which value
+    // comes out where without reading `passthrough` over the wire — and an
+    // output with no route simply has no line reaching it, which is the fact
+    // most worth seeing.
+    if node.bypassed {
+        scenes.extend(passthrough_scenes(
+            document,
+            tree,
+            node.id,
+            (x, y),
+            &shown,
+            theme,
+        ));
+    }
+    for (side, ports) in [(false, &shown.inputs), (true, &shown.outputs)] {
+        for (row, &port) in ports.iter().enumerate() {
+            let all = if side { &outs } else { &ins };
+            let Some(declared) = all.get(port as usize) else {
+                continue;
+            };
+            scenes.extend(port_scenes(
+                declared,
+                (node.id, port, side),
+                pin_at(x, y, row, side),
+                (theme, label),
             ));
         }
     }
@@ -466,6 +567,20 @@ fn node_scene(
 /// A wire: a cubic whose handles are horizontal, the shape every node editor
 /// draws.
 fn wire_scene(from: (i32, i32), to: (i32, i32), colour: Color, tag: String) -> Scene {
+    wire_with(from, to, Stroke::new(colour, 2), tag)
+}
+
+/// The same wire, dashed: drawn, and carrying nothing (R1586).
+fn muted_wire_scene(from: (i32, i32), to: (i32, i32), colour: Color, tag: String) -> Scene {
+    wire_with(
+        from,
+        to,
+        Stroke::new(colour, 2).with_dash(Dash::DASHED),
+        tag,
+    )
+}
+
+fn wire_with(from: (i32, i32), to: (i32, i32), stroke: Stroke, tag: String) -> Scene {
     let reach = ((to.0 - from.0).abs() / 2).clamp(30, 120);
     let left = from.0.min(to.0) - 4;
     let top = from.1.min(to.1) - 4;
@@ -481,7 +596,7 @@ fn wire_scene(from: (i32, i32), to: (i32, i32), colour: Color, tag: String) -> S
                     end: point(to),
                 },
             ],
-            PathStyle::stroked(Stroke::new(colour, 2)),
+            PathStyle::stroked(stroke),
         )
         .with_tag(tag)
         .with_layout(LayoutStyle::new().with_absolute_position(upx(left), upx(top))),
@@ -544,12 +659,24 @@ fn view() -> Scene {
                 true,
             );
             let to = pin_at(sink.x, sink.y + CANVAS_TOP, link.to.port as usize, false);
-            children.push(wire_scene(
-                from,
-                to,
-                wire_colour,
-                format!("{VIEW_TAG}.wire.{}", link.id.0),
-            ));
+            children.push(if link.muted {
+                // R1586 — a muted wire is still a wire. Dashed, because what
+                // changed is whether it carries a value and not whether it is
+                // there, and R1575 gave the stroke that vocabulary.
+                muted_wire_scene(
+                    from,
+                    to,
+                    theme.resolve(ColorRole::OnSurfaceMuted),
+                    format!("{VIEW_TAG}.wire.{}", link.id.0),
+                )
+            } else {
+                wire_scene(
+                    from,
+                    to,
+                    wire_colour,
+                    format!("{VIEW_TAG}.wire.{}", link.id.0),
+                )
+            });
         }
         for node in host.nodes() {
             children.extend(node_scene(
@@ -829,6 +956,10 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::new("clipboard_bytes", "int"),
                     SchemaField::new("last_insert", "string"),
                     SchemaField::new("last_move", "string"),
+                    // R1586 — how each node and wire takes part.
+                    SchemaField::new("bypassed", "string"),
+                    SchemaField::new("muted_links", "string"),
+                    SchemaField::new("last_rewire", "string"),
                     // Argument-taking reads.
                     SchemaField::action("node_kind", "string"),
                     SchemaField::action("node_value", "string"),
@@ -836,6 +967,9 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("interface", "string"),
                     SchemaField::action("instances", "string"),
                     SchemaField::action("tree_name", "string"),
+                    SchemaField::action("passthrough", "string"),
+                    SchemaField::action("visible_ports", "string"),
+                    SchemaField::action("looks", "string"),
                     // The verbs.
                     SchemaField::action("select", "string"),
                     SchemaField::action("group", "string"),
@@ -854,6 +988,12 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("expose", "string"),
                     SchemaField::action("unexpose", "string"),
                     SchemaField::action("reset", "string"),
+                    SchemaField::action("bypass", "string"),
+                    SchemaField::action("mute_link", "string"),
+                    SchemaField::action("dissolve", "string"),
+                    SchemaField::action("detach", "string"),
+                    SchemaField::action("collapse", "string"),
+                    SchemaField::action("hide_ports", "string"),
                 ]
             },
         )
@@ -923,6 +1063,24 @@ impl ExternalIntrospect for GroupsOracle {
                 .map_or(0, |json| json.len())),
             "last_insert" => Some(IntrospectValue::Text(state.last_insert.get())),
             "last_move" => Some(IntrospectValue::Text(state.last_move.get())),
+            "last_rewire" => Some(IntrospectValue::Text(state.last_rewire.get())),
+            "bypassed" => Some(IntrospectValue::Text(join_ids(
+                document
+                    .tree(tree)
+                    .into_iter()
+                    .flat_map(pinion_node_graph::Tree::nodes)
+                    .filter(|n| n.bypassed)
+                    .map(|n| n.id.0),
+            ))),
+            "muted_links" => Some(IntrospectValue::Text(join_ids(
+                document
+                    .tree(tree)
+                    .map(pinion_node_graph::Tree::links)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|l| l.muted)
+                    .map(|l| l.id.0),
+            ))),
             _ => None,
         }
     }
@@ -931,7 +1089,8 @@ impl ExternalIntrospect for GroupsOracle {
         match path {
             "trees" | "definitions" | "nodes" | "links" | "valid" | "path" | "depth"
             | "current_tree" | "selection" | "last_refusal" | "clipboard" | "clipboard_severed"
-            | "clipboard_bytes" | "last_insert" | "last_move" => Err(InterveneError::ReadOnly),
+            | "clipboard_bytes" | "last_insert" | "last_move" | "bypassed" | "muted_links"
+            | "last_rewire" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -942,9 +1101,8 @@ impl ExternalIntrospect for GroupsOracle {
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         let outcome = match path {
-            "node_kind" | "node_value" | "node_ports" | "interface" | "instances" | "tree_name" => {
-                self.read(path, &args)
-            }
+            "node_kind" | "node_value" | "node_ports" | "interface" | "instances" | "tree_name"
+            | "passthrough" | "visible_ports" | "looks" => self.read(path, &args),
             _ => self.verb(path, &args),
         };
         // R1584 — every refusal reaches the readout, whoever made it. The
@@ -1022,6 +1180,7 @@ impl GroupsOracle {
                     i64::try_from(state.document.get().instance_count(tree)).unwrap_or(i64::MAX),
                 ))
             }
+            "passthrough" | "visible_ports" | "looks" => self.participation_read(path, args),
             "tree_name" => {
                 let (_, tree) = self.tree_arg(args)?;
                 Ok(IntrospectValue::Text(
@@ -1032,6 +1191,72 @@ impl GroupsOracle {
                         .map(|t| t.name.clone())
                         .unwrap_or_default(),
                 ))
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
+    /// R1586 — the three reads that say how a node takes part: what would flow
+    /// through it, which of its ports are drawn, and what it looks like. Split
+    /// out of [`read`](Self::read) because they are one subject, the way the
+    /// boundary and clipboard verbs already are.
+    fn participation_read(
+        &self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let document = state.document.get();
+        let tree = state.current();
+        match path {
+            "passthrough" => {
+                let id = NodeId(Self::number(args)?);
+                let through = document
+                    .passthrough(tree, id)
+                    .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
+                let routes = through
+                    .routes()
+                    .iter()
+                    .map(|r| format!("{}<-{}", r.output, r.input))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                Ok(IntrospectValue::Text(format!(
+                    "routes:{routes}|dropped:{}|unreached:{}|identity:{}",
+                    join_ids(through.dropped_outputs().iter().copied()),
+                    join_ids(through.unreached_inputs().iter().copied()),
+                    through.is_identity(),
+                )))
+            }
+            "visible_ports" => {
+                let id = NodeId(Self::number(args)?);
+                let shown = document
+                    .visible_ports(tree, id)
+                    .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
+                Ok(IntrospectValue::Text(format!(
+                    "in:{}|out:{}|hidden_in:{}|hidden_out:{}",
+                    join_ids(shown.inputs.iter().copied()),
+                    join_ids(shown.outputs.iter().copied()),
+                    join_ids(shown.hidden_inputs.iter().copied()),
+                    join_ids(shown.hidden_outputs.iter().copied()),
+                )))
+            }
+            "looks" => {
+                let id = NodeId(Self::number(args)?);
+                let node = document
+                    .tree(tree)
+                    .and_then(|t| t.node(id))
+                    .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
+                let look = &node.appearance;
+                Ok(IntrospectValue::Text(format!(
+                    "bypassed:{}|collapsed:{}|hide_unused_ports:{}|options:{}|preview:{}|width:{}",
+                    node.bypassed,
+                    look.collapsed,
+                    look.hide_unused_ports,
+                    look.show_options,
+                    look.show_preview,
+                    look.width
+                        .map_or_else(|| "auto".to_owned(), |w| w.to_string()),
+                )))
             }
             _ => Err(InvokeError::UnknownPath),
         }
@@ -1054,6 +1279,9 @@ impl GroupsOracle {
                 let ids = Self::ids(args)?;
                 state.selection.set(ids.clone());
                 ok(&ids.len().to_string())
+            }
+            "bypass" | "collapse" | "hide_ports" | "mute_link" | "dissolve" | "detach" => {
+                self.participation(path, args)
             }
             "group" => {
                 let name = Self::text(args)?;
@@ -1108,6 +1336,89 @@ impl GroupsOracle {
     /// boundary — which is the same place Blender reads it from
     /// (`snode->edittree` against `ED_node_tree_get(snode, 1)`), and refusing at
     /// the root is its "Not inside node group".
+    /// R1586 — the verbs that change how a node or a wire takes part.
+    ///
+    /// `bypass` and `mute_link` change what the graph *means*; `collapse` and
+    /// `hide_ports` change only what it looks like; `dissolve` and `detach`
+    /// apply the bypass derivation to the structure. Grouped here because the
+    /// difference between those three kinds is the round's whole subject.
+    fn participation(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let tree = state.current();
+        let ok = |text: &str| Ok(IntrospectValue::Text(text.to_owned()));
+        match path {
+            // R1586 — a node says how it takes part. `bypass` changes the
+            // meaning; `collapse` and `hide_ports` change only the picture, and
+            // the demo asserts that difference over the wire.
+            "bypass" | "collapse" | "hide_ports" => {
+                let ids = Self::ids(args)?;
+                let mut document = state.document.get();
+                let mut changed = Vec::new();
+                for id in ids {
+                    let node = document
+                        .tree_mut(tree)
+                        .and_then(|t| t.node_mut(id))
+                        .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
+                    let slot = match path {
+                        "bypass" => &mut node.bypassed,
+                        "collapse" => &mut node.appearance.collapsed,
+                        _ => &mut node.appearance.hide_unused_ports,
+                    };
+                    *slot = !*slot;
+                    changed.push(format!("{}={}", id.0, *slot));
+                }
+                state.document.set(document);
+                state.refusal.set(String::new());
+                ok(&changed.join(","))
+            }
+            "mute_link" => {
+                let id = LinkId(Self::number(args)?);
+                let mut document = state.document.get();
+                let was = document
+                    .tree(tree)
+                    .and_then(|t| t.link(id))
+                    .map(|l| l.muted)
+                    .ok_or_else(|| InvokeError::rejected(format!("no link {}", id.0)))?;
+                document
+                    .set_link_muted(tree, id, !was)
+                    .map_err(|e| InvokeError::rejected(e.to_string()))?;
+                state.document.set(document);
+                state.refusal.set(String::new());
+                ok(if was { "unmuted" } else { "muted" })
+            }
+            "dissolve" | "detach" => {
+                let id = NodeId(Self::number(args)?);
+                let keep = path == "detach";
+                let out = state
+                    .edit(|document| {
+                        if keep {
+                            document.detach(tree, id)
+                        } else {
+                            document.dissolve(tree, id)
+                        }
+                    })
+                    .map_err(InvokeError::rejected)?;
+                state.last_rewire.set(describe_rewire(&out));
+                if !keep {
+                    state.selection.set(
+                        state
+                            .selection
+                            .get()
+                            .into_iter()
+                            .filter(|n| *n != id)
+                            .collect(),
+                    );
+                }
+                ok(&describe_rewire(&out))
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
     fn boundary(
         &mut self,
         path: &str,
@@ -1396,6 +1707,45 @@ impl GroupsOracle {
 }
 
 /// `"Base:colour,Blend:colour"` — a port list as the wire sees it.
+/// `1,4,7` — the wire form for a list of small numbers, empty when there are
+/// none. One spelling, so an agent parses every id list the same way.
+fn join_ids(ids: impl Iterator<Item = u32>) -> String {
+    ids.map(|id| id.to_string()).collect::<Vec<_>>().join(",")
+}
+
+/// R1586 — a rewire in one line: what was bridged, and what nothing reached.
+///
+/// The second half is the part Blender's `node_internal_relink` removes and
+/// never mentions, so it is the reason this read exists at all.
+fn describe_rewire(out: &Rewired) -> String {
+    let bridges = out
+        .bridged
+        .iter()
+        .map(|b| {
+            format!(
+                "{}.{}->{}.{}{}",
+                b.from.node.0,
+                b.from.port,
+                b.to.node.0,
+                b.to.port,
+                if b.muted { " (muted)" } else { "" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let severed = out
+        .severed
+        .iter()
+        .map(|l| format!("{}.{}", l.to.node.0, l.to.port))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "bridged:{bridges}|severed:{severed}|removed:{}|lossless:{}",
+        out.removed.len(),
+        out.lossless()
+    )
+}
+
 fn describe(ports: &[Port<Ty, Val>]) -> String {
     ports
         .iter()

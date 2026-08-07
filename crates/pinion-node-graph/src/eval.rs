@@ -155,44 +155,66 @@ impl<K: NodeKind> Evaluator<'_, K> {
         }
 
         // The signature resolved above, so the node is there.
-        let body = self
+        let resolved = self
             .document
             .tree(frame.tree)
             .and_then(|t| t.node(node))
-            .map(|n| n.body.clone());
-        let Some(body) = body else {
+            .map(|n| (n.body.clone(), n.bypassed));
+        let Some((body, bypassed)) = resolved else {
             self.visiting.remove(&key);
             return vec![None; arity];
         };
-        let mut outputs = match body {
-            NodeBody::Kind(kind) => {
-                let inputs = self.node_inputs(frame, node, depth);
-                kind.evaluate(&inputs)
+        // R1586 — a bypassed node does not compute. Its inputs are still
+        // resolved (something has to pass through), and the routing is derived
+        // from its signature rather than authored. This arm comes before the
+        // body match on purpose: it is the same answer for an application kind
+        // and for a group instance, and a group instance must NOT be descended
+        // into here — bypassing one is exactly the request not to run it.
+        let mut outputs = if bypassed {
+            let inputs = self.node_inputs(frame, node, depth);
+            let routing = self
+                .document
+                .passthrough(frame.tree, node)
+                .unwrap_or_default();
+            let mut passed = vec![None; arity];
+            for route in routing.routes() {
+                if let Some(slot) = passed.get_mut(route.output as usize) {
+                    *slot = inputs.get(route.input as usize).cloned().flatten();
+                }
             }
-            // The inside end of this tree's interface inputs: it produces what
-            // the instance above was fed.
-            NodeBody::Interface(InterfaceSide::Input) => frame.bindings.clone(),
-            // The inside end of the OUTPUTS has none of its own.
-            NodeBody::Interface(InterfaceSide::Output) => Vec::new(),
-            NodeBody::Group(definition) => {
-                let bindings = self.node_inputs(frame, node, depth);
-                let mut instance = frame.instance.clone();
-                instance.push((frame.tree, node));
-                let inner = Frame {
-                    instance,
-                    tree: definition,
-                    bindings,
-                };
-                match self
-                    .document
-                    .tree(definition)
-                    .and_then(|t| t.interface_node(InterfaceSide::Output))
-                    .map(|n| n.id)
-                {
-                    Some(exit) => self.node_inputs(&inner, exit, depth + 1),
-                    // A definition with no inside-output node exposes outputs
-                    // that nothing inside produces. Legal, and empty.
-                    None => Vec::new(),
+            passed
+        } else {
+            match body {
+                NodeBody::Kind(kind) => {
+                    let inputs = self.node_inputs(frame, node, depth);
+                    kind.evaluate(&inputs)
+                }
+                // The inside end of this tree's interface inputs: it produces
+                // what the instance above was fed.
+                NodeBody::Interface(InterfaceSide::Input) => frame.bindings.clone(),
+                // The inside end of the OUTPUTS has none of its own.
+                NodeBody::Interface(InterfaceSide::Output) => Vec::new(),
+                NodeBody::Group(definition) => {
+                    let bindings = self.node_inputs(frame, node, depth);
+                    let mut instance = frame.instance.clone();
+                    instance.push((frame.tree, node));
+                    let inner = Frame {
+                        instance,
+                        tree: definition,
+                        bindings,
+                    };
+                    match self
+                        .document
+                        .tree(definition)
+                        .and_then(|t| t.interface_node(InterfaceSide::Output))
+                        .map(|n| n.id)
+                    {
+                        Some(exit) => self.node_inputs(&inner, exit, depth + 1),
+                        // A definition with no inside-output node exposes
+                        // outputs that nothing inside produces. Legal, and
+                        // empty.
+                        None => Vec::new(),
+                    }
                 }
             }
         };
@@ -215,10 +237,17 @@ impl<K: NodeKind> Evaluator<'_, K> {
         let mut resolved = Vec::with_capacity(signature.inputs.len());
         for (index, port) in signature.inputs.iter().enumerate() {
             let socket = Socket::new(node, u32::try_from(index).unwrap_or(u32::MAX));
+            // R1586 — a MUTED link is structurally present and semantically
+            // absent, so the port falls back to its own default exactly as if
+            // nothing were wired. Filtered here rather than in `link_into`,
+            // because every structural derivation in this crate — the group
+            // boundary, the partition, the fragment cut — must go on seeing it:
+            // the wire is still there, it is the value that is not.
             let feeding = self
                 .document
                 .tree(frame.tree)
                 .and_then(|t| t.link_into(socket))
+                .filter(|link| !link.muted)
                 .copied();
             resolved.push(match feeding {
                 Some(link) => self

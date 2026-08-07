@@ -76,8 +76,8 @@ use std::fmt;
 
 use crate::group::{INTERFACE_GAP, PortSide};
 use crate::model::{
-    Document, DroppedLink, InterfaceSide, KindPort, LinkId, NodeBody, NodeId, NodeKind, Socket,
-    TreeId,
+    Document, DroppedLink, InterfaceSide, KindPort, LinkId, NodeBody, NodeId, NodeKind, Sink,
+    Socket, TreeId,
 };
 use crate::numbering::Numbering;
 
@@ -577,13 +577,37 @@ struct Face<K: NodeKind> {
     port: KindPort<K>,
     outer: Vec<Socket>,
     inner: Vec<Socket>,
+    /// Those of this face's *consumers* whose crossing link was muted, in the
+    /// identity they had before anything moved (R1586).
+    ///
+    /// A subset rather than a flag beside each socket, because which of `outer`
+    /// and `inner` holds the consumers depends on the face's direction, and a
+    /// field that meant two things by position is the shape this crate spends
+    /// its refusals avoiding.
+    muted: Vec<Socket>,
+}
+
+impl<K: NodeKind> Face<K> {
+    /// Whether this face's crossing at `consumer` was muted before the move.
+    fn was_muted(&self, consumer: Socket) -> bool {
+        self.muted.contains(&consumer)
+    }
+}
+
+/// The muted subset of a `(consumer, muted)` list, in the form [`Face`] holds.
+fn muted_of(consumers: &[(Socket, bool)]) -> Vec<Socket> {
+    consumers
+        .iter()
+        .filter(|&&(_, muted)| muted)
+        .map(|&(socket, _)| socket)
+        .collect()
 }
 
 /// An interface input whose inside consumers change hands: the feed moved in,
 /// so the value is produced inside now.
 struct Takeover {
     producer: Socket,
-    consumers: Vec<Socket>,
+    consumers: Vec<Sink>,
 }
 
 /// Everything the inward move needs, computed before anything is mutated.
@@ -591,15 +615,15 @@ struct InwardPlan<K: NodeKind> {
     moving: Vec<NodeId>,
     entry: Option<NodeId>,
     /// Links between two moved nodes, to re-create inside.
-    carried: Vec<(Socket, Socket)>,
+    carried: Vec<(Socket, Sink)>,
     /// Extra inside consumers for a value that already crosses at a port.
-    shared: Vec<(u32, Vec<Socket>)>,
+    shared: Vec<(u32, Vec<Sink>)>,
     inbound: Vec<Face<K>>,
     outbound: Vec<Face<K>>,
     takeovers: Vec<Takeover>,
     /// An interface output consumed by a moved node: the producer inside feeds
     /// it directly, and the port stays, because an output may feed many.
-    passthroughs: Vec<(Socket, Socket)>,
+    passthroughs: Vec<(Socket, Sink)>,
     dying: Ports,
     lost: Vec<LinkId>,
 }
@@ -608,13 +632,13 @@ struct InwardPlan<K: NodeKind> {
 struct OutwardPlan<K: NodeKind> {
     moving: Vec<NodeId>,
     /// Links between two moved nodes, to re-create in the host.
-    carried: Vec<(Socket, Socket)>,
+    carried: Vec<(Socket, Sink)>,
     /// An interface input feeding moved nodes: they are fed by whatever feeds
     /// the instance's port, when anything does.
-    entry_feeds: Vec<(Option<Socket>, Vec<Socket>)>,
+    entry_feeds: Vec<(Option<Socket>, Vec<Sink>)>,
     /// An interface output fed by a moved node: it feeds whatever the
     /// instance's port fed.
-    exit_takes: Vec<(Socket, Vec<Socket>)>,
+    exit_takes: Vec<(Socket, Vec<Sink>)>,
     inbound: Vec<Face<K>>,
     outbound: Vec<Face<K>>,
     dying: Ports,
@@ -704,9 +728,19 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             existing.sort_unstable();
+            // R1586 — each of these consumers is fed by one link today, and the
+            // derived link stands in for exactly that one, so its mutedness is
+            // read here rather than lost.
+            let sinks: Vec<Sink> = fresh
+                .iter()
+                .map(|&socket| Sink {
+                    socket,
+                    muted: host.link_into(socket).is_some_and(|l| l.muted),
+                })
+                .collect();
             if let Some(&port) = existing.first() {
                 // One value is one port, and this value already crosses here.
-                plan.shared.push((port, fresh));
+                plan.shared.push((port, sinks));
             } else {
                 let port =
                     self.port(tree, first, PortSide::In)
@@ -717,6 +751,7 @@ impl<K: NodeKind> Document<K> {
                 plan.inbound.push(Face {
                     port,
                     outer: vec![producer],
+                    muted: sinks.iter().filter(|s| s.muted).map(|s| s.socket).collect(),
                     inner: fresh,
                 });
             }
@@ -733,13 +768,19 @@ impl<K: NodeKind> Document<K> {
                         tree,
                         node: producer.node,
                     })?;
+            let consumers: Vec<Socket> = face
+                .consumers()
+                .iter()
+                .map(|c| numbering.socket(*c))
+                .collect();
             plan.outbound.push(Face {
                 port,
-                outer: face
-                    .consumers()
+                muted: consumers
                     .iter()
-                    .map(|c| numbering.socket(*c))
+                    .copied()
+                    .filter(|&c| host.link_into(c).is_some_and(|l| l.muted))
                     .collect(),
+                outer: consumers,
                 inner: vec![producer],
             });
         }
@@ -752,18 +793,29 @@ impl<K: NodeKind> Document<K> {
                 selected.contains(&link.from.node),
                 selected.contains(&link.to.node),
             ) {
-                (true, true) => plan.carried.push((link.from, link.to)),
+                (true, true) => plan.carried.push((
+                    link.from,
+                    Sink {
+                        socket: link.to,
+                        muted: link.muted,
+                    },
+                )),
                 (true, false) => {
                     // A moved node feeds the instance, so the value is produced
-                    // inside now and the port's own feed is gone.
-                    let consumers: Vec<Socket> = plan
+                    // inside now and the port's own feed is gone. The one link
+                    // that replaces the two is muted when either was (R1586) —
+                    // the rule an inline and a dissolve both use.
+                    let consumers: Vec<Sink> = plan
                         .entry
                         .map(|entry| {
                             inner
                                 .links()
                                 .iter()
                                 .filter(|l| l.from == Socket::new(entry, link.to.port))
-                                .map(|l| l.to)
+                                .map(|l| Sink {
+                                    socket: l.to,
+                                    muted: l.muted || link.muted,
+                                })
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -785,10 +837,16 @@ impl<K: NodeKind> Document<K> {
                             .links()
                             .iter()
                             .find(|l| l.to == Socket::new(exit, link.from.port))
-                            .map(|l| l.from)
+                            .map(|l| (l.from, l.muted))
                     });
                     match producer {
-                        Some(producer) => plan.passthroughs.push((producer, link.to)),
+                        Some((producer, muted)) => plan.passthroughs.push((
+                            producer,
+                            Sink {
+                                socket: link.to,
+                                muted: muted || link.muted,
+                            },
+                        )),
                         None => plan.lost.push(link.id),
                     }
                 }
@@ -838,8 +896,9 @@ impl<K: NodeKind> Document<K> {
             .then(|| self.interface_node_or_create(definition, InterfaceSide::Output));
 
         for (from, to) in &plan.carried {
-            if let (Some(from), Some(to)) = (remap(&mapping, *from), remap(&mapping, *to)) {
-                self.push_link(definition, from, to);
+            if let (Some(from), Some(landed)) = (remap(&mapping, *from), remap(&mapping, to.socket))
+            {
+                self.push_link(definition, from, landed, to.muted);
             }
         }
         for takeover in &plan.takeovers {
@@ -847,32 +906,37 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             for consumer in &takeover.consumers {
-                self.push_link(definition, producer, *consumer);
+                self.push_link(definition, producer, consumer.socket, consumer.muted);
             }
         }
         for (producer, consumer) in &plan.passthroughs {
-            if let Some(consumer) = remap(&mapping, *consumer) {
-                self.push_link(definition, *producer, consumer);
+            if let Some(landed) = remap(&mapping, consumer.socket) {
+                self.push_link(definition, *producer, landed, consumer.muted);
             }
         }
         if let Some(entry) = entry {
             for (port, consumers) in &plan.shared {
                 let at = interface_edit.survivor(InterfaceSide::Input, *port);
                 for consumer in consumers {
-                    if let Some(consumer) = remap(&mapping, *consumer) {
-                        self.push_link(definition, Socket::new(entry, at), consumer);
+                    if let Some(landed) = remap(&mapping, consumer.socket) {
+                        self.push_link(definition, Socket::new(entry, at), landed, consumer.muted);
                     }
                 }
             }
             for (nth, face) in plan.inbound.iter().enumerate() {
                 let at = interface_edit.added(InterfaceSide::Input, nth);
                 for consumer in &face.inner {
-                    if let Some(consumer) = remap(&mapping, *consumer) {
-                        self.push_link(definition, Socket::new(entry, at), consumer);
+                    // Read against the identity the consumer had before it
+                    // moved, which is the identity the face recorded (R1586).
+                    let muted = face.was_muted(*consumer);
+                    if let Some(landed) = remap(&mapping, *consumer) {
+                        self.push_link(definition, Socket::new(entry, at), landed, muted);
                     }
                 }
                 for producer in &face.outer {
-                    self.push_link(tree, *producer, Socket::new(instance, at));
+                    // The shared half of the crossing; the fact rides the
+                    // per-consumer half, as it does in a collapse.
+                    self.push_link(tree, *producer, Socket::new(instance, at), false);
                 }
             }
         }
@@ -881,11 +945,12 @@ impl<K: NodeKind> Document<K> {
                 let at = interface_edit.added(InterfaceSide::Output, nth);
                 for producer in &face.inner {
                     if let Some(producer) = remap(&mapping, *producer) {
-                        self.push_link(definition, producer, Socket::new(exit, at));
+                        self.push_link(definition, producer, Socket::new(exit, at), false);
                     }
                 }
                 for consumer in &face.outer {
-                    self.push_link(tree, Socket::new(instance, at), *consumer);
+                    let muted = face.was_muted(*consumer);
+                    self.push_link(tree, Socket::new(instance, at), *consumer, muted);
                 }
             }
         }
@@ -956,25 +1021,42 @@ impl<K: NodeKind> Document<K> {
             lost: Vec::new(),
         };
         // One value is one port, so the new crossings are grouped by producer.
-        let mut entering: BTreeMap<u32, Vec<Socket>> = BTreeMap::new();
-        let mut leaving: BTreeMap<Socket, Vec<Socket>> = BTreeMap::new();
-        let mut arriving: BTreeMap<Socket, Vec<Socket>> = BTreeMap::new();
+        let mut entering: BTreeMap<u32, Vec<Sink>> = BTreeMap::new();
+        let mut leaving: BTreeMap<Socket, Vec<(Socket, bool)>> = BTreeMap::new();
+        let mut arriving: BTreeMap<Socket, Vec<(Socket, bool)>> = BTreeMap::new();
         for link in inner.links() {
             match (
                 selected.contains(&link.from.node),
                 selected.contains(&link.to.node),
             ) {
-                (true, true) => plan.carried.push((link.from, link.to)),
+                (true, true) => plan.carried.push((
+                    link.from,
+                    Sink {
+                        socket: link.to,
+                        muted: link.muted,
+                    },
+                )),
                 (false, true) if Some(link.from.node) == entry => {
-                    entering.entry(link.from.port).or_default().push(link.to);
+                    entering.entry(link.from.port).or_default().push(Sink {
+                        socket: link.to,
+                        muted: link.muted,
+                    });
                 }
-                (false, true) => arriving.entry(link.from).or_default().push(link.to),
+                (false, true) => arriving
+                    .entry(link.from)
+                    .or_default()
+                    .push((link.to, link.muted)),
                 (true, false) if Some(link.to.node) == exit => {
-                    let consumers: Vec<Socket> = host
+                    // Two links become one, so the survivor is muted when
+                    // either was (R1586).
+                    let consumers: Vec<Sink> = host
                         .links()
                         .iter()
                         .filter(|l| l.from == Socket::new(instance, link.to.port))
-                        .map(|l| l.to)
+                        .map(|l| Sink {
+                            socket: l.to,
+                            muted: l.muted || link.muted,
+                        })
                         .collect();
                     plan.dying.insert(InterfaceSide::Output, link.to.port);
                     if consumers.is_empty() {
@@ -982,13 +1064,23 @@ impl<K: NodeKind> Document<K> {
                     }
                     plan.exit_takes.push((link.from, consumers));
                 }
-                (true, false) => leaving.entry(link.from).or_default().push(link.to),
+                (true, false) => leaving
+                    .entry(link.from)
+                    .or_default()
+                    .push((link.to, link.muted)),
                 (false, false) => {}
             }
         }
 
-        for (port, consumers) in entering {
-            let feed = host.link_into(Socket::new(instance, port)).map(|l| l.from);
+        for (port, mut consumers) in entering {
+            let feed = host.link_into(Socket::new(instance, port));
+            // The outside half of the chain this replaces (R1586).
+            if feed.is_some_and(|l| l.muted) {
+                for sink in &mut consumers {
+                    sink.muted = true;
+                }
+            }
+            let feed = feed.map(|l| l.from);
             if feed.is_none() {
                 plan.lost.extend(
                     inner
@@ -1017,16 +1109,17 @@ impl<K: NodeKind> Document<K> {
         // its port is named by the consumer that stays — the inside end, the
         // same rule a collapse uses.
         for (producer, consumers) in leaving {
-            let port = self.port(definition, consumers[0], PortSide::In).ok_or(
+            let port = self.port(definition, consumers[0].0, PortSide::In).ok_or(
                 RepartitionError::NoSuchNode {
                     tree: definition,
-                    node: consumers[0].node,
+                    node: consumers[0].0.node,
                 },
             )?;
             plan.inbound.push(Face {
                 port,
                 outer: vec![producer],
-                inner: consumers,
+                muted: muted_of(&consumers),
+                inner: consumers.into_iter().map(|(socket, _)| socket).collect(),
             });
         }
         for (producer, consumers) in arriving {
@@ -1038,7 +1131,8 @@ impl<K: NodeKind> Document<K> {
             )?;
             plan.outbound.push(Face {
                 port,
-                outer: consumers,
+                muted: muted_of(&consumers),
+                outer: consumers.into_iter().map(|(socket, _)| socket).collect(),
                 inner: vec![producer],
             });
         }
@@ -1085,15 +1179,16 @@ impl<K: NodeKind> Document<K> {
             .then(|| self.interface_node_or_create(definition, InterfaceSide::Output));
 
         for (from, to) in &plan.carried {
-            if let (Some(from), Some(to)) = (remap(&mapping, *from), remap(&mapping, *to)) {
-                self.push_link(tree, from, to);
+            if let (Some(from), Some(landed)) = (remap(&mapping, *from), remap(&mapping, to.socket))
+            {
+                self.push_link(tree, from, landed, to.muted);
             }
         }
         for (feed, consumers) in &plan.entry_feeds {
             let Some(feed) = feed else { continue };
             for consumer in consumers {
-                if let Some(consumer) = remap(&mapping, *consumer) {
-                    self.push_link(tree, *feed, consumer);
+                if let Some(landed) = remap(&mapping, consumer.socket) {
+                    self.push_link(tree, *feed, landed, consumer.muted);
                 }
             }
         }
@@ -1102,18 +1197,19 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             for consumer in consumers {
-                self.push_link(tree, producer, *consumer);
+                self.push_link(tree, producer, consumer.socket, consumer.muted);
             }
         }
         if let Some(entry) = entry {
             for (nth, face) in plan.inbound.iter().enumerate() {
                 let at = interface_edit.added(InterfaceSide::Input, nth);
                 for consumer in &face.inner {
-                    self.push_link(definition, Socket::new(entry, at), *consumer);
+                    let muted = face.was_muted(*consumer);
+                    self.push_link(definition, Socket::new(entry, at), *consumer, muted);
                 }
                 for producer in &face.outer {
                     if let Some(producer) = remap(&mapping, *producer) {
-                        self.push_link(tree, producer, Socket::new(instance, at));
+                        self.push_link(tree, producer, Socket::new(instance, at), false);
                     }
                 }
             }
@@ -1122,11 +1218,12 @@ impl<K: NodeKind> Document<K> {
             for (nth, face) in plan.outbound.iter().enumerate() {
                 let at = interface_edit.added(InterfaceSide::Output, nth);
                 for producer in &face.inner {
-                    self.push_link(definition, *producer, Socket::new(exit, at));
+                    self.push_link(definition, *producer, Socket::new(exit, at), false);
                 }
                 for consumer in &face.outer {
-                    if let Some(consumer) = remap(&mapping, *consumer) {
-                        self.push_link(tree, Socket::new(instance, at), consumer);
+                    let muted = face.was_muted(*consumer);
+                    if let Some(landed) = remap(&mapping, *consumer) {
+                        self.push_link(tree, Socket::new(instance, at), landed, muted);
                     }
                 }
             }

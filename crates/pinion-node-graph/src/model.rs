@@ -5,6 +5,8 @@
 //! module supplies everything a node system needs that is *not* taxonomy.
 
 use serde::{Deserialize, Serialize};
+
+use crate::appearance::Appearance;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -58,6 +60,36 @@ pub struct Link {
     pub from: Socket,
     /// The consuming socket (an input).
     pub to: Socket,
+    /// Whether the link is **muted**: it is part of the graph's structure and
+    /// carries no value, so the port it feeds falls back to its own default
+    /// exactly as if nothing were wired to it (R1586).
+    ///
+    /// This is how a wiring is A/B-tested without being destroyed. It is a
+    /// *semantic* declaration — [`Evaluator`](crate::Evaluator) reads it —
+    /// while every structural derivation in this crate ignores it, because a
+    /// muted link still occupies its input and still crosses a boundary.
+    ///
+    /// Blender spells this `NODE_LINK_MUTED` and spells a bypassed **node**
+    /// `NODE_MUTED`, which are opposite behaviours under one word: a muted link
+    /// stops a value, a muted node passes one through. They are named apart
+    /// here — see [`Node::bypassed`].
+    #[serde(default)]
+    pub muted: bool,
+}
+
+/// A consumer a derivation is about to feed, and whether the link it stands in
+/// for was muted (R1586).
+///
+/// Every structural derivation in this crate routes by *consumer*, because an
+/// input takes at most one link and so a consumer socket names a link. That is
+/// what lets mutedness survive a group collapse, a paste and a boundary move
+/// without being threaded through as a separate map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Sink {
+    /// The consuming socket.
+    pub socket: Socket,
+    /// Whether the value reaching it was being stopped.
+    pub muted: bool,
 }
 
 /// One socket in a node's signature.
@@ -192,6 +224,27 @@ pub struct Node<K> {
     pub y: i32,
     /// A user-facing rename. `None` means "call it what its body is called".
     pub label: Option<String>,
+    /// Whether the node is **bypassed**: it does not compute, and the values
+    /// arriving at its inputs pass straight out of its outputs (R1586).
+    ///
+    /// This is the one fact on a node, other than its body and its links, that
+    /// changes what the graph *means* — so it is a field of its own rather than
+    /// a bit in a word shared with the node's looks. Which input reaches which
+    /// output is derived, not authored: see [`Document::passthrough`].
+    ///
+    /// Blender spells this `NODE_MUTED` and keeps it in the same `flag` integer
+    /// as `NODE_COLLAPSED`, `NODE_PREVIEW` and even `NODE_SELECT`, so nothing in
+    /// its model says which of those bits its evaluator may read.
+    #[serde(default)]
+    pub bypassed: bool,
+    /// What the node looks like — never what it means.
+    ///
+    /// It lives in the document for the same reason `x` and `y` do: it must
+    /// travel with the node through a group collapse, a fragment and a paste,
+    /// and a side table keyed by [`NodeId`] would not, because those operations
+    /// move nodes between trees.
+    #[serde(default)]
+    pub appearance: Appearance,
 }
 
 impl<K: NodeKind> Node<K> {
@@ -207,6 +260,33 @@ impl<K: NodeKind> Node<K> {
             NodeBody::Interface(InterfaceSide::Input) => "Group Input".to_owned(),
             NodeBody::Interface(InterfaceSide::Output) => "Group Output".to_owned(),
         }
+    }
+
+    /// Take on every fact about `source` that is not its identity, its body or
+    /// its place: the rename, the bypass, the looks.
+    ///
+    /// The one place a node is copied *without* being moved — which is what a
+    /// paste and an inline both do, since each mints a fresh id in a tree that
+    /// has its own numbering. Before R1586 those two sites copied the label and
+    /// nothing else, which was complete at the time and silently would not have
+    /// been the moment a field was added; the compiler cannot see a hand-rolled
+    /// copy the way it sees a struct literal.
+    ///
+    /// So `source` is **destructured**: a field added to [`Node`] fails to
+    /// compile here until someone has said whether a copy carries it.
+    pub(crate) fn adopt_from(&mut self, source: &Self) {
+        let Self {
+            id: _,
+            body: _,
+            x: _,
+            y: _,
+            label,
+            bypassed,
+            appearance,
+        } = source;
+        self.label.clone_from(label);
+        self.bypassed = *bypassed;
+        self.appearance.clone_from(appearance);
     }
 }
 
@@ -543,6 +623,8 @@ impl<K: NodeKind> Document<K> {
                 x,
                 y,
                 label: None,
+                bypassed: false,
+                appearance: Appearance::default(),
             },
         );
         Ok(id)
@@ -564,12 +646,24 @@ impl<K: NodeKind> Document<K> {
         if host.nodes.remove(&node).is_none() {
             return Err(EditError::NoSuchNode { tree, node });
         }
+        Ok(self.unwire_node(tree, node))
+    }
+
+    /// Remove every link touching `node`, answering them; the node stays.
+    ///
+    /// The half of [`Self::remove_node`] that [`Self::detach`] also needs, kept
+    /// in one place so "which links touch this node" has one definition
+    /// (R1586).
+    pub(crate) fn unwire_node(&mut self, tree: TreeId, node: NodeId) -> Vec<Link> {
+        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+            return Vec::new();
+        };
         let (dropped, kept) = host
             .links
             .iter()
             .partition(|l| l.from.node == node || l.to.node == node);
         host.links = kept;
-        Ok(dropped)
+        dropped
     }
 
     /// Link one socket to another.
@@ -640,7 +734,12 @@ impl<K: NodeKind> Document<K> {
         }
         let id = LinkId(host.next_link);
         host.next_link += 1;
-        host.links.push(Link { id, from, to });
+        host.links.push(Link {
+            id,
+            from,
+            to,
+            muted: false,
+        });
         Ok(Connected {
             link: id,
             displaced,
@@ -663,6 +762,68 @@ impl<K: NodeKind> Document<K> {
             .position(|l| l.id == link)
             .ok_or(EditError::NoSuchLink { tree, link })?;
         Ok(host.links.remove(at))
+    }
+
+    /// Bypass `node`, or stop bypassing it, answering what it was before.
+    ///
+    /// A bypassed node does not compute: the values arriving at its inputs pass
+    /// straight out of its outputs, by the routing
+    /// [`Self::passthrough`] derives. Nothing structural changes, which is the
+    /// point — this is the non-destructive twin of [`Self::dissolve`], and the
+    /// two share one derivation so they cannot disagree.
+    ///
+    /// This is the same field [`Tree::node_mut`] reaches, not a second copy of
+    /// it. Blender's `NODE_OT_mute_toggle`.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchNode`].
+    pub fn set_bypassed(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        bypassed: bool,
+    ) -> Result<bool, EditError> {
+        let host = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .ok_or(EditError::NoSuchTree(tree))?;
+        let target = host
+            .nodes
+            .get_mut(&node)
+            .ok_or(EditError::NoSuchNode { tree, node })?;
+        Ok(std::mem::replace(&mut target.bypassed, bypassed))
+    }
+
+    /// Mute `link`, or unmute it, answering what it was before.
+    ///
+    /// A muted link keeps its place in the structure and carries no value, so
+    /// the port it feeds falls back to its own default. Blender's
+    /// `NODE_OT_links_mute`.
+    ///
+    /// Narrower than a `link_mut` on purpose: mutedness is the only part of a
+    /// link that may be changed in place, because the endpoints are what every
+    /// invariant in this crate is stated over.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchLink`].
+    pub fn set_link_muted(
+        &mut self,
+        tree: TreeId,
+        link: LinkId,
+        muted: bool,
+    ) -> Result<bool, EditError> {
+        let host = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .ok_or(EditError::NoSuchTree(tree))?;
+        let target = host
+            .links
+            .iter_mut()
+            .find(|l| l.id == link)
+            .ok_or(EditError::NoSuchLink { tree, link })?;
+        Ok(std::mem::replace(&mut target.muted, muted))
     }
 
     /// Take a node out of a tree without touching any link.
@@ -701,13 +862,30 @@ impl<K: NodeKind> Document<K> {
     /// collapse would leave a half-built document, which the plan-then-perform
     /// split exists to make impossible. [`Self::validate`] is the standing
     /// check that this trust is warranted.
-    pub(crate) fn push_link(&mut self, tree: TreeId, from: Socket, to: Socket) -> LinkId {
+    ///
+    /// `muted` is an argument rather than a default because a derived link
+    /// stands in for one that already existed, and whether *that* one carried a
+    /// value is a fact the derivation must not quietly discard (R1586). Making
+    /// it a parameter is what turns "did every link-moving operation preserve
+    /// mutedness?" into something the compiler asks at each of its call sites.
+    pub(crate) fn push_link(
+        &mut self,
+        tree: TreeId,
+        from: Socket,
+        to: Socket,
+        muted: bool,
+    ) -> LinkId {
         let Some(host) = self.trees.get_mut(tree.0 as usize) else {
             return LinkId(u32::MAX);
         };
         let id = LinkId(host.next_link);
         host.next_link += 1;
-        host.links.push(Link { id, from, to });
+        host.links.push(Link {
+            id,
+            from,
+            to,
+            muted,
+        });
         id
     }
 

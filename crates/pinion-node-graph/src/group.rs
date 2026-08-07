@@ -338,13 +338,22 @@ impl<K: NodeKind> Document<K> {
             .filter_map(|&id| self.take_link(tree, id))
             .collect();
         for link in carried {
-            self.push_link(definition, link.from, link.to);
+            self.push_link(definition, link.from, link.to, link.muted);
         }
+        // R1586 — a crossing becomes TWO links, and only one of them can carry
+        // the fact that the value was being stopped. It is the per-consumer
+        // half: a face aggregates one producer with several consumers, whose
+        // crossings may disagree about mutedness, and an input takes at most one
+        // link — so the consumer socket is what names a crossing.
+        let mut crossing_muted: BTreeMap<Socket, bool> = BTreeMap::new();
         for face in plan.inputs.iter().chain(&plan.outputs) {
             for &id in &face.links {
-                let _ = self.take_link(tree, id);
+                if let Some(link) = self.take_link(tree, id) {
+                    crossing_muted.insert(link.to, link.muted);
+                }
             }
         }
+        let was_muted = |consumer: Socket| crossing_muted.get(&consumer).copied().unwrap_or(false);
 
         // The interface nodes: the inside end of the group's own sockets.
         let entry = self
@@ -366,12 +375,19 @@ impl<K: NodeKind> Document<K> {
         for (index, face) in plan.inputs.iter().enumerate() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
             for &consumer in &face.consumers {
-                self.push_link(definition, Socket::new(entry, port), consumer);
+                self.push_link(
+                    definition,
+                    Socket::new(entry, port),
+                    consumer,
+                    was_muted(consumer),
+                );
             }
         }
         for (index, face) in plan.outputs.iter().enumerate() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
-            self.push_link(definition, face.producer, Socket::new(exit, port));
+            // The shared half of an outbound crossing: several consumers may
+            // read this port and disagree, so the fact rides the outside links.
+            self.push_link(definition, face.producer, Socket::new(exit, port), false);
         }
 
         // The instance, wired where the selection was wired.
@@ -385,12 +401,13 @@ impl<K: NodeKind> Document<K> {
             .unwrap_or(NodeId(0));
         for (index, face) in plan.inputs.iter().enumerate() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
-            self.push_link(tree, face.producer, Socket::new(node, port));
+            // The shared half of an inbound crossing — see `crossing_muted`.
+            self.push_link(tree, face.producer, Socket::new(node, port), false);
         }
         for (index, face) in plan.outputs.iter().enumerate() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
             for &consumer in &face.consumers {
-                self.push_link(tree, Socket::new(node, port), consumer);
+                self.push_link(tree, Socket::new(node, port), consumer, was_muted(consumer));
             }
         }
         Grouped { definition, node }
@@ -450,7 +467,7 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
-                slot.label.clone_from(&old.label);
+                slot.adopt_from(&old);
             }
             renamed.insert(old.id, fresh);
             nodes.push(fresh);
@@ -470,6 +487,7 @@ impl<K: NodeKind> Document<K> {
                 tree,
                 Socket::new(from, link.from.port),
                 Socket::new(to, link.to.port),
+                link.muted,
             ));
         }
 
@@ -483,10 +501,16 @@ impl<K: NodeKind> Document<K> {
                 .filter(|l| l.from.node == entry && l.from.port == link.to.port)
             {
                 if let Some(&to) = renamed.get(&inner_link.to.node) {
+                    // R1586 — the inline JOINS the two halves a collapse split,
+                    // so the one link that replaces them is muted when either
+                    // was: a value that was being stopped goes on being stopped.
+                    // This is the exact inverse of the split above, which is
+                    // what makes a collapse-then-inline round trip preserve it.
                     links.push(self.push_link(
                         tree,
                         link.from,
                         Socket::new(to, inner_link.to.port),
+                        link.muted || inner_link.muted,
                     ));
                 }
             }
@@ -502,7 +526,12 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             if let Some(&from) = renamed.get(&inner_link.from.node) {
-                links.push(self.push_link(tree, Socket::new(from, inner_link.from.port), link.to));
+                links.push(self.push_link(
+                    tree,
+                    Socket::new(from, inner_link.from.port),
+                    link.to,
+                    link.muted || inner_link.muted,
+                ));
             }
         }
 
