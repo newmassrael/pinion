@@ -191,6 +191,17 @@ const THEME_TAG: &str = "app";
 /// implementation, the textbook canonical pattern for every future
 /// breaking-change axis.
 const PERSISTED_SCHEMA_VERSION: u32 = 2;
+
+/// R1599 — the append-only `(version, digest)` ledger the persistence gate
+/// reads. See `pinion_core::test_fixtures::assert_persisted_shape`: a shape
+/// change can only go green again by appending a pair whose version nobody has
+/// used, and that append IS the bump the standing rule asks for.
+///
+/// The ledger opens at the CURRENT version. v1's shape was never digested, and
+/// writing one for it now would be inventing a measurement — the same reason
+/// `hello-node-editor`'s ledger opens at 9 rather than at 1.
+#[cfg(test)]
+const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[(2, 0xf34a_763e_e28e_aec1)];
 const STORAGE_APP_NAME: &str = "pinion-settings-panel";
 const STORAGE_STATE_KEY: &str = "state.json";
 
@@ -1547,4 +1558,33 @@ impl WidgetView for SettingsPanelView {
 
 fn main() {
     pinion_shell::run::<SettingsPanelView>();
+}
+
+#[cfg(test)]
+mod persisted_shape {
+    use super::{
+        NOTIFICATION_DEFAULTS, PERSISTED_SCHEMA_VERSION, PERSISTED_SHAPE_HISTORY,
+        SettingsPersistedState,
+    };
+
+    /// R1599 — the gate under "bump `PERSISTED_SCHEMA_VERSION` when the schema
+    /// changes", which was prose no commit gate read until this round. This
+    /// binding ships a v1 -> v2 migrator, so a silent shape change here would
+    /// not merely fail to load: it would load a v1 blob through the v2 path.
+    #[test]
+    fn r1599_the_persisted_shape_cannot_change_without_the_version() {
+        pinion_core::test_fixtures::assert_persisted_shape(
+            "settings-panel SettingsPersistedState",
+            PERSISTED_SCHEMA_VERSION,
+            &SettingsPersistedState {
+                schema_version: PERSISTED_SCHEMA_VERSION,
+                nav_index: 1,
+                dark_mode: true,
+                font_scale: 1.25,
+                display_name: "pinned".to_owned(),
+                notifications: NOTIFICATION_DEFAULTS,
+            },
+            PERSISTED_SHAPE_HISTORY,
+        );
+    }
 }

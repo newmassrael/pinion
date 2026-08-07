@@ -308,6 +308,17 @@ const SEED_COMPLETION_STRIDE: u64 = 3;
 /// without bumping the version).
 const PERSISTED_SCHEMA_VERSION: u32 = 1;
 
+/// R1599 — the append-only `(version, digest)` ledger the persistence gate
+/// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
+/// is append-only and why both columns must stay unique: a shape change can
+/// only go green again by appending a pair whose version nobody has used, and
+/// that append IS the bump the standing rule asks for.
+///
+/// The ledger opens at the CURRENT version. Nothing earlier was ever measured,
+/// and writing a digest for it now would be inventing a measurement.
+#[cfg(test)]
+const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[(1, 0x08e3_6bf4_efe5_1a58)];
+
 /// (R659 §5.16) Canonical `TasteJS` `TodoMVC` filter modes. Discriminants
 /// 0/1/2 match the visual left-to-right order + composite-tag wire
 /// (`todo_filter#<i>`). `#[non_exhaustive]` keeps future additions
@@ -5520,5 +5531,31 @@ mod tests {
                 "completed seed row must paint strikethrough",
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod persisted_shape {
+    use super::{PERSISTED_SCHEMA_VERSION, PERSISTED_SHAPE_HISTORY, PersistedState};
+
+    /// R1599 — the gate under "bump `PERSISTED_SCHEMA_VERSION` when the schema
+    /// changes", which was prose no commit gate read until this round.
+    #[test]
+    fn r1599_the_persisted_shape_cannot_change_without_the_version() {
+        pinion_core::test_fixtures::assert_persisted_shape(
+            "todomvc PersistedState",
+            PERSISTED_SCHEMA_VERSION,
+            &PersistedState {
+                schema_version: PERSISTED_SCHEMA_VERSION,
+                todos: vec![super::TodoItem {
+                    id: 1,
+                    text: "pinned".to_owned(),
+                    completed: true,
+                }],
+                filter: super::FilterMode::Active,
+                next_id: 2,
+            },
+            PERSISTED_SHAPE_HISTORY,
+        );
     }
 }

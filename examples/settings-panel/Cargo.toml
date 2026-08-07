@@ -27,6 +27,11 @@ vello = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
+[dev-dependencies]
+# R1599 — `pinion_core::test_fixtures::assert_persisted_shape`, the gate that
+# makes a persisted-schema change impossible without a version bump.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
 
