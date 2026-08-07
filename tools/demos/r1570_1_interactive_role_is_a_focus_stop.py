@@ -64,6 +64,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from binding_focus import (  # noqa: E402
+    INTERACTIVE_ROLES,
+    NO_RPC_STDIN,
+    interactive_bindings,
+)
 from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
@@ -74,12 +79,6 @@ from rpc_verify import (  # noqa: E402
 )
 
 WORKSPACE = Path(__file__).resolve().parent.parent.parent
-
-#: ARIA roles that denote an OPERABLE control. A role outside this set is a
-#: structural or live-region role and carries no focus obligation, so listing
-#: the interactive ones (rather than excluding the structural ones) keeps a
-#: role added later from being silently swept in.
-INTERACTIVE_ROLES = {"Button", "CheckBox", "Switch", "RadioButton", "Listbox"}
 
 #: R1576 — no fixed sleep in front of the readiness handshake.
 #:
@@ -103,14 +102,6 @@ SWITCH_FAMILY = [
     "hello-richtext-list",
 ]
 
-#: R1570.5 — TUI siblings. They are terminal bindings driven through a
-#: different entry point, and this harness's stdin handshake gets a broken pipe
-#: rather than a refusal. Excluded by NAME and listed, so the exclusion is a
-#: decision on the page instead of a silent gap; their GUI siblings
-#: (`hello-button`, `hello-commands`, `hello-toggle`) are in the population and
-#: share the `WidgetCore` body under test.
-NO_RPC_STDIN = {"hello-button-tui", "hello-commands-tui", "hello-toggle-tui"}
-
 #: A painted node that must NOT be a stop. `hue_strip` is a decorative gradient
 #: `Scene::Box` in `hello-gradient`; R1570.1 stamped it by mistake and this is
 #: what found it.
@@ -122,54 +113,22 @@ def declared_controls() -> tuple[
 ]:
     """Every binding that presents an interactive ARIA role, however it says so.
 
-    R1570.5 — the population used to be "bindings whose `#[widget(...)]`
-    attribute names an interactive `role`", which is 23. It is not the class:
-    89 bindings construct an interactive `AriaRole`, and the other 66 write
-    their `WidgetA11y` impl by hand. Scoping the gate to the attribute made its
-    verdict read as total while covering a quarter of the subject, and five of
-    the unscanned bindings had the exact defect (`hello-grouped-sort`,
-    `hello-listbox-multi`, `hello-radio-group`, `hello-scene-scale`,
-    `hello-virtual-sort`). A derived population is only as wide as the thing it
-    derives from — that is the same lesson as R1518's curated list, one level
-    less obvious.
+    R1588 — the derivation MOVED to `tools/binding_focus.py` and is shared with
+    the R1518 sweep, which used to carry a hand-written list of fourteen names.
+    Two gates asking different questions of different populations is how a
+    binding ends up covered by one and invisible to the other; the module docs
+    there carry the reasoning this function used to, including what a source
+    scan cannot see.
 
-    Two kinds come back, because only one of them can be asked a precise
-    question. A binding that DECLARES `role` + `tag` can be asked whether THAT
-    tag is focusable; a hand-written one names its roles somewhere in a
-    `WidgetA11y` impl this scan will not try to parse, so all it can be asked
-    is whether the window has any focus stop at all. Weaker, and still enough:
-    the defect this gate exists for is "no stop anywhere".
-
-    Returns `(declared, excluded_by_role, hand_written)`.
+    Returns `(declared, excluded_by_role, hand_written)` — this demo's own
+    shape, adapted from the shared `Population` so its body is untouched.
     """
-    declared: list[tuple[str, str, str]] = []
-    excluded: list[tuple[str, str]] = []
-    hand_written: list[str] = []
-    for main_rs in sorted((WORKSPACE / "examples").glob("*/src/main.rs")):
-        src = main_rs.read_text()
-        name = main_rs.parts[-3]
-        attr = re.search(r"#\[widget\((?P<a>.*?)\n\)\]", src, re.S)
-        if attr is not None:
-            body = attr.group("a")
-            # Anchored to line starts: an unanchored match reads `tag = "..."`
-            # out of the module's own doc comments, which is how this demo's
-            # first draft picked the wrong tag for two bindings.
-            role = re.search(r"^\s*role\s*=\s*(\w+)", body, re.M)
-            tag = re.search(r'^\s*tag\s*=\s*"([^"]+)"', body, re.M)
-            if role is not None and tag is not None:
-                if role.group(1) in INTERACTIVE_ROLES:
-                    declared.append((name, tag.group(1), role.group(1)))
-                else:
-                    excluded.append((name, role.group(1)))
-                continue
-        # No attribute, or one that declares no role: fall back to the roles the
-        # binding CONSTRUCTS. `AriaRole::X` in the source is the only statement
-        # a hand-written `WidgetA11y` impl makes that this scan can read.
-        roles = sorted(set(re.findall(r"AriaRole::(\w+)", src)))
-        if any(r in INTERACTIVE_ROLES for r in roles):
-            if name not in NO_RPC_STDIN:
-                hand_written.append(name)
-    return declared, excluded, hand_written
+    pop = interactive_bindings()
+    return (
+        [(d.name, d.tag, d.role) for d in pop.declared],
+        pop.excluded_by_role,
+        pop.hand_written,
+    )
 
 
 def focused(tf: RpcSubprocess) -> Any:

@@ -89,6 +89,18 @@ if ! python3 "$repo_root/tools/test_rpc_verify.py" >&2; then
     exit 1
 fi
 
+# R1588 — the population both focus sweeps census, checked against the tree it
+# is derived from. The sweeps themselves are CI's job (they boot 92 windowed
+# shells); what runs here is the derivation, because a population that has
+# quietly narrowed makes those sweeps pass while covering less — which is
+# exactly how a curated list of fourteen hid an absence in seventeen bindings
+# for fifty rounds. Runs in well under a second: it reads source, boots nothing.
+echo "pre-push: focus population derivation ..." >&2
+if ! python3 "$repo_root/tools/test_binding_focus.py" >&2; then
+    echo "pre-push: the shared focus population failed its own tests" >&2
+    exit 1
+fi
+
 # R1582 — the blast-radius computation the consumer gate rests on, checked
 # against a synthetic workspace so its assertions state the graph they are
 # about. A gate whose arithmetic nothing verifies is the shape R1522 fixed for
