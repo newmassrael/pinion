@@ -41,6 +41,11 @@ enum Op {
     /// by POSITION and routing by "the lowest input of the right type" give
     /// different answers, so it is what makes the identity rule falsifiable.
     Swap,
+    /// `(Count: Number, Body: Text) -> Text`. The shape that makes R1598's
+    /// lone-port pass falsifiable: a single `Text` port matches none of these
+    /// by NAME and cannot cross into index 0, so only "the first port that will
+    /// take it" reaches index 1.
+    Stamp,
     Sink,
 }
 
@@ -73,6 +78,7 @@ impl NodeKind for Op {
             Self::Measure => "Measure",
             Self::Gate => "Gate",
             Self::Swap => "Swap",
+            Self::Stamp => "Stamp",
             Self::Sink => "Sink",
         }
         .to_owned()
@@ -95,6 +101,7 @@ impl NodeKind for Op {
                 Port::new("Left", Ty::Number).with_default(Val::Number(-1)),
                 Port::new("Right", Ty::Number).with_default(Val::Number(-2)),
             ],
+            Self::Stamp => vec![Port::new("Count", Ty::Number), Port::new("Body", Ty::Text)],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
         }
     }
@@ -104,7 +111,7 @@ impl NodeKind for Op {
             Self::Num(_) | Self::Add | Self::Measure | Self::Gate => {
                 vec![Port::new("Out", Ty::Number)]
             }
-            Self::Word(_) | Self::Shout => vec![Port::new("Out", Ty::Text)],
+            Self::Word(_) | Self::Shout | Self::Stamp => vec![Port::new("Out", Ty::Text)],
             Self::Split => vec![Port::new("Half", Ty::Number), Port::new("Rest", Ty::Number)],
             Self::Swap => vec![
                 Port::new("Left", Ty::Number),
@@ -137,6 +144,7 @@ impl NodeKind for Op {
             })],
             Self::Gate => vec![number(0).zip(number(1)).map(|(l, v)| Val::Number(v.min(l)))],
             Self::Swap => vec![number(1).map(Val::Number), number(0).map(Val::Number)],
+            Self::Stamp => vec![inputs.get(1).and_then(Option::as_ref).cloned()],
             Self::Sink => Vec::new(),
         }
     }
@@ -6950,8 +6958,9 @@ fn r1598_what_does_not_survive_is_named_rather_than_dropped() {
     );
     assert_eq!(
         swapped.discarded,
-        vec![PortRef::input(1)],
-        "including the authored value that was on it"
+        vec![(PortRef::input(1), Val::Number(7))],
+        "★ including the authored value that was on it, AND WHAT IT WAS -- the \
+         address alone leaves a caller nothing to show or to put back"
     );
     assert_eq!(swapped.severed.len(), 1, "and the wire that fed it");
     assert_eq!(
@@ -7096,4 +7105,58 @@ fn r1598_a_swap_can_neither_close_a_cycle_nor_overfeed_an_input() {
     );
     // No input takes two links, which `validate` states as OverfedInput.
     assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn r1598_a_lone_port_lands_wherever_it_fits() {
+    // Blender's reroute arm, derived from the ARITY instead of from a node
+    // type: a side with exactly one port has no position worth preserving and
+    // no name that means anything beside a name it is the only one of, so it
+    // takes the first port that will have it. Blender gates the same behaviour
+    // on `old_node.bl_idname == "NodeReroute"`, so there it is one type's
+    // privilege.
+    //
+    // `Measure` is Text -> Number, one port each side. Swapping it for `Gate`
+    // ((Number, Number) -> Number) leaves its lone INPUT with nowhere to go by
+    // name ("Phrase" vs "Limit"/"Value") and nowhere by position (index 0 is a
+    // Number and the port is Text) -- so it is dropped. Its lone OUTPUT is a
+    // Number and lands on index 0 by position.
+    let mut document = Document::new("root");
+    let meter = document
+        .add_node(ROOT, NodeBody::Kind(Op::Measure), 0, 0)
+        .expect("root tree");
+    let swapped = document.set_kind(ROOT, meter, Op::Gate).expect("swap");
+    assert_eq!(swapped.dropped, vec![PortRef::input(0)], "{swapped:?}");
+
+    // ★ The case pass three EXISTS for, and the first draft of this test did
+    // not have it: a lone port whose type fits a port that is NOT at its own
+    // index and whose name matches nothing. `Measure`'s input is
+    // ("Phrase", Text); `Stamp`'s are ("Count", Number) and ("Body", Text). No
+    // name matches, index 0 cannot take a Text, and only "the first port that
+    // will have it" reaches index 1.
+    let mut two = Document::new("root");
+    let meter = two
+        .add_node(ROOT, NodeBody::Kind(Op::Measure), 0, 0)
+        .expect("root tree");
+    let said = two
+        .add_node(ROOT, NodeBody::Kind(Op::Word("hi".to_owned())), 0, 0)
+        .expect("root tree");
+    two.connect(ROOT, Socket::new(said, 0), Socket::new(meter, 0))
+        .expect("Text into Text");
+
+    let swapped = two.set_kind(ROOT, meter, Op::Stamp).expect("swap");
+    assert_eq!(
+        swapped
+            .carried
+            .iter()
+            .find(|c| c.from == PortRef::input(0))
+            .map(|c| (c.to, c.by_name)),
+        Some((PortRef::input(1), false)),
+        "★ the lone Text input skipped index 0 and landed on index 1: {swapped:?}"
+    );
+    assert!(
+        swapped.severed.is_empty(),
+        "so the wire that fed it survived"
+    );
+    assert!(two.validate().is_empty());
 }

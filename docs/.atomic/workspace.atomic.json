@@ -85106,6 +85106,46 @@
         "None of this round's own. The campaign's remaining operators are find_node (a crate shape -- search across a tree plus the path to what is found), insert_offset (model plus layout), and three that are app gestures or need a prior decision (resize, view_selected, node_copy_color). Still true and still outside any operator census: execution semantics -- control flow, side effects, iteration, time -- are inexpressible in evaluate(inputs) -> outputs, and Blender is pure dataflow too, so no comparison with it will ever surface that."
       ]
     },
+    "Round 1598.1": {
+      "decision_summary": "The closing audit of R1598, which found three things and fixed all three. First: `Swapped::discarded`'s doc said \"with what they were\" and the field was a bare `Vec<PortRef>` -- a doc promising what the type does not do, which is the class this project keeps recording as \"a documented prescription is also audit material\". It carries the value now (`Vec<(PortRef, K::Value)>`), and that is the better answer anyway: the swap has already happened, so \"port in1 lost something\" leaves a caller nothing to show or to put back while \"port in1 lost 0.5\" does. Second: the port correspondence was below the reference on one case. Blender scans for the FIRST COMPATIBLE socket when the old node is a `NodeReroute`, and this had only name-then-position, so a lone port whose type fits a port that is not at its own index was dropped where Blender keeps it. A third pass adds it, gated on the side having exactly ONE port -- a lone port has no position worth preserving and no name that means anything beside a name it is the only one of, so \"wherever it fits\" is honest rather than a guess. Blender gates the same behaviour on `bl_idname == \"NodeReroute\"`, so there it is one node TYPE's privilege; here it falls out of the arity and every single-port kind gets it. Third: `r1598_a_lone_port_lands_wherever_it_fits`'s own second half admitted in a comment that the taxonomy had no shape to test it with, so it asserted nothing about the pass it was named for; `Op::Stamp` ((Count: Number, Body: Text) -> Text) is that shape, and the test now drives it.",
+      "changes_bullets": [
+        "Swapped::discarded carries the value, not just the address. The wire form is `in1=#010203` rather than `in1`.",
+        "A third correspondence pass for a side with exactly one port: the first port that will take it. Derived from the ARITY where Blender gates it on a node type.",
+        "Op::Stamp in the crate's test taxonomy -- (Count: Number, Body: Text) -> Text, the shape that makes the lone-port pass falsifiable.",
+        "debt-blender-census-by-field-name gains its THIRD face: the name is not where the implementation is. NODE_OT_swap_node is Python (scripts/startup/bl_operators/node.py) and appears in space_node/*.cc only as a string inside WM_operatortype_find, so a name-matching census over that directory attributes it to a module that merely mentions it. The mirror image is the dangerous one and is UNMEASURED: a Python-only operator that appears in no .cc string at all is missing from the campaign census entirely, so its denominator of 91 may be wrong."
+      ],
+      "verification_bullets": [
+        "202 pinion-node-graph tests and 254 hello-node-editor tests green; workspace clippy 0, fmt clean, cargo doc clean. Both R1597 and R1598 demos re-run and PASS after the wire form changed.",
+        "CF-5 (no lone-port pass -- Blender's rule for everything but a reroute) fails `r1598_a_lone_port_lands_wherever_it_fits` exactly, which the first draft of that test could not have caught: it had no fixture with the discriminating shape and said so in a comment.",
+        "The value half needs no counterfactual: `discarded` is `Vec<(PortRef, K::Value)>`, so a report that dropped the value would not compile against the assertion."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "One, registered rather than fixed: the campaign's operator census has never been run as the UNION of the C++ and Python operator sets, so its denominator is unverified. Recorded in debt-blender-census-by-field-name with the procedure. Not fixed here because re-running the census is its own measurement round and would silently change every coverage figure the campaign file states."
+      ],
+      "publishable_decision_summary": "The closing audit of R1598, which found three things and fixed all three. First: `Swapped::discarded`'s doc said \"with what they were\" and the field was a bare `Vec<PortRef>` -- a doc promising what the type does not do, which is the class this project keeps recording as \"a documented prescription is also audit material\". It carries the value now (`Vec<(PortRef, K::Value)>`), and that is the better answer anyway: the swap has already happened, so \"port in1 lost something\" leaves a caller nothing to show or to put back while \"port in1 lost 0.5\" does. Second: the port correspondence was below the reference on one case. Blender scans for the FIRST COMPATIBLE socket when the old node is a `NodeReroute`, and this had only name-then-position, so a lone port whose type fits a port that is not at its own index was dropped where Blender keeps it. A third pass adds it, gated on the side having exactly ONE port -- a lone port has no position worth preserving and no name that means anything beside a name it is the only one of, so \"wherever it fits\" is honest rather than a guess. Blender gates the same behaviour on `bl_idname == \"NodeReroute\"`, so there it is one node TYPE's privilege; here it falls out of the arity and every single-port kind gets it. Third: `r1598_a_lone_port_lands_wherever_it_fits`'s own second half admitted in a comment that the taxonomy had no shape to test it with, so it asserted nothing about the pass it was named for; `Op::Stamp` ((Count: Number, Body: Text) -> Text) is that shape, and the test now drives it.",
+      "publishable_changes_bullets": [
+        "Swapped::discarded carries the value, not just the address. The wire form is `in1=#010203` rather than `in1`.",
+        "A third correspondence pass for a side with exactly one port: the first port that will take it. Derived from the ARITY where Blender gates it on a node type.",
+        "Op::Stamp in the crate's test taxonomy -- (Count: Number, Body: Text) -> Text, the shape that makes the lone-port pass falsifiable.",
+        "debt-blender-census-by-field-name gains its THIRD face: the name is not where the implementation is. NODE_OT_swap_node is Python (scripts/startup/bl_operators/node.py) and appears in space_node/*.cc only as a string inside WM_operatortype_find, so a name-matching census over that directory attributes it to a module that merely mentions it. The mirror image is the dangerous one and is UNMEASURED: a Python-only operator that appears in no .cc string at all is missing from the campaign census entirely, so its denominator of 91 may be wrong."
+      ],
+      "publishable_verification_bullets": [
+        "202 pinion-node-graph tests and 254 hello-node-editor tests green; workspace clippy 0, fmt clean, cargo doc clean. Both R1597 and R1598 demos re-run and PASS after the wire form changed.",
+        "CF-5 (no lone-port pass -- Blender's rule for everything but a reroute) fails `r1598_a_lone_port_lands_wherever_it_fits` exactly, which the first draft of that test could not have caught: it had no fixture with the discriminating shape and said so in a comment.",
+        "The value half needs no counterfactual: `discarded` is `Vec<(PortRef, K::Value)>`, so a report that dropped the value would not compile against the assertion."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "One, registered rather than fixed: the campaign's operator census has never been run as the UNION of the C++ and Python operator sets, so its denominator is unverified. Recorded in debt-blender-census-by-field-name with the procedure. Not fixed here because re-running the census is its own measurement round and would silently change every coverage figure the campaign file states."
+      ]
+    },
     "Round 16": {
       "decision_summary": "Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)",
       "changes_bullets": [

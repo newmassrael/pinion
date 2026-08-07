@@ -4249,10 +4249,13 @@ impl NodeGraphExternal {
                         .collect::<Vec<_>>()
                         .join(","),
                     csv_ids(swapped.severed.iter().map(|l| l.id.0)),
+                    // R1598 — the value, not just its address: the swap has
+                    // already happened, so "in1 lost something" leaves a client
+                    // nothing to show, while "in1 lost 0.5" does.
                     swapped
                         .discarded
                         .iter()
-                        .map(ToString::to_string)
+                        .map(|(port, value)| format!("{port}={}", value.display()))
                         .collect::<Vec<_>>()
                         .join(","),
                 ));

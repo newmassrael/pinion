@@ -44,8 +44,8 @@ pub struct Carried {
 /// Every field is something Blender's swap does not report: it drops what does
 /// not fit inside swallowed exceptions, so "the swap worked" and "the swap
 /// worked and cost you two wires" are the same outcome there.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Swapped {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Swapped<K: NodeKind> {
     /// Ports of the old signature that the new one answers, ascending.
     pub carried: Vec<Carried>,
     /// Ports the new signature has no answer for, ascending.
@@ -56,11 +56,28 @@ pub struct Swapped {
     /// Links that touched a dropped port and are gone.
     pub severed: Vec<Link>,
     /// Authored values ([`Node::values`](crate::Node::values)) that were on a
-    /// dropped port and are gone, with what they were.
-    pub discarded: Vec<PortRef>,
+    /// dropped port and are gone, **with what they were**.
+    ///
+    /// The value and not just its address, because the address alone cannot
+    /// answer the question a report exists for — the swap has already happened,
+    /// so "port in1 lost something" leaves the caller nothing to show or to put
+    /// back, while "port in1 lost the number 7" does. Blender loses these inside
+    /// `except (AttributeError, KeyError, TypeError): pass`.
+    pub discarded: Vec<(PortRef, K::Value)>,
 }
 
-impl Swapped {
+impl<K: NodeKind> Default for Swapped<K> {
+    fn default() -> Self {
+        Self {
+            carried: Vec::new(),
+            dropped: Vec::new(),
+            severed: Vec::new(),
+            discarded: Vec::new(),
+        }
+    }
+}
+
+impl<K: NodeKind> Swapped<K> {
     /// Whether the swap kept everything the node had.
     #[must_use]
     pub fn lossless(&self) -> bool {
@@ -124,6 +141,29 @@ impl Correspondence {
                 claimed.insert(at(index));
             }
         }
+        // Pass three, and ONLY for a side that had exactly one port: the first
+        // port that will take it.
+        //
+        // A lone port has no position worth preserving and no name that means
+        // anything beside a name it is the only one of — so "wherever it fits"
+        // is the honest answer rather than a guess, which is why this is not
+        // done when there are several to tell apart. Blender reaches the same
+        // behaviour by testing `old_node.bl_idname == "NodeReroute"`, so there
+        // it is one node TYPE's privilege; here it falls out of the arity, and
+        // every single-port kind gets it.
+        if old.len() == 1 && !taken.contains_key(&0) {
+            let found = new
+                .iter()
+                .enumerate()
+                .find(|(candidate, other)| {
+                    !claimed.contains(&at(*candidate)) && crosses(&old[0].ty, &other.ty)
+                })
+                .map(|(candidate, _)| at(candidate));
+            if let Some(candidate) = found {
+                taken.insert(0, candidate);
+                claimed.insert(candidate);
+            }
+        }
         Self { taken, by_name }
     }
 }
@@ -154,7 +194,12 @@ impl<K: NodeKind> Document<K> {
     /// [`EditError::NoSuchTree`], [`EditError::NoSuchNode`], or
     /// [`EditError::NotAKind`] for a frame, a group instance or an interface
     /// node — a body this crate owns is not the application's to overwrite.
-    pub fn set_kind(&mut self, tree: TreeId, node: NodeId, kind: K) -> Result<Swapped, EditError> {
+    pub fn set_kind(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        kind: K,
+    ) -> Result<Swapped<K>, EditError> {
         let Some(before) = self.signature(tree, node) else {
             return Err(if self.tree(tree).is_none() {
                 EditError::NoSuchTree(tree)
@@ -178,7 +223,7 @@ impl<K: NodeKind> Document<K> {
         let inputs = Correspondence::build(&before.inputs, &after_signature.inputs, &crosses);
         let outputs = Correspondence::build(&before.outputs, &after_signature.outputs, &crosses);
 
-        let mut swapped = Swapped::default();
+        let mut swapped = Swapped::<K>::default();
         for (side, map, arity) in [
             (Side::Input, &inputs, before.inputs.len()),
             (Side::Output, &outputs, before.outputs.len()),
@@ -211,11 +256,11 @@ impl<K: NodeKind> Document<K> {
                     Some(to) => {
                         slot.values.insert(*to, value);
                     }
-                    None => swapped.discarded.push(port),
+                    None => swapped.discarded.push((port, value)),
                 }
             }
         }
-        swapped.discarded.sort_unstable();
+        swapped.discarded.sort_by_key(|(port, _)| *port);
         Ok(swapped)
     }
 }

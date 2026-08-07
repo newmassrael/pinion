@@ -9000,7 +9000,11 @@ fn r1598_a_swap_that_loses_a_port_names_the_wire_and_the_value() {
             "only the first input has anywhere to go"
         );
         assert!(!severed.is_empty(), "the wires that fed the rest are named");
-        assert_eq!(discarded, "in1", "and so is the authored value that died");
+        assert_eq!(
+            discarded, "in1=#010203",
+            "★ and so is the authored value that died, WITH WHAT IT WAS -- the \
+             address alone leaves a client nothing to show"
+        );
         // The graph is left sound: no dangling wire, no stray value.
         assert!(
             graph_invariants_hold(&coord.graph()),

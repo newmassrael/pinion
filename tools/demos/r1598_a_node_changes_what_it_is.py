@@ -149,7 +149,11 @@ def body() -> None:
         tf.intervene(f"{EXT}/node.{lerp}.input_default.2", 0.5)
         assert_eq(q(tf, f"node.{lerp}.input_default.2"), 0.5, "C: the value is authored")
         carried, severed, discarded = cost(tf, lerp, "Add")
-        assert "in2" in discarded, f"C: * the value that died is NAMED: {discarded!r}"
+        assert discarded.startswith("in2="), f"C: the port that lost it: {discarded!r}"
+        assert "0.5" in discarded, (
+            f"C: * and WHAT it was -- the swap already happened, so an address "
+            f"alone leaves a client nothing to show: {discarded!r}"
+        )
         assert_eq(q(tf, f"node.{lerp}.op"), "Add", "C: and the node is still the node")
 
         # -- (D) a structural body is refused BY NAME ------------------------
