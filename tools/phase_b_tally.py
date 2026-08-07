@@ -514,9 +514,49 @@ AXES = [
         # (R1590's four selection operators plus the two model gaps), which
         # averages back to 97. A re-judgment that holds still is a legitimate
         # outcome: the tool demands a LOOK, not a move.
-        "judged_at": 1594,
-        "completion": 97,
-        "evidence_snapshot": {"example-name": 29, "round-axis": 14},
+        # R1598.3 re-judged 97 -> 98, DEMANDED by the tool (`round-axis` 14 -> 18
+        # = +29%), absorbing R1595, R1596, R1597 and R1598.
+        #
+        # It moves because the item EVERY judgment in this series has carried is
+        # closed. R1577 lifted the node model into `pinion-node-graph` and left
+        # the flagship example holding its own; R1584, R1589 and R1594 each
+        # re-stated that as remaining. R1597 finished the migration —
+        # `hello-node-editor` is 9,186 -> 8,331 lines, the tree has no second
+        # `GraphNode` / `Edge` and no second frame implementation
+        # ([[debt-two-node-graph-models]], closed) — and the migration is what
+        # produced the round's findings rather than being bookkeeping after
+        # them: membership had been a RECTANGLE re-tested on every read, so
+        # widening a comment frame silently adopted nodes, and `attach` /
+        # `detach` (two census operators whose model layer had shipped with
+        # nothing to reach it) came with the fix. R1595 gave a frame a HEIGHT
+        # (`Appearance::height`, `Option` because an ordinary node's height is
+        # derived from its ports and a frame's is not), R1596 made a cycle NAME
+        # the nodes on it, and R1598 let a node change what it IS without
+        # changing which node it is (`Document::set_kind`).
+        #
+        # Re-run rather than inherited: the Blender operator census at
+        # `8cf59599` is 91, of which 32 are that application's own content. Of
+        # the 59 that are node-system mechanism, FOUR are absent — `find_node`,
+        # `insert_offset`, `node_copy_color` and `view_selected` — so coverage
+        # is 55/59 = 93%, up from 86% at R1590. The two the campaign file still
+        # lists as excluded, `select_circle` and `select_lasso`, are NOT
+        # excluded any more: R1591 made a region a value and R1592 gave the node
+        # editor both, so they are live consumers rather than a stated gap.
+        #
+        # +1 and not more, and what caps it is this axis's own name. "Node-graph
+        # editor substrate (visual scripting / material graph)" is two things,
+        # and only the material half is built: EXECUTION SEMANTICS — control
+        # flow, iteration, side effects, time — are inexpressible in
+        # `evaluate(inputs) -> outputs`, so the control plane is at zero. That
+        # was already true when R1594.1 set 97, so it is not a reason to hold
+        # now; everything that changed since is a gain. It is a reason not to
+        # reach 99, and it is the round after this one.
+        #
+        # Composition now: property grid ~98, data grid ~98, node graph 95 -> 97,
+        # which averages 97.7.
+        "judged_at": 1598,
+        "completion": 98,
+        "evidence_snapshot": {"example-name": 29, "round-axis": 18},
     },
     {
         "key": "modelview",
