@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Appearance, ConnectError, Conversion, Crossings, Definitions, Document, DuplicateError,
     EditPath, ExtractError, Fragment, GroupError, Grow, InsertError, InterfaceSide, NestError,
-    Node, NodeBody, NodeId, NodeKind, Orphaned, ParentError, PathError, Port, ROOT, Reach,
-    RepartitionError, Route, SelectError, Severed, Sharing, Socket, TreeId, UngroupError,
-    Violation,
+    Node, NodeBody, NodeId, NodeKind, Orphaned, ParentError, PathError, Port, PortRef,
+    PortValueError, ROOT, Reach, RepartitionError, Route, SelectError, Severed, Sharing, Side,
+    Socket, TreeId, UngroupError, Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -4921,6 +4921,10 @@ enum LOp {
     /// scalar that would have to CONVERT, and index 1 holds a vector that would
     /// not.
     Cross,
+    /// R1594 — a source that carries nothing: its resting value is declared by
+    /// the KIND, on its output port, so the variant is a unit and the value is
+    /// still per node.
+    Resting,
     /// `Vector -> Scalar`. Its output is the one no input can feed, because the
     /// narrowing direction is refused — the analogue of `Op::Measure`, reached
     /// through the lattice rather than through disjointness.
@@ -4944,6 +4948,7 @@ impl NodeKind for LOp {
             Self::Sum => "Sum",
             Self::Cross => "Cross",
             Self::Meter => "Meter",
+            Self::Resting => "Resting",
             Self::Wash => "Wash",
             Self::Sink => "Sink",
         }
@@ -4952,7 +4957,7 @@ impl NodeKind for LOp {
 
     fn inputs(&self) -> Vec<Port<LTy, LVal>> {
         match self {
-            Self::Level(_) | Self::Swatch(_) => Vec::new(),
+            Self::Level(_) | Self::Swatch(_) | Self::Resting => Vec::new(),
             Self::Sum => vec![
                 Port::new("A", LTy::Vector).with_default(LVal::Vector([0, 0, 0])),
                 Port::new("B", LTy::Vector).with_default(LVal::Vector([0, 0, 0])),
@@ -4971,6 +4976,9 @@ impl NodeKind for LOp {
         match self {
             Self::Level(_) | Self::Meter => vec![Port::new("Out", LTy::Scalar)],
             Self::Swatch(_) | Self::Sum | Self::Wash => vec![Port::new("Out", LTy::Vector)],
+            Self::Resting => {
+                vec![Port::new("Out", LTy::Vector).with_default(LVal::Vector([128, 128, 128]))]
+            }
             Self::Cross => vec![
                 Port::new("Colour", LTy::Vector),
                 Port::new("Amount", LTy::Scalar),
@@ -4991,6 +4999,8 @@ impl NodeKind for LOp {
         match self {
             Self::Level(n) => vec![Some(LVal::Scalar(*n))],
             Self::Swatch(v) => vec![Some(LVal::Vector(*v))],
+            // Computes nothing: what it emits is what its port carries.
+            Self::Resting => vec![None],
             Self::Sum => vec![
                 vector(0)
                     .zip(vector(1))
@@ -5004,6 +5014,13 @@ impl NodeKind for LOp {
             Self::Wash => vec![scalar(0).map(|s| LVal::Vector([s * 2, s * 2, s * 2]))],
             Self::Sink => Vec::new(),
         }
+    }
+
+    fn value_type(value: &LVal) -> Option<LTy> {
+        Some(match value {
+            LVal::Scalar(_) => LTy::Scalar,
+            LVal::Vector(_) => LTy::Vector,
+        })
     }
 
     fn conversion(from: &LTy, to: &LTy) -> Conversion<LVal> {
@@ -5576,4 +5593,404 @@ fn a_declared_conversion_may_still_decline_a_value() {
         .connect(ROOT, Socket::new(source, 0), Socket::new(narrow, 0))
         .unwrap();
     assert!(document.validate().is_empty());
+}
+
+// ------------------------------------------------------------------- R1594
+// A socket's value is authored on the node.
+
+#[test]
+fn two_nodes_of_one_kind_hold_two_values() {
+    // The thing that was inexpressible: a port's TYPE and NAME come from the
+    // kind, so every node of a kind shares them, and before R1594 its VALUE did
+    // too. Two `Swatch`es are two colours.
+    let mut document = Document::new("root");
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(0)), 0, 0)
+        .unwrap();
+    let two = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(0)), 0, 60)
+        .unwrap();
+    assert_eq!(
+        document.set_port_value(ROOT, one, PortRef::output(0), LVal::Scalar(11)),
+        Ok(None),
+        "nothing was there before"
+    );
+    document
+        .set_port_value(ROOT, two, PortRef::output(0), LVal::Scalar(22))
+        .unwrap();
+    assert_eq!(
+        document.port_value(ROOT, one, PortRef::output(0)),
+        Some(&LVal::Scalar(11))
+    );
+    assert_eq!(
+        document.port_value(ROOT, two, PortRef::output(0)),
+        Some(&LVal::Scalar(22))
+    );
+    // And a second write answers what it replaced.
+    assert_eq!(
+        document.set_port_value(ROOT, one, PortRef::output(0), LVal::Scalar(33)),
+        Ok(Some(LVal::Scalar(11)))
+    );
+}
+
+#[test]
+fn a_port_carries_the_link_then_the_authored_value_then_the_kinds_own() {
+    // One sentence, three fallbacks, asserted in order.
+    let mut f = lattice();
+    // `Sum`'s input 0 declares `Vector([0,0,0])` as the kind's resting value.
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sum, 0)),
+        Some(LVal::Vector([0, 0, 0])),
+        "the kind's own default, with nothing else supplying one"
+    );
+    f.document
+        .set_port_value(ROOT, f.sum, PortRef::input(0), LVal::Vector([5, 5, 5]))
+        .unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sum, 0)),
+        Some(LVal::Vector([5, 5, 5])),
+        "an authored value beats the kind's"
+    );
+    f.document
+        .connect(ROOT, Socket::new(f.swatch, 0), Socket::new(f.sum, 0))
+        .unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sum, 0)),
+        Some(LVal::Vector([1, 2, 3])),
+        "and a link beats both — the authored value is HIDDEN, not discarded"
+    );
+    // Unwire and it is still there, which is the Blueprint/Blender behaviour
+    // this crate's `Port::default` doc already claimed for the kind's value.
+    let link = f.document.tree(ROOT).unwrap().links()[0].id;
+    f.document.disconnect(ROOT, link).unwrap();
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sum, 0)),
+        Some(LVal::Vector([5, 5, 5]))
+    );
+}
+
+#[test]
+fn a_source_constant_is_the_same_mechanism_as_a_pin_default() {
+    // The half Blender reaches through per-node C code: its Value node's
+    // constant IS its own output socket's `default_value`, read by
+    // `node_shader_value.cc` and by nothing generic. Here it is the rule.
+    let mut document = Document::new("root");
+    // `Swatch` computes its output, so an authored value must NOT override it.
+    let swatch = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([1, 2, 3])), 0, 0)
+        .unwrap();
+    document
+        .set_port_value(ROOT, swatch, PortRef::output(0), LVal::Vector([9, 9, 9]))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, swatch),
+        vec![Some(LVal::Vector([1, 2, 3]))],
+        "the kind produced a value, so nothing falls back"
+    );
+
+    // `Meter` produces nothing when its input is unresolvable, and there the
+    // authored value is what the port carries.
+    let meter = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 200, 0)
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, meter),
+        vec![None],
+        "no input, no computation"
+    );
+    document
+        .set_port_value(ROOT, meter, PortRef::output(0), LVal::Scalar(42))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, meter),
+        vec![Some(LVal::Scalar(42))],
+        "an authored value is what the port carries when nothing else supplies one"
+    );
+}
+
+#[test]
+fn a_bypassed_node_carries_its_routing_and_not_its_authored_outputs() {
+    // A bypassed node is "as if it were not here", and R1586 NAMES the outputs
+    // no input can feed. An authored value filling one of those would make
+    // `dropped_outputs` a lie.
+    let mut document = Document::new("root");
+    let meter = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 0, 0)
+        .unwrap();
+    document
+        .set_port_value(ROOT, meter, PortRef::output(0), LVal::Scalar(42))
+        .unwrap();
+    assert_eq!(document.evaluate(ROOT, meter), vec![Some(LVal::Scalar(42))]);
+    document.set_bypassed(ROOT, meter, true).unwrap();
+    assert_eq!(
+        document.passthrough(ROOT, meter).unwrap().dropped_outputs(),
+        &[0],
+        "a vector cannot narrow to a scalar, so the output is dropped"
+    );
+    assert_eq!(
+        document.evaluate(ROOT, meter),
+        vec![None],
+        "and dropped means dropped: the authored value does not fill it in"
+    );
+}
+
+#[test]
+fn authoring_a_value_on_a_port_that_is_not_there_is_refused_by_name() {
+    let mut f = lattice();
+    assert_eq!(
+        f.document
+            .set_port_value(ROOT, f.level, PortRef::input(0), LVal::Scalar(1)),
+        Err(PortValueError::NoSuchPort {
+            port: PortRef::input(0),
+            arity: 0,
+        }),
+        "a Level has no inputs, and the refusal says how many it has"
+    );
+    assert_eq!(
+        f.document
+            .set_port_value(ROOT, f.sum, PortRef::output(3), LVal::Vector([0, 0, 0])),
+        Err(PortValueError::NoSuchPort {
+            port: PortRef::output(3),
+            arity: 1,
+        })
+    );
+    assert_eq!(
+        f.document
+            .set_port_value(ROOT, NodeId(99), PortRef::input(0), LVal::Scalar(1)),
+        Err(PortValueError::NoSuchNode(NodeId(99)))
+    );
+    // Blender writes a socket's `default_value` through RNA with no such gate.
+    assert!(f.document.validate().is_empty(), "and nothing was written");
+}
+
+#[test]
+fn a_value_of_the_wrong_type_is_refused_when_the_taxonomy_can_tell() {
+    let mut f = lattice();
+    assert_eq!(
+        f.document
+            .set_port_value(ROOT, f.sum, PortRef::input(0), LVal::Scalar(1)),
+        Err(PortValueError::WrongType {
+            port: PortRef::input(0),
+            expected: LTy::Vector,
+            found: LTy::Scalar,
+        }),
+        "an authored value is not a wire: it is stored as it is, so it must BE \
+         the port's type rather than merely reach it"
+    );
+    // `Op`, which does not classify its values, accepts anything — the
+    // behaviour `Port::with_default` has always had.
+    let mut document = Document::new("root");
+    let add = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+        .unwrap();
+    assert!(
+        document
+            .set_port_value(ROOT, add, PortRef::input(0), Val::Text("nope".into()))
+            .is_ok(),
+        "no classification, no gate — and the doc says so"
+    );
+}
+
+#[test]
+fn a_copy_carries_what_was_authored_on_it() {
+    let mut f = lattice();
+    f.document
+        .set_port_value(ROOT, f.swatch, PortRef::output(0), LVal::Vector([7, 7, 7]))
+        .unwrap();
+    let made = f
+        .document
+        .duplicate(
+            ROOT,
+            &[f.swatch],
+            (40, 40),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    let copy = made.nodes[0];
+    assert_eq!(
+        f.document.port_value(ROOT, copy, PortRef::output(0)),
+        Some(&LVal::Vector([7, 7, 7])),
+        "a duplicated Swatch that came out grey is the defect `adopt_from` \
+         exists to prevent"
+    );
+    // Through a group collapse too, which moves the node to another tree.
+    let made = f.document.group(ROOT, &[f.swatch], "Held").unwrap();
+    let inner = f
+        .document
+        .tree(made.definition)
+        .unwrap()
+        .nodes()
+        .find(|n| matches!(n.body, NodeBody::Kind(LOp::Swatch(_))))
+        .unwrap();
+    assert_eq!(
+        inner.port_value(PortRef::output(0)),
+        Some(&LVal::Vector([7, 7, 7]))
+    );
+}
+
+#[test]
+fn a_value_on_a_port_that_stopped_existing_is_reported() {
+    // Two ways to reach it, and neither is `set_port_value`: a document from a
+    // file, and a definition whose interface SHRANK under an instance that had
+    // authored a value on the port that went away.
+    let mut f = lattice();
+    f.document
+        .set_port_value(ROOT, f.sum, PortRef::input(1), LVal::Vector([4, 4, 4]))
+        .unwrap();
+    assert!(f.document.validate().is_empty());
+
+    // A boundary needs something crossing it, so wire the Sum up first.
+    f.document
+        .connect(ROOT, Socket::new(f.swatch, 0), Socket::new(f.sum, 0))
+        .unwrap();
+    let made = f.document.group(ROOT, &[f.sum], "Held").unwrap();
+    let instance = made.node;
+    let definition = made.definition;
+    // The instance takes the definition's interface. Author on its last port,
+    // then take that port away from the definition.
+    let arity = f
+        .document
+        .signature(ROOT, instance)
+        .map(|s| s.inputs.len())
+        .unwrap_or_default();
+    assert!(arity > 0, "the collapse derived at least one input");
+    let last = u32::try_from(arity - 1).unwrap();
+    f.document
+        .set_port_value(
+            ROOT,
+            instance,
+            PortRef::input(last),
+            LVal::Vector([8, 8, 8]),
+        )
+        .unwrap();
+    assert!(f.document.validate().is_empty());
+    f.document
+        .unexpose(definition, InterfaceSide::Input, last)
+        .unwrap();
+    assert_eq!(
+        f.document.validate(),
+        vec![Violation::StrayPortValue {
+            tree: ROOT,
+            node: instance,
+            port: PortRef::input(last),
+        }],
+        "the value outlived its port, and `validate` names it"
+    );
+}
+
+#[test]
+fn authored_values_survive_the_wire() {
+    let mut f = lattice();
+    f.document
+        .set_port_value(ROOT, f.swatch, PortRef::output(0), LVal::Vector([7, 8, 9]))
+        .unwrap();
+    f.document
+        .set_port_value(ROOT, f.sum, PortRef::input(1), LVal::Vector([1, 1, 1]))
+        .unwrap();
+    let text = serde_json::to_string(&f.document).unwrap();
+    let back: Document<LOp> = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, f.document);
+    assert_eq!(
+        back.port_value(ROOT, f.swatch, PortRef::output(0)),
+        Some(&LVal::Vector([7, 8, 9]))
+    );
+    assert!(back.validate().is_empty());
+    // A `PortRef` is a struct, so the map cannot be a JSON object; it travels
+    // as pairs, and the shape is asserted rather than assumed.
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let node = json["trees"][0]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == f.swatch.0)
+        .unwrap();
+    assert_eq!(
+        node["values"],
+        serde_json::json!([[{"side": "Output", "index": 0}, {"Vector": [7, 8, 9]}]])
+    );
+}
+
+#[test]
+fn clearing_a_value_gives_the_port_back_to_its_kind() {
+    let mut f = lattice();
+    f.document
+        .set_port_value(ROOT, f.sum, PortRef::input(0), LVal::Vector([5, 5, 5]))
+        .unwrap();
+    assert_eq!(
+        f.document
+            .clear_port_value(ROOT, f.sum, PortRef::input(0))
+            .unwrap(),
+        Some(LVal::Vector([5, 5, 5]))
+    );
+    assert_eq!(
+        f.document.evaluator().input(ROOT, Socket::new(f.sum, 0)),
+        Some(LVal::Vector([0, 0, 0])),
+        "the kind's own resting value again — clearing is not writing the \
+         default over it, so a later change to the kind reaches this node"
+    );
+    assert_eq!(
+        f.document
+            .clear_port_value(ROOT, f.sum, PortRef::input(0))
+            .unwrap(),
+        None,
+        "and clearing nothing answers nothing"
+    );
+    assert_eq!(
+        f.document
+            .clear_port_value(ROOT, NodeId(99), PortRef::input(0)),
+        Err(crate::EditError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(99)
+        })
+    );
+}
+
+#[test]
+fn a_port_reference_names_itself() {
+    assert_eq!(PortRef::input(2).to_string(), "in2");
+    assert_eq!(PortRef::output(0).to_string(), "out0");
+    assert_eq!(PortRef::input(0).side, Side::Input);
+}
+
+#[test]
+fn an_output_falls_back_the_same_three_ways_an_input_does() {
+    // R1594 — the rule is one sentence and it is symmetric: a port carries what
+    // is supplied to it, else what the NODE authored, else what the KIND
+    // declares. `Port::default`'s doc said "None on outputs" before this round;
+    // that was a consequence of nothing reading it there, not a rule.
+    let mut document = Document::new("root");
+    let meter = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 0, 0)
+        .unwrap();
+    // `Meter` declares no output default, so with no input there is nothing.
+    assert_eq!(document.evaluate(ROOT, meter), vec![None]);
+
+    // `Resting` does declare one, and it is what a fresh node emits — which is
+    // what lets a source kind be a UNIT variant instead of carrying a payload
+    // the taxonomy can never be asked to change.
+    let resting = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Resting), 0, 60)
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, resting),
+        vec![Some(LVal::Vector([128, 128, 128]))],
+        "the kind's declared resting value"
+    );
+    document
+        .set_port_value(ROOT, resting, PortRef::output(0), LVal::Vector([1, 2, 3]))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, resting),
+        vec![Some(LVal::Vector([1, 2, 3]))],
+        "and the node's own beats it"
+    );
+    document
+        .clear_port_value(ROOT, resting, PortRef::output(0))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, resting),
+        vec![Some(LVal::Vector([128, 128, 128]))],
+        "cleared, the kind's is reached again"
+    );
 }

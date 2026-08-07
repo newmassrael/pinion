@@ -189,8 +189,8 @@ pub use group::{
 };
 pub use model::{
     ConnectError, Connected, Conversion, Document, DroppedLink, EditError, Interface,
-    InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, ROOT, Removed,
-    Signature, Socket, Tree, TreeId,
+    InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, PortRef,
+    PortValueError, ROOT, Removed, Side, Signature, Socket, Tree, TreeId,
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use select::{Grow, Grown, Reach, SelectError};

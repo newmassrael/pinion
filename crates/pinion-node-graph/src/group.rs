@@ -17,8 +17,8 @@ use std::fmt;
 
 use crate::frame::{Orphaned, parents_of};
 use crate::model::{
-    Document, InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT,
-    Socket, Tree, TreeId, centroid,
+    Document, InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, PortRef,
+    ROOT, Side, Socket, Tree, TreeId, centroid,
 };
 use crate::numbering::Numbering;
 
@@ -948,9 +948,50 @@ pub enum Violation {
         /// A node on the cycle.
         node: NodeId,
     },
+    /// A value is authored on a port the node's signature does not have
+    /// (R1594).
+    ///
+    /// Unreachable through [`Document::set_port_value`], which checks the
+    /// signature — and reachable two ways from outside it: a document from a
+    /// file, and a definition whose interface *shrank* under an instance that
+    /// had authored a value on the port that went away. The second is why this
+    /// is a violation rather than an impossibility.
+    StrayPortValue {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node holding it.
+        node: NodeId,
+        /// The port it names.
+        port: PortRef,
+    },
 }
 
 impl<K: NodeKind> Document<K> {
+    /// Ports a node has authored a value on that its signature does not have
+    /// (R1594), ascending.
+    fn stray_port_values(&self, tree: &Tree<K>, node: &Node<K>) -> Vec<Violation> {
+        let Some(signature) = self.signature(tree.id, node.id) else {
+            // The node's body names a definition that is gone, which
+            // `DanglingInstance` already reports; one cause, one finding.
+            return Vec::new();
+        };
+        node.values
+            .keys()
+            .filter(|port| {
+                let arity = match port.side {
+                    Side::Input => signature.inputs.len(),
+                    Side::Output => signature.outputs.len(),
+                };
+                port.index as usize >= arity
+            })
+            .map(|port| Violation::StrayPortValue {
+                tree: tree.id,
+                node: node.id,
+                port: *port,
+            })
+            .collect()
+    }
+
     /// Every way one node's containment breaks the forest (R1589).
     fn forest_violations(&self, tree: &Tree<K>, node: &Node<K>) -> Vec<Violation> {
         let Some(parent) = node.parent else {
@@ -1062,6 +1103,7 @@ impl<K: NodeKind> Document<K> {
                     }
                 }
                 found.extend(self.forest_violations(tree, node));
+                found.extend(self.stray_port_values(tree, node));
             }
         }
         // `Nesting::cycle(_, t, t)` answers the question "may `t` be placed in

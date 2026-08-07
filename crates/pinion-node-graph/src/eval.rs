@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    Conversion, Document, InterfaceSide, NodeBody, NodeId, NodeKind, Socket, TreeId,
+    Conversion, Document, InterfaceSide, NodeBody, NodeId, NodeKind, PortRef, Socket, TreeId,
 };
 
 /// How deep the walk may recurse before it gives up.
@@ -243,6 +243,32 @@ impl<K: NodeKind> Evaluator<'_, K> {
             }
         };
         outputs.resize(arity, None);
+        // R1594 — the other half of one rule: an authored value is what a port
+        // carries when nothing else supplies one. For an input that means no
+        // link; for an output it means the kind produced nothing there, which
+        // is what makes a SOURCE node's constant this same mechanism instead of
+        // a second one. Blender's Value node reads its own output socket in
+        // per-node C code, so there the fact is a node type's private
+        // arrangement rather than a rule.
+        if !bypassed
+            && let Some(held) = self
+                .document
+                .tree(descent.tree)
+                .and_then(|host| host.node(node))
+        {
+            for (index, slot) in outputs.iter_mut().enumerate() {
+                if slot.is_some() {
+                    continue;
+                }
+                let port = PortRef::output(u32::try_from(index).unwrap_or(u32::MAX));
+                *slot = held.port_value(port).cloned().or_else(|| {
+                    signature
+                        .outputs
+                        .get(index)
+                        .and_then(|declared| declared.default.clone())
+                });
+            }
+        }
 
         self.visiting.remove(&key);
         self.memo.insert(key, outputs.clone());
@@ -291,7 +317,15 @@ impl<K: NodeKind> Evaluator<'_, K> {
                         .flatten()
                         .and_then(|value| crossing.apply(value))
                 }
-                None => port.default.clone(),
+                // R1594 — nothing is wired, so the port carries what was
+                // authored ON THIS NODE, and only failing that the kind's own
+                // resting value. Two `Swatch` nodes are two colours; the kind
+                // can only say what a Swatch is.
+                None => self
+                    .document
+                    .port_value(descent.tree, node, PortRef::input(socket.port))
+                    .or(port.default.as_ref())
+                    .cloned(),
             });
         }
         resolved

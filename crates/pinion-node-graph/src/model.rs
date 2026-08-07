@@ -94,9 +94,6 @@ pub(crate) struct Sink {
 
 /// One socket in a node's signature.
 ///
-/// `default` is the value the port carries when nothing is linked to it — the
-/// "pin default" of Blender and Blueprint. It is retained while the port is
-/// wired, because wiring hides an authored value rather than discarding it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Port<T, V> {
     /// Human-facing name. Not an identity — ports are addressed by index.
@@ -104,8 +101,18 @@ pub struct Port<T, V> {
     /// The application's socket type. This crate only ever asks whether a
     /// value can cross from one to another ([`NodeKind::conversion`]).
     pub ty: T,
-    /// The value used when the port is unlinked. `None` on outputs, and on
-    /// inputs that have no meaningful resting value.
+    /// The value this port carries when nothing else supplies one — the "pin
+    /// default" of Blender and Blueprint.
+    ///
+    /// On an **input** that means no link. On an **output** it means the kind
+    /// computed nothing there, which is what lets a source node declare its
+    /// resting constant here (R1594) instead of the taxonomy carrying a payload
+    /// it can never be asked to change. Either way the node's own
+    /// [`Node::values`] takes precedence, because a port's *type* is the kind's
+    /// and its *value* is the node's.
+    ///
+    /// Retained while the port is wired, because wiring hides an authored value
+    /// rather than discarding it.
     pub default: Option<V>,
     /// Whether a value may pass through this port while its node is **bypassed**
     /// (R1587). `true` for an ordinary port.
@@ -358,6 +365,24 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// Implementations must be **consistent**: `crossing(t, t)` should never be
     /// [`Conversion::Refused`], or a node's own value cannot reach a port of its
     /// own type.
+    /// Which socket type `value` is one of, if the taxonomy classifies its
+    /// values at all (R1594).
+    ///
+    /// The default is `None`: a taxonomy whose value type does not carry its own
+    /// type — one flat `f64`, say — cannot answer, and is not asked to. What
+    /// that costs is that [`Document::set_port_value`] then accepts any value on
+    /// any port, exactly as [`Port::with_default`] always has.
+    ///
+    /// Blender does not need this because a socket's authored value is a
+    /// *different C struct per socket type* (`bNodeSocketValueFloat` and its
+    /// siblings), so a mismatch there is a type error at the call site. One
+    /// `Value` type across the taxonomy is the price of this trait being
+    /// generic, and this is how that price is paid back.
+    fn value_type(value: &Self::Value) -> Option<Self::Type> {
+        let _ = value;
+        None
+    }
+
     fn conversion(from: &Self::Type, to: &Self::Type) -> Conversion<Self::Value> {
         if from == to {
             Conversion::Direct
@@ -411,9 +436,70 @@ pub enum NodeBody<K> {
     Frame,
 }
 
-/// A node: what it is, where it sits, and what it is called.
+/// Which side of a node's own signature a port sits on (R1594).
+///
+/// Deliberately **not** [`InterfaceSide`], which names a half of a *tree's*
+/// interface. The two would read alike and mean different structures, and one
+/// word for two structures is the confusion R1586 and R1593 each spent effort
+/// undoing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Side {
+    /// A port a value arrives at.
+    Input,
+    /// A port a value leaves by.
+    Output,
+}
+
+/// One port of one node, named from inside that node (R1594).
+///
+/// A [`Socket`] names a port of a *named* node, which is what a link needs. This
+/// names a port of the node you already have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct PortRef {
+    /// Which side of the signature.
+    pub side: Side,
+    /// The port's index on that side.
+    pub index: u32,
+}
+
+impl PortRef {
+    /// Input port `index`.
+    #[must_use]
+    pub const fn input(index: u32) -> Self {
+        Self {
+            side: Side::Input,
+            index,
+        }
+    }
+
+    /// Output port `index`.
+    #[must_use]
+    pub const fn output(index: u32) -> Self {
+        Self {
+            side: Side::Output,
+            index,
+        }
+    }
+}
+
+impl fmt::Display for PortRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let side = match self.side {
+            Side::Input => "in",
+            Side::Output => "out",
+        };
+        write!(f, "{side}{}", self.index)
+    }
+}
+
+/// A node: what it is, where it sits, what it is called, and what its own ports
+/// have been given.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Node<K> {
+#[serde(bound(
+    serialize = "K: Serialize, K::Value: Serialize",
+    deserialize = "K: Deserialize<'de>, K::Value: Deserialize<'de>"
+))]
+pub struct Node<K: NodeKind> {
     /// Stable within its tree.
     pub id: NodeId,
     /// What the node is. Identity for evaluation.
@@ -460,9 +546,63 @@ pub struct Node<K> {
     /// build it ships.
     #[serde(default)]
     pub parent: Option<NodeId>,
+    /// Values authored on **this node's** ports (R1594).
+    ///
+    /// A port's type and its name come from the kind, so every node of a kind
+    /// shares them. Its *value* does not: two `Swatch` nodes are two different
+    /// colours, and the number a user typed into an unwired input belongs to
+    /// that input and to no other node's. Blender keeps exactly this, as
+    /// `bNodeSocket::default_value`, per socket per node.
+    ///
+    /// The rule the evaluator applies is one sentence covering both sides: **an
+    /// authored value is what the port carries when nothing else supplies one.**
+    /// For an input that means no link; for an output it means the kind computed
+    /// nothing there, which is what makes a source node's constant this same
+    /// mechanism rather than a second one. Blender's Value node reaches its
+    /// constant through per-node C code that reads its own output socket
+    /// (`node_shader_value.cc`), so there the fact is a node type's private
+    /// arrangement; here it is a rule.
+    ///
+    /// Sparse, because most ports have nothing authored, and a map because two
+    /// values for one port is a state worth not having: a document that arrives
+    /// from a peer with a repeated key keeps the last, the way any JSON object
+    /// does.
+    #[serde(default, with = "port_values")]
+    pub values: BTreeMap<PortRef, K::Value>,
+}
+
+/// `serde` for [`Node::values`]: JSON has no map key but a string, and
+/// [`PortRef`] is a struct, so the map travels as a sequence of pairs.
+mod port_values {
+    use std::collections::BTreeMap;
+
+    use serde::de::{Deserialize, Deserializer};
+    use serde::ser::{Serialize, Serializer};
+
+    use super::PortRef;
+
+    pub(super) fn serialize<V: Serialize, S: Serializer>(
+        values: &BTreeMap<PortRef, V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        values.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, V: Deserialize<'de>, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<PortRef, V>, D::Error> {
+        Ok(Vec::<(PortRef, V)>::deserialize(deserializer)?
+            .into_iter()
+            .collect())
+    }
 }
 
 impl<K: NodeKind> Node<K> {
+    /// What has been authored on `port` of this node, if anything.
+    #[must_use]
+    pub fn port_value(&self, port: PortRef) -> Option<&K::Value> {
+        self.values.get(&port)
+    }
     /// The name to show: the rename if there is one, else the body's own.
     #[must_use]
     pub fn display_name(&self) -> String {
@@ -505,6 +645,11 @@ impl<K: NodeKind> Node<K> {
     /// remaps it through the map it already has — and the ones that carry a
     /// selection out of a tree must additionally decide what becomes of a parent
     /// the selection left behind.
+    ///
+    /// R1594 added `values`, and the answer for it is **yes**: a port reference
+    /// is an index into this node's own signature, which the copy has too, so
+    /// unlike `parent` it needs no remapping — and a duplicated `Swatch` that
+    /// came out grey would be the defect the field exists to prevent.
     pub(crate) fn adopt_from(&mut self, source: &Self) {
         let Self {
             id: _,
@@ -515,10 +660,12 @@ impl<K: NodeKind> Node<K> {
             bypassed,
             appearance,
             parent: _,
+            values,
         } = source;
         self.label.clone_from(label);
         self.bypassed = *bypassed;
         self.appearance.clone_from(appearance);
+        self.values.clone_from(values);
     }
 }
 
@@ -865,6 +1012,7 @@ impl<K: NodeKind> Document<K> {
                 bypassed: false,
                 appearance: Appearance::default(),
                 parent: None,
+                values: BTreeMap::new(),
             },
         );
         Ok(id)
@@ -982,6 +1130,97 @@ impl<K: NodeKind> Document<K> {
     pub fn link_conversion(&self, tree: TreeId, link: LinkId) -> Option<Conversion<K::Value>> {
         let link = self.tree(tree)?.link(link)?;
         self.conversion(tree, link.from, link.to)
+    }
+
+    /// What has been authored on one of a node's ports (R1594).
+    ///
+    /// `None` when nothing has, when the node is not there, or when the tree is
+    /// not — the three are told apart by asking about the node.
+    #[must_use]
+    pub fn port_value(&self, tree: TreeId, node: NodeId, port: PortRef) -> Option<&K::Value> {
+        self.tree(tree)?.node(node)?.port_value(port)
+    }
+
+    /// Author a value on one of a node's ports, answering what it replaced.
+    ///
+    /// The value a port *carries* is not the same question: see
+    /// [`Evaluator::inputs`](crate::Evaluator::inputs), which prefers a link and
+    /// falls back to this and then to the kind's own [`Port::default`].
+    ///
+    /// The port must exist in the node's **signature**, so this refuses on a
+    /// group instance whose definition has no such port exactly as it does on an
+    /// application kind — Blender lets a socket's `default_value` be written
+    /// through RNA with no such gate, and a stale index simply writes nowhere.
+    ///
+    /// # Errors
+    ///
+    /// [`PortValueError::NoSuchPort`] when the index is past the signature's
+    /// arity, and [`PortValueError::WrongType`] when the taxonomy classifies its
+    /// values ([`NodeKind::value_type`]) and this one is not the port's type. A
+    /// taxonomy that does not classify accepts anything, which is what
+    /// [`Port::with_default`] has always done.
+    pub fn set_port_value(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        port: PortRef,
+        value: K::Value,
+    ) -> Result<Option<K::Value>, PortValueError<K::Type>> {
+        let signature = self
+            .signature(tree, node)
+            .ok_or(PortValueError::NoSuchNode(node))?;
+        let ports = match port.side {
+            Side::Input => &signature.inputs,
+            Side::Output => &signature.outputs,
+        };
+        let declared = ports
+            .get(port.index as usize)
+            .ok_or(PortValueError::NoSuchPort {
+                port,
+                arity: u32::try_from(ports.len()).unwrap_or(u32::MAX),
+            })?;
+        if let Some(found) = K::value_type(&value)
+            && found != declared.ty
+        {
+            return Err(PortValueError::WrongType {
+                port,
+                expected: declared.ty.clone(),
+                found,
+            });
+        }
+        // The signature resolved, so both the tree and the node are there.
+        let held = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .and_then(|host| host.nodes.get_mut(&node))
+            .ok_or(PortValueError::NoSuchNode(node))?;
+        Ok(held.values.insert(port, value))
+    }
+
+    /// Take an authored value back off a port, answering it.
+    ///
+    /// Distinct from writing the kind's own default over it: after this the port
+    /// carries whatever the *kind* says, so a later change to the kind's default
+    /// reaches this node again.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchNode`].
+    pub fn clear_port_value(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        port: PortRef,
+    ) -> Result<Option<K::Value>, EditError> {
+        let host = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .ok_or(EditError::NoSuchTree(tree))?;
+        let held = host
+            .nodes
+            .get_mut(&node)
+            .ok_or(EditError::NoSuchNode { tree, node })?;
+        Ok(held.values.remove(&port))
     }
 
     /// Link one socket to another.
@@ -1409,6 +1648,7 @@ mod node_map {
     ) -> Result<S::Ok, S::Error>
     where
         K: NodeKind + Serialize,
+        K::Value: Serialize,
         S: Serializer,
     {
         nodes.values().collect::<Vec<_>>().serialize(serializer)
@@ -1419,6 +1659,7 @@ mod node_map {
     ) -> Result<BTreeMap<NodeId, Node<K>>, D::Error>
     where
         K: NodeKind + Deserialize<'de>,
+        K::Value: Deserialize<'de>,
         D: Deserializer<'de>,
     {
         Ok(Vec::<Node<K>>::deserialize(deserializer)?
@@ -1488,6 +1729,51 @@ pub struct Connected {
     /// one.
     pub displaced: Option<Link>,
 }
+
+/// Why a value could not be authored on a port (R1594).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PortValueError<T> {
+    /// No such node in that tree.
+    NoSuchNode(NodeId),
+    /// The node has no such port, and the arity says how far it goes.
+    NoSuchPort {
+        /// The port asked for.
+        port: PortRef,
+        /// How many ports that side actually has.
+        arity: u32,
+    },
+    /// The taxonomy classifies its values and this one is not the port's type.
+    WrongType {
+        /// The port.
+        port: PortRef,
+        /// The type it declares.
+        expected: T,
+        /// The type the value turned out to be.
+        found: T,
+    },
+}
+
+impl<T: fmt::Debug> fmt::Display for PortValueError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSuchNode(node) => write!(f, "no node {}", node.0),
+            Self::NoSuchPort { port, arity } => {
+                write!(f, "no port {port}: that side has {arity}")
+            }
+            Self::WrongType {
+                port,
+                expected,
+                found,
+            } => write!(
+                f,
+                "port {port} takes {expected:?}, and that value is {found:?}"
+            ),
+        }
+    }
+}
+
+impl<T: fmt::Debug> std::error::Error for PortValueError<T> {}
 
 /// Why a structural edit could not be performed.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -208,3 +208,101 @@ fn r1593_a_converting_wire_is_dotted_and_a_muted_one_stays_dashed() {
         WireLook::Muted.stroke(ink, grey).dash
     );
 }
+
+// --- R1594: a socket's value is authored on the node --------------------------
+
+/// The seeded material is unchanged, which is the migration's whole claim: the
+/// two `Swatch`es and the `Level` used to carry their constants in the taxonomy
+/// and now carry them on their own ports.
+#[test]
+fn r1594_the_seed_holds_three_values_on_three_nodes() {
+    use pinion_node_graph::PortRef;
+    let document = seed();
+    assert_eq!(
+        document.port_value(ROOT, NodeId(0), PortRef::output(0)),
+        Some(&Val::Colour([200, 60, 60]))
+    );
+    assert_eq!(
+        document.port_value(ROOT, NodeId(1), PortRef::output(0)),
+        Some(&Val::Colour([40, 90, 220]))
+    );
+    assert_eq!(
+        document.port_value(ROOT, NodeId(2), PortRef::output(0)),
+        Some(&Val::Amount(25))
+    );
+    // Two nodes of ONE kind, two values — the thing the payload variant could
+    // not express, because a kind is shared and a node is not.
+    assert_eq!(
+        document.evaluate(ROOT, NodeId(0)),
+        vec![Some(Val::Colour([200, 60, 60]))]
+    );
+    assert_eq!(
+        document.evaluate(ROOT, NodeId(1)),
+        vec![Some(Val::Colour([40, 90, 220]))]
+    );
+    assert!(document.validate().is_empty());
+}
+
+/// A fresh source emits the KIND's declared resting value, so adding one from
+/// the palette does not produce a node that carries nothing.
+#[test]
+fn r1594_a_fresh_source_rests_where_its_kind_says() {
+    use pinion_node_graph::{NodeBody, PortRef};
+    let mut document = seed();
+    let fresh = document
+        .add_node(ROOT, NodeBody::Kind(Op::Swatch), 400, 400)
+        .unwrap();
+    assert_eq!(
+        document.port_value(ROOT, fresh, PortRef::output(0)),
+        None,
+        "nothing is authored on it"
+    );
+    assert_eq!(
+        document.evaluate(ROOT, fresh),
+        vec![Some(Val::Colour([128, 128, 128]))],
+        "and it rests where its kind says"
+    );
+    document
+        .set_port_value(ROOT, fresh, PortRef::output(0), Val::Colour([1, 2, 3]))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, fresh),
+        vec![Some(Val::Colour([1, 2, 3]))]
+    );
+}
+
+/// The taxonomy classifies its values, so a colour cannot be authored on an
+/// amount port. Blender gets this from a different C struct per socket type.
+#[test]
+fn r1594_the_lattice_gates_what_may_be_authored() {
+    use pinion_node_graph::{PortRef, PortValueError};
+    let mut document = seed();
+    assert_eq!(
+        document.set_port_value(ROOT, NodeId(2), PortRef::output(0), Val::Colour([1, 2, 3])),
+        Err(PortValueError::WrongType {
+            port: PortRef::output(0),
+            expected: Ty::Amount,
+            found: Ty::Colour,
+        })
+    );
+    assert_eq!(Op::value_type(&Val::Amount(1)), Some(Ty::Amount));
+    assert_eq!(Op::value_type(&Val::Colour([0, 0, 0])), Some(Ty::Colour));
+}
+
+/// The wire form reads back what it publishes.
+#[test]
+fn r1594_the_wire_form_round_trips() {
+    for value in [
+        Val::Amount(0),
+        Val::Amount(100),
+        Val::Amount(-3),
+        Val::Colour([200, 60, 60]),
+        Val::Colour([0, 0, 0]),
+    ] {
+        assert_eq!(Val::parse(&value.wire()), Some(value.clone()), "{value:?}");
+    }
+    assert_eq!(Val::parse(" 50 "), Some(Val::Amount(50)));
+    assert_eq!(Val::parse("1, 2, 3"), Some(Val::Colour([1, 2, 3])));
+    assert_eq!(Val::parse("nope"), None);
+    assert_eq!(Val::parse("1,2"), None);
+}

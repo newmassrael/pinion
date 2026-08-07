@@ -32356,6 +32356,66 @@
         "debt-two-node-graph-models is UNBLOCKED, not closed: the flagship example's lattice is now expressible, and migrating its 9,186-line model plus 9,094 lines of tests is the slice this round deliberately did not take."
       ]
     },
+    "R1594": {
+      "decision_summary": "R1594 §5.38 §5.52 §2 #7 — A SOCKET'S VALUE IS AUTHORED ON THE NODE. A port's TYPE and NAME come from the kind, so every node of a kind shares them; its VALUE does not — two Swatch nodes are two colours, and the number typed into an unwired input belongs to that input and to no other node's. pinion-node-graph had nowhere to put that, because Port::default is derived from the kind, so the crate's own flagship consumer had to carry each source's constant as a payload inside its taxonomy (Swatch([i64;3])) where nothing could ever edit it. Blender keeps exactly what was missing, as bNodeSocket::default_value, per socket per node. Node::values is that, and the rule the evaluator applies is ONE SENTENCE COVERING BOTH SIDES: an authored value is what a port carries when nothing else supplies one — for an input that means no link, for an output it means the kind computed nothing there, which is what makes a source node's constant this same mechanism instead of a second one. Found by mapping every model operation hello-node-editor performs against the crate: this and R1593's directed type relation are the only two the crate could not express, and they are the whole of what blocked debt-two-node-graph-models.",
+      "changes_bullets": [
+        "Node::values plus PortRef / Side: a sparse map of values authored on a node's own ports",
+        "The fallback is symmetric and three deep on both sides: supplied, then the node's, then the kind's",
+        "Document::set_port_value refuses a port the SIGNATURE lacks, and a value NodeKind::value_type says is the wrong type",
+        "Violation::StrayPortValue for a value that outlived its port, which a shrinking interface can produce",
+        "hello-node-groups' Swatch and Level become UNIT variants: the taxonomy got SMALLER and the constant became editable"
+      ],
+      "verification_bullets": [
+        "All 161 pre-existing crate tests passed UNCHANGED, which is the compatibility proof: a node with nothing authored behaves exactly as before. 173 crate tests after (12 new), hello-node-groups 16 (4 new).",
+        "7 crate counterfactuals, each reverted with hash verification: input ignoring the node's value (1 test), output fallback removed (2), output fallback also applied when bypassed (1), adopt_from dropping the values (1), set_port_value not checking the signature (1), the wrong-type gate removed (1), and the stray-value check never firing (1).",
+        "TWO of those seven had ZERO discriminating power on their first draft and each failed differently: CF-5 did not compile, and CF-7 was caught by the dead_code lint rather than by any assertion — the R1558 class. Both were rewritten until an assertion caught them.",
+        "2 demo counterfactuals. D-CF-2 PASSED TWICE for two different reasons and both are findings. The first time the demo asserted the CARRIED value after a clear, which is 0 whether the value was removed or the kind's default was written over it — zero discrimination, and the distinguishing fact is whether anything is still AUTHORED. The second time the counterfactual's own anchor did not match after rustfmt had reindented the target, so the edit applied NOTHING and the run reported PASS: a counterfactual that does not apply is indistinguishable from one that was caught. The driver now asserts the anchor matched.",
+        "Demo: tools/demos/r1594_a_value_is_authored_on_the_node.py, 59 assertions over 8 phases, driving the three-step fallback in order and back again, both refusal gates, a duplicate, a group collapse, an interface that shrinks under an instance, and a bypass.",
+        "Blast radius: all eight demos over hello-node-groups and pinion-node-graph re-run green after a release rebuild.",
+        "Gates: cargo fmt --all --check, clippy -D pedantic on both packages, cargo doc --document-private-items, phase_b_tally --selftest."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Port::default's doc said \"None on outputs\". That was a consequence of nothing reading it there rather than a rule, and this round makes the output side read it — so a source KIND can declare its resting value and a source NODE can override it. The doc is corrected rather than left to be discovered.",
+        "A bypassed node does NOT consult its authored outputs. R1586 NAMES the outputs no input can feed, and filling one in from an authored value would make dropped_outputs a lie. Asserted rather than assumed, and it is the one place the two rules had to be ordered.",
+        "NodeKind::value_type is a second provided-default trait method in as many rounds. A taxonomy that cannot classify its values is not asked to, and pays by having set_port_value accept anything — which is what Port::with_default has always done, so nothing regressed; but the crate now has two extension points whose default is \"say nothing\", and a third would be worth resisting.",
+        "The values travel unremapped through adopt_from because a PortRef indexes the node's OWN signature. That is only true while a copy keeps its body; a future set_kind (the census's swap_node) is exactly the operation that would invalidate them, and it does not exist yet.",
+        "debt-two-node-graph-models: after R1593 and R1594 the crate can express everything hello-node-editor's model does. What remains is the migration itself — 9,186 lines plus 9,094 of tests against its own types — and it is now scope, not capability."
+      ],
+      "publishable_decision_summary": "R1594 §5.38 §5.52 §2 #7 — A SOCKET'S VALUE IS AUTHORED ON THE NODE. A port's TYPE and NAME come from the kind, so every node of a kind shares them; its VALUE does not — two Swatch nodes are two colours, and the number typed into an unwired input belongs to that input and to no other node's. pinion-node-graph had nowhere to put that, because Port::default is derived from the kind, so the crate's own flagship consumer had to carry each source's constant as a payload inside its taxonomy (Swatch([i64;3])) where nothing could ever edit it. Blender keeps exactly what was missing, as bNodeSocket::default_value, per socket per node. Node::values is that, and the rule the evaluator applies is ONE SENTENCE COVERING BOTH SIDES: an authored value is what a port carries when nothing else supplies one — for an input that means no link, for an output it means the kind computed nothing there, which is what makes a source node's constant this same mechanism instead of a second one. Found by mapping every model operation hello-node-editor performs against the crate: this and R1593's directed type relation are the only two the crate could not express, and they are the whole of what blocked debt-two-node-graph-models.",
+      "publishable_changes_bullets": [
+        "Node::values plus PortRef / Side: a sparse map of values authored on a node's own ports",
+        "The fallback is symmetric and three deep on both sides: supplied, then the node's, then the kind's",
+        "Document::set_port_value refuses a port the SIGNATURE lacks, and a value NodeKind::value_type says is the wrong type",
+        "Violation::StrayPortValue for a value that outlived its port, which a shrinking interface can produce",
+        "hello-node-groups' Swatch and Level become UNIT variants: the taxonomy got SMALLER and the constant became editable"
+      ],
+      "publishable_verification_bullets": [
+        "All 161 pre-existing crate tests passed UNCHANGED, which is the compatibility proof: a node with nothing authored behaves exactly as before. 173 crate tests after (12 new), hello-node-groups 16 (4 new).",
+        "7 crate counterfactuals, each reverted with hash verification: input ignoring the node's value (1 test), output fallback removed (2), output fallback also applied when bypassed (1), adopt_from dropping the values (1), set_port_value not checking the signature (1), the wrong-type gate removed (1), and the stray-value check never firing (1).",
+        "TWO of those seven had ZERO discriminating power on their first draft and each failed differently: CF-5 did not compile, and CF-7 was caught by the dead_code lint rather than by any assertion — the R1558 class. Both were rewritten until an assertion caught them.",
+        "2 demo counterfactuals. D-CF-2 PASSED TWICE for two different reasons and both are findings. The first time the demo asserted the CARRIED value after a clear, which is 0 whether the value was removed or the kind's default was written over it — zero discrimination, and the distinguishing fact is whether anything is still AUTHORED. The second time the counterfactual's own anchor did not match after rustfmt had reindented the target, so the edit applied NOTHING and the run reported PASS: a counterfactual that does not apply is indistinguishable from one that was caught. The driver now asserts the anchor matched.",
+        "Demo: tools/demos/r1594_a_value_is_authored_on_the_node.py, 59 assertions over 8 phases, driving the three-step fallback in order and back again, both refusal gates, a duplicate, a group collapse, an interface that shrinks under an instance, and a bypass.",
+        "Blast radius: all eight demos over hello-node-groups and pinion-node-graph re-run green after a release rebuild.",
+        "Gates: cargo fmt --all --check, clippy -D pedantic on both packages, cargo doc --document-private-items, phase_b_tally --selftest."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Port::default's doc said \"None on outputs\". That was a consequence of nothing reading it there rather than a rule, and this round makes the output side read it — so a source KIND can declare its resting value and a source NODE can override it. The doc is corrected rather than left to be discovered.",
+        "A bypassed node does NOT consult its authored outputs. R1586 NAMES the outputs no input can feed, and filling one in from an authored value would make dropped_outputs a lie. Asserted rather than assumed, and it is the one place the two rules had to be ordered.",
+        "NodeKind::value_type is a second provided-default trait method in as many rounds. A taxonomy that cannot classify its values is not asked to, and pays by having set_port_value accept anything — which is what Port::with_default has always done, so nothing regressed; but the crate now has two extension points whose default is \"say nothing\", and a third would be worth resisting.",
+        "The values travel unremapped through adopt_from because a PortRef indexes the node's OWN signature. That is only true while a copy keeps its body; a future set_kind (the census's swap_node) is exactly the operation that would invalidate them, and it does not exist yet.",
+        "debt-two-node-graph-models: after R1593 and R1594 the crate can express everything hello-node-editor's model does. What remains is the migration itself — 9,186 lines plus 9,094 of tests against its own types — and it is now scope, not capability."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

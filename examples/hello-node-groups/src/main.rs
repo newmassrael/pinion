@@ -60,8 +60,8 @@ use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
     Conversion, Crossings, Definitions, Document, EditPath, Enframed, Fragment, Grow, Inserted,
-    InterfaceSide, LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, ROOT,
-    Reach, Repartitioned, Rewired, Severed, Sharing, Socket, TreeId,
+    InterfaceSide, LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, PortRef,
+    ROOT, Reach, Repartitioned, Rewired, Severed, Sharing, Socket, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -137,6 +137,22 @@ impl Val {
         }
     }
 
+    /// R1594 — the wire form read back. The mirror of [`Val::wire`], so a value
+    /// this application publishes is a value it accepts
+    /// ([[wire-form-read-write-symmetry]]).
+    fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        if let Some((r, rest)) = raw.split_once(',') {
+            let (g, b) = rest.split_once(',')?;
+            return Some(Self::Colour([
+                r.trim().parse().ok()?,
+                g.trim().parse().ok()?,
+                b.trim().parse().ok()?,
+            ]));
+        }
+        Some(Self::Amount(raw.parse().ok()?))
+    }
+
     /// The wire form: `"12,34,56"` for a colour, `"50"` for an amount.
     fn wire(&self) -> String {
         match self {
@@ -149,8 +165,13 @@ impl Val {
 /// The material ops. Five arms, and not one of them knows what a group is.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 enum Op {
-    Swatch([i64; 3]),
-    Level(i64),
+    /// R1594 — a colour source. A UNIT variant: what it emits is a value
+    /// authored on its own output port, not a payload in the taxonomy. Before
+    /// R1594 the crate had nowhere to put a per-node value, so the constant had
+    /// to live here — where an editor could never change it.
+    Swatch,
+    /// R1594 — a scalar source, the same shape.
+    Level,
     /// `mix(a, b, t)` — component-wise, `t` in percent.
     Mix,
     /// Desaturate towards grey by `t` percent.
@@ -193,8 +214,8 @@ impl Op {
     /// Parse the palette name a `add` verb takes.
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
-            "swatch" => Self::Swatch([128, 128, 128]),
-            "level" => Self::Level(50),
+            "swatch" => Self::Swatch,
+            "level" => Self::Level,
             "mix" => Self::Mix,
             "fade" => Self::Fade,
             "cap" => Self::Cap,
@@ -212,8 +233,8 @@ impl NodeKind for Op {
 
     fn name(&self) -> String {
         match self {
-            Self::Swatch(_) => "Swatch",
-            Self::Level(_) => "Level",
+            Self::Swatch => "Swatch",
+            Self::Level => "Level",
             Self::Mix => "Mix",
             Self::Fade => "Fade",
             Self::Cap => "Cap",
@@ -226,7 +247,7 @@ impl NodeKind for Op {
 
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Swatch(_) | Self::Level(_) => Vec::new(),
+            Self::Swatch | Self::Level => Vec::new(),
             Self::Mix => vec![
                 Port::new("Base", Ty::Colour).with_default(Val::Colour([0, 0, 0])),
                 Port::new("Blend", Ty::Colour).with_default(Val::Colour([255, 255, 255])),
@@ -253,10 +274,17 @@ impl NodeKind for Op {
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Swatch(_) | Self::Mix | Self::Fade | Self::Tint | Self::Glaze => {
+            Self::Mix | Self::Fade | Self::Tint | Self::Glaze => {
                 vec![Port::new("Colour", Ty::Colour)]
             }
-            Self::Level(_) => vec![Port::new("Amount", Ty::Amount)],
+            // R1594 — the resting value a fresh source emits is declared here,
+            // by the KIND, and the value a particular node emits is authored on
+            // that node's port. Type and name from the kind, value from the
+            // node.
+            Self::Swatch => {
+                vec![Port::new("Colour", Ty::Colour).with_default(Val::Colour([128, 128, 128]))]
+            }
+            Self::Level => vec![Port::new("Amount", Ty::Amount).with_default(Val::Amount(50))],
             Self::Cap => vec![
                 Port::new("Amount", Ty::Amount),
                 Port::new("Clipped", Ty::Amount).no_passthrough(),
@@ -269,8 +297,9 @@ impl NodeKind for Op {
         let colour = |i: usize| inputs.get(i).and_then(Option::as_ref).and_then(Val::colour);
         let amount = |i: usize| inputs.get(i).and_then(Option::as_ref).and_then(Val::amount);
         match self {
-            Self::Swatch(rgb) => vec![Some(Val::Colour(*rgb))],
-            Self::Level(a) => vec![Some(Val::Amount(*a))],
+            // A source computes nothing: what it emits is what its port
+            // carries, which is the node's business and not the kind's.
+            Self::Swatch | Self::Level => vec![None],
             Self::Mix => {
                 let (Some(a), Some(b), Some(t)) = (colour(0), colour(1), amount(2)) else {
                     return vec![None];
@@ -322,6 +351,19 @@ impl NodeKind for Op {
             }
             Self::Output => Vec::new(),
         }
+    }
+
+    /// R1594 — which socket type a value is one of.
+    ///
+    /// This taxonomy's values carry their own type, so it can answer, and
+    /// answering is what lets [`Document::set_port_value`] refuse a colour on an
+    /// amount port. Blender needs no equivalent because a socket's authored
+    /// value is a different C struct per socket type.
+    fn value_type(value: &Val) -> Option<Ty> {
+        Some(match value {
+            Val::Colour(_) => Ty::Colour,
+            Val::Amount(_) => Ty::Amount,
+        })
     }
 
     /// R1593 — the lattice. An amount broadcasts into a colour; a colour does
@@ -430,9 +472,19 @@ impl GroupsState {
 /// crossing out.
 fn seed() -> Document<Op> {
     let mut document = Document::new("Material");
-    let base = add(&mut document, Op::Swatch([200, 60, 60]), 20, 0);
-    let blend = add(&mut document, Op::Swatch([40, 90, 220]), 20, 90);
-    let level = add(&mut document, Op::Level(25), 20, 180);
+    let base = add(&mut document, Op::Swatch, 20, 0);
+    let blend = add(&mut document, Op::Swatch, 20, 90);
+    let level = add(&mut document, Op::Level, 20, 180);
+    // R1594 — three nodes of two kinds, three different values, authored on the
+    // nodes' own ports. Before this round the constant lived in the taxonomy,
+    // so `Swatch` had to be a payload variant and nothing could edit it.
+    for (node, value) in [
+        (base, Val::Colour([200, 60, 60])),
+        (blend, Val::Colour([40, 90, 220])),
+        (level, Val::Amount(25)),
+    ] {
+        let _ = document.set_port_value(ROOT, node, PortRef::output(0), value);
+    }
     let mix = add(&mut document, Op::Mix, 260, 60);
     let fade = add(&mut document, Op::Fade, 470, 60);
     let out = add(&mut document, Op::Output, 680, 60);
@@ -1275,6 +1327,7 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("containment", "string"),
                     SchemaField::action("same_kind", "string"),
                     SchemaField::action("conversion", "string"),
+                    SchemaField::action("port_values", "string"),
                     // The verbs.
                     SchemaField::action("select", "string"),
                     SchemaField::action("group", "string"),
@@ -1302,6 +1355,8 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("frame", "string"),
                     SchemaField::action("unframe", "string"),
                     SchemaField::action("reparent", "string"),
+                    SchemaField::action("set_value", "string"),
+                    SchemaField::action("clear_value", "string"),
                     SchemaField::action("nudge", "string"),
                     SchemaField::action("grow", "string"),
                 ]
@@ -1421,7 +1476,7 @@ impl ExternalIntrospect for GroupsOracle {
         let outcome = match path {
             "node_kind" | "node_value" | "node_ports" | "interface" | "instances" | "tree_name"
             | "passthrough" | "visible_ports" | "looks" | "containment" | "same_kind"
-            | "conversion" => self.read(path, &args),
+            | "conversion" | "port_values" => self.read(path, &args),
             _ => self.verb(path, &args),
         };
         // R1584 — every refusal reaches the readout, whoever made it. The
@@ -1502,6 +1557,11 @@ impl GroupsOracle {
             }
             "passthrough" | "visible_ports" | "looks" => self.participation_read(path, args),
             "conversion" => self.conversion_read(args),
+            "port_values" => self.port_values_read(args),
+            // R1594 — what has been authored on this node's own ports, and what
+            // each of them therefore CARRIES. Two different facts: the first is
+            // the node's, the second is the answer after the kind's declared
+            // resting value and any link have had their say.
             "same_kind" => self.same_kind_read(args),
             "containment" => {
                 let document = state.document.get();
@@ -1693,6 +1753,53 @@ impl GroupsOracle {
         )))
     }
 
+    /// R1594 — what has been authored on this node's own ports, and what each
+    /// of its ports therefore CARRIES.
+    ///
+    /// Two different facts, and keeping them apart is the point: the first is
+    /// the node's own, the second is the answer after a link, the node's value
+    /// and the kind's declared resting value have each had their say in that
+    /// order.
+    fn port_values_read(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let document = state.document.get();
+        let tree = state.current();
+        let id = NodeId(Self::number(args)?);
+        let node = document
+            .tree(tree)
+            .and_then(|t| t.node(id))
+            .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
+        let authored = node
+            .values
+            .iter()
+            .map(|(port, value)| format!("{port}={}", value.wire()))
+            .collect::<Vec<_>>()
+            .join(",");
+        let show = |side: &str, values: Vec<Option<Val>>| {
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    format!(
+                        "{side}{i}={}",
+                        v.map_or_else(|| "null".to_owned(), |v| v.wire())
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut evaluator = document.evaluator();
+        let inputs = evaluator.inputs(tree, id);
+        let outputs = evaluator.outputs(tree, id);
+        let carries = show("in", inputs)
+            .into_iter()
+            .chain(show("out", outputs))
+            .collect::<Vec<_>>()
+            .join(",");
+        Ok(IntrospectValue::Text(format!(
+            "authored:{authored}|carries:{carries}"
+        )))
+    }
+
     /// The verbs. Each one is a call into the substrate plus the bookkeeping
     /// this application actually owns: what is selected, and where the user is.
     fn verb(&mut self, path: &str, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
@@ -1756,12 +1863,83 @@ impl GroupsOracle {
                 state.selection.set(vec![node]);
                 ok(&node.0.to_string())
             }
+            "set_value" | "clear_value" => self.port_value(path, args),
             "frame" | "unframe" | "reparent" | "nudge" => self.containment(path, args),
             "grow" => self.grow(args),
             "copy" | "paste" | "duplicate" => self.clipboard(path, args),
             "group_insert" | "group_separate" | "fork" => self.boundary(path, args),
             _ => Err(InvokeError::UnknownPath),
         }
+    }
+
+    /// R1594 — author a value on one of a node's own ports, or take it back.
+    ///
+    /// `set_value "3.out0=200,60,60"` and `clear_value "3.out0"`. The port is
+    /// spelled the way [`PortRef`] prints itself, so the argument and the
+    /// readout use one vocabulary.
+    fn port_value(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let tree = state.current();
+        let raw = Self::text(args)?;
+        let (target, value) = match raw.split_once('=') {
+            Some((target, value)) => (target, Some(value)),
+            None => (raw.as_str(), None),
+        };
+        let (node, port) = target.trim().split_once('.').ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "malformed argument {target:?} (expected \"<node>.<in|out><port>\")"
+            ))
+        })?;
+        let node = NodeId(
+            node.trim()
+                .parse()
+                .map_err(|_| InvokeError::rejected(format!("{node:?} is not a node id")))?,
+        );
+        let port = Self::port_ref(port)?;
+        if path == "set_value" {
+            {
+                let value = value.ok_or_else(|| {
+                    InvokeError::rejected("set_value needs \"<node>.<port>=<value>\"".to_owned())
+                })?;
+                let parsed = Val::parse(value).ok_or_else(|| {
+                    InvokeError::rejected(format!("{value:?} is not a colour or an amount"))
+                })?;
+                let replaced = state
+                    .edit(|document| document.set_port_value(tree, node, port, parsed.clone()))
+                    .map_err(InvokeError::rejected)?;
+                Ok(IntrospectValue::Text(replaced.map_or_else(
+                    || "authored".to_owned(),
+                    |old| format!("authored, was {}", old.wire()),
+                )))
+            }
+        } else {
+            let cleared = state
+                .edit(|document| document.clear_port_value(tree, node, port))
+                .map_err(InvokeError::rejected)?;
+            Ok(IntrospectValue::Text(cleared.map_or_else(
+                || "nothing was authored".to_owned(),
+                |old| format!("cleared {}", old.wire()),
+            )))
+        }
+    }
+
+    /// `"in0"` / `"out2"` — the spelling [`PortRef`] prints.
+    fn port_ref(raw: &str) -> Result<PortRef, InvokeError> {
+        let raw = raw.trim();
+        let malformed = || {
+            InvokeError::rejected(format!(
+                "malformed port {raw:?} (expected \"in<N>\" or \"out<N>\")"
+            ))
+        };
+        if let Some(index) = raw.strip_prefix("out") {
+            return Ok(PortRef::output(index.parse().map_err(|_| malformed())?));
+        }
+        let index = raw.strip_prefix("in").ok_or_else(malformed)?;
+        Ok(PortRef::input(index.parse().map_err(|_| malformed())?))
     }
 
     /// R1590 — the run of nodes that do what this one does, in evaluation
