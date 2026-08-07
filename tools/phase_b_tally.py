@@ -491,9 +491,32 @@ AXES = [
         # ([[debt-two-node-graph-models]]). Weighing the families: property grid
         # ~98, data grid ~98, node graph ~95 after these three rounds, which
         # averages ~97.
-        "judged_at": 1589,
+        # R1594 re-judged and the number HELD at 97, which is the finding. The
+        # tool demanded the look (`round-axis` 11 -> 14 = +27%) and it absorbs
+        # R1590, R1593 and R1594. R1593 gave the crate a DIRECTED type relation
+        # (`NodeKind::conversion`) — its gate was `source.ty != sink.ty`, and
+        # `!=` is symmetric, so a lattice where a scalar broadcasts into a
+        # vector without the vector narrowing back was INEXPRESSIBLE, and the
+        # trait's own doc said to model it "by making the coercion part of
+        # equality", which no equality relation can be. R1594 gave a NODE its
+        # own socket values (Blender's `bNodeSocket::default_value`); before it
+        # every node of a kind shared one value, so a source's constant had to
+        # live inside the taxonomy where nothing could edit it.
+        #
+        # Both are PREREQUISITES rather than polish — a node-graph substrate
+        # without either cannot host a material or a Blueprint graph at all — so
+        # the honest reading is that 97 was OVERSTATED before them, and the
+        # reason nobody noticed is R1577's own lesson recurring one level in:
+        # its census measured OPERATORS, and neither of these is an operator, so
+        # both read as zero. A reference has more than one axis.
+        #
+        # Composition now: property grid ~98, data grid ~98, node graph 90 -> 95
+        # (R1590's four selection operators plus the two model gaps), which
+        # averages back to 97. A re-judgment that holds still is a legitimate
+        # outcome: the tool demands a LOOK, not a move.
+        "judged_at": 1594,
         "completion": 97,
-        "evidence_snapshot": {"example-name": 29, "round-axis": 11},
+        "evidence_snapshot": {"example-name": 29, "round-axis": 14},
     },
     {
         "key": "modelview",
