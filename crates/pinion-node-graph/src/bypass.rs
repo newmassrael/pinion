@@ -11,12 +11,20 @@
 //!
 //! # The rule
 //!
-//! **A bypassed node is the identity, as far as its signature allows.**
+//! **A bypassed node is the identity, as far as its signature allows — and it
+//! changes a value only when it has to.**
 //!
-//! Output `n` takes its value from input `n` when their types agree; failing
-//! that, from the lowest-indexed input of the right type; failing that, from
-//! nothing, and the output is *named* as dropped. That is the whole of it, and
-//! it is a function of the node's signature alone.
+//! Output `n` takes its value from whichever input a value may reach it from,
+//! preferring one that reaches it *unchanged*, then the input at index `n`, then
+//! the earliest; failing all of them, from nothing, and the output is *named* as
+//! dropped. That is the whole of it, and it is a function of the node's
+//! signature alone.
+//!
+//! The first of those three preferences is R1593's: once a taxonomy declares a
+//! conversion lattice ([`NodeKind::conversion`]), an input can reach an output
+//! by being converted, and a value that survives
+//! intact is a better answer than one that is rewritten. A signature with no
+//! conversions in it ranks exactly as it did before that question existed.
 //!
 //! Blender instead scores every input against every output through a static
 //! table of socket-type pairs (`get_internal_link_type_priority`) and breaks
@@ -43,21 +51,32 @@
 use crate::model::{Document, EditError, Link, LinkId, NodeId, NodeKind, Socket, TreeId};
 
 /// One value's way through a node that is not computing: which input the value
-/// arrives on, and which output it leaves by.
+/// arrives on, which output it leaves by, and whether it is changed on the way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Route {
     /// The output port the value leaves by.
     pub output: u32,
     /// The input port it came in on.
     pub input: u32,
+    /// Whether the value is **converted** between the two, because the taxonomy
+    /// declares the input's type to reach the output's through a conversion
+    /// rather than directly (R1593).
+    ///
+    /// Part of the routing rather than a separate lookup, because "what does
+    /// bypassing this node do" is not fully answered by naming a port when the
+    /// value that comes out is a different one from the value that went in.
+    pub converts: bool,
 }
 
 impl Route {
     /// Whether this route is the identity: the value leaves by the port it
-    /// arrived on.
+    /// arrived on, unchanged.
+    ///
+    /// R1593 — a converting route is *not* the identity even at the same index,
+    /// because the value that leaves is not the value that arrived.
     #[must_use]
     pub const fn is_identity(self) -> bool {
-        self.output == self.input
+        self.output == self.input && !self.converts
     }
 }
 
@@ -180,29 +199,47 @@ impl<K: NodeKind> Document<K> {
         // R1587 — a port may declare itself off the bypass path, and the
         // declaration is read from both ends: an excluded input is never a
         // source, an excluded output receives nothing.
+        //
+        // R1593 — "the types agree" is the taxonomy's directed relation, the
+        // same one a link is judged by, and it is asked in the direction the
+        // value travels: out of the INPUT, into the OUTPUT. Blender answers this
+        // one from a third table (`get_internal_link_type_priority`), unrelated
+        // to either the one that validates a link or the one that converts a
+        // value, so what a muted node passes through there can disagree with
+        // what a wire in the same position would have carried.
         let eligible = |input: &crate::model::Port<K::Type, K::Value>, ty: &K::Type| {
-            input.passthrough && input.ty == *ty
+            input.passthrough && K::conversion(&input.ty, ty).is_allowed()
         };
         for (index, out) in signature.outputs.iter().enumerate() {
             let output = u32::try_from(index).unwrap_or(u32::MAX);
-            // The identity first: same index, if the types agree there.
-            let same_index = signature
-                .inputs
-                .get(index)
-                .is_some_and(|input| eligible(input, &out.ty));
-            let chosen = if !out.passthrough {
-                None
-            } else if same_index {
-                Some(output)
-            } else {
+            // R1593 — among the inputs a value may leave by this output, the
+            // best one, ranked on three keys in this order: it does not convert;
+            // it sits at the output's own index; it is early. The first key is
+            // new and the other two are the pre-R1593 rule, so a signature with
+            // no conversions in it routes exactly as it did.
+            let chosen = if out.passthrough {
                 signature
                     .inputs
                     .iter()
-                    .position(|input| eligible(input, &out.ty))
-                    .map(|at| u32::try_from(at).unwrap_or(u32::MAX))
+                    .enumerate()
+                    .filter(|(_, input)| eligible(input, &out.ty))
+                    .min_by_key(|(at, input)| {
+                        (
+                            u8::from(K::conversion(&input.ty, &out.ty).converts()),
+                            u8::from(*at != index),
+                            *at,
+                        )
+                    })
+                    .map(|(at, input)| Route {
+                        output,
+                        input: u32::try_from(at).unwrap_or(u32::MAX),
+                        converts: K::conversion(&input.ty, &out.ty).converts(),
+                    })
+            } else {
+                None
             };
             match chosen {
-                Some(input) => routes.push(Route { output, input }),
+                Some(route) => routes.push(route),
                 None => dropped_outputs.push(output),
             }
         }

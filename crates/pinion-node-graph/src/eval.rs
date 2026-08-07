@@ -18,7 +18,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::{Document, InterfaceSide, NodeBody, NodeId, NodeKind, Socket, TreeId};
+use crate::model::{
+    Conversion, Document, InterfaceSide, NodeBody, NodeId, NodeKind, Socket, TreeId,
+};
 
 /// How deep the walk may recurse before it gives up.
 ///
@@ -178,8 +180,24 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 .unwrap_or_default();
             let mut passed = vec![None; arity];
             for route in routing.routes() {
+                // R1593 — a route may convert, and it converts by the taxonomy's
+                // one relation, asked in the direction the value travels. Read
+                // off the signature rather than carried on the route, because a
+                // `fn` pointer on a `Route` would make the routing a value that
+                // could not be compared.
+                let crossing = signature
+                    .inputs
+                    .get(route.input as usize)
+                    .zip(signature.outputs.get(route.output as usize))
+                    .map_or(Conversion::Refused, |(input, out)| {
+                        K::conversion(&input.ty, &out.ty)
+                    });
                 if let Some(slot) = passed.get_mut(route.output as usize) {
-                    *slot = inputs.get(route.input as usize).cloned().flatten();
+                    *slot = inputs
+                        .get(route.input as usize)
+                        .cloned()
+                        .flatten()
+                        .and_then(|value| crossing.apply(value));
                 }
             }
             passed
@@ -256,11 +274,23 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 .filter(|link| !link.muted)
                 .copied();
             resolved.push(match feeding {
-                Some(link) => self
-                    .node_outputs(descent, link.from.node, depth + 1)
-                    .into_iter()
-                    .nth(link.from.port as usize)
-                    .flatten(),
+                Some(link) => {
+                    // R1593 — the value crosses the link under the same relation
+                    // that let the link exist, so a wire `connect` accepted can
+                    // always carry what travels along it. A `Refused` here is
+                    // unreachable for a document this crate built and is the
+                    // honest answer for one that arrived from elsewhere with a
+                    // link `validate` would flag.
+                    let crossing = self
+                        .document
+                        .conversion(descent.tree, link.from, socket)
+                        .unwrap_or(Conversion::Refused);
+                    self.node_outputs(descent, link.from.node, depth + 1)
+                        .into_iter()
+                        .nth(link.from.port as usize)
+                        .flatten()
+                        .and_then(|value| crossing.apply(value))
+                }
                 None => port.default.clone(),
             });
         }

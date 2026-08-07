@@ -59,9 +59,9 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Crossings, Definitions, Document, EditPath, Enframed, Fragment, Grow, Inserted, InterfaceSide,
-    LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, ROOT, Reach,
-    Repartitioned, Rewired, Severed, Sharing, Socket, TreeId,
+    Conversion, Crossings, Definitions, Document, EditPath, Enframed, Fragment, Grow, Inserted,
+    InterfaceSide, LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, ROOT,
+    Reach, Repartitioned, Rewired, Severed, Sharing, Socket, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -88,8 +88,15 @@ const STATUS_FONT_PX: u32 = 12;
 
 // --- The taxonomy: the whole of what this application supplies ----------------
 
-/// The two socket types. Everything else about typing — that a link needs
-/// agreement, that a refusal names both ends — is the substrate's.
+/// The two socket types, and the **direction** between them.
+///
+/// R1593 — an amount broadcasts into a colour (the grey of that intensity) and
+/// a colour never narrows back into an amount. That is the whole of what this
+/// application declares about typing; everything else — that a link is judged
+/// by it, that a value is converted by it, that a bypassed node routes by it,
+/// that a saved file is re-checked against it — is the substrate's, and is one
+/// declaration rather than three tables that can disagree
+/// ([`NodeKind::conversion`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 enum Ty {
     Colour,
@@ -154,11 +161,35 @@ enum Op {
     /// off the bypass path, and so does `Clipped`, whose value only means
     /// anything while the node is computing.
     Cap,
+    /// R1593 — an amount in, a colour out. The one shape here whose *bypass*
+    /// route can only CONVERT: its single input reaches its single output
+    /// through the lattice's broadcast and by no other path, so a relation that
+    /// compared types with `==` would drop that output instead.
+    ///
+    /// What it computes is deliberately NOT the broadcast (it doubles, and
+    /// clamps), so "the node ran" and "the node was bypassed" are two different
+    /// numbers rather than one that could be either.
+    Tint,
+    /// R1593 — a strength and a colour in, a colour out. The shape that makes
+    /// the bypass *preference* falsifiable: its output's OWN index holds an
+    /// amount, which could reach it by converting, and index 1 holds a colour,
+    /// which reaches it unchanged. A rule that ranked position above the value
+    /// would pass the grey of the strength through instead of the colour.
+    Glaze,
     /// The sink: its resolved input is the material's result.
     Output,
 }
 
 impl Op {
+    /// Every name the `add` verb takes, in palette order.
+    ///
+    /// One list, so the parser and the refusal that names the alternatives
+    /// cannot drift — they did, before R1593: the message still read
+    /// "swatch/level/mix/fade/output" long after `cap` was added.
+    const PALETTE: [&'static str; 8] = [
+        "swatch", "level", "mix", "fade", "cap", "tint", "glaze", "output",
+    ];
+
     /// Parse the palette name a `add` verb takes.
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
@@ -167,6 +198,8 @@ impl Op {
             "mix" => Self::Mix,
             "fade" => Self::Fade,
             "cap" => Self::Cap,
+            "tint" => Self::Tint,
+            "glaze" => Self::Glaze,
             "output" => Self::Output,
             _ => return None,
         })
@@ -184,6 +217,8 @@ impl NodeKind for Op {
             Self::Mix => "Mix",
             Self::Fade => "Fade",
             Self::Cap => "Cap",
+            Self::Tint => "Tint",
+            Self::Glaze => "Glaze",
             Self::Output => "Output",
         }
         .to_owned()
@@ -207,13 +242,20 @@ impl NodeKind for Op {
                     .no_passthrough(),
                 Port::new("Amount", Ty::Amount).with_default(Val::Amount(0)),
             ],
+            Self::Tint => vec![Port::new("Amount", Ty::Amount).with_default(Val::Amount(0))],
+            Self::Glaze => vec![
+                Port::new("Strength", Ty::Amount).with_default(Val::Amount(0)),
+                Port::new("Colour", Ty::Colour).with_default(Val::Colour([0, 0, 0])),
+            ],
             Self::Output => vec![Port::new("Surface", Ty::Colour)],
         }
     }
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Swatch(_) | Self::Mix | Self::Fade => vec![Port::new("Colour", Ty::Colour)],
+            Self::Swatch(_) | Self::Mix | Self::Fade | Self::Tint | Self::Glaze => {
+                vec![Port::new("Colour", Ty::Colour)]
+            }
             Self::Level(_) => vec![Port::new("Amount", Ty::Amount)],
             Self::Cap => vec![
                 Port::new("Amount", Ty::Amount),
@@ -263,7 +305,54 @@ impl NodeKind for Op {
                     Some(Val::Amount((amount - ceiling).max(0))),
                 ]
             }
+            Self::Tint => {
+                let level = amount(0).unwrap_or(0).clamp(0, 100) * 2;
+                vec![Some(Val::Colour([level, level, level]))]
+            }
+            Self::Glaze => {
+                let (Some(strength), Some(c)) = (amount(0), colour(1)) else {
+                    return vec![None];
+                };
+                let keep = 100 - strength.clamp(0, 100);
+                vec![Some(Val::Colour([
+                    c[0] * keep / 100,
+                    c[1] * keep / 100,
+                    c[2] * keep / 100,
+                ]))]
+            }
             Self::Output => Vec::new(),
+        }
+    }
+
+    /// R1593 — the lattice. An amount broadcasts into a colour; a colour does
+    /// not narrow back.
+    ///
+    /// An *associated* function, because a wire's legality is a property of the
+    /// two types and of neither node: an editor asks it while the wire is being
+    /// dragged, before there is a value and often before there is a node at the
+    /// far end.
+    ///
+    /// Declaring the conversion here — rather than declaring a *predicate* here
+    /// and the conversion somewhere else — is what makes "this wire is legal"
+    /// and "this is what arrives along it" impossible to disagree. Blender has
+    /// three separate answers to that one question (`validate_link`,
+    /// `DataTypeConversions`, `get_internal_link_type_priority`).
+    fn conversion(from: &Ty, to: &Ty) -> Conversion<Val> {
+        match (from, to) {
+            (Ty::Colour, Ty::Colour) | (Ty::Amount, Ty::Amount) => Conversion::Direct,
+            // A percentage becomes the grey of that intensity. Integer
+            // throughout, so what an agent reads is exact.
+            (Ty::Amount, Ty::Colour) => Conversion::Converted(|value| match value {
+                Val::Amount(a) => {
+                    let level = a.clamp(0, 100) * 255 / 100;
+                    Some(Val::Colour([level, level, level]))
+                }
+                Val::Colour(_) => None,
+            }),
+            // No narrowing: a colour is three numbers and an amount is one, and
+            // which one it would be is a question the lattice must not answer
+            // by guessing.
+            (Ty::Colour, Ty::Amount) => Conversion::Refused,
         }
     }
 }
@@ -554,6 +643,11 @@ fn port_scenes(
 ///
 /// An output with no route simply has no line reaching it — which is the fact
 /// an author most needs to see, and the one Blender's derivation discards.
+///
+/// R1593 — a route that CONVERTS is drawn dotted, by the same
+/// [`WireLook`] a link is, because it is the same fact about the same value:
+/// what leaves is not what arrived. That the two agree is structural rather
+/// than remembered — one enum, one stroke table.
 fn passthrough_scenes(
     document: &Document<Op>,
     tree: TreeId,
@@ -569,10 +663,13 @@ fn passthrough_scenes(
         .routes()
         .iter()
         .map(|route| {
+            let muted = theme.resolve(ColorRole::OnSurfaceMuted);
             wire_scene(
+                WireLook::of(false, route.converts),
                 pin_at(at.0, at.1, position(&shown.inputs, route.input), false),
                 pin_at(at.0, at.1, position(&shown.outputs, route.output), true),
-                theme.resolve(ColorRole::OnSurfaceMuted),
+                muted,
+                muted,
                 format!("{VIEW_TAG}.through.{}.{}", node.0, route.output),
             )
         })
@@ -695,20 +792,61 @@ fn node_scene(
     scenes
 }
 
-/// A wire: a cubic whose handles are horizontal, the shape every node editor
-/// draws.
-fn wire_scene(from: (i32, i32), to: (i32, i32), colour: Color, tag: String) -> Scene {
-    wire_with(from, to, Stroke::new(colour, 2), tag)
+/// What a wire is doing with the value it was given, which is what decides how
+/// it is drawn.
+///
+/// Three facts, ORDERED rather than merged, and this is the one place that
+/// ordering is stated: a muted wire carries no value, so there is nothing for
+/// it to convert, and drawing it as "converting" would say something false.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WireLook {
+    /// Carries its value unchanged.
+    Direct,
+    /// Carries its value, and **changes** it on the way (R1593).
+    Converting,
+    /// Drawn, and carrying nothing (R1586).
+    Muted,
 }
 
-/// The same wire, dashed: drawn, and carrying nothing (R1586).
-fn muted_wire_scene(from: (i32, i32), to: (i32, i32), colour: Color, tag: String) -> Scene {
-    wire_with(
-        from,
-        to,
-        Stroke::new(colour, 2).with_dash(Dash::DASHED),
-        tag,
-    )
+impl WireLook {
+    /// The look a link with these two facts has.
+    const fn of(muted: bool, converts: bool) -> Self {
+        if muted {
+            Self::Muted
+        } else if converts {
+            Self::Converting
+        } else {
+            Self::Direct
+        }
+    }
+
+    /// The stroke that says it.
+    ///
+    /// Solid, dashed and dotted are three arms of one vocabulary R1575 opened —
+    /// so a reader tells them apart without a legend, and a colour-blind reader
+    /// tells them apart at all. Blender shows an implicit conversion only by
+    /// materialising a whole `implicit_conversion` node into the tree, so
+    /// seeing that fact there costs a change to the graph you are looking at.
+    fn stroke(self, direct: Color, muted: Color) -> Stroke {
+        match self {
+            Self::Direct => Stroke::new(direct, 2),
+            Self::Converting => Stroke::new(direct, 2).with_dash(Dash::DOTTED),
+            Self::Muted => Stroke::new(muted, 2).with_dash(Dash::DASHED),
+        }
+    }
+}
+
+/// A wire: a cubic whose handles are horizontal, the shape every node editor
+/// draws.
+fn wire_scene(
+    look: WireLook,
+    from: (i32, i32),
+    to: (i32, i32),
+    direct: Color,
+    muted: Color,
+    tag: String,
+) -> Scene {
+    wire_with(from, to, look.stroke(direct, muted), tag)
 }
 
 fn wire_with(from: (i32, i32), to: (i32, i32), stroke: Stroke, tag: String) -> Scene {
@@ -803,24 +941,20 @@ fn view() -> Scene {
                 true,
             );
             let to = pin_at(sink.x, sink.y + CANVAS_TOP, link.to.port as usize, false);
-            children.push(if link.muted {
-                // R1586 — a muted wire is still a wire. Dashed, because what
-                // changed is whether it carries a value and not whether it is
-                // there, and R1575 gave the stroke that vocabulary.
-                muted_wire_scene(
-                    from,
-                    to,
-                    theme.resolve(ColorRole::OnSurfaceMuted),
-                    format!("{VIEW_TAG}.wire.{}", link.id.0),
-                )
-            } else {
-                wire_scene(
-                    from,
-                    to,
-                    wire_colour,
-                    format!("{VIEW_TAG}.wire.{}", link.id.0),
-                )
-            });
+            let look = WireLook::of(
+                link.muted,
+                document
+                    .link_conversion(tree, link.id)
+                    .is_some_and(|c| c.converts()),
+            );
+            children.push(wire_scene(
+                look,
+                from,
+                to,
+                wire_colour,
+                theme.resolve(ColorRole::OnSurfaceMuted),
+                format!("{VIEW_TAG}.wire.{}", link.id.0),
+            ));
         }
         for node in host.nodes().filter(|n| !n.is_frame()) {
             children.extend(node_scene(
@@ -1121,6 +1255,7 @@ impl ExternalIntrospect for GroupsOracle {
                     // R1586 — how each node and wire takes part.
                     SchemaField::new("bypassed", "string"),
                     SchemaField::new("muted_links", "string"),
+                    SchemaField::new("link_conversions", "string"),
                     SchemaField::new("last_rewire", "string"),
                     // R1589 — the containment forest, whole. Neither Blender
                     // nor Qt has an accessor for "what contains what right
@@ -1139,6 +1274,7 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("looks", "string"),
                     SchemaField::action("containment", "string"),
                     SchemaField::action("same_kind", "string"),
+                    SchemaField::action("conversion", "string"),
                     // The verbs.
                     SchemaField::action("select", "string"),
                     SchemaField::action("group", "string"),
@@ -1262,15 +1398,7 @@ impl ExternalIntrospect for GroupsOracle {
                     .collect::<Vec<_>>()
                     .join(";"),
             )),
-            "muted_links" => Some(IntrospectValue::Text(join_ids(
-                document
-                    .tree(tree)
-                    .map(pinion_node_graph::Tree::links)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|l| l.muted)
-                    .map(|l| l.id.0),
-            ))),
+            "muted_links" | "link_conversions" => Self::link_query(&document, tree, path),
             _ => None,
         }
     }
@@ -1280,7 +1408,7 @@ impl ExternalIntrospect for GroupsOracle {
             "trees" | "definitions" | "nodes" | "links" | "valid" | "path" | "depth"
             | "current_tree" | "selection" | "last_refusal" | "clipboard" | "clipboard_severed"
             | "clipboard_bytes" | "last_insert" | "last_move" | "bypassed" | "muted_links"
-            | "last_rewire" => Err(InterveneError::ReadOnly),
+            | "link_conversions" | "last_rewire" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -1292,9 +1420,8 @@ impl ExternalIntrospect for GroupsOracle {
     ) -> Result<IntrospectValue, InvokeError> {
         let outcome = match path {
             "node_kind" | "node_value" | "node_ports" | "interface" | "instances" | "tree_name"
-            | "passthrough" | "visible_ports" | "looks" | "containment" | "same_kind" => {
-                self.read(path, &args)
-            }
+            | "passthrough" | "visible_ports" | "looks" | "containment" | "same_kind"
+            | "conversion" => self.read(path, &args),
             _ => self.verb(path, &args),
         };
         // R1584 — every refusal reaches the readout, whoever made it. The
@@ -1374,6 +1501,7 @@ impl GroupsOracle {
                 ))
             }
             "passthrough" | "visible_ports" | "looks" => self.participation_read(path, args),
+            "conversion" => self.conversion_read(args),
             "same_kind" => self.same_kind_read(args),
             "containment" => {
                 let document = state.document.get();
@@ -1438,8 +1566,19 @@ impl GroupsOracle {
                     .map(|r| format!("{}<-{}", r.output, r.input))
                     .collect::<Vec<_>>()
                     .join(",");
+                // R1593 — which of those routes CHANGES the value on the way.
+                // A separate field rather than a mark inside `routes`, so a
+                // reader that predates the question still parses the same
+                // string it always did.
+                let converting = join_ids(
+                    through
+                        .routes()
+                        .iter()
+                        .filter(|r| r.converts)
+                        .map(|r| r.output),
+                );
                 Ok(IntrospectValue::Text(format!(
-                    "routes:{routes}|dropped:{}|unreached:{}|identity:{}",
+                    "routes:{routes}|dropped:{}|unreached:{}|identity:{}|converting:{converting}",
                     join_ids(through.dropped_outputs().iter().copied()),
                     join_ids(through.unreached_inputs().iter().copied()),
                     through.is_identity(),
@@ -1478,6 +1617,80 @@ impl GroupsOracle {
             }
             _ => Err(InvokeError::UnknownPath),
         }
+    }
+
+    /// The two per-link facts, kept together because they are one subject —
+    /// what each wire in this tree is doing with the value it was given.
+    ///
+    /// Split out of [`query`](Self::query) at clippy's own line limit, which is
+    /// the same signal that produced [`participation_read`](Self::participation_read).
+    fn link_query(document: &Document<Op>, tree: TreeId, path: &str) -> Option<IntrospectValue> {
+        let links = document
+            .tree(tree)
+            .map(pinion_node_graph::Tree::links)
+            .unwrap_or_default();
+        match path {
+            "muted_links" => Some(IntrospectValue::Text(join_ids(
+                links.iter().filter(|l| l.muted).map(|l| l.id.0),
+            ))),
+            // R1593 — which of this tree's links carry their value through a
+            // conversion. Blender makes the same fact visible by materialising
+            // a whole `implicit_conversion` node into the tree; here it is
+            // derived from the link's two ends, so nothing can go stale and
+            // nothing has to be drawn to be asked.
+            "link_conversions" => Some(IntrospectValue::Text(
+                links
+                    .iter()
+                    .map(|l| {
+                        format!(
+                            "{}={}",
+                            l.id.0,
+                            document
+                                .link_conversion(tree, l.id)
+                                .map_or("gone", |c| c.name())
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )),
+            _ => None,
+        }
+    }
+
+    /// R1593 — what would happen to a value going from one socket to another,
+    /// asked BEFORE any wire exists.
+    ///
+    /// Takes the same argument spelling the `connect` verb does, so "may I?"
+    /// and "do it" name the wire the same way — and answers with the two types
+    /// as well as the verdict, because "refused" is only actionable if you are
+    /// told what was refused.
+    fn conversion_read(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let document = state.document.get();
+        let tree = state.current();
+
+        let (from, to) = Self::pair(args)?;
+        let describe = |socket: Socket, side: InterfaceSide| {
+            document
+                .signature(tree, socket.node)
+                .and_then(|sig| {
+                    let ports = match side {
+                        InterfaceSide::Input => sig.inputs,
+                        InterfaceSide::Output => sig.outputs,
+                    };
+                    ports.get(socket.port as usize).map(|p| p.ty.name())
+                })
+                .unwrap_or("?")
+        };
+        let conversion = document
+            .conversion(tree, from, to)
+            .ok_or_else(|| InvokeError::rejected(format!("no socket {from} or {to}")))?;
+        Ok(IntrospectValue::Text(format!(
+            "{}->{} {}",
+            describe(from, InterfaceSide::Output),
+            describe(to, InterfaceSide::Input),
+            conversion.name(),
+        )))
     }
 
     /// The verbs. Each one is a call into the substrate plus the bookkeeping
@@ -2049,8 +2262,9 @@ impl GroupsOracle {
             "add" => {
                 let op = Op::parse(&Self::text(args)?).ok_or_else(|| {
                     InvokeError::rejected(format!(
-                        "{:?} is not one of swatch/level/mix/fade/output",
-                        Self::text(args).unwrap_or_default()
+                        "{:?} is not one of {}",
+                        Self::text(args).unwrap_or_default(),
+                        Op::PALETTE.join("/")
                     ))
                 })?;
                 let placed = state

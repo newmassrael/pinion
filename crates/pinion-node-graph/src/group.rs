@@ -1015,7 +1015,7 @@ impl<K: NodeKind> Document<K> {
                     });
                     continue;
                 };
-                if out.ty != inp.ty {
+                if K::conversion(&out.ty, &inp.ty).is_refused() {
                     found.push(Violation::TypeMismatch {
                         tree: tree.id,
                         link: link.id,

@@ -295,9 +295,10 @@ pub struct Inserted {
     /// Links restored from the fragment's inbound crossings.
     pub reattached: Vec<LinkId>,
     /// Inbound crossings that could not be restored — the producing socket is
-    /// gone from the destination tree, or no longer carries the type the copy
-    /// expects. Named rather than dropped, because "your paste is missing two
-    /// inputs" is a thing the user has to be told.
+    /// gone from the destination tree, or carries a type no value can cross
+    /// from into the port the copy offers (R1593). Named rather than dropped,
+    /// because "your paste is missing two inputs" is a thing the user has to be
+    /// told.
     pub unattached: Vec<Severed>,
     /// Copies put back inside the frame their original was in, ascending
     /// (R1589).
@@ -713,7 +714,7 @@ impl<K: NodeKind> Document<K> {
                     if !fed.insert(consumer) {
                         continue;
                     }
-                    if self.crossing_types_agree(tree, severed.producer, fragment, consumer) {
+                    if self.value_can_cross(tree, severed.producer, fragment, consumer) {
                         landed.push(Sink {
                             socket: consumer,
                             muted: severed.is_muted(consumer),
@@ -737,14 +738,17 @@ impl<K: NodeKind> Document<K> {
         })
     }
 
-    /// Whether the producer still sits in `tree` carrying the type the
-    /// fragment's consumer expects.
+    /// Whether a value can still travel from the producer that sits in `tree`
+    /// into the port the fragment's consumer offers.
     ///
     /// Both ends are read **before** the insertion: the producer from this
     /// document, the consumer from the fragment's own signature — which is the
     /// same signature the copy will have, because a carried definition's
     /// interface is either copied whole or matched to an equal one.
-    fn crossing_types_agree(
+    ///
+    /// R1593 — the taxonomy's directed relation, not equality, so a cut that a
+    /// broadcast used to carry is re-attachable.
+    fn value_can_cross(
         &self,
         tree: TreeId,
         producer: Socket,
@@ -763,7 +767,7 @@ impl<K: NodeKind> Document<K> {
         ) else {
             return false;
         };
-        out.ty == input.ty
+        K::conversion(&out.ty, &input.ty).is_allowed()
     }
 
     /// Apply a validated plan. Nothing here can fail.

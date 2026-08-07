@@ -32296,6 +32296,66 @@
         "The region walk over a scene still tests a node's RECT rather than a PathNode's real outline, unchanged from R1591 and stated there."
       ]
     },
+    "R1593": {
+      "decision_summary": "R1593 §5.38 §5.52 §2 #7 — A LINK MAY CONVERT. A node system's type relation is DIRECTED: a scalar feeds a colour by broadcasting, and a colour never narrows back into a scalar. pinion-node-graph decided a wire with source.ty != sink.ty, and != is symmetric — so the crate's own NodeKind doc, which told a coercing taxonomy to \"model that by making the coercion part of equality\", was asking for something no equality relation can be, and its flagship consumer is the counter-example: hello-node-editor's PortType lattice was INEXPRESSIBLE on this crate, which is the first structural reason debt-two-node-graph-models could not be closed. NodeKind::conversion declares the relation once, AS THE CONVERSION ITSELF, and that single declaration decides the four things the crate had spelled as == in four separate places: whether connect accepts a wire, what arrives along it, which input a bypassed node routes to which output, and whether a document from a file still type-checks. Blender keeps THREE independent answers to that one question — validate_link, DataTypeConversions and get_internal_link_type_priority — and its shader validate_link returns true for pairs its conversion table has no entry for at all.",
+      "changes_bullets": [
+        "Conversion<V> (Refused / Direct / Converted(fn)) plus NodeKind::conversion, whose provided default IS equality",
+        "Document::conversion and link_conversion: what would happen to a value, askable before the wire exists",
+        "The four == sites become one relation: connect, passthrough eligibility, fragment re-attach, validate",
+        "The bypass rule gains its first clause since R1586: it changes a value only when it has to, and Route::converts says which",
+        "hello-node-groups declares the lattice (amount broadcasts to grey, colour never narrows) and paints a converting wire DOTTED"
+      ],
+      "verification_bullets": [
+        "All 151 pre-existing crate tests passed UNCHANGED under the new relation, which is the backwards-compat proof: the default conversion is equality, so a taxonomy that declares nothing behaves exactly as before. 160 crate tests after (9 new over a second test taxonomy with an asymmetric lattice, kept apart from the first because every assertion above it reads its meaning from equality). hello-node-groups 12.",
+        "7 crate counterfactuals, each reverted with hash verification, each caught by a distinct test: symmetric connect gate (6 tests), evaluator skipping the conversion (3), routing preferring the output's own index over a direct crossing (2), bypass eligibility back to equality (1), validate back to equality (1), fragment re-attach back to equality (1), and conversion() defaulted to allow-everything (5).",
+        "CF-2 found a discrimination hole in a NEIGHBOURING test and that is the round's process finding: every_accepted_wire_can_carry_a_value asserted only that a value arrived, so a wire that carried the value across UNCONVERTED passed it — the very failure the property exists to exclude. It now asserts the arriving value has the DESTINATION's type, and the counterfactual was re-run against the strengthened form.",
+        "5 demo counterfactuals. D-CF-4 PASSED on the first run, which is a finding of the same class one level up: the section asserting the routing preference was written against Fade, whose own-index input is already the direct one, so both the rule and its counterfactual give the same answer — zero discriminating power. A shape where the preference is falsifiable (Glaze: Amount, Colour -> Colour) was added and the counterfactual then failed on it.",
+        "Demo: tools/demos/r1593_a_link_may_convert.py, 51 assertions over 10 phases, driving the painted stroke rhythm over the wire (dotted for converting, dashed for muted, null for direct) rather than asserting the tag is present.",
+        "Blast radius: all seven demos over hello-node-groups and pinion-node-graph re-run green after a release rebuild (r1577, r1578, r1584, r1586, r1589, r1590, r1591).",
+        "Gates: cargo fmt --all --check, clippy -D pedantic on both packages, cargo doc --document-private-items, phase_b_tally --selftest."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "NAME COLLISION FOUND AND AVOIDED: the type was first written as Crossing, and pinion_graph::group::Crossing already means a value crossing a GROUP boundary — the same one-word-two-meanings hazard R1586 spent a round untangling in Blender's vocabulary. Renamed to Conversion before the round closed; the wire vocabulary follows it (conversion, link_conversions).",
+        "A conversion cannot be declared per PORT, only per type pair. Blender has no per-port override either, so this is a stated limit rather than a divergence; the forcing case would be a port that wants a different broadcast from every other port of its type.",
+        "Conversion::Converted carries fn(V) -> Option<V>, so a conversion that is DECLARED for a pair can still decline a particular value. Nothing in the tree exercises that arm's None leg through a link yet — the lattice conversions here are total on their own type.",
+        "The evaluator re-derives the conversion per link read rather than caching it. Free today (the relation is a pure function of two types and both are already in hand), and it is where a cost would show up if a taxonomy made conversion() expensive.",
+        "debt-two-node-graph-models is UNBLOCKED, not closed: the flagship example's lattice is now expressible, and migrating its 9,186-line model plus 9,094 lines of tests is the slice this round deliberately did not take."
+      ],
+      "publishable_decision_summary": "R1593 §5.38 §5.52 §2 #7 — A LINK MAY CONVERT. A node system's type relation is DIRECTED: a scalar feeds a colour by broadcasting, and a colour never narrows back into a scalar. pinion-node-graph decided a wire with source.ty != sink.ty, and != is symmetric — so the crate's own NodeKind doc, which told a coercing taxonomy to \"model that by making the coercion part of equality\", was asking for something no equality relation can be, and its flagship consumer is the counter-example: hello-node-editor's PortType lattice was INEXPRESSIBLE on this crate, which is the first structural reason debt-two-node-graph-models could not be closed. NodeKind::conversion declares the relation once, AS THE CONVERSION ITSELF, and that single declaration decides the four things the crate had spelled as == in four separate places: whether connect accepts a wire, what arrives along it, which input a bypassed node routes to which output, and whether a document from a file still type-checks. Blender keeps THREE independent answers to that one question — validate_link, DataTypeConversions and get_internal_link_type_priority — and its shader validate_link returns true for pairs its conversion table has no entry for at all.",
+      "publishable_changes_bullets": [
+        "Conversion<V> (Refused / Direct / Converted(fn)) plus NodeKind::conversion, whose provided default IS equality",
+        "Document::conversion and link_conversion: what would happen to a value, askable before the wire exists",
+        "The four == sites become one relation: connect, passthrough eligibility, fragment re-attach, validate",
+        "The bypass rule gains its first clause since R1586: it changes a value only when it has to, and Route::converts says which",
+        "hello-node-groups declares the lattice (amount broadcasts to grey, colour never narrows) and paints a converting wire DOTTED"
+      ],
+      "publishable_verification_bullets": [
+        "All 151 pre-existing crate tests passed UNCHANGED under the new relation, which is the backwards-compat proof: the default conversion is equality, so a taxonomy that declares nothing behaves exactly as before. 160 crate tests after (9 new over a second test taxonomy with an asymmetric lattice, kept apart from the first because every assertion above it reads its meaning from equality). hello-node-groups 12.",
+        "7 crate counterfactuals, each reverted with hash verification, each caught by a distinct test: symmetric connect gate (6 tests), evaluator skipping the conversion (3), routing preferring the output's own index over a direct crossing (2), bypass eligibility back to equality (1), validate back to equality (1), fragment re-attach back to equality (1), and conversion() defaulted to allow-everything (5).",
+        "CF-2 found a discrimination hole in a NEIGHBOURING test and that is the round's process finding: every_accepted_wire_can_carry_a_value asserted only that a value arrived, so a wire that carried the value across UNCONVERTED passed it — the very failure the property exists to exclude. It now asserts the arriving value has the DESTINATION's type, and the counterfactual was re-run against the strengthened form.",
+        "5 demo counterfactuals. D-CF-4 PASSED on the first run, which is a finding of the same class one level up: the section asserting the routing preference was written against Fade, whose own-index input is already the direct one, so both the rule and its counterfactual give the same answer — zero discriminating power. A shape where the preference is falsifiable (Glaze: Amount, Colour -> Colour) was added and the counterfactual then failed on it.",
+        "Demo: tools/demos/r1593_a_link_may_convert.py, 51 assertions over 10 phases, driving the painted stroke rhythm over the wire (dotted for converting, dashed for muted, null for direct) rather than asserting the tag is present.",
+        "Blast radius: all seven demos over hello-node-groups and pinion-node-graph re-run green after a release rebuild (r1577, r1578, r1584, r1586, r1589, r1590, r1591).",
+        "Gates: cargo fmt --all --check, clippy -D pedantic on both packages, cargo doc --document-private-items, phase_b_tally --selftest."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NAME COLLISION FOUND AND AVOIDED: the type was first written as Crossing, and pinion_graph::group::Crossing already means a value crossing a GROUP boundary — the same one-word-two-meanings hazard R1586 spent a round untangling in Blender's vocabulary. Renamed to Conversion before the round closed; the wire vocabulary follows it (conversion, link_conversions).",
+        "A conversion cannot be declared per PORT, only per type pair. Blender has no per-port override either, so this is a stated limit rather than a divergence; the forcing case would be a port that wants a different broadcast from every other port of its type.",
+        "Conversion::Converted carries fn(V) -> Option<V>, so a conversion that is DECLARED for a pair can still decline a particular value. Nothing in the tree exercises that arm's None leg through a link yet — the lattice conversions here are total on their own type.",
+        "The evaluator re-derives the conversion per link read rather than caching it. Free today (the relation is a pure function of two types and both are already in hand), and it is where a cost would show up if a taxonomy made conversion() expensive.",
+        "debt-two-node-graph-models is UNBLOCKED, not closed: the flagship example's lattice is now expressible, and migrating its 9,186-line model plus 9,094 lines of tests is the slice this round deliberately did not take."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -101,7 +101,8 @@ pub(crate) struct Sink {
 pub struct Port<T, V> {
     /// Human-facing name. Not an identity — ports are addressed by index.
     pub name: String,
-    /// The application's socket type. This crate only ever compares two.
+    /// The application's socket type. This crate only ever asks whether a
+    /// value can cross from one to another ([`NodeKind::conversion`]).
     pub ty: T,
     /// The value used when the port is unlinked. `None` on outputs, and on
     /// inputs that have no meaningful resting value.
@@ -177,6 +178,100 @@ impl<T, V> Port<T, V> {
     }
 }
 
+/// Whether and how a value crosses from an output into an input (R1593).
+///
+/// A node system's type relation is **directed**: a scalar feeds a colour by
+/// broadcasting, and a colour never narrows back into a scalar. That is not
+/// something equality can express — equality is symmetric — so it is a relation
+/// the taxonomy declares, and it is declared once, as *the conversion itself*.
+///
+/// Legality and the conversion being one declaration is the point. Blender
+/// keeps them apart, in three places that can disagree: `validate_link` (a
+/// per-tree-type predicate that says whether a wire may exist),
+/// `DataTypeConversions` (a global `Map<(from, to), ConversionFunctions>` that
+/// holds the actual conversion), and `get_internal_link_type_priority` (a static
+/// socket-type table used when a node is muted). Here there is one answer, so a
+/// wire this crate accepts is a wire it can carry a value along, and a value
+/// passing through a bypassed node converts by the same rule it would have
+/// converted by along a link.
+///
+/// [`Conversion::Converted`] carries a plain `fn` pointer rather than a boxed
+/// closure because a type-lattice conversion is a property of the pair of types
+/// and captures nothing — the same reason Blender's own conversion table stores
+/// `void (*convert_single_to_initialized)(const void *, void *)`.
+pub enum Conversion<V> {
+    /// No value of the source type may enter this port.
+    Refused,
+    /// The value arrives unchanged.
+    Direct,
+    /// The value arrives through this map.
+    ///
+    /// The map may still answer `None` — a conversion that is *declared* for a
+    /// pair of types can fail on a particular value, and that is a different
+    /// fact from the wire being illegal.
+    Converted(fn(V) -> Option<V>),
+}
+
+// Derived by hand: `#[derive(Clone, Copy)]` would bound `V`, and a crossing is
+// a decision about types that holds no value at all.
+impl<V> Clone for Conversion<V> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<V> Copy for Conversion<V> {}
+
+impl<V> fmt::Debug for Conversion<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl<V> Conversion<V> {
+    /// Whether no value may cross at all — the answer that refuses a wire.
+    #[must_use]
+    pub const fn is_refused(&self) -> bool {
+        matches!(self, Self::Refused)
+    }
+
+    /// Whether a value crosses, changed or not.
+    #[must_use]
+    pub const fn is_allowed(&self) -> bool {
+        !self.is_refused()
+    }
+
+    /// Whether a value that crosses is changed on the way.
+    ///
+    /// Published rather than hidden because it is a fact about the graph a
+    /// reader wants: Blender makes it visible by materialising a whole
+    /// `implicit_conversion` node.
+    #[must_use]
+    pub const fn converts(&self) -> bool {
+        matches!(self, Self::Converted(_))
+    }
+
+    /// The wire-form token — `refused`, `direct` or `converted`.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Refused => "refused",
+            Self::Direct => "direct",
+            Self::Converted(_) => "converted",
+        }
+    }
+
+    /// Take `value` across, or `None` if it may not go or the conversion
+    /// declined it.
+    pub fn apply(&self, value: V) -> Option<V> {
+        match self {
+            Self::Refused => None,
+            Self::Direct => Some(value),
+            Self::Converted(map) => map(value),
+        }
+    }
+}
+
 /// The application's node taxonomy.
 ///
 /// This is the whole of what a consumer supplies. Everything else in this crate
@@ -198,10 +293,18 @@ impl<T, V> Port<T, V> {
 /// say — is only `Deserialize<'static>`, not `for<'de> Deserialize<'de>`, and
 /// that is invisible until something asks for the owned form. Own the strings.
 pub trait NodeKind: Clone + PartialEq + fmt::Debug {
-    /// The application's socket type. Two ports may be linked when their types
-    /// are equal; this crate attaches no other meaning, so an implementor whose
-    /// types coerce models that by making the coercion part of equality or by
-    /// declaring one type.
+    /// The application's socket type.
+    ///
+    /// Equality is the *default* relation between two of them and not the only
+    /// one available: see [`NodeKind::conversion`], which is what actually decides
+    /// whether a value may go from one port to another.
+    ///
+    /// Before R1593 this doc said an implementor whose types coerce "models that
+    /// by making the coercion part of equality". That was **false**, and the
+    /// crate's own flagship consumer is the counter-example: a scalar assigns to
+    /// a vector and a vector does not narrow to a scalar, so the relation is
+    /// asymmetric, and no equality relation is. Making them equal would have
+    /// admitted the narrowing too.
     type Type: Clone + PartialEq + fmt::Debug;
 
     /// The value that flows along a link.
@@ -230,6 +333,38 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// the evaluator, so an implementor that returns the wrong length degrades
     /// rather than corrupting the frame.
     fn evaluate(&self, inputs: &[Option<Self::Value>]) -> Vec<Option<Self::Value>>;
+
+    /// Whether and how a value leaving an output of type `from` may enter an
+    /// input of type `to` (R1593).
+    ///
+    /// An **associated** function and not a method, because a wire's legality is
+    /// a property of the two types and of nothing else: an editor asks it while
+    /// a wire is being dragged, before there is a value and often before there
+    /// is a node at the far end. Blender hangs the same question off the *tree
+    /// type* (`bNodeTreeType::validate_link`) for that reason.
+    ///
+    /// The default is the strictest relation there is — identical types cross
+    /// unchanged and nothing else crosses at all — which is what this crate did
+    /// before the question could be asked. A taxonomy with a coercion lattice
+    /// overrides it; one without writes nothing.
+    ///
+    /// This one declaration decides four separate things, which is the whole
+    /// reason it is one: whether [`Document::connect`] accepts a wire, what
+    /// value arrives at the far end of one, which input a **bypassed** node
+    /// routes to which output ([`Document::passthrough`]), and whether a
+    /// document that arrived from a file still type-checks
+    /// ([`Document::validate`]).
+    ///
+    /// Implementations must be **consistent**: `crossing(t, t)` should never be
+    /// [`Conversion::Refused`], or a node's own value cannot reach a port of its
+    /// own type.
+    fn conversion(from: &Self::Type, to: &Self::Type) -> Conversion<Self::Value> {
+        if from == to {
+            Conversion::Direct
+        } else {
+            Conversion::Refused
+        }
+    }
 }
 
 /// A [`Port`] specialised to one taxonomy.
@@ -810,13 +945,52 @@ impl<K: NodeKind> Document<K> {
         dropped
     }
 
+    /// What would happen to a value travelling from the output `from` to the
+    /// input `to` (R1593).
+    ///
+    /// The question an editor asks while a wire is being *dragged*, and the one
+    /// [`Self::connect`] answers with when it refuses. `None` when either socket
+    /// is not there — which is a different answer from
+    /// [`Conversion::Refused`], because "there is no
+    /// such port" and "no value may go there" are different facts.
+    ///
+    /// Blender has no equivalent accessor: `validate_link` is a C function
+    /// pointer on the tree type, so the only way to ask is to reach through
+    /// `ntree.typeinfo` yourself, and whether the value would be *changed* on
+    /// the way lives in a different table again.
+    #[must_use]
+    pub fn conversion(
+        &self,
+        tree: TreeId,
+        from: Socket,
+        to: Socket,
+    ) -> Option<Conversion<K::Value>> {
+        let source = self.signature(tree, from.node)?;
+        let sink = self.signature(tree, to.node)?;
+        let out = source.outputs.get(from.port as usize)?;
+        let input = sink.inputs.get(to.port as usize)?;
+        Some(K::conversion(&out.ty, &input.ty))
+    }
+
+    /// The crossing along an existing link, which is what its value went
+    /// through (R1593).
+    ///
+    /// `None` when the link is not there or either of its ends has stopped
+    /// existing — the state [`Violation::DanglingLink`](crate::Violation::DanglingLink)
+    /// names.
+    #[must_use]
+    pub fn link_conversion(&self, tree: TreeId, link: LinkId) -> Option<Conversion<K::Value>> {
+        let link = self.tree(tree)?.link(link)?;
+        self.conversion(tree, link.from, link.to)
+    }
+
     /// Link one socket to another.
     ///
     /// The four things that can be wrong are checked here rather than left to
     /// the caller, because every one of them is a property of the graph and not
-    /// of the gesture: the sockets must exist, their types must agree, the
-    /// consuming end must be an input (which takes at most one link), and the
-    /// link must not close a cycle.
+    /// of the gesture: the sockets must exist, a value must be able to cross
+    /// between their types, the consuming end must be an input (which takes at
+    /// most one link), and the link must not close a cycle.
     ///
     /// An input that is already linked is **replaced**, and the displaced link
     /// is reported — that is what a node editor does when a wire is dropped on
@@ -853,7 +1027,10 @@ impl<K: NodeKind> Document<K> {
                 socket: to,
                 arity: u32::try_from(in_ports.len()).unwrap_or(u32::MAX),
             })?;
-        if source.ty != sink.ty {
+        // R1593 — the relation is directed and the taxonomy declares it, so a
+        // scalar may broadcast into a colour while the colour never narrows
+        // back. The default `crossing` is equality, which is what this was.
+        if K::conversion(&source.ty, &sink.ty).is_refused() {
             return Err(ConnectError::TypeMismatch {
                 from,
                 from_type: source.ty.clone(),

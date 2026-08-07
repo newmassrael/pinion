@@ -6,9 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Appearance, ConnectError, Crossings, Definitions, Document, DuplicateError, EditPath,
-    ExtractError, Fragment, GroupError, Grow, InsertError, InterfaceSide, NestError, Node,
-    NodeBody, NodeId, NodeKind, Orphaned, ParentError, PathError, Port, ROOT, Reach,
+    Appearance, ConnectError, Conversion, Crossings, Definitions, Document, DuplicateError,
+    EditPath, ExtractError, Fragment, GroupError, Grow, InsertError, InterfaceSide, NestError,
+    Node, NodeBody, NodeId, NodeKind, Orphaned, ParentError, PathError, Port, ROOT, Reach,
     RepartitionError, Route, SelectError, Severed, Sharing, Socket, TreeId, UngroupError,
     Violation,
 };
@@ -2323,7 +2323,8 @@ fn a_bypassed_node_is_the_identity_as_far_as_its_signature_allows() {
         through.routes(),
         &[Route {
             output: 0,
-            input: 0
+            input: 0,
+            converts: false,
         }]
     );
     assert!(through.is_identity(), "same index, agreeing types");
@@ -2347,11 +2348,13 @@ fn one_input_can_feed_several_outputs_and_the_second_is_not_the_identity() {
         &[
             Route {
                 output: 0,
-                input: 0
+                input: 0,
+                converts: false,
             },
             Route {
                 output: 1,
-                input: 0
+                input: 0,
+                converts: false,
             },
         ],
         "one value in, the same value out of both halves"
@@ -2676,7 +2679,8 @@ fn a_bypassed_group_instance_is_not_descended_into() {
         through.routes(),
         &[Route {
             output: 0,
-            input: 0
+            input: 0,
+            converts: false,
         }]
     );
 
@@ -3065,11 +3069,13 @@ fn the_identity_rule_is_falsifiable_where_position_and_type_order_disagree() {
         &[
             Route {
                 output: 0,
-                input: 0
+                input: 0,
+                converts: false,
             },
             Route {
                 output: 1,
-                input: 1
+                input: 1,
+                converts: false,
             },
         ]
     );
@@ -3458,7 +3464,8 @@ fn an_output_can_be_declared_to_carry_nothing_while_bypassed() {
         through.routes(),
         &[Route {
             output: 0,
-            input: 1
+            input: 1,
+            converts: false,
         }]
     );
     assert_eq!(
@@ -4874,4 +4881,581 @@ fn a_stale_selection_is_refused_rather_than_quietly_narrowed() {
     // An empty selection is a legitimate question with an empty answer.
     let empty = f.document.grow(ROOT, &[], Grow::SameKind).unwrap();
     assert!(empty.selection.is_empty() && !empty.changed());
+}
+
+// ------------------------------------------------------------------- R1593
+// A link may convert.
+
+/// A second test taxonomy, whose type relation is **asymmetric**.
+///
+/// Kept apart from [`Op`] on purpose. `Op`'s relation is equality, and every
+/// assertion above this line reads its meaning from that — `Measure`'s output is
+/// the one "no input can feed" only because `Text` does not reach `Number`. Two
+/// taxonomies in one crate is also what proves the default is a *default*: one
+/// mechanism, two different relations, neither compiled in.
+///
+/// The lattice is the one the crate's flagship consumer has: a scalar
+/// broadcasts into a vector, and a vector never narrows back into a scalar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum LTy {
+    Scalar,
+    Vector,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum LVal {
+    Scalar(i64),
+    Vector([i64; 3]),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum LOp {
+    /// A scalar source.
+    Level(i64),
+    /// A vector source.
+    Swatch([i64; 3]),
+    /// `Vector + Vector -> Vector`, so a scalar reaches it only by broadcasting.
+    Sum,
+    /// `(Scalar, Vector) -> (Vector, Scalar)`. The shape that makes the routing
+    /// preference falsifiable: output 0 is a vector, its own index holds a
+    /// scalar that would have to CONVERT, and index 1 holds a vector that would
+    /// not.
+    Cross,
+    /// `Vector -> Scalar`. Its output is the one no input can feed, because the
+    /// narrowing direction is refused — the analogue of `Op::Measure`, reached
+    /// through the lattice rather than through disjointness.
+    Meter,
+    /// `Scalar -> Vector`. The mirror of `Meter`, and the shape whose only
+    /// pass-through CONVERTS: bypassed, its scalar input can reach its vector
+    /// output only by broadcasting. Under a relation that compared types with
+    /// `==` this output would be dropped instead.
+    Wash,
+    Sink,
+}
+
+impl NodeKind for LOp {
+    type Type = LTy;
+    type Value = LVal;
+
+    fn name(&self) -> String {
+        match self {
+            Self::Level(_) => "Level",
+            Self::Swatch(_) => "Swatch",
+            Self::Sum => "Sum",
+            Self::Cross => "Cross",
+            Self::Meter => "Meter",
+            Self::Wash => "Wash",
+            Self::Sink => "Sink",
+        }
+        .to_owned()
+    }
+
+    fn inputs(&self) -> Vec<Port<LTy, LVal>> {
+        match self {
+            Self::Level(_) | Self::Swatch(_) => Vec::new(),
+            Self::Sum => vec![
+                Port::new("A", LTy::Vector).with_default(LVal::Vector([0, 0, 0])),
+                Port::new("B", LTy::Vector).with_default(LVal::Vector([0, 0, 0])),
+            ],
+            Self::Cross => vec![
+                Port::new("Amount", LTy::Scalar).with_default(LVal::Scalar(1)),
+                Port::new("Colour", LTy::Vector).with_default(LVal::Vector([9, 9, 9])),
+            ],
+            Self::Meter => vec![Port::new("Colour", LTy::Vector)],
+            Self::Wash => vec![Port::new("Amount", LTy::Scalar).with_default(LVal::Scalar(3))],
+            Self::Sink => vec![Port::new("Result", LTy::Vector)],
+        }
+    }
+
+    fn outputs(&self) -> Vec<Port<LTy, LVal>> {
+        match self {
+            Self::Level(_) | Self::Meter => vec![Port::new("Out", LTy::Scalar)],
+            Self::Swatch(_) | Self::Sum | Self::Wash => vec![Port::new("Out", LTy::Vector)],
+            Self::Cross => vec![
+                Port::new("Colour", LTy::Vector),
+                Port::new("Amount", LTy::Scalar),
+            ],
+            Self::Sink => Vec::new(),
+        }
+    }
+
+    fn evaluate(&self, inputs: &[Option<LVal>]) -> Vec<Option<LVal>> {
+        let vector = |i: usize| match inputs.get(i).and_then(Option::as_ref) {
+            Some(LVal::Vector(v)) => Some(*v),
+            _ => None,
+        };
+        let scalar = |i: usize| match inputs.get(i).and_then(Option::as_ref) {
+            Some(LVal::Scalar(s)) => Some(*s),
+            _ => None,
+        };
+        match self {
+            Self::Level(n) => vec![Some(LVal::Scalar(*n))],
+            Self::Swatch(v) => vec![Some(LVal::Vector(*v))],
+            Self::Sum => vec![
+                vector(0)
+                    .zip(vector(1))
+                    .map(|(a, b)| LVal::Vector([a[0] + b[0], a[1] + b[1], a[2] + b[2]])),
+            ],
+            Self::Cross => vec![vector(1).map(LVal::Vector), scalar(0).map(LVal::Scalar)],
+            Self::Meter => vec![vector(0).map(|v| LVal::Scalar(v[0] + v[1] + v[2]))],
+            // Deliberately NOT the broadcast: a `Wash` that computed doubles
+            // its input, so the value a bypassed one passes through is
+            // distinguishable from the value a computing one produces.
+            Self::Wash => vec![scalar(0).map(|s| LVal::Vector([s * 2, s * 2, s * 2]))],
+            Self::Sink => Vec::new(),
+        }
+    }
+
+    fn conversion(from: &LTy, to: &LTy) -> Conversion<LVal> {
+        match (from, to) {
+            (LTy::Scalar, LTy::Scalar) | (LTy::Vector, LTy::Vector) => Conversion::Direct,
+            // The broadcast: a scalar becomes the grey of that magnitude.
+            (LTy::Scalar, LTy::Vector) => Conversion::Converted(|value| match value {
+                LVal::Scalar(s) => Some(LVal::Vector([s, s, s])),
+                LVal::Vector(_) => None,
+            }),
+            // No narrowing.
+            (LTy::Vector, LTy::Scalar) => Conversion::Refused,
+        }
+    }
+}
+
+/// Every ordered pair of the lattice's types, so a property holds over the whole
+/// relation rather than over the one pair a fixture happens to use.
+const LATTICE: [(LTy, LTy); 4] = [
+    (LTy::Scalar, LTy::Scalar),
+    (LTy::Scalar, LTy::Vector),
+    (LTy::Vector, LTy::Scalar),
+    (LTy::Vector, LTy::Vector),
+];
+
+/// A lattice document: `Level`(scalar) and `Swatch`(vector) feeding a `Sum`,
+/// with a `Meter` and a `Sink` to hand.
+struct Lattice {
+    document: Document<LOp>,
+    level: NodeId,
+    swatch: NodeId,
+    sum: NodeId,
+    meter: NodeId,
+    cross: NodeId,
+}
+
+fn lattice() -> Lattice {
+    let mut document = Document::new("root");
+    let level = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(4)), 0, 0)
+        .unwrap();
+    let swatch = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([1, 2, 3])), 0, 60)
+        .unwrap();
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 200, 0)
+        .unwrap();
+    let meter = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 200, 120)
+        .unwrap();
+    let cross = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 400, 0)
+        .unwrap();
+    Lattice {
+        document,
+        level,
+        swatch,
+        sum,
+        meter,
+        cross,
+    }
+}
+
+#[test]
+fn the_type_relation_is_directed_and_no_equality_could_be() {
+    // The headline. The SAME document accepts this pair of types one way round
+    // and refuses it the other. `connect`'s pre-R1593 gate was
+    // `source.ty != sink.ty`, and `!=` is symmetric, so no implementation of
+    // `PartialEq` — however clever — can produce both of these outcomes at once.
+    // That is the proof that this crate's own doc was wrong to say a coercing
+    // taxonomy "models that by making the coercion part of equality": making
+    // them equal would have admitted the narrowing too.
+    let mut f = lattice();
+
+    // Scalar -> Vector: accepted.
+    assert!(
+        f.document
+            .connect(ROOT, Socket::new(f.level, 0), Socket::new(f.sum, 0))
+            .is_ok()
+    );
+    // Vector -> Scalar, the mirror image: refused, and the refusal names both
+    // ends rather than reporting a bare failure.
+    assert_eq!(
+        f.document
+            .connect(ROOT, Socket::new(f.swatch, 0), Socket::new(f.cross, 0)),
+        Err(ConnectError::TypeMismatch {
+            from: Socket::new(f.swatch, 0),
+            from_type: LTy::Vector,
+            to: Socket::new(f.cross, 0),
+            to_type: LTy::Scalar,
+        })
+    );
+}
+
+#[test]
+fn a_crossing_is_answerable_before_a_wire_exists() {
+    // The question an editor asks while a wire is being dragged. Blender's
+    // `validate_link` is a C function pointer on the tree type with no accessor
+    // in front of it, and whether the value would be CHANGED on the way lives in
+    // a different table again (`DataTypeConversions`).
+    let f = lattice();
+    let ask = |from: (NodeId, u32), to: (NodeId, u32)| {
+        f.document
+            .conversion(ROOT, Socket::new(from.0, from.1), Socket::new(to.0, to.1))
+            .map(|c| c.name())
+    };
+    assert_eq!(ask((f.swatch, 0), (f.sum, 0)), Some("direct"));
+    assert_eq!(ask((f.level, 0), (f.sum, 0)), Some("converted"));
+    assert_eq!(ask((f.swatch, 0), (f.cross, 0)), Some("refused"));
+
+    // "There is no such port" is a different answer from "no value may go
+    // there", so it is a different value and not a third arm of `Conversion`.
+    assert_eq!(ask((f.level, 7), (f.sum, 0)), None);
+    assert_eq!(ask((f.level, 0), (NodeId(99), 0)), None);
+}
+
+#[test]
+fn the_value_arrives_converted() {
+    let mut f = lattice();
+    f.document
+        .connect(ROOT, Socket::new(f.level, 0), Socket::new(f.sum, 0))
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(f.swatch, 0), Socket::new(f.sum, 1))
+        .unwrap();
+    // The scalar 4 broadcast to [4,4,4], plus the swatch.
+    assert_eq!(
+        f.document.evaluate(ROOT, f.sum),
+        vec![Some(LVal::Vector([5, 6, 7]))],
+        "the link carried the value THROUGH the declared conversion"
+    );
+    // And the conversion is readable off the link itself, after the fact.
+    let link = f.document.tree(ROOT).unwrap().links()[0].id;
+    assert_eq!(
+        f.document.link_conversion(ROOT, link).map(|c| c.converts()),
+        Some(true)
+    );
+}
+
+#[test]
+fn every_accepted_wire_can_carry_a_value() {
+    // The property that comes of legality and the conversion being ONE
+    // declaration: over the whole relation, `connect` accepts a pair exactly
+    // when a value survives the trip. Blender cannot state this — a shader
+    // tree's `validate_link` returns `true` for pairs `DataTypeConversions`
+    // has no entry for at all, so acceptance there does not entail carriage.
+    for (from, to) in LATTICE {
+        let mut document = Document::new("root");
+        // A source of `from` and a consumer of `to`, whichever they are.
+        let (source, out_port) = match from {
+            LTy::Scalar => (
+                document
+                    .add_node(ROOT, NodeBody::Kind(LOp::Level(7)), 0, 0)
+                    .unwrap(),
+                0,
+            ),
+            LTy::Vector => (
+                document
+                    .add_node(ROOT, NodeBody::Kind(LOp::Swatch([7, 7, 7])), 0, 0)
+                    .unwrap(),
+                0,
+            ),
+        };
+        let (consumer, in_port) = match to {
+            LTy::Scalar => (
+                document
+                    .add_node(ROOT, NodeBody::Kind(LOp::Cross), 200, 0)
+                    .unwrap(),
+                0,
+            ),
+            LTy::Vector => (
+                document
+                    .add_node(ROOT, NodeBody::Kind(LOp::Meter), 200, 0)
+                    .unwrap(),
+                0,
+            ),
+        };
+        let accepted = document
+            .connect(
+                ROOT,
+                Socket::new(source, out_port),
+                Socket::new(consumer, in_port),
+            )
+            .is_ok();
+        assert_eq!(
+            accepted,
+            LOp::conversion(&from, &to).is_allowed(),
+            "{from:?} -> {to:?}: acceptance and the declared crossing are one answer"
+        );
+        if accepted {
+            // A value arrives, AND it arrives as the port's own type. Merely
+            // asserting `is_some()` would pass on a wire that carried the value
+            // across unconverted, which is the very failure this property
+            // exists to exclude — a counterfactual that stopped the evaluator
+            // applying the conversion left this test green until it checked the
+            // arriving type.
+            let arrived = document
+                .evaluator()
+                .input(ROOT, Socket::new(consumer, in_port));
+            let shape = match arrived {
+                Some(LVal::Scalar(_)) => Some(LTy::Scalar),
+                Some(LVal::Vector(_)) => Some(LTy::Vector),
+                None => None,
+            };
+            assert_eq!(
+                shape,
+                Some(to),
+                "{from:?} -> {to:?}: accepted, so a value of the DESTINATION's \
+                 type must arrive"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_bypassed_node_changes_a_value_only_when_it_has_to() {
+    // `Cross` is `(Amount: Scalar, Colour: Vector) -> (Colour: Vector, Amount:
+    // Scalar)`. Output 0 is a vector: its OWN index holds a scalar, which could
+    // reach it by converting, and index 1 holds a vector, which reaches it
+    // unchanged. The rule prefers the value that survives.
+    let f = lattice();
+    let through = f.document.passthrough(ROOT, f.cross).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[
+            Route {
+                output: 0,
+                input: 1,
+                converts: false,
+            },
+            Route {
+                output: 1,
+                input: 0,
+                converts: false,
+            },
+        ],
+        "a direct crossing beats a converting one at the output's own index"
+    );
+    assert!(
+        !through.is_identity(),
+        "neither value leaves by the port it arrived on"
+    );
+
+    // And when converting is the only way through, it is taken and SAID.
+    let mut document = Document::new("root");
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 0, 0)
+        .unwrap();
+    let level = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(5)), -200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(level, 0), Socket::new(sum, 0))
+        .unwrap();
+    document.set_bypassed(ROOT, sum, true).unwrap();
+    let through = document.passthrough(ROOT, sum).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[Route {
+            output: 0,
+            input: 0,
+            converts: false,
+        }],
+        "Sum is vector-in vector-out, so nothing converts here"
+    );
+    // A `Meter` bypassed: vector in, scalar out, and the narrowing is refused,
+    // so the output is DROPPED rather than silently carrying the wrong thing.
+    let meter = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Meter), 200, 0)
+        .unwrap();
+    let through = document.passthrough(ROOT, meter).unwrap();
+    assert!(through.routes().is_empty());
+    assert_eq!(through.dropped_outputs(), &[0]);
+}
+
+#[test]
+fn a_converting_route_is_not_the_identity_and_the_evaluator_applies_it() {
+    // A node whose only pass-through converts: `Cross`'s output 1 (Scalar) can
+    // only come from input 0 (Scalar) — direct. So build the converting case
+    // explicitly with a `Sum` whose input is fed a broadcast scalar.
+    let mut document = Document::new("root");
+    let swatch = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([2, 2, 2])), 0, 0)
+        .unwrap();
+    let cross = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 200, 0)
+        .unwrap();
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 400, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(swatch, 0), Socket::new(cross, 1))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(cross, 0), Socket::new(sink, 0))
+        .unwrap();
+    assert_eq!(
+        document.evaluator().input(ROOT, Socket::new(sink, 0)),
+        Some(LVal::Vector([2, 2, 2]))
+    );
+
+    // Bypassed, the vector still comes out of output 0 — the direct route.
+    document.set_bypassed(ROOT, cross, true).unwrap();
+    assert_eq!(
+        document.evaluator().input(ROOT, Socket::new(sink, 0)),
+        Some(LVal::Vector([2, 2, 2]))
+    );
+
+    // A shape whose ONLY route converts, asserted end to end. `Wash` is
+    // `Scalar -> Vector`: bypassed, its scalar input can reach its vector output
+    // only by broadcasting, so under a relation that compared types with `==`
+    // this output would be DROPPED and the sink would fall back to its default.
+    let mut document = Document::new("root");
+    let level = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(5)), 0, 0)
+        .unwrap();
+    let wash = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Wash), 200, 0)
+        .unwrap();
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sink), 400, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(level, 0), Socket::new(wash, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(wash, 0), Socket::new(sink, 0))
+        .unwrap();
+
+    // Computing, `Wash` doubles: [10,10,10]. The two answers are distinguishable
+    // on purpose, so "the bypass ran" is not confusable with "it computed".
+    assert_eq!(
+        document.evaluator().input(ROOT, Socket::new(sink, 0)),
+        Some(LVal::Vector([10, 10, 10]))
+    );
+
+    let through = document.passthrough(ROOT, wash).unwrap();
+    assert_eq!(
+        through.routes(),
+        &[Route {
+            output: 0,
+            input: 0,
+            converts: true,
+        }],
+        "the only way through is the broadcast, and the routing SAYS it converts"
+    );
+    assert!(
+        !through.is_identity(),
+        "same index, but the value that leaves is not the value that arrived"
+    );
+    assert!(through.dropped_outputs().is_empty());
+
+    document.set_bypassed(ROOT, wash, true).unwrap();
+    assert_eq!(
+        document.evaluator().input(ROOT, Socket::new(sink, 0)),
+        Some(LVal::Vector([5, 5, 5])),
+        "the scalar 5 crossed the bypassed node THROUGH the declared conversion"
+    );
+}
+
+#[test]
+fn a_document_from_a_file_is_checked_against_the_same_relation() {
+    // `validate` is the standing check for a document that promised nothing.
+    // Before R1593 it compared types with `!=`, which would have flagged every
+    // legitimate broadcast in a saved lattice document as a violation.
+    let mut f = lattice();
+    f.document
+        .connect(ROOT, Socket::new(f.level, 0), Socket::new(f.sum, 0))
+        .unwrap();
+    let text = serde_json::to_string(&f.document).unwrap();
+    let reloaded: Document<LOp> = serde_json::from_str(&text).unwrap();
+    assert!(
+        reloaded.validate().is_empty(),
+        "a broadcast survives the round trip without being called a mismatch"
+    );
+
+    // And a link the relation refuses IS flagged — the narrowing direction,
+    // which no gesture in this crate can produce, so it can only arrive from
+    // outside.
+    let mut json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let links = json["trees"][0]["links"].as_array_mut().unwrap();
+    links.push(serde_json::json!({
+        "id": 90, "from": {"node": f.swatch.0, "port": 0},
+        "to": {"node": f.meter.0, "port": 0}, "muted": false
+    }));
+    // swatch(Vector) -> meter(Vector): legal, direct. And meter's OWN output is
+    // a Scalar, so meter -> sum would BROADCAST and be legal too — which is the
+    // trap this fixture walked into on the first draft. The refused direction is
+    // a Vector reaching a Scalar port: swatch -> cross's `Amount`.
+    links.push(serde_json::json!({
+        "id": 91, "from": {"node": f.swatch.0, "port": 0},
+        "to": {"node": f.cross.0, "port": 0}, "muted": false
+    }));
+    let broken: Document<LOp> = serde_json::from_value(json).unwrap();
+    assert_eq!(
+        broken.validate(),
+        vec![Violation::TypeMismatch {
+            tree: ROOT,
+            link: crate::LinkId(91),
+        }],
+        "the narrowing is named, and the broadcast beside it is not"
+    );
+}
+
+#[test]
+fn the_default_relation_is_equality_and_nothing_had_to_say_so() {
+    // `Op`, the taxonomy every assertion above this line uses, declares no
+    // `crossing` at all — so this is the provided default, asserted directly
+    // rather than inferred from those tests passing.
+    assert!(Op::conversion(&Ty::Number, &Ty::Number).is_allowed());
+    assert!(!Op::conversion(&Ty::Number, &Ty::Number).converts());
+    assert!(Op::conversion(&Ty::Number, &Ty::Text).is_refused());
+    assert!(Op::conversion(&Ty::Text, &Ty::Number).is_refused());
+    assert_eq!(Op::conversion(&Ty::Text, &Ty::Text).name(), "direct");
+}
+
+#[test]
+fn a_cut_that_a_broadcast_carried_can_be_re_attached() {
+    // `Fragment` re-attaches a severed crossing only when a value can still
+    // travel it. That test was `out.ty == input.ty`, so before R1593 a
+    // copy-paste across a broadcasting wire would have dropped the wire
+    // silently — the fragment's own `inbound` records it, and the re-attachment
+    // would have refused it.
+    let mut f = lattice();
+    f.document
+        .connect(ROOT, Socket::new(f.level, 0), Socket::new(f.sum, 0))
+        .unwrap();
+    let fragment = f.document.extract(ROOT, &[f.sum]).unwrap();
+    assert_eq!(
+        fragment.inbound().len(),
+        1,
+        "the broadcast wire was cut and recorded"
+    );
+    let inserted = f
+        .document
+        .insert(
+            ROOT,
+            &fragment,
+            (600, 300),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(
+        inserted.reattached.len(),
+        1,
+        "and put back, because a value can still cross it"
+    );
+    let copy = inserted.nodes[0];
+    assert_eq!(
+        f.document.evaluate(ROOT, copy),
+        vec![Some(LVal::Vector([4, 4, 4]))],
+        "the pasted node is fed the same broadcast the original was"
+    );
 }

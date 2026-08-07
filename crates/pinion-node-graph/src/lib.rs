@@ -25,9 +25,17 @@
 //!
 //! * **A typed model** — [`Document`] of [`Tree`]s, [`Node`]s and [`Link`]s
 //!   whose structural edits maintain their own invariants. [`Document::connect`]
-//!   checks that the sockets exist, that their types agree, that an input takes
-//!   one link, and that the wire does not close a cycle — and *names* whichever
-//!   of those failed, including the path a refused wire would have closed.
+//!   checks that the sockets exist, that a value can cross between their types,
+//!   that an input takes one link, and that the wire does not close a cycle —
+//!   and *names* whichever of those failed, including the path a refused wire
+//!   would have closed.
+//! * **A directed type relation** — [`NodeKind::conversion`] says whether and
+//!   *how* a value crosses from one socket type to another, so a taxonomy whose
+//!   scalar broadcasts into a vector without the vector narrowing back is
+//!   expressible at all: equality is symmetric, and that relation is not. It is
+//!   declared once, **as the conversion itself**, which is what makes "this
+//!   wire is legal" and "this is what arrives along it" unable to disagree.
+//!   Blender keeps those two apart, and keeps a third copy for muted nodes.
 //! * **Groups** — [`Document::group`] collapses a selection into a re-usable
 //!   definition plus one instance, with the interface **derived** from the
 //!   links that cross the boundary. [`Document::instantiate`] places another
@@ -180,9 +188,9 @@ pub use group::{
     Violation,
 };
 pub use model::{
-    ConnectError, Connected, Document, DroppedLink, EditError, Interface, InterfaceSide, KindPort,
-    Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, ROOT, Removed, Signature, Socket, Tree,
-    TreeId,
+    ConnectError, Connected, Conversion, Document, DroppedLink, EditError, Interface,
+    InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, ROOT, Removed,
+    Signature, Socket, Tree, TreeId,
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use select::{Grow, Grown, Reach, SelectError};
