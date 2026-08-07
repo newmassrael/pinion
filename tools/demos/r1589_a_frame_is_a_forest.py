@@ -381,6 +381,18 @@ def body() -> None:
             "frame:true",
             "N: the destination tree now has a FRAME wearing that exact number",
         )
+        # ★ §C asserted the empty signature in the ROOT tree, whose interface is
+        # empty — so a frame wrongly wearing its TREE's ports answers identically
+        # there and that check discriminates nothing. R1590 found it by
+        # counterfactual (D-CF-11) after R1589's own CF-9 had found the same hole
+        # in the crate test and the sweep stopped at that one artifact. Here the
+        # definition HAS interface ports, so this can fail.
+        assert "|" in str(inv(tf, "interface", "1")), "N: the definition has ports"
+        assert_eq(
+            inv(tf, "node_ports", str(born)),
+            "in:|out:",
+            "N: and a frame still has no ports OF ITS OWN",
+        )
 
         pasted = fields(str(inv(tf, "paste", "0,0")), "|")
         assert_eq(

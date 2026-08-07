@@ -164,6 +164,7 @@ mod group;
 mod model;
 mod numbering;
 mod partition;
+mod select;
 #[cfg(test)]
 mod tests;
 
@@ -184,6 +185,7 @@ pub use model::{
     TreeId,
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
+pub use select::{Grow, Grown, Reach, SelectError};
 
 /// Re-exported so a consumer can name the boundary derivation this crate's
 /// group operations are built on without adding a second dependency.

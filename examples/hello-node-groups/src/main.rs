@@ -59,9 +59,9 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Crossings, Definitions, Document, EditPath, Enframed, Fragment, Inserted, InterfaceSide,
-    LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, ROOT, Repartitioned,
-    Rewired, Severed, Sharing, Socket, TreeId,
+    Crossings, Definitions, Document, EditPath, Enframed, Fragment, Grow, Inserted, InterfaceSide,
+    LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, ROOT, Reach,
+    Repartitioned, Rewired, Severed, Sharing, Socket, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -1138,6 +1138,7 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("visible_ports", "string"),
                     SchemaField::action("looks", "string"),
                     SchemaField::action("containment", "string"),
+                    SchemaField::action("same_kind", "string"),
                     // The verbs.
                     SchemaField::action("select", "string"),
                     SchemaField::action("group", "string"),
@@ -1166,6 +1167,7 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("unframe", "string"),
                     SchemaField::action("reparent", "string"),
                     SchemaField::action("nudge", "string"),
+                    SchemaField::action("grow", "string"),
                 ]
             },
         )
@@ -1290,7 +1292,9 @@ impl ExternalIntrospect for GroupsOracle {
     ) -> Result<IntrospectValue, InvokeError> {
         let outcome = match path {
             "node_kind" | "node_value" | "node_ports" | "interface" | "instances" | "tree_name"
-            | "passthrough" | "visible_ports" | "looks" | "containment" => self.read(path, &args),
+            | "passthrough" | "visible_ports" | "looks" | "containment" | "same_kind" => {
+                self.read(path, &args)
+            }
             _ => self.verb(path, &args),
         };
         // R1584 — every refusal reaches the readout, whoever made it. The
@@ -1370,6 +1374,7 @@ impl GroupsOracle {
                 ))
             }
             "passthrough" | "visible_ports" | "looks" => self.participation_read(path, args),
+            "same_kind" => self.same_kind_read(args),
             "containment" => {
                 let document = state.document.get();
                 let tree = state.current();
@@ -1539,10 +1544,82 @@ impl GroupsOracle {
                 ok(&node.0.to_string())
             }
             "frame" | "unframe" | "reparent" | "nudge" => self.containment(path, args),
+            "grow" => self.grow(args),
             "copy" | "paste" | "duplicate" => self.clipboard(path, args),
             "group_insert" | "group_separate" | "fork" => self.boundary(path, args),
             _ => Err(InvokeError::UnknownPath),
         }
+    }
+
+    /// R1590 — the run of nodes that do what this one does, in evaluation
+    /// order, with the subject's place in it.
+    ///
+    /// "3 of 7" is the fact `NODE_OT_select_same_type_step` cannot answer: it
+    /// reports by moving the active node and says only whether it moved.
+    fn same_kind_read(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let document = state.document.get();
+        let tree = state.current();
+        let id = NodeId(Self::number(args)?);
+        let run = document
+            .same_kind_run(tree, id)
+            .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
+        let at = run.iter().position(|&n| n == id).unwrap_or_default();
+        Ok(IntrospectValue::Text(format!(
+            "at:{} of:{} run:{}",
+            at + 1,
+            run.len(),
+            join_ids(run.iter().map(|n| n.0))
+        )))
+    }
+
+    /// R1590 — grow the selection by one question about the graph.
+    ///
+    /// The whole of what this application supplies is the **word**: the
+    /// derivation, the reach and the refusal are the substrate's, and the
+    /// selection this grows is the editor's because a selection belongs to
+    /// whoever is looking rather than to the document.
+    fn grow(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let tree = state.current();
+        let raw = Self::text(args)?;
+        let (word, reach) = raw.split_once(':').unwrap_or((raw.as_str(), "direct"));
+        let reach = match reach.trim() {
+            "direct" => Reach::Direct,
+            "transitive" => Reach::Transitive,
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "{other:?} is not a reach (expected \"direct\" or \"transitive\")"
+                )));
+            }
+        };
+        let by = match word.trim() {
+            "downstream" => Grow::Downstream(reach),
+            "upstream" => Grow::Upstream(reach),
+            "contents" => Grow::Contents(reach),
+            "containers" => Grow::Containers(reach),
+            "same_kind" => Grow::SameKind,
+            "prefix" => Grow::NamePrefix,
+            "suffix" => Grow::NameSuffix,
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "{other:?} is not a way to grow a selection"
+                )));
+            }
+        };
+        // A pure query: the document is not touched, so this does not go
+        // through `edit` and nothing is marked dirty by asking.
+        let grown = state
+            .document
+            .get()
+            .grow(tree, &state.selection.get(), by)
+            .map_err(|error| InvokeError::rejected(error.to_string()))?;
+        state.selection.set(grown.selection.clone());
+        Ok(IntrospectValue::Text(format!(
+            "added:{}|now:{}",
+            join_ids(grown.added.iter().map(|n| n.0)),
+            grown.selection.len()
+        )))
     }
 
     /// R1589 — the containment gestures. Every one of them is one substrate

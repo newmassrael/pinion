@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Appearance, ConnectError, Crossings, Definitions, Document, DuplicateError, EditPath,
-    ExtractError, Fragment, GroupError, InsertError, InterfaceSide, NestError, Node, NodeBody,
-    NodeId, NodeKind, Orphaned, ParentError, PathError, Port, ROOT, RepartitionError, Route,
-    Severed, Sharing, Socket, TreeId, UngroupError, Violation,
+    ExtractError, Fragment, GroupError, Grow, InsertError, InterfaceSide, NestError, Node,
+    NodeBody, NodeId, NodeKind, Orphaned, ParentError, PathError, Port, ROOT, Reach,
+    RepartitionError, Route, SelectError, Severed, Sharing, Socket, TreeId, UngroupError,
+    Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -4323,4 +4324,554 @@ fn framing_nothing_is_refused_and_an_empty_frame_needs_no_derivation() {
         "Frame"
     );
     assert!(f.document.validate().is_empty());
+}
+
+// ---------------------------------------------------------------- selecting
+//
+// R1590. As with the frames, every claim about Blender is a HELPER reproducing
+// its rule over these types, so a divergence is asserted rather than described.
+
+/// Blender's `node_select_linked_to_exec` / `..._from_exec` at `8cf50599`: for
+/// each selected node, walk its sockets' **directly linked** sockets and select
+/// their owners. One hop, every time — the reach is the number of keypresses.
+fn blender_linked_one_hop(
+    document: &Document<Op>,
+    tree: TreeId,
+    selection: &[NodeId],
+    downstream: bool,
+) -> std::collections::BTreeSet<NodeId> {
+    let mut out: std::collections::BTreeSet<NodeId> = selection.iter().copied().collect();
+    let Some(host) = document.tree(tree) else {
+        return out;
+    };
+    let held: Vec<NodeId> = selection.to_vec();
+    for link in host.links() {
+        let (near, far) = if downstream {
+            (link.from.node, link.to.node)
+        } else {
+            (link.to.node, link.from.node)
+        };
+        if held.contains(&near) {
+            out.insert(far);
+        }
+    }
+    out
+}
+
+/// Compile-time witness that growing a selection is a **query**.
+///
+/// This function body only compiles because `grow` takes `&self`, so the
+/// guarantee is the signature rather than an assertion — an edit that happened
+/// to change nothing would satisfy any runtime comparison, which is why
+/// `growing_a_selection_changes_nothing_in_the_document` is a consistency check
+/// and this is the proof. Blender's equivalents take the tree by mutable
+/// reference and carry `OPTYPE_UNDO`.
+fn growing_needs_no_mutable_document(document: &Document<Op>) -> Vec<NodeId> {
+    document
+        .grow(ROOT, &[], Grow::SameKind)
+        .map(|grown| grown.selection)
+        .unwrap_or_default()
+}
+
+/// Blender's `node_select_grouped_name` for a suffix: the run after the last
+/// delimiter, or — its own special case — the WHOLE NAME when there is none.
+fn blender_suffix(name: &str) -> &str {
+    name.rsplit_once(['.', '-', '_'])
+        .map_or(name, |(_, tail)| tail)
+}
+
+/// A chain long enough that one hop and the closure differ, with a branch so
+/// "everything downstream" is not a straight line: `head -> mid -> tail`, and
+/// `mid -> aside` as well.
+struct Chained {
+    document: Document<Op>,
+    head: NodeId,
+    mid: NodeId,
+    tail: NodeId,
+    aside: NodeId,
+}
+
+fn chained() -> Chained {
+    let mut document = Document::new("root");
+    let head = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(2)), 0, 0)
+        .unwrap();
+    let mid = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 0)
+        .unwrap();
+    let tail = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 400, 0)
+        .unwrap();
+    let aside = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 400, 100)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(head, 0), Socket::new(mid, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(mid, 0), Socket::new(tail, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(mid, 0), Socket::new(aside, 0))
+        .unwrap();
+    Chained {
+        document,
+        head,
+        mid,
+        tail,
+        aside,
+    }
+}
+
+#[test]
+fn one_hop_is_blenders_answer_and_the_closure_is_the_question() {
+    let c = chained();
+    let direct = c
+        .document
+        .grow(ROOT, &[c.head], Grow::Downstream(Reach::Direct))
+        .unwrap();
+    assert_eq!(direct.added, vec![c.mid], "one hop reaches the adder only");
+    assert_eq!(
+        direct
+            .selection
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>(),
+        blender_linked_one_hop(&c.document, ROOT, &[c.head], true),
+        "and it is exactly what Blender's rule answers"
+    );
+
+    let closure = c
+        .document
+        .grow(ROOT, &[c.head], Grow::Downstream(Reach::Transitive))
+        .unwrap();
+    assert_eq!(
+        closure.added,
+        vec![c.mid, c.tail, c.aside],
+        "PAST BLENDER — the branch and the far end in ONE call, where the reach \
+         is a keypress count"
+    );
+    // The property that makes the answer knowable: asking again adds nothing.
+    let again = c
+        .document
+        .grow(
+            ROOT,
+            &closure.selection,
+            Grow::Downstream(Reach::Transitive),
+        )
+        .unwrap();
+    assert!(!again.changed(), "a transitive walk is idempotent");
+    assert_eq!(again.selection, closure.selection);
+}
+
+#[test]
+fn growing_a_selection_changes_nothing_in_the_document() {
+    let c = chained();
+    let before = c.document.clone();
+    for by in [
+        Grow::Downstream(Reach::Transitive),
+        Grow::Upstream(Reach::Transitive),
+        Grow::SameKind,
+        Grow::NamePrefix,
+        Grow::NameSuffix,
+        Grow::Contents(Reach::Direct),
+        Grow::Containers(Reach::Direct),
+    ] {
+        c.document.grow(ROOT, &[c.mid], by).unwrap();
+    }
+    assert_eq!(
+        c.document, before,
+        "the document is the same value afterwards — a consistency check. The \
+         GUARANTEE is the signature: see `growing_needs_no_mutable_document`, \
+         which compiles only because `grow` takes `&self`, where Blender's \
+         equivalents take the tree mutably and carry OPTYPE_UNDO"
+    );
+    assert!(growing_needs_no_mutable_document(&c.document).is_empty());
+}
+
+#[test]
+fn upstream_is_the_other_direction_of_the_same_relation() {
+    let c = chained();
+    let up = c
+        .document
+        .grow(ROOT, &[c.tail], Grow::Upstream(Reach::Transitive))
+        .unwrap();
+    assert_eq!(up.added, vec![c.head, c.mid]);
+    assert!(
+        !up.selection.contains(&c.aside),
+        "the sibling branch is downstream of `mid`, not upstream of `tail`"
+    );
+    assert_eq!(
+        c.document
+            .grow(ROOT, &[c.tail], Grow::Upstream(Reach::Direct))
+            .unwrap()
+            .selection
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>(),
+        blender_linked_one_hop(&c.document, ROOT, &[c.tail], false),
+    );
+}
+
+#[test]
+fn a_muted_link_is_still_a_wire_when_a_selection_grows() {
+    let mut c = chained();
+    let link = c
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(c.tail, 0))
+        .unwrap()
+        .id;
+    c.document.set_link_muted(ROOT, link, true).unwrap();
+    // The value has stopped flowing...
+    assert_eq!(number(&c.document.evaluate(ROOT, c.tail)), None);
+    // ...and the wire is still on screen, so it is still a way to the node.
+    let grown = c
+        .document
+        .grow(ROOT, &[c.mid], Grow::Downstream(Reach::Direct))
+        .unwrap();
+    assert!(
+        grown.selection.contains(&c.tail),
+        "R1586 — every STRUCTURAL derivation goes on seeing a muted link"
+    );
+}
+
+#[test]
+fn a_selection_does_not_grow_into_a_group_it_stops_at_the_instance() {
+    let mut c = chained();
+    let made = c.document.group(ROOT, &[c.mid], "Stage").unwrap();
+    let inside: Vec<NodeId> = c
+        .document
+        .tree(made.definition)
+        .unwrap()
+        .nodes()
+        .map(|n| n.id)
+        .collect();
+    let grown = c
+        .document
+        .grow(ROOT, &[c.head], Grow::Downstream(Reach::Transitive))
+        .unwrap();
+    assert!(
+        grown.selection.contains(&made.node),
+        "it reaches the instance"
+    );
+    for id in inside {
+        assert!(
+            !grown.added.contains(&id) || grown.selection.contains(&made.node),
+            "a selection is within ONE tree; the definition's nodes are in another"
+        );
+    }
+    // Read the other way: the growth's answer is entirely in the host tree.
+    for &id in &grown.selection {
+        assert!(c.document.tree(ROOT).unwrap().node(id).is_some());
+    }
+}
+
+#[test]
+fn the_two_relations_cannot_collide() {
+    let f = framed();
+    // A frame has no ports, so no link reaches one...
+    let by_link = f
+        .document
+        .grow(ROOT, &[f.two], Grow::Downstream(Reach::Transitive))
+        .unwrap();
+    assert!(!by_link.selection.contains(&f.outer));
+    assert!(!by_link.selection.contains(&f.inner));
+    // ...and containment only ever relates a frame to its members.
+    let by_frame = f
+        .document
+        .grow(ROOT, &[f.outer], Grow::Contents(Reach::Transitive))
+        .unwrap();
+    assert_eq!(by_frame.added, vec![f.two, f.three, f.inner]);
+    assert!(!by_frame.selection.contains(&f.add), "which is outside it");
+}
+
+#[test]
+fn contents_and_containers_read_the_reach_the_same_way_as_the_links_do() {
+    let f = framed();
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[f.outer], Grow::Contents(Reach::Direct))
+            .unwrap()
+            .added,
+        vec![f.two, f.inner],
+        "direct members"
+    );
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[f.three], Grow::Containers(Reach::Direct))
+            .unwrap()
+            .added,
+        vec![f.inner],
+        "the fence it is immediately in"
+    );
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[f.three], Grow::Containers(Reach::Transitive))
+            .unwrap()
+            .added,
+        vec![f.outer, f.inner],
+        "and every fence above it — R1589's ancestry, asked as a selection"
+    );
+    assert!(
+        !f.document
+            .grow(ROOT, &[f.add], Grow::Containers(Reach::Transitive))
+            .unwrap()
+            .changed(),
+        "a node on the canvas is in nothing"
+    );
+}
+
+#[test]
+fn same_kind_is_what_a_node_does_and_never_what_it_is_set_to() {
+    let mut f = fixture();
+    // `Num(2)` and `Num(3)` are two settings of ONE kind.
+    let grown = f.document.grow(ROOT, &[f.two], Grow::SameKind).unwrap();
+    assert_eq!(grown.added, vec![f.three]);
+    assert!(
+        !grown.selection.contains(&f.add),
+        "an adder is not a number"
+    );
+
+    // A label does not change what a node is. `NodeKind::name` is a stable
+    // identity token, which is Blender's `type_legacy` too.
+    f.document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(f.three)
+        .unwrap()
+        .label = Some("Renamed".to_owned());
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[f.two], Grow::SameKind)
+            .unwrap()
+            .added,
+        vec![f.three]
+    );
+}
+
+#[test]
+fn two_instances_of_different_definitions_are_not_one_kind() {
+    let mut f = fixture();
+    let one = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    let other = f.document.add_definition("Other");
+    let twin = f.document.instantiate(ROOT, other, 600, 0).unwrap();
+
+    let grown = f.document.grow(ROOT, &[one.node], Grow::SameKind).unwrap();
+    assert!(
+        !grown.selection.contains(&twin),
+        "PAST BLENDER — every group node there is `type_legacy == NODE_GROUP`, \
+         so grouping by type sweeps in instances of unrelated definitions. An \
+         instance's signature IS its definition's interface, so two instances \
+         of different definitions are alike in nothing this model can see"
+    );
+    // Same definition, though, is the same kind.
+    let again = f
+        .document
+        .instantiate(ROOT, one.definition, 600, 200)
+        .unwrap();
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[one.node], Grow::SameKind)
+            .unwrap()
+            .added,
+        vec![again]
+    );
+}
+
+#[test]
+fn an_affix_that_is_not_there_offers_no_criterion() {
+    let mut f = fixture();
+    let named = |document: &mut Document<Op>, id: NodeId, name: &str| {
+        document.tree_mut(ROOT).unwrap().node_mut(id).unwrap().label = Some(name.to_owned());
+    };
+    named(&mut f.document, f.two, "decode.header");
+    named(&mut f.document, f.three, "decode.body");
+    named(&mut f.document, f.add, "verify.header");
+    // TWO delimiter-free nodes with the SAME name: without a second one, "this
+    // node has no suffix" and "its suffix is its whole name" give the identical
+    // answer, and the counterfactual for Blender's substitution passes (CF-3).
+    named(&mut f.document, f.sink, "plain");
+    let twin = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 600, 0)
+        .unwrap();
+    named(&mut f.document, twin, "plain");
+
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[f.two], Grow::NamePrefix)
+            .unwrap()
+            .added,
+        vec![f.three],
+        "`decode` is the run up to the first delimiter"
+    );
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[f.two], Grow::NameSuffix)
+            .unwrap()
+            .added,
+        vec![f.add],
+        "and `header` the run after the last"
+    );
+
+    // `plain` has no delimiter, so it has no affix and offers no criterion —
+    // even though another node is called exactly that.
+    let from_plain = f.document.grow(ROOT, &[f.sink], Grow::NameSuffix).unwrap();
+    assert!(
+        !from_plain.changed(),
+        "PAST BLENDER — `node_select_grouped_name` substitutes the WHOLE NAME \
+         for a missing suffix, which conflates 'this node has no suffix' with \
+         'its suffix is its entire name'"
+    );
+    // Blender's rule held as a helper, and the divergence asserted: under it the
+    // twin WOULD join, because both nodes' whole names stand in as suffixes.
+    assert_eq!(blender_suffix("plain"), blender_suffix("plain"));
+    assert!(
+        !from_plain.selection.contains(&twin),
+        "which is the node Blender's substitution would have swept in"
+    );
+    assert_ne!(blender_suffix("decode.header"), "decode.header");
+    // And a node that is not selected is never a criterion.
+    assert!(
+        !f.document
+            .grow(ROOT, &[f.sink], Grow::NamePrefix)
+            .unwrap()
+            .changed()
+    );
+}
+
+#[test]
+fn the_affix_is_read_off_the_name_that_is_painted() {
+    let mut f = fixture();
+    // No label, so the displayed name is the body's own — which is what a node
+    // header shows. Blender groups on `bNode::name`, the datablock id
+    // (`Mix.001`), which is not what its own header draws.
+    assert_eq!(
+        f.document
+            .tree(ROOT)
+            .unwrap()
+            .node(f.two)
+            .unwrap()
+            .display_name(),
+        "Num"
+    );
+    f.document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(f.two)
+        .unwrap()
+        .label = Some("stage.one".to_owned());
+    f.document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(f.add)
+        .unwrap()
+        .label = Some("stage.two".to_owned());
+    assert_eq!(
+        f.document
+            .grow(ROOT, &[f.two], Grow::NamePrefix)
+            .unwrap()
+            .added,
+        vec![f.add],
+        "the rename is what the user typed and what the card shows"
+    );
+}
+
+#[test]
+fn the_same_kind_run_is_in_evaluation_order_and_says_where_you_are() {
+    let mut f = fixture();
+    let far = f
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 600, 0)
+        .unwrap();
+    f.document
+        .connect(ROOT, Socket::new(f.add, 0), Socket::new(far, 0))
+        .unwrap();
+
+    let run = f.document.same_kind_run(ROOT, f.add).unwrap();
+    assert_eq!(run, vec![f.add, far], "producers before consumers");
+    assert_eq!(
+        run.iter().position(|&id| id == far),
+        Some(1),
+        "PAST BLENDER — the RUN is published, so an editor can say `2 of 2`. \
+         NODE_OT_select_same_type_step answers by moving the active node and \
+         reports only whether it moved"
+    );
+    // Blender's operator is one line over this.
+    let step = |from: NodeId, forward: bool| -> Option<NodeId> {
+        let at = run.iter().position(|&id| id == from)?;
+        let next = if forward {
+            at.checked_add(1)?
+        } else {
+            at.checked_sub(1)?
+        };
+        run.get(next).copied()
+    };
+    assert_eq!(step(f.add, true), Some(far));
+    assert_eq!(
+        step(far, true),
+        None,
+        "it stops at the end, as Blender's does"
+    );
+    assert_eq!(step(far, false), Some(f.add));
+    assert_eq!(f.document.same_kind_run(ROOT, NodeId(99)), None);
+}
+
+#[test]
+fn the_evaluation_order_is_a_permutation_even_when_the_document_is_not_a_graph() {
+    let f = fixture();
+    let order = f.document.evaluation_order(ROOT);
+    assert_eq!(order.len(), f.document.tree(ROOT).unwrap().node_count());
+    assert!(
+        order.iter().position(|&id| id == f.add) < order.iter().position(|&id| id == f.sink),
+        "the adder is resolved before its sink"
+    );
+
+    // A document that arrived with a link cycle: every node still appears once.
+    let mut json: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&f.document).unwrap()).unwrap();
+    let links = json["trees"][0]["links"].as_array_mut().unwrap();
+    links.push(serde_json::json!({
+        "id": 90, "from": {"node": f.sink.0, "port": 0},
+        "to": {"node": f.add.0, "port": 0}, "muted": false
+    }));
+    let broken: Document<Op> = serde_json::from_value(json).unwrap();
+    let order = broken.evaluation_order(ROOT);
+    let unique: std::collections::BTreeSet<NodeId> = order.iter().copied().collect();
+    assert_eq!(order.len(), unique.len(), "no repeats");
+    assert_eq!(
+        unique.len(),
+        broken.tree(ROOT).unwrap().node_count(),
+        "none lost"
+    );
+    // And a growth over it terminates.
+    assert!(
+        broken
+            .grow(ROOT, &[f.add], Grow::Downstream(Reach::Transitive))
+            .unwrap()
+            .changed()
+    );
+}
+
+#[test]
+fn a_stale_selection_is_refused_rather_than_quietly_narrowed() {
+    let f = fixture();
+    assert_eq!(
+        f.document.grow(ROOT, &[f.two, NodeId(99)], Grow::SameKind),
+        Err(SelectError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(99)
+        }),
+        "Blender's operators skip such a node, so the question silently becomes \
+         a different question"
+    );
+    assert_eq!(
+        f.document.grow(TreeId(9), &[], Grow::SameKind),
+        Err(SelectError::NoSuchTree(TreeId(9)))
+    );
+    // An empty selection is a legitimate question with an empty answer.
+    let empty = f.document.grow(ROOT, &[], Grow::SameKind).unwrap();
+    assert!(empty.selection.is_empty() && !empty.changed());
 }
