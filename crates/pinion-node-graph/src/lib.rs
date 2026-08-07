@@ -60,6 +60,17 @@
 //!   node types register a per-node C callback to redirect their pass-through
 //!   and not one of them computes anything this default does not already
 //!   produce.
+//! * **Frames** — [`NodeBody::Frame`] is a node whose whole content is what it
+//!   contains, and [`Node::parent`] is the relation. Read across a tree that
+//!   relation is a **forest**: [`Document::set_parent`] refuses a container that
+//!   is not a frame and a containment that would close a cycle, naming the
+//!   chain, where Blender states both rules as assertions its shipped build
+//!   compiles out. Every gesture over it — [`Document::enframe`],
+//!   [`Document::unframe`], [`Document::translate`] — is a call site of one
+//!   derivation, [`Document::outermost`], which Blender writes three times.
+//!   Deleting a frame hands its members to the frame *above* rather than to the
+//!   canvas, and every operation that moves nodes between trees says what became
+//!   of a container that stayed behind ([`Orphaned`]).
 //! * **Looks that travel** — [`Appearance`] is what a node looks like, kept in
 //!   the document because a group collapse and a paste move nodes between
 //!   trees, and kept apart from the graph's meaning because only one of the two
@@ -148,6 +159,7 @@ mod appearance;
 mod bypass;
 mod eval;
 mod fragment;
+mod frame;
 mod group;
 mod model;
 mod numbering;
@@ -161,13 +173,15 @@ pub use eval::Evaluator;
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,
 };
+pub use frame::{Enframed, Orphaned, ParentError};
 pub use group::{
     EditPath, GroupError, Grouped, NestError, PathEntry, PathError, UngroupError, Ungrouped,
     Violation,
 };
 pub use model::{
     ConnectError, Connected, Document, DroppedLink, EditError, Interface, InterfaceSide, KindPort,
-    Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, ROOT, Signature, Socket, Tree, TreeId,
+    Link, LinkId, Node, NodeBody, NodeId, NodeKind, Port, ROOT, Removed, Signature, Socket, Tree,
+    TreeId,
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 

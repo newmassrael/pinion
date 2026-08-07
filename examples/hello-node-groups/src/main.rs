@@ -59,9 +59,9 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Crossings, Definitions, Document, EditPath, Fragment, Inserted, InterfaceSide, LinkId,
-    NodeBody, NodeId, NodeKind, Port, PortChange, ROOT, Repartitioned, Rewired, Severed, Sharing,
-    Socket, TreeId,
+    Crossings, Definitions, Document, EditPath, Enframed, Fragment, Inserted, InterfaceSide,
+    LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, ROOT, Repartitioned,
+    Rewired, Severed, Sharing, Socket, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,8 @@ const WIN_H: u32 = 560;
 const CARD_W: i32 = 150;
 const ROW_H: i32 = 18;
 const HEAD_H: i32 = 26;
+/// How far a frame's fence stands off what it contains, per level of nesting.
+const FRAME_PAD: i32 = 14;
 const PORT: i32 = 9;
 const CANVAS_TOP: i32 = 76;
 const TITLE_FONT_PX: u32 = 16;
@@ -398,7 +400,105 @@ fn card_height(ports: (usize, usize)) -> i32 {
     HEAD_H + rows(ports.0.max(ports.1).max(1)) * ROW_H + 6
 }
 
-/// Where a socket's pin sits, in canvas coordinates.
+/// R1589 — a frame's extent: the union of what it contains, plus a margin that
+/// grows with how deeply it is nested, so an inner frame sits inside its
+/// container rather than on top of it.
+///
+/// Derived by the **application**, because it needs card geometry the crate
+/// deliberately does not have: the crate answers *what does this contain*, this
+/// answers *how big is that*. Blender computes the same union in `node_draw.cc`
+/// into `runtime->draw_bounds`, a cache with a pass to keep it fresh.
+///
+/// `None` for a frame containing nothing — an empty fence has no derived size,
+/// and drawing a default-sized one would be inventing a fact.
+fn frame_extent(
+    document: &Document<Op>,
+    tree: TreeId,
+    frame: NodeId,
+) -> Option<(i32, i32, i32, i32)> {
+    let host = document.tree(tree)?;
+    let contents = document.contents(tree, frame);
+    let depth_here = document.ancestry(tree, frame).len();
+    let mut extent: Option<(i32, i32, i32, i32)> = None;
+    let mut below = 1;
+    for &member in &contents {
+        below = below.max(
+            document
+                .ancestry(tree, member)
+                .len()
+                .saturating_sub(depth_here),
+        );
+        let node = host.node(member)?;
+        if node.is_frame() {
+            continue;
+        }
+        let shown = document.visible_ports(tree, member).unwrap_or_default();
+        let height = card_height((shown.inputs.len(), shown.outputs.len()));
+        let card = (node.x, node.y, node.x + CARD_W, node.y + height);
+        extent = Some(match extent {
+            None => card,
+            Some(had) => (
+                had.0.min(card.0),
+                had.1.min(card.1),
+                had.2.max(card.2),
+                had.3.max(card.3),
+            ),
+        });
+    }
+    let pad = FRAME_PAD * i32::try_from(below).unwrap_or(1);
+    extent.map(|(x0, y0, x1, y1)| (x0 - pad, y0 - pad, x1 + pad, y1 + pad))
+}
+
+/// The fence itself, plus its title. Tagged, so the derived extent is readable
+/// over the wire without a screenshot (§2 #7).
+fn frame_scene(
+    document: &Document<Op>,
+    tree: TreeId,
+    node: &Node<Op>,
+    selected: bool,
+    theme: &pinion_core::theme::Theme,
+) -> Vec<Scene> {
+    let Some((x0, y0, x1, y1)) = frame_extent(document, tree, node.id) else {
+        return Vec::new();
+    };
+    let rect = Rect::new(upx(x0), upx(y0 + CANVAS_TOP), upx(x1 - x0), upx(y1 - y0));
+    let outline = theme.resolve(if selected {
+        ColorRole::Accent
+    } else {
+        ColorRole::Outline
+    });
+    vec![
+        Scene::Box(
+            BoxNode::new(
+                rect,
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
+                    .with_border(Border::new(outline, if selected { 2 } else { 1 })),
+            )
+            .with_tag(format!("{VIEW_TAG}.frame.{}", node.id.0))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(rect.x, rect.y)
+                    .with_size(Size::px(rect.w, rect.h)),
+            ),
+        ),
+        Scene::Text(
+            TextNode::styled(
+                node.display_name(),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(STATUS_FONT_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )
+            .with_tag(format!("{VIEW_TAG}.frame.{}.title", node.id.0))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(rect.x + 6, rect.y + 4)
+                    .with_size(Size::px(rect.w.saturating_sub(12), STATUS_FONT_PX + 4)),
+            ),
+        ),
+    ]
+}
+
 /// One port: its pin and its name.
 ///
 /// The tag names the port's INDEX IN THE SIGNATURE and not the row it landed
@@ -488,6 +588,7 @@ fn position(shown: &[u32], port: u32) -> usize {
     shown.iter().position(|&p| p == port).unwrap_or(0)
 }
 
+/// Where a socket's pin sits, in canvas coordinates.
 fn pin_at(x: i32, y: i32, index: usize, output: bool) -> (i32, i32) {
     let px = if output {
         x + CARD_W - PORT / 2
@@ -519,7 +620,10 @@ fn node_scene(
     // graph" is visible without reading its title.
     let fill = theme.resolve(match node.body {
         NodeBody::Group(_) => ColorRole::SurfaceContainerHighest,
-        NodeBody::Interface(_) => ColorRole::SurfaceContainerLow,
+        // A frame is not a card: it is drawn by `frame_scene`, behind
+        // everything, at an extent DERIVED from what it contains (R1589), so
+        // the canvas loop never reaches this arm for one.
+        NodeBody::Interface(_) | NodeBody::Frame => ColorRole::SurfaceContainerLow,
         NodeBody::Kind(_) => ColorRole::SurfaceContainerHigh,
     });
     let label = theme.resolve(ColorRole::OnSurface);
@@ -671,6 +775,19 @@ fn view() -> Scene {
     ];
 
     if let Some(host) = document.tree(tree) {
+        // R1589 — frames first, outermost first, so a nested fence draws on top
+        // of the one containing it and both draw behind every wire and card.
+        let mut fences: Vec<&Node<Op>> = host.nodes().filter(|n| n.is_frame()).collect();
+        fences.sort_by_key(|n| document.ancestry(tree, n.id).len());
+        for fence in fences {
+            children.extend(frame_scene(
+                &document,
+                tree,
+                fence,
+                selection.contains(&fence.id),
+                &theme,
+            ));
+        }
         let wire_colour = theme.resolve(ColorRole::Outline);
         for link in host.links() {
             let (Some(source), Some(sink)) = (
@@ -705,7 +822,7 @@ fn view() -> Scene {
                 )
             });
         }
-        for node in host.nodes() {
+        for node in host.nodes().filter(|n| !n.is_frame()) {
             children.extend(node_scene(
                 &document,
                 tree,
@@ -760,7 +877,7 @@ fn describe_move(out: &Repartitioned<Op>) -> String {
             .join(" ")
     };
     format!(
-        "def:{}|forked_from:{}|moved:{}|exposed:{}|unexposed:{}|severed:{}|others:{}",
+        "def:{}|forked_from:{}|moved:{}|exposed:{}|unexposed:{}|severed:{}|others:{}|unframed:{}",
         out.definition.0,
         out.forked_from
             .map_or_else(|| "-".to_owned(), |t| t.0.to_string()),
@@ -772,7 +889,8 @@ fn describe_move(out: &Repartitioned<Op>) -> String {
             .map(|dropped| format!("t{}:{}", dropped.tree.0, dropped.link.to))
             .collect::<Vec<_>>()
             .join(" "),
-        out.other_instances
+        out.other_instances,
+        describe_orphans(&out.orphaned)
     )
 }
 
@@ -818,14 +936,31 @@ fn describe_insert(out: &Inserted) -> String {
             .join(",")
     };
     format!(
-        "nodes:{}|links:{}|added:{}|reused:{}|reattached:{}|unattached:{}",
+        "nodes:{}|links:{}|added:{}|reused:{}|reattached:{}|unattached:{}|reframed:{}|unframed:{}",
         out.nodes.len(),
         out.links.len(),
         ids(&out.definitions_added),
         ids(&out.definitions_reused),
         out.reattached.len(),
-        describe_severed(&out.unattached)
+        describe_severed(&out.unattached),
+        out.reframed
+            .iter()
+            .map(|n| n.0.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        describe_orphans(&out.unframed)
     )
+}
+
+/// R1589 — the containments an edit could not carry: `"3<7"`, the node and the
+/// frame it is no longer in. Published rather than left to be noticed, because
+/// a copy that quietly left its fence behind is exactly what Blender does.
+fn describe_orphans(orphaned: &[Orphaned]) -> String {
+    orphaned
+        .iter()
+        .map(|one| format!("{}<{}", one.node.0, one.frame.0))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Where a fragment goes and under which two policies.
@@ -987,6 +1122,11 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::new("bypassed", "string"),
                     SchemaField::new("muted_links", "string"),
                     SchemaField::new("last_rewire", "string"),
+                    // R1589 — the containment forest, whole. Neither Blender
+                    // nor Qt has an accessor for "what contains what right
+                    // now": `bNode::parent` is one pointer per node, so the
+                    // relation exists only as something you reassemble.
+                    SchemaField::new("frames", "string"),
                     // Argument-taking reads.
                     SchemaField::action("node_kind", "string"),
                     SchemaField::action("node_value", "string"),
@@ -997,6 +1137,7 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("passthrough", "string"),
                     SchemaField::action("visible_ports", "string"),
                     SchemaField::action("looks", "string"),
+                    SchemaField::action("containment", "string"),
                     // The verbs.
                     SchemaField::action("select", "string"),
                     SchemaField::action("group", "string"),
@@ -1021,6 +1162,10 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("detach", "string"),
                     SchemaField::action("collapse", "string"),
                     SchemaField::action("hide_ports", "string"),
+                    SchemaField::action("frame", "string"),
+                    SchemaField::action("unframe", "string"),
+                    SchemaField::action("reparent", "string"),
+                    SchemaField::action("nudge", "string"),
                 ]
             },
         )
@@ -1099,6 +1244,22 @@ impl ExternalIntrospect for GroupsOracle {
                     .filter(|n| n.bypassed)
                     .map(|n| n.id.0),
             ))),
+            "frames" => Some(IntrospectValue::Text(
+                document
+                    .tree(tree)
+                    .into_iter()
+                    .flat_map(pinion_node_graph::Tree::nodes)
+                    .filter(|n| n.is_frame())
+                    .map(|n| {
+                        format!(
+                            "{}={}",
+                            n.id.0,
+                            join_ids(document.members(tree, n.id).into_iter().map(|m| m.0))
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(";"),
+            )),
             "muted_links" => Some(IntrospectValue::Text(join_ids(
                 document
                     .tree(tree)
@@ -1129,7 +1290,7 @@ impl ExternalIntrospect for GroupsOracle {
     ) -> Result<IntrospectValue, InvokeError> {
         let outcome = match path {
             "node_kind" | "node_value" | "node_ports" | "interface" | "instances" | "tree_name"
-            | "passthrough" | "visible_ports" | "looks" => self.read(path, &args),
+            | "passthrough" | "visible_ports" | "looks" | "containment" => self.read(path, &args),
             _ => self.verb(path, &args),
         };
         // R1584 — every refusal reaches the readout, whoever made it. The
@@ -1164,6 +1325,7 @@ impl GroupsOracle {
                     NodeBody::Group(inner) => format!("group:{}", inner.0),
                     NodeBody::Interface(InterfaceSide::Input) => "interface:input".to_owned(),
                     NodeBody::Interface(InterfaceSide::Output) => "interface:output".to_owned(),
+                    NodeBody::Frame => "frame".to_owned(),
                 }))
             }
             "node_value" => {
@@ -1208,6 +1370,30 @@ impl GroupsOracle {
                 ))
             }
             "passthrough" | "visible_ports" | "looks" => self.participation_read(path, args),
+            "containment" => {
+                let document = state.document.get();
+                let tree = state.current();
+                let id = NodeId(Self::number(args)?);
+                let node = document
+                    .tree(tree)
+                    .and_then(|t| t.node(id))
+                    .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
+                let list = |ids: &[NodeId]| {
+                    ids.iter()
+                        .map(|n| n.0.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                Ok(IntrospectValue::Text(format!(
+                    "frame:{} parent:{} ancestry:{} members:{} contents:{}",
+                    node.is_frame(),
+                    node.parent
+                        .map_or_else(|| "-".to_owned(), |p| p.0.to_string()),
+                    list(&document.ancestry(tree, id)),
+                    list(&document.members(tree, id)),
+                    list(&document.contents(tree, id)),
+                )))
+            }
             "tree_name" => {
                 let (_, tree) = self.tree_arg(args)?;
                 Ok(IntrospectValue::Text(
@@ -1317,7 +1503,12 @@ impl GroupsOracle {
                     .edit(|document| document.group(tree, &selection, name))
                     .map_err(InvokeError::rejected)?;
                 state.selection.set(vec![made.node]);
-                ok(&format!("{}:{}", made.definition.0, made.node.0))
+                ok(&format!(
+                    "{}:{}|unframed:{}",
+                    made.definition.0,
+                    made.node.0,
+                    describe_orphans(&made.orphaned)
+                ))
             }
             "ungroup" => {
                 let (host, id) = Self::addressed(args, tree)?;
@@ -1347,10 +1538,127 @@ impl GroupsOracle {
                 state.selection.set(vec![node]);
                 ok(&node.0.to_string())
             }
+            "frame" | "unframe" | "reparent" | "nudge" => self.containment(path, args),
             "copy" | "paste" | "duplicate" => self.clipboard(path, args),
             "group_insert" | "group_separate" | "fork" => self.boundary(path, args),
             _ => Err(InvokeError::UnknownPath),
         }
+    }
+
+    /// R1589 — the containment gestures. Every one of them is one substrate
+    /// call: the derivation that decides *which* nodes each acts on lives in
+    /// the crate ([`Document::outermost`]), so this application supplies only
+    /// the selection and the argument.
+    fn containment(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let tree = state.current();
+        let ok = |text: String| Ok(IntrospectValue::Text(text));
+        match path {
+            "frame" => {
+                let label = Self::text(args)?;
+                let selection = state.selection.get();
+                let made: Enframed = state
+                    .edit(|document| {
+                        document.enframe(
+                            tree,
+                            &selection,
+                            (!label.is_empty()).then(|| label.clone()),
+                        )
+                    })
+                    .map_err(InvokeError::rejected)?;
+                state.selection.set(vec![made.frame]);
+                ok(format!(
+                    "{}:{}",
+                    made.frame.0,
+                    made.members
+                        .iter()
+                        .map(|n| n.0.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ))
+            }
+            "unframe" => {
+                let selection = state.selection.get();
+                let moved = state
+                    .edit(|document| document.unframe(tree, &selection))
+                    .map_err(InvokeError::rejected)?;
+                ok(moved
+                    .iter()
+                    .map(|n| n.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","))
+            }
+            "reparent" => {
+                let (node, into) = Self::containment_arg(args)?;
+                let was = state
+                    .edit(|document| document.set_parent(tree, node, into))
+                    .map_err(InvokeError::rejected)?;
+                ok(was.map_or_else(|| "-".to_owned(), |p| p.0.to_string()))
+            }
+            "nudge" => {
+                let (node, dx, dy) = Self::nudge_arg(args)?;
+                let moved = state
+                    .edit(|document| document.translate(tree, node, dx, dy))
+                    .map_err(InvokeError::rejected)?;
+                ok(moved
+                    .iter()
+                    .map(|n| n.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","))
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
+    /// `"3>7"` puts node 3 inside frame 7; `"3>-"` takes it out of everything.
+    fn containment_arg(arg: &IntrospectValue) -> Result<(NodeId, Option<NodeId>), InvokeError> {
+        let raw = Self::text(arg)?;
+        let (node, into) = raw.split_once('>').ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "malformed argument {raw:?} (expected \"<node>><frame|->\")"
+            ))
+        })?;
+        let node = NodeId(
+            node.trim()
+                .parse()
+                .map_err(|_| InvokeError::rejected(format!("{node:?} is not a node id")))?,
+        );
+        let into = match into.trim() {
+            "-" => None,
+            frame => Some(NodeId(frame.parse().map_err(|_| {
+                InvokeError::rejected(format!("{frame:?} is not a node id"))
+            })?)),
+        };
+        Ok((node, into))
+    }
+
+    /// `"7:40:-10"` — move node 7 right 40 and up 10.
+    fn nudge_arg(arg: &IntrospectValue) -> Result<(NodeId, i32, i32), InvokeError> {
+        let raw = Self::text(arg)?;
+        let parts: Vec<&str> = raw.split(':').collect();
+        let [node, dx, dy] = parts.as_slice() else {
+            return Err(InvokeError::rejected(format!(
+                "malformed argument {raw:?} (expected \"<node>:<dx>:<dy>\")"
+            )));
+        };
+        let number = |raw: &str| {
+            raw.trim()
+                .parse::<i32>()
+                .map_err(|_| InvokeError::rejected(format!("{raw:?} is not a number")))
+        };
+        Ok((
+            NodeId(
+                node.trim()
+                    .parse()
+                    .map_err(|_| InvokeError::rejected(format!("{node:?} is not a node id")))?,
+            ),
+            number(dx)?,
+            number(dy)?,
+        ))
     }
 
     /// R1584 — the two directions of a boundary move, and the fork that makes

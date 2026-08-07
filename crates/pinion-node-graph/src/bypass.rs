@@ -150,6 +150,9 @@ pub struct Rewired {
     /// Every link that touched the node and is now gone, the severed ones
     /// included.
     pub removed: Vec<Link>,
+    /// The nodes a dissolved frame contained, which its own container has taken
+    /// on (R1589). Always empty for a detach, which removes no node.
+    pub adopted: Vec<NodeId>,
 }
 
 impl Rewired {
@@ -297,9 +300,17 @@ impl<K: NodeKind> Document<K> {
         }
 
         self.unwire_node(tree, node);
-        if remove_node {
+        let adopted = if remove_node {
+            // R1589 — a dissolve is a delete, so what the node CONTAINED is
+            // reconciled by the same derivation `remove_node` uses. Without this
+            // a dissolved frame would leave its members naming a node that is
+            // gone, which `validate` reports as a dangling parent.
+            let adopted = self.adopt_orphans(tree, node);
             self.take_node(tree, node);
-        }
+            adopted
+        } else {
+            Vec::new()
+        };
 
         let bridged = plan
             .into_iter()
@@ -315,6 +326,7 @@ impl<K: NodeKind> Document<K> {
             bridged,
             severed,
             removed,
+            adopted,
         })
     }
 }

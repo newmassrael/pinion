@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Appearance, ConnectError, Crossings, Definitions, Document, DuplicateError, EditPath,
-    ExtractError, Fragment, GroupError, InsertError, InterfaceSide, NestError, NodeBody, NodeId,
-    NodeKind, PathError, Port, ROOT, RepartitionError, Route, Severed, Sharing, Socket, TreeId,
-    UngroupError, Violation,
+    ExtractError, Fragment, GroupError, InsertError, InterfaceSide, NestError, Node, NodeBody,
+    NodeId, NodeKind, Orphaned, ParentError, PathError, Port, ROOT, RepartitionError, Route,
+    Severed, Sharing, Socket, TreeId, UngroupError, Violation,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -275,7 +275,8 @@ fn a_node_cannot_feed_itself() {
 fn removing_a_node_reports_the_links_that_went_with_it() {
     let mut f = fixture();
     let dropped = f.document.remove_node(ROOT, f.add).unwrap();
-    assert_eq!(dropped.len(), 3);
+    assert_eq!(dropped.links.len(), 3);
+    assert!(dropped.adopted.is_empty(), "it contained nothing");
     assert!(f.document.validate().is_empty());
 }
 
@@ -3518,4 +3519,808 @@ fn a_port_declaration_survives_serialization() {
     let old = r#"{"name":"Value","ty":"Number","default":null}"#;
     let parsed: Port<Ty, Val> = serde_json::from_str(old).expect("a pre-R1587 port still reads");
     assert!(parsed.passthrough, "and takes part, as it did before");
+}
+
+// ------------------------------------------------------------------- frames
+//
+// R1589. Every claim about Blender below is stated as a HELPER that reproduces
+// its rule over this crate's types, so the divergence is asserted rather than
+// described — the discipline R1577 and R1584 set, because a test that checks
+// only our own answer cannot tell a better rule from an equal one.
+
+/// Blender's containment guard, `node_is_parent_and_child(parent, child)` at
+/// `8cf50599`: walk the CHILD's parent chain and see whether the parent is on
+/// it.
+///
+/// Present because Blender states it as `BLI_assert` inside `node_attach_node`,
+/// which is compiled out of a release build — and because its own
+/// `NODE_OT_parent_set` calls `node_detach_node` first, so by the time the
+/// assert runs the chain it would have walked is already cleared.
+fn blender_is_parent_and_child(
+    document: &Document<Op>,
+    tree: TreeId,
+    parent: NodeId,
+    child: NodeId,
+) -> bool {
+    let mut cursor = Some(child);
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(current) = cursor {
+        if current == parent {
+            return true;
+        }
+        if !seen.insert(current) {
+            return false;
+        }
+        cursor = document
+            .tree(tree)
+            .and_then(|t| t.node(current))
+            .and_then(|n| n.parent);
+    }
+    false
+}
+
+/// A frame with two numbers in it, one of them also inside an inner frame.
+///
+/// `outer` contains `inner` and `two`; `inner` contains `three`. So every
+/// question about roots, ancestry and lowest common container has a non-trivial
+/// answer here.
+struct Framed {
+    document: Document<Op>,
+    two: NodeId,
+    three: NodeId,
+    add: NodeId,
+    sink: NodeId,
+    outer: NodeId,
+    inner: NodeId,
+}
+
+fn framed() -> Framed {
+    let mut f = fixture();
+    let outer = f.document.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap();
+    let inner = f.document.add_node(ROOT, NodeBody::Frame, 0, 60).unwrap();
+    f.document.set_parent(ROOT, inner, Some(outer)).unwrap();
+    f.document.set_parent(ROOT, f.two, Some(outer)).unwrap();
+    f.document.set_parent(ROOT, f.three, Some(inner)).unwrap();
+    Framed {
+        document: f.document,
+        two: f.two,
+        three: f.three,
+        add: f.add,
+        sink: f.sink,
+        outer,
+        inner,
+    }
+}
+
+#[test]
+fn a_frame_takes_part_in_the_canvas_and_never_in_the_graph() {
+    let f = framed();
+    // Containment changed nothing about what the graph computes.
+    assert_eq!(number(&f.document.evaluate(ROOT, f.add)), Some(5));
+    // A frame has no ports, so nothing can be wired to one — and the refusal is
+    // the ordinary arity refusal rather than an arm someone had to remember.
+    let mut document = f.document;
+    let refused = document
+        .connect(ROOT, Socket::new(f.two, 0), Socket::new(f.outer, 0))
+        .unwrap_err();
+    assert!(matches!(
+        refused,
+        ConnectError::NoSuchPort { socket, arity: 0 } if socket.node == f.outer
+    ));
+    assert!(document.evaluate(ROOT, f.outer).is_empty());
+
+    // Asserted inside a definition that HAS an interface, because the root's is
+    // empty and a frame that wrongly presented its tree's own ports would give
+    // the identical answer there — a counterfactual (CF-9) passed against the
+    // first draft of this test for exactly that reason.
+    let made = document.group(ROOT, &[f.add], "Sum").unwrap();
+    let definition = made.definition;
+    assert_eq!(
+        document
+            .tree(definition)
+            .unwrap()
+            .interface()
+            .inputs()
+            .len(),
+        2,
+        "the definition takes two values, so there is something to confuse it with"
+    );
+    let fenced = document
+        .add_node(definition, NodeBody::Frame, 0, 0)
+        .unwrap();
+    let signature = document.signature(definition, fenced).unwrap();
+    assert!(
+        signature.inputs.is_empty() && signature.outputs.is_empty(),
+        "a frame has no ports of its own, in a tree that has ports"
+    );
+    assert!(document.evaluate(definition, fenced).is_empty());
+    assert!(
+        document
+            .connect(definition, Socket::new(fenced, 0), Socket::new(fenced, 0))
+            .is_err()
+    );
+    assert!(document.validate().is_empty());
+}
+
+#[test]
+fn the_forest_answers_ancestry_members_and_contents() {
+    let f = framed();
+    assert_eq!(f.document.ancestry(ROOT, f.three), vec![f.outer, f.inner]);
+    assert_eq!(f.document.ancestry(ROOT, f.two), vec![f.outer]);
+    assert!(f.document.ancestry(ROOT, f.add).is_empty());
+
+    let mut direct = f.document.members(ROOT, f.outer);
+    direct.sort_unstable();
+    let mut expected = vec![f.inner, f.two];
+    expected.sort_unstable();
+    assert_eq!(direct, expected, "members is DIRECT containment");
+
+    let mut all = f.document.contents(ROOT, f.outer);
+    all.sort_unstable();
+    let mut deep = vec![f.inner, f.two, f.three];
+    deep.sort_unstable();
+    assert_eq!(all, deep, "contents is transitive");
+    assert_eq!(f.document.contents(ROOT, f.inner), vec![f.three]);
+}
+
+#[test]
+fn the_common_frame_of_a_frame_and_its_content_is_the_frames_own_container() {
+    let f = framed();
+    // `inner` and what is inside it: the answer must be true of BOTH, and
+    // `inner` is not inside itself.
+    assert_eq!(
+        f.document.common_frame(ROOT, &[f.inner, f.three]),
+        Some(f.outer)
+    );
+    assert_eq!(
+        f.document.common_frame(ROOT, &[f.two, f.three]),
+        Some(f.outer)
+    );
+    assert_eq!(f.document.common_frame(ROOT, &[f.three]), Some(f.inner));
+    assert_eq!(
+        f.document.common_frame(ROOT, &[f.three, f.add]),
+        None,
+        "one of them is on the canvas, so the canvas is all they share"
+    );
+    assert_eq!(f.document.common_frame(ROOT, &[]), None);
+}
+
+#[test]
+fn a_containment_cycle_is_refused_where_blenders_own_guard_passes_it() {
+    let mut f = framed();
+    // Blender's `NODE_OT_parent_set` with `outer` selected and `inner` active:
+    // it calls `node_detach_node(outer)` and THEN asserts. Reproduce that exact
+    // order and ask its guard the question it would ask.
+    let mut mirror = f.document.clone();
+    mirror
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(f.outer)
+        .unwrap()
+        .parent = None;
+    assert!(
+        !blender_is_parent_and_child(&mirror, ROOT, f.inner, f.outer),
+        "the detach cleared the chain the assert walks, so it fires on nothing"
+    );
+
+    // Here the same request is refused, and the refusal names the chain.
+    let refused = f
+        .document
+        .set_parent(ROOT, f.outer, Some(f.inner))
+        .unwrap_err();
+    let ParentError::Cycle { chain } = &refused else {
+        panic!("expected a cycle, got {refused:?}");
+    };
+    assert_eq!(chain, &vec![f.outer, f.inner]);
+    assert!(refused.to_string().contains("inside itself"));
+    // Refused means unchanged.
+    assert_eq!(f.document.ancestry(ROOT, f.inner), vec![f.outer]);
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn a_node_cannot_be_inside_itself_or_inside_something_that_is_not_a_frame() {
+    let mut f = framed();
+    assert_eq!(
+        f.document.set_parent(ROOT, f.outer, Some(f.outer)),
+        Err(ParentError::SelfParent(f.outer))
+    );
+    assert_eq!(
+        f.document.set_parent(ROOT, f.two, Some(f.add)),
+        Err(ParentError::NotAFrame { node: f.add }),
+        "Blender states this one as an assertion too"
+    );
+    assert_eq!(
+        f.document.set_parent(ROOT, f.two, Some(NodeId(99))),
+        Err(ParentError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(99)
+        })
+    );
+    assert_eq!(f.document.ancestry(ROOT, f.two), vec![f.outer]);
+}
+
+#[test]
+fn framing_a_selection_attaches_only_its_outermost_members() {
+    let mut f = framed();
+    // `inner` and `three` are both selected, and `three` is inside `inner`.
+    let made = f
+        .document
+        .enframe(ROOT, &[f.inner, f.three], Some("decode".to_owned()))
+        .unwrap();
+    assert_eq!(
+        made.members,
+        vec![f.inner],
+        "the inner one keeps the container that is itself moving"
+    );
+    assert_eq!(
+        f.document.ancestry(ROOT, f.three),
+        vec![f.outer, made.frame, f.inner]
+    );
+    // The new frame landed INSIDE what already contained all of the selection,
+    // so framing part of a pipeline does not lift it out of the pipeline.
+    assert_eq!(f.document.ancestry(ROOT, made.frame), vec![f.outer]);
+    assert_eq!(
+        f.document
+            .tree(ROOT)
+            .unwrap()
+            .node(made.frame)
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("decode")
+    );
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn the_outermost_derivation_is_what_every_gesture_over_the_forest_uses() {
+    let f = framed();
+    // Blender computes this three times — `node_join_attach_recursive`,
+    // `node_detach_recursive` (two recursive functions over two structs with
+    // identical fields) and again in the transform code.
+    assert_eq!(
+        f.document.outermost(ROOT, &[f.inner, f.three]),
+        vec![f.inner]
+    );
+    assert_eq!(
+        f.document.outermost(ROOT, &[f.two, f.three]),
+        {
+            let mut both = vec![f.two, f.three];
+            both.sort_unstable();
+            both
+        },
+        "neither contains the other, so both are roots"
+    );
+    assert_eq!(
+        f.document
+            .outermost(ROOT, &[f.outer, f.inner, f.three, f.two]),
+        vec![f.outer]
+    );
+    assert!(f.document.outermost(ROOT, &[]).is_empty());
+}
+
+#[test]
+fn unframing_leaves_one_level_where_blender_leaves_all_of_them() {
+    let mut f = framed();
+    assert_eq!(f.document.ancestry(ROOT, f.three), vec![f.outer, f.inner]);
+
+    let moved = f.document.unframe(ROOT, &[f.three]).unwrap();
+    assert_eq!(moved, vec![f.three]);
+    assert_eq!(
+        f.document.ancestry(ROOT, f.three),
+        vec![f.outer],
+        "out of `inner`, still in `outer` — the containment the gesture did not touch"
+    );
+    // Blender's `NODE_OT_detach` sets parent to nullptr, which is reachable here
+    // too and is a DIFFERENT request.
+    f.document.set_parent(ROOT, f.three, None).unwrap();
+    assert!(f.document.ancestry(ROOT, f.three).is_empty());
+    // Nothing to leave.
+    assert!(f.document.unframe(ROOT, &[f.three]).unwrap().is_empty());
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn moving_a_frame_moves_everything_it_contains() {
+    let mut f = framed();
+    let before: Vec<(i32, i32)> = [f.two, f.three, f.add]
+        .iter()
+        .map(|&id| {
+            let n = f.document.tree(ROOT).unwrap().node(id).unwrap();
+            (n.x, n.y)
+        })
+        .collect();
+
+    let moved = f.document.translate(ROOT, f.outer, 40, -10).unwrap();
+    assert_eq!(
+        moved.first(),
+        Some(&f.outer),
+        "the frame itself comes first"
+    );
+    let mut carried = moved[1..].to_vec();
+    carried.sort_unstable();
+    let mut deep = vec![f.inner, f.two, f.three];
+    deep.sort_unstable();
+    assert_eq!(carried, deep, "transitively, not just direct members");
+
+    for (id, (x, y)) in [f.two, f.three].iter().zip(&before) {
+        let now = f.document.tree(ROOT).unwrap().node(*id).unwrap();
+        assert_eq!((now.x, now.y), (x + 40, y - 10));
+    }
+    let untouched = f.document.tree(ROOT).unwrap().node(f.add).unwrap();
+    assert_eq!((untouched.x, untouched.y), before[2]);
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn deleting_a_frame_hands_its_members_to_the_frame_above_it() {
+    let mut f = framed();
+    let removed = f.document.remove_node(ROOT, f.inner).unwrap();
+    assert_eq!(removed.adopted, vec![f.three]);
+    assert_eq!(
+        f.document.ancestry(ROOT, f.three),
+        vec![f.outer],
+        "only the containment the deletion destroyed is destroyed"
+    );
+    // Blender's `node_unlink_attached` clears the child's parent outright, so
+    // the same delete would put `three` on the canvas even though `outer` is
+    // still there and still contains where it was.
+    let mut blender = framed();
+    for member in blender.document.members(ROOT, blender.inner) {
+        blender
+            .document
+            .tree_mut(ROOT)
+            .unwrap()
+            .node_mut(member)
+            .unwrap()
+            .parent = None;
+    }
+    blender.document.remove_node(ROOT, blender.inner).unwrap();
+    assert!(blender.document.ancestry(ROOT, blender.three).is_empty());
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn a_dissolved_frame_hands_its_members_up_by_the_same_derivation() {
+    let mut f = framed();
+    let out = f.document.dissolve(ROOT, f.inner).unwrap();
+    assert_eq!(out.adopted, vec![f.three]);
+    assert_eq!(f.document.ancestry(ROOT, f.three), vec![f.outer]);
+    assert!(
+        f.document.validate().is_empty(),
+        "without this a member would name a node that is gone"
+    );
+    // Detach removes no node, so it adopts nobody.
+    let mut g = framed();
+    assert!(g.document.detach(ROOT, g.inner).unwrap().adopted.is_empty());
+}
+
+#[test]
+fn a_boundary_move_carries_the_whole_node() {
+    // R1589 found this broken: `partition::move_nodes` copied the LABEL alone,
+    // three rounds after `Node::adopt_from` was introduced so that a field added
+    // to a node could not be dropped by a hand-rolled copy.
+    let mut b = boundaried();
+    b.document.set_bypassed(ROOT, b.two, true).unwrap();
+    b.document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(b.two)
+        .unwrap()
+        .appearance
+        .collapsed = true;
+
+    let out = b
+        .document
+        .group_insert(ROOT, b.instance, &[b.two], Sharing::Shared)
+        .unwrap();
+    let moved = b
+        .document
+        .tree(b.definition)
+        .unwrap()
+        .node(out.moved[0])
+        .unwrap();
+    assert!(moved.bypassed, "a bypassed node stays bypassed");
+    assert!(moved.appearance.collapsed, "and keeps its looks");
+}
+
+#[test]
+fn a_node_moved_into_a_group_leaves_its_frame_behind_and_the_frame_is_named() {
+    let mut b = boundaried();
+    let frame = b.document.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap();
+    b.document.set_parent(ROOT, b.two, Some(frame)).unwrap();
+
+    let out = b
+        .document
+        .group_insert(ROOT, b.instance, &[b.two], Sharing::Shared)
+        .unwrap();
+    assert_eq!(
+        out.orphaned,
+        vec![Orphaned {
+            node: out.moved[0],
+            frame
+        }],
+        "a host-tree frame id means nothing inside the definition"
+    );
+    assert!(
+        b.document
+            .tree(b.definition)
+            .unwrap()
+            .node(out.moved[0])
+            .unwrap()
+            .parent
+            .is_none()
+    );
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn a_node_moved_out_of_a_group_lands_in_the_frame_the_instance_is_in() {
+    let mut b = boundaried();
+    let frame = b.document.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap();
+    b.document
+        .set_parent(ROOT, b.instance, Some(frame))
+        .unwrap();
+
+    let out = b
+        .document
+        .group_separate(ROOT, b.instance, &[b.add], Sharing::Shared)
+        .unwrap();
+    assert_eq!(
+        b.document.ancestry(ROOT, out.moved[0]),
+        vec![frame],
+        "it lands where the instance is, which is inside the instance's frame"
+    );
+    assert!(out.orphaned.is_empty());
+    assert!(b.document.validate().is_empty());
+}
+
+#[test]
+fn a_collapse_leaves_the_instance_where_the_selection_was() {
+    let mut f = framed();
+    let made = f.document.group(ROOT, &[f.add], "Sum").unwrap();
+    assert!(
+        f.document.ancestry(ROOT, made.node).is_empty(),
+        "the selection was on the canvas"
+    );
+
+    let mut g = framed();
+    let frame = g.document.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap();
+    g.document.set_parent(ROOT, g.add, Some(frame)).unwrap();
+    g.document.set_parent(ROOT, g.sink, Some(frame)).unwrap();
+    let made = g.document.group(ROOT, &[g.add, g.sink], "Tail").unwrap();
+    assert_eq!(
+        g.document.ancestry(ROOT, made.node),
+        vec![frame],
+        "a pipeline stage collapsed into a group stays in its pipeline"
+    );
+    // The nodes themselves are in another tree now, where a host frame id means
+    // nothing — so the containment survives at the level that can hold it, the
+    // instance, and its loss at the node level is reported rather than assumed.
+    assert_eq!(
+        made.orphaned,
+        vec![
+            Orphaned { node: g.add, frame },
+            Orphaned {
+                node: g.sink,
+                frame
+            }
+        ]
+    );
+    assert!(g.document.validate().is_empty());
+}
+
+#[test]
+fn a_collapse_carries_a_selected_frame_and_names_one_that_stayed() {
+    let mut f = fixture();
+    let frame = f.document.add_node(ROOT, NodeBody::Frame, 100, 0).unwrap();
+    f.document.set_parent(ROOT, f.add, Some(frame)).unwrap();
+
+    // The frame is selected too, so it travels with what it contains.
+    let carried = f.document.group(ROOT, &[frame, f.add], "Stage").unwrap();
+    assert!(carried.orphaned.is_empty());
+    let inside = f.document.tree(carried.definition).unwrap();
+    let moved_frame = inside
+        .nodes()
+        .find(|n| n.is_frame())
+        .expect("the frame came along");
+    assert_eq!(
+        f.document
+            .tree(carried.definition)
+            .unwrap()
+            .nodes()
+            .find(|n| matches!(n.body, NodeBody::Kind(Op::Add)))
+            .unwrap()
+            .parent,
+        Some(moved_frame.id),
+        "ids are preserved by a collapse, so the containment needs no remapping"
+    );
+    assert!(f.document.validate().is_empty());
+
+    // The other way: the frame is NOT selected, so it stays and is reported.
+    let mut g = fixture();
+    let frame = g.document.add_node(ROOT, NodeBody::Frame, 100, 0).unwrap();
+    g.document.set_parent(ROOT, g.add, Some(frame)).unwrap();
+    let cut = g.document.group(ROOT, &[g.add], "Stage").unwrap();
+    assert_eq!(cut.orphaned, vec![Orphaned { node: g.add, frame }]);
+    assert!(g.document.validate().is_empty());
+}
+
+#[test]
+fn an_inline_keeps_the_definitions_own_frames_where_blender_flattens_them() {
+    let mut f = fixture();
+    let inner_frame = f.document.add_node(ROOT, NodeBody::Frame, 100, 0).unwrap();
+    f.document
+        .set_parent(ROOT, f.add, Some(inner_frame))
+        .unwrap();
+    let made = f
+        .document
+        .group(ROOT, &[inner_frame, f.add], "Stage")
+        .unwrap();
+    // The instance itself sits in a frame, which is the case that triggers
+    // Blender's flattening loop at all.
+    let host_frame = f.document.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap();
+    f.document
+        .set_parent(ROOT, made.node, Some(host_frame))
+        .unwrap();
+
+    let out = f.document.ungroup(ROOT, made.node).unwrap();
+    let frames: Vec<NodeId> = out
+        .nodes
+        .iter()
+        .copied()
+        .filter(|&id| f.document.tree(ROOT).unwrap().node(id).unwrap().is_frame())
+        .collect();
+    assert_eq!(frames.len(), 1, "the definition's own frame came back");
+    let adder = out
+        .nodes
+        .iter()
+        .copied()
+        .find(|&id| {
+            matches!(
+                f.document.tree(ROOT).unwrap().node(id).unwrap().body,
+                NodeBody::Kind(Op::Add)
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        f.document.ancestry(ROOT, adder),
+        vec![host_frame, frames[0]],
+        "the definition's forest survived, grafted onto the instance's container"
+    );
+    // Blender assigns the group node's parent to EVERY copied node
+    // (`node_group.cc`, the `if (group_node.parent)` loop), overwriting the
+    // parent/child relationships its own copy step had just recreated.
+    let mut blender = f.document.clone();
+    for &id in &out.nodes {
+        blender.tree_mut(ROOT).unwrap().node_mut(id).unwrap().parent = Some(host_frame);
+    }
+    assert_eq!(
+        blender.ancestry(ROOT, adder),
+        vec![host_frame],
+        "one level, because the internal frame is no longer anyone's container"
+    );
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn a_fragment_names_the_frame_it_was_cut_out_of() {
+    let f = framed();
+    let cut = f.document.extract(ROOT, &[f.three]).unwrap();
+    assert_eq!(
+        cut.orphaned(),
+        &[Orphaned {
+            node: f.three,
+            frame: f.inner
+        }]
+    );
+    assert!(
+        cut.nodes().all(|n| n.parent.is_none()),
+        "the fragment does not hold the frame, so it does not claim to"
+    );
+
+    // A selection that takes its frame with it keeps the containment, because a
+    // fragment preserves node ids. `inner`'s OWN container stayed behind, so
+    // that one crossing of the boundary is the only thing reported.
+    let whole = f.document.extract(ROOT, &[f.inner, f.three]).unwrap();
+    assert_eq!(
+        whole.orphaned(),
+        &[Orphaned {
+            node: f.inner,
+            frame: f.outer
+        }]
+    );
+    assert_eq!(
+        whole
+            .document()
+            .tree(ROOT)
+            .unwrap()
+            .node(f.three)
+            .unwrap()
+            .parent,
+        Some(f.inner)
+    );
+    assert!(whole.validate().is_empty());
+}
+
+#[test]
+fn a_duplicate_lands_back_in_its_frame_where_blender_leaves_it_outside() {
+    let mut f = framed();
+    let out = f
+        .document
+        .duplicate(
+            ROOT,
+            &[f.three],
+            (40, 40),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    let copy = out.nodes[0];
+    assert_eq!(out.reframed, vec![copy]);
+    assert!(out.unframed.is_empty());
+    assert_eq!(
+        f.document.ancestry(ROOT, copy),
+        vec![f.outer, f.inner],
+        "a duplicate of something in a frame is in that frame"
+    );
+    // Blender's copy path looks the parent up in the copy map, does not find it
+    // because the frame was not selected, and calls `node_detach_node` — with no
+    // record anywhere that it happened.
+    let mut blender = f.document.clone();
+    blender
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(copy)
+        .unwrap()
+        .parent = None;
+    assert!(blender.ancestry(ROOT, copy).is_empty());
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn a_fragment_pasted_into_another_tree_never_joins_a_frame_by_number() {
+    let mut f = framed();
+    let cut = f.document.extract(ROOT, &[f.three]).unwrap();
+    // A definition whose node ids collide with the root's by construction.
+    let elsewhere = f.document.add_definition("elsewhere");
+    let decoy = f
+        .document
+        .add_node(elsewhere, NodeBody::Frame, 0, 0)
+        .unwrap();
+    while f.document.tree(elsewhere).unwrap().node_count() <= f.inner.0 as usize {
+        f.document
+            .add_node(elsewhere, NodeBody::Frame, 0, 0)
+            .unwrap();
+    }
+    assert!(
+        f.document
+            .tree(elsewhere)
+            .unwrap()
+            .node(f.inner)
+            .is_some_and(Node::is_frame),
+        "the same NUMBER names a frame there, which is the trap"
+    );
+
+    let out = f
+        .document
+        .insert(elsewhere, &cut, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert!(out.reframed.is_empty());
+    assert_eq!(
+        out.unframed,
+        vec![Orphaned {
+            node: out.nodes[0],
+            frame: f.inner
+        }]
+    );
+    assert!(
+        f.document
+            .tree(elsewhere)
+            .unwrap()
+            .node(out.nodes[0])
+            .unwrap()
+            .parent
+            .is_none()
+    );
+    assert_ne!(decoy, out.nodes[0]);
+    assert!(f.document.validate().is_empty());
+}
+
+#[test]
+fn a_broken_forest_is_reported_three_ways() {
+    let f = framed();
+    let mut json: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&f.document).unwrap()).unwrap();
+    let nodes = json["trees"][0]["nodes"].as_array_mut().unwrap();
+    // `two` (index 0) points at a node that is not there; `add` (index 2) points
+    // at something that is not a frame; and the two frames contain each other.
+    nodes[0]["parent"] = serde_json::json!(99);
+    nodes[2]["parent"] = serde_json::json!(f.sink.0);
+    nodes[4]["parent"] = serde_json::json!(f.inner.0);
+    let broken: Document<Op> = serde_json::from_value(json).unwrap();
+
+    let found = broken.validate();
+    assert!(found.contains(&Violation::DanglingParent {
+        tree: ROOT,
+        node: f.two,
+        parent: NodeId(99)
+    }));
+    assert!(found.contains(&Violation::ParentNotAFrame {
+        tree: ROOT,
+        node: f.add,
+        parent: f.sink
+    }));
+    assert!(found.contains(&Violation::ContainmentCycle {
+        tree: ROOT,
+        node: f.outer
+    }));
+    assert!(found.contains(&Violation::ContainmentCycle {
+        tree: ROOT,
+        node: f.inner
+    }));
+    // And every derivation over that document still terminates.
+    assert_eq!(broken.ancestry(ROOT, f.outer).len(), 1);
+    assert_eq!(broken.contents(ROOT, f.outer).len(), 2);
+    assert!(broken.outermost(ROOT, &[f.outer, f.inner]).len() <= 2);
+}
+
+#[test]
+fn the_forest_survives_a_round_trip() {
+    let f = framed();
+    let text = serde_json::to_string(&f.document).unwrap();
+    let back: Document<Op> = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, f.document);
+    assert_eq!(back.ancestry(ROOT, f.three), vec![f.outer, f.inner]);
+    assert!(back.validate().is_empty());
+
+    // A document written before frames existed has no `parent` key at all.
+    let older = serde_json::json!({
+        "trees": [{
+            "id": 0,
+            "name": "root",
+            "nodes": [{"id": 0, "body": {"Kind": {"Num": 1}}, "x": 0, "y": 0, "label": null}],
+            "links": [],
+            "interface": {"inputs": [], "outputs": []},
+            "next_node": 1,
+            "next_link": 0
+        }]
+    });
+    let parsed: Document<Op> = serde_json::from_value(older).unwrap();
+    assert!(
+        parsed
+            .tree(ROOT)
+            .unwrap()
+            .node(NodeId(0))
+            .unwrap()
+            .parent
+            .is_none()
+    );
+}
+
+#[test]
+fn framing_nothing_is_refused_and_an_empty_frame_needs_no_derivation() {
+    let mut f = fixture();
+    assert_eq!(f.document.enframe(ROOT, &[], None), Err(ParentError::Empty));
+    assert_eq!(
+        f.document.enframe(ROOT, &[NodeId(42)], None),
+        Err(ParentError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(42)
+        })
+    );
+    // The empty frame is the plain constructor.
+    let empty = f.document.add_node(ROOT, NodeBody::Frame, 10, 20).unwrap();
+    assert!(f.document.members(ROOT, empty).is_empty());
+    assert_eq!(
+        f.document
+            .tree(ROOT)
+            .unwrap()
+            .node(empty)
+            .unwrap()
+            .display_name(),
+        "Frame"
+    );
+    assert!(f.document.validate().is_empty());
 }

@@ -248,8 +248,9 @@ pub enum InterfaceSide {
 
 /// What a node is.
 ///
-/// The application's own kinds are the leaves; the two structural arms are this
-/// crate's, and are what make a node able to *be* a graph.
+/// The application's own kinds are the leaves; the three structural arms are
+/// this crate's, and are what make a node able to *be* a graph and to *contain*
+/// one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeBody<K> {
     /// An application node.
@@ -260,6 +261,19 @@ pub enum NodeBody<K> {
     Group(TreeId),
     /// The inside end of this tree's own interface.
     Interface(InterfaceSide),
+    /// A node whose whole content is what it contains: the only body a
+    /// [`Node::parent`] may name (R1589). Blender's `NODE_FRAME`.
+    ///
+    /// Owned by this crate rather than left to the taxonomy for the reason the
+    /// other two structural arms are: a frame is an *editor* affordance and not
+    /// application subject matter, so an application that supplied one would be
+    /// re-deriving containment, and one that forgot would have no frames at all.
+    ///
+    /// Its signature is empty, so nothing can be linked to it and evaluation
+    /// never reaches it — containment is a fact about the canvas, and this is
+    /// the same separation [`Appearance`] draws. Blender's
+    /// frame is an ordinary node type with sockets it happens not to declare.
+    Frame,
 }
 
 /// A node: what it is, where it sits, and what it is called.
@@ -296,6 +310,21 @@ pub struct Node<K> {
     /// move nodes between trees.
     #[serde(default)]
     pub appearance: Appearance,
+    /// The [`NodeBody::Frame`] this node sits inside, or `None` for the tree's
+    /// own canvas (R1589).
+    ///
+    /// A **within-tree** reference, exactly like a [`Link`]'s sockets: a
+    /// [`NodeId`] is unique in its tree and nowhere else, which is why every
+    /// operation that moves a node between trees has to say what happens to it.
+    ///
+    /// Read on its own this is one edge; read across a tree it is a **forest**,
+    /// and that is the invariant [`Document::set_parent`] maintains and
+    /// [`Document::validate`] checks. Blender declares the same field as a bare
+    /// `bNode *parent` and enforces its two rules — parent is a frame, and no
+    /// node contains itself — with `BLI_assert`, which is compiled out of the
+    /// build it ships.
+    #[serde(default)]
+    pub parent: Option<NodeId>,
 }
 
 impl<K: NodeKind> Node<K> {
@@ -310,7 +339,15 @@ impl<K: NodeKind> Node<K> {
             NodeBody::Group(_) => "Group".to_owned(),
             NodeBody::Interface(InterfaceSide::Input) => "Group Input".to_owned(),
             NodeBody::Interface(InterfaceSide::Output) => "Group Output".to_owned(),
+            NodeBody::Frame => "Frame".to_owned(),
         }
+    }
+
+    /// Whether this node is a [`NodeBody::Frame`] — the one body that may
+    /// contain others.
+    #[must_use]
+    pub const fn is_frame(&self) -> bool {
+        matches!(self.body, NodeBody::Frame)
     }
 
     /// Take on every fact about `source` that is not its identity, its body or
@@ -325,6 +362,14 @@ impl<K: NodeKind> Node<K> {
     ///
     /// So `source` is **destructured**: a field added to [`Node`] fails to
     /// compile here until someone has said whether a copy carries it.
+    ///
+    /// R1589 added `parent`, and the answer for it is **no**: a parent is a
+    /// [`NodeId`] in the *source's* numbering, and every caller of this is
+    /// minting fresh ids in another one, so copying the field would name
+    /// whichever node happened to hold that id in the destination. Each caller
+    /// remaps it through the map it already has — and the ones that carry a
+    /// selection out of a tree must additionally decide what becomes of a parent
+    /// the selection left behind.
     pub(crate) fn adopt_from(&mut self, source: &Self) {
         let Self {
             id: _,
@@ -334,6 +379,7 @@ impl<K: NodeKind> Node<K> {
             label,
             bypassed,
             appearance,
+            parent: _,
         } = source;
         self.label.clone_from(label);
         self.bypassed = *bypassed;
@@ -645,6 +691,13 @@ impl<K: NodeKind> Document<K> {
                 inputs: host.interface.outputs.clone(),
                 outputs: Vec::new(),
             },
+            // A frame takes part in the canvas, never in the graph — so there is
+            // nothing to link to it, and `connect` refuses either end of one
+            // with `NoSuchPort` rather than needing an arm of its own.
+            NodeBody::Frame => Signature {
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            },
         })
     }
 
@@ -676,28 +729,68 @@ impl<K: NodeKind> Document<K> {
                 label: None,
                 bypassed: false,
                 appearance: Appearance::default(),
+                parent: None,
             },
         );
         Ok(id)
     }
 
-    /// Remove a node and every link touching it, answering the links dropped.
+    /// Remove a node and every link touching it, answering what that cost.
     ///
-    /// Reporting them is what lets an undo stack put the node back whole;
+    /// Reporting the links is what lets an undo stack put the node back whole;
     /// silently dropping incident links is how a "delete" becomes unrepeatable.
+    /// The same argument covers what the node **contained**: deleting a frame is
+    /// not deleting a pipeline stage, so its members survive — see
+    /// [`Removed::adopted`] for where they land and why.
     ///
     /// # Errors
     ///
     /// [`EditError::NoSuchTree`] or [`EditError::NoSuchNode`].
-    pub fn remove_node(&mut self, tree: TreeId, node: NodeId) -> Result<Vec<Link>, EditError> {
+    pub fn remove_node(&mut self, tree: TreeId, node: NodeId) -> Result<Removed, EditError> {
         let host = self
             .trees
             .get_mut(tree.0 as usize)
             .ok_or(EditError::NoSuchTree(tree))?;
-        if host.nodes.remove(&node).is_none() {
+        if !host.nodes.contains_key(&node) {
             return Err(EditError::NoSuchNode { tree, node });
         }
-        Ok(self.unwire_node(tree, node))
+        let adopted = self.adopt_orphans(tree, node);
+        if let Some(host) = self.trees.get_mut(tree.0 as usize) {
+            host.nodes.remove(&node);
+        }
+        Ok(Removed {
+            links: self.unwire_node(tree, node),
+            adopted,
+        })
+    }
+
+    /// Hand `dying`'s direct members to `dying`'s own parent, answering them.
+    ///
+    /// The one place a node's disappearance is reconciled with the forest, so
+    /// every path that removes a node — [`Self::remove_node`],
+    /// [`Self::dissolve`](crate::Document::dissolve) and its detach twin —
+    /// reaches the same answer.
+    ///
+    /// **The grandparent, not the canvas.** Blender's `node_unlink_attached`
+    /// clears every child's parent outright, so deleting the middle frame of
+    /// `Outer > Inner > node` moves `node` to the root even though `Outer` is
+    /// still there and still contains where the node was. Only the containment
+    /// the deletion actually destroyed is destroyed here.
+    pub(crate) fn adopt_orphans(&mut self, tree: TreeId, dying: NodeId) -> Vec<NodeId> {
+        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+            return Vec::new();
+        };
+        let Some(grandparent) = host.nodes.get(&dying).map(|n| n.parent) else {
+            return Vec::new();
+        };
+        let mut adopted = Vec::new();
+        for member in host.nodes.values_mut() {
+            if member.parent == Some(dying) {
+                member.parent = grandparent;
+                adopted.push(member.id);
+            }
+        }
+        adopted
     }
 
     /// Remove every link touching `node`, answering them; the node stays.
@@ -1193,6 +1286,20 @@ impl fmt::Display for DroppedLink {
             self.tree.0, self.link.from, self.link.to
         )
     }
+}
+
+/// What a successful [`Document::remove_node`] cost.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Removed {
+    /// Every link that touched the node, as it was.
+    pub links: Vec<Link>,
+    /// The nodes the removed one contained, which its own parent has taken on —
+    /// ascending, and empty for a node that contained nothing (R1589).
+    ///
+    /// Named rather than merely re-parented, because "deleting this frame moved
+    /// six nodes" is the half of the edit that is not on screen where the
+    /// gesture happened.
+    pub adopted: Vec<NodeId>,
 }
 
 /// What a successful [`Document::connect`] did.

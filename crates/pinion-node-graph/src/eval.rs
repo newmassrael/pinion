@@ -76,16 +76,16 @@ impl<K: NodeKind> Evaluator<'_, K> {
     /// When `tree` is a definition, the evaluation runs as if an instance had
     /// been fed the interface's own port defaults.
     pub fn outputs(&mut self, tree: TreeId, node: NodeId) -> Vec<Option<K::Value>> {
-        let frame = self.top_frame(tree);
-        self.node_outputs(&frame, node, 0)
+        let descent = self.top_descent(tree);
+        self.node_outputs(&descent, node, 0)
     }
 
     /// Every resolved input of `node`, in port order: what actually arrives,
     /// which is the wired source's output when there is one and the port's own
     /// default when there is not.
     pub fn inputs(&mut self, tree: TreeId, node: NodeId) -> Vec<Option<K::Value>> {
-        let frame = self.top_frame(tree);
-        self.node_inputs(&frame, node, 0)
+        let descent = self.top_descent(tree);
+        self.node_inputs(&descent, node, 0)
     }
 
     /// One resolved input.
@@ -113,8 +113,8 @@ impl<K: NodeKind> Evaluator<'_, K> {
         self.truncated
     }
 
-    /// The starting frame for a tree read on its own.
-    fn top_frame(&self, tree: TreeId) -> Frame<K> {
+    /// The starting descent level for a tree read on its own.
+    fn top_descent(&self, tree: TreeId) -> Descent<K> {
         let bindings = self.document.tree(tree).map_or_else(Vec::new, |t| {
             t.interface()
                 .inputs()
@@ -122,7 +122,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 .map(|port| port.default.clone())
                 .collect()
         });
-        Frame {
+        Descent {
             instance: Instance::new(),
             tree,
             bindings,
@@ -131,15 +131,15 @@ impl<K: NodeKind> Evaluator<'_, K> {
 
     fn node_outputs(
         &mut self,
-        frame: &Frame<K>,
+        descent: &Descent<K>,
         node: NodeId,
         depth: usize,
     ) -> Vec<Option<K::Value>> {
-        let Some(signature) = self.document.signature(frame.tree, node) else {
+        let Some(signature) = self.document.signature(descent.tree, node) else {
             return Vec::new();
         };
         let arity = signature.outputs.len();
-        let key = (frame.instance.clone(), node);
+        let key = (descent.instance.clone(), node);
         if let Some(cached) = self.memo.get(&key) {
             return cached.clone();
         }
@@ -157,7 +157,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
         // The signature resolved above, so the node is there.
         let resolved = self
             .document
-            .tree(frame.tree)
+            .tree(descent.tree)
             .and_then(|t| t.node(node))
             .map(|n| (n.body.clone(), n.bypassed));
         let Some((body, bypassed)) = resolved else {
@@ -171,10 +171,10 @@ impl<K: NodeKind> Evaluator<'_, K> {
         // and for a group instance, and a group instance must NOT be descended
         // into here — bypassing one is exactly the request not to run it.
         let mut outputs = if bypassed {
-            let inputs = self.node_inputs(frame, node, depth);
+            let inputs = self.node_inputs(descent, node, depth);
             let routing = self
                 .document
-                .passthrough(frame.tree, node)
+                .passthrough(descent.tree, node)
                 .unwrap_or_default();
             let mut passed = vec![None; arity];
             for route in routing.routes() {
@@ -186,19 +186,25 @@ impl<K: NodeKind> Evaluator<'_, K> {
         } else {
             match body {
                 NodeBody::Kind(kind) => {
-                    let inputs = self.node_inputs(frame, node, depth);
+                    let inputs = self.node_inputs(descent, node, depth);
                     kind.evaluate(&inputs)
                 }
                 // The inside end of this tree's interface inputs: it produces
                 // what the instance above was fed.
-                NodeBody::Interface(InterfaceSide::Input) => frame.bindings.clone(),
-                // The inside end of the OUTPUTS has none of its own.
-                NodeBody::Interface(InterfaceSide::Output) => Vec::new(),
+                NodeBody::Interface(InterfaceSide::Input) => descent.bindings.clone(),
+                // Two bodies that produce nothing, for two different reasons:
+                // the inside end of the OUTPUTS has no outputs of its own, and
+                // a frame (R1589) is a fact about the canvas with no ports at
+                // all, so nothing reaches it by following a link and a caller
+                // asking directly gets the honest empty answer. One arm because
+                // the answer is one value; the compiler still enumerates a new
+                // body here rather than defaulting it.
+                NodeBody::Interface(InterfaceSide::Output) | NodeBody::Frame => Vec::new(),
                 NodeBody::Group(definition) => {
-                    let bindings = self.node_inputs(frame, node, depth);
-                    let mut instance = frame.instance.clone();
-                    instance.push((frame.tree, node));
-                    let inner = Frame {
+                    let bindings = self.node_inputs(descent, node, depth);
+                    let mut instance = descent.instance.clone();
+                    instance.push((descent.tree, node));
+                    let inner = Descent {
                         instance,
                         tree: definition,
                         bindings,
@@ -227,11 +233,11 @@ impl<K: NodeKind> Evaluator<'_, K> {
 
     fn node_inputs(
         &mut self,
-        frame: &Frame<K>,
+        descent: &Descent<K>,
         node: NodeId,
         depth: usize,
     ) -> Vec<Option<K::Value>> {
-        let Some(signature) = self.document.signature(frame.tree, node) else {
+        let Some(signature) = self.document.signature(descent.tree, node) else {
             return Vec::new();
         };
         let mut resolved = Vec::with_capacity(signature.inputs.len());
@@ -245,13 +251,13 @@ impl<K: NodeKind> Evaluator<'_, K> {
             // the wire is still there, it is the value that is not.
             let feeding = self
                 .document
-                .tree(frame.tree)
+                .tree(descent.tree)
                 .and_then(|t| t.link_into(socket))
                 .filter(|link| !link.muted)
                 .copied();
             resolved.push(match feeding {
                 Some(link) => self
-                    .node_outputs(frame, link.from.node, depth + 1)
+                    .node_outputs(descent, link.from.node, depth + 1)
                     .into_iter()
                     .nth(link.from.port as usize)
                     .flatten(),
@@ -263,7 +269,12 @@ impl<K: NodeKind> Evaluator<'_, K> {
 }
 
 /// One level of the descent.
-struct Frame<K: NodeKind> {
+///
+/// Named `Descent` and not `Frame`: R1589 gave this crate a
+/// [`NodeBody::Frame`], and a word that means a stack level in one module and a
+/// canvas container in another is the exact confusion R1586 spent a round
+/// untangling in Blender's own vocabulary.
+struct Descent<K: NodeKind> {
     instance: Instance,
     tree: TreeId,
     /// What the instance above was fed, standing in for this tree's

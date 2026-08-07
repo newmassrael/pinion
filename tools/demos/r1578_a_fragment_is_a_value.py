@@ -210,7 +210,9 @@ def body() -> None:
         # ── (F) a copied group instance brings its definition ───────────────
         assert_eq(inv(tf, "select", str(MIX)), "1", "F: back to the mix")
         made = str(inv(tf, "group", "Blend"))
-        definition, instance = (int(p) for p in made.split(":"))
+        # R1589 appended the containments the collapse could not carry, so the
+        # pair is the first field rather than the whole reply.
+        definition, instance = (int(p) for p in made.split("|")[0].split(":"))
         assert_eq(definition, 1, "F: the first definition")
         assert_eq(inv(tf, "select", str(instance)), "1", "F: select the instance")
         assert_eq(

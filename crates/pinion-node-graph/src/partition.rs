@@ -74,10 +74,11 @@ use pinion_graph::group as boundary;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::frame::{Orphaned, parents_of};
 use crate::group::{INTERFACE_GAP, PortSide};
 use crate::model::{
     Document, DroppedLink, InterfaceSide, KindPort, LinkId, NodeBody, NodeId, NodeKind, Sink,
-    Socket, TreeId,
+    Socket, Tree, TreeId,
 };
 use crate::numbering::Numbering;
 
@@ -132,6 +133,9 @@ pub struct Repartitioned<K: NodeKind> {
     /// How many *other* instances of [`Self::definition`] this changed. Always
     /// zero after a fork, by construction.
     pub other_instances: usize,
+    /// Moved nodes whose frame could not cross with them, and the frame each was
+    /// in, named in the tree it stayed in (R1589).
+    pub orphaned: Vec<Orphaned>,
 }
 
 /// Why a boundary could not be moved.
@@ -443,34 +447,57 @@ impl<K: NodeKind> Document<K> {
         edit
     }
 
-    /// Move nodes from one tree to another, keeping their labels and their
-    /// relative positions, and answer the old-to-new id map.
+    /// Move nodes from one tree to another, keeping **everything about them
+    /// that is not their identity or their place**, and answer the old-to-new id
+    /// map together with the containers that could not come along.
     ///
     /// Ids are per tree, so a node crossing trees is renumbered. Positions are
     /// offset by the instance's own, which is what makes an insert and an
     /// [`Document::ungroup`](crate::Document::ungroup) land in the same place.
+    ///
+    /// `roots` is what a node whose frame stayed behind becomes a member of —
+    /// the instance's own container going outward, and nothing going inward,
+    /// because a host-tree frame is not in the definition at all.
+    ///
+    /// R1589 found this copying the **label alone**, where R1586 had introduced
+    /// [`Node::adopt_from`](crate::Node) precisely so a field added to a node
+    /// could not be silently dropped by a hand-rolled copy — and then swept two
+    /// of the three sites. So a node moved across a group boundary arrived
+    /// un-bypassed, un-collapsed and full-width, which is the defect that
+    /// mechanism exists to prevent, in the mechanism's own crate. The third site
+    /// now routes through it as well.
     fn move_nodes(
         &mut self,
         from: TreeId,
         to: TreeId,
         nodes: &[NodeId],
         offset: (i32, i32),
-    ) -> BTreeMap<NodeId, NodeId> {
+        roots: Option<NodeId>,
+    ) -> (BTreeMap<NodeId, NodeId>, Vec<Orphaned>) {
+        let moving: BTreeSet<NodeId> = nodes.iter().copied().collect();
+        let forest = parents_of(
+            self.tree(from)
+                .into_iter()
+                .flat_map(Tree::nodes)
+                .filter(|node| moving.contains(&node.id)),
+        );
         let mut mapping = BTreeMap::new();
         for &id in nodes {
             let Some(node) = self.take_node(from, id) else {
                 continue;
             };
-            let Ok(fresh) = self.add_node(to, node.body, node.x + offset.0, node.y + offset.1)
+            let Ok(fresh) =
+                self.add_node(to, node.body.clone(), node.x + offset.0, node.y + offset.1)
             else {
                 continue;
             };
             if let Some(slot) = self.tree_mut(to).and_then(|t| t.node_mut(fresh)) {
-                slot.label = node.label;
+                slot.adopt_from(&node);
             }
             mapping.insert(id, fresh);
         }
-        mapping
+        let orphaned = self.remap_parents(to, &mapping, &forest, roots);
+        (mapping, orphaned)
     }
 
     /// Take every link in `tree` with an endpoint in `selected`, answering the
@@ -873,7 +900,11 @@ impl<K: NodeKind> Document<K> {
         let selected: BTreeSet<NodeId> = plan.moving.iter().copied().collect();
 
         let mut severed = self.take_incident_links(tree, &selected, &plan.lost);
-        let mapping = self.move_nodes(tree, definition, &plan.moving, (-origin.0, -origin.1));
+        // Inward: a host-tree frame is not in the definition, so a container the
+        // selection left behind cannot be re-derived — the moved nodes land on
+        // the definition's own canvas and the frame is named (R1589).
+        let (mapping, orphaned) =
+            self.move_nodes(tree, definition, &plan.moving, (-origin.0, -origin.1), None);
 
         let adding = faces_as_ports(&plan.inbound, &plan.outbound);
         let interface_edit = self.edit_interface(definition, &plan.dying, &adding);
@@ -963,6 +994,7 @@ impl<K: NodeKind> Document<K> {
             unexposed: interface_edit.unexposed,
             severed,
             other_instances,
+            orphaned,
         }
     }
 
@@ -1156,7 +1188,16 @@ impl<K: NodeKind> Document<K> {
         let selected: BTreeSet<NodeId> = plan.moving.iter().copied().collect();
 
         let mut severed = self.take_incident_links(definition, &selected, &plan.lost);
-        let mapping = self.move_nodes(definition, tree, &plan.moving, origin);
+        // Outward: a node leaving the definition lands where the instance is,
+        // which means inside whatever contains the instance (R1589) — the same
+        // rule an inline follows, so separating a node and inlining the whole
+        // group put it in the same frame.
+        let container = self
+            .tree(tree)
+            .and_then(|t| t.node(instance))
+            .and_then(|n| n.parent);
+        let (mapping, orphaned) =
+            self.move_nodes(definition, tree, &plan.moving, origin, container);
 
         let adding = faces_as_ports(&plan.inbound, &plan.outbound);
         let interface_edit = self.edit_interface(definition, &plan.dying, &adding);
@@ -1237,6 +1278,7 @@ impl<K: NodeKind> Document<K> {
             unexposed: interface_edit.unexposed,
             severed,
             other_instances,
+            orphaned,
         }
     }
 }

@@ -75,6 +75,7 @@ use std::fmt;
 use pinion_graph::group as boundary;
 use serde::{Deserialize, Serialize};
 
+use crate::frame::{Orphaned, parents_of};
 use crate::model::{
     Document, InterfaceSide, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT, Sink, Socket,
     Tree, TreeId, centroid,
@@ -158,6 +159,8 @@ pub struct Fragment<K: NodeKind> {
     outbound: Vec<Severed>,
     source: TreeId,
     origin: (i32, i32),
+    #[serde(default)]
+    orphaned: Vec<Orphaned>,
 }
 
 impl<K: NodeKind> Fragment<K> {
@@ -208,6 +211,18 @@ impl<K: NodeKind> Fragment<K> {
     #[must_use]
     pub fn outbound(&self) -> &[Severed] {
         &self.outbound
+    }
+
+    /// The nodes whose frame did not come along, and the frame each was in
+    /// (R1589).
+    ///
+    /// Named for the same reason the severed links are: a selection lifted out
+    /// of a frame has lost a fact about itself, and the user is the one who
+    /// decides whether that matters. [`Document::insert`] puts these back when
+    /// the fragment is going home — see its own docs.
+    #[must_use]
+    pub fn orphaned(&self) -> &[Orphaned] {
+        &self.orphaned
     }
 
     /// The tree this was cut from.
@@ -284,6 +299,12 @@ pub struct Inserted {
     /// expects. Named rather than dropped, because "your paste is missing two
     /// inputs" is a thing the user has to be told.
     pub unattached: Vec<Severed>,
+    /// Copies put back inside the frame their original was in, ascending
+    /// (R1589).
+    pub reframed: Vec<NodeId>,
+    /// Copies whose original's frame could not take them, with that frame named
+    /// — the fragment went to a different tree, or the frame is gone.
+    pub unframed: Vec<Orphaned>,
 }
 
 /// Why a selection could not be lifted out.
@@ -466,21 +487,7 @@ impl<K: NodeKind> Document<K> {
             }
         }
 
-        for &id in &chosen {
-            let Some(node) = host.node(id) else { continue };
-            content.put_node(
-                ROOT,
-                Node {
-                    id: node.id,
-                    body: remapped_body(&node.body, &remap),
-                    x: node.x - origin.0,
-                    y: node.y - origin.1,
-                    label: node.label.clone(),
-                    bypassed: node.bypassed,
-                    appearance: node.appearance.clone(),
-                },
-            );
-        }
+        let orphaned = copy_selection_into(&mut content, host, &chosen, origin, &remap);
         for &index in cut.internal() {
             let link = host.links()[index];
             // A cut carries the wiring as it was: a muted link is still a link,
@@ -495,6 +502,7 @@ impl<K: NodeKind> Document<K> {
             outbound: severed(cut.outputs()),
             source: tree,
             origin,
+            orphaned,
         })
     }
 
@@ -818,6 +826,8 @@ impl<K: NodeKind> Document<K> {
             ));
         }
 
+        let (reframed, unframed) = self.reframe_copies(tree, fragment, &renamed);
+
         let mut reattached = Vec::new();
         let mut unattached = plan.unattached.clone();
         for (producer, consumers) in &plan.reattach {
@@ -855,7 +865,68 @@ impl<K: NodeKind> Document<K> {
             definitions_reused: plan.reused.clone(),
             reattached,
             unattached,
+            reframed,
+            unframed,
         }
+    }
+
+    /// Rebuild the copies' forest and, where the fragment is going home, put
+    /// each copy back inside the frame its original was in (R1589).
+    ///
+    /// Two steps because the containers split in two: one that came along is a
+    /// copy, remapped through the very map the links use; one that stayed behind
+    /// is a node of the destination — and only if the destination is the tree
+    /// the fragment was cut from.
+    ///
+    /// **A frame id means something only in its own tree**, so a fragment
+    /// inserted anywhere else cannot re-enter one: the same number there names
+    /// an unrelated node. That is the `same_definition` hazard one axis over,
+    /// with the same answer — never match on something that is not an identity.
+    ///
+    /// Re-entering is not a policy the way [`Crossings`] is, and the difference
+    /// is in this crate's own type split: restoring an inbound *link* changes
+    /// what the graph computes, so a caller has to be asked. Containment is not
+    /// part of the graph's meaning at all, so there is no case in which putting
+    /// a duplicate back where its original was is the wrong answer — and the one
+    /// call that undoes it is `set_parent(.., None)`.
+    fn reframe_copies(
+        &mut self,
+        tree: TreeId,
+        fragment: &Fragment<K>,
+        renamed: &BTreeMap<NodeId, NodeId>,
+    ) -> (Vec<NodeId>, Vec<Orphaned>) {
+        let source_parents = parents_of(fragment.nodes());
+        self.remap_parents(tree, renamed, &source_parents, None);
+
+        let going_home = tree == fragment.source;
+        let (mut reframed, mut unframed) = (Vec::new(), Vec::new());
+        for orphan in &fragment.orphaned {
+            let Some(&copy) = renamed.get(&orphan.node) else {
+                continue;
+            };
+            let welcome = going_home
+                && self
+                    .tree(tree)
+                    .and_then(|t| t.node(orphan.frame))
+                    .is_some_and(Node::is_frame);
+            if welcome {
+                // Cannot break the forest: `copy` did not exist a moment ago, so
+                // nothing is inside it, and `orphan.frame` was already here and
+                // was not copied, so nothing of this insertion is above it.
+                if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(copy)) {
+                    slot.parent = Some(orphan.frame);
+                }
+                reframed.push(copy);
+            } else {
+                unframed.push(Orphaned {
+                    node: copy,
+                    frame: orphan.frame,
+                });
+            }
+        }
+        reframed.sort_unstable();
+        unframed.sort_unstable_by_key(|o| o.node);
+        (reframed, unframed)
     }
 
     /// The definitions instanced directly by `tree`'s nodes, ascending.
@@ -916,6 +987,49 @@ struct InsertPlan {
     unattached: Vec<Severed>,
 }
 
+/// Put the selected nodes into a fragment's root, answering the ones whose
+/// container stayed behind.
+///
+/// A fragment preserves node ids, so a container that came along needs no
+/// remapping; one that did not is a reference to a node the fragment does not
+/// hold, and it is **named** rather than silently cleared. Blender's copy path
+/// (`node_copy_local`, then the parent recreation loop) calls `node_detach_node`
+/// in exactly this case and records nothing anywhere.
+fn copy_selection_into<K: NodeKind>(
+    content: &mut Document<K>,
+    host: &Tree<K>,
+    chosen: &[NodeId],
+    origin: (i32, i32),
+    remap: &BTreeMap<TreeId, TreeId>,
+) -> Vec<Orphaned> {
+    let held: BTreeSet<NodeId> = chosen.iter().copied().collect();
+    let mut orphaned = Vec::new();
+    for &id in chosen {
+        let Some(node) = host.node(id) else { continue };
+        let parent = match node.parent {
+            Some(frame) if !held.contains(&frame) => {
+                orphaned.push(Orphaned { node: id, frame });
+                None
+            }
+            carried => carried,
+        };
+        content.put_node(
+            ROOT,
+            Node {
+                id: node.id,
+                body: remapped_body(&node.body, remap),
+                x: node.x - origin.0,
+                y: node.y - origin.1,
+                label: node.label.clone(),
+                bypassed: node.bypassed,
+                appearance: node.appearance.clone(),
+                parent,
+            },
+        );
+    }
+    orphaned
+}
+
 /// A node body with its group reference moved into the destination numbering.
 fn remapped_body<K: NodeKind>(body: &NodeBody<K>, remap: &BTreeMap<TreeId, TreeId>) -> NodeBody<K> {
     match body {
@@ -956,6 +1070,9 @@ fn copy_tree_body<K: NodeKind>(
                 label: node.label.clone(),
                 bypassed: node.bypassed,
                 appearance: node.appearance.clone(),
+                // A whole tree travels, ids and all, so its own forest arrives
+                // intact and needs no remapping.
+                parent: node.parent,
             },
         );
     }

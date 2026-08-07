@@ -105,7 +105,11 @@ def refused(tf: RpcSubprocess, path: str, args) -> str:
 def collapse_the_mix(tf: RpcSubprocess) -> None:
     """Put the seeded Mix in a group called `Tint`, leaving instance node 6."""
     assert_eq(inv(tf, "select", str(MIX)), "1", "the mix alone")
-    assert_eq(inv(tf, "group", "Tint"), "1:6", "definition 1, instance node 6")
+    assert_eq(
+        inv(tf, "group", "Tint"),
+        "1:6|unframed:",
+        "definition 1, instance node 6, and nothing left a frame behind (R1589)",
+    )
 
 
 def body() -> None:
@@ -218,7 +222,11 @@ def body() -> None:
         # describing a crossing, one starts, and the arithmetic does not move.
         assert_eq(inv(tf, "reset", ""), "reset", "E: back to the seed")
         assert_eq(inv(tf, "select", f"{MIX},{FADE}"), "2", "E: the mix and the fade")
-        assert_eq(inv(tf, "group", "Chain"), "1:6", "E: definition 1, instance 6")
+        assert_eq(
+            inv(tf, "group", "Chain"),
+            "1:6|unframed:",
+            "E: definition 1, instance 6, nothing unframed (R1589)",
+        )
         assert_eq(
             inv(tf, "interface", "1"),
             "in:Base:colour,Blend:colour,Factor:amount|out:Colour:colour",

@@ -12,12 +12,13 @@
 
 use pinion_graph::group as boundary;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::frame::{Orphaned, parents_of};
 use crate::model::{
     Document, InterfaceSide, KindPort, Link, LinkId, Node, NodeBody, NodeId, NodeKind, ROOT,
-    Socket, TreeId, centroid,
+    Socket, Tree, TreeId, centroid,
 };
 use crate::numbering::Numbering;
 
@@ -25,12 +26,21 @@ use crate::numbering::Numbering;
 pub(crate) const INTERFACE_GAP: i32 = 220;
 
 /// What collapsing a selection produced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grouped {
     /// The new definition.
     pub definition: TreeId,
     /// The instance of it left behind in the host tree.
     pub node: NodeId,
+    /// Selected nodes whose frame stayed behind in the host tree, and the frame
+    /// each was in (R1589).
+    ///
+    /// The collapse moves nodes into another tree, where a host-tree frame id
+    /// means nothing — so a container that was not itself selected cannot come
+    /// along. The instance takes the selection's place *inside* that frame
+    /// (Blender does the same, `gnode->parent = find_common_parent_node(...)`),
+    /// which is why this is a report rather than a refusal.
+    pub orphaned: Vec<Orphaned>,
 }
 
 /// What inlining a group instance produced.
@@ -287,6 +297,8 @@ impl<K: NodeKind> Document<K> {
             Some((n.x, n.y))
         }));
         Ok(GroupPlan {
+            host: tree,
+            container: self.common_frame(tree, &chosen),
             chosen,
             inputs,
             outputs,
@@ -307,28 +319,7 @@ impl<K: NodeKind> Document<K> {
             let _ = self.expose(definition, InterfaceSide::Output, port);
         }
 
-        // Move the nodes, keeping their ids (ids are per tree) and their
-        // relative positions, recentred so the definition opens around origin.
-        let mut moved: Vec<Node<K>> = Vec::new();
-        for &id in &plan.chosen {
-            if let Some(mut node) = self.take_node(tree, id) {
-                node.x -= plan.centre.0;
-                node.y -= plan.centre.1;
-                moved.push(node);
-            }
-        }
-        let (mut min_x, mut max_x, mut mid_y) = (0_i32, 0_i32, 0_i32);
-        for node in &moved {
-            min_x = min_x.min(node.x);
-            max_x = max_x.max(node.x);
-            mid_y += node.y;
-        }
-        if !moved.is_empty() {
-            mid_y /= i32::try_from(moved.len()).unwrap_or(1);
-        }
-        for node in moved {
-            self.put_node(definition, node);
-        }
+        let (orphaned, min_x, max_x, mid_y) = self.move_selection_into(definition, plan);
 
         // Internal links move across unchanged; crossing links go away, their
         // meaning carried by the interface.
@@ -390,7 +381,9 @@ impl<K: NodeKind> Document<K> {
             self.push_link(definition, face.producer, Socket::new(exit, port), false);
         }
 
-        // The instance, wired where the selection was wired.
+        // The instance, wired where the selection was wired — and sitting where
+        // the selection sat, inside whatever contained all of it (R1589). A
+        // pipeline stage collapsed into a group stays in its pipeline.
         let node = self
             .add_node(
                 tree,
@@ -399,6 +392,9 @@ impl<K: NodeKind> Document<K> {
                 plan.centre.1,
             )
             .unwrap_or(NodeId(0));
+        if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(node)) {
+            slot.parent = plan.container;
+        }
         for (index, face) in plan.inputs.iter().enumerate() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
             // The shared half of an inbound crossing — see `crossing_muted`.
@@ -410,7 +406,56 @@ impl<K: NodeKind> Document<K> {
                 self.push_link(tree, Socket::new(node, port), consumer, was_muted(consumer));
             }
         }
-        Grouped { definition, node }
+        Grouped {
+            definition,
+            node,
+            orphaned,
+        }
+    }
+
+    /// Move a collapse's chosen nodes into the fresh definition, answering the
+    /// containers left behind and the extent the interface nodes are placed
+    /// against.
+    ///
+    /// R1589 — node ids survive a collapse (they are per tree), so a container
+    /// that is itself moving stays correctly named and needs no map. One that is
+    /// NOT moving is a host-tree id that would name a different node inside the
+    /// definition, so it is cleared and reported; the instance takes the
+    /// selection's place inside it, which is where the containment goes on
+    /// living.
+    fn move_selection_into(
+        &mut self,
+        definition: TreeId,
+        plan: &GroupPlan<K>,
+    ) -> (Vec<Orphaned>, i32, i32, i32) {
+        let chosen: BTreeSet<NodeId> = plan.chosen.iter().copied().collect();
+        let mut orphaned = Vec::new();
+        let mut moved: Vec<Node<K>> = Vec::new();
+        for &id in &plan.chosen {
+            let Some(mut node) = self.take_node(plan.host, id) else {
+                continue;
+            };
+            node.x -= plan.centre.0;
+            node.y -= plan.centre.1;
+            if let Some(frame) = node.parent.filter(|frame| !chosen.contains(frame)) {
+                orphaned.push(Orphaned { node: id, frame });
+                node.parent = None;
+            }
+            moved.push(node);
+        }
+        let (mut min_x, mut max_x, mut mid_y) = (0_i32, 0_i32, 0_i32);
+        for node in &moved {
+            min_x = min_x.min(node.x);
+            max_x = max_x.max(node.x);
+            mid_y += node.y;
+        }
+        if !moved.is_empty() {
+            mid_y /= i32::try_from(moved.len()).unwrap_or(1);
+        }
+        for node in moved {
+            self.put_node(definition, node);
+        }
+        (orphaned, min_x, max_x, mid_y)
     }
 
     /// Inline a group instance back into its host tree.
@@ -427,6 +472,7 @@ impl<K: NodeKind> Document<K> {
             return Err(UngroupError::NotAGroup(node));
         };
         let (origin_x, origin_y) = (instance.x, instance.y);
+        let container = instance.parent;
         let Some(inner) = self.tree(definition) else {
             return Err(UngroupError::NoSuchTree(definition));
         };
@@ -440,6 +486,7 @@ impl<K: NodeKind> Document<K> {
             .filter(|n| !is_interface(n.id))
             .cloned()
             .collect();
+        let inner_forest = parents_of(body.iter());
         let inner_links: Vec<Link> = inner.links().to_vec();
 
         // The instance's own wiring, read before anything moves.
@@ -456,22 +503,15 @@ impl<K: NodeKind> Document<K> {
             .copied()
             .collect();
 
-        // Copy the body in with FRESH ids: the host has its own numbering, and
-        // the definition keeps its nodes for its other instances.
-        let mut renamed: BTreeMap<NodeId, NodeId> = BTreeMap::new();
-        let mut nodes = Vec::new();
-        for old in body {
-            let Ok(fresh) =
-                self.add_node(tree, old.body.clone(), origin_x + old.x, origin_y + old.y)
-            else {
-                continue;
-            };
-            if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
-                slot.adopt_from(&old);
-            }
-            renamed.insert(old.id, fresh);
-            nodes.push(fresh);
-        }
+        let (renamed, nodes) = self.inline_body(tree, body, (origin_x, origin_y));
+        // R1589 — the definition's own frames come along, so its forest is
+        // rebuilt in the host's numbering and only its ROOTS are grafted onto
+        // whatever contained the instance. Blender assigns the group node's
+        // parent to *every* copied node (`node_group.cc`, the `if
+        // (group_node.parent)` loop), which overwrites the parent/child
+        // relationships its own copy step had just recreated — so ungrouping a
+        // definition that contains frames, inside a frame, flattens it.
+        self.remap_parents(tree, &renamed, &inner_forest, container);
 
         let mut links = Vec::new();
         for link in &inner_links {
@@ -541,6 +581,34 @@ impl<K: NodeKind> Document<K> {
             links,
             definition_unused: self.instance_count(definition) == 0,
         })
+    }
+
+    /// Copy a definition's body into the host tree with FRESH ids, answering the
+    /// old-to-new map and the new nodes in copy order.
+    ///
+    /// The host has its own numbering, and the definition keeps its nodes for
+    /// its other instances — so this is a copy, not a move.
+    fn inline_body(
+        &mut self,
+        tree: TreeId,
+        body: Vec<Node<K>>,
+        origin: (i32, i32),
+    ) -> (BTreeMap<NodeId, NodeId>, Vec<NodeId>) {
+        let mut renamed: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+        let mut nodes = Vec::new();
+        for old in body {
+            let Ok(fresh) =
+                self.add_node(tree, old.body.clone(), origin.0 + old.x, origin.1 + old.y)
+            else {
+                continue;
+            };
+            if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(fresh)) {
+                slot.adopt_from(&old);
+            }
+            renamed.insert(old.id, fresh);
+            nodes.push(fresh);
+        }
+        (renamed, nodes)
     }
 
     /// Place another instance of an existing definition.
@@ -615,6 +683,11 @@ struct GroupPlan<K: NodeKind> {
     interface_outputs: Vec<KindPort<K>>,
     internal: Vec<LinkId>,
     centre: (i32, i32),
+    /// The tree the selection is being lifted out of.
+    host: TreeId,
+    /// The frame that contained all of the selection, which the instance
+    /// inherits (R1589).
+    container: Option<NodeId>,
 }
 
 /// One step of the path into the document.
@@ -842,9 +915,77 @@ pub enum Violation {
         /// Which side is doubled.
         side: InterfaceSide,
     },
+    /// A node says it is inside a node that is not in its tree (R1589).
+    DanglingParent {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The contained node.
+        node: NodeId,
+        /// The container it names.
+        parent: NodeId,
+    },
+    /// A node says it is inside something that is not a
+    /// [`NodeBody::Frame`], which is the only body that
+    /// contains (R1589).
+    ParentNotAFrame {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The contained node.
+        node: NodeId,
+        /// The container it names.
+        parent: NodeId,
+    },
+    /// A tree's containment is not a forest: this node is inside itself,
+    /// directly or through a chain of frames (R1589).
+    ///
+    /// Unreachable through this crate's API — [`Document::set_parent`] refuses
+    /// it — and reachable through a document that arrived from a file or a peer,
+    /// which is what `validate` is for. Blender reaches it through its own
+    /// editor, because both of its guards are assertions.
+    ContainmentCycle {
+        /// The tree it is in.
+        tree: TreeId,
+        /// A node on the cycle.
+        node: NodeId,
+    },
 }
 
 impl<K: NodeKind> Document<K> {
+    /// Every way one node's containment breaks the forest (R1589).
+    fn forest_violations(&self, tree: &Tree<K>, node: &Node<K>) -> Vec<Violation> {
+        let Some(parent) = node.parent else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        match tree.node(parent) {
+            None => found.push(Violation::DanglingParent {
+                tree: tree.id,
+                node: node.id,
+                parent,
+            }),
+            Some(container) if !container.is_frame() => {
+                found.push(Violation::ParentNotAFrame {
+                    tree: tree.id,
+                    node: node.id,
+                    parent,
+                });
+            }
+            Some(_) => {}
+        }
+        // `ancestry` stops at the first repeat, so a node on a cycle is one
+        // whose ancestry ends at a node STILL CLAIMING a parent: the walk
+        // stopped because it had been there, not because it reached the canvas.
+        let ancestry = self.ancestry(tree.id, node.id);
+        let top = ancestry.first().copied().unwrap_or(node.id);
+        if tree.node(top).is_some_and(|n| n.parent.is_some()) {
+            found.push(Violation::ContainmentCycle {
+                tree: tree.id,
+                node: node.id,
+            });
+        }
+        found
+    }
+
     /// Every way this document breaks its own rules, in tree order.
     ///
     /// Empty for any document built through this crate's API.
@@ -920,6 +1061,7 @@ impl<K: NodeKind> Document<K> {
                         });
                     }
                 }
+                found.extend(self.forest_violations(tree, node));
             }
         }
         // `Nesting::cycle(_, t, t)` answers the question "may `t` be placed in

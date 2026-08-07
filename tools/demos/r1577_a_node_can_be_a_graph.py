@@ -148,7 +148,9 @@ def body() -> None:
         # ── (C) the interface is DERIVED from what crosses ──────────────────
         assert_eq(inv(tf, "select", str(MIX)), "1", "C: select the mix alone")
         made = str(inv(tf, "group", "Blend"))
-        definition, instance = (int(p) for p in made.split(":"))
+        # R1589 appended the containments the collapse could not carry, so the
+        # pair is the first field rather than the whole reply.
+        definition, instance = (int(p) for p in made.split("|")[0].split(":"))
         assert_eq(definition, 1, "C: the first definition")
         assert_eq(q(tf, "trees"), 2, "C: the document gained a tree")
         assert_eq(
