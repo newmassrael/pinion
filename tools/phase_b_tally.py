@@ -433,9 +433,35 @@ AXES = [
         # averages ~95, and 95 is what is recorded. The lesson is R1519's own,
         # one axis over: a completion nobody checked against a reference is
         # not a measurement, and the check is what moved this one DOWN.
-        "judged_at": 1577,
-        "completion": 95,
-        "evidence_snapshot": {"example-name": 29, "round-axis": 6},
+        # R1584 re-judgment, 95 -> 96, DEMANDED by the tool (round-axis 6 -> 8,
+        # +33%). R1584's own reading of this tally said +17% and "inside the
+        # band" — taken while the round was still DECLARED AHEAD, which is
+        # exactly the reading R1550 recorded as the one to distrust: the ledger
+        # counts rounds git HAS. The deferral was wrong and this corrects it.
+        #
+        # What moved: the node-graph family, the third of this axis's three and
+        # the one the R1577 census found weakest. R1584 makes the group boundary
+        # a PARTITION THAT MOVES — `group_insert` / `group_separate`, the two
+        # directions of one operation, with the interface RE-DERIVED from the
+        # partition that results and every value whose crossing disappeared
+        # RECONNECTED. That last part is where Blender stops:
+        # `node_group_separate_selected` copies the nodes out, deletes them from
+        # the group, touches the interface not at all, and the value that flowed
+        # through them is gone. Held as a test helper and asserted rather than
+        # described.
+        #
+        # Only +1, and the reason is the R1577 census this axis is now measured
+        # against: eleven named gaps in editor capability, of which R1578 closed
+        # four as one concept and R1584 closes two. SIX REMAIN — collapse/hide/
+        # mute, the richer selection vocabulary, link mute and detach,
+        # `insert_offset`, `find`, and `resize`/`view_selected`/`swap_node` —
+        # and `hello-node-editor` still holds its own model, so the tree still
+        # carries two ([[debt-two-node-graph-models]]). Weighing the families:
+        # property grid ~98, data grid ~98, node graph ~92 after this round,
+        # which averages ~96.
+        "judged_at": 1584,
+        "completion": 96,
+        "evidence_snapshot": {"example-name": 29, "round-axis": 8},
     },
     {
         "key": "modelview",
@@ -1663,8 +1689,38 @@ AXES = [
         #    not WHICH SUBTREE. There is no per-subscription filter. Qt has no
         #    equivalent at all so it is an axis gap rather than round debt, but
         #    a large scene where an agent watches one panel will want it.
-        "judged_at": 1565,
-        "completion": 62,
+        # R1585 re-judgment, 62 -> 65, DEMANDED by the tool (round-axis 4 -> 6,
+        # +50%; R1566 landed at exactly the band edge and deferred, and R1585
+        # carries both).
+        #
+        # A method now says HOW A WINDOW IS NAMED TO IT. Two spellings address a
+        # window — `params.window` for the dispatch scope, `/window[id]/` for a
+        # path — and which method took which was published nowhere. That gap had
+        # already been paid for: R1581 tried `window[main]/scene/access`, met a
+        # bare -32601, and registered a debt against a capability that was there
+        # all along. `rpc/methods` now carries a per-method `window` class plus a
+        # WINDOW_DOC legend, and the unknown-method arm READS that catalog, so
+        # the exact call that produced the false debt corrects itself.
+        #
+        # The column is PROVEN rather than parsed — every catalogued method is
+        # probed with a malformed prefix — because a source census demonstrably
+        # cannot answer it (a call graph keyed by function name merges four
+        # different `fn parse` and credits two methods with a prefix neither
+        # reads). R1585.1 then gated the probe's own population against the
+        # source, closing the curated-population hole in the gate itself.
+        #
+        # Only +3, and the ceiling is this axis's name: R1539's four gaps all
+        # still stand (no method -> type binding, no version negotiation,
+        # deprecation path, compatibility policy or freeze; the census covers
+        # `pinion-rpc` only), R1552's per-subscription filter is still absent,
+        # and this round DELIBERATELY WITHHELD half of its own subject — whether
+        # a method's ANSWER varies by scope is applied by the embedder and
+        # cannot be observed from inside `pinion-rpc`, so publishing it would
+        # ship a fact the surface has not established
+        # ([[debt-scope-effect-per-method-unpublished]], R1539's own precedent).
+        "judged_at": 1585,
+        "completion": 65,
+        "evidence_snapshot": {"example-name": 9, "round-axis": 6},
                 # R1565 re-judged 55 -> 62, DEMANDED by the tool (ledger 3 -> 4). It
         # closes BOTH items R1564's own audit left open.
         #
@@ -1728,7 +1784,6 @@ AXES = [
         # per-subscription filter (R1552's own); and the -32000..-32099 space is
         # now three codes deep with no published map, so a client discovers
         # `ACTION_REFUSED` by reading pinion's source rather than by asking.
-        "evidence_snapshot": {"example-name": 9, "round-axis": 4},
     },
 ]
 

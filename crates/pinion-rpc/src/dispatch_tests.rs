@@ -8937,11 +8937,142 @@ fn census_kind_of(node: &SnapshotNode) -> Option<SceneNodeKind> {
 /// malformed window prefix, and a method that routes its path argument
 /// through [`crate::path`] answers with the published `EmptyWindowId` word
 /// (`rpc/errors`). One that does not, cannot — it never looks.
+/// Every param name this surface reads, with a path-shaped probe value.
+///
+/// R1585.1 — a SUPERSET, and the superset is GATED
+/// (`r1585_1_the_probe_supplies_every_param_the_surface_reads`) rather than
+/// hand-kept. The first draft carried eleven names chosen by watching methods
+/// refuse, and the census found nineteen more — including `signal_path` and
+/// `target_path`, which are path-shaped. A method reading its path from a name
+/// the probe does not supply answers with a param error, is observed as not
+/// path-addressed, and is published as `scope` while taking a window prefix:
+/// the curated-population defect, in the gate that exists to prevent one.
+fn probe_params() -> serde_json::Value {
+    const PROBE: &str = "/window[]/anything";
+    let mut params = serde_json::Map::new();
+    for name in PROBE_PARAM_NAMES {
+        params.insert((*name).to_owned(), serde_json::json!(PROBE));
+    }
+    // The few that are read as something other than a string. Each is the
+    // shape the method's own refusal asked for.
+    params.insert("args".to_owned(), serde_json::Value::Null);
+    params.insert("max_attempts".to_owned(), serde_json::json!(1));
+    params.insert("preview_id".to_owned(), serde_json::json!(1));
+    params.insert("ttl_ms".to_owned(), serde_json::json!(1));
+    params.insert("x".to_owned(), serde_json::json!(0));
+    params.insert("y".to_owned(), serde_json::json!(0));
+    params.insert("codepoint".to_owned(), serde_json::json!(65));
+    params.insert("glyph_id".to_owned(), serde_json::json!(1));
+    params.insert("font_id".to_owned(), serde_json::json!(1));
+    params.insert("bytes".to_owned(), serde_json::json!([0]));
+    params.insert(
+        "viewport".to_owned(),
+        serde_json::json!({"width": 1, "height": 1}),
+    );
+    // `scene/simulate` carries its path INSIDE a step, so the probe has to be
+    // a well-formed step to reach it at all.
+    params.insert(
+        "steps".to_owned(),
+        serde_json::json!([{"kind": "query", "path": PROBE, "value": "probe"}]),
+    );
+    serde_json::Value::Object(params)
+}
+
+/// The names [`probe_params`] supplies. Asserted complete against the source.
+const PROBE_PARAM_NAMES: &[&str] = &[
+    "args",
+    "at",
+    "button",
+    "by",
+    "bytes",
+    "codepoint",
+    "focused",
+    "font_id",
+    "form",
+    "glyph_id",
+    "intent",
+    "kind",
+    "max_attempts",
+    "path",
+    "phase",
+    "preview_id",
+    "replacement",
+    "signal_path",
+    "state",
+    "steps",
+    "style",
+    "tag",
+    "target",
+    "target_path",
+    "text",
+    "to",
+    "ttl_ms",
+    "value",
+    "viewport",
+    "x",
+    "y",
+];
+
+/// R1585.1 — the probe reaches every param name the dispatcher reads.
+///
+/// Without this the probe's population is CURATED, and a curated population
+/// cannot find an absence — the same defect
+/// `debt-focus-sweep-population-is-curated` records one subsystem over. The
+/// census pattern is `params.get("<name>")`, which is unambiguous, unlike the
+/// call-graph census this gate replaced.
+#[test]
+fn r1585_1_the_probe_supplies_every_param_the_surface_reads() {
+    let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sources = Vec::new();
+    let mut stack = vec![src_dir];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("the crate's own src/ is readable") {
+            let path = entry.expect("a readable dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                sources.push(std::fs::read_to_string(&path).expect("a readable source file"));
+            }
+        }
+    }
+    assert!(
+        sources.len() > 20,
+        "the census read nothing — it is testing nothing"
+    );
+
+    let mut read: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for text in &sources {
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("params.get(\"") {
+            rest = &rest[at + "params.get(\"".len()..];
+            if let Some(end) = rest.find('"') {
+                let name = &rest[..end];
+                if name.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                    read.insert(name.to_owned());
+                }
+            }
+        }
+    }
+    assert!(
+        read.len() >= 25,
+        "the census found only {} param names — the pattern has drifted",
+        read.len()
+    );
+    let supplied: std::collections::BTreeSet<String> =
+        PROBE_PARAM_NAMES.iter().map(|n| (*n).to_owned()).collect();
+    let missing: Vec<&String> = read.difference(&supplied).collect();
+    assert!(
+        missing.is_empty(),
+        "the window-column probe does not supply these params, so a method \
+         reading its path from one of them would be silently published as \
+         `scope`: {missing:?}"
+    );
+}
+
 #[test]
 fn r1585_the_window_column_is_what_the_methods_actually_do() {
     // The prefix is well-formed as a PATH and malformed as a WINDOW, so only
     // a method that reads it as a window can object to it.
-    const PROBE: &str = "/window[]/anything";
     let declared: Vec<(&str, bool)> = crate::methods::RPC_METHODS
         .iter()
         .map(|(name, _, window)| (*name, matches!(window, crate::methods::MethodWindow::Path)))
@@ -8954,18 +9085,7 @@ fn r1585_the_window_column_is_what_the_methods_actually_do() {
             "method": name,
             // Every spelling a path argument has in this surface, so the
             // probe reaches the method whichever one it reads.
-            // A SUPERSET of the params this surface takes, so a method
-            // cannot fall out of the probe by rejecting an unrelated
-            // argument before it ever looks at its path. Each key here was
-            // added because a method NAMED it in its refusal.
-            "params": {
-                "path": PROBE, "tag": PROBE, "target": PROBE,
-                "args": null, "value": "probe",
-                // `scene/simulate` carries its path INSIDE a step, so the
-                // probe has to be a well-formed step to reach it at all.
-                "steps": [{"kind": "query", "path": PROBE, "value": "probe"}],
-                "max_attempts": 1, "preview_id": 1, "x": 0, "y": 0,
-            },
+            "params": probe_params(),
             "id": 1,
         })
         .to_string();

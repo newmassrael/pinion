@@ -31802,6 +31802,50 @@
         "Of the two window spellings, only the path one is now discoverable per method; a client that wants to know which methods CHANGE their answer under a scope must still try it"
       ]
     },
+    "R1585.1": {
+      "decision_summary": "R1585.1 §5.18 §5.7 — THE PROBE'S OWN POPULATION IS GATED, AND TWO RE-JUDGMENTS THE TALLY DEMANDED. Asked whether every new debt had been registered, the audit found three things and this closes them. (1) R1585's window-column probe supplied eleven param names chosen by watching methods refuse; a census of `params.get(\"...\")` across the crate found THIRTY, and two of the nineteen missing are path-shaped — `signal_path` and `target_path`. A method reading its path from one of those would answer the probe with a param error, be observed as not path-addressed, and be published as `scope` while taking a window prefix: the curated-population defect, inside the gate built to prevent one. (2) R1584's round-trip port-order limit was stated in its demo and nowhere a consumer of the crate would read it. (3) R1584 read the tally while its own round was still DECLARED AHEAD, saw +17%, and deferred — the reading R1550 recorded as the one to distrust, because the ledger counts rounds git HAS. Both axes were STALE at the push gate; both are re-judged here.",
+      "changes_bullets": [
+        "probe_params() is derived from PROBE_PARAM_NAMES, and r1585_1_the_probe_supplies_every_param_the_surface_reads asserts that list covers every params.get(\"<name>\") in the crate, so a new param name fails the test instead of silently narrowing the probe. The census pattern is unambiguous, unlike the call-graph census this gate replaced",
+        "The wider probe leaves all twelve classifications unchanged, which is the useful outcome: the published column was right, and nothing had guaranteed it would stay right",
+        "partition.rs states the round-trip limit in its module docs: a boundary round trip keeps what the graph computes and NOT the port order, because ports are addressed by index and other instances are wired by it, so restoring a port to its old position would silently rewire every one of them",
+        "Advanced DCC re-judged 95 -> 96 and §7 API 62 -> 65, both demanded by tools/phase_b_tally.py, with the leverage order changing: DCC goes from first (100) to joint-last (80)"
+      ],
+      "verification_bullets": [
+        "pinion-rpc 1149 unit tests + 4 integration, pinion-node-graph 84 + 1 doctest, clippy -D pedantic clean, cargo doc clean",
+        "The new gate is asserted non-vacuous twice: it fails if it reads fewer than 20 source files, and again if the census finds fewer than 25 param names — a pattern that drifted would otherwise report an empty difference and pass",
+        "tools/phase_b_tally.py --selftest PASS, and the report carries no STALE axis after both re-judgments"
+      ],
+      "impact_refs": [
+        "5.18",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The probe classifies by what a method DOES with a malformed prefix; a method that rejects some other argument first is still observed as not path-addressed. The param census closes the known instance of that and does not make the shape impossible",
+        "Whether a method's ANSWER varies by window scope stays unpublished and unobservable from inside pinion-rpc ([[debt-scope-effect-per-method-unpublished]])"
+      ],
+      "publishable_decision_summary": "R1585.1 §5.18 §5.7 — THE PROBE'S OWN POPULATION IS GATED, AND TWO RE-JUDGMENTS THE TALLY DEMANDED. Asked whether every new debt had been registered, the audit found three things and this closes them. (1) R1585's window-column probe supplied eleven param names chosen by watching methods refuse; a census of `params.get(\"...\")` across the crate found THIRTY, and two of the nineteen missing are path-shaped — `signal_path` and `target_path`. A method reading its path from one of those would answer the probe with a param error, be observed as not path-addressed, and be published as `scope` while taking a window prefix: the curated-population defect, inside the gate built to prevent one. (2) R1584's round-trip port-order limit was stated in its demo and nowhere a consumer of the crate would read it. (3) R1584 read the tally while its own round was still DECLARED AHEAD, saw +17%, and deferred — the reading R1550 recorded as the one to distrust, because the ledger counts rounds git HAS. Both axes were STALE at the push gate; both are re-judged here.",
+      "publishable_changes_bullets": [
+        "probe_params() is derived from PROBE_PARAM_NAMES, and r1585_1_the_probe_supplies_every_param_the_surface_reads asserts that list covers every params.get(\"<name>\") in the crate, so a new param name fails the test instead of silently narrowing the probe. The census pattern is unambiguous, unlike the call-graph census this gate replaced",
+        "The wider probe leaves all twelve classifications unchanged, which is the useful outcome: the published column was right, and nothing had guaranteed it would stay right",
+        "partition.rs states the round-trip limit in its module docs: a boundary round trip keeps what the graph computes and NOT the port order, because ports are addressed by index and other instances are wired by it, so restoring a port to its old position would silently rewire every one of them",
+        "Advanced DCC re-judged 95 -> 96 and §7 API 62 -> 65, both demanded by tools/phase_b_tally.py, with the leverage order changing: DCC goes from first (100) to joint-last (80)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-rpc 1149 unit tests + 4 integration, pinion-node-graph 84 + 1 doctest, clippy -D pedantic clean, cargo doc clean",
+        "The new gate is asserted non-vacuous twice: it fails if it reads fewer than 20 source files, and again if the census finds fewer than 25 param names — a pattern that drifted would otherwise report an empty difference and pass",
+        "tools/phase_b_tally.py --selftest PASS, and the report carries no STALE axis after both re-judgments"
+      ],
+      "publishable_impact_refs": [
+        "5.18",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The probe classifies by what a method DOES with a malformed prefix; a method that rejects some other argument first is still observed as not path-addressed. The param census closes the known instance of that and does not make the shape impossible",
+        "Whether a method's ANSWER varies by window scope stays unpublished and unobservable from inside pinion-rpc ([[debt-scope-effect-per-method-unpublished]])"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

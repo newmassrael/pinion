@@ -33,6 +33,22 @@
 //! flow through them is gone. This crate's tests hold that rule as a helper and
 //! assert the divergence rather than describing it.
 //!
+//! # A round trip keeps the meaning and not the order
+//!
+//! Move a node in and back out and the graph computes what it computed, every
+//! value crossing where it crossed — but the interface's port ORDER is not
+//! restored: a port that stops describing a crossing is removed, and one that
+//! starts is **appended**.
+//!
+//! That is forced rather than sloppy. Ports are addressed by index, and other
+//! instances of the definition are wired by that index, so putting a returning
+//! port back at its old position would silently rewire every one of them.
+//! Appending is the only placement that cannot reach through the boundary it
+//! is being moved across. A caller that needs a particular order has
+//! [`Document::expose`](crate::Document::expose) and
+//! [`Document::unexpose`](crate::Document::unexpose), which state the cost of
+//! a removal in dropped links.
+//!
 //! # A definition is shared; an edit through one instance is not
 //!
 //! The nodes move into (or out of) a *definition*, and a definition can have
