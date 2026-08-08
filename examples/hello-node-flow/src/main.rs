@@ -965,13 +965,19 @@ impl FlowOracle {
                     .next()
                     .and_then(|p| p.trim().parse::<i64>().ok())
                     .ok_or_else(|| InvokeError::Rejected(format!("{spec:?}: no value").into()))?;
-                if !state.document.get().delays(TREE).contains(&NodeId(id)) {
-                    return Err(InvokeError::Rejected(
-                        format!("node {id} is not a register in this tree").into(),
-                    ));
-                }
+                // R1601.1 — the check is the framework's, not a second copy
+                // here: only the document knows the node is a register and what
+                // that register can hold.
+                let document = state.document.get();
                 let mut machine = state.machine.get();
-                let was = machine.force(Instance::root(), NodeId(id), Val::Number(value));
+                let was = document
+                    .force(
+                        &mut machine,
+                        &Instance::root(),
+                        NodeId(id),
+                        Val::Number(value),
+                    )
+                    .map_err(|e| InvokeError::Rejected(e.to_string().into()))?;
                 state.machine.set(machine);
                 state.refusal.set(String::new());
                 Ok(IntrospectValue::Text(match was {

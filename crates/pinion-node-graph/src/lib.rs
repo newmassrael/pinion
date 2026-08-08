@@ -209,7 +209,7 @@ pub use group::{
     Violation,
 };
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
-pub use machine::{Committed, Machine, Tick};
+pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{
     ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError, Flow, Instance,
     Interface, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,

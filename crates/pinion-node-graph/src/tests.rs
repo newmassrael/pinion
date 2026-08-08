@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Appearance, Carried, ConnectError, Control, Conversion, Crossings, Definitions, Document,
-    DuplicateError, EditError, EditPath, Extent, ExtractError, Fragment, GroupError, Grow,
-    InsertError, Instance, InterfaceSide, Layered, Machine, Multiplicity, NestError, Node,
+    DuplicateError, EditError, EditPath, Extent, ExtractError, ForceError, Fragment, GroupError,
+    Grow, InsertError, Instance, InterfaceSide, Layered, Machine, Multiplicity, NestError, Node,
     NodeBody, NodeId, NodeKind, Organic, Orphaned, ParentError, PathError, Port, PortRef,
     PortValueError, ROOT, Reach, RepartitionError, Route, RunError, SelectError, Severed, Sharing,
     Side, Socket, Stop, Tick, TreeId, UngroupError, Violation, crossing,
@@ -8298,7 +8298,9 @@ fn sequentially(
                 .flatten()
         };
         if let Some(value) = arriving {
-            state.force(Instance::root(), *node, value);
+            document
+                .force(state, &Instance::root(), *node, value)
+                .expect("the model writes real registers");
         }
     }
 }
@@ -9109,4 +9111,86 @@ fn r1600_a_wire_leaving_a_delay_can_never_close_a_cycle() {
             "and it counts, wired in either order"
         );
     }
+}
+
+#[test]
+fn r1601_forcing_a_register_is_checked_by_the_thing_that_knows_the_document() {
+    // ★ Found by auditing R1600's own doc: it said a mistyped forced value
+    // would be reported by `validate`, and `validate` reads a DOCUMENT while a
+    // forced value lives in a machine — so nothing could have reported it. The
+    // check belongs where the knowledge is.
+    let (document, delay, tally) = counter_fixture(1);
+    let mut state = Machine::new();
+
+    assert_eq!(
+        document.force(&mut state, &Instance::root(), delay, Val::Number(9)),
+        Ok(None),
+        "a register takes a value of its type, and answers what was there"
+    );
+    assert_eq!(held(state.read(&Instance::root(), delay)), Some(9));
+    assert_eq!(
+        document.force(&mut state, &Instance::root(), delay, Val::Number(4)),
+        Ok(Some(Val::Number(9))),
+        "and the second write answers the first"
+    );
+
+    // The three things a machine could not have known.
+    assert_eq!(
+        document.force(&mut state, &Instance::root(), tally, Val::Number(1)),
+        Err(ForceError::NotARegister {
+            tree: ROOT,
+            node: tally
+        }),
+        "a node that holds nothing between ticks has no register to write"
+    );
+    assert_eq!(
+        document.force(&mut state, &Instance::root(), NodeId(9999), Val::Number(1)),
+        Err(ForceError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(9999)
+        })
+    );
+    let nowhere = Instance::root().inside(ROOT, delay);
+    assert_eq!(
+        document.force(&mut state, &nowhere, delay, Val::Number(1)),
+        Err(ForceError::NoSuchInstance),
+        "an Instance is public, so one can be built by hand — and this is the \
+         one place a hand-built path is checked against the document"
+    );
+
+    // And the type gate is R1594's own, so a taxonomy that classifies is held
+    // to it and one that declines is not.
+    let mut typed: Document<LOp> = Document::new("root");
+    let register = typed
+        .add_node(ROOT, NodeBody::Delay(LTy::Vector), 0, 0)
+        .unwrap();
+    let mut typed_state = Machine::new();
+    assert_eq!(
+        typed.force(
+            &mut typed_state,
+            &Instance::root(),
+            register,
+            LVal::Scalar(3)
+        ),
+        Err(ForceError::WrongType {
+            tree: ROOT,
+            node: register
+        })
+    );
+    assert!(
+        typed
+            .force(
+                &mut typed_state,
+                &Instance::root(),
+                register,
+                LVal::Vector([1, 1, 1])
+            )
+            .is_ok()
+    );
+    assert_eq!(
+        document.force(&mut state, &Instance::root(), delay, Val::Text("no".into())),
+        Ok(Some(Val::Number(4))),
+        "and `Flo` declines to classify, so it is not held to a rule it cannot \
+         state — the same answer R1594 gives an authored value"
+    );
 }

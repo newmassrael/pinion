@@ -195,23 +195,18 @@ impl<K: NodeKind> Machine<K> {
         })
     }
 
-    /// Write a register directly, answering what was there.
+    /// Write a register directly. **Crate-private** — see
+    /// [`Document::force`], which is the checked way in.
     ///
-    /// **Forcing**, in the hardware and Simulink sense: not something the graph
-    /// does, but something an operator or a debugger does *to* it — restore a
-    /// saved scenario mid-run, drive a branch down the arm you want to see,
-    /// reproduce a state a capture caught. Named for stepping outside the tick
-    /// discipline rather than for setting a value, because that is the fact
-    /// worth seeing at the call site: [`Document::tick`] advances every register
-    /// at one instant, and this one does not.
-    ///
-    /// The value is not type-checked against the delay's port, for the same
-    /// reason [`Machine`] holds no reference to a document: a machine is a
-    /// value that outlives the edits made to the graph it came from. A forced
-    /// value the port cannot hold is reported by
-    /// [`Document::validate`] on the next thing that reads it, in exactly the
-    /// way an authored one is.
-    pub fn force(&mut self, instance: Instance, node: NodeId, value: K::Value) -> Option<K::Value> {
+    /// Unchecked on purpose and therefore not public: a [`Machine`] holds no
+    /// reference to a document, so it cannot know that `node` is a delay or what
+    /// type that delay holds. Only the document knows, so the check lives there.
+    pub(crate) fn write(
+        &mut self,
+        instance: Instance,
+        node: NodeId,
+        value: K::Value,
+    ) -> Option<K::Value> {
         self.held.entry(instance).or_default().insert(node, value)
     }
 
@@ -417,6 +412,74 @@ impl<K: NodeKind> Document<K> {
         }
     }
 
+    /// Write one register directly, answering what was there (R1600, checked
+    /// R1601.1).
+    ///
+    /// **Forcing**, in the hardware and Simulink sense: not something the graph
+    /// does, but something an operator or a debugger does *to* it — restore a
+    /// saved scenario mid-run, drive a branch down the arm you want to see,
+    /// reproduce a state a capture caught. Named for stepping outside the tick
+    /// discipline rather than for setting a value, because that is the fact
+    /// worth seeing at the call site: [`Self::tick`] advances every register at
+    /// one instant, and this one does not.
+    ///
+    /// It hangs off the **document** rather than off the machine because the
+    /// three things worth checking are all facts the machine cannot know: that
+    /// the instance names a tree, that the node there is a
+    /// [`NodeBody::Delay`], and that the value is one that delay can hold.
+    /// R1601.1 moved it here after finding the alternative's doc claiming
+    /// [`Self::validate`] would report a mistyped forced value — it cannot,
+    /// because `validate` reads a document and a forced value is not in one.
+    ///
+    /// # Errors
+    ///
+    /// [`ForceError`].
+    pub fn force(
+        &self,
+        state: &mut Machine<K>,
+        instance: &Instance,
+        node: NodeId,
+        value: K::Value,
+    ) -> Result<Option<K::Value>, ForceError> {
+        let tree = self.tree_of(instance).ok_or(ForceError::NoSuchInstance)?;
+        let held = self
+            .tree(tree)
+            .and_then(|host| host.node(node))
+            .ok_or(ForceError::NoSuchNode { tree, node })?;
+        let NodeBody::Delay(ty) = &held.body else {
+            return Err(ForceError::NotARegister { tree, node });
+        };
+        // The same gate `set_port_value` applies to an authored value, and for
+        // the same reason: a taxonomy that declines to classify its values
+        // (`value_type` answers `None`) is not held to a rule it cannot state.
+        if let Some(found) = K::value_type(&value)
+            && &found != ty
+        {
+            return Err(ForceError::WrongType { tree, node });
+        }
+        Ok(state.write(instance.clone(), node, value))
+    }
+
+    /// Which tree an instance path lands in, or `None` if it names a node or a
+    /// definition this document does not have.
+    ///
+    /// The one place an [`Instance`] built by hand is checked against the
+    /// document. [`Descent`](crate::Descent) instances are built by the walk and
+    /// cannot be wrong; one handed in from outside can be.
+    fn tree_of(&self, instance: &Instance) -> Option<TreeId> {
+        let mut tree = crate::model::ROOT;
+        for (host, node) in instance.path() {
+            if *host != tree {
+                return None;
+            }
+            match self.tree(tree)?.node(*node)?.body {
+                NodeBody::Group(definition) => tree = definition,
+                _ => return None,
+            }
+        }
+        Some(tree)
+    }
+
     /// Tick until nothing changes, or `budget` ticks have been taken (R1600).
     ///
     /// The **fixed point**: the reading a converging scenario is waiting for,
@@ -442,3 +505,55 @@ impl<K: NodeKind> Document<K> {
         taken
     }
 }
+
+/// Why a register could not be forced (R1601.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ForceError {
+    /// The instance path does not name a chain of group instances in this
+    /// document.
+    NoSuchInstance,
+    /// No such node in the tree that instance lands in.
+    NoSuchNode {
+        /// The tree the instance resolved to.
+        tree: TreeId,
+        /// The node that is not in it.
+        node: NodeId,
+    },
+    /// The node is there and is not a [`NodeBody::Delay`], so it holds nothing
+    /// between ticks and there is no register to write.
+    NotARegister {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node that is not a register.
+        node: NodeId,
+    },
+    /// The taxonomy classifies its values and this one is not the type the
+    /// delay holds.
+    WrongType {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The register.
+        node: NodeId,
+    },
+}
+
+impl std::fmt::Display for ForceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSuchInstance => f.write_str("no such instance in this document"),
+            Self::NoSuchNode { tree, node } => {
+                write!(f, "tree {tree} has no node {node}")
+            }
+            Self::NotARegister { tree, node } => {
+                write!(f, "node {node} in tree {tree} is not a register")
+            }
+            Self::WrongType { tree, node } => write!(
+                f,
+                "register {node} in tree {tree} cannot hold a value of that type"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ForceError {}

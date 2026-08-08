@@ -85370,6 +85370,34 @@
         "The Unreal unit is one header. FGraphEditorCommandsImpl is the graph editor's command list and is the right peer for Blender's operator list, but Unreal also reaches node-system behaviour through UEdGraphSchema virtuals and through per-node context menus, neither of which this census counts. The 78 is a floor, named as one."
       ]
     },
+    "Round 1601.1": {
+      "decision_summary": "Forcing a register is checked by the thing that knows the document. R1600 shipped Machine::force with a doc claiming that a mistyped forced value would be reported by Document::validate in exactly the way an authored one is. That is FALSE and the audit for this round's close found it: validate reads a DOCUMENT, and a forced value lives in a Machine that deliberately holds no reference to one, so nothing could report it. The fix is not to correct the sentence but to move the operation: a machine cannot know that a node is a delay or what type that delay holds, and the document can, so the check lives on the document. Document::force answers ForceError::NoSuchInstance / NoSuchNode / NotARegister / WrongType, and the type leg is R1594's own gate, so a taxonomy that declines to classify its values is not held to a rule it cannot state. It also closes a smaller hole R1600's own Descent doc had asserted away: an Instance is public, so a caller CAN build a path the document does not have, and Document::tree_of is the one place a hand-built path is now checked. The consumer's hand-rolled 'is this a register' guard goes with it -- a second statement of a rule the framework now owns.",
+      "changes_bullets": [
+        "Machine::force becomes the crate-private Machine::write and Document::force is the checked way in, answering ForceError for an instance path this document does not have, a node that is not there, a node that is not a NodeBody::Delay, and a value the register cannot hold. The type gate is R1594's own, so a taxonomy that declines to classify its values is not held to a rule it cannot state.",
+        "Document::tree_of is the one place an Instance built by hand is checked against the document. An Instance is public (root / inside), so a caller can assemble a path the document does not have; a Descent's instance is built by the walk and cannot be wrong, and R1600's Descent doc had claimed that property for instances generally.",
+        "hello-node-flow drops its hand-rolled \"is this node a register\" check, which was a second statement of a rule the framework now owns."
+      ],
+      "verification_bullets": [
+        "r1601_forcing_a_register_is_checked_by_the_thing_that_knows_the_document exercises all four refusals plus both legs of the type gate, and asserts that the classifying taxonomy is held to it while the non-classifying one is not. 238 crate tests, 10 binding tests, fmt and clippy clean.",
+        "Found by auditing R1600's own doc rather than by a test failing, which is why it is worth recording: the claim was that validate would report a mistyped forced value, and validate takes only a document while a forced value lives in a machine that holds no reference to one. Nothing could have reported it."
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "publishable_decision_summary": "Forcing a register is checked by the thing that knows the document. R1600 shipped Machine::force with a doc claiming that a mistyped forced value would be reported by Document::validate in exactly the way an authored one is. That is FALSE and the audit for this round's close found it: validate reads a DOCUMENT, and a forced value lives in a Machine that deliberately holds no reference to one, so nothing could report it. The fix is not to correct the sentence but to move the operation: a machine cannot know that a node is a delay or what type that delay holds, and the document can, so the check lives on the document. Document::force answers ForceError::NoSuchInstance / NoSuchNode / NotARegister / WrongType, and the type leg is R1594's own gate, so a taxonomy that declines to classify its values is not held to a rule it cannot state. It also closes a smaller hole R1600's own Descent doc had asserted away: an Instance is public, so a caller CAN build a path the document does not have, and Document::tree_of is the one place a hand-built path is now checked. The consumer's hand-rolled 'is this a register' guard goes with it -- a second statement of a rule the framework now owns.",
+      "publishable_changes_bullets": [
+        "Machine::force becomes the crate-private Machine::write and Document::force is the checked way in, answering ForceError for an instance path this document does not have, a node that is not there, a node that is not a NodeBody::Delay, and a value the register cannot hold. The type gate is R1594's own, so a taxonomy that declines to classify its values is not held to a rule it cannot state.",
+        "Document::tree_of is the one place an Instance built by hand is checked against the document. An Instance is public (root / inside), so a caller can assemble a path the document does not have; a Descent's instance is built by the walk and cannot be wrong, and R1600's Descent doc had claimed that property for instances generally.",
+        "hello-node-flow drops its hand-rolled \"is this node a register\" check, which was a second statement of a rule the framework now owns."
+      ],
+      "publishable_verification_bullets": [
+        "r1601_forcing_a_register_is_checked_by_the_thing_that_knows_the_document exercises all four refusals plus both legs of the type gate, and asserts that the classifying taxonomy is held to it while the non-classifying one is not. 238 crate tests, 10 binding tests, fmt and clippy clean.",
+        "Found by auditing R1600's own doc rather than by a test failing, which is why it is worth recording: the claim was that validate would report a mistyped forced value, and validate takes only a document while a forced value lives in a machine that holds no reference to one. Nothing could have reported it."
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

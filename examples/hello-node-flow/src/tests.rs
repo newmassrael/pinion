@@ -169,7 +169,14 @@ fn r1600_a_register_is_forced_and_the_scenario_jumps_to_its_end() {
 
     // The debugger's verb: write the register directly and the scenario is at
     // its end with no ticks taken at all.
-    machine.force(Instance::root(), elapsed, Val::Number(LIMIT + 1));
+    graph
+        .force(
+            &mut machine,
+            &Instance::root(),
+            elapsed,
+            Val::Number(LIMIT + 1),
+        )
+        .expect("the register holds a Number");
     assert_eq!(machine.ticks(), 0, "forcing is not ticking");
     assert_eq!(
         graph
