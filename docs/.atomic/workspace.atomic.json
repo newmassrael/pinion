@@ -85674,6 +85674,44 @@
         "covered_by is still unverified prose where proven_by is gated"
       ]
     },
+    "Round 1605.1": {
+      "decision_summary": "R1605.1 — and Python has two string quotes.\n\nThe closing audit asked whether every debt this round produced was registered,\nand found a DEFECT instead, in the same class as the four the round is about: a\ncensus that accepts exactly one spelling. PY_IDNAME matched only double-quoted\nliterals, and node_wrangler writes bl_idname = 'node.nw_swap_links', so SIX\nBlender operators were invisible. All six are addon operators, so the coverage\nnumber does not move — but that is luck rather than a bound, because an operator\nunder scripts/startup/ written with single quotes would have left the DENOMINATOR\nsilently short, which is the direction that inflates. Blender's live census goes\n246 -> 252 and the six are judged addon.\n\nIt also opened the Python side's own residue, which the C++ side had closed and\nPython had not: a bl_idname whose value is not a quoted literal is unreadable by\nANY text census, because the name exists only after the module is imported.\nblender_computed_idnames counts them and the report prints the number — 14 at the\npinned revision, all of them keying sets, addon preferences and key\nconfigurations, no node operator among them. That is a fact about today's tree\nrather than a property of the mechanism, so it is measured rather than assumed,\nand debt-python-idname-can-be-computed records that nobody is yet watching it\ngrow.\n\nTwo counterfactuals, both CAUGHT: narrowing the quote class, and making every\nvalue count as a literal so the residue reads zero.\n\nThe audit also registered debt-census-instance-owner-is-prose: R1605's new\n`instance` verdict points at the row that carries the judgement IN PROSE, so if\nthat row is renamed or removed, 69 rows stay out of the denominator with nothing\njudging them — one capability disappearing in silence, the same direction as a\nwrong `have`. The fix is the same shape proven_by already uses (a field, checked\nby --check-pin for existence and verdict), and it lands naturally with\ndebt-census-covered-by-is-unverified-prose's own prescription.",
+      "changes_bullets": [
+        "PY_IDNAME accepts both Python string quotes; six operators recovered",
+        "blender_computed_idnames counts the bl_idnames no text census can read",
+        "Six recovered node_wrangler operators judged addon; coverage unmoved"
+      ],
+      "verification_bullets": [
+        "2 of 2 counterfactuals CAUGHT; --selftest gains 3 assertions",
+        "--check-pin: 679 judged operators, 0 problems; --strict clean",
+        "Blender live 246 -> 252, coverage held at 71% because all six are addon"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "14 computed bl_idnames are unreadable and nobody watches that number grow",
+        "instance verdicts name their judging row in prose, not as a checked field"
+      ],
+      "publishable_decision_summary": "R1605.1 — and Python has two string quotes.\n\nThe closing audit asked whether every debt this round produced was registered,\nand found a DEFECT instead, in the same class as the four the round is about: a\ncensus that accepts exactly one spelling. PY_IDNAME matched only double-quoted\nliterals, and node_wrangler writes bl_idname = 'node.nw_swap_links', so SIX\nBlender operators were invisible. All six are addon operators, so the coverage\nnumber does not move — but that is luck rather than a bound, because an operator\nunder scripts/startup/ written with single quotes would have left the DENOMINATOR\nsilently short, which is the direction that inflates. Blender's live census goes\n246 -> 252 and the six are judged addon.\n\nIt also opened the Python side's own residue, which the C++ side had closed and\nPython had not: a bl_idname whose value is not a quoted literal is unreadable by\nANY text census, because the name exists only after the module is imported.\nblender_computed_idnames counts them and the report prints the number — 14 at the\npinned revision, all of them keying sets, addon preferences and key\nconfigurations, no node operator among them. That is a fact about today's tree\nrather than a property of the mechanism, so it is measured rather than assumed,\nand debt-python-idname-can-be-computed records that nobody is yet watching it\ngrow.\n\nTwo counterfactuals, both CAUGHT: narrowing the quote class, and making every\nvalue count as a literal so the residue reads zero.\n\nThe audit also registered debt-census-instance-owner-is-prose: R1605's new\n`instance` verdict points at the row that carries the judgement IN PROSE, so if\nthat row is renamed or removed, 69 rows stay out of the denominator with nothing\njudging them — one capability disappearing in silence, the same direction as a\nwrong `have`. The fix is the same shape proven_by already uses (a field, checked\nby --check-pin for existence and verdict), and it lands naturally with\ndebt-census-covered-by-is-unverified-prose's own prescription.",
+      "publishable_changes_bullets": [
+        "PY_IDNAME accepts both Python string quotes; six operators recovered",
+        "blender_computed_idnames counts the bl_idnames no text census can read",
+        "Six recovered node_wrangler operators judged addon; coverage unmoved"
+      ],
+      "publishable_verification_bullets": [
+        "2 of 2 counterfactuals CAUGHT; --selftest gains 3 assertions",
+        "--check-pin: 679 judged operators, 0 problems; --strict clean",
+        "Blender live 246 -> 252, coverage held at 71% because all six are addon"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "14 computed bl_idnames are unreadable and nobody watches that number grow",
+        "instance verdicts name their judging row in prose, not as a checked field"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

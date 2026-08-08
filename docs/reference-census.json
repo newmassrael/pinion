@@ -833,6 +833,20 @@
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
+    "NODE_OT_lazy_connect_call_inputs_menu": {
+      "covered_by": "the `node_wrangler` addon, which is not Blender's node system \u2014 the class R1601 already excludes",
+      "mechanism": "python-addon",
+      "proven_by": "",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/lazy_connect.py"
+    },
+    "NODE_OT_lazy_connect_make_link": {
+      "covered_by": "the `node_wrangler` addon, which is not Blender's node system \u2014 the class R1601 already excludes",
+      "mechanism": "python-addon",
+      "proven_by": "",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/lazy_connect.py"
+    },
     "NODE_OT_link": {
       "covered_by": "Document::connect",
       "mechanism": "cpp",
@@ -966,6 +980,13 @@
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/add_reroutes.py"
     },
+    "NODE_OT_nw_add_sequence": {
+      "covered_by": "the `node_wrangler` addon, which is not Blender's node system \u2014 the class R1601 already excludes",
+      "mechanism": "python-addon",
+      "proven_by": "",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/add_image_sequence.py"
+    },
     "NODE_OT_nw_add_texture": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
@@ -994,6 +1015,13 @@
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/batch_change.py"
     },
+    "NODE_OT_nw_bg_reset": {
+      "covered_by": "the `node_wrangler` addon, which is not Blender's node system \u2014 the class R1601 already excludes",
+      "mechanism": "python-addon",
+      "proven_by": "",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/reset_backdrop.py"
+    },
     "NODE_OT_nw_center_nodes": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
@@ -1021,6 +1049,13 @@
       "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/copy_settings.py"
+    },
+    "NODE_OT_nw_del_unused": {
+      "covered_by": "the `node_wrangler` addon, which is not Blender's node system \u2014 the class R1601 already excludes",
+      "mechanism": "python-addon",
+      "proven_by": "",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/delete_unused.py"
     },
     "NODE_OT_nw_detach_outputs": {
       "covered_by": "an add-on, not Blender's node system",
@@ -1105,6 +1140,13 @@
       "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/select_hierarchy.py"
+    },
+    "NODE_OT_nw_swap_links": {
+      "covered_by": "the `node_wrangler` addon, which is not Blender's node system \u2014 the class R1601 already excludes",
+      "mechanism": "python-addon",
+      "proven_by": "",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/swap_links.py"
     },
     "NODE_OT_options_toggle": {
       "covered_by": "Appearance::show_options",

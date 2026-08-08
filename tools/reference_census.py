@@ -442,7 +442,17 @@ def walk(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
 #: census keyed on a *variable name* — recurring inside the tool built to end it.
 CPP_IDNAME = re.compile(r'\b[A-Za-z_][A-Za-z_0-9]*->idname\s*=\s*"(NODE_OT_[a-z_0-9]+)"')
 CPP_MACRO = re.compile(r'WM_operatortype_append_macro\(\s*"(NODE_OT_[a-z_0-9]+)"')
-PY_IDNAME = re.compile(r'bl_idname\s*=\s*"node\.([a-z_0-9]+)"')
+#: R1605.1 — **and Python has two string quotes**.
+#:
+#: Found by the closing audit, and it is the *fourth* instance in one round of
+#: the same failure: a census that accepts exactly one spelling. `node_wrangler`
+#: writes `bl_idname = 'node.nw_swap_links'`, and six operators were invisible.
+#:
+#: All six are addon operators, so the coverage number does not move — but that
+#: is luck, not a bound. A `scripts/startup/` operator written with single quotes
+#: would have left the DENOMINATOR silently short, which is the direction that
+#: inflates.
+PY_IDNAME = re.compile(r"""bl_idname\s*=\s*(['"])node\.([a-z_0-9]+)\1""")
 
 #: R1605 — and sometimes the string is not in the source at all.
 #:
@@ -498,6 +508,17 @@ BLENDER_TEMPLATE_OPS = "source/blender/nodes/NOD_socket_items_ops.hh"
 #: exhaustive rather than assumed to be.
 CPP_ANY_IDNAME = re.compile(r"\bNODE_OT_[a-z_0-9]+")
 
+#: R1605.1 — the Python side's residue, the peer of [`unreal_command_residue`].
+#:
+#: A `bl_idname` whose value is not a quoted literal is **unreadable by any text
+#: census**: `bl_idname = ANIM_KS_LOCATION_ID` names an operator only after the
+#: module is imported. Measured at the pinned revision: 14, all of them keying
+#: sets, addon preferences and key configurations — no node operator among them.
+#: That is a fact about today's tree, not a property of the mechanism, so the
+#: number is printed rather than assumed to stay zero.
+PY_IDNAME_ANY = re.compile(r"^\s*bl_idname\s*=\s*(.+)$", re.M)
+PY_IDNAME_LITERAL = re.compile(r"""^['"]""")
+
 
 def census_blender(root: Path) -> tuple[dict[str, Operator], list[str]]:
     """The four mechanisms, in precedence order.
@@ -542,7 +563,7 @@ def census_blender(root: Path) -> tuple[dict[str, Operator], list[str]]:
             continue
         rel = str(path.relative_to(root))
         core = rel.startswith("scripts/startup/")
-        for stem in PY_IDNAME.findall(body):
+        for _quote, stem in PY_IDNAME.findall(body):
             add("NODE_OT_" + stem, "python-core" if core else "python-addon", rel)
 
     for name, member, where in blender_hooks(root):
@@ -572,6 +593,25 @@ HOOK_FUNCTION = re.compile(r"^\s*std::function<.*>\s+([a-zA-Z_0-9]+)\s*;")
 #: Blender's node-system extension surface: what a node type, a tree type and a
 #: socket type may each answer.
 BLENDER_HOOK_STRUCTS = ("bNodeType", "bNodeTreeType", "bNodeSocketType")
+
+
+def blender_computed_idnames(root: Path) -> int:
+    """`bl_idname` assignments whose value is not a quoted literal.
+
+    The Python peer of [`unreal_command_residue`]: the part of the reference no
+    text scan can read, counted instead of wished away. If one of these ever
+    resolves to a `node.` id, the operator denominator is short and nothing else
+    would say so.
+    """
+    loose = 0
+    for path in walk(root / "scripts", (".py",)):
+        body = read(path)
+        if "bl_idname" not in body:
+            continue
+        for value in PY_IDNAME_ANY.findall(body):
+            if not PY_IDNAME_LITERAL.match(value.strip()):
+                loose += 1
+    return loose
 
 
 def blender_hooks(root: Path) -> list[tuple[str, str, str]]:
@@ -1046,6 +1086,11 @@ def report(census: Census, pin: dict, strict: bool) -> int:
                 f"(no name to count), {neither} neither"
             )
         if tree == "blender":
+            print(
+                f"  {blender_computed_idnames(BLENDER)} Python bl_idname(s) are "
+                "not a quoted literal — computed at import, unreadable by any "
+                "text census (measured: keying sets and preferences, no node op)"
+            )
             # Named `unregistered` rather than folded into `new`: these are not
             # rows the pin lacks, they are names no mechanism explains.
             diff["unregistered"] = [
@@ -1183,8 +1228,25 @@ def selftest() -> int:
         "★ and a LOOKUP is not — the R1598 attribution error, as an assertion",
     )
     check(
-        PY_IDNAME.findall('    bl_idname = "node.swap_node"') == ["swap_node"],
+        [stem for _q, stem in PY_IDNAME.findall('    bl_idname = "node.swap_node"')]
+        == ["swap_node"],
         "a Python operator is found where the C++ census cannot see it",
+    )
+    check(
+        [stem for _q, stem in PY_IDNAME.findall("    bl_idname = 'node.nw_del_unused'")]
+        == ["nw_del_unused"],
+        "★ and so is one written with the OTHER quote — Python has two, and "
+        "accepting one is the same failure as accepting one C++ spelling",
+    )
+    check(
+        PY_IDNAME.findall("""bl_idname = "node.x'""") == [],
+        "while mismatched quotes are not a literal and are not read as one",
+    )
+    check(
+        PY_IDNAME_LITERAL.match("ANIM_KS_LOCATION_ID") is None
+        and PY_IDNAME_LITERAL.match("'node.x'") is not None,
+        "and a COMPUTED bl_idname is told apart from a literal, so the part no "
+        "text census can read is counted rather than assumed to be empty",
     )
 
     print("R1605 — and reading C++ as text is not enough")
