@@ -44,8 +44,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Appearance, Crossings, Definitions, Document, EditPath, Fragment, Grow, InterfaceSide, LinkId,
-    NodeBody, NodeId, NodeKind, Port, PortRef, ROOT, Reach, Sharing, Socket, TreeId,
+    Appearance, Conversion, Crossings, Definitions, Document, EditPath, Fragment, Grow,
+    InterfaceSide, LinkId, NodeBody, NodeId, NodeKind, Port, PortRef, ROOT, Reach, Sharing, Socket,
+    TreeId,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -139,6 +140,30 @@ impl NodeKind for Op {
             Self::Word(_) | Self::Shout => vec![Port::new("Out", Ty::Text)],
             Self::Sink => Vec::new(),
         }
+    }
+
+    /// A **directed** relation, which is why it is here and not an equality: a
+    /// number reads as text and text does not read back as a number. Both of
+    /// the reference hooks this answers — Unreal's
+    /// `CreateAutomaticConversionNodeAndConnections` and Blender's
+    /// `bNodeTreeType::validate_link` — need exactly this asymmetry, and it was
+    /// R1593's subject.
+    fn conversion(from: &Ty, to: &Ty) -> Conversion<Val> {
+        match (from, to) {
+            (Ty::Number, Ty::Number) | (Ty::Text, Ty::Text) => Conversion::Direct,
+            (Ty::Number, Ty::Text) => Conversion::Converted(|value| match value {
+                Val::Number(n) => Some(Val::Text(n.to_string())),
+                text @ Val::Text(_) => Some(text),
+            }),
+            (Ty::Text, Ty::Number) => Conversion::Refused,
+        }
+    }
+
+    fn value_type(value: &Val) -> Option<Ty> {
+        Some(match value {
+            Val::Number(_) => Ty::Number,
+            Val::Text(_) => Ty::Text,
+        })
     }
 
     fn evaluate(&self, inputs: &[Option<Val>]) -> Vec<Option<Val>> {
@@ -285,7 +310,10 @@ fn proof<F: Fn() + 'static>(tree: &'static str, operator: &'static str, run: F) 
 /// this project lets a function have; the two are one table.
 fn proofs() -> Vec<Proof> {
     let mut all = blender_proofs();
+    all.extend(blender_hook_proofs());
     all.extend(unreal_proofs());
+    all.extend(unreal_hook_proofs());
+    all.extend(unreal_schema_hook_proofs());
     all
 }
 
@@ -387,6 +415,43 @@ fn blender_proofs() -> Vec<Proof> {
     ]
 }
 
+/// The HOOK surface (R1603): what Blender asks a node type, a tree type
+/// and a socket type to decide.
+fn blender_hook_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "blender",
+            "bNodeType::can_sync_sockets",
+            blender_node_can_sync_sockets,
+        ),
+        proof("blender", "bNodeType::copyfunc", blender_node_copyfunc),
+        proof("blender", "bNodeType::initfunc", blender_node_initfunc),
+        proof("blender", "bNodeType::labelfunc", blender_node_labelfunc),
+        proof("blender", "bNodeType::updatefunc", blender_node_updatefunc),
+        proof(
+            "blender",
+            "bNodeTreeType::localize",
+            blender_node_tree_localize,
+        ),
+        proof("blender", "bNodeTreeType::update", blender_node_tree_update),
+        proof(
+            "blender",
+            "bNodeTreeType::validate_link",
+            blender_node_tree_validate_link,
+        ),
+        proof(
+            "blender",
+            "bNodeSocketType::interface_from_socket",
+            blender_node_socket_interface_from_socket,
+        ),
+        proof(
+            "blender",
+            "bNodeSocketType::interface_init_socket",
+            blender_node_socket_interface_init_socket,
+        ),
+    ]
+}
+
 fn unreal_proofs() -> Vec<Proof> {
     vec![
         proof("unreal", "BreakNodeLinks", unreal_break_node_links),
@@ -451,35 +516,198 @@ fn unreal_proofs() -> Vec<Proof> {
         proof("unreal", "ShowAllPins", unreal_show_all_pins),
     ]
 }
-/// The proof name an operator must carry, so the two are one decision.
+
+/// The HOOK surface (R1603): the virtuals of `UEdGraphNode` and
+/// `UEdGraphSchema`.
+fn unreal_hook_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "unreal",
+            "UEdGraphNode::AllocateDefaultPins",
+            unreal_node_allocate_default_pins,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::DestroyNode",
+            unreal_node_destroy_node,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::GetPassThroughPin",
+            unreal_node_get_pass_through_pin,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::GetPinDisplayName",
+            unreal_node_get_pin_display_name,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::GetSubGraphs",
+            unreal_node_get_sub_graphs,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::NodeConnectionListChanged",
+            unreal_node_node_connection_list_changed,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::OnPinRemoved",
+            unreal_node_on_pin_removed,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::OnRenameNode",
+            unreal_node_on_rename_node,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::OnUpdateCommentText",
+            unreal_node_on_update_comment_text,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::PinConnectionListChanged",
+            unreal_node_pin_connection_list_changed,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::PinDefaultValueChanged",
+            unreal_node_pin_default_value_changed,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::PostPasteNode",
+            unreal_node_post_paste_node,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::PostPlacedNewNode",
+            unreal_node_post_placed_new_node,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::PrepareForCopying",
+            unreal_node_prepare_for_copying,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphNode::ResizeNode",
+            unreal_node_resize_node,
+        ),
+    ]
+}
+
+/// And the schema's half of it — what Unreal asks a GRAPH to decide.
+fn unreal_schema_hook_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "unreal",
+            "UEdGraphSchema::ArePinTypesEquivalent",
+            unreal_schema_are_pin_types_equivalent,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::ArePinsCompatible",
+            unreal_schema_are_pins_compatible,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::CanCreateConnection",
+            unreal_schema_can_create_connection,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::CanEncapuslateNode",
+            unreal_schema_can_encapuslate_node,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::CreateAutomaticConversionNodeAndConnections",
+            unreal_schema_create_automatic_conversion_node_and_connections,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::DoesDefaultValueMatch",
+            unreal_schema_does_default_value_match,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::GetGraphDisplayInformation",
+            unreal_schema_get_graph_display_information,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::IsPinDefaultValid",
+            unreal_schema_is_pin_default_valid,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::SetNodePosition",
+            unreal_schema_set_node_position,
+        ),
+        proof(
+            "unreal",
+            "UEdGraphSchema::TrySetDefaultValue",
+            unreal_schema_try_set_default_value,
+        ),
+    ]
+}
+/// The proof name a reference row must carry, so the two are one decision.
 ///
-/// Blender's operators are already snake case under a fixed prefix; Unreal's
-/// are Pascal case, so the same rule reads them by case boundary.
+/// Two shapes, because a reference has two kinds of name. An **operator** is a
+/// bare identifier — snake case under a fixed prefix in Blender, Pascal case in
+/// Unreal. A **hook** is `Owner::member`, and its owner is stripped down to what
+/// distinguishes it: a leading `b` or `U`, a leading `EdGraph` and a trailing
+/// `Type` are all the reference's own naming furniture, so `bNodeTreeType` and
+/// `UEdGraphNode` become `node_tree` and `node`.
 fn proof_name(tree: &str, operator: &str) -> String {
+    if let Some((owner, member)) = operator.split_once("::") {
+        let tag = owner
+            .trim_start_matches('b')
+            .trim_start_matches('U')
+            .trim_start_matches("EdGraph")
+            .trim_end_matches("Type");
+        return format!("{tree}_{}_{}", snake(tag), snake(member));
+    }
     let stem = if tree == "blender" {
         operator.trim_start_matches("NODE_OT_").to_owned()
     } else {
-        let mut out = String::new();
-        for (index, character) in operator.char_indices() {
-            if character.is_ascii_uppercase() && index > 0 {
-                out.push('_');
-            }
-            out.push(character.to_ascii_lowercase());
-        }
-        out
+        snake(operator)
     };
     format!("{tree}_{stem}")
 }
 
-/// The pin's `have` rows addressed to this crate, and the proofs in this file,
-/// are the same set — and each row names the proof that runs it.
+/// Pascal or snake in, snake out. A name already in snake case is unchanged.
+fn snake(name: &str) -> String {
+    let mut out = String::new();
+    for (index, character) in name.char_indices() {
+        if character.is_ascii_uppercase() && index > 0 {
+            out.push('_');
+        }
+        out.push(character.to_ascii_lowercase());
+    }
+    out
+}
+
+/// The pin and the proofs agree, in both directions.
 ///
 /// This is the check that makes a verdict cost something. A `have` added to the
 /// pin with no proof fails here; a proof deleted or renamed fails here; and a
-/// row whose `proven_by` names a different capability than the operator it sits
-/// under fails here, because the name is *derived* rather than transcribed.
+/// proof whose name is not derived from the row that owns it fails here, because
+/// the name comes from the **compiler** rather than from a string typed twice.
+///
+/// ★ It is not a bijection any more, and the reason is a finding rather than a
+/// concession. One pinion mechanism often answers **several** reference rows —
+/// Blender's `bNodeTreeType::localize` and Unreal's `UEdGraphSchema::DuplicateGraph`
+/// are one `fork_definition`; `NODE_OT_delete` and `SafeDeleteNodeFromGraph` are
+/// one `remove_node` — and saying so is exactly the "the reference writes it
+/// three times and this derives it once" measurement R1589 recorded by hand. So
+/// a proof has one **owner** (the row its name derives from) and may be **cited**
+/// by any number of others, and the fan-out is reported.
 #[test]
-fn the_pin_and_the_proofs_are_in_bijection() {
+fn the_pin_and_the_proofs_agree() {
     let pin: BTreeMap<String, BTreeMap<String, Row>> =
         serde_json::from_str(PIN).expect("the census pin parses");
 
@@ -506,39 +734,43 @@ fn the_pin_and_the_proofs_are_in_bijection() {
     }
 
     let table = proofs();
-    let mine: BTreeSet<(String, String)> = table
-        .iter()
-        .map(|entry| (entry.tree.to_owned(), entry.operator.to_owned()))
-        .collect();
-    let pinned: BTreeSet<(String, String)> = claimed.keys().cloned().collect();
+    let names: BTreeSet<&str> = table.iter().map(|entry| entry.name).collect();
+    assert_eq!(names.len(), table.len(), "two proofs share a name");
 
-    let unproven: Vec<_> = pinned.difference(&mine).collect();
-    assert!(
-        unproven.is_empty(),
-        "the pin claims {CRATE} proves these and this file does not: {unproven:?}"
-    );
-    let unclaimed: Vec<_> = mine.difference(&pinned).collect();
-    assert!(
-        unclaimed.is_empty(),
-        "this file proves these and the pin does not say so: {unclaimed:?}"
-    );
-
+    // Every row this crate is addressed by names a proof that is here.
+    for ((tree, operator), proof) in &claimed {
+        assert!(
+            names.contains(proof.as_str()),
+            "{tree}/{operator} names {proof}, which is not in this file"
+        );
+    }
+    // And every proof here is owned by exactly one row, which is the row its
+    // name derives from. A proof nothing owns is a test the pin never asks for.
     for entry in &table {
-        let key = (entry.tree.to_owned(), entry.operator.to_owned());
+        let owner = (entry.tree.to_owned(), entry.operator.to_owned());
         assert_eq!(
             entry.name,
             proof_name(entry.tree, entry.operator),
-            "{}/{} is proven by a function whose name is not derived from it",
+            "{}/{} owns a proof whose name is not derived from it",
             entry.tree,
             entry.operator
         );
         assert_eq!(
-            claimed[&key], entry.name,
-            "{}/{} names a proof the compiler says is called something else",
-            entry.tree, entry.operator
+            claimed.get(&owner).map(String::as_str),
+            Some(entry.name),
+            "{}/{} does not name the proof that says it owns it",
+            entry.tree,
+            entry.operator
         );
     }
-    assert_eq!(table.len(), claimed.len());
+
+    let cited = claimed.len() - table.len();
+    assert!(
+        cited > 0,
+        "no row cites another row's proof, which would mean this crate answers \
+         every reference row with its own mechanism — worth noticing if it ever \
+         becomes true"
+    );
 }
 
 /// Every proof in the table runs.
@@ -2298,4 +2530,980 @@ fn unreal_select_all_output_nodes() {
         )
         .unwrap();
     assert_eq!(grown.added, vec![chain.add, chain.sink]);
+}
+
+// ============================================ the HOOK surface (R1603)
+
+// What follows answers the second surface: not "what can a user invoke" but
+// "what does the editor ask the node system to decide". R1593 and R1594 both
+// live here and on no operator list anywhere, which is why an operator census
+// read them as zero and the coverage judged on top of it was overstated.
+
+/// Blender calls a node type when the tree changed so it can bring itself up to
+/// date. Nothing here is ever told: every derived fact is recomputed on read, so
+/// a node cannot be stale.
+#[test]
+fn blender_node_updatefunc() {
+    let mut chain = chain();
+    let lonely = node(&mut chain.document, Op::Add);
+    chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(lonely))
+        .unwrap()
+        .appearance
+        .hide_unused_ports = true;
+    assert_eq!(
+        chain
+            .document
+            .visible_ports(ROOT, lonely)
+            .unwrap()
+            .hidden_inputs,
+        vec![0, 1]
+    );
+
+    wire(&mut chain.document, chain.two, 0, lonely, 1);
+    assert_eq!(
+        chain
+            .document
+            .visible_ports(ROOT, lonely)
+            .unwrap()
+            .hidden_inputs,
+        vec![0],
+        "the node answered the new wiring with nothing having notified it"
+    );
+}
+
+/// Blender asks a node type whether its sockets may be re-synchronised with its
+/// declaration. There is nothing to synchronise: a node's signature IS its
+/// kind's, so changing the kind changes the signature in the same instant.
+#[test]
+fn blender_node_can_sync_sockets() {
+    let mut chain = chain();
+    let before = chain.document.signature(ROOT, chain.add).unwrap();
+    assert_eq!(before.inputs[1].name, "Addend");
+
+    chain.document.set_kind(ROOT, chain.add, Op::Mul).unwrap();
+    let after = chain.document.signature(ROOT, chain.add).unwrap();
+    assert_eq!(after.inputs[1].name, "Factor");
+    assert_eq!(
+        after.inputs[1].default_value(),
+        None,
+        "and its declared default came with it"
+    );
+}
+
+/// Blender calls a node type to copy its per-node storage. `adopt_from`
+/// destructures its source, so a field added to a node fails to compile until
+/// someone says whether a copy carries it — where a hand-written copy silently
+/// drops it (the defect R1589 found in this crate's own `move_nodes`).
+#[test]
+fn blender_node_copyfunc() {
+    let mut chain = chain();
+    let frame = chain
+        .document
+        .enframe(ROOT, &[chain.add], None)
+        .unwrap()
+        .frame;
+    chain.document.set_bypassed(ROOT, chain.add, true).unwrap();
+    chain
+        .document
+        .set_port_value(ROOT, chain.add, PortRef::input(0), Val::Number(7))
+        .unwrap();
+    {
+        let held = chain
+            .document
+            .tree_mut(ROOT)
+            .and_then(|t| t.node_mut(chain.add))
+            .unwrap();
+        held.label = Some("stage".into());
+        held.appearance.collapsed = true;
+    }
+
+    let copy = chain
+        .document
+        .duplicate(
+            ROOT,
+            &[chain.add],
+            (10, 10),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    let made = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .node(copy.nodes[0])
+        .unwrap();
+    assert_eq!(made.label.as_deref(), Some("stage"));
+    assert!(made.bypassed);
+    assert!(made.appearance.collapsed);
+    assert_eq!(made.values.get(&PortRef::input(0)), Some(&Val::Number(7)));
+    assert_eq!(
+        made.parent,
+        Some(frame),
+        "and it lands back inside its fence"
+    );
+}
+
+/// Blender calls a node type to initialise a new node. Here a node is born as
+/// its kind: `add_node` takes the body, and the ports and their declared
+/// defaults are there in the same call.
+#[test]
+fn blender_node_initfunc() {
+    let mut document: Document<Op> = Document::new("root");
+    let add = node(&mut document, Op::Add);
+
+    let signature = document.signature(ROOT, add).unwrap();
+    assert_eq!(signature.inputs.len(), 2);
+    assert_eq!(signature.inputs[0].default_value(), Some(&Val::Number(0)));
+    assert_eq!(signature.inputs[1].default_value(), Some(&Val::Number(1)));
+    assert_eq!(
+        document.evaluate(ROOT, add),
+        vec![Some(Val::Number(1))],
+        "and it computes from those defaults with nothing else supplied"
+    );
+}
+
+/// Blender calls a node type for the node's displayed label. Here the kind
+/// answers and an authored label overrides it, which is one derivation
+/// (`display_name`) rather than a callback each type has to remember.
+#[test]
+fn blender_node_labelfunc() {
+    let mut chain = chain();
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(chain.add)
+            .unwrap()
+            .display_name(),
+        "Add"
+    );
+
+    chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(chain.add))
+        .unwrap()
+        .label = Some("Total".into());
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(chain.add)
+            .unwrap()
+            .display_name(),
+        "Total"
+    );
+}
+
+/// Blender's tree type decides whether a wire may exist. Here that is
+/// `NodeKind::conversion`, declared once **as the conversion**, so "may this
+/// wire exist" and "what arrives along it" are one answer — Blender keeps three.
+#[test]
+fn blender_node_tree_validate_link() {
+    let mut document: Document<Op> = Document::new("root");
+    let two = num(&mut document, 2);
+    let word = node(&mut document, Op::Word("hi".into()));
+    let shout = node(&mut document, Op::Shout);
+    let double = node(&mut document, Op::Double);
+
+    assert!(
+        document
+            .connect(ROOT, Socket::new(word, 0), Socket::new(double, 0))
+            .is_err()
+    );
+    document
+        .connect(ROOT, Socket::new(two, 0), Socket::new(shout, 0))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, shout),
+        vec![Some(Val::Text("2".into()))],
+        "a number crossed into a Text port through the declared conversion"
+    );
+}
+
+/// Blender's tree type is called to update after a change. Here the standing
+/// check is `validate`, which is a question rather than a pass an edit has to
+/// remember to run — and it answers about a document that arrived from a file
+/// just as well as about one this process built.
+#[test]
+fn blender_node_tree_update() {
+    let mut chain = chain();
+    assert!(chain.document.validate().is_empty());
+    chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    assert!(chain.document.validate().is_empty());
+
+    let wire_form = serde_json::to_string(&chain.document).unwrap();
+    let round_trip: Document<Op> = serde_json::from_str(&wire_form).unwrap();
+    assert!(round_trip.validate().is_empty());
+}
+
+/// Blender's tree type makes a local copy of the tree to evaluate. Here a
+/// definition is forked, and the fork is independent: an edit through one
+/// instance does not reach the other.
+#[test]
+fn blender_node_tree_localize() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let second = chain
+        .document
+        .instantiate(ROOT, made.definition, 0, 300)
+        .unwrap();
+
+    let forked = chain.document.fork_definition(ROOT, second).unwrap();
+    assert_ne!(forked, made.definition);
+    assert_eq!(chain.document.instance_count(made.definition), 1);
+    assert_eq!(chain.document.instance_count(forked), 1);
+
+    chain
+        .document
+        .expose(forked, InterfaceSide::Input, Port::new("Extra", Ty::Number))
+        .unwrap();
+    assert_eq!(
+        chain.document.signature(ROOT, second).unwrap().inputs.len(),
+        3
+    );
+    assert_eq!(
+        chain
+            .document
+            .signature(ROOT, made.node)
+            .unwrap()
+            .inputs
+            .len(),
+        2,
+        "the original definition is untouched"
+    );
+}
+
+/// Blender's socket type builds an interface item from a socket. Here `expose`
+/// takes the **port itself**, so an interface port is a port — name, type and
+/// declared default together — rather than a second description of one.
+#[test]
+fn blender_node_socket_interface_from_socket() {
+    let mut document: Document<Op> = Document::new("root");
+    let definition = document.add_definition("Def");
+    let port = Port::new("Seed", Ty::Number).with_default(Val::Number(4));
+    document
+        .expose(definition, InterfaceSide::Input, port)
+        .unwrap();
+
+    let interface = document.tree(definition).unwrap().interface();
+    assert_eq!(interface.inputs()[0].name, "Seed");
+    assert_eq!(interface.inputs()[0].value_type(), Some(&Ty::Number));
+    assert_eq!(interface.inputs()[0].default_value(), Some(&Val::Number(4)));
+}
+
+/// And the other direction: Blender's socket type initialises a node socket
+/// from an interface item. Here an instance's socket **is** the interface port,
+/// derived, so the two cannot describe different things.
+#[test]
+fn blender_node_socket_interface_init_socket() {
+    let mut document: Document<Op> = Document::new("root");
+    let definition = document.add_definition("Def");
+    document
+        .expose(
+            definition,
+            InterfaceSide::Input,
+            Port::new("Seed", Ty::Number).with_default(Val::Number(4)),
+        )
+        .unwrap();
+    let instance = document.instantiate(ROOT, definition, 0, 0).unwrap();
+
+    let signature = document.signature(ROOT, instance).unwrap();
+    let interface = document.tree(definition).unwrap().interface();
+    assert_eq!(signature.inputs.len(), 1);
+    assert_eq!(signature.inputs[0].name, interface.inputs()[0].name);
+    assert_eq!(signature.inputs[0].default_value(), Some(&Val::Number(4)));
+}
+
+// ---------------------------------------------------------- Unreal's node
+
+/// Unreal's node allocates its default pins. Here a kind **declares** its
+/// ports, so a node's sockets are derived from the kind rather than built by a
+/// call the node has to make and could forget.
+#[test]
+fn unreal_node_allocate_default_pins() {
+    let mut document: Document<Op> = Document::new("root");
+    let mul = node(&mut document, Op::Mul);
+    let signature = document.signature(ROOT, mul).unwrap();
+
+    assert_eq!(
+        signature
+            .inputs
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        Op::Mul
+            .inputs()
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(signature.outputs.len(), 1);
+}
+
+/// Unreal's node is told to destroy itself. Here removal is the document's, and
+/// it **names** what went — the links, and the members a deleted frame handed to
+/// the frame above rather than stranding on the canvas.
+#[test]
+fn unreal_node_destroy_node() {
+    let mut chain = chain();
+    let inner = chain
+        .document
+        .enframe(ROOT, &[chain.add], None)
+        .unwrap()
+        .frame;
+    let outer = chain
+        .document
+        .enframe(ROOT, &[chain.two], None)
+        .unwrap()
+        .frame;
+    chain.document.set_parent(ROOT, inner, Some(outer)).unwrap();
+
+    let removed = chain.document.remove_node(ROOT, inner).unwrap();
+    assert_eq!(removed.adopted, vec![chain.add]);
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(chain.add)
+            .unwrap()
+            .parent,
+        Some(outer),
+        "the member went to the frame ABOVE, not to the canvas"
+    );
+}
+
+/// Unreal asks a node which pin a value passes through when the node is
+/// disabled. Here the answer is derived from the **signature alone**, so
+/// unplugging a different port cannot change it — where Unreal's own equivalent
+/// ranks against a static type table and breaks ties on what happens to be wired.
+#[test]
+fn unreal_node_get_pass_through_pin() {
+    let mut chain = chain();
+    let before = chain.document.passthrough(ROOT, chain.add).unwrap();
+    assert_eq!(before.source_of(0), Some(0));
+
+    let second = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .link_into(Socket::new(chain.add, 1))
+        .map(|l| l.id)
+        .unwrap();
+    chain.document.disconnect(ROOT, second).unwrap();
+    assert_eq!(
+        chain
+            .document
+            .passthrough(ROOT, chain.add)
+            .unwrap()
+            .source_of(0),
+        Some(0),
+        "unplugging the other input did not move the route"
+    );
+}
+
+/// Unreal asks a node for a pin's displayed name. Here a port carries its name
+/// and the signature answers it, on an instance as well as on a kind.
+#[test]
+fn unreal_node_get_pin_display_name() {
+    let mut chain = chain();
+    let signature = chain.document.signature(ROOT, chain.add).unwrap();
+    assert_eq!(signature.inputs[0].name, "Augend");
+    assert_eq!(signature.outputs[0].name, "Out");
+
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let derived = chain.document.signature(ROOT, made.node).unwrap();
+    assert_eq!(derived.inputs.len(), 2);
+    assert!(derived.inputs.iter().all(|p| !p.name.is_empty()));
+}
+
+/// Unreal asks a node for the graphs it contains. Here containment is a
+/// document-level relation, so the nesting is readable in one call rather than
+/// one pointer at a time.
+#[test]
+fn unreal_node_get_sub_graphs() {
+    let mut chain = chain();
+    let inner = chain.document.group(ROOT, &[chain.add], "Inner").unwrap();
+    let outer = chain.document.group(ROOT, &[inner.node], "Outer").unwrap();
+
+    let containment = chain.document.containment();
+    assert!(containment.contains(&(outer.definition.0 as usize, inner.definition.0 as usize)));
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(outer.node)
+            .unwrap()
+            .body,
+        NodeBody::Group(outer.definition)
+    );
+}
+
+/// Unreal tells a node its connections changed. Here nothing is told, because
+/// nothing is stored: what the node computes is a function of the graph as it is
+/// when the question is asked.
+#[test]
+fn unreal_node_node_connection_list_changed() {
+    let mut chain = chain();
+    assert_eq!(
+        chain.document.evaluate(ROOT, chain.add),
+        vec![Some(Val::Number(5))]
+    );
+
+    let ten = num(&mut chain.document, 10);
+    wire(&mut chain.document, ten, 0, chain.add, 0);
+    assert_eq!(
+        chain.document.evaluate(ROOT, chain.add),
+        vec![Some(Val::Number(13))],
+        "the new answer needed no notification"
+    );
+}
+
+/// Unreal tells a node one of its pins was removed. Here removing an interface
+/// port names every link that had to go **with the tree it was in** — which is
+/// the point, since the ones that matter are at instances, in other trees.
+#[test]
+fn unreal_node_on_pin_removed() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let dropped = chain
+        .document
+        .unexpose(made.definition, InterfaceSide::Input, 0)
+        .unwrap();
+
+    assert!(dropped.iter().any(|d| d.tree == ROOT));
+    assert!(dropped.iter().any(|d| d.tree == made.definition));
+}
+
+/// Unreal's node is told it was renamed. Here a label is a field of the node, so
+/// a rename is an assignment — and it travels with a copy, which is what makes
+/// it a property of the node rather than of the editor.
+#[test]
+fn unreal_node_on_rename_node() {
+    let mut chain = chain();
+    chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(chain.add))
+        .unwrap()
+        .label = Some("Total".into());
+
+    let copy = chain
+        .document
+        .duplicate(
+            ROOT,
+            &[chain.add],
+            (10, 0),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(copy.nodes[0])
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("Total")
+    );
+}
+
+/// Unreal's comment node is told its text changed. A frame's label is the same
+/// field an ordinary node's is, so nothing here has a second text model.
+#[test]
+fn unreal_node_on_update_comment_text() {
+    let mut chain = chain();
+    let frame = chain
+        .document
+        .enframe(ROOT, &[chain.two], Some("inputs".into()))
+        .unwrap()
+        .frame;
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(frame)
+            .unwrap()
+            .display_name(),
+        "inputs"
+    );
+
+    chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(frame))
+        .unwrap()
+        .label = Some("sources".into());
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(frame)
+            .unwrap()
+            .display_name(),
+        "sources"
+    );
+}
+
+/// Unreal tells one **pin** its connections changed. Here a port's visibility is
+/// a derivation over the declaration and the wiring together, per port.
+#[test]
+fn unreal_node_pin_connection_list_changed() {
+    let mut chain = chain();
+    let mul = node(&mut chain.document, Op::Mul);
+    chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(mul))
+        .unwrap()
+        .appearance
+        .hide_unused_ports = true;
+    assert_eq!(
+        chain.document.visible_ports(ROOT, mul).unwrap().inputs,
+        Vec::<u32>::new()
+    );
+
+    wire(&mut chain.document, chain.two, 0, mul, 0);
+    assert_eq!(
+        chain.document.visible_ports(ROOT, mul).unwrap().inputs,
+        vec![0]
+    );
+    assert_eq!(
+        chain
+            .document
+            .visible_ports(ROOT, mul)
+            .unwrap()
+            .hidden_inputs,
+        vec![1]
+    );
+}
+
+/// Unreal tells a node a pin's default value changed. Here the authored value
+/// is what the port carries when nothing else supplies one, so writing it
+/// changes what the node computes and nothing has to be notified.
+#[test]
+fn unreal_node_pin_default_value_changed() {
+    let mut chain = chain();
+    let mul = node(&mut chain.document, Op::Mul);
+    wire(&mut chain.document, chain.two, 0, mul, 1);
+    assert_eq!(
+        chain.document.evaluate(ROOT, mul),
+        vec![Some(Val::Number(4))]
+    );
+
+    let previous = chain
+        .document
+        .set_port_value(ROOT, mul, PortRef::input(0), Val::Number(5))
+        .unwrap();
+    assert_eq!(previous, None, "and it says what it replaced");
+    assert_eq!(
+        chain.document.evaluate(ROOT, mul),
+        vec![Some(Val::Number(10))]
+    );
+}
+
+/// Unreal's node is told it was pasted. Here the paste **reports** what it did,
+/// so a caller never has to scan for what arrived attached and what did not.
+#[test]
+fn unreal_node_post_paste_node() {
+    let mut chain = chain();
+    let frame = chain
+        .document
+        .enframe(ROOT, &[chain.add], None)
+        .unwrap()
+        .frame;
+    let fragment = chain.document.extract(ROOT, &[chain.add]).unwrap();
+
+    let pasted = chain
+        .document
+        .insert(
+            ROOT,
+            &fragment,
+            (500, 500),
+            Crossings::KeepInbound,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(pasted.nodes.len(), 1);
+    assert_eq!(
+        pasted.reframed, pasted.nodes,
+        "the copy landed back inside the fence its original is in"
+    );
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(pasted.nodes[0])
+            .unwrap()
+            .parent,
+        Some(frame)
+    );
+    assert_eq!(
+        pasted.reattached.len(),
+        2,
+        "and the feeds it was cut from were restored and NAMED"
+    );
+    assert!(pasted.unattached.is_empty());
+}
+
+/// Unreal's node is told it was just placed, so it can finish itself. Here a
+/// placed node is complete by construction: it answers its signature, its
+/// declared defaults and its value in the same breath as its id.
+#[test]
+fn unreal_node_post_placed_new_node() {
+    let mut document: Document<Op> = Document::new("root");
+    let add = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 40, 90)
+        .unwrap();
+
+    let placed = document.tree(ROOT).unwrap().node(add).unwrap();
+    assert_eq!((placed.x, placed.y), (40, 90));
+    assert_eq!(placed.appearance, Appearance::default());
+    assert_eq!(document.signature(ROOT, add).unwrap().inputs.len(), 2);
+    assert_eq!(document.evaluate(ROOT, add), vec![Some(Val::Number(1))]);
+    assert!(document.validate().is_empty());
+}
+
+/// Unreal prepares a node for copying. Here the copy is a **value** that carries
+/// the definitions it depends on, so it can be written to a file or sent to
+/// another process rather than living inside one editor's clipboard.
+#[test]
+fn unreal_node_prepare_for_copying() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let fragment = chain.document.extract(ROOT, &[made.node]).unwrap();
+
+    assert_eq!(fragment.definitions().count(), 1);
+    let wire_form = serde_json::to_string(&fragment).unwrap();
+    let back: Fragment<Op> = serde_json::from_str(&wire_form).unwrap();
+    assert_eq!(back.definitions().count(), 1);
+
+    let mut elsewhere: Document<Op> = Document::new("other");
+    let landed = elsewhere
+        .insert(ROOT, &back, (0, 0), Crossings::Drop, Definitions::Share)
+        .unwrap();
+    assert_eq!(
+        landed.definitions_added.len(),
+        1,
+        "the definition travelled with it"
+    );
+}
+
+/// Unreal resizes a node. A width is authored on any node; a **height** is
+/// authored only where nothing derives it, which is what tells a frame apart
+/// from a node whose height is a function of its ports.
+#[test]
+fn unreal_node_resize_node() {
+    let mut chain = chain();
+    let frame = chain
+        .document
+        .enframe(ROOT, &[chain.add], None)
+        .unwrap()
+        .frame;
+    {
+        let looks = &mut chain
+            .document
+            .tree_mut(ROOT)
+            .and_then(|t| t.node_mut(frame))
+            .unwrap()
+            .appearance;
+        looks.width = Some(400);
+        looks.height = Some(240);
+    }
+    chain
+        .document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(chain.add))
+        .unwrap()
+        .appearance
+        .width = Some(180);
+
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(frame)
+            .unwrap()
+            .appearance
+            .height,
+        Some(240)
+    );
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(chain.add)
+            .unwrap()
+            .appearance
+            .height,
+        None,
+        "an ordinary node's height stays derived even after its width is authored"
+    );
+}
+
+// -------------------------------------------------------- Unreal's schema
+
+/// Unreal asks the schema whether two pin types are equivalent. Here that is
+/// `NodeKind::conversion` answering `Direct`, which is the same declaration that
+/// decides what arrives.
+#[test]
+fn unreal_schema_are_pin_types_equivalent() {
+    assert!(matches!(
+        Op::conversion(&Ty::Number, &Ty::Number),
+        Conversion::Direct
+    ));
+    assert!(matches!(
+        Op::conversion(&Ty::Text, &Ty::Text),
+        Conversion::Direct
+    ));
+    assert!(matches!(
+        Op::conversion(&Ty::Number, &Ty::Text),
+        Conversion::Converted(_)
+    ));
+    assert!(Op::conversion(&Ty::Text, &Ty::Number).is_refused());
+}
+
+/// Unreal asks whether two **pins** are compatible, which is a different
+/// question from whether their types are: a port also has a side and a flow.
+/// `crossing` is the one question every derivation in this crate asks.
+#[test]
+fn unreal_schema_are_pins_compatible() {
+    let number = Port::new("A", Ty::Number);
+    let text = Port::new("B", Ty::Text);
+    assert!(pinion_node_graph::crossing::<Op>(&number, &text).is_allowed());
+    assert!(pinion_node_graph::crossing::<Op>(&number, &text).converts());
+    assert!(pinion_node_graph::crossing::<Op>(&text, &number).is_refused());
+
+    let control: Port<Ty, Val> = Port::control("Then");
+    assert!(
+        pinion_node_graph::crossing::<Op>(&number, &control).is_refused(),
+        "a value port and a control port never pair, whatever their types"
+    );
+}
+
+/// Unreal asks the schema whether a connection may be made. Here `connect`
+/// answers it and **names** whichever of the four things failed — including the
+/// path a refused wire would have closed.
+#[test]
+fn unreal_schema_can_create_connection() {
+    let mut document: Document<Op> = Document::new("root");
+    let first = node(&mut document, Op::Double);
+    let second = node(&mut document, Op::Double);
+    wire(&mut document, first, 0, second, 0);
+
+    let cycle = document.connect(ROOT, Socket::new(second, 0), Socket::new(first, 0));
+    let error = cycle.unwrap_err();
+    let named = format!("{error}");
+    assert!(named.contains("cycle") || named.contains("path"), "{named}");
+
+    let word = node(&mut document, Op::Word("x".into()));
+    assert!(
+        document
+            .connect(ROOT, Socket::new(word, 0), Socket::new(first, 0))
+            .is_err()
+    );
+}
+
+/// Unreal asks whether a node may be encapsulated into a subgraph. Here the
+/// refusal is by **reachability** and it names the walk, where Unreal's own
+/// `CanEncapuslateNode` answers a bare bool.
+#[test]
+fn unreal_schema_can_encapuslate_node() {
+    let mut document: Document<Op> = Document::new("root");
+    let source = num(&mut document, 2);
+    let outside = node(&mut document, Op::Double);
+    let sink = node(&mut document, Op::Double);
+    wire(&mut document, source, 0, outside, 0);
+    wire(&mut document, outside, 0, sink, 0);
+
+    let refused = document.group(ROOT, &[source, sink], "Bad");
+    assert!(
+        refused.is_err(),
+        "an unselected node both fed by and feeding the selection would make the tree cyclic"
+    );
+    assert!(
+        document
+            .group(ROOT, &[source, outside, sink], "Good")
+            .is_ok()
+    );
+}
+
+/// ★ Unreal's schema materialises a whole conversion **node** into the graph
+/// when a wire needs one, so the graph the user sees is not the graph they drew.
+/// Here the conversion is a property of the link and costs no node at all.
+#[test]
+fn unreal_schema_create_automatic_conversion_node_and_connections() {
+    let mut document: Document<Op> = Document::new("root");
+    let two = num(&mut document, 2);
+    let shout = node(&mut document, Op::Shout);
+    let before = document.tree(ROOT).unwrap().node_count();
+
+    let made = document
+        .connect(ROOT, Socket::new(two, 0), Socket::new(shout, 0))
+        .unwrap();
+    assert_eq!(document.tree(ROOT).unwrap().node_count(), before);
+
+    let conversion = document.link_conversion(ROOT, made.link).unwrap();
+    assert!(conversion.converts(), "and the wire SAYS it converts");
+    assert_eq!(
+        document.evaluate(ROOT, shout),
+        vec![Some(Val::Text("2".into()))]
+    );
+}
+
+/// Unreal asks whether a pin still holds its default value. Here that is the
+/// authored value beside the declared one, and the two are separate questions
+/// with separate answers.
+#[test]
+fn unreal_schema_does_default_value_match() {
+    let mut chain = chain();
+    let mul = node(&mut chain.document, Op::Mul);
+    let declared = chain.document.signature(ROOT, mul).unwrap().inputs[0]
+        .default_value()
+        .cloned();
+    assert_eq!(declared, Some(Val::Number(2)));
+    assert_eq!(
+        chain.document.port_value(ROOT, mul, PortRef::input(0)),
+        None
+    );
+
+    chain
+        .document
+        .set_port_value(ROOT, mul, PortRef::input(0), Val::Number(2))
+        .unwrap();
+    assert_eq!(
+        chain.document.port_value(ROOT, mul, PortRef::input(0)),
+        Some(&Val::Number(2)),
+        "authored to the SAME value as the declaration, and still distinguishable from unset"
+    );
+}
+
+/// Unreal asks the schema how to display a graph. Here a tree carries its name
+/// and the edit path reads the chain of them, so "where am I" is one call.
+#[test]
+fn unreal_schema_get_graph_display_information() {
+    let mut chain = chain();
+    let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
+    let mut path = EditPath::root();
+    path.enter(&chain.document, made.node).unwrap();
+
+    let crumbs = chain.document.tree(made.definition).map(|t| t.name.clone());
+    assert_eq!(crumbs.as_deref(), Some("Sum"));
+    assert_eq!(path.breadcrumb(&chain.document).len(), 2);
+    assert!(
+        path.breadcrumb(&chain.document)
+            .iter()
+            .any(|c| c.contains("Sum"))
+    );
+}
+
+/// Unreal asks whether a pin's default value is valid. Here the write is
+/// **type-checked** through `NodeKind::value_type` and refused by name.
+#[test]
+fn unreal_schema_is_pin_default_valid() {
+    let mut chain = chain();
+    let mul = node(&mut chain.document, Op::Mul);
+    let refused =
+        chain
+            .document
+            .set_port_value(ROOT, mul, PortRef::input(0), Val::Text("nope".into()));
+    assert!(refused.is_err());
+    assert_eq!(
+        chain.document.port_value(ROOT, mul, PortRef::input(0)),
+        None
+    );
+
+    chain
+        .document
+        .set_port_value(ROOT, mul, PortRef::input(0), Val::Number(3))
+        .unwrap();
+    assert_eq!(
+        chain.document.port_value(ROOT, mul, PortRef::input(0)),
+        Some(&Val::Number(3))
+    );
+}
+
+/// Unreal asks the schema to place a node. Here position is a field, and moving
+/// a frame carries what it contains — which is what the containment relation is
+/// for.
+#[test]
+fn unreal_schema_set_node_position() {
+    let mut chain = chain();
+    let frame = chain
+        .document
+        .enframe(ROOT, &[chain.two, chain.three], None)
+        .unwrap()
+        .frame;
+    let before = chain
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .node(chain.two)
+        .unwrap()
+        .x;
+
+    let moved = chain.document.translate(ROOT, frame, 60, -20).unwrap();
+    assert_eq!(moved.len(), 3);
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(chain.two)
+            .unwrap()
+            .x,
+        before + 60
+    );
+    assert_eq!(
+        chain
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(chain.add)
+            .unwrap()
+            .x,
+        0
+    );
+}
+
+/// Unreal's schema has one setter per value type (`TrySetDefaultValue`,
+/// `TrySetDefaultText`, `TrySetDefaultObject`). Here the value is the taxonomy's
+/// own, so there is one setter — and it is gated by the **signature**, refusing
+/// a port the node does not have and naming the arity.
+#[test]
+fn unreal_schema_try_set_default_value() {
+    let mut chain = chain();
+    let mul = node(&mut chain.document, Op::Mul);
+    let refused = chain
+        .document
+        .set_port_value(ROOT, mul, PortRef::input(9), Val::Number(1));
+    assert!(refused.is_err());
+    let named = format!("{}", refused.unwrap_err());
+    assert!(named.contains('9') || named.contains('2'), "{named}");
+
+    chain
+        .document
+        .set_port_value(ROOT, mul, PortRef::output(0), Val::Number(11))
+        .unwrap();
+    assert_eq!(
+        chain.document.port_value(ROOT, mul, PortRef::output(0)),
+        Some(&Val::Number(11)),
+        "an OUTPUT may be authored too: one sentence covers both sides"
+    );
 }

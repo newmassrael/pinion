@@ -3,24 +3,28 @@
     "NODE_OT_activate_viewer": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_add_closure_zone": {
       "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_add_collection": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_add_color": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
@@ -34,6 +38,7 @@
     "NODE_OT_add_foreach_geometry_element_zone": {
       "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -47,6 +52,7 @@
     "NODE_OT_add_group_asset": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
@@ -60,66 +66,77 @@
     "NODE_OT_add_image": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_add_import_node": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_add_mask": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_add_material": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_add_node": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_add_object": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_add_repeat_zone": {
       "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_add_reroute": {
       "covered_by": "no reroute body: a transparent 1-in/1-out node that inherits its type",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "absent",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_add_simulation_zone": {
       "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_add_typed_bundle": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_add_zone": {
       "covered_by": "a ZONE: a bracketed region of ONE tree with evaluation semantics \u2014 neither a Frame (no semantics) nor a Group (another tree)",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "absent",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -133,30 +150,35 @@
     "NODE_OT_backimage_fit": {
       "covered_by": "Blender's compositor backdrop image",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_view.cc"
     },
     "NODE_OT_backimage_move": {
       "covered_by": "Blender's compositor backdrop image",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_view.cc"
     },
     "NODE_OT_backimage_sample": {
       "covered_by": "Blender's compositor backdrop image",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_view.cc"
     },
     "NODE_OT_backimage_zoom": {
       "covered_by": "Blender's compositor backdrop image",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_view.cc"
     },
     "NODE_OT_clear_viewer_border": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -184,24 +206,28 @@
     "NODE_OT_connect_to_output": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/connect_to_output.py"
     },
     "NODE_OT_cryptomatte_layer_add": {
       "covered_by": "Blender's cryptomatte compositing",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_cryptomatte_layer_remove": {
       "covered_by": "Blender's cryptomatte compositing",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_default_group_width_set": {
       "covered_by": "a user preference, not a graph fact",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_group.cc"
     },
@@ -215,6 +241,7 @@
     "NODE_OT_delete_copy_reconnect": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
@@ -235,6 +262,7 @@
     "NODE_OT_detach_translate_attach": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
@@ -248,42 +276,49 @@
     "NODE_OT_duplicate_compositing_modifier_node_group": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_duplicate_compositing_node_group": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_duplicate_move": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
     "NODE_OT_duplicate_move_keep_inputs": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
     "NODE_OT_duplicate_move_linked": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
     "NODE_OT_find_node": {
       "covered_by": "a search across the tree AND the path to the hit",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "absent",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
     "NODE_OT_gltf_settings_node_operator": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/io_scene_gltf2/blender/com/gltf2_blender_ui.py"
     },
@@ -332,6 +367,7 @@
     "NODE_OT_hide_socket_toggle": {
       "covered_by": "per-socket manual hide: Appearance derives hidden ports and cannot be told",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "absent",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -345,6 +381,7 @@
     "NODE_OT_insert_offset": {
       "covered_by": "drop a node onto a link and push the rest along",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "absent",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -358,6 +395,7 @@
     "NODE_OT_interface_item_make_panel_toggle": {
       "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "absent",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -371,6 +409,7 @@
     "NODE_OT_interface_item_new_panel_toggle": {
       "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "absent",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -384,6 +423,7 @@
     "NODE_OT_interface_item_unlink_panel_toggle": {
       "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "absent",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -397,6 +437,7 @@
     "NODE_OT_join_named": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
@@ -417,6 +458,7 @@
     "NODE_OT_link_drag_operation_test": {
       "covered_by": "an internal drag-state probe, not a user capability",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/link_drag_search.cc"
     },
@@ -430,6 +472,7 @@
     "NODE_OT_link_viewer": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -457,12 +500,14 @@
     "NODE_OT_move_detach_links": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
     "NODE_OT_move_detach_links_release": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
@@ -476,24 +521,28 @@
     "NODE_OT_new_compositing_node_group": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
     "NODE_OT_new_geometry_node_group_assign": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/geometry_nodes.py"
     },
     "NODE_OT_new_geometry_node_group_tool": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/geometry_nodes.py"
     },
     "NODE_OT_new_geometry_nodes_modifier": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/geometry_nodes.py"
     },
@@ -507,138 +556,161 @@
     "NODE_OT_node_color_preset_add": {
       "covered_by": "a colour preset list, Blender UI furniture",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/presets.py"
     },
     "NODE_OT_node_copy_color": {
       "covered_by": "colour is not in Appearance \u2014 a representation decision comes first",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "absent",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_nw_add_reroutes": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/add_reroutes.py"
     },
     "NODE_OT_nw_add_texture": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/add_texture_setup.py"
     },
     "NODE_OT_nw_add_textures_for_principled": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/add_principled_setup.py"
     },
     "NODE_OT_nw_align_nodes": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/align_selected.py"
     },
     "NODE_OT_nw_batch_change": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/batch_change.py"
     },
     "NODE_OT_nw_center_nodes": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/center_selected.py"
     },
     "NODE_OT_nw_clear_label": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/labels_clear.py"
     },
     "NODE_OT_nw_copy_label": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/copy_label.py"
     },
     "NODE_OT_nw_copy_settings": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/copy_settings.py"
     },
     "NODE_OT_nw_detach_outputs": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/detach_outputs.py"
     },
     "NODE_OT_nw_factor": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/change_factor.py"
     },
     "NODE_OT_nw_lazy_connect": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/lazy_connect.py"
     },
     "NODE_OT_nw_lazy_mix": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/lazy_mix.py"
     },
     "NODE_OT_nw_link_active_to_selected": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/link_active_to_selected.py"
     },
     "NODE_OT_nw_link_out": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/link_to_output.py"
     },
     "NODE_OT_nw_merge_nodes": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/merge_selected.py"
     },
     "NODE_OT_nw_modify_labels": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/labels_modify.py"
     },
     "NODE_OT_nw_reload_images": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/reload_images.py"
     },
     "NODE_OT_nw_reset_nodes": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/reset_selected.py"
     },
     "NODE_OT_nw_save_viewer": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/save_viewer_image.py"
     },
     "NODE_OT_nw_select_parent_child": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/addons_core/node_wrangler/operators/select_hierarchy.py"
     },
@@ -666,12 +738,14 @@
     "NODE_OT_read_viewlayers": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_render_changed": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -685,12 +759,14 @@
     "NODE_OT_select": {
       "covered_by": "a pointer gesture over painted geometry, which the binding owns",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
     "NODE_OT_select_all": {
       "covered_by": "a pointer gesture over painted geometry, which the binding owns",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
@@ -725,6 +801,7 @@
     "NODE_OT_select_link_viewer": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
@@ -752,12 +829,14 @@
     "NODE_OT_shader_script_update": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_simple_operator": {
       "covered_by": "an add-on, not Blender's node system",
       "mechanism": "python-addon",
+      "proven_by": "",
       "verdict": "addon",
       "where": "scripts/templates_py/Operator/node.py"
     },
@@ -771,12 +850,14 @@
     "NODE_OT_swap_empty_group": {
       "covered_by": "no verb changes which definition an instance stands for",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "absent",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_swap_group_asset": {
       "covered_by": "no verb changes which definition an instance stands for",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "absent",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
@@ -790,36 +871,42 @@
     "NODE_OT_swap_typed_bundle": {
       "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_swap_zone": {
       "covered_by": "changing a zone's kind, which needs zones",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "absent",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_test_inlining_shader_nodes": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_toggle_viewer": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_translate_attach": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
     "NODE_OT_translate_attach_remove_on_cancel": {
       "covered_by": "a macro over other operators \u2014 covering the parts covers it",
       "mechanism": "macro",
+      "proven_by": "",
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
@@ -833,98 +920,328 @@
     "NODE_OT_view_all": {
       "covered_by": "pure viewport framing; the crate deliberately holds no viewport",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_view.cc"
     },
     "NODE_OT_view_selected": {
       "covered_by": "pure viewport framing; the crate deliberately holds no viewport",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_view.cc"
     },
     "NODE_OT_viewer_border": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_viewer_shortcut_get": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
     },
     "NODE_OT_viewer_shortcut_set": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "python-core",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "scripts/startup/bl_operators/node.py"
+    },
+    "bNodeSocketType::draw": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "bNodeSocketType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeSocketType::draw_color": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "bNodeSocketType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeSocketType::draw_color_simple": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "bNodeSocketType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeSocketType::free_self": {
+      "covered_by": "Blender's DNA type-registration lifecycle, not its node system",
+      "mechanism": "bNodeSocketType",
+      "verdict": "host-framework",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeSocketType::interface_draw": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "bNodeSocketType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeSocketType::interface_from_socket": {
+      "covered_by": "Document::expose takes the PORT itself, so an interface port is a port",
+      "mechanism": "bNodeSocketType",
+      "proven_by": "pinion-node-graph::blender_node_socket_interface_from_socket",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeSocketType::interface_init_socket": {
+      "covered_by": "an instance's socket IS the interface port, derived rather than initialised from it",
+      "mechanism": "bNodeSocketType",
+      "proven_by": "pinion-node-graph::blender_node_socket_interface_init_socket",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeTreeType::foreach_nodeclass": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "bNodeTreeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeTreeType::get_from_context": {
+      "covered_by": "finding the tree from the editor's own context",
+      "mechanism": "bNodeTreeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeTreeType::localize": {
+      "covered_by": "Document::fork_definition copies a tree, and the copy is independent",
+      "mechanism": "bNodeTreeType",
+      "proven_by": "pinion-node-graph::blender_node_tree_localize",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeTreeType::poll": {
+      "covered_by": "whether this tree kind may be shown in this editor",
+      "mechanism": "bNodeTreeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeTreeType::update": {
+      "covered_by": "Document::validate is a STANDING check rather than an update pass an edit has to remember to run",
+      "mechanism": "bNodeTreeType",
+      "proven_by": "pinion-node-graph::blender_node_tree_update",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeTreeType::valid_socket_type": {
+      "covered_by": "no per-tree restriction on which socket types may appear",
+      "mechanism": "bNodeTreeType",
+      "verdict": "absent",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeTreeType::validate_link": {
+      "covered_by": "NodeKind::conversion, declared once AS the conversion, so legality and what arrives cannot disagree",
+      "mechanism": "bNodeTreeType",
+      "proven_by": "pinion-node-graph::blender_node_tree_validate_link",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::add_ui_poll": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "bNodeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::can_sync_sockets": {
+      "covered_by": "the signature is DERIVED from the kind, so a node's sockets cannot go out of step",
+      "mechanism": "bNodeType",
+      "proven_by": "pinion-node-graph::blender_node_can_sync_sockets",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::copyfunc": {
+      "covered_by": "Node::adopt_from destructures its source, so a field added to a node cannot be dropped by a copy",
+      "mechanism": "bNodeType",
+      "proven_by": "pinion-node-graph::blender_node_copyfunc",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::copyfunc_api": {
+      "covered_by": "Blender's RNA property-system lifecycle, not its node system",
+      "mechanism": "bNodeType",
+      "verdict": "host-framework",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::draw_backdrop": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "bNodeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::draw_buttons": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "bNodeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::draw_buttons_ex": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "bNodeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::free_self": {
+      "covered_by": "Blender's DNA type-registration lifecycle, not its node system",
+      "mechanism": "bNodeType",
+      "verdict": "host-framework",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::freefunc": {
+      "covered_by": "Blender's DNA type-registration lifecycle, not its node system",
+      "mechanism": "bNodeType",
+      "verdict": "host-framework",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::freefunc_api": {
+      "covered_by": "Blender's RNA property-system lifecycle, not its node system",
+      "mechanism": "bNodeType",
+      "verdict": "host-framework",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::initfunc": {
+      "covered_by": "add_node takes the body, so a node is born as its kind with that kind's declared port defaults",
+      "mechanism": "bNodeType",
+      "proven_by": "pinion-node-graph::blender_node_initfunc",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::initfunc_api": {
+      "covered_by": "Blender's RNA property-system lifecycle, not its node system",
+      "mechanism": "bNodeType",
+      "verdict": "host-framework",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::insert_link": {
+      "covered_by": "a kind cannot intervene when a link is dropped on it; connect decides centrally from the signature and the conversion relation",
+      "mechanism": "bNodeType",
+      "verdict": "absent",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::labelfunc": {
+      "covered_by": "Node::display_name derives from the kind and Node::label overrides it",
+      "mechanism": "bNodeType",
+      "proven_by": "pinion-node-graph::blender_node_labelfunc",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::poll": {
+      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "mechanism": "bNodeType",
+      "verdict": "absent",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::poll_instance": {
+      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "mechanism": "bNodeType",
+      "verdict": "absent",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::register_operators": {
+      "covered_by": "a node type registering Blender operators - its own UI mechanism",
+      "mechanism": "bNodeType",
+      "verdict": "app-content",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::ui_class": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "bNodeType",
+      "verdict": "absent",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::ui_description_fn": {
+      "covered_by": "a port and a node carry a name and no description",
+      "mechanism": "bNodeType",
+      "verdict": "absent",
+      "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "bNodeType::updatefunc": {
+      "covered_by": "every derived fact is recomputed on read, so a node is never TOLD the tree changed",
+      "mechanism": "bNodeType",
+      "proven_by": "pinion-node-graph::blender_node_updatefunc",
+      "verdict": "have",
+      "where": "source/blender/blenkernel/BKE_node.hh"
     }
   },
   "unreal": {
     "AddBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AddExecutionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AddOptionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AddParentNode": {
       "covered_by": "Unreal's Blueprint/level subject matter",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AlignNodesBottom": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AlignNodesCenter": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AlignNodesLeft": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AlignNodesMiddle": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AlignNodesRight": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AlignNodesTop": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "AssignReferencedActor": {
       "covered_by": "Unreal's Blueprint/level subject matter",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -952,18 +1269,21 @@
     "ChangePinType": {
       "covered_by": "per-PIN type: a wildcard port resolved per node, where set_kind changes the whole node",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "ClearAllQuickJumps": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "ClearQuickJump": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -991,12 +1311,14 @@
     "ConvertEventToFunction": {
       "covered_by": "Unreal's Blueprint/level subject matter",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "ConvertFunctionToEvent": {
       "covered_by": "Unreal's Blueprint/level subject matter",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1010,12 +1332,14 @@
     "CreateCustomEvent": {
       "covered_by": "Unreal's Blueprint/level subject matter",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "CreateMatchingFunction": {
       "covered_by": "Unreal's Blueprint/level subject matter",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1029,6 +1353,7 @@
     "DisableBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1042,18 +1367,21 @@
     "DistributeNodesHorizontally": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "DistributeNodesVertically": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "EnableBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1067,12 +1395,14 @@
     "EnableNodes_Always": {
       "covered_by": "a build-configuration flag on Unreal's own node enablement",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "EnableNodes_DevelopmentOnly": {
       "covered_by": "a build-configuration flag on Unreal's own node enablement",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1086,54 +1416,63 @@
     "FindAndReplaceReferences": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "FindReferences": {
       "covered_by": "a search across the tree and the path to the hit \u2014 Blender's find_node",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "FindReferencesByClassMemberGlobal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "FindReferencesByClassMemberLocal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "FindReferencesByNameGlobal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "FindReferencesByNameLocal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "GetFindReferences": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "GoToDefinition": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "GoToDocumentation": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1154,18 +1493,21 @@
     "InsertExecutionPinAfter": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "InsertExecutionPinBefore": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "OpenInNewTab": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1186,24 +1528,28 @@
     "PromoteToLocalVariable": {
       "covered_by": "VARIABLES are Unreal's state model, and R1600 recorded why this crate's only state is a delay",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "PromoteToVariable": {
       "covered_by": "VARIABLES are Unreal's state model, and R1600 recorded why this crate's only state is a delay",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "QuickJump": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "RecombineStructPin": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1217,30 +1563,35 @@
     "RemoveBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "RemoveExecutionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "RemoveOptionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "RemoveOtherStructVarPins": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "RemoveThisStructVarPin": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1254,6 +1605,7 @@
     "RestoreAllStructVarPins": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1274,12 +1626,14 @@
     "SelectReferenceInLevel": {
       "covered_by": "Unreal's Blueprint/level subject matter",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "SetQuickJump": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1293,60 +1647,1292 @@
     "SplitStructPin": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "StackNodesHorizontally": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "StackNodesVertically": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "StartWatchingPin": {
       "covered_by": "WATCHES: a named port whose value is reported every step",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "StopWatchingPin": {
       "covered_by": "WATCHES: a named port whose value is reported every step",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "StraightenConnections": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "SummonCreateNodeMenu": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "ToggleBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "UEdGraphNode::AddPinSearchMetaDataInfo": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::AddSearchMetaDataInfo": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::AllocateDefaultPins": {
+      "covered_by": "a kind DECLARES its ports, so a node's sockets are derived rather than allocated",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_allocate_default_pins",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::AutowireNewNode": {
+      "covered_by": "dropping a node onto a wire and having it wire itself - Blender's insert_offset",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::BeginDestroy": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CanCreateUnderSpecifiedSchema": {
+      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CanDuplicateNode": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CanJumpToDefinition": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CanPasteHere": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CanSplitPin": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CanUserDeleteNode": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CanUserEditPinAdvancedViewFlag": {
+      "covered_by": "an ADVANCED-view class of port, hidden by default and revealed per node",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CreateNodeImage": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CreateUniquePinName": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::CreateVisualWidget": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::DestroyNode": {
+      "covered_by": "Document::remove_node, which NAMES the links that had to go and the members a deleted frame handed up",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_destroy_node",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::DiffProperties": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ExportCustomProperties": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::FindDiffs": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GatherForLocalization": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetCanRenameNode": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetDeprecationResponse": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetDescriptiveCompiledName": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetDocumentationExcerptName": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetDocumentationLink": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetFindReferenceSearchString": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetFindReferenceSearchString_Impl": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetIconAndTint": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetJumpTargetForDoubleClick": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetKeywords": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetMenuEntries": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetNodeBodyTintColor": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetNodeCommentColor": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetNodeContextMenuActions": {
+      "covered_by": "which menu items a node offers - the editor's menu, which the binding owns",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetNodeTitle": {
+      "covered_by": "Node::display_name derives from the kind and Node::label overrides it",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::blender_node_labelfunc",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetNodeTitleColor": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetNodeTitleTextColor": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetPassThroughPin": {
+      "covered_by": "Document::passthrough, derived from the SIGNATURE alone rather than from the wiring",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_get_pass_through_pin",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetPinDisplayName": {
+      "covered_by": "a Port carries its name and Document::signature answers it",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_get_pin_display_name",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetPinHoverText": {
+      "covered_by": "a port and a node carry a name and no description",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetPinMetaData": {
+      "covered_by": "a port and a node carry a name and no description",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetPinNameOverride": {
+      "covered_by": "a port's name comes from the kind and a node cannot override it",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetPropertyNameAndValueForDiff": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetSubGraphs": {
+      "covered_by": "Document::containment answers the nesting, and tree() the definition an instance stands for",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_get_sub_graphs",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetTooltipText": {
+      "covered_by": "a port and a node carry a name and no description",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::GetVisualWarningTooltipText": {
+      "covered_by": "a node has no WARNING state - a diagnostic a kind attaches to itself",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::HasDeprecatedReference": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::HasExternalDependencies": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ImportCustomProperties": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::IncludeParentNodeContextMenu": {
+      "covered_by": "menu composition, which the binding owns",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::IsCompatibleWithGraph": {
+      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::IsCompilerRelevant": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::IsDeprecated": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::IsInDevelopmentMode": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::JumpToDefinition": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::MakeNameValidator": {
+      "covered_by": "no name-validation surface: a label is free text",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::NodeConnectionListChanged": {
+      "covered_by": "no notification exists because nothing is stored: a node's derived facts are recomputed on read",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_node_connection_list_changed",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::OnCommentBubbleToggled": {
+      "covered_by": "a comment bubble is a drawn affordance",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::OnPinRemoved": {
+      "covered_by": "Document::unexpose names every link that had to go, WITH the tree it was in",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_on_pin_removed",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::OnRenameNode": {
+      "covered_by": "Node::label is a field of the node, so a rename is an assignment and travels with a copy",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_on_rename_node",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::OnUpdateCommentText": {
+      "covered_by": "a frame's label is the same field an ordinary node's is",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_on_update_comment_text",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PinConnectionListChanged": {
+      "covered_by": "a port's visibility follows the wiring by derivation, with no per-pin notification",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_pin_connection_list_changed",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PinDefaultValueChanged": {
+      "covered_by": "Document::set_port_value changes what the node computes with nothing to notify",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_pin_default_value_changed",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PinTypeChanged": {
+      "covered_by": "per-PIN type: a wildcard port resolved per node, where set_kind changes the whole node",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PostEditChangeProperty": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PostEditUndo": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PostLoad": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PostPasteNode": {
+      "covered_by": "Document::insert REPORTS what it did - reattached, unattached, reframed, unframed",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_post_paste_node",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PostPlacedNewNode": {
+      "covered_by": "a placed node is complete by construction: it answers its signature, its defaults and its value with no second call",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_post_placed_new_node",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PreSave": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::PrepareForCopying": {
+      "covered_by": "Document::extract answers a Fragment carrying the DEFINITIONS it depends on",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_prepare_for_copying",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ReconstructNode": {
+      "covered_by": "the signature is derived from the kind, and set_kind names everything that did not survive",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_reconstruct_nodes",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::RemovePinAt": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ResizeNode": {
+      "covered_by": "Appearance::width and height, where a frame's height is authored and an ordinary node's is derived",
+      "mechanism": "UEdGraphNode",
+      "proven_by": "pinion-node-graph::unreal_node_resize_node",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::Serialize": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphNode",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ShouldDrawNodeAsControlPointOnly": {
+      "covered_by": "no reroute body: a transparent 1-in/1-out node that inherits its type",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ShouldMergeChildGraphs": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ShouldOverridePinNames": {
+      "covered_by": "a port's name comes from the kind and a node cannot override it",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ShowPaletteIconOnNode": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ShowVisualWarning": {
+      "covered_by": "a node has no WARNING state - a diagnostic a kind attaches to itself",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::SupportsCommentBubble": {
+      "covered_by": "a comment bubble is a drawn affordance",
+      "mechanism": "UEdGraphNode",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphNode::ValidateNodeDuringCompilation": {
+      "covered_by": "a KIND cannot contribute a rule to Document::validate - the standing check is the crate's alone",
+      "mechanism": "UEdGraphNode",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
+    },
+    "UEdGraphSchema::AddAction": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::AddActionList": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::AddReferencedObjects": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::AllowsFunctionVariants": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::AllowsFuzzyActionFiltering": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ArePinTypesEquivalent": {
+      "covered_by": "NodeKind::conversion answering Conversion::Direct is exactly this question",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_are_pin_types_equivalent",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ArePinsCompatible": {
+      "covered_by": "crossing() is the ONE question every derivation asks about a pair of ports",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_are_pins_compatible",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::BackwardCompatibilityNodeConversion": {
+      "covered_by": "no versioned migration of a document's node kinds",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::BeginGraphDragAction": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::BreakNodeLinks": {
+      "covered_by": "Document::disconnect over the links touching a node, each handed back",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_break_node_links",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::BreakPinLinks": {
+      "covered_by": "Document::disconnect scoped to one end of one socket",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_break_pin_links",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::BreakSinglePinLink": {
+      "covered_by": "Document::disconnect, which answers the link it removed",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_break_this_link",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanBeDeleted": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanBeRenamed": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanCreateConnection": {
+      "covered_by": "Document::connect checks four things and NAMES whichever failed, including the path a refused wire would close",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_can_create_connection",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanCreateNewNodes": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanDuplicateGraph": {
+      "covered_by": "a node cannot refuse an edit; there is no per-node permission surface",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanEncapuslateNode": {
+      "covered_by": "Document::group refuses by REACHABILITY and names the walk",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_can_encapuslate_node",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanGraphBeDropped": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanMergeNodes": {
+      "covered_by": "merging two nodes into one",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanRelinkConnectionToPin": {
+      "covered_by": "RELINKING: moving an existing wire's end to another port",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanShowDataTooltipForPin": {
+      "covered_by": "a port and a node carry a name and no description",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CanVariableBeDropped": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ClearPinWatch": {
+      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ConstructBasicPinTooltip": {
+      "covered_by": "a port and a node carry a name and no description",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CopyPinLinks": {
+      "covered_by": "copying one port's links onto another port",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CreateAutomaticConversionNodeAndConnections": {
+      "covered_by": "NodeKind::conversion - and showing an implicit conversion costs NO node, where this materialises one into the graph",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_create_automatic_conversion_node_and_connections",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CreateConnectionDrawingPolicy": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CreateDefaultNodesForGraph": {
+      "covered_by": "a schema supplying a graph's starter nodes",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CreatePromotedConnection": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::CreateSubstituteNode": {
+      "covered_by": "replacing a pasted node with another the graph will accept",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DoesDefaultValueMatch": {
+      "covered_by": "Document::port_value beside Port::default_value answers whether a node carries an authored value at all",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_does_default_value_match",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DoesDefaultValueMatchAutogenerated": {
+      "covered_by": "the same pair, read against the kind's own declaration",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_does_default_value_match",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DoesSupportPinWatching": {
+      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DropPinOnNode": {
+      "covered_by": "dragging a pin onto a node and having the node grow one",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DroppedAssetsOnGraph": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DroppedAssetsOnNode": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DroppedAssetsOnPin": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::DuplicateGraph": {
+      "covered_by": "Document::fork_definition copies a tree, and the copy is independent",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::blender_node_tree_localize",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::Empty": {
+      "covered_by": "clearing the action list a palette is built from",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::FadeNodeWhenDraggingOffPin": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ForceVisualizationCacheClear": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetActionFilteredWeight": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetAssetsGraphHoverMessage": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetAssetsNodeHoverMessage": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetAssetsPinHoverMessage": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetContextMenuActions": {
+      "covered_by": "which menu items the canvas offers, which the binding owns",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetCreateCommentAction": {
+      "covered_by": "NodeBody::Frame is a structural body this crate owns, so a comment cannot be forgotten by an application",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_create_comment",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetCurrentVisualizationCacheID": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetFindReferenceSearchTerm": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetGraphCategory": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetGraphContextActions": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetGraphDisplayInformation": {
+      "covered_by": "a Tree carries its name, and EditPath::breadcrumb reads the chain of them",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_get_graph_display_information",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetGraphType": {
+      "covered_by": "a Document is ONE tree kind, so nothing can be refused per graph type",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetLocalVariables": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetNameValidator": {
+      "covered_by": "no name-validation surface: a label is free text",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetNodeSelectionCount": {
+      "covered_by": "a selection belongs to an editor and not to a document - two people looking at one graph have two selections and one document",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetPaletteIcon": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetPaletteToolTip": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetParentContextMenuName": {
+      "covered_by": "menu composition, which the binding owns",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetPersistentItemDefiningObject": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetPinColor": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetPinDisplayName": {
+      "covered_by": "a Port carries its name and Document::signature answers it",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_node_get_pin_display_name",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetPinTypeColor": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetReorderIndexInContainer": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetSearchWeightModifiers": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetSecondaryPinTypeColor": {
+      "covered_by": "colour is not in Appearance at all - the same gap NODE_OT_node_copy_color names",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::GetTypeId": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::HandleGraphBeingDeleted": {
+      "covered_by": "no notification when a definition goes away",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::InsertAdditionalActions": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsA": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsAVariable": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsCacheVisualizationOutOfDate": {
+      "covered_by": "drawing; this crate deliberately holds no renderer",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsConnectionRelinkingAllowed": {
+      "covered_by": "RELINKING: moving an existing wire's end to another port",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsDelegateCategory": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsParentable": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsPinBeingWatched": {
+      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsPinDefaultValid": {
+      "covered_by": "Document::set_port_value refuses a value the port's type cannot hold, and names the port",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_is_pin_default_valid",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsSelfPin": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::IsTitleBarPin": {
+      "covered_by": "where a port is DRAWN on the node's card",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::MakeActionFromVariableDescription": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::MarkBlueprintDirtyFromNewNode": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::MovePersistentItemToCategory": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::MovePinLinks": {
+      "covered_by": "moving one port's links onto another port",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::OnDoubleClick": {
+      "covered_by": "a pointer gesture over painted geometry, which the binding owns",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::OnPinConnectionDoubleCicked": {
+      "covered_by": "a pointer gesture over painted geometry, which the binding owns",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::PerformAction": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::Print": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::RecombinePin": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ReconstructNode": {
+      "covered_by": "the signature is derived from the kind, and set_kind names everything that did not survive",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_reconstruct_nodes",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ReorderToBeforeAction": {
+      "covered_by": "which node kinds a palette offers, and how it is searched",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::RequestVariableDropOnNode": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::RequestVariableDropOnPanel": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::RequestVariableDropOnPin": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ResetPinToAutogeneratedDefaultValue": {
+      "covered_by": "Document::clear_port_value, which leaves NO authored value rather than a copy of the default",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_reset_pin_to_default_value",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::SafeDeleteNodeFromGraph": {
+      "covered_by": "Document::remove_node names the links that had to go",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::blender_delete",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::SetNodePosition": {
+      "covered_by": "Node::x and y, and Document::translate which carries a frame's contents",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_set_node_position",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::SetPinBeingDroppedOnNode": {
+      "covered_by": "drag state during a pointer gesture, which the binding owns",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ShouldAlwaysPurgeOnModification": {
+      "covered_by": "Unreal's UObject lifecycle, not its node system",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "host-framework",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ShouldHidePinDefaultValue": {
+      "covered_by": "the hidden set is published and the signature says which ports have defaults, so the rule is a filter over the two",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_hide_no_connection_no_default_pins",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ShouldShowAssetPickerForPin": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::ShouldShowPanelContextMenuForIncompatibleConnectionsImpl": {
+      "covered_by": "menu composition, which the binding owns",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::SplitPin": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::SupportsDropPinOnNode": {
+      "covered_by": "dragging a pin onto a node and having the node grow one",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::SupportsPinType": {
+      "covered_by": "no per-tree restriction on which socket types may appear",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::SupportsPinTypeContainer": {
+      "covered_by": "CONTAINER socket types: an array, set or map of a type",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TryCreateConnection": {
+      "covered_by": "Document::connect, which checks four things and names whichever failed",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::blender_link",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TryDeleteGraph": {
+      "covered_by": "a definition cannot be removed from a document",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TryRelinkConnectionTarget": {
+      "covered_by": "RELINKING: moving an existing wire's end to another port",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TryRenameGraph": {
+      "covered_by": "a tree's name is fixed at add_definition",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "absent",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TrySetDefaultObject": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TrySetDefaultText": {
+      "covered_by": "Document::set_port_value, whose value is the taxonomy's own and needs no per-type setter",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_try_set_default_value",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TrySetDefaultValue": {
+      "covered_by": "Document::set_port_value, gated by the SIGNATURE and type-checked through NodeKind::value_type",
+      "mechanism": "UEdGraphSchema",
+      "proven_by": "pinion-node-graph::unreal_schema_try_set_default_value",
+      "verdict": "have",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TrySetGraphCategory": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
+    },
+    "UEdGraphSchema::TryToGetChildEvents": {
+      "covered_by": "Unreal's Blueprint/asset subject matter",
+      "mechanism": "UEdGraphSchema",
+      "verdict": "app-content",
+      "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
     "ZoomIn": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "ZoomOut": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
       "mechanism": "graph-editor-command",
+      "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     }

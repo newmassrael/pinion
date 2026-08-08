@@ -106,14 +106,51 @@ PROOF_FILE = "tests/reference_census.rs"
 PROOF_ADDRESS = re.compile(r"^([a-z0-9][a-z0-9-]*)::([a-z][a-z0-9_]*)$")
 
 #: Verdicts a pinned operator may carry. `have` and `absent` are the two that
-#: move the coverage number; the other three take it out of the denominator,
-#: each for a stated reason.
+#: move the coverage number; the others take it out of the denominator, each
+#: for a stated reason.
 VERDICTS = {
     "have": "the crate or a binding does this",
     "absent": "a node-system capability we do not have",
     "composition": "a macro over other operators — covering the parts covers it",
     "app-content": "the reference application's own subject matter, not editor mechanism",
     "addon": "not the reference's node system at all",
+    "host-framework": "the reference's own object / UI framework, not its node system",
+}
+
+#: R1603 — **a reference has more than one surface**, and a census that reads
+#: only one is blind to whole capability classes rather than merely incomplete.
+#:
+#: R1593 (a link may convert) and R1594 (a value is authored on a socket) each
+#: closed something a node substrate cannot host a material or Blueprint graph
+#: without. Both are `UEdGraphSchema` virtuals in Unreal
+#: (`CreateAutomaticConversionNodeAndConnections`, `TrySetDefaultValue`) and
+#: `bNodeType` / `bNodeTreeType` callbacks in Blender — and **neither is an
+#: operator**, so the R1601 census read both as zero and the coverage judged on
+#: top of it was overstated by exactly the amount nobody could see.
+#:
+#: So a surface is a *kind of question* the reference answers, and each has its
+#: own denominator: merging them into one percentage would let a fat one hide a
+#: starved one.
+SURFACES = {
+    "operator": "a user-invokable action, registered and bound to a menu or key",
+    "command": "the same thing under Unreal's name for it",
+    "hook": "a decision the editor asks the node system to make — the extension "
+    "surface, which no operator census can see",
+}
+
+#: `mechanism` says how the reference writes it; the surface is a property of
+#: the mechanism rather than a second judgement.
+SURFACE_OF = {
+    "cpp": "operator",
+    "macro": "operator",
+    "python-core": "operator",
+    "python-addon": "operator",
+    "graph-editor-command": "command",
+    "bNodeType": "hook",
+    "bNodeTreeType": "hook",
+    "bNodeSocketType": "hook",
+    "UEdGraphSchema": "hook",
+    "UEdGraphNode": "hook",
 }
 
 
@@ -187,28 +224,83 @@ def census_blender(root: Path) -> dict[str, Operator]:
         core = rel.startswith("scripts/startup/")
         for stem in PY_IDNAME.findall(body):
             add("NODE_OT_" + stem, "python-core" if core else "python-addon", rel)
+
+    for name, member, where in blender_hooks(root):
+        add(f"{name}::{member}", name, where)
+    return found
+
+
+#: A C function pointer field, `void (*insert_link)(..)`.
+HOOK_POINTER = re.compile(r"\(\*([a-zA-Z_0-9]+)\)\s*\(")
+#: The same slot written as a `std::function`, which Blender is migrating to.
+HOOK_FUNCTION = re.compile(r"^\s*std::function<.*>\s+([a-zA-Z_0-9]+)\s*;")
+
+#: Blender's node-system extension surface: what a node type, a tree type and a
+#: socket type may each answer.
+BLENDER_HOOK_STRUCTS = ("bNodeType", "bNodeTreeType", "bNodeSocketType")
+
+
+def blender_hooks(root: Path) -> list[tuple[str, str, str]]:
+    """`(struct, member, where)` for every callback slot in those three structs.
+
+    Brace-counted rather than regex-scoped: a struct's extent is a nesting
+    question and a regex answering one is how a census acquires a hole.
+    """
+    where = "source/blender/blenkernel/BKE_node.hh"
+    lines = read(root / where).split("\n")
+    found: list[tuple[str, str, str]] = []
+    for name in BLENDER_HOOK_STRUCTS:
+        opening = f"struct {name} {{"
+        start = next((k for k, line in enumerate(lines) if line.startswith(opening)), None)
+        if start is None:
+            continue
+        depth = 0
+        for index in range(start, len(lines)):
+            line = lines[index]
+            depth += line.count("{") - line.count("}")
+            pointer = HOOK_POINTER.search(line)
+            if pointer:
+                found.append((name, pointer.group(1), where))
+            boxed = HOOK_FUNCTION.match(line)
+            if boxed:
+                found.append((name, boxed.group(1), where))
+            if depth == 0 and index > start:
+                break
     return found
 
 
 # ----------------------------------------------------------------- Unreal
 
 UE_COMMAND = re.compile(r"TSharedPtr<\s*FUICommandInfo\s*>\s*([A-Za-z_0-9]+)")
+UE_VIRTUAL = re.compile(r"\bvirtual\s+[A-Za-z_0-9:<>&*,\s]+?\b([A-Za-z_0-9]+)\s*\(")
+
+#: Unreal's node-system extension surface, and the peer of Blender's three
+#: structs: what a *graph* answers (the schema) and what a *node* answers.
+UNREAL_HOOK_HEADERS = {
+    "UEdGraphSchema": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h",
+    "UEdGraphNode": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h",
+}
 
 
 def census_unreal(root: Path) -> dict[str, Operator]:
-    """`FGraphEditorCommandsImpl` — the peer of Blender's operator list.
+    """Two surfaces.
 
-    Deliberately NOT `UK2Node_*`: those are node *types*, the analogue of the 429
-    registered node types this campaign already excludes as content. What answers
-    "what can this editor do" is the command list.
+    **Commands** — `FGraphEditorCommandsImpl`, the peer of Blender's operator
+    list. Deliberately NOT `UK2Node_*`: those are node *types*, the analogue of
+    the 429 registered node types this campaign already excludes as content.
+
+    **Hooks** — the virtuals of `UEdGraphSchema` and `UEdGraphNode`. R1601 named
+    this surface as uncounted and R1602 measured why it matters: the two things
+    R1593 and R1594 closed are on it and on no operator list anywhere.
     """
-    header = root / "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
-    body = read(header)
+    found: dict[str, Operator] = {}
     where = "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
-    return {
-        name: Operator(name, "graph-editor-command", where)
-        for name in UE_COMMAND.findall(body)
-    }
+    for name in UE_COMMAND.findall(read(root / where)):
+        found.setdefault(name, Operator(name, "graph-editor-command", where))
+    for owner, header in UNREAL_HOOK_HEADERS.items():
+        for member in UE_VIRTUAL.findall(read(root / header)):
+            found.setdefault(f"{owner}::{member}", Operator(f"{owner}::{member}", owner, header))
+    return found
 
 
 # ------------------------------------------------------------------- pin
@@ -242,15 +334,26 @@ def compare(live: dict[str, Operator], pinned: dict) -> dict[str, list[str]]:
     }
 
 
-def coverage(pinned: dict) -> tuple[int, int, list[str]]:
-    """`(have, denominator, the absent ones)`.
+def surface_of(row: dict) -> str:
+    """Which kind of question this row is. Unknown mechanisms answer `other`
+    rather than being folded into a surface they might not belong to."""
+    return SURFACE_OF.get(row.get("mechanism", ""), "other")
+
+
+def coverage(pinned: dict, surface: str | None = None) -> tuple[int, int, list[str]]:
+    """`(have, denominator, the absent ones)`, over one surface or over all.
 
     Only `have` and `absent` are in the denominator. Everything else is out of
     it **with its reason named in the pin**, which is what stops a coverage
     number from being inflated by excluding things quietly.
     """
-    have = [n for n, row in pinned.items() if row.get("verdict") == "have"]
-    absent = [n for n, row in pinned.items() if row.get("verdict") == "absent"]
+    rows = {
+        name: row
+        for name, row in pinned.items()
+        if surface is None or surface_of(row) == surface
+    }
+    have = [n for n, row in rows.items() if row.get("verdict") == "have"]
+    absent = [n for n, row in rows.items() if row.get("verdict") == "absent"]
     return len(have), len(have) + len(absent), sorted(absent)
 
 
@@ -276,12 +379,22 @@ def report(census: Census, pin: dict, strict: bool) -> int:
         have, total, absent = coverage(pinned)
         if total:
             print(f"  pinned coverage: {have}/{total} = {100 * have // total}%")
+            # Per surface, because merging them lets a fat one hide a starved
+            # one — which is exactly what happened before this surface existed.
+            for surface in sorted({surface_of(row) for row in pinned.values()}):
+                s_have, s_total, s_absent = coverage(pinned, surface)
+                if not s_total:
+                    continue
+                print(
+                    f"    {surface:<10} {s_have}/{s_total} = "
+                    f"{100 * s_have // s_total}%   ({len(s_absent)} absent)"
+                )
             out = len(pinned) - total
             if out:
                 reasons: dict[str, int] = {}
                 for row in pinned.values():
                     verdict = row.get("verdict")
-                    if verdict in ("composition", "app-content", "addon"):
+                    if verdict in ("composition", "app-content", "addon", "host-framework"):
                         reasons[verdict] = reasons.get(verdict, 0) + 1
                 shape = ", ".join(f"{k} {v}" for k, v in sorted(reasons.items()))
                 print(f"  out of the denominator: {out} ({shape})")
@@ -388,7 +501,8 @@ def selftest() -> int:
         "a macro is not a gap — counting one would be the R1577 false-gap error",
     )
     check(
-        set(VERDICTS) == {"have", "absent", "composition", "app-content", "addon"},
+        set(VERDICTS)
+        == {"have", "absent", "composition", "app-content", "addon", "host-framework"},
         "and every out-of-denominator class has a stated reason",
     )
 
@@ -412,6 +526,52 @@ def selftest() -> int:
         UE_COMMAND.findall("TSharedPtr< FUICommandInfo > CollapseNodes;")
         == ["CollapseNodes"],
         "and Unreal's command list parses",
+    )
+
+    print("R1603 — a reference has more than one surface")
+    pinned = {
+        "NODE_OT_a": {"mechanism": "cpp", "verdict": "have"},
+        "NODE_OT_b": {"mechanism": "cpp", "verdict": "absent"},
+        "bNodeType::c": {"mechanism": "bNodeType", "verdict": "have"},
+        "bNodeType::d": {"mechanism": "bNodeType", "verdict": "app-content"},
+    }
+    check(coverage(pinned, "operator")[:2] == (1, 2), "an operator surface counts operators")
+    check(coverage(pinned, "hook")[:2] == (1, 1), "and the hook surface counts hooks")
+    check(
+        coverage(pinned)[:2] == (2, 3),
+        "★ the whole is the sum, so no surface can be quietly left out of it",
+    )
+    check(
+        surface_of({"mechanism": "nonesuch"}) == "other",
+        "an unknown mechanism answers `other` rather than joining a surface",
+    )
+    check(
+        set(SURFACE_OF.values()) <= set(SURFACES),
+        "and every mechanism's surface is one this file states the meaning of",
+    )
+
+    print("the hook census reads what the reference actually writes")
+    check(
+        HOOK_POINTER.findall("  bool (*insert_link)(NodeInsertLinkParams &params) = nullptr;")
+        == ["insert_link"],
+        "a C function-pointer slot is found",
+    )
+    check(
+        HOOK_FUNCTION.match("  std::function<void(bNode &)> ui_description_fn;") is not None,
+        "and so is the std::function form Blender is migrating to",
+    )
+    check(
+        HOOK_POINTER.findall("  node_type_storage(ntype, ...);") == [],
+        "a call is not a slot",
+    )
+    check(
+        UE_VIRTUAL.findall("\tvirtual bool TryCreateConnection(UEdGraphPin* A) const;")
+        == ["TryCreateConnection"],
+        "an Unreal virtual is found",
+    )
+    check(
+        UE_VIRTUAL.findall("\tbool TryCreateConnection(UEdGraphPin* A) const;") == [],
+        "and a non-virtual member is not — the surface is what the editor may OVERRIDE",
     )
 
     print("R1602 — a `have` names the test that runs it")
