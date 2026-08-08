@@ -18,6 +18,7 @@ pub mod file_browser;
 pub mod grid_edit;
 pub mod grid_sort;
 pub mod group_order;
+pub mod hex_dump;
 pub mod index_runs;
 pub mod interaction;
 pub mod key_sequence;

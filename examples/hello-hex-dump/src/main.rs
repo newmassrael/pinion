@@ -74,6 +74,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::hex_dump::{self, ByteSelection, Cell, HexLayout};
 use pinion_core::widgets::range_slider::RangeSliderExternal;
 use pinion_core::{
     CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermCell, TermColor,
@@ -126,23 +127,21 @@ fn sample() -> Vec<u8> {
 
 // --- The dump layout (columns) ---------------------------------------------
 
-/// Bytes per dump row.
-const BYTES_PER_ROW: usize = 16;
-/// The offset column is `{:08x}` — 8 hex digits.
-const OFFSET_COLS: usize = 8;
-/// First hex-pair column: the offset (8) plus a 2-space gutter.
-const HEX_START: usize = OFFSET_COLS + 2;
-/// The left ascii-gutter bar `|`.
-const ASCII_BAR_L: usize = 60;
-/// The first ascii-gutter character column.
-const ASCII_START: usize = 61;
-/// The right ascii-gutter bar `|`.
-const ASCII_BAR_R: usize = 77;
-/// Total grid columns (one past the right bar).
-const TOTAL_COLS: usize = 78;
+/// R1606 — the layout is `pinion_core::widgets::hex_dump`'s now, not this
+/// example's. What used to live here was five hand-computed column constants
+/// (`ASCII_BAR_L = 60`, `ASCII_START = 61`, `ASCII_BAR_R = 77`,
+/// `TOTAL_COLS = 78`, `HEX_START = 10`) plus three functions that had to agree
+/// with them by inspection; all of it is derived from this one declaration, and
+/// the crate's `every_byte_round_trips_through_both_of_its_cells` property is
+/// what now keeps the forward map and the hit-test from drifting apart.
+const LAYOUT: HexLayout = HexLayout::new(SAMPLE_LEN);
 
+/// Bytes per dump row — read off the layout so there is one statement of it.
+const BYTES_PER_ROW: usize = LAYOUT.bytes_per_row();
 /// Grid rows for [`SAMPLE_LEN`].
-const ROWS: usize = SAMPLE_LEN.div_ceil(BYTES_PER_ROW);
+const ROWS: usize = LAYOUT.rows();
+/// Total grid columns (one past the right bar).
+const TOTAL_COLS: usize = LAYOUT.total_cols();
 
 /// The grid's absolute placement + pixel extent, at the `CellMetric::DEFAULT`
 /// 8x16 cell — sized so `rect.w / 8` derives exactly [`TOTAL_COLS`] (`78 * 8`)
@@ -153,33 +152,22 @@ const GRID_POS: (u32, u32) = (16, 40);
 const GRID_W: u32 = 624;
 const GRID_H: u32 = 128;
 
-/// The first (high-nibble) hex column of the `j`-th byte in a row. Each byte
-/// is `2` digits + a trailing space (`3` columns); an extra space splits the
-/// two 8-byte groups, so bytes `8..16` shift right by one.
+/// The first (high-nibble) hex column of the `j`-th byte in a row.
 const fn hex_col(j: usize) -> usize {
-    HEX_START + j * 3 + if j >= 8 { 1 } else { 0 }
+    LAYOUT.hex_col(j)
 }
 
 /// The ascii-gutter column of the `j`-th byte in a row.
 const fn ascii_col(j: usize) -> usize {
-    ASCII_START + j
+    LAYOUT.ascii_col(j)
 }
 
-/// The byte a `(col, row)` cell addresses — the inverse of [`hex_col`] /
-/// [`ascii_col`]. A byte owns three cells (its two hex digits + its ascii
-/// glyph); every other column (the offset field, the group gaps, the gutter
-/// bars, the padding) belongs to no byte. `None` off the buffer or on a
-/// non-byte cell — the click-to-select hit-test the pointer resolves.
+/// The byte a `(col, row)` cell addresses — the click-to-select hit-test the
+/// pointer resolves. `None` off the buffer or on a cell that is not a byte;
+/// the crate's `Region` says *which* non-byte cell it was, which this example
+/// does not need yet but a hex EDITOR would.
 fn byte_at_cell(col: usize, row: usize) -> Option<usize> {
-    if row >= ROWS {
-        return None;
-    }
-    (0..BYTES_PER_ROW)
-        .find_map(|j| {
-            let hc = hex_col(j);
-            (col == hc || col == hc + 1 || col == ascii_col(j)).then(|| row * BYTES_PER_ROW + j)
-        })
-        .filter(|&idx| idx < SAMPLE_LEN)
+    LAYOUT.byte_at(Cell::new(col, row))
 }
 
 // --- The byte-range brush (Brush substrate, R1394) -------------------------
@@ -258,10 +246,7 @@ fn read_selection(scene: &Scene) -> Option<Selection> {
     reason = "domain() clamps to [0, N]; round then clamp keeps it in usize range"
 )]
 fn selected_bytes(low: f32, high: f32) -> (usize, usize) {
-    let (x_lo, x_hi) = brush().domain(low, high);
-    let lo = (x_lo.round() as usize).min(SAMPLE_LEN);
-    let hi = (x_hi.round() as usize).min(SAMPLE_LEN);
-    (lo.min(hi), hi.max(lo))
+    LAYOUT.window(low, high)
 }
 
 // --- Cell colours ----------------------------------------------------------
@@ -296,8 +281,7 @@ fn ascii_glyph(byte: u8, colors: &CellColors) -> (String, TermColor) {
 
 /// One hex digit (`0-9a-f`) as a `String`.
 fn hex_digit(nibble: u8) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    (HEX[(nibble & 0x0f) as usize] as char).to_string()
+    hex_dump::hex_digit(nibble).to_string()
 }
 
 /// Build the hex-dump [`GridBuffer`]. Two orthogonal visual channels ride each
@@ -322,7 +306,7 @@ fn hex_dump_buffer(
 
         // Offset column: the row's start offset as 8 hex digits.
         let offset = format!("{base:08x}");
-        for (i, ch) in offset.chars().take(OFFSET_COLS).enumerate() {
+        for (i, ch) in offset.chars().take(LAYOUT.offset_digits()).enumerate() {
             cells[i] = TermCell::new(ch.to_string(), colors.muted, TermColor::Default);
         }
 
@@ -354,8 +338,8 @@ fn hex_dump_buffer(
         }
 
         // The ascii-gutter bars.
-        cells[ASCII_BAR_L] = TermCell::new("|", colors.muted, TermColor::Default);
-        cells[ASCII_BAR_R] = TermCell::new("|", colors.muted, TermColor::Default);
+        cells[LAYOUT.ascii_bar_left()] = TermCell::new("|", colors.muted, TermColor::Default);
+        cells[LAYOUT.ascii_bar_right()] = TermCell::new("|", colors.muted, TermColor::Default);
 
         buf = buf.with_row(u16::try_from(r).unwrap_or(0), cells);
     }
@@ -381,12 +365,7 @@ struct Selection {
 /// The selected bytes as a lowercase hex string (`"50494e01"`) — what a hex
 /// editor would copy. Empty for an out-of-range range.
 fn selection_hex(bytes: &[u8], start: usize, end: usize) -> String {
-    use std::fmt::Write;
-    let mut hex = String::new();
-    for b in bytes.get(start..end).unwrap_or(&[]) {
-        let _ = write!(hex, "{b:02x}");
-    }
-    hex
+    ByteSelection::drag(start, end.saturating_sub(1)).hex(bytes, "")
 }
 
 /// view-fn (§6.3): pure sync mapping. `(low, high)` is the brushed byte-offset
@@ -959,16 +938,16 @@ mod tests {
         assert_eq!(hex_col(8), 35); // 10 + 8*3 + 1
         assert_eq!(hex_col(15), 56); // 10 + 15*3 + 1
         // The two hex digits of the last byte sit within the gutter's left edge.
-        assert!(hex_col(15) + 1 < ASCII_BAR_L);
+        assert!(hex_col(15) + 1 < LAYOUT.ascii_bar_left());
     }
 
     #[test]
     fn ascii_columns_sit_between_the_gutter_bars() {
-        assert_eq!(ascii_col(0), ASCII_START);
+        assert_eq!(ascii_col(0), LAYOUT.ascii_start());
         assert_eq!(ascii_col(15), 76);
-        assert!(ASCII_BAR_L < ascii_col(0));
-        assert!(ascii_col(15) < ASCII_BAR_R);
-        assert_eq!(ASCII_BAR_R + 1, TOTAL_COLS);
+        assert!(LAYOUT.ascii_bar_left() < ascii_col(0));
+        assert!(ascii_col(15) < LAYOUT.ascii_bar_right());
+        assert_eq!(LAYOUT.ascii_bar_right() + 1, TOTAL_COLS);
     }
 
     #[test]
@@ -1004,7 +983,7 @@ mod tests {
     fn row_zero_offset_and_hex_and_ascii_render() {
         let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors());
         // Offset column: "00000000".
-        let offset: String = (0..OFFSET_COLS)
+        let offset: String = (0..LAYOUT.offset_digits())
             .map(|col| buf.cell(c(col), 0).unwrap().cluster.clone())
             .collect();
         assert_eq!(offset, "00000000");
@@ -1151,8 +1130,16 @@ mod tests {
         // space, and the gutter bars.
         assert_eq!(byte_at_cell(0, 0), None, "offset column");
         assert_eq!(byte_at_cell(hex_col(0) + 2, 0), None, "inter-byte space");
-        assert_eq!(byte_at_cell(ASCII_BAR_L, 0), None, "left gutter bar");
-        assert_eq!(byte_at_cell(ASCII_BAR_R, 0), None, "right gutter bar");
+        assert_eq!(
+            byte_at_cell(LAYOUT.ascii_bar_left(), 0),
+            None,
+            "left gutter bar"
+        );
+        assert_eq!(
+            byte_at_cell(LAYOUT.ascii_bar_right(), 0),
+            None,
+            "right gutter bar"
+        );
         assert_eq!(byte_at_cell(hex_col(0), ROWS), None, "past the last row");
     }
 
@@ -1208,7 +1195,10 @@ mod tests {
         assert_eq!(o.range(), Some((1, 5)), "backward drag keeps anchor 4");
         assert_eq!(o.focus(), Some(1));
         // Dragging onto a non-byte cell (the gutter) does NOT collapse it.
-        o.pointer_move(frac(ASCII_BAR_L * 8 + 4, GRID_W), frac(8, GRID_H));
+        o.pointer_move(
+            frac(LAYOUT.ascii_bar_left() * 8 + 4, GRID_W),
+            frac(8, GRID_H),
+        );
         assert_eq!(o.range(), Some((1, 5)), "gutter drag keeps the last range");
         // A NEW press (after release) starts a fresh selection.
         o.invoke("send", IntrospectValue::Text("PointerUp".into()))

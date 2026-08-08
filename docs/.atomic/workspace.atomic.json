@@ -85712,6 +85712,52 @@
         "instance verdicts name their judging row in prose, not as a checked field"
       ]
     },
+    "Round 1606": {
+      "decision_summary": "The geometry of a byte dump is a value. This is the analyzer-tool audit's plane-A gap, registered as debt-hex-view-is-an-example-not-a-crate three messages before it was built: a protocol inspector's window has two hard pieces and only one of them was in a crate. The detail tree is row_dissect, whose module doc calls itself Wireshark's packet-detail pane; the DUMP lived entirely inside examples/hello-hex-dump, so an application that wanted one had to copy 1,477 lines. Copying a renderer is a nuisance; copying a GEOMETRY is a fork, because the invariants go with it and then drift, and this project has already paid that exact bill once -- debt-two-node-graph-models, where the example held its own node model until R1597 closed it and only then discovered that frame membership had been a rectangle re-tested on every read. WHAT MAKES IT WORTH A TYPE. A byte appears in two disjoint places, its two hex digits and its one ascii glyph, so a dump needs byte->cell to paint and cell->byte to hit-test, and the two must not be able to disagree. Before this module they were three hand-written functions that agreed by inspection, beside five hand-computed column constants -- ASCII_BAR_L = 60, ASCII_START = 61, ASCII_BAR_R = 77, TOTAL_COLS = 78, HEX_START = 10 -- that a person had derived once, on paper, from a 16-byte row split into two groups of 8. Widen the row and every one of those numbers is wrong with nothing to say so. HexLayout is now the declaration (bytes per row, bytes per group, offset digits, gutter) and every column is derived from it; region_at is the ONLY place that reads a cell, and hex_cell / ascii_cell are checked against it by a round-trip property over eight layouts including a group that does not divide the row, a row narrower than a group, and a short final row. Totality is asserted too: every cell inside the grid classifies, and each byte is claimed exactly three times. The test that the derivations reproduce all five paper constants EXACTLY is what makes the lift faithful rather than merely compiling. TWO THINGS PAST WHAT A HEX VIEW NORMALLY DOES, and Qt is not a floor here because it has no hex view at all -- no widget, no geometry -- so the existence is not parity with anything and the shape is chosen. A cell that is not a byte says WHAT it is: Region names the offset field, the gutter bars and the padding apart from each other, where the old hit-test answered Option<usize>, so \"you clicked the offset column\" and \"you clicked the gap between the two groups\" were the same value and an editor wanting to select a row by its offset had nothing to read. And a hex cell names its NIBBLE, which is the difference between overtyping one digit and overtyping the byte -- the thing a hex editor is for -- rather than rounding both digits to the byte. THE MIGRATION CAUGHT A WIRE CHANGE MADE WITHOUT MEANING TO. ByteSelection::hex was written to join pairs with a space, and the existing consumer's published contract is \"0000002c\" with no separator; the example's own tests went red on it. The resolution is not a different default but a PARAMETER: a clipboard payload meant to be pasted into code and a status readout want different separators, and a crate that picks one is making a presentation decision on behalf of every consumer. The signature records why it is shaped that way. It also re-confirmed the class this project keeps paying for -- cargo check compiles the bin and not the test target, so the stale constants left in the example's test module were invisible until the tests were actually run, which is debt-local-gate-misses-example-tests one more time.",
+      "changes_bullets": [
+        "pinion_core::widgets::hex_dump: HexLayout / Cell / Region / Nibble / ByteSelection",
+        "Five hand-computed column constants become derivations of one declaration",
+        "region_at is the only reader of a cell, so the inverse cannot drift from the map",
+        "A non-byte cell says which non-byte it is; a hex cell names its nibble",
+        "hello-hex-dump now DEPENDS on it rather than holding a copy"
+      ],
+      "verification_bullets": [
+        "14 crate tests: round-trip and totality over eight layouts, not just the classic one",
+        "The classic dump's five paper constants reproduced exactly — the lift is faithful",
+        "22 example tests green; tools/demos/r1400_hex_dump.py re-passes unchanged (101.8s)",
+        "5/5 counterfactuals CAUGHT; clippy -p pinion-core -p hello-hex-dump --all-targets clean"
+      ],
+      "impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The example still owns the PAINT: colours, TermCell assembly and the oracle wiring",
+        "A hex EDITOR needs writes; this is the read geometry, and Nibble is the seam for it"
+      ],
+      "publishable_decision_summary": "The geometry of a byte dump is a value. This is the analyzer-tool audit's plane-A gap, registered as debt-hex-view-is-an-example-not-a-crate three messages before it was built: a protocol inspector's window has two hard pieces and only one of them was in a crate. The detail tree is row_dissect, whose module doc calls itself Wireshark's packet-detail pane; the DUMP lived entirely inside examples/hello-hex-dump, so an application that wanted one had to copy 1,477 lines. Copying a renderer is a nuisance; copying a GEOMETRY is a fork, because the invariants go with it and then drift, and this project has already paid that exact bill once -- debt-two-node-graph-models, where the example held its own node model until R1597 closed it and only then discovered that frame membership had been a rectangle re-tested on every read. WHAT MAKES IT WORTH A TYPE. A byte appears in two disjoint places, its two hex digits and its one ascii glyph, so a dump needs byte->cell to paint and cell->byte to hit-test, and the two must not be able to disagree. Before this module they were three hand-written functions that agreed by inspection, beside five hand-computed column constants -- ASCII_BAR_L = 60, ASCII_START = 61, ASCII_BAR_R = 77, TOTAL_COLS = 78, HEX_START = 10 -- that a person had derived once, on paper, from a 16-byte row split into two groups of 8. Widen the row and every one of those numbers is wrong with nothing to say so. HexLayout is now the declaration (bytes per row, bytes per group, offset digits, gutter) and every column is derived from it; region_at is the ONLY place that reads a cell, and hex_cell / ascii_cell are checked against it by a round-trip property over eight layouts including a group that does not divide the row, a row narrower than a group, and a short final row. Totality is asserted too: every cell inside the grid classifies, and each byte is claimed exactly three times. The test that the derivations reproduce all five paper constants EXACTLY is what makes the lift faithful rather than merely compiling. TWO THINGS PAST WHAT A HEX VIEW NORMALLY DOES, and Qt is not a floor here because it has no hex view at all -- no widget, no geometry -- so the existence is not parity with anything and the shape is chosen. A cell that is not a byte says WHAT it is: Region names the offset field, the gutter bars and the padding apart from each other, where the old hit-test answered Option<usize>, so \"you clicked the offset column\" and \"you clicked the gap between the two groups\" were the same value and an editor wanting to select a row by its offset had nothing to read. And a hex cell names its NIBBLE, which is the difference between overtyping one digit and overtyping the byte -- the thing a hex editor is for -- rather than rounding both digits to the byte. THE MIGRATION CAUGHT A WIRE CHANGE MADE WITHOUT MEANING TO. ByteSelection::hex was written to join pairs with a space, and the existing consumer's published contract is \"0000002c\" with no separator; the example's own tests went red on it. The resolution is not a different default but a PARAMETER: a clipboard payload meant to be pasted into code and a status readout want different separators, and a crate that picks one is making a presentation decision on behalf of every consumer. The signature records why it is shaped that way. It also re-confirmed the class this project keeps paying for -- cargo check compiles the bin and not the test target, so the stale constants left in the example's test module were invisible until the tests were actually run, which is debt-local-gate-misses-example-tests one more time.",
+      "publishable_changes_bullets": [
+        "pinion_core::widgets::hex_dump: HexLayout / Cell / Region / Nibble / ByteSelection",
+        "Five hand-computed column constants become derivations of one declaration",
+        "region_at is the only reader of a cell, so the inverse cannot drift from the map",
+        "A non-byte cell says which non-byte it is; a hex cell names its nibble",
+        "hello-hex-dump now DEPENDS on it rather than holding a copy"
+      ],
+      "publishable_verification_bullets": [
+        "14 crate tests: round-trip and totality over eight layouts, not just the classic one",
+        "The classic dump's five paper constants reproduced exactly — the lift is faithful",
+        "22 example tests green; tools/demos/r1400_hex_dump.py re-passes unchanged (101.8s)",
+        "5/5 counterfactuals CAUGHT; clippy -p pinion-core -p hello-hex-dump --all-targets clean"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The example still owns the PAINT: colours, TermCell assembly and the oracle wiring",
+        "A hex EDITOR needs writes; this is the read geometry, and Nibble is the seam for it"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [
