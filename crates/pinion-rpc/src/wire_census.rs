@@ -532,6 +532,9 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("decorations", WireTy::Boolean, None),
                 WireField::new("display", WireTy::String, None).nullable(),
                 WireField::new("anchored", WireTy::Object, Some("AnchoredOutcome")).nullable(),
+                WireField::new("level", WireTy::String, None),
+                WireField::new("level_outcome", WireTy::Object, Some("LevelOutcomeWire"))
+                    .nullable(),
             ],
         },
     },
@@ -1042,6 +1045,16 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("y", WireTy::Integer, None),
                 WireField::new("w", WireTy::Integer, None),
                 WireField::new("h", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "LevelOutcomeWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("declared", WireTy::String, None),
+                WireField::new("backend", WireTy::String, None),
             ],
         },
     },
@@ -1706,6 +1719,37 @@ pub const WIRE_TYPES: &[WireType] = &[
             fields: &[
                 WireField::new("width", WireTy::Integer, None),
                 WireField::new("height", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "WindowDeclareOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("window_id", WireTy::String, None),
+                WireField::new("applied", WireTy::Array, None),
+            ],
+        },
+    },
+    WireType {
+        // R1610 — the patch. Every axis but `window_id` is OPTIONAL, and the
+        // two nullable ones are also NULLABLE, which is the whole point: an
+        // absent key leaves the axis alone and an explicit null clears it, so
+        // the census has to carry both facts per field or a client cannot tell
+        // "say nothing" from "hand the window back to the window manager".
+        name: "WindowDeclareParams",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("window_id", WireTy::String, None),
+                WireField::new("title", WireTy::String, None).optional(),
+                WireField::new("position", WireTy::Array, None)
+                    .optional()
+                    .nullable(),
+                WireField::new("display", WireTy::String, None)
+                    .optional()
+                    .nullable(),
+                WireField::new("decorations", WireTy::Boolean, None).optional(),
+                WireField::new("level", WireTy::String, None).optional(),
             ],
         },
     },

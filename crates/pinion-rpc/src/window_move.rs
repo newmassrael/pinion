@@ -8,7 +8,7 @@
 //! reposition a torn-off panel symbolically, exactly as a user would by
 //! dragging the title bar.
 //!
-//! The application registers a `reposition_request` closure on
+//! The application registers a `declare_request` closure on
 //! [`crate::DispatchContext`]; the closure looks the declared window up
 //! by id and, when found, writes the new logical-pixel outer position
 //! into the binding's `Signal<Vec<WindowSpec>>`. The reconcile move
@@ -60,7 +60,7 @@ pub struct WindowMoveOutcome {
     pub x: i32,
     /// Echoes the requested logical y.
     pub y: i32,
-    /// Whether the application's `reposition_request` closure wrote the
+    /// Whether the application's `declare_request` closure wrote the
     /// declared position. `true` once the matching window's spec has the
     /// new position; a miss surfaces [`WindowMoveError::UnknownWindow`]
     /// rather than `false`, so this is `true` on the success path.
@@ -71,9 +71,9 @@ pub struct WindowMoveOutcome {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowMoveError {
-    /// The dispatcher was invoked without a `reposition_request` closure
+    /// The dispatcher was invoked without a `declare_request` closure
     /// registered — a single-window or TUI binding that declares no
-    /// `windows_signal`. [`crate::DispatchContext::with_reposition_request`]
+    /// `windows_signal`. [`crate::DispatchContext::with_declare_request`]
     /// is the application-side surface that registers one.
     ClosureUnavailable,
     /// No declared window carries the requested id (a stale handle, or a
@@ -89,18 +89,27 @@ pub enum WindowMoveError {
 /// [`WindowMoveError::UnknownWindow`] so the wire surfaces a precise
 /// miss rather than a silent no-op.
 ///
+/// **R1610 — one write path.** This is now expressed as the position-only
+/// [`crate::WindowDeclareParams`] patch that it is, driven through the same
+/// `declare_request` closure `scene/window_declare` uses. The wire shape here
+/// is unchanged (`{window_id, x, y}` in, `{window_id, x, y, requested}` out);
+/// what changed is that a move and a `position` patch can no longer come to
+/// mean different things, which two closures writing the same signal would
+/// eventually have allowed.
+///
 /// # Errors
 ///
 /// See [`WindowMoveError`] for the failure surface.
 pub fn window_move<F>(
     params: WindowMoveParams,
-    reposition_request: Option<&mut F>,
+    declare_request: Option<&mut F>,
 ) -> Result<WindowMoveOutcome, WindowMoveError>
 where
-    F: FnMut(&str, i32, i32) -> bool + ?Sized,
+    F: FnMut(&crate::WindowDeclareParams) -> bool + ?Sized,
 {
-    let closure = reposition_request.ok_or(WindowMoveError::ClosureUnavailable)?;
-    if closure(&params.window_id, params.x, params.y) {
+    let closure = declare_request.ok_or(WindowMoveError::ClosureUnavailable)?;
+    let patch = crate::WindowDeclareParams::moving(params.window_id.clone(), params.x, params.y);
+    if closure(&patch) {
         Ok(WindowMoveOutcome {
             window_id: params.window_id,
             x: params.x,
@@ -119,7 +128,7 @@ mod tests {
 
     #[test]
     fn window_move_requires_closure() {
-        let err = window_move::<dyn FnMut(&str, i32, i32) -> bool>(
+        let err = window_move::<dyn FnMut(&crate::WindowDeclareParams) -> bool>(
             WindowMoveParams {
                 window_id: "torn-1".into(),
                 x: 100,
@@ -133,7 +142,7 @@ mod tests {
 
     #[test]
     fn window_move_unknown_window_when_closure_reports_miss() {
-        let mut closure = |_id: &str, _x: i32, _y: i32| false;
+        let mut closure = |_p: &crate::WindowDeclareParams| false;
         let err = window_move(
             WindowMoveParams {
                 window_id: "ghost".into(),
@@ -149,8 +158,9 @@ mod tests {
     #[test]
     fn window_move_invokes_closure_with_requested_position() {
         let captured: Cell<(String, i32, i32)> = Cell::new((String::new(), 0, 0));
-        let mut closure = |id: &str, x: i32, y: i32| {
-            captured.set((id.to_owned(), x, y));
+        let mut closure = |p: &crate::WindowDeclareParams| {
+            let &(x, y) = p.position.set().expect("a move patches position");
+            captured.set((p.window_id.clone(), x, y));
             true
         };
         let outcome = window_move(
@@ -166,5 +176,32 @@ mod tests {
         assert_eq!(outcome.window_id, "torn-2");
         assert_eq!((outcome.x, outcome.y), (240, 160));
         assert_eq!(captured.into_inner(), ("torn-2".to_owned(), 240, 160));
+    }
+
+    #[test]
+    fn r1610_a_move_touches_position_and_nothing_else() {
+        // The whole risk of expressing a move as a patch is that it quietly
+        // patches an axis nobody asked about — a move that also cleared the
+        // window's display, say. The patch it builds names exactly one axis.
+        let captured: Cell<Option<Vec<String>>> = Cell::new(None);
+        let mut closure = |p: &crate::WindowDeclareParams| {
+            captured.set(Some(
+                p.declared_axes().into_iter().map(str::to_owned).collect(),
+            ));
+            true
+        };
+        window_move(
+            WindowMoveParams {
+                window_id: "panel".into(),
+                x: 1,
+                y: 2,
+            },
+            Some(&mut closure),
+        )
+        .unwrap();
+        assert_eq!(
+            captured.into_inner().as_deref(),
+            Some(&["position".to_owned()][..])
+        );
     }
 }

@@ -424,10 +424,24 @@ fn classify(
     }
 
     let t = resolve(rust, aliases);
+    // R1610 — `Patch<T>` is this crate's three-state wire patch: absent leaves
+    // the axis alone, an explicit null clears it, a value sets it. It carries
+    // no `#[derive(Serialize)]` (both halves are hand-written, which is where
+    // the three states live), so the scan below never sees it and every field
+    // using one would publish as `any` — telling an agent nothing about the
+    // very axis whose three-ness the type exists for. Unwrapping it here is a
+    // STRUCTURAL fact about a local type, not a hand-kept name-to-type table:
+    // it is exactly `Option<T>` on the wire, and additionally nullable.
+    let (patched, t) = match inner(&t, "Patch<") {
+        Some(i) => (true, resolve(i, aliases)),
+        None => (false, t),
+    };
+    let _ = patched;
     let (optional, t) = match inner(&t, "Option<") {
         Some(i) => (true, resolve(i, aliases)),
         None => (false, t),
     };
+    let optional = optional || patched;
     let elem = inner(&t, "Vec<").map(|i| resolve(i, aliases)).or_else(|| {
         t.strip_prefix('[')
             .and_then(|i| i.strip_suffix(']'))
@@ -445,6 +459,18 @@ fn classify(
     }
     let ty = primitive(&t).unwrap_or("any").to_owned();
     (optional, ty, None)
+}
+
+/// R1610 — does this field carry a [`Patch`], which is BOTH absent-able and
+/// null-able? The two facts are separate everywhere else in this census (a
+/// `skip_serializing_if` makes a key absent; an `Option` makes it null), and a
+/// patch is the one shape that is genuinely both, which is the whole reason it
+/// exists as a type.
+fn is_patch(rust: &str) -> bool {
+    rust.trim()
+        .trim_end_matches(',')
+        .trim()
+        .starts_with("Patch<")
 }
 
 /// `name ty` plus `?` when the key may be absent and `|null` when it is always
@@ -487,7 +513,7 @@ fn render_parsed(
                     name,
                     f,
                     *skipped,
-                    is_option && !skipped,
+                    (is_option && !skipped) || is_patch(rust),
                     &ty,
                     of.as_deref(),
                 ));
@@ -505,7 +531,7 @@ fn render_parsed(
                         &head,
                         f,
                         *skipped,
-                        is_option && !skipped,
+                        (is_option && !skipped) || is_patch(rust),
                         &ty,
                         of.as_deref(),
                     ));

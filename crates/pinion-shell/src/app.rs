@@ -47,7 +47,9 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::monitor::MonitorHandle;
-use winit::window::{CursorIcon, ResizeDirection, Window, WindowId, WindowLevel};
+use winit::window::{
+    CursorIcon, ResizeDirection, Window, WindowId, WindowLevel as WinitWindowLevel,
+};
 
 use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
@@ -56,6 +58,7 @@ use crate::{
     WindowPlacement, WindowSpec,
 };
 use pinion_core::display::{Anchored, DisplayInfo, DisplayRect, DisplayTopology};
+use pinion_core::window_level::{WindowLevel, WindowingBackend};
 
 /// R1576 §5.16 §5.41 — one winit monitor as a [`DisplayInfo`], field for field.
 ///
@@ -839,6 +842,24 @@ impl<V: WidgetView> AppShell<V> {
         self.publish_display_topology(self.display_topology());
     }
 
+    /// R1610 §5.16 §2 #7 — stamp which windowing system this process is talking
+    /// to, once, from the live event loop.
+    ///
+    /// Deliberately NOT part of [`Self::stamp_desktop_facts`], which re-reads the
+    /// desk on every dispatch because a monitor can be plugged in mid-session.
+    /// A process does not migrate from X11 to Wayland while running, so re-asking
+    /// would be pure cost — and asking once at the one place that holds an
+    /// `ActiveEventLoop` is what makes it a read rather than a build-target guess.
+    fn stamp_windowing_backend(&self, event_loop: &ActiveEventLoop) {
+        let backend = detect_windowing_backend(event_loop);
+        self.core.set_windowing_backend(backend);
+        tracing::debug!(
+            target: "pinion::shell",
+            backend = backend.as_str(),
+            "windowing backend detected",
+        );
+    }
+
     /// R1576 §5.16 §5.41 — publish one reading of the desk to BOTH readers:
     /// the substrate (which answers `scene/displays` and resolves
     /// `scene/windows`' placements) and the binding-facing
@@ -974,7 +995,10 @@ impl<V: WidgetView> AppShell<V> {
         let attrs = Window::default_attributes()
             .with_title("pinion-drag-preview")
             .with_decorations(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
+            // R1610 — through the same map every declared window uses, so the
+            // shell has ONE spelling of "on top" rather than a private one here
+            // and a vocabulary elsewhere.
+            .with_window_level(winit_window_level(WindowLevel::AlwaysOnTop))
             .with_visible(false)
             .with_inner_size(LogicalSize::new(f64::from(w.max(1)), f64::from(h.max(1))));
         let window = match event_loop.create_window(attrs) {
@@ -3041,6 +3065,45 @@ impl<V: WidgetView + 'static> AppShell<V> {
     /// canonical behaviour for the dock + tear-off arc (the main
     /// dock surface stays alive as the "host" for every torn-off
     /// panel).
+    /// R1610 §5.16 §5.41 — apply one live declared axis to the windows whose
+    /// value on it changed.
+    ///
+    /// The apply half of the family whose diff half is [`window_axis_changes`],
+    /// and lifted for the same reason at the same moment: the level pass would
+    /// have been the THIRD hand-written copy of "look the spec id up, reach the
+    /// live window, set the value, trace it". Three copies of a lookup is three
+    /// chances for one of them to skip a window shape the others reach.
+    ///
+    /// The lookup is the subtle part and it is now stated once. The apply
+    /// reaches every window with a live arc, INCLUDING a `Suspended(Some)` one
+    /// ([`Self::slot_window`] returns its cached arc); only a `Suspended(None)`
+    /// slot — no arc at all — is skipped, and that one is rebuilt by
+    /// [`Self::resume_spec`] from the CURRENT spec, so nothing is lost.
+    ///
+    /// `what` is the trace message. winit offers no read-back for any of these
+    /// axes, so the trace is what an out-of-process observer can assert the
+    /// apply on; it is not a claim that the OS accepted it.
+    fn apply_axis_pass<T, F>(&self, changes: Vec<(String, T)>, what: &'static str, apply: F)
+    where
+        T: std::fmt::Debug,
+        F: Fn(&Window, T),
+    {
+        for (spec_id, value) in changes {
+            if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied()
+                && let Some(slot) = self.windows.get(&window_id)
+                && let Some(window) = Self::slot_window(slot)
+            {
+                tracing::debug!(
+                    target: "pinion::shell",
+                    window = %spec_id,
+                    value = ?value,
+                    "{what}",
+                );
+                apply(window, value);
+            }
+        }
+    }
+
     fn reconcile_windows(&mut self, event_loop: &ActiveEventLoop) {
         let Some(signal) = self.windows_signal.as_ref() else {
             // No opt-in, no reconcile — defensive against a
@@ -3178,24 +3241,15 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // position re-apply). Only a `Suspended(None)` slot — no arc at all — is skipped;
         // it is rebuilt by `resume_spec`, whose `with_title` reads the CURRENT spec, so
         // the title cannot be lost.
-        for (spec_id, title) in window_title_changes(&old_specs, &new_specs) {
-            if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied()
-                && let Some(slot) = self.windows.get(&window_id)
-                && let Some(window) = Self::slot_window(slot)
-            {
-                window.set_title(title);
-                // winit exposes no OS title read-back (its X11 `Window::title()` is a
-                // stub returning ""), so this trace is what an out-of-process observer
-                // (the `hello-dock-panels-editor` demo) can assert the apply on. It is
-                // NOT a claim that the OS accepted it — that is winit's contract.
-                tracing::debug!(
-                    target: "pinion::shell",
-                    window = %spec_id,
-                    title = %title,
-                    "window title updated",
-                );
-            }
-        }
+        // winit exposes no OS title read-back (its X11 `Window::title()` is a stub
+        // returning ""), so the trace each apply emits is what an out-of-process
+        // observer (the `hello-dock-panels-editor` demo) asserts on. It is NOT a
+        // claim that the OS accepted it — that is winit's contract.
+        self.apply_axis_pass(
+            window_title_changes(&old_specs, &new_specs),
+            "window title updated",
+            Window::set_title,
+        );
         // R1320 §5.16 §5.41 — decorations pass. R1118 made a same-id `decorations` flip
         // a WARN ("create-time-only; recreate the window to change chrome") justified by
         // "no `Window::set_decorations` call exists". That justification was FALSE:
@@ -3204,20 +3258,22 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // that tells a consumer to destroy and recreate a window, on the strength of an
         // invented platform limit, is worse than no warn — so it becomes an apply, the
         // same shape as the title + position passes.
-        for (spec_id, decorations) in window_decoration_changes(&old_specs, &new_specs) {
-            if let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied()
-                && let Some(slot) = self.windows.get(&window_id)
-                && let Some(window) = Self::slot_window(slot)
-            {
-                window.set_decorations(decorations);
-                tracing::debug!(
-                    target: "pinion::shell",
-                    window = %spec_id,
-                    decorations,
-                    "window decorations updated",
-                );
-            }
-        }
+        self.apply_axis_pass(
+            window_decoration_changes(&old_specs, &new_specs),
+            "window decorations updated",
+            Window::set_decorations,
+        );
+        // R1610 §5.16 §5.41 — level pass, the third live declared axis. A window
+        // level is a thing the USER toggles, so the create-time-only shape the
+        // `decorations` axis wore until R1320 would not have been the feature.
+        // `Window::set_window_level` applies to a live window on every desktop
+        // backend — where a flags-word encoding costs a hide, and on one backend a
+        // destroy-and-recreate of the native window. See `window_level_changes`.
+        self.apply_axis_pass(
+            window_level_changes(&old_specs, &new_specs),
+            "window level updated",
+            |window, level| window.set_window_level(winit_window_level(level)),
+        );
         // Update the cache so the next `reconcile_windows` call
         // diffs against the snapshot the shell just acted on.
         let now_empty = new_specs.is_empty();
@@ -3304,6 +3360,10 @@ impl<V: WidgetView + 'static> AppShell<V> {
             // `reconcile_windows` cover a window that never suspended.)
             w.set_title(&spec.title);
             w.set_decorations(spec.decorations);
+            // R1610 — and the declared LEVEL, for the same reason: a cached window
+            // reused across a suspend/resume cycle would otherwise keep whatever
+            // stacking it had before while the binding's spec says otherwise.
+            w.set_window_level(winit_window_level(spec.level));
             w
         } else {
             let mut attrs = Window::default_attributes()
@@ -3347,6 +3407,12 @@ impl<V: WidgetView + 'static> AppShell<V> {
             // `strategy`, not re-applied on a same-id spec change (a
             // dock-back destroys the floating window, never re-decorates).
             attrs = attrs.with_decorations(spec.decorations);
+            // R1610 §5.16 §5.41 — honour the declared window LEVEL at create.
+            // `WindowLevel::Normal` (every pre-R1610 binding) is winit's own
+            // default, so this is byte-identical for them. Unlike
+            // `decorations` this is also re-applied on a same-id change (the
+            // level pass in `reconcile_windows`) — see `window_level_changes`.
+            attrs = attrs.with_window_level(winit_window_level(spec.level));
             // R835 §5.16 — windowless test mode. `PINION_HIDDEN_WINDOW`
             // creates the shell window UNMAPPED (`visible = false`): Vello
             // still renders to the GPU surface and `scene/snapshot` /
@@ -3696,6 +3762,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             event_loop.available_monitors(),
             event_loop.primary_monitor().as_ref(),
         ));
+        // R1610 §5.16 §2 #7 — and which windowing system that desk belongs to,
+        // for the level outcome `scene/windows` reports. Same reason it goes
+        // first: a binding declaring `level: AlwaysOnTop` in its own factory
+        // should be able to learn straight away whether that will be honoured.
+        self.stamp_windowing_backend(event_loop);
         let opt_signal = self.core.root_owner().run(V::windows_signal);
         let specs: Vec<WindowSpec> = match opt_signal.as_ref() {
             Some(signal) => signal.get(),
@@ -5049,16 +5120,107 @@ fn window_placement_moves(
 ///
 /// O(N²) `find` for the same reason [`window_placement_moves`] accepts it: N is the
 /// window count, a handful.
-fn window_title_changes<'a>(old: &[WindowSpec], new: &'a [WindowSpec]) -> Vec<(String, &'a str)> {
+fn window_title_changes<'a>(
+    old: &'a [WindowSpec],
+    new: &'a [WindowSpec],
+) -> Vec<(String, &'a str)> {
+    window_axis_changes(old, new, |spec| spec.title.as_str())
+}
+
+/// R1610 §5.16 §5.41 — the same-id changes on ONE declared axis between two
+/// [`WindowSpec`] lists: every window present in **both** lists whose value on that
+/// axis differs, paired with the new value.
+///
+/// The three live axes ([`window_title_changes`], [`window_decoration_changes`],
+/// [`window_level_changes`]) are this function with a different projection. R1610 was
+/// about to write the third hand-rolled copy of the identical walk — a window absent
+/// from `old` is an ADD, whose value `resume_spec` applies at create; a window absent
+/// from `new` is a DROP; only the intersection can carry a change — and three
+/// mechanical copies of a rule is the point at which the rule should have one home
+/// (the R727 / R732 third-consumer mandate). Getting the ADD case wrong in one copy
+/// and not the others is exactly the drift that costs.
+///
+/// `axis` returns the value to compare, which may borrow from the specs (hence the
+/// shared lifetime) so the title projection stays allocation-free.
+///
+/// [`window_placement_moves`] is deliberately NOT expressed here: placement is not a
+/// field comparison but a resolution against the live monitor topology, with an add
+/// that CAN require an apply. A shape that only looks similar is not the same rule.
+fn window_axis_changes<'a, T, F>(
+    old: &'a [WindowSpec],
+    new: &'a [WindowSpec],
+    axis: F,
+) -> Vec<(String, T)>
+where
+    T: PartialEq,
+    F: Fn(&'a WindowSpec) -> T,
+{
     let mut changes = Vec::new();
     for spec in new {
         if let Some(old_spec) = old.iter().find(|o| o.id == spec.id) {
-            if old_spec.title != spec.title {
-                changes.push((spec.id.as_ref().to_owned(), spec.title.as_str()));
+            let next = axis(spec);
+            if axis(old_spec) != next {
+                changes.push((spec.id.as_ref().to_owned(), next));
             }
         }
     }
     changes
+}
+
+/// R1610 §5.16 — the one place a pinion [`WindowLevel`] becomes a winit
+/// [`winit::window::WindowLevel`].
+///
+/// A total match rather than a `From` impl with a `_` arm: the two enums are the
+/// same three arms today, and if either grows one the compiler is what says so.
+const fn winit_window_level(level: WindowLevel) -> WinitWindowLevel {
+    match level {
+        WindowLevel::AlwaysOnBottom => WinitWindowLevel::AlwaysOnBottom,
+        WindowLevel::Normal => WinitWindowLevel::Normal,
+        WindowLevel::AlwaysOnTop => WinitWindowLevel::AlwaysOnTop,
+    }
+}
+
+/// R1610 §5.16 §2 #7 — which windowing system this process is actually talking to.
+///
+/// A build target is not the answer on Linux: one binary runs on X11 or Wayland
+/// depending on the session, and that is precisely the pair whose window-level
+/// support differs (winit 0.30's Wayland backend implements `set_window_level` as an
+/// empty body — core `xdg-shell` has no stacking protocol). winit answers it for the
+/// live event loop through its per-platform extension traits, so this is a read, not
+/// a guess.
+///
+/// [`WindowingBackend::Other`] is deliberate on any target this adapter has not
+/// measured: reported as such rather than folded into a success or a failure, so a
+/// caller can tell "cannot" from "nobody looked".
+#[cfg(all(unix, not(target_os = "macos")))]
+fn detect_windowing_backend(event_loop: &ActiveEventLoop) -> WindowingBackend {
+    use winit::platform::wayland::ActiveEventLoopExtWayland;
+    use winit::platform::x11::ActiveEventLoopExtX11;
+    if event_loop.is_wayland() {
+        WindowingBackend::Wayland
+    } else if event_loop.is_x11() {
+        WindowingBackend::X11
+    } else {
+        WindowingBackend::Other
+    }
+}
+
+/// R1610 §5.16 §2 #7 — macOS has one windowing system; see the unix twin.
+#[cfg(target_os = "macos")]
+const fn detect_windowing_backend(_event_loop: &ActiveEventLoop) -> WindowingBackend {
+    WindowingBackend::MacOs
+}
+
+/// R1610 §5.16 §2 #7 — Windows has one windowing system; see the unix twin.
+#[cfg(windows)]
+const fn detect_windowing_backend(_event_loop: &ActiveEventLoop) -> WindowingBackend {
+    WindowingBackend::Windows
+}
+
+/// R1610 §5.16 §2 #7 — any other target: unmeasured, and said so.
+#[cfg(not(any(unix, windows)))]
+const fn detect_windowing_backend(_event_loop: &ActiveEventLoop) -> WindowingBackend {
+    WindowingBackend::Other
 }
 
 /// R1320 §5.16 §5.41 — acknowledge a USER window move in the reconcile cache by
@@ -5092,15 +5254,29 @@ fn cache_moved_position(cache: &mut [WindowSpec], spec_id: &str, position: (i32,
 /// OS chrome by writing its spec — the declared spec stays the SSOT for chrome exactly
 /// as it now is for title.
 fn window_decoration_changes(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String, bool)> {
-    let mut changes = Vec::new();
-    for spec in new {
-        if let Some(old_spec) = old.iter().find(|o| o.id == spec.id) {
-            if old_spec.decorations != spec.decorations {
-                changes.push((spec.id.as_ref().to_owned(), spec.decorations));
-            }
-        }
-    }
-    changes
+    window_axis_changes(old, new, |spec| spec.decorations)
+}
+
+/// R1610 §5.16 §5.41 — the same-id LEVEL changes between two [`WindowSpec`] lists,
+/// the third member of the live-axis family beside [`window_title_changes`] and
+/// [`window_decoration_changes`].
+///
+/// This axis has to be live, which is what makes it different from `decorations`
+/// arriving late (R1320 corrected an invented limit) — a window level is a thing the
+/// USER turns on and off ("keep this readout above the app I am watching"), so a
+/// create-time-only level would not be the feature at all. winit 0.30 has
+/// [`winit::window::Window::set_window_level`] on every desktop backend, and it
+/// applies to a live window: no recreate, no unmap, no re-show.
+///
+/// The reference encoding pays much more for the same capability. When the level
+/// lives inside a window-flags word, changing it goes through the flags setter, which
+/// reparents and therefore HIDES the widget — the caller has to show it again — and on
+/// one platform backend the native window is destroyed and recreated, because a
+/// changed stacking bit is recorded as a recreation reason and the next show rebuilds
+/// the window. Pinning a panel there costs the window's native handle, its mapped
+/// state, and a visible flash. Here it costs one `set_window_level`.
+fn window_level_changes(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String, WindowLevel)> {
+    window_axis_changes(old, new, |spec| spec.level)
 }
 
 /// R1088 §5.16 §5.41 §2 #7 PR-31 — is this `WindowEvent::Moved` the echo of
@@ -5609,6 +5785,113 @@ mod r1319_window_title_change_diff_tests {
             titled("torn-x", "pane").with_decorations(false),
         ];
         assert_eq!(window_decoration_changes(&old, &added), Vec::new());
+    }
+
+    #[test]
+    fn r1610_level_changes_mirror_the_other_live_axes() {
+        // The third member of the live-axis family, and the reason it exists as
+        // a family: all three are now `window_axis_changes` with a different
+        // projection, so the ADD / DROP / unchanged rules cannot be right in one
+        // and wrong in another.
+        use super::window_level_changes;
+        use pinion_core::window_level::WindowLevel;
+        let old = vec![titled("main", "editor")];
+        let new = vec![titled("main", "editor").with_level(WindowLevel::AlwaysOnTop)];
+        assert_eq!(
+            window_level_changes(&old, &new),
+            vec![("main".to_owned(), WindowLevel::AlwaysOnTop)],
+        );
+        assert_eq!(window_level_changes(&old, &old), Vec::new());
+        // An ADD is not a change — `resume_spec`'s `with_window_level` applies
+        // it at create.
+        let added = vec![
+            titled("main", "editor"),
+            titled("torn-x", "pane").with_level(WindowLevel::AlwaysOnTop),
+        ];
+        assert_eq!(window_level_changes(&old, &added), Vec::new());
+        // A DROP is not a change either.
+        assert_eq!(window_level_changes(&added, &old), Vec::new());
+        // And going BACK to Normal is a change like any other — a user
+        // un-pinning a panel must reach the window manager.
+        let pinned = vec![titled("main", "editor").with_level(WindowLevel::AlwaysOnTop)];
+        assert_eq!(
+            window_level_changes(&pinned, &old),
+            vec![("main".to_owned(), WindowLevel::Normal)],
+        );
+    }
+
+    #[test]
+    fn r1610_the_three_live_axes_are_orthogonal() {
+        // A window pinned on top, renamed and undecorated in ONE reconcile must
+        // get all three applies. This is the property that makes them separate
+        // passes rather than one "the spec changed" pass — and now that they
+        // share a derivation, the property is what says the sharing did not
+        // merge them.
+        use super::{window_decoration_changes, window_level_changes};
+        use pinion_core::window_level::WindowLevel;
+        let old = vec![titled("panel", "KPI")];
+        let new = vec![
+            titled("panel", "KPI (pinned)")
+                .with_decorations(false)
+                .with_level(WindowLevel::AlwaysOnTop),
+        ];
+        assert_eq!(
+            window_title_changes(&old, &new),
+            vec![("panel".to_owned(), "KPI (pinned)")],
+        );
+        assert_eq!(
+            window_decoration_changes(&old, &new),
+            vec![("panel".to_owned(), false)],
+        );
+        assert_eq!(
+            window_level_changes(&old, &new),
+            vec![("panel".to_owned(), WindowLevel::AlwaysOnTop)],
+        );
+    }
+
+    #[test]
+    fn r1610_a_change_on_one_axis_is_not_a_change_on_another() {
+        // The mirror image of the test above, and the one that would catch a
+        // lift that dropped its projection argument: retitling a window must
+        // leave the level pass with nothing to do.
+        use super::{window_decoration_changes, window_level_changes};
+        let old = vec![titled("panel", "KPI")];
+        let new = vec![titled("panel", "KPI 2")];
+        assert!(!window_title_changes(&old, &new).is_empty());
+        assert_eq!(window_level_changes(&old, &new), Vec::new());
+        assert_eq!(window_decoration_changes(&old, &new), Vec::new());
+    }
+
+    #[test]
+    fn r1610_every_pinion_level_maps_to_its_winit_twin() {
+        // The one place the two vocabularies meet. A wrong arm here would pin a
+        // window to the BOTTOM, which no unit test above could see because
+        // every one of them stops at the pinion enum.
+        use super::{WinitWindowLevel, winit_window_level};
+        use pinion_core::window_level::WindowLevel;
+        assert_eq!(
+            winit_window_level(WindowLevel::AlwaysOnBottom),
+            WinitWindowLevel::AlwaysOnBottom,
+        );
+        assert_eq!(
+            winit_window_level(WindowLevel::Normal),
+            WinitWindowLevel::Normal,
+        );
+        assert_eq!(
+            winit_window_level(WindowLevel::AlwaysOnTop),
+            WinitWindowLevel::AlwaysOnTop,
+        );
+        // The map is injective — collapsing two levels onto one winit arm would
+        // make "on top" and "on bottom" the same window.
+        let mapped: Vec<WinitWindowLevel> = WindowLevel::ALL
+            .into_iter()
+            .map(winit_window_level)
+            .collect();
+        for (i, a) in mapped.iter().enumerate() {
+            for b in &mapped[i + 1..] {
+                assert_ne!(a, b, "two pinion levels must not share a winit level");
+            }
+        }
     }
 
     #[test]

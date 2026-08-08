@@ -2596,6 +2596,8 @@ fn r1087_windows_reports_id_title_and_position() {
             decorations: true,
             display: None,
             anchored: None,
+            level: "normal".to_owned(),
+            level_outcome: None,
         },
         DeclaredWindow {
             id: "torn-inspector".to_owned(),
@@ -2607,6 +2609,8 @@ fn r1087_windows_reports_id_title_and_position() {
             decorations: false,
             display: None,
             anchored: None,
+            level: "normal".to_owned(),
+            level_outcome: None,
         },
     ];
     let mut ctx =
@@ -2622,11 +2626,13 @@ fn r1087_windows_reports_id_title_and_position() {
                     "id": "main", "title": "Main", "position": null,
                     "declared_size": [880, 600], "decorations": true,
                     "display": null, "anchored": null,
+                    "level": "normal", "level_outcome": null,
                 },
                 {
                     "id": "torn-inspector", "title": "Inspector",
                     "position": [120, 80], "declared_size": [360, 360],
                     "decorations": false, "display": null, "anchored": null,
+                    "level": "normal", "level_outcome": null,
                 },
             ]
         })),
@@ -2653,6 +2659,8 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
             decorations: true,
             display: None,
             anchored: None,
+            level: "normal".to_owned(),
+            level_outcome: None,
         },
         DeclaredWindow {
             id: "intrinsic-popover".to_owned(),
@@ -2662,6 +2670,8 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
             decorations: true,
             display: None,
             anchored: None,
+            level: "normal".to_owned(),
+            level_outcome: None,
         },
     ];
     let mut ctx =
@@ -2677,14 +2687,184 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
                     "id": "fixed-dialog", "title": "Dialog",
                     "position": [40, 40], "declared_size": [400, 300],
                     "decorations": true, "display": null, "anchored": null,
+                    "level": "normal", "level_outcome": null,
                 },
                 {
                     "id": "intrinsic-popover", "title": "Popover",
                     "position": null, "declared_size": null,
                     "decorations": true, "display": null, "anchored": null,
+                    "level": "normal", "level_outcome": null,
                 },
             ]
         })),
+    );
+}
+
+// ---- R1610 §5.16 §5.41 §2 #7 — scene/window_declare (the general write) ----
+
+#[test]
+fn r1610_window_declare_without_a_closure_is_named_not_silent() {
+    // A TUI or single-window binding declares no `windows_signal`, so there is
+    // nothing to write. The refusal names that, rather than reporting a
+    // success that changed nothing.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_declare",
+                  "params":{"window_id":"panel","level":"always_on_top"},"id":3}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("must error without a closure");
+    assert_eq!(err.code, -32602);
+    assert_eq!(
+        err.data.as_ref().and_then(Value::as_str),
+        Some("ClosureUnavailable"),
+    );
+}
+
+#[test]
+fn r1610_window_declare_patches_the_named_axes_and_echoes_them() {
+    // The whole method in one dispatch: the client names two axes, the closure
+    // sees exactly those two, and the response says which it understood.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let seen: std::cell::RefCell<Vec<crate::WindowDeclareParams>> =
+        std::cell::RefCell::new(Vec::new());
+    let mut closure = |p: &crate::WindowDeclareParams| {
+        seen.borrow_mut().push(p.clone());
+        true
+    };
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_declare_request(&mut closure);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_declare",
+                  "params":{"window_id":"panel","level":"always_on_top","title":"KPI"},"id":4}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(
+        resp.result,
+        Some(serde_json::json!({
+            "window_id": "panel",
+            "applied": ["title", "level"],
+        })),
+    );
+    let got = seen.into_inner();
+    assert_eq!(got.len(), 1, "exactly one closure call");
+    assert_eq!(got[0].level, Some("always_on_top".to_owned()),);
+    assert_eq!(got[0].title.as_deref(), Some("KPI"));
+    assert!(
+        got[0].position.is_untouched(),
+        "an unnamed axis reaches the closure as untouched"
+    );
+    assert_eq!(got[0].decorations, None);
+}
+
+#[test]
+fn r1610_window_declare_tells_a_clear_apart_from_a_silence_on_the_wire() {
+    // The distinction the double-option exists for, asserted where it matters:
+    // through a real dispatch, not just through serde.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let seen: std::cell::RefCell<Vec<crate::WindowDeclareParams>> =
+        std::cell::RefCell::new(Vec::new());
+    let mut closure = |p: &crate::WindowDeclareParams| {
+        seen.borrow_mut().push(p.clone());
+        true
+    };
+    for params in [
+        r#"{"window_id":"panel","position":null}"#,
+        r#"{"window_id":"panel","position":[12,34]}"#,
+        r#"{"window_id":"panel","title":"x"}"#,
+    ] {
+        // A fresh context per dispatch, because `dispatch` TAKES the write
+        // closure out of the context — which is what the shell does too (it
+        // rebuilds a context around every request).
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_declare_request(&mut closure);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/window_declare","params":{params},"id":5}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_none(), "{params}: {:?}", resp.error);
+    }
+    let got = seen.into_inner();
+    assert_eq!(
+        got[0].position,
+        crate::window_declare::Patch::Clear,
+        "explicit null CLEARS",
+    );
+    assert_eq!(
+        got[1].position,
+        crate::window_declare::Patch::Set((12, 34)),
+        "a value SETS",
+    );
+    assert!(got[2].position.is_untouched(), "an absent key is SILENT");
+}
+
+#[test]
+fn r1610_window_declare_refuses_an_empty_patch_and_an_unknown_window() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    // A miss reports the window, not a cheerful `false`.
+    let mut miss = |_p: &crate::WindowDeclareParams| false;
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_declare_request(&mut miss);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_declare",
+                  "params":{"window_id":"ghost","level":"normal"},"id":6}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert_eq!(
+        resp.error
+            .as_ref()
+            .and_then(|e| e.data.as_ref())
+            .and_then(Value::as_str),
+        Some("UnknownWindow"),
+    );
+    // A patch naming no axis — what a misspelled axis key arrives as.
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_declare",
+                  "params":{"window_id":"panel","levl":"always_on_top"},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert_eq!(
+        resp.error
+            .as_ref()
+            .and_then(|e| e.data.as_ref())
+            .and_then(Value::as_str),
+        Some("NoAxisDeclared"),
+    );
+}
+
+#[test]
+fn r1610_window_move_and_window_declare_share_one_write_path() {
+    // Both methods reach the SAME closure, and a move arrives as the
+    // position-only patch it is. Two closures over one signal is two places
+    // for the same axis to acquire different semantics.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let seen: std::cell::RefCell<Vec<crate::WindowDeclareParams>> =
+        std::cell::RefCell::new(Vec::new());
+    let mut closure = |p: &crate::WindowDeclareParams| {
+        seen.borrow_mut().push(p.clone());
+        true
+    };
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_declare_request(&mut closure);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/window_move",
+                  "params":{"window_id":"panel","x":90,"y":120},"id":8}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let got = seen.into_inner();
+    assert_eq!(got.len(), 1, "the move reached the declare closure");
+    assert_eq!(got[0].window_id, "panel");
+    assert_eq!(
+        got[0].position,
+        crate::window_declare::Patch::Set((90, 120))
+    );
+    assert_eq!(
+        got[0].declared_axes(),
+        vec!["position"],
+        "a move must not quietly patch any other axis",
     );
 }
 

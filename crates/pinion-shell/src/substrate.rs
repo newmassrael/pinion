@@ -478,6 +478,17 @@ pub struct ShellCore<V: WidgetView> {
     /// list for the second.
     display_topology: RefCell<Option<pinion_core::display::DisplayTopology>>,
 
+    /// R1610 §5.16 §2 #7 — the windowing system this process is actually talking
+    /// to, stamped by [`crate::AppShell`] from the live event loop.
+    ///
+    /// The same seam and the same `None` distinction as
+    /// [`Self::display_topology`]: `None` means nobody stamped one (a TUI
+    /// backend, a fixture), which is why `scene/windows` reports a window's
+    /// level outcome as absent rather than inventing a backend for it. A build
+    /// target would not do — one Linux binary runs on X11 or Wayland, and those
+    /// two differ on exactly this axis.
+    windowing_backend: RefCell<Option<pinion_core::window_level::WindowingBackend>>,
+
     /// (R1193 §5.16 §5.28 §5.39) The per-window shell-side state store — one
     /// [`WindowState`] per window, keyed by canonical
     /// [`WindowSpec`](crate::WindowSpec) id. R1193 consolidated the 11
@@ -838,6 +849,7 @@ impl<V: WidgetView> ShellCore<V> {
             last_access_focus: None,
             redraw_requested: false,
             display_topology: RefCell::new(None),
+            windowing_backend: RefCell::new(None),
             window_states: HashMap::new(),
             cross_preview_target: None,
             text_select_drag: None,
@@ -3069,6 +3081,29 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn display_topology(&self) -> Option<pinion_core::display::DisplayTopology> {
         self.display_topology.borrow().clone()
+    }
+
+    /// R1610 §5.16 §2 #7 — stamp the windowing system this process is talking to.
+    ///
+    /// [`crate::AppShell`] calls this once the event loop exists (it is what
+    /// knows); the substrate stays backend-agnostic. The seam
+    /// [`Self::set_display_topology`] already uses — and stamped once rather
+    /// than per dispatch, because unlike the monitor list, which changes when
+    /// somebody plugs a cable in, a process does not migrate between X11 and
+    /// Wayland while running.
+    pub fn set_windowing_backend(&self, backend: pinion_core::window_level::WindowingBackend) {
+        *self.windowing_backend.borrow_mut() = Some(backend);
+    }
+
+    /// R1610 — the stamped windowing backend, or `None` when nobody stamped one.
+    ///
+    /// `None` is a real answer, not a missing one: a TUI surface or a fixture
+    /// has no windowing system, so `scene/windows` reports no level outcome
+    /// rather than deriving one against a backend nobody looked at. Same
+    /// discipline as [`Self::display_topology`].
+    #[must_use]
+    pub fn windowing_backend(&self) -> Option<pinion_core::window_level::WindowingBackend> {
+        *self.windowing_backend.borrow()
     }
 
     /// R1148 §5.51 §5.16 → R1151 — the stamped ACTUAL client origin of `window_id`
@@ -5945,31 +5980,61 @@ impl<V: WidgetView> ShellCore<V> {
                     chord,
                 )
             });
-        let reposition_signal = (request.method == "scene/window_move")
-            .then(|| self.core.root_owner().run(V::windows_signal))
-            .flatten();
-        let mut reposition_request = |id: &str, x: i32, y: i32| -> bool {
-            let Some(signal) = reposition_signal.as_ref() else {
+        // R1610 §5.16 §5.41 — generalised from R1088's position-only
+        // `reposition_request`: ONE closure behind both write methods, so a
+        // `scene/window_move` and a `position` patch cannot acquire different
+        // semantics. `scene/window_move` builds the position-only patch.
+        let declare_signal = matches!(
+            request.method.as_str(),
+            "scene/window_move" | "scene/window_declare"
+        )
+        .then(|| self.core.root_owner().run(V::windows_signal))
+        .flatten();
+        let mut declare_request = |patch: &pinion_rpc::WindowDeclareParams| -> bool {
+            let Some(signal) = declare_signal.as_ref() else {
                 return false;
             };
             let mut specs = signal.get();
-            let Some(spec) = specs.iter_mut().find(|s| s.id.as_ref() == id) else {
+            let Some(spec) = specs
+                .iter_mut()
+                .find(|s| s.id.as_ref() == patch.window_id.as_str())
+            else {
                 return false;
             };
+            let before = spec.clone();
+            if let Some(title) = patch.title.clone() {
+                spec.title = title;
+            }
             // An explicit AI reposition PINS the window (a `None`
             // WM-placed window becomes `Some` pinned) — unlike the
             // conservative user-`Moved` feedback, which only refreshes an
-            // already-declared position. Re-setting the current position
-            // is an accepted committing no-op (the signal equality-skip
-            // would absorb it anyway; the guard skips the Vec rebuild and
-            // keeps it explicit). Writing the signal fires the reconcile
-            // move pass, which drives the live OS window — declared
-            // becomes eventual-actual.
-            if spec.position == Some((x, y)) {
-                return true;
+            // already-declared position. An explicit `null` is the inverse
+            // and the only way BACK to a window-manager-placed window,
+            // which R1576 makes the same argument for on the binding side.
+            patch.position.apply_to(&mut spec.position);
+            if let Some(display) = patch.display.set() {
+                spec.display = Some(pinion_core::display::DisplayId::new(display.clone()));
+            } else if patch.display == pinion_rpc::window_declare::Patch::Clear {
+                spec.display = None;
             }
-            spec.position = Some((x, y));
-            signal.set(specs);
+            if let Some(decorations) = patch.decorations {
+                spec.decorations = decorations;
+            }
+            if let Some(level) = patch
+                .level
+                .as_deref()
+                .and_then(pinion_core::window_level::WindowLevel::from_wire)
+            {
+                spec.level = level;
+            }
+            // Re-declaring what a window already says is an accepted
+            // committing no-op: the signal's equality-skip would absorb it
+            // anyway, and the guard keeps the Vec rebuild explicit. Writing
+            // the signal fires the reconcile passes, which drive the live OS
+            // window — declared becomes eventual-actual.
+            if *spec != before {
+                signal.set(specs);
+            }
             true
         };
         // R1419 §5.39 §5.16 — the `scene/window_focus` drive peer of the
@@ -6349,7 +6414,7 @@ impl<V: WidgetView> ShellCore<V> {
             // R1569 §5.39 §5.20 — the window's live accelerator map, plus the
             // resolver `scene/accelerators`' optional `chord` parameter needs.
             // The chord is a REQUEST parameter, so it cannot be pre-resolved
-            // here; the closure is the `reposition_request` shape.
+            // here; the closure is the `declare_request` shape.
             ctx = ctx.with_accelerators(window_reads.accelerators, window_reads.accelerator_focus);
             ctx = ctx.with_accelerator_chord(accelerator_chord.clone());
             // R1087 §5.16 §5.41 §2 #7 PR-31 — the declared-window set
@@ -6365,13 +6430,14 @@ impl<V: WidgetView> ShellCore<V> {
             if let Some(drop) = cross_window_drop {
                 ctx = ctx.with_cross_window_drop(drop);
             }
-            // R1088 §5.16 §5.41 §2 #7 PR-31 — the `scene/window_move`
-            // write peer. Its closure resolved a signal above only for
-            // that method (a harmless no-op closure otherwise), so this
-            // attaches unconditionally without per-dispatch cost.
-            ctx = ctx.with_reposition_request(&mut reposition_request);
+            // R1088 §5.16 §5.41 §2 #7 PR-31 / R1610 — the `scene/window_move`
+            // + `scene/window_declare` write peer. Its closure resolved a
+            // signal above only for those methods (a harmless no-op closure
+            // otherwise), so this attaches unconditionally without
+            // per-dispatch cost.
+            ctx = ctx.with_declare_request(&mut declare_request);
             // R1419 §5.39 §5.16 — the `scene/window_focus` OS-focus drive peer.
-            // Like `reposition_request`, the closure captures no `self` borrow
+            // Like `declare_request`, the closure captures no `self` borrow
             // (it records the edge into a `Cell` + reads a pre-block snapshot),
             // so it attaches unconditionally without a per-dispatch cost; the
             // real mutation lands after the block.
@@ -7181,6 +7247,9 @@ impl<V: WidgetView> ShellCore<V> {
         // stored copy that could disagree with it. `None` (no stamp) leaves
         // every window's `anchored` null: nobody looked, so nothing is claimed.
         let topology = self.display_topology();
+        // R1610 — stamped once at resume; `None` on a surface that has no
+        // windowing system to stamp.
+        let backend = self.windowing_backend();
         specs
             .into_iter()
             .map(|spec| pinion_rpc::DeclaredWindow {
@@ -7211,6 +7280,14 @@ impl<V: WidgetView> ShellCore<V> {
                 // `WindowSpec::decorations` SSOT; `true` for every
                 // pre-R1115 binding). Always known, never `null`.
                 decorations: spec.decorations,
+                // R1610 §5.16 §5.41 — the DECLARED level, and what the
+                // windowing system actually running does with it. Derived
+                // here against the stamped backend rather than stored, for
+                // the same one-fact-one-source reason `anchored` is; `None`
+                // when nobody stamped a backend, so a TUI surface claims
+                // nothing rather than inventing a window system.
+                level: spec.level.as_str().to_owned(),
+                level_outcome: backend.map(|b| b.outcome(spec.level).into()),
             })
             .collect()
     }

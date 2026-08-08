@@ -57,6 +57,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_core::display::{Anchor, Anchored, DisplayId, DisplayTopology};
+use pinion_core::window_level::WindowLevel;
 use pinion_core::{Intent, Scene, Signal, WidgetCore};
 use vello::Scene as VelloScene;
 use vello::peniko::Color as PenikoColor;
@@ -867,7 +868,8 @@ pub struct WindowSpec {
     /// `decorations: false` and pinion paints the panel's own header
     /// (drag-grip + close) instead of stacking a redundant OS title bar
     /// over it — the custom-chrome floating panel the self-hosted-editor
-    /// northern star needs (Blender/Unreal tear-offs show no OS title bar).
+    /// northern star needs (professional 3D and game tools show no OS title bar
+    /// on a torn-off panel).
     ///
     /// **R1320 §5.16 §5.41 — a LIVE, reconcilable axis** (like
     /// [`position`](Self::position) and [`title`](Self::title), unlike
@@ -903,10 +905,10 @@ pub struct WindowSpec {
     /// That reinterpretation is the whole point, and it is what a **layout
     /// preset** needs to be worth saving. An absolute coordinate means
     /// something different the moment the monitors are rearranged and means
-    /// nothing at all once one is unplugged — which is why a restored Qt
-    /// layout so often opens off-screen: `QWidget::saveGeometry()` stores
-    /// absolute geometry in an opaque `QByteArray`, and `restoreGeometry` has
-    /// nowhere to record that it had to put the window somewhere else. Here
+    /// nothing at all once one is unplugged — which is why a restored layout so
+    /// often opens off-screen: the conventional save-geometry call stores
+    /// absolute geometry in an opaque byte blob, and the restore has nowhere to
+    /// record that it had to put the window somewhere else. Here
     /// "second monitor, 40 logical pixels in" survives the desk changing, and
     /// when that monitor is gone the substitution onto the fallback display is
     /// **reported** — `scene/windows` publishes the
@@ -924,6 +926,40 @@ pub struct WindowSpec {
     /// existed deserializes to `None`, the absolute reading.
     #[serde(default)]
     pub display: Option<DisplayId>,
+    /// R1610 §5.16 §5.41 — where this window sits in the window manager's
+    /// front-to-back order.
+    ///
+    /// [`WindowLevel::Normal`] (the default, and every pre-R1610 window,
+    /// byte-identical) is ordinary stacking.
+    /// [`WindowLevel::AlwaysOnTop`] is the floating-readout position a
+    /// monitoring tool's torn-off panel wants — visible over the application
+    /// being watched. [`WindowLevel::AlwaysOnBottom`] is the desktop-widget
+    /// position.
+    ///
+    /// A LIVE, reconcilable axis like [`position`](Self::position) /
+    /// [`title`](Self::title) / [`decorations`](Self::decorations), and
+    /// unlike [`strategy`](Self::strategy): honoured at create
+    /// ([`winit::window::WindowAttributes::with_window_level`]) and on a
+    /// same-id change by [`crate::AppShell`]'s `reconcile_windows` level pass
+    /// (`Window::set_window_level`), so pinning a live panel on top is a
+    /// signal write. That it must be live is the whole point — a level is a
+    /// thing the *user* toggles, so a create-time-only axis would not be the
+    /// feature.
+    ///
+    /// **A declaration, whose fate is reported separately.** This field is
+    /// what the binding wrote and reads back unchanged, which is what makes a
+    /// saved layout a layout. Whether the windowing system actually running
+    /// drives it is [`pinion_core::window_level::LevelOutcome`], published on
+    /// `scene/windows` beside this value — see that module for why a
+    /// stored-flags accessor has no channel for the distinction, and is
+    /// silently wrong wherever a platform backend drops the bit.
+    ///
+    /// `#[serde(default)]` so every wire form written before this field
+    /// existed deserializes to [`WindowLevel::Normal`] — the enum's own
+    /// `Default`, so unlike [`decorations`](Self::decorations) no explicit
+    /// default fn is needed.
+    #[serde(default)]
+    pub level: WindowLevel,
 }
 
 /// Serde default for [`WindowSpec::decorations`] — `true` (OS-decorated),
@@ -951,6 +987,7 @@ impl WindowSpec {
             position: None,
             decorations: windowspec_decorations_default(),
             display: None,
+            level: WindowLevel::Normal,
         }
     }
 
@@ -975,6 +1012,7 @@ impl WindowSpec {
             position: None,
             decorations: windowspec_decorations_default(),
             display: None,
+            level: WindowLevel::Normal,
         }
     }
 
@@ -1035,6 +1073,20 @@ impl WindowSpec {
     #[must_use]
     pub fn with_display(mut self, display: DisplayId) -> Self {
         self.display = Some(display);
+        self
+    }
+
+    /// R1610 §5.16 §5.41 — declare where this window sits in the window
+    /// manager's front-to-back order. See [`level`](Self::level).
+    ///
+    /// Chains after `main` / `new` alongside the rest of the declared-axis
+    /// builder family, and works on an already-open window: re-pushing the
+    /// spec with a new level drives the `reconcile_windows` level pass, which
+    /// is how a user's "keep this panel on top" toggle is expressed —
+    /// a signal write, never a reach for a winit handle.
+    #[must_use]
+    pub const fn with_level(mut self, level: WindowLevel) -> Self {
+        self.level = level;
         self
     }
 
@@ -1378,7 +1430,8 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// honest matrix:
     /// - `decorations:true`  + `chrome:None`        — OS-drawn title bar (default).
     /// - `decorations:false` + `chrome:Some(style)` — pinion-drawn chrome (CSD:
-    ///   an editor panel / torn-off dock window — Blender / Unreal / VS Code).
+    ///   an editor panel / torn-off dock window, as professional 3D, game and
+    ///   code editors all have).
     /// - `decorations:false` + `chrome:None`        — naked borderless (a splash
     ///   or a fullscreen game viewport — the Phase-C/D surface).
     ///

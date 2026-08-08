@@ -90,6 +90,7 @@ use crate::theme::{
     ThemeTokensOutcome, parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens,
 };
 use crate::wait_for::{WaitForError, WaitOutcome, wait_for};
+use crate::window_declare::{WindowDeclareError, WindowDeclareParams, window_declare};
 use crate::window_move::{WindowMoveError, WindowMoveParams, window_move};
 use crate::wire_census::rpc_schema;
 
@@ -353,19 +354,25 @@ pub struct DispatchContext<'a> {
     /// iteration. Asynchronous — AI clients pair with
     /// `scene/wait_for_frame` for stable observation.
     pub resize_request: Option<&'a mut (dyn FnMut(u32, u32) + 'a)>,
-    /// (R1088 §5.16 §5.41 §2 #7 PR-31) The WRITE peer of the
-    /// `scene/windows` read: `scene/window_move` invokes this closure
-    /// with `(window_id, x, y)` and the application writes the new
-    /// logical-pixel position into the binding's `Signal<Vec<WindowSpec>>`
-    /// (the reconcile move pass then drives the live OS window). Returns
-    /// `true` when a declared window matched the id; `false` →
+    /// (R1088 §5.16 §5.41 §2 #7 PR-31, generalised R1610) The WRITE peer of
+    /// the `scene/windows` read: the application writes the patched axes into
+    /// its `Signal<Vec<WindowSpec>>` and the reconcile passes drive the live
+    /// OS window. Returns `true` when a declared window matched the id;
+    /// `false` → `WindowDeclareError::UnknownWindow` /
     /// `WindowMoveError::UnknownWindow`. Absent on single-window / TUI
     /// bindings (no `windows_signal`).
+    ///
+    /// **ONE closure for both write methods.** `scene/window_declare` passes
+    /// the client's patch through; `scene/window_move` builds the position-only
+    /// patch it always was. Two closures writing one signal is two places for
+    /// the same axis to acquire different semantics — R1088's "an explicit AI
+    /// reposition PINS the window" would have been true of one and not the
+    /// other.
     #[allow(
         clippy::type_complexity,
-        reason = "the resize_request sibling above carries the same boxed-FnMut shape un-aliased; a one-field type alias for the dispatch context's reposition hook would obscure the parallel more than it clarifies"
+        reason = "the resize_request sibling above carries the same boxed-FnMut shape un-aliased; a one-field type alias for the dispatch context's declare hook would obscure the parallel more than it clarifies"
     )]
-    pub reposition_request: Option<&'a mut (dyn FnMut(&str, i32, i32) -> bool + 'a)>,
+    pub declare_request: Option<&'a mut (dyn FnMut(&WindowDeclareParams) -> bool + 'a)>,
     /// (R1419 §5.39 §5.16 / R1420) The drive peer of the `os_focused_window` leg
     /// the `scene/input_state` READ exposes: `scene/window_focus` invokes this
     /// closure with `focused: bool` to record a winit `WindowEvent::Focused` edge
@@ -379,7 +386,7 @@ pub struct DispatchContext<'a> {
     /// OS-window-focus gate (the TUI's single full-screen surface).
     #[allow(
         clippy::type_complexity,
-        reason = "matches the reposition_request sibling's boxed-FnMut shape; a one-field alias would obscure the parallel"
+        reason = "matches the declare_request sibling's boxed-FnMut shape; a one-field alias would obscure the parallel"
     )]
     pub window_focus_request: Option<&'a mut (dyn FnMut(bool) -> Option<String> + 'a)>,
     /// (R705 §5.12 §2 #7) The named window's most recently painted
@@ -1501,6 +1508,78 @@ pub struct DeclaredWindow {
     /// stored — so it cannot become a second, stale copy of where the window
     /// is (R1575's "one fact, one source" argument).
     pub anchored: Option<AnchoredOutcome>,
+    /// R1610 §5.16 §5.41 §2 #7 — where this window is DECLARED to sit in the
+    /// window manager's front-to-back order.
+    ///
+    /// Never `null`: every window has a known declared level (the binding's
+    /// `pinion_shell::WindowSpec::level`, defaulting
+    /// [`WindowLevel::Normal`](pinion_core::window_level::WindowLevel::Normal)),
+    /// the same always-known honesty [`decorations`](Self::decorations) has.
+    /// What the running windowing system did with it is
+    /// [`level_outcome`](Self::level_outcome).
+    pub level: String,
+    /// R1610 §5.16 §5.41 §2 #7 — what became of
+    /// [`level`](Self::level) on the windowing system actually running:
+    /// `applied`, `unsupported` (Wayland has no stacking protocol), or
+    /// `unknown` (a backend this adapter has not measured).
+    ///
+    /// `null` when no windowing backend was stamped at all — a TUI surface or a
+    /// fixture — which is a third thing again, and the same
+    /// nobody-looked-so-nothing-is-claimed rule
+    /// [`anchored`](Self::anchored) uses for an unstamped desk.
+    ///
+    /// **This field is the point of the axis.** A flags accessor returns the
+    /// value the program STORED, so where a platform backend ignores a stacking
+    /// bit outright — one mainstream toolkit's macOS backend never reads the
+    /// stay-below bit at all — the program declares it, reads it back as set,
+    /// and is wrong. A declaration whose fate is unreportable is a declaration a
+    /// program can be silently wrong about.
+    ///
+    /// Derived from the declaration and the stamped backend each dispatch,
+    /// never stored, for the reason [`anchored`](Self::anchored) gives.
+    pub level_outcome: Option<LevelOutcomeWire>,
+}
+
+/// R1610 §5.16 §2 #7 — what became of a window's declared level, projected to
+/// the wire.
+///
+/// Flattened rather than a tagged union, for the reason
+/// [`AnchoredOutcome`] gives: all three outcomes carry
+/// the same two facts beside their `kind`, and a client branches on `kind`
+/// either way. `kind` is a closed vocabulary this crate owns — `applied` /
+/// `unsupported` / `unknown`.
+///
+/// Owned HERE rather than re-exported from the domain crate, because this
+/// crate owns the wire shape and the census that keeps `rpc/schema` honest
+/// only reads this crate: a field typed with another crate's vocabulary
+/// publishes as `any`, which tells an agent nothing. The same reason
+/// [`DeclaredWindow::display`] is a `String` and not a `DisplayId`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LevelOutcomeWire {
+    /// `applied`, `unsupported`, or `unknown`.
+    pub kind: &'static str,
+    /// The level the binding asked for. Always present — an honoured
+    /// declaration still says what it asked for, so one field answers "what
+    /// did I request" across all three outcomes.
+    pub declared: String,
+    /// The windowing system this was decided against.
+    pub backend: String,
+}
+
+impl From<pinion_core::window_level::LevelOutcome> for LevelOutcomeWire {
+    fn from(outcome: pinion_core::window_level::LevelOutcome) -> Self {
+        Self {
+            // Asked of the type rather than matched here. `LevelOutcome` is
+            // `#[non_exhaustive]` and lives in another crate, so a match
+            // written here would need a wildcard, and a wildcard at a wire
+            // boundary reports a NEW arm as an old one — R1600's lesson that
+            // adding an arm is weaker than changing a type. `kind()` matches
+            // exhaustively where the arms are declared.
+            kind: outcome.kind(),
+            declared: outcome.declared().as_str().to_owned(),
+            backend: outcome.backend().as_str().to_owned(),
+        }
+    }
 }
 
 impl<'a> DispatchContext<'a> {
@@ -1521,7 +1600,7 @@ impl<'a> DispatchContext<'a> {
             paint_producer: None,
             access_producer: None,
             resize_request: None,
-            reposition_request: None,
+            declare_request: None,
             accelerators: Vec::new(),
             accelerator_focus: None,
             accelerator_chord: None,
@@ -1594,18 +1673,18 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
-    /// Builder: attach the window reposition request closure (R1088
-    /// §5.16 §5.41 §2 #7 PR-31 — the `scene/window_move` WRITE peer of
-    /// the `scene/windows` read). The closure is invoked with
-    /// `(window_id, x, y)`; it writes the new logical-pixel position into
-    /// the binding's `Signal<Vec<WindowSpec>>` and returns whether a
+    /// Builder: attach the declared-window WRITE closure (R1088 §5.16 §5.41
+    /// §2 #7 PR-31, generalised R1610 — the `scene/window_declare` and
+    /// `scene/window_move` peer of the `scene/windows` read). The closure is
+    /// invoked with a [`WindowDeclareParams`] patch; it writes the named axes
+    /// into the binding's `Signal<Vec<WindowSpec>>` and returns whether a
     /// declared window matched.
     #[must_use]
-    pub fn with_reposition_request(
+    pub fn with_declare_request(
         mut self,
-        request: &'a mut (dyn FnMut(&str, i32, i32) -> bool + 'a),
+        request: &'a mut (dyn FnMut(&WindowDeclareParams) -> bool + 'a),
     ) -> Self {
-        self.reposition_request = Some(request);
+        self.declare_request = Some(request);
         self
     }
 
@@ -2080,7 +2159,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // `scene/access` invokes it once to dump the AccessKit projection.
     let mut access_producer = ctx.access_producer.take();
     let mut resize_request = ctx.resize_request.take();
-    let mut reposition_request = ctx.reposition_request.take();
+    let mut declare_request = ctx.declare_request.take();
     let mut window_focus_request = ctx.window_focus_request.take();
     // R51.73 §5.40 — same split-borrow pattern for the focus manager:
     // `focus/set` mutates, `focus/get` reads; both need exclusive
@@ -2732,12 +2811,26 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                         clippy::option_as_ref_deref,
                         reason = "dyn FnMut is not DerefMut; manual reborrow required"
                     )]
-                    let req = reposition_request.as_mut().map(|p| &mut **p);
+                    let req = declare_request.as_mut().map(|p| &mut **p);
                     (
                         handle_scene_window_move(req, request.params.as_ref()),
                         // Async — the signal write fires reconcile + the actual OS
                         // move lands when the shell next reconciles. No OCC bump
                         // here (mirrors `scene/resize`).
+                        HandlerKind::Read,
+                    )
+                }
+                "scene/window_declare" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let req = declare_request.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_window_declare(req, request.params.as_ref()),
+                        // Async for the same reason `scene/window_move` is: the
+                        // signal write fires reconcile and the OS calls land on
+                        // the next event-loop iteration.
                         HandlerKind::Read,
                     )
                 }
@@ -7823,20 +7916,20 @@ fn resize_error_to_rpc(err: ResizeError) -> RpcError {
 }
 
 /// R1088 §5.16 §5.41 §2 #7 PR-31 — `scene/window_move` dispatch entry.
-/// Invokes the application's `reposition_request` closure with the
+/// Invokes the application's `declare_request` closure with the
 /// requested declared window id + logical `(x, y)` position. The WRITE
 /// peer of the `scene/windows` read.
 fn handle_scene_window_move<F>(
-    reposition_request: Option<&mut F>,
+    declare_request: Option<&mut F>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
-    F: FnMut(&str, i32, i32) -> bool + ?Sized,
+    F: FnMut(&WindowDeclareParams) -> bool + ?Sized,
 {
     let params = require_params(params)?;
     let typed: WindowMoveParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
-    match window_move(typed, reposition_request) {
+    match window_move(typed, declare_request) {
         Ok(outcome) => serde_json::to_value(outcome)
             .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
         Err(err) => Err(window_move_error_to_rpc(err)),
@@ -7847,6 +7940,41 @@ fn window_move_error_to_rpc(err: WindowMoveError) -> RpcError {
     let variant = match err {
         WindowMoveError::ClosureUnavailable => "ClosureUnavailable",
         WindowMoveError::UnknownWindow => "UnknownWindow",
+    };
+    RpcError::invalid_params(variant)
+}
+
+/// R1610 §5.16 §5.41 §2 #7 — `scene/window_declare` dispatch entry: the
+/// GENERAL write peer of the `scene/windows` read.
+///
+/// One method over the whole declaration, mirroring the one method that reads
+/// it. Before this, four of the five live axes `scene/windows` publishes could
+/// not be written at all — see [`mod@crate::window_declare`] for why that
+/// asymmetry is the defect rather than the level axis being a missing fifth
+/// method.
+fn handle_scene_window_declare<F>(
+    declare_request: Option<&mut F>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(&WindowDeclareParams) -> bool + ?Sized,
+{
+    let params = require_params(params)?;
+    let typed: WindowDeclareParams = serde_json::from_value(params.clone())
+        .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
+    match window_declare(typed, declare_request) {
+        Ok(outcome) => serde_json::to_value(outcome)
+            .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
+        Err(err) => Err(window_declare_error_to_rpc(err)),
+    }
+}
+
+fn window_declare_error_to_rpc(err: WindowDeclareError) -> RpcError {
+    let variant = match err {
+        WindowDeclareError::ClosureUnavailable => "ClosureUnavailable",
+        WindowDeclareError::UnknownWindow => "UnknownWindow",
+        WindowDeclareError::NoAxisDeclared => "NoAxisDeclared",
+        WindowDeclareError::UnknownLevel => "UnknownLevel",
     };
     RpcError::invalid_params(variant)
 }

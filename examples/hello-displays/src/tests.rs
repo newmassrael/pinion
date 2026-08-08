@@ -156,6 +156,136 @@ fn r1576_the_description_names_the_outcome_and_the_display_used() {
     );
 }
 
+// ---- R1610 §5.16 §5.41 — the panel's window LEVEL ----
+
+#[test]
+fn r1610_a_level_is_declared_on_the_spec_and_nothing_else_moves() {
+    // The claim the round rests on: pinning a panel is a spec write, not a
+    // reach for a window handle — and it must not disturb the placement, which
+    // is the other declaration living on the same struct.
+    use pinion_core::window_level::WindowLevel;
+    let placed = PresetKind::NamedDisplay("left").apply_to(panel(), &two_panels());
+    let pinned = placed.clone().with_level(WindowLevel::AlwaysOnTop);
+    assert_eq!(pinned.level, WindowLevel::AlwaysOnTop);
+    assert_eq!(pinned.display, placed.display, "the display is untouched");
+    assert_eq!(pinned.position, placed.position, "the offset is untouched");
+    assert_eq!(pinned.title, placed.title);
+    assert_eq!(
+        describe_placement(&pinned, &two_panels()),
+        describe_placement(&placed, &two_panels()),
+        "a level change cannot move a window",
+    );
+}
+
+#[test]
+fn r1610_a_preset_does_not_disturb_the_level() {
+    // The mirror image, and the one that would catch a preset rebuilding the
+    // spec from scratch: applying a placement preset to a PINNED panel must
+    // leave it pinned. A monitoring readout that quietly dropped behind the
+    // app when the user moved it to the other monitor is the bug.
+    use pinion_core::window_level::WindowLevel;
+    let pinned = panel().with_level(WindowLevel::AlwaysOnTop);
+    for (_, kind) in PRESETS {
+        let moved = kind.apply_to(pinned.clone(), &two_panels());
+        assert_eq!(
+            moved.level,
+            WindowLevel::AlwaysOnTop,
+            "{kind:?} must not touch the level",
+        );
+    }
+}
+
+/// R1610 — the state object, against a fabricated desk.
+///
+/// Everything above tests a PURE function. Two counterfactuals found what that
+/// leaves uncovered: deleting the signal write from `set_level`, and making
+/// `apply` reset the level, both left this suite green, because nothing here
+/// exercised `DesksState`'s own verbs — the demo was the only thing that did,
+/// and a demo does not run under `cargo test`. `Signal::new` needs no `Owner`
+/// scope and `DisplayHandle` is constructible, so the state object is a value a
+/// test can hold, and there was never a reason for the gap.
+fn state_on(desk: DisplayTopology) -> super::DesksState {
+    let handle = std::sync::Arc::new(pinion_shell::DisplayHandle::new());
+    handle.set(desk);
+    super::DesksState::new(handle)
+}
+
+#[test]
+fn r1610_set_level_writes_the_declaration_the_shell_reconciles() {
+    use pinion_core::window_level::WindowLevel;
+    let state = state_on(two_panels());
+    assert_eq!(
+        state.panel_spec().expect("declared").level,
+        WindowLevel::Normal
+    );
+
+    let echoed = state.set_level("always_on_top").expect("a known level");
+    assert_eq!(
+        echoed, "always_on_top",
+        "the verb echoes the canonical name"
+    );
+    assert_eq!(
+        state.panel_spec().expect("declared").level,
+        WindowLevel::AlwaysOnTop,
+        "the verb must write the SIGNAL — the shell's level pass reads nothing \
+         else, so a verb that only computed would pin nothing",
+    );
+    // Un-pinning is the same path, and it has to reach the signal too.
+    state.set_level("normal").expect("a known level");
+    assert_eq!(
+        state.panel_spec().expect("declared").level,
+        WindowLevel::Normal,
+    );
+}
+
+#[test]
+fn r1610_set_level_refuses_an_unknown_spelling_and_changes_nothing() {
+    use pinion_core::window_level::WindowLevel;
+    let state = state_on(two_panels());
+    state.set_level("always_on_top").expect("a known level");
+    let err = state.set_level("sideways").expect_err("not a level");
+    assert!(
+        format!("{err:?}").contains("is not a window level"),
+        "the refusal says what it refused: {err:?}",
+    );
+    assert_eq!(
+        state.panel_spec().expect("declared").level,
+        WindowLevel::AlwaysOnTop,
+        "a refused verb leaves the declaration exactly as it was",
+    );
+}
+
+#[test]
+fn r1610_applying_a_placement_preset_leaves_the_level_alone() {
+    // The counterfactual that found this one added `.with_level(Normal)` to
+    // `apply`, and every test passed: a monitoring readout that quietly drops
+    // behind the watched application when the user moves it to the other
+    // monitor is the bug, and nothing could see it.
+    use pinion_core::window_level::WindowLevel;
+    let state = state_on(two_panels());
+    state.set_level("always_on_top").expect("a known level");
+    for (name, _) in PRESETS {
+        state
+            .apply(name)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        assert_eq!(
+            state.panel_spec().expect("declared").level,
+            WindowLevel::AlwaysOnTop,
+            "preset {name} must not touch the level",
+        );
+    }
+}
+
+#[test]
+fn r1610_a_window_boots_at_the_normal_level() {
+    use pinion_core::window_level::WindowLevel;
+    assert_eq!(
+        panel().level,
+        WindowLevel::Normal,
+        "every pre-R1610 window is byte-identical",
+    );
+}
+
 #[test]
 fn r1576_the_rectangle_argument_is_parsed_strictly() {
     assert_eq!(

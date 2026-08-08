@@ -63,6 +63,7 @@ pub mod theme;
 pub mod transport;
 pub mod wait_for;
 pub mod waiter;
+pub mod window_declare;
 pub mod window_move;
 pub mod wire_census;
 
@@ -175,4 +176,7 @@ pub use transport::{
 };
 pub use wait_for::{WaitForError, WaitOutcome, wait_for};
 pub use waiter::{WaiterRegistry, try_async_wait_for, waiter_response};
+pub use window_declare::{
+    WindowDeclareError, WindowDeclareOutcome, WindowDeclareParams, window_declare,
+};
 pub use window_move::{WindowMoveError, WindowMoveOutcome, WindowMoveParams, window_move};

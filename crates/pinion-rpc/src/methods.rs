@@ -310,6 +310,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/unsubscribe", MethodOcc::Read, MethodWindow::Scope),
     ("scene/waitFor", MethodOcc::Read, MethodWindow::Path),
     ("scene/wheel", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/window_declare", MethodOcc::Read, MethodWindow::Scope),
     ("scene/window_focus", MethodOcc::Read, MethodWindow::Scope),
     ("scene/window_move", MethodOcc::Read, MethodWindow::Scope),
     ("scene/windows", MethodOcc::Read, MethodWindow::Scope),
@@ -501,6 +502,7 @@ mod tests {
         // `occ: Read` (deferred / async / out-of-OCC), so a consumer must
         // not read `Read` as "side-effect-free".
         for effecting_read in [
+            "scene/window_declare",     // async — the patch lands on reconcile
             "scene/window_move",        // async — move lands on reconcile
             "scene/window_focus",       // out-of-band OS-focus gate/mirror drive
             "scene/key",                // deferred input

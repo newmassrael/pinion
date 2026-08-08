@@ -11,11 +11,11 @@
 //!
 //! Every desktop toolkit gets this wrong the same way, and for the same reason:
 //! a saved position is an **absolute** coordinate in a space the application
-//! cannot describe. Qt's `QWidget::saveGeometry()` writes exactly that into an
-//! opaque `QByteArray`, and `restoreGeometry` answers a bare `bool` with
-//! nowhere to say that the window went somewhere else — which is why so many
-//! restored windows open where no pixel is, unreachable without a keyboard
-//! shortcut most users do not know.
+//! cannot describe. The usual save-geometry call writes exactly that into an
+//! opaque byte blob, and the restore answers a bare `bool` with nowhere to say
+//! that the window went somewhere else — which is why so many restored windows
+//! open where no pixel is, unreachable without a keyboard shortcut most users
+//! do not know.
 //!
 //! R1576's answer is that a place is stated **relative to a named display**.
 //! [`WindowSpec::display`] plus a position is "40 logical pixels into that
@@ -37,27 +37,53 @@
 //! the interesting rows, and they are the two that are ordinarily impossible to
 //! exercise without a monitor farm.
 //!
-//! ## Where this is past Qt 6.11
+//! ## R1610 — and where the panel sits in the stacking order
 //!
-//! 1. **A display has an address.** `QScreen` has no id accessor; `name()` is
-//!    platform text with no uniqueness guarantee, so a Qt preset cannot name a
-//!    monitor at all — the only handle is a `QScreen *` that dies on
-//!    `screenRemoved`.
-//! 2. **A rectangle can be resolved before it is used.** Every Qt screen query
-//!    takes a *point*; `invoke("resolve", "x,y,w,h")` here answers with the home
-//!    display, the pixels that are on a display, the pixels that are not, and
-//!    where the window would have to move.
+//! A place has a second half a layout preset needs: not only *where* on the
+//! desk, but *how far forward*. A monitoring tool's torn-off readout is
+//! supposed to stay visible over the application being watched, and that is
+//! [`WindowSpec::level`] — declared like the placement, changed at runtime like
+//! the placement (`invoke("level", "always_on_top")`), and read back on
+//! `scene/windows` like the placement.
+//!
+//! It carries the same honesty the placement does. `level` is what the binding
+//! DECLARED; `level_outcome` is what the windowing system actually running did
+//! with it, because on Wayland the answer is "nothing" — the core shell
+//! protocol has no stacking request.
+//!
+//! ## What the usual desktop-toolkit shape cannot do
+//!
+//! 1. **A display has an address.** The conventional screen object has no id
+//!    accessor and its name is platform text with no uniqueness guarantee, so a
+//!    preset cannot name a monitor at all — the only handle is a pointer that
+//!    dies when the screen is removed.
+//! 2. **A rectangle can be resolved before it is used.** The conventional
+//!    screen queries all take a *point*; `invoke("resolve", "x,y,w,h")` here
+//!    answers with the home display, the pixels that are on a display, the
+//!    pixels that are not, and where the window would have to move.
 //! 3. **The substitution is in the answer.** `scene/windows` reports each
 //!    window's `anchored` outcome — `on_declared` / `substituted` /
-//!    `no_display` — with **both** ids when a display was swapped.
-//! 4. **The desk reaches the wire at all.** `QGuiApplication::screens()` is
-//!    in-process C++; nothing outside a Qt application can ask it what it is
-//!    displaying on.
+//!    `no_display` — with **both** ids when a display was swapped, where the
+//!    conventional restore answers a bare `bool`.
+//! 4. **The desk reaches the wire at all.** A screen list that lives in
+//!    in-process C++ cannot be asked by anything outside the application.
 //! 5. **The holes are stated.** `gap_free` says whether the arrangement fills
 //!    its own bounding box — the fact that makes "inside the virtual desktop"
-//!    and "on a display" different questions. Qt has no accessor for it, which
-//!    is why Qt code so often uses `virtualGeometry()` containment as a
-//!    visibility test and is wrong on every L-shaped desk.
+//!    and "on a display" different questions. Without it, code uses
+//!    virtual-geometry containment as a visibility test and is wrong on every
+//!    L-shaped desk.
+//! 6. **A level is one value, and it is enumerable.** Encoded as two
+//!    independent bits in a flags word, "on top and on bottom" is a value a
+//!    program can build and each platform backend resolves differently, and
+//!    "offer the user the window levels" is not a question the vocabulary can
+//!    answer. `level_names` here answers it over the wire.
+//! 7. **Changing it costs one call.** A flags-word encoding makes the change
+//!    reparent and hide the window, and on one platform backend destroy and
+//!    recreate it. Here the panel stays mapped.
+//! 8. **A dropped declaration is reported.** A flags accessor returns what the
+//!    program stored, so a stacking bit a platform backend never reads still
+//!    reads back as set. `scene/windows` publishes `level_outcome` beside
+//!    `level`.
 //!
 //! ## The AI surface (§2 #7)
 //!
@@ -85,6 +111,7 @@ use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
+use pinion_core::window_level::WindowLevel;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{
     DisplayHandle, SizeStrategy, WidgetView, WindowPlacement, WindowSpec, use_display_handle,
@@ -280,6 +307,35 @@ impl DesksState {
         self.last_event.set(format!("applied {canonical}"));
         Ok(summary)
     }
+
+    /// R1610 — pin the panel above (or below) everything else, by writing its
+    /// spec's level. The same one-assignment shape [`Self::apply`] has: the
+    /// shell's level pass sees the change and drives the live OS window.
+    ///
+    /// This is the analyzer-tool gesture — "keep the readout over the app I am
+    /// watching" — and it has to work on a window that is already open, which is
+    /// why the axis is reconcilable rather than create-time.
+    fn set_level(&self, name: &str) -> Result<String, InvokeError> {
+        let level = WindowLevel::from_wire(name.trim()).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{name:?} is not a window level; known: {}",
+                WindowLevel::ALL
+                    .iter()
+                    .map(|l| l.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+        let mut specs = self.windows.get();
+        let slot = specs
+            .iter_mut()
+            .find(|s| s.id.as_ref() == PANEL_WINDOW)
+            .ok_or_else(|| InvokeError::rejected("the panel window is not declared"))?;
+        *slot = slot.clone().with_level(level);
+        self.windows.set(specs);
+        self.last_event.set(format!("level {}", level.as_str()));
+        Ok(level.as_str().to_string())
+    }
 }
 
 /// One line describing where a spec's placement lands on `desk`.
@@ -371,12 +427,19 @@ impl ExternalIntrospect for DeskOracle {
                     SchemaField::new("panel_display", "string"),
                     SchemaField::new("panel_offset", "string"),
                     SchemaField::new("panel_placement", "string"),
+                    // R1610 — the panel's declared LEVEL and the names it can
+                    // take. `level_names` is what makes a level picker
+                    // buildable from the wire alone, where two bits inside a
+                    // flags word carry no enumeration of themselves.
+                    SchemaField::new("panel_level", "string"),
+                    SchemaField::new("level_names", "string"),
                     SchemaField::new("applied_preset", "string"),
                     SchemaField::new("preset_names", "string"),
                     SchemaField::new("last_event", "string"),
                     // Verbs.
                     SchemaField::action("apply", "string"),
                     SchemaField::action("resolve", "string"),
+                    SchemaField::action("level", "string"),
                 ]
             },
         )
@@ -396,7 +459,7 @@ impl ExternalIntrospect for DeskOracle {
                     .join(","),
             ),
             // The empty string is "no primary", a real state on a headless desk
-            // — and one Qt models as `primaryScreen()` returning `nullptr`.
+            // — and one the conventional API models as a null screen pointer.
             "primary_id" => text(
                 desk.primary()
                     .map(|d| d.id().as_str().to_string())
@@ -429,6 +492,18 @@ impl ExternalIntrospect for DeskOracle {
                 state
                     .panel_spec()
                     .map_or_else(|| "no panel".to_string(), |s| describe_placement(&s, &desk)),
+            ),
+            "panel_level" => text(
+                state
+                    .panel_spec()
+                    .map_or_else(|| "no panel".to_string(), |s| s.level.as_str().to_string()),
+            ),
+            "level_names" => text(
+                WindowLevel::ALL
+                    .iter()
+                    .map(|l| l.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
             ),
             "applied_preset" => text(state.applied.get()),
             "preset_names" => text(
@@ -490,6 +565,11 @@ impl ExternalIntrospect for DeskOracle {
                         .suggestion
                         .map_or_else(|| "none".to_string(), |(x, y)| format!("{x},{y}")),
                 )))
+            }
+            "level" => {
+                let state = self.state()?.clone();
+                let name = Self::text(&args)?;
+                state.set_level(&name).map(IntrospectValue::Text)
             }
             _ => Err(InvokeError::UnknownPath),
         }
@@ -576,6 +656,12 @@ fn view_main() -> Scene {
     let mut y = 78;
     children.extend(display_rows(&desk, &mut y, ink, muted));
     children.extend(preset_rows(&applied_preset(), &mut y, ink, muted));
+    children.extend(level_rows(
+        state.panel_spec().map_or(WindowLevel::Normal, |s| s.level),
+        &mut y,
+        ink,
+        muted,
+    ));
     children.push(line(
         format!(
             "panel: {}",
@@ -678,6 +764,41 @@ fn preset_rows(
     rows
 }
 
+/// R1610 — one row per window level, marking the panel's declared one.
+///
+/// A level PICKER is the thing this row set is: three values a user chooses
+/// between. Encoded as two independent bits inside a flags word carrying
+/// twenty unrelated hints, the program cannot ask its own vocabulary what the
+/// levels are — it has to know the two spellings and that they are mutually
+/// exclusive, a rule each platform backend enforces differently.
+fn level_rows(
+    declared: WindowLevel,
+    y: &mut u32,
+    ink: pinion_core::style::Color,
+    muted: pinion_core::style::Color,
+) -> Vec<Scene> {
+    let mut rows = Vec::new();
+    rows.push(line("window level (panel)", *y, BODY_FONT_PX, muted));
+    *y += ROW_H;
+    for level in WindowLevel::ALL {
+        let marker = if level == declared { ">" } else { " " };
+        let what = match level {
+            WindowLevel::AlwaysOnBottom => "below ordinary windows (a desktop widget)",
+            WindowLevel::Normal => "ordinary stacking",
+            WindowLevel::AlwaysOnTop => "above ordinary windows (a floating readout)",
+        };
+        rows.push(line(
+            format!("{marker} {}: {what}", level.as_str()),
+            *y,
+            BODY_FONT_PX,
+            ink,
+        ));
+        *y += ROW_H;
+    }
+    *y += 14;
+    rows
+}
+
 fn view_panel() -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let state = use_desks_state();
@@ -697,6 +818,19 @@ fn view_panel() -> Scene {
                     |s| describe_placement(&s, &desk),
                 ),
                 Rect::new(20, 48, PANEL_W - 40, BODY_FONT_PX + 4),
+                TextStyle::new()
+                    .with_size_px(BODY_FONT_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )),
+            // R1610 — the level the panel declares, painted where the placement
+            // is, because they are the same kind of fact: a declaration whose
+            // resolution the wire reports.
+            Scene::Text(TextNode::styled(
+                state.panel_spec().map_or_else(
+                    || "no level".to_string(),
+                    |s| format!("level: {}", s.level.as_str()),
+                ),
+                Rect::new(20, 48 + ROW_H, PANEL_W - 40, BODY_FONT_PX + 4),
                 TextStyle::new()
                     .with_size_px(BODY_FONT_PX)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
@@ -746,8 +880,9 @@ impl WidgetA11y for DisplaysView {
     /// says — how many displays, which is primary, and where the panel is
     /// declared to be with what became of that declaration.
     ///
-    /// The last part is the one Qt cannot reach: a Qt window's screen is known
-    /// to `QWindow::screen()` and to nothing an accessibility client can ask.
+    /// The last part is the one the conventional shape cannot reach: a window's
+    /// screen is known to the window object and to nothing an accessibility
+    /// client can ask.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_desks_state();
         let desk = state.desk();

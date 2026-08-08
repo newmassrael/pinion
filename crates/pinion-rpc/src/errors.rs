@@ -85,27 +85,72 @@ pub struct ErrorEntry {
 /// source in **both** directions, so a word added to a dispatcher and not here
 /// fails, and so does a word here that nothing emits — a dead entry in a closed
 /// vocabulary is a promise to a client that will never be kept.
+/// R1610 — the vocabulary grew from 17 words to 35 without a single new
+/// refusal being written, because the gate below could see two of the four
+/// shapes this dispatcher emits a word in.
+///
+/// R1566 built the scan around `WireFault::params("…")` and
+/// `Cow::Borrowed("…")`, which is how `path.rs` and `query.rs` spell it. The
+/// dispatcher's own refusals are spelled two other ways —
+/// `RpcError::invalid_params("Word")` directly, and the
+/// `fn …_error_to_rpc(err) { let variant = match err { … }; …invalid_params(variant) }`
+/// block that thirteen error types share — and both were invisible. Eighteen
+/// words reached the wire that a client could only learn by reading pinion's
+/// source, which is the exact defect this module exists to end, sitting inside
+/// the gate built to end it.
+///
+/// It is the R1605 shape again: a text census that looks for the emissions it
+/// knows how to find, rather than making every emission account for itself.
+/// The scan below now walks the `variant` blocks structurally (from
+/// `let variant = match` to the end of its function, counted only when that
+/// function reaches `invalid_params(variant)` — `apply_error_to_rpc` builds an
+/// OBJECT payload out of the same shape and is correctly not vocabulary), and
+/// reads a bare CamelCase literal passed straight to `invalid_params`.
+///
+/// What remains outside is PROSE, and deliberately: 81 of the dispatcher's
+/// literals are sentences like `"params.value missing"` — echoes of the
+/// caller's own input, which the `-32602` entry's `meaning` already tells a
+/// client not to match on.
 const VOCABULARY_32602: &[&str] = &[
     // `PathError::wire_tag` — the window-prefix failures. `UnknownWindow`
     // appends the offending id after a colon, so it is the one member a client
     // matches by PREFIX; the entry's `meaning` says so.
+    "CapacityFull",
+    "ClosureUnavailable",
+    "EmptySteps",
     "EmptyWindowId",
+    "InitialQueryFailed",
+    "InputInjectionUnavailable",
+    "Intervene",
     "InterveneTypeMismatch",
     "IntrospectionOptedOut",
+    "InvalidSize",
+    "InvalidViewport",
     "InvokeTypeMismatch",
     "MalformedDisplayAsk",
     "MalformedPrefix",
+    "MissingCursor",
+    "NoAxisDeclared",
     "NoExternalAtPath",
+    "NoLastPaintLayout",
+    "OutOfBounds",
+    "PaintProducerUnavailable",
     "PathIsAReadSlot",
     "PathIsAnAction",
     "ReadOnly",
+    "RenderBackendUnavailable",
     "RetainedNodeNotWritable",
+    "RollbackFailed",
+    "SnapshotFailed",
     "UnknownIntervenePath",
     "UnknownIntrospectPath",
     "UnknownInvokePath",
+    "UnknownLevel",
+    "UnknownPath",
     "UnknownWindow",
     "UnmappedSurfaceError",
     "UnsupportedPath",
+    "ZeroAttempts",
 ];
 
 /// The published catalog. Ordered by code, descending — the standard codes
@@ -314,6 +359,79 @@ mod tests {
         }
     }
 
+    /// R1610 — is this a CamelCase vocabulary word rather than prose?
+    ///
+    /// The dispatcher's `-32602` payloads are a MIX, which is what the
+    /// `-32602` entry's `meaning` already tells a client: a word from a closed
+    /// vocabulary, or an echo of the caller's own input
+    /// (`"params.value missing"`). One rule tells them apart — a word has no
+    /// space, no colon and no dot, and starts upper-case — and it has to be
+    /// applied, because "collect every literal" would publish 81 sentences as
+    /// vocabulary and "collect the ones I recognise" is how R1566's scan came
+    /// to miss eighteen.
+    fn is_vocabulary_word(s: &str) -> bool {
+        s.starts_with(|c: char| c.is_ascii_uppercase())
+            && s.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+
+    /// R1610 — the word in `RpcError::invalid_params("Word")`, when the literal
+    /// is a vocabulary word rather than prose.
+    fn bare_invalid_params_word(line: &str) -> Option<&str> {
+        let after = line.split_once("invalid_params(\"")?.1;
+        let word = after.split_once('"')?.0;
+        is_vocabulary_word(word).then_some(word)
+    }
+
+    /// R1610 — every word emitted by a `let variant = match err { … }` block
+    /// whose function reaches `RpcError::invalid_params(variant)`.
+    ///
+    /// Structural rather than line-local on purpose. `=> "Word",` is how a
+    /// dozen VALUE enums spell their wire names too (`Butt`, `Center`, `Tile`,
+    /// `Ellipsis`), so a line pattern collects sixteen of those as refusals —
+    /// measured. Scoping to the block, and requiring the block's function to
+    /// actually hand `variant` to `invalid_params`, is also what correctly
+    /// EXCLUDES `apply_error_to_rpc`: it has the same `let variant = match`
+    /// shape and builds an object payload, so its words are not vocabulary.
+    fn variant_block_words(src: &str) -> Vec<&str> {
+        let lines: Vec<&str> = src.lines().collect();
+        let mut words = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            if !lines[i].trim_start().starts_with("let variant = match") {
+                i += 1;
+                continue;
+            }
+            let mut block = Vec::new();
+            let mut reaches_invalid_params = false;
+            let mut j = i + 1;
+            // A bare `}` in column zero ends the enclosing function — the one
+            // boundary that does not need a brace counter here, since every
+            // one of these lives at the top level of the module.
+            while j < lines.len() && lines[j] != "}" {
+                let line = lines[j];
+                if !line.trim_start().starts_with("//") {
+                    if let Some(word) = line
+                        .split_once("=> \"")
+                        .and_then(|(_, rest)| rest.split_once('"'))
+                        .map(|(word, _)| word)
+                        .filter(|w| is_vocabulary_word(w))
+                    {
+                        block.push(word);
+                    }
+                    if line.contains("RpcError::invalid_params(variant)") {
+                        reaches_invalid_params = true;
+                    }
+                }
+                j += 1;
+            }
+            if reaches_invalid_params {
+                words.extend(block);
+            }
+            i = j;
+        }
+        words
+    }
+
     /// R1566 — the vocabulary is complete in BOTH directions.
     ///
     /// One direction stops a word reaching the wire undiscoverable, which is
@@ -372,7 +490,20 @@ mod tests {
                 if line.contains("\"MalformedDisplayAsk: {name}") {
                     emitted.push("MalformedDisplayAsk");
                 }
+                // R1610 — shape three: a bare word handed straight to
+                // `invalid_params`. Invisible to the two openers above, which
+                // is how `InputInjectionUnavailable` reached the wire from 24
+                // call sites without ever being published.
+                if let Some(word) = bare_invalid_params_word(line) {
+                    emitted.push(word);
+                }
             }
+            // R1610 — shape four: the `let variant = match err { … }` block
+            // thirteen error types share. Walked structurally rather than by a
+            // line pattern, because `=> "Word",` is ALSO how a dozen value
+            // enums spell their wire names (`Butt`, `Center`, `Tile`), and a
+            // line-local rule collects sixteen of those as refusals.
+            emitted.extend(variant_block_words(src));
         }
         emitted.sort_unstable();
         emitted.dedup();
