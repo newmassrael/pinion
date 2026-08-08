@@ -199,6 +199,22 @@ AXES = [
                 "grid-frozen-col", "row-dissect", "hex-dump", "code-fold",
                 "command-palette", "selection-toolbar", "tab-reorder",
                 "dock-presets",
+                # R1609, cleared inline: `hello-tile-dashboard` (R1608) had no
+                # pattern and this tool reported it UNCLASSIFIED for a round —
+                # the R1575 / R1577 shape a third time, and again found by the
+                # census rather than remembered. It is filed here because
+                # `dock-` is: a tile board and a dock are the same KIND of
+                # artifact, two shells that arrange panels, and this axis is
+                # where this tree already files that kind.
+                #
+                # Its ROUNDS still declare `none` (R1607, R1608, R1609), which
+                # is not a contradiction: the example-name census answers "which
+                # axis does this artifact belong to" and the round ledger
+                # answers "which axis did this round advance", and R1606
+                # recorded why those are different questions — this axis's three
+                # named families are property grid, data grid and node graph,
+                # and a dashboard shell is none of them.
+                "tile-dashboard",
             ]),
         ],
         # R1532 re-judgment, demanded by this axis's round count going 0 -> 1

@@ -368,6 +368,79 @@ pub struct AccessNode {
     /// R730 / R731 / R739 additive-axis convention) so it defaults absent
     /// without forcing every hand-written node literal to enumerate it.
     pub access_key: Option<String>,
+    /// R1609 §5.40 — WAI-ARIA `aria-live` per WAI-ARIA 1.2 §6.6.10: whether an
+    /// assistive technology announces this node's contents changing **without
+    /// the user having navigated to it**.
+    ///
+    /// The channel a change nobody is looking at travels on. Every other axis on
+    /// this struct describes a node the user has reached; a live region is how a
+    /// consequence *elsewhere* gets said. R1609's forcing consumer is a tile
+    /// dashboard's keyboard editing: moving one card pushes others, and the
+    /// cards that moved are exactly the ones the user is not on.
+    ///
+    /// Lowers to `accesskit::Node::set_live`. `None` omits the attribute, which
+    /// is what every pre-R1609 node did and what an AT reads as "not live".
+    ///
+    /// ## Why a declared region and not an announcement event
+    ///
+    /// Qt's peer is `QAccessibleAnnouncementEvent` (Qt 6.8+, with a
+    /// `QAccessible::AnnouncementPoliteness` of `Polite` / `Assertive`), which is
+    /// **fired** rather than declared — and measured against Qt 6.11.1, *no
+    /// widget in `qtbase/src/widgets` fires one*: the only references outside
+    /// `qaccessible.{h,cpp}` are the platform adapters that deliver it and
+    /// `qtestaccessible.h`. So the capability is there and the widget set
+    /// announces nothing.
+    ///
+    /// Declaring it is also the only shape compatible with §2 #7. A fired event
+    /// leaves no trace, so `scene/access` could not report it and a test could
+    /// only observe it by intercepting a callback; a region is part of the scene,
+    /// so what an AT will say is derivable from the paint. It also cannot
+    /// disagree with itself: two code paths that change the same fact announce
+    /// identically because neither of them decides to announce.
+    pub live: Option<AccessLive>,
+}
+
+/// R1609 §5.40 — how urgently an assistive technology should announce a change
+/// inside a live region (WAI-ARIA `aria-live`).
+///
+/// Three arms where Qt's `AnnouncementPoliteness` has two, and the extra one is
+/// not padding: an event has no "off" because not firing it *is* off, while a
+/// declared region can be nested, so [`Self::Off`] is how a subtree opts out of
+/// an ancestor's liveness. Mirrors `accesskit::Live` exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessLive {
+    /// Changes here are not announced — an explicit opt-out, meaningful inside
+    /// an ancestor that is live.
+    Off,
+    /// Announced when the user is idle, without interrupting. The right default
+    /// for a consequence: a card that was pushed out of the way is worth saying
+    /// and not worth cutting anyone off for.
+    Polite,
+    /// Announced immediately, interrupting. For something the user must hear
+    /// before continuing.
+    Assertive,
+}
+
+impl AccessLive {
+    /// The WAI-ARIA attribute value.
+    #[must_use]
+    pub const fn aria_name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Polite => "polite",
+            Self::Assertive => "assertive",
+        }
+    }
+
+    /// Lower to the AccessKit vocabulary.
+    #[must_use]
+    pub const fn to_accesskit(self) -> accesskit::Live {
+        match self {
+            Self::Off => accesskit::Live::Off,
+            Self::Polite => accesskit::Live::Polite,
+            Self::Assertive => accesskit::Live::Assertive,
+        }
+    }
 }
 
 impl AccessNode {
@@ -407,7 +480,16 @@ impl AccessNode {
             value_text: None,
             has_popup: None,
             access_key: None,
+            live: None,
         }
+    }
+
+    /// (R1609 §5.40) Declare this node a WAI-ARIA live region — see
+    /// [`Self::live`].
+    #[must_use]
+    pub const fn with_live(mut self, live: AccessLive) -> Self {
+        self.live = Some(live);
+        self
     }
 
     /// Set the accessible name.

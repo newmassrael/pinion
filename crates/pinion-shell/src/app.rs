@@ -258,6 +258,13 @@ fn cursor_icon_for_hint(hint: CursorHint) -> CursorIcon {
         CursorHint::RowResize => CursorIcon::NsResize,
         // R1405 — the pointing hand over a clickable target (an OSC-8 link).
         CursorHint::Pointer => CursorIcon::Pointer,
+        // R1609 — a corner handle moves two edges at once, so it asks for the
+        // diagonal cursor Qt spells `SizeFDiagCursor` / `SizeBDiagCursor`. The
+        // same two icons `resize_cursor_for_action` has commanded for a window
+        // corner since R1189: the icons were reachable and the node vocabulary
+        // was not, which is why these two arms are one line each.
+        CursorHint::NwseResize => CursorIcon::NwseResize,
+        CursorHint::NeswResize => CursorIcon::NeswResize,
     }
 }
 
@@ -6839,6 +6846,26 @@ mod r1121_chrome_action_tests {
         assert_eq!(
             cursor_icon_for_hint(CursorHint::RowResize),
             CursorIcon::NsResize
+        );
+        // R1609 — the two diagonals a corner handle asks for. Asserted against
+        // the SAME icons `resize_cursor_for_action` commands for a window's
+        // corner, which is the point of the round's finding: the icons were
+        // reachable from the chrome path since R1189 and the node vocabulary
+        // could not name them, so a card's corner grip and a window's corner now
+        // read identically rather than by coincidence.
+        assert_eq!(
+            cursor_icon_for_hint(CursorHint::NwseResize),
+            CursorIcon::NwseResize
+        );
+        assert_eq!(
+            cursor_icon_for_hint(CursorHint::NeswResize),
+            CursorIcon::NeswResize
+        );
+        assert_eq!(
+            cursor_icon_for_hint(CursorHint::NwseResize),
+            super::resize_cursor_for_action(ChromeAction::Resize(ResizeDirection::SouthEast))
+                .expect("a corner chrome edge commands a cursor"),
+            "a card's ⤡ grip and a window's south-east corner are one icon"
         );
     }
 

@@ -473,6 +473,17 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_modal();
     }
 
+    // R1609 §5.40 — WAI-ARIA `aria-live`. Emitted only when declared, so a node
+    // that says nothing about liveness keeps the attribute absent rather than
+    // asserting `Off` — the same absent-vs-explicit distinction `aria-readonly`
+    // has, and it matters here because `Off` is a meaningful opt-out inside a
+    // live ancestor. Qt's peer is a fired `QAccessibleAnnouncementEvent`, which
+    // no widget in `qtbase/src/widgets` fires; a declaration is also the only
+    // form §2 #7 can report, since a fired event leaves nothing to read back.
+    if let Some(live) = access.live {
+        node.set_live(live.to_accesskit());
+    }
+
     if let Some(bounds) = access.bounds {
         node.set_bounds(rect_to_accesskit(bounds));
     }
@@ -1417,6 +1428,46 @@ mod tests {
         b.add(&AccessNode::new("save_tip", AriaRole::Tooltip).with_name("Saves the file"));
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 3);
+    }
+
+    #[test]
+    fn r1609_a_live_region_declaration_reaches_accesskit_and_absence_stays_absent() {
+        // Not a smoke test: `accesskit::Node::live()` is a real getter, so the
+        // lowered value is asserted rather than inferred from the node count.
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            &AccessNode::new("board", AriaRole::Group)
+                .with_name("Tile dashboard")
+                .with_live(crate::node::AccessLive::Polite),
+        );
+        b.add(&AccessNode::new("quiet", AriaRole::Group).with_name("Not live"));
+        b.add(
+            &AccessNode::new("urgent", AriaRole::Group)
+                .with_live(crate::node::AccessLive::Assertive),
+        );
+        // `Off` is why this axis is three-valued where Qt's politeness is two:
+        // a fired event has no "off", a declared region nested in a live
+        // ancestor does.
+        b.add(&AccessNode::new("optout", AriaRole::Group).with_live(crate::node::AccessLive::Off));
+        let update = b.build(None);
+
+        let live_of = |tag: &str| {
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == tag_to_node_id(tag))
+                .map(|(_, node)| node.live())
+                .expect("the node is in the update")
+        };
+        assert_eq!(live_of("board"), Some(accesskit::Live::Polite));
+        assert_eq!(live_of("urgent"), Some(accesskit::Live::Assertive));
+        assert_eq!(live_of("optout"), Some(accesskit::Live::Off));
+        assert_eq!(
+            live_of("quiet"),
+            None,
+            "a node that says nothing about liveness keeps the attribute ABSENT \
+             rather than asserting Off — the distinction `aria-readonly` has too"
+        );
     }
 
     #[test]

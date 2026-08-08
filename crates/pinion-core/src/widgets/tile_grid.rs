@@ -42,10 +42,66 @@
 //!   close gaps automatically, so a drag has a non-local effect nobody asked
 //!   for and its inverse is not a drag. [`TileGrid::compact`] is a separate
 //!   call, so an editor decides whether "tidy up" is part of the gesture.
+//!
+//! ## R1609 — an arrangement is editable without a pointer, and an edge is a
+//! handle
+//!
+//! R1608 gave the board a drag and left two things open: a resize existed only
+//! as a *verb* (no corner handle), and there was **no keyboard channel at all**
+//! — a screen-reader user could read the arrangement and not change it. Both
+//! close here, and they close *together*, because they are the same derivation:
+//!
+//! > **Moving one edge of a tile to a grid line, holding the opposite edge
+//! > still.** A [`TileHandle`] drag moves one edge (a side) or two (a corner);
+//! > a [`TileNudge`] moves one by a single cell. One private `set_edge`, four
+//! > public entry points.
+//!
+//! Qt's floor for all of this is `QMdiSubWindow`, and it is a real floor —
+//! keyboard move *and* resize exist there. Measured against
+//! `qtbase/src/widgets/widgets/qmdisubwindow.cpp` in Qt 6.11.1, five things
+//! here are different on purpose:
+//!
+//! * **No mode.** Qt's keyboard editing lives behind `isInInteractiveMode`,
+//!   entered only from the *system menu* — `_q_enterInteractiveMode` starts by
+//!   casting `q->sender()` to a `QAction` and returns if it is not one of
+//!   `actions[MoveAction]` / `actions[ResizeAction]`. So switching from moving
+//!   to resizing costs a menu round trip. Here the chord says which, and
+//!   [`TileNudge`] is one flat vocabulary of twelve.
+//! * **Nothing warps the pointer.** Qt implements each arrow key as
+//!   `parentWidget()->mapFromGlobal(cursor().pos() + delta)` and then
+//!   `cursor().setPos(...)` to catch the mouse up, with the *whole*
+//!   `keyPressEvent` body inside `#ifndef QT_NO_CURSOR` — so on a cursor-less
+//!   build Qt has no keyboard layout editing at all, and on every other build a
+//!   keyboard user's physical pointer jumps across the screen. A nudge here is
+//!   arithmetic on cells.
+//! * **A keyboard edit can be taken back.** Qt saves `oldGeometry` on entering
+//!   interactive mode and **never restores it**: `Key_Escape`, `Key_Return` and
+//!   `Key_Enter` all fall to the same `leaveInteractiveMode()`, so Escape
+//!   *commits*. [`TileEdit`] is the undo point, and it must be one rather than
+//!   a saved rectangle because a move displaces *other* tiles — restoring the
+//!   card alone would leave the board rearranged around it.
+//! * **A session's reflow is a difference, not a sum.** Five nudges that push
+//!   one card from row 1 to row 5 are one displacement, not five;
+//!   [`Reflow::between`] derives it from the two arrangements.
+//! * **Arrow navigation is total, and the invariant is why.** Two tiles that do
+//!   not overlap are separated on at least one axis — that is literally the
+//!   negation of [`Tile::overlaps`] — so every other tile lies beyond one of
+//!   the four edges ([`Tile::lies_beyond`]) and [`TileGrid::neighbour`] can
+//!   reach all of them. `QMdiArea` cannot have this property, because MDI
+//!   windows *may* overlap; its navigation is `activateNextSubWindow`, a walk
+//!   down a `QList` in creation order.
+//!
+//! One more, on the pointer side: Qt's `initOperationMap` hand-writes nine rows
+//! pairing each of its private `Operation` values with a `ChangeFlag` bitmask
+//! (`HMove | HResize | HResizeReverse` …) **and** a cursor, and the enum, the
+//! map and the regions are all private, so no caller can enumerate the handles
+//! a subwindow has. [`TileHandle::ALL`] is the enumeration, and both the edges
+//! it moves and the [`TileHandle::cursor`] it asks for are *derived* from which
+//! axes it touches.
 
 use serde::{Deserialize, Serialize};
 
-use crate::style::GridPlacement;
+use crate::style::{CursorHint, GridPlacement};
 
 /// A tile's identity, stable across moves and saves.
 ///
@@ -130,6 +186,331 @@ impl Tile {
             && self.row < other.bottom()
             && other.row < self.bottom()
     }
+
+    /// (R1609) Whether this tile lies entirely beyond `from`'s `dir` edge — the
+    /// half-plane [`TileGrid::neighbour`] searches.
+    ///
+    /// ★ **This is where arrow navigation gets its totality, and the source is
+    /// the invariant itself.** Expand [`Self::overlaps`] and negate it: two
+    /// tiles that do not overlap satisfy `a.right() <= b.col` or
+    /// `b.right() <= a.col` or `a.bottom() <= b.row` or `b.bottom() <= a.row` —
+    /// which is exactly "one of them lies beyond one of the other's four
+    /// edges". So on a legal arrangement *every* other card is a candidate in at
+    /// least one direction, and no card can be stranded where no arrow key
+    /// reaches it.
+    ///
+    /// `QMdiArea` cannot make this claim, because its subwindows may overlap and
+    /// the negation therefore does not hold; `activateNextSubWindow` walks a
+    /// `QList` in creation order instead, so its "next" window bears no relation
+    /// to where the user is looking.
+    #[must_use]
+    pub const fn lies_beyond(&self, from: &Self, dir: TileDirection) -> bool {
+        match dir {
+            TileDirection::Left => self.right() <= from.col,
+            TileDirection::Right => from.right() <= self.col,
+            TileDirection::Up => self.bottom() <= from.row,
+            TileDirection::Down => from.bottom() <= self.row,
+        }
+    }
+
+    /// Whether the two tiles' row ranges intersect — regardless of columns.
+    #[must_use]
+    const fn shares_rows(&self, other: &Self) -> bool {
+        self.row < other.bottom() && other.row < self.bottom()
+    }
+
+    /// Whether the two tiles' column ranges intersect — regardless of rows.
+    #[must_use]
+    const fn shares_columns(&self, other: &Self) -> bool {
+        self.col < other.right() && other.col < self.right()
+    }
+}
+
+/// (R1609) One side of a tile's rectangle.
+///
+/// The unit every resize is expressed in: a gesture moves an edge to a grid
+/// line and the opposite edge stays put, which is what makes dragging a card's
+/// left side change both its column *and* its width without those being two
+/// decisions that can disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TileEdge {
+    /// The left side — moving it changes `col` and `w`.
+    Left,
+    /// The right side — moving it changes `w` alone.
+    Right,
+    /// The top side — moving it changes `row` and `h`.
+    Top,
+    /// The bottom side — moving it changes `h` alone.
+    Bottom,
+}
+
+impl TileEdge {
+    /// Every edge, so a consumer can enumerate rather than spell four out.
+    pub const ALL: [Self; 4] = [Self::Left, Self::Right, Self::Top, Self::Bottom];
+
+    /// Whether this edge is the one nearer the grid's origin.
+    ///
+    /// The single asymmetry in the whole resize derivation: growing a *start*
+    /// edge moves its line **down** in value and growing an *end* edge moves it
+    /// up, so [`TileGrid::nudge`] needs this and nothing else to turn a
+    /// direction into a signed step.
+    #[must_use]
+    pub const fn is_start(self) -> bool {
+        matches!(self, Self::Left | Self::Top)
+    }
+
+    /// Whether this edge runs along the column axis.
+    #[must_use]
+    pub const fn is_horizontal(self) -> bool {
+        matches!(self, Self::Left | Self::Right)
+    }
+
+    /// Where this edge of `tile` currently sits, as a zero-based grid line.
+    ///
+    /// A start edge's line is the cell it occupies; an end edge's line is one
+    /// *past* the last cell — the same half-open convention [`Tile::right`] and
+    /// [`Tile::bottom`] already use, so a resize and the overlap test measure
+    /// the rectangle the same way.
+    #[must_use]
+    pub const fn line_of(self, tile: &Tile) -> u32 {
+        match self {
+            Self::Left => tile.col,
+            Self::Right => tile.right(),
+            Self::Top => tile.row,
+            Self::Bottom => tile.bottom(),
+        }
+    }
+}
+
+/// (R1609) Where a resize gesture grabbed a tile: one edge, or the two that
+/// meet at a corner.
+///
+/// Qt's peer is the private `QMdiSubWindowPrivate::Operation`, which has the
+/// same eight resize values plus `Move` and `None`. Two differences, and both
+/// come from *deriving* rather than tabulating: the set is
+/// [enumerable](Self::ALL) where Qt's enum is in a `_p.h` and its region map is
+/// private, and the [cursor](Self::cursor) follows from which axes the handle
+/// moves where `initOperationMap` writes one per row by hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TileHandle {
+    /// The left side alone.
+    Left,
+    /// The right side alone.
+    Right,
+    /// The top side alone.
+    Top,
+    /// The bottom side alone.
+    Bottom,
+    /// The top-left corner — left and top together.
+    TopLeft,
+    /// The top-right corner.
+    TopRight,
+    /// The bottom-left corner.
+    BottomLeft,
+    /// The bottom-right corner — the only one `QSizeGrip` can be.
+    BottomRight,
+}
+
+impl TileHandle {
+    /// Every handle, in a stable order.
+    ///
+    /// What lets a card paint its whole handle ring in a loop — and what
+    /// `QMdiSubWindow` cannot answer at all, since `isPersistent`-style
+    /// per-thing queries are the only public surface and `Operation` is private.
+    pub const ALL: [Self; 8] = [
+        Self::Left,
+        Self::Right,
+        Self::Top,
+        Self::Bottom,
+        Self::TopLeft,
+        Self::TopRight,
+        Self::BottomLeft,
+        Self::BottomRight,
+    ];
+
+    /// The column-axis edge this handle moves, if any.
+    #[must_use]
+    pub const fn horizontal(self) -> Option<TileEdge> {
+        match self {
+            Self::Left | Self::TopLeft | Self::BottomLeft => Some(TileEdge::Left),
+            Self::Right | Self::TopRight | Self::BottomRight => Some(TileEdge::Right),
+            Self::Top | Self::Bottom => None,
+        }
+    }
+
+    /// The row-axis edge this handle moves, if any.
+    #[must_use]
+    pub const fn vertical(self) -> Option<TileEdge> {
+        match self {
+            Self::Top | Self::TopLeft | Self::TopRight => Some(TileEdge::Top),
+            Self::Bottom | Self::BottomLeft | Self::BottomRight => Some(TileEdge::Bottom),
+            Self::Left | Self::Right => None,
+        }
+    }
+
+    /// Whether this handle moves `edge`.
+    ///
+    /// Derived from the two axis accessors rather than a third table, so a
+    /// handle cannot claim an edge its own resize does not touch.
+    #[must_use]
+    pub fn moves(self, edge: TileEdge) -> bool {
+        self.horizontal() == Some(edge) || self.vertical() == Some(edge)
+    }
+
+    /// The mouse cursor this handle asks for.
+    ///
+    /// **Derived, including the diagonal's slope.** A handle on one axis wants
+    /// that axis's double arrow. A corner wants a diagonal, and *which*
+    /// diagonal follows from [`TileEdge::is_start`]: two start edges (top-left)
+    /// or two end edges (bottom-right) lie on the `⤡` diagonal, one of each on
+    /// `⤢`. Qt writes the same four cursors as literal values in nine
+    /// `operationMap.insert` rows beside a hand-written `ChangeFlag` mask, so a
+    /// row whose flags and cursor disagree is a state that exists there and
+    /// cannot exist here.
+    #[must_use]
+    pub const fn cursor(self) -> CursorHint {
+        match (self.horizontal(), self.vertical()) {
+            (Some(h), Some(v)) => {
+                if h.is_start() == v.is_start() {
+                    CursorHint::NwseResize
+                } else {
+                    CursorHint::NeswResize
+                }
+            }
+            (Some(_), None) => CursorHint::ColResize,
+            (None, _) => CursorHint::RowResize,
+        }
+    }
+
+    /// Which handle a point inside a card hits, `None` for its interior.
+    ///
+    /// `u` and `v` are the point's position within the card as `[0, 1]`
+    /// fractions; `band` is how much of each side counts as a handle, clamped
+    /// to at most half so the left and right bands cannot both claim a point.
+    ///
+    /// Qt's `getOperation` walks nine cached `QRegion`s that
+    /// `updateDirtyRegions` has to rebuild whenever the widget's geometry
+    /// changes — a second copy of the geometry, kept in step by a callback. This
+    /// is a pure function of the point, so there is nothing to keep in step and
+    /// nothing to invalidate. A non-finite coordinate compares false against
+    /// both bounds and so reads as the interior, which is the safe answer: a
+    /// bad pointer sample moves a card rather than resizing it.
+    #[must_use]
+    pub fn at(u: f32, v: f32, band: f32) -> Option<Self> {
+        let band = band.clamp(f32::EPSILON, 0.5);
+        let horizontal = if u < band {
+            Some(TileEdge::Left)
+        } else if u > 1.0 - band {
+            Some(TileEdge::Right)
+        } else {
+            None
+        };
+        let vertical = if v < band {
+            Some(TileEdge::Top)
+        } else if v > 1.0 - band {
+            Some(TileEdge::Bottom)
+        } else {
+            None
+        };
+        match (horizontal, vertical) {
+            (Some(TileEdge::Left), Some(TileEdge::Top)) => Some(Self::TopLeft),
+            (Some(TileEdge::Left), Some(_)) => Some(Self::BottomLeft),
+            (Some(_), Some(TileEdge::Top)) => Some(Self::TopRight),
+            (Some(_), Some(_)) => Some(Self::BottomRight),
+            (Some(TileEdge::Left), None) => Some(Self::Left),
+            (Some(_), None) => Some(Self::Right),
+            (None, Some(TileEdge::Top)) => Some(Self::Top),
+            (None, Some(_)) => Some(Self::Bottom),
+            (None, None) => None,
+        }
+    }
+}
+
+/// (R1609) The four directions a keyboard edit works in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TileDirection {
+    /// Toward column zero.
+    Left,
+    /// Away from column zero.
+    Right,
+    /// Toward row zero.
+    Up,
+    /// Away from row zero.
+    Down,
+}
+
+impl TileDirection {
+    /// Every direction, so a keymap can be built by iteration.
+    pub const ALL: [Self; 4] = [Self::Left, Self::Right, Self::Up, Self::Down];
+
+    /// The edge a resize in this direction acts on.
+    #[must_use]
+    pub const fn edge(self) -> TileEdge {
+        match self {
+            Self::Left => TileEdge::Left,
+            Self::Right => TileEdge::Right,
+            Self::Up => TileEdge::Top,
+            Self::Down => TileEdge::Bottom,
+        }
+    }
+
+    /// The direction that undoes this one.
+    #[must_use]
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
+        }
+    }
+}
+
+/// (R1609) A one-cell keyboard edit — the whole vocabulary, twelve values.
+///
+/// Flat on purpose. Qt reaches the same behaviours through a *mode*
+/// (`currentOperation`, set from a system-menu action) plus a delta, which means
+/// the same arrow key means different things depending on state the user cannot
+/// see and a screen reader is not told about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TileNudge {
+    /// Slide the whole card one cell.
+    Move(TileDirection),
+    /// Push that side one cell outward, making the card bigger.
+    Grow(TileDirection),
+    /// Pull that side one cell inward, making the card smaller.
+    Shrink(TileDirection),
+}
+
+impl TileNudge {
+    /// The direction this nudge names.
+    #[must_use]
+    pub const fn direction(self) -> TileDirection {
+        match self {
+            Self::Move(d) | Self::Grow(d) | Self::Shrink(d) => d,
+        }
+    }
+
+    /// The nudge that undoes this one **for the card, not for the board**.
+    ///
+    /// The distinction is load-bearing and is why [`TileEdit`] exists rather
+    /// than an inverse-gesture stack. `Grow(Down)` then `Shrink(Down)` returns
+    /// the card to the exact rectangle it had — and the cards it pushed on the
+    /// way down **stay** pushed, because the reflow only ever moves tiles
+    /// downward and floating them back up is [`TileGrid::compact`]'s job, a
+    /// separate verb. `Move` is weaker still: an inverse `Move` is not even
+    /// exact for the card once a bound has clamped it.
+    ///
+    /// So this is the right thing for building a keymap out of
+    /// [`TileDirection::ALL`], and the wrong thing to build an undo out of.
+    #[must_use]
+    pub const fn inverse(self) -> Self {
+        match self {
+            Self::Move(d) => Self::Move(d.opposite()),
+            Self::Grow(d) => Self::Shrink(d),
+            Self::Shrink(d) => Self::Grow(d),
+        }
+    }
 }
 
 /// What a move or a resize did to the tiles it landed on.
@@ -152,6 +533,123 @@ impl Reflow {
     #[must_use]
     pub fn is_clean(&self) -> bool {
         self.displaced.is_empty()
+    }
+
+    /// (R1609) What a whole *session* of edits did to the other tiles, as the
+    /// difference between two arrangements.
+    ///
+    /// ★ **A session's reflow is a difference and not a sum**, and the two are
+    /// genuinely different answers. Five arrow presses that walk a card down
+    /// past another one push that other card from row 1 to row 5; adding the
+    /// per-press reflows says `x:1>2, x:2>3, x:3>4, x:4>5` — four displacements
+    /// of a card that moved once, and an undo record built from that list has to
+    /// know to collapse it. Comparing the arrangements says `x:1>5`.
+    ///
+    /// `edited` is excluded because being *displaced* means being pushed by
+    /// somebody else; the card the user is holding moved because they moved it.
+    /// Order follows `before`'s tile order, so the answer is stable across calls
+    /// rather than depending on which cards happened to settle first.
+    ///
+    /// Only rows can differ: the reflow moves tiles **down** and nothing else,
+    /// so a column change belongs to whoever was edited.
+    #[must_use]
+    pub fn between(before: &TileGrid, after: &TileGrid, edited: &TileId) -> Self {
+        let displaced = before
+            .tiles()
+            .iter()
+            .filter(|tile| &tile.id != edited)
+            .filter_map(|tile| {
+                let now = after.tile(&tile.id)?;
+                (now.row != tile.row).then(|| Displaced {
+                    id: tile.id.clone(),
+                    from: tile.row,
+                    to: now.row,
+                })
+            })
+            .collect();
+        Self { displaced }
+    }
+}
+
+/// (R1609) An edit in progress: which card, and the arrangement to go back to.
+///
+/// **The undo point has to be the whole board, not the card's rectangle.** A
+/// move displaces other cards, so restoring only the one being dragged would
+/// leave the board rearranged around a card that had returned home. Qt makes
+/// exactly this mistake in miniature: `_q_enterInteractiveMode` stores
+/// `oldGeometry = q->geometry()` and then no path ever reads it back —
+/// `Key_Escape`, `Key_Return` and `Key_Enter` share one `leaveInteractiveMode()`
+/// arm, so a keyboard move in Qt cannot be abandoned at all.
+///
+/// The session deliberately does **not** hold the live arrangement. R1608's
+/// design point was that the painter, the wire and the assistive-technology tree
+/// read *one* `TileGrid`; a session carrying its own copy would make two that
+/// could disagree about what is on screen. So the caller keeps editing its grid
+/// and this holds only what to restore, plus the derivations that need both.
+/// Serializable for the same reason [`TileGrid`] is, and the framework asks for
+/// it directly: a session held in a `Signal` must round-trip, so an in-flight
+/// edit survives a persisted session and <kbd>Escape</kbd> still knows what to
+/// restore. Qt's `oldGeometry` is a private `QRect` member that dies with the
+/// widget.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileEdit {
+    id: TileId,
+    before: TileGrid,
+}
+
+impl TileEdit {
+    /// Open a session on a tile.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`] — a session on a card that is not there would
+    /// be an undo point for nothing.
+    pub fn begin(grid: &TileGrid, id: &TileId) -> Result<Self, TileError> {
+        if grid.tile(id).is_none() {
+            return Err(TileError::NoSuchTile(id.clone()));
+        }
+        Ok(Self {
+            id: id.clone(),
+            before: grid.clone(),
+        })
+    }
+
+    /// Which card the session is editing.
+    #[must_use]
+    pub const fn id(&self) -> &TileId {
+        &self.id
+    }
+
+    /// The arrangement as it was when the session opened.
+    #[must_use]
+    pub const fn before(&self) -> &TileGrid {
+        &self.before
+    }
+
+    /// What the session has displaced so far, against the arrangement it opened
+    /// on — see [`Reflow::between`].
+    #[must_use]
+    pub fn reflow(&self, now: &TileGrid) -> Reflow {
+        Reflow::between(&self.before, now, &self.id)
+    }
+
+    /// Whether anything at all has changed since the session opened.
+    ///
+    /// The question a bound makes necessary: a held arrow key at column zero
+    /// leaves the arrangement **equal**, and an announcement or an undo entry for
+    /// an edit that did nothing is noise. Qt asks the same question the same way
+    /// and only about the one widget — `keyPressEvent` compares
+    /// `currentGeometry == oldGeometry` and returns early — which is cheap here
+    /// because the arrangement is a value.
+    #[must_use]
+    pub fn changed(&self, now: &TileGrid) -> bool {
+        &self.before != now
+    }
+
+    /// Abandon the session: the arrangement as it was, other cards included.
+    #[must_use]
+    pub fn cancel(self) -> TileGrid {
+        self.before
     }
 }
 
@@ -341,6 +839,145 @@ impl TileGrid {
         Ok(self.reflow_around(id))
     }
 
+    /// (R1609) Drag one of a tile's eight handles to a cell, pushing whatever
+    /// the result grows into downward.
+    ///
+    /// The cell is the one the pointer is over, and each edge reads it the way
+    /// its own half-open line does: a left or top edge lands *on* the cell, a
+    /// right or bottom edge lands one past it, so the dragged side always ends up
+    /// covering the cell under the cursor.
+    ///
+    /// ★ **A corner moves both its edges before anything reflows, and that is a
+    /// decision rather than an implementation detail.** Resolving the horizontal
+    /// edge, reflowing, then resolving the vertical one would let an
+    /// *intermediate* rectangle — one the user never asked for and never sees —
+    /// displace cards the final rectangle does not touch, and those cards do not
+    /// come back, because the reflow only ever pushes down. One gesture is one
+    /// reflow.
+    ///
+    /// Bounds are **clamped**, not refused: a drag past the board's edge is a
+    /// gesture rather than a mistake, and a side dragged past its opposite stops
+    /// one cell short so a card never inverts or vanishes. That is
+    /// [`Self::move_to`]'s existing rule, applied to sizes.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`].
+    pub fn drag_handle(
+        &mut self,
+        id: &TileId,
+        handle: TileHandle,
+        col: u32,
+        row: u32,
+    ) -> Result<Reflow, TileError> {
+        let columns = self.columns;
+        let target = self
+            .tiles
+            .iter_mut()
+            .find(|t| &t.id == id)
+            .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+        for edge in [handle.horizontal(), handle.vertical()]
+            .into_iter()
+            .flatten()
+        {
+            let line = match edge {
+                TileEdge::Left => col,
+                TileEdge::Right => col.saturating_add(1),
+                TileEdge::Top => row,
+                TileEdge::Bottom => row.saturating_add(1),
+            };
+            set_edge(target, edge, line, columns);
+        }
+        Ok(self.reflow_around(id))
+    }
+
+    /// (R1609) Apply a one-cell keyboard edit.
+    ///
+    /// The whole keyboard channel: twelve values, no mode, and every one of them
+    /// either the existing [`Self::move_to`] or the same `set_edge` a handle drag
+    /// runs. A nudge that has nowhere to go leaves the arrangement **equal** —
+    /// `TileGrid` is `PartialEq`, so "did that do anything" is one comparison
+    /// ([`TileEdit::changed`]) rather than a second return channel, and a held
+    /// arrow key at a bound stops instead of erroring (R1549's rule, where
+    /// `QAbstractSpinBox` keeps its repeat timer running against a pinned value).
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`].
+    pub fn nudge(&mut self, id: &TileId, nudge: TileNudge) -> Result<Reflow, TileError> {
+        if let TileNudge::Move(direction) = nudge {
+            let tile = self
+                .tile(id)
+                .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+            let (col, row) = match direction {
+                TileDirection::Left => (tile.col.saturating_sub(1), tile.row),
+                TileDirection::Right => (tile.col.saturating_add(1), tile.row),
+                TileDirection::Up => (tile.col, tile.row.saturating_sub(1)),
+                TileDirection::Down => (tile.col, tile.row.saturating_add(1)),
+            };
+            // Through `move_to`, so the right-edge clamp lives in one place.
+            return self.move_to(id, col, row);
+        }
+        let columns = self.columns;
+        let target = self
+            .tiles
+            .iter_mut()
+            .find(|t| &t.id == id)
+            .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+        let edge = nudge.direction().edge();
+        // Growing a start edge lowers its line; growing an end edge raises it.
+        // `TileEdge::is_start` is the only asymmetry the resize needs.
+        let outward = matches!(nudge, TileNudge::Grow(_));
+        let line = edge.line_of(target);
+        let line = if edge.is_start() == outward {
+            line.saturating_sub(1)
+        } else {
+            line.saturating_add(1)
+        };
+        set_edge(target, edge, line, columns);
+        Ok(self.reflow_around(id))
+    }
+
+    /// (R1609) The tile an arrow key in `dir` moves the selection to.
+    ///
+    /// Spatial, not ordinal: the nearest tile lying wholly beyond that edge
+    /// ([`Tile::lies_beyond`]), preferring one whose band on the *other* axis
+    /// overlaps this tile's, then the least distance, then the nearer on the
+    /// cross axis, then top-to-bottom-left-to-right — a total order, so the
+    /// answer never depends on the order cards were added.
+    ///
+    /// The band preference is what makes it feel like a grid: from the left card
+    /// of a row, Right goes to its neighbour in that row and not to a card three
+    /// rows down that happens to start one column sooner. The fallback past the
+    /// band is what keeps navigation **total** — see [`Tile::lies_beyond`] for why
+    /// the non-overlap invariant guarantees every card is reachable.
+    ///
+    /// `QMdiArea` offers `activateNextSubWindow` / `activatePreviousSubWindow`
+    /// over a `QList`, so it has no notion of *direction* at all.
+    #[must_use]
+    pub fn neighbour(&self, id: &TileId, dir: TileDirection) -> Option<&Tile> {
+        let from = self.tile(id)?;
+        self.tiles
+            .iter()
+            .filter(|tile| tile.id != from.id && tile.lies_beyond(from, dir))
+            .min_by_key(|tile| {
+                let (band, gap, cross) = if dir.edge().is_horizontal() {
+                    let gap = match dir {
+                        TileDirection::Left => from.col - tile.right(),
+                        _ => tile.col - from.right(),
+                    };
+                    (!tile.shares_rows(from), gap, tile.row.abs_diff(from.row))
+                } else {
+                    let gap = match dir {
+                        TileDirection::Up => from.row - tile.bottom(),
+                        _ => tile.row - from.bottom(),
+                    };
+                    (!tile.shares_columns(from), gap, tile.col.abs_diff(from.col))
+                };
+                (band, gap, cross, tile.row, tile.col)
+            })
+    }
+
     /// Take a tile out. The gap it leaves stays a gap until [`Self::compact`].
     ///
     /// # Errors
@@ -480,6 +1117,51 @@ impl TileGrid {
             pinned.push(index);
         }
         Reflow { displaced }
+    }
+}
+
+/// (R1609) **The one derivation under every resize**: put one edge of a tile on
+/// a grid line, holding the opposite edge still.
+///
+/// Both public entry points funnel through here — [`TileGrid::drag_handle`] calls
+/// it once per edge in the handle, [`TileGrid::nudge`] once with a one-cell
+/// step — so a corner drag and a `Grow` chord cannot disagree about what moving a
+/// side means. Qt spreads the equivalent across `setNewGeometry`, a per-operation
+/// `ChangeFlag` mask (`HResizeReverse` marks the two edges that also move the
+/// origin) and `QWidget`'s own min/max clamping.
+///
+/// Clamping, stated once here rather than at each call site:
+///
+/// * A start edge stops one line short of its opposite, so the tile keeps at
+///   least one cell and never inverts. `w`/`h` are documented never zero and this
+///   is where that stays true under a drag.
+/// * A start edge stops at line zero by being unsigned — the caller's
+///   `saturating_sub` already floored it.
+/// * The right edge stops at the column count, which is the board's only bound.
+/// * The bottom edge has **no** upper bound, because a dashboard's rows are
+///   unbounded ([`TileGrid::rows`] is derived) and a card may always grow taller.
+fn set_edge(tile: &mut Tile, edge: TileEdge, line: u32, columns: u32) {
+    match edge {
+        TileEdge::Left => {
+            let right = tile.right();
+            let col = line.min(right - 1);
+            tile.col = col;
+            tile.w = right - col;
+        }
+        TileEdge::Right => {
+            // `col + w <= columns` and `w >= 1`, so `col + 1 <= columns`: the
+            // clamp's bounds are ordered and it cannot panic.
+            tile.w = line.clamp(tile.col + 1, columns) - tile.col;
+        }
+        TileEdge::Top => {
+            let bottom = tile.bottom();
+            let row = line.min(bottom - 1);
+            tile.row = row;
+            tile.h = bottom - row;
+        }
+        TileEdge::Bottom => {
+            tile.h = line.max(tile.row + 1) - tile.row;
+        }
     }
 }
 
@@ -723,5 +1405,554 @@ mod tests {
         assert_eq!(grid.columns(), 1);
         grid.place(Tile::new("only", 5, 0, 1, 1)).unwrap();
         assert_eq!(grid.tile(&TileId::new("only")).unwrap().col, 0);
+    }
+
+    // ---- R1609: an edge is a handle, and the board is editable by keyboard ---
+
+    fn tile_of(grid: &TileGrid, id: &str) -> Tile {
+        grid.tile(&TileId::new(id)).expect("a seeded tile").clone()
+    }
+
+    #[test]
+    fn r1609_a_handle_derives_its_edges_and_its_cursor() {
+        // The enumeration Qt keeps in a private header: eight handles, and each
+        // one's edges and cursor FOLLOW from which axes it moves.
+        assert_eq!(TileHandle::ALL.len(), 8);
+        for handle in TileHandle::ALL {
+            let axes = usize::from(handle.horizontal().is_some())
+                + usize::from(handle.vertical().is_some());
+            assert!((1..=2).contains(&axes), "{handle:?} moves {axes} axes");
+            let moved: Vec<TileEdge> = TileEdge::ALL
+                .into_iter()
+                .filter(|e| handle.moves(*e))
+                .collect();
+            assert_eq!(moved.len(), axes, "{handle:?} moves exactly its own edges");
+            // No handle may claim both sides of one axis — that would be a
+            // rectangle with two lefts.
+            assert!(!(handle.moves(TileEdge::Left) && handle.moves(TileEdge::Right)));
+            assert!(!(handle.moves(TileEdge::Top) && handle.moves(TileEdge::Bottom)));
+        }
+
+        // The diagonal's slope is derived from `is_start`, not tabulated.
+        assert_eq!(TileHandle::TopLeft.cursor(), CursorHint::NwseResize);
+        assert_eq!(TileHandle::BottomRight.cursor(), CursorHint::NwseResize);
+        assert_eq!(TileHandle::TopRight.cursor(), CursorHint::NeswResize);
+        assert_eq!(TileHandle::BottomLeft.cursor(), CursorHint::NeswResize);
+        assert_eq!(TileHandle::Left.cursor(), CursorHint::ColResize);
+        assert_eq!(TileHandle::Bottom.cursor(), CursorHint::RowResize);
+    }
+
+    #[test]
+    fn r1609_the_handle_hit_test_is_a_pure_function_of_the_point() {
+        // Qt caches nine QRegions and rebuilds them from `updateDirtyRegions`
+        // whenever the geometry moves; this needs no cache, so there is nothing
+        // to invalidate.
+        assert_eq!(TileHandle::at(0.5, 0.5, 0.25), None, "the interior moves");
+        assert_eq!(TileHandle::at(0.02, 0.5, 0.25), Some(TileHandle::Left));
+        assert_eq!(TileHandle::at(0.98, 0.5, 0.25), Some(TileHandle::Right));
+        assert_eq!(TileHandle::at(0.5, 0.02, 0.25), Some(TileHandle::Top));
+        assert_eq!(TileHandle::at(0.5, 0.98, 0.25), Some(TileHandle::Bottom));
+        assert_eq!(TileHandle::at(0.02, 0.02, 0.25), Some(TileHandle::TopLeft));
+        assert_eq!(TileHandle::at(0.98, 0.02, 0.25), Some(TileHandle::TopRight));
+        assert_eq!(
+            TileHandle::at(0.02, 0.98, 0.25),
+            Some(TileHandle::BottomLeft)
+        );
+        assert_eq!(
+            TileHandle::at(0.98, 0.98, 0.25),
+            Some(TileHandle::BottomRight)
+        );
+
+        // A band wider than half would let left and right both claim the middle;
+        // it is clamped instead, so the whole card is a handle ring with no
+        // interior and every point still answers exactly once.
+        assert_eq!(TileHandle::at(0.5, 0.5, 9.0), None, "0.5 is exclusive");
+        assert_eq!(TileHandle::at(0.49, 0.5, 9.0), Some(TileHandle::Left));
+        assert_eq!(TileHandle::at(0.51, 0.5, 9.0), Some(TileHandle::Right));
+
+        // A non-finite sample reads as the interior: a bad pointer packet moves
+        // a card rather than silently resizing it.
+        assert_eq!(TileHandle::at(f32::NAN, f32::NAN, 0.25), None);
+    }
+
+    #[test]
+    fn r1609_dragging_a_side_holds_the_opposite_one_still() {
+        let mut grid = dashboard();
+        // `tall` is col 0..4 on rows 2..4. Drag its RIGHT edge onto cell 7.
+        grid.drag_handle(&TileId::new("tall"), TileHandle::Right, 7, 3)
+            .unwrap();
+        let tall = tile_of(&grid, "tall");
+        assert_eq!((tall.col, tall.w), (0, 8), "the dragged side covers cell 7");
+        assert_eq!((tall.row, tall.h), (2, 2), "the other axis is untouched");
+
+        // Now its LEFT edge onto cell 3: the right edge must not move, so the
+        // column and the width change together.
+        grid.drag_handle(&TileId::new("tall"), TileHandle::Left, 3, 3)
+            .unwrap();
+        let tall = tile_of(&grid, "tall");
+        assert_eq!((tall.col, tall.w, tall.right()), (3, 5, 8));
+        assert!(grid.violations().is_empty());
+    }
+
+    #[test]
+    fn r1609_a_side_dragged_past_its_opposite_stops_one_cell_short() {
+        let mut grid = dashboard();
+        // Drag `tall`'s left edge far to the RIGHT, past its own right edge.
+        grid.drag_handle(&TileId::new("tall"), TileHandle::Left, 99, 3)
+            .unwrap();
+        let tall = tile_of(&grid, "tall");
+        assert_eq!(
+            (tall.col, tall.w),
+            (3, 1),
+            "a card never inverts and never reaches zero cells"
+        );
+        // And the top edge dragged past the bottom.
+        grid.drag_handle(&TileId::new("tall"), TileHandle::Top, 3, 99)
+            .unwrap();
+        let tall = tile_of(&grid, "tall");
+        assert_eq!((tall.row, tall.h), (3, 1));
+        assert!(grid.violations().is_empty());
+        // The right edge stops at the board's own bound.
+        grid.drag_handle(&TileId::new("tall"), TileHandle::Right, 99, 3)
+            .unwrap();
+        assert_eq!(tile_of(&grid, "tall").right(), 12);
+        assert!(grid.violations().is_empty());
+    }
+
+    #[test]
+    fn r1609_a_corner_moves_both_edges_before_anything_reflows() {
+        // ★ The decision the round had to make, asserted as a difference rather
+        // than argued. A corner drag that SHRINKS one axis while GROWING the
+        // other has an intermediate rectangle covering cells the final one does
+        // not, so resolving the edges one at a time can displace a card the
+        // gesture never reaches — and the reflow only pushes down, so that card
+        // never comes back.
+        //
+        // ★ The first draft of this test grew both axes and its two routes
+        // agreed, because a rectangle reached by two outward steps contains
+        // every intermediate. The hazard needs one edge going each way.
+        //
+        // ★★ And the SECOND draft — one such fixture — was caught by a
+        // counterfactual, which is the more valuable finding. A per-edge
+        // implementation resolves the edges in some fixed order, and for any
+        // single fixture one of the two orders is harmless; the loop here happens
+        // to take the horizontal edge first, so a fixture where *vertical*-first
+        // is the harmful one let the rejected design pass. Both mirror images are
+        // therefore fixtures, so no order is safe in both and the assertion is
+        // about the DESIGN rather than about one arrangement.
+        //
+        // In each: `keep` sits in the region the harmful intermediate sweeps and
+        // the final rectangle never reaches.
+        let board = |wide: Tile| {
+            let mut grid = TileGrid::new(12);
+            for tile in [wide, Tile::new("keep", 4, 1, 2, 1)] {
+                grid.place(tile).unwrap();
+            }
+            grid
+        };
+        let wide = TileId::new("wide");
+
+        for (label, start, to, target) in [
+            (
+                // Shrinks horizontally, grows vertically: taking the BOTTOM edge
+                // first makes it six columns by four rows for an instant.
+                "vertical-first is the harmful order",
+                Tile::new("wide", 0, 0, 6, 1),
+                (2u32, 3u32),
+                Tile::new("wide", 0, 0, 3, 4),
+            ),
+            (
+                // The mirror — grows horizontally, shrinks vertically: taking the
+                // RIGHT edge first makes it six columns by four rows for an
+                // instant, and that is the order the implementation's loop uses.
+                "horizontal-first is the harmful order",
+                Tile::new("wide", 0, 0, 3, 4),
+                (5, 0),
+                Tile::new("wide", 0, 0, 6, 1),
+            ),
+        ] {
+            let (col, row) = to;
+            let mut together = board(start.clone());
+            let one = together
+                .drag_handle(&wide, TileHandle::BottomRight, col, row)
+                .unwrap();
+
+            let mut horizontal_first = board(start.clone());
+            horizontal_first
+                .drag_handle(&wide, TileHandle::Right, col, row)
+                .unwrap();
+            horizontal_first
+                .drag_handle(&wide, TileHandle::Bottom, col, row)
+                .unwrap();
+
+            let mut vertical_first = board(start.clone());
+            vertical_first
+                .drag_handle(&wide, TileHandle::Bottom, col, row)
+                .unwrap();
+            vertical_first
+                .drag_handle(&wide, TileHandle::Right, col, row)
+                .unwrap();
+
+            for (name, grid) in [
+                ("one gesture", &together),
+                ("horizontal first", &horizontal_first),
+                ("vertical first", &vertical_first),
+            ] {
+                assert_eq!(
+                    tile_of(grid, "wide"),
+                    target,
+                    "{label}: {name} must reach the same rectangle — the routes \
+                     differ in cost, not in destination"
+                );
+                assert!(
+                    grid.violations().is_empty(),
+                    "{label}: {name} left the board illegal"
+                );
+            }
+
+            assert!(
+                one.is_clean(),
+                "{label}: the final rectangle never reaches `keep`, so one \
+                 gesture displaces nothing"
+            );
+            assert_eq!(
+                tile_of(&together, "keep").row,
+                1,
+                "{label}: and `keep` did not move"
+            );
+
+            // Exactly one of the split orders swept it, and which one is the
+            // point: a per-edge route's answer depends on an order the user never
+            // chose, while one gesture has no order to depend on.
+            let split = [
+                tile_of(&horizontal_first, "keep").row,
+                tile_of(&vertical_first, "keep").row,
+            ];
+            assert!(
+                split.contains(&1) && split.iter().any(|row| *row != 1),
+                "{label}: one split order must sweep `keep` and the other must \
+                 not, got {split:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn r1609_the_keyboard_vocabulary_is_twelve_values_and_every_one_is_an_edge() {
+        let mut grid = dashboard();
+        let tall = TileId::new("tall");
+
+        // Move: the whole card slides.
+        grid.nudge(&tall, TileNudge::Move(TileDirection::Right))
+            .unwrap();
+        assert_eq!(
+            (tile_of(&grid, "tall").col, tile_of(&grid, "tall").w),
+            (1, 4)
+        );
+
+        // Grow / Shrink on each side, checked against the edge that must hold.
+        for (nudge, expect) in [
+            (TileNudge::Grow(TileDirection::Right), (1u32, 5u32)),
+            (TileNudge::Shrink(TileDirection::Right), (1, 4)),
+            (TileNudge::Grow(TileDirection::Left), (0, 5)),
+            (TileNudge::Shrink(TileDirection::Left), (1, 4)),
+        ] {
+            grid.nudge(&tall, nudge).unwrap();
+            let t = tile_of(&grid, "tall");
+            assert_eq!((t.col, t.w), expect, "after {nudge:?}");
+        }
+        for (nudge, expect) in [
+            (TileNudge::Grow(TileDirection::Down), (2u32, 3u32)),
+            (TileNudge::Shrink(TileDirection::Down), (2, 2)),
+            (TileNudge::Grow(TileDirection::Up), (1, 3)),
+            (TileNudge::Shrink(TileDirection::Up), (2, 2)),
+        ] {
+            grid.nudge(&tall, nudge).unwrap();
+            let t = tile_of(&grid, "tall");
+            assert_eq!((t.row, t.h), expect, "after {nudge:?}");
+        }
+        assert!(grid.violations().is_empty());
+
+        // ★ Every Grow/Shrink pair is an exact inverse FOR THE CARD, and the
+        // first draft of this asserted it for the whole BOARD and was wrong.
+        // Growing downward pushes cards out of the way and shrinking back does
+        // not float them home, because the reflow only moves tiles down and
+        // undoing that is `compact`'s job — a separate verb by R1607's choice.
+        // That is exactly why an undo has to be `TileEdit` and not an inverse
+        // gesture, and it is asserted here instead of assumed.
+        for direction in TileDirection::ALL {
+            let grow = TileNudge::Grow(direction);
+            assert_eq!(grow.inverse(), TileNudge::Shrink(direction));
+            let board_before = grid.clone();
+            let card_before = tile_of(&grid, "tall");
+            let session = TileEdit::begin(&grid, &tall).unwrap();
+
+            grid.nudge(&tall, grow).unwrap();
+            grid.nudge(&tall, grow.inverse()).unwrap();
+            assert_eq!(
+                tile_of(&grid, "tall"),
+                card_before,
+                "Grow({direction:?}) then Shrink must restore the CARD"
+            );
+            let board_after = grid.clone();
+            if direction == TileDirection::Down {
+                assert_ne!(
+                    board_after, board_before,
+                    "★ growing downward displaced a card that shrinking back does \
+                     NOT float home — an inverse gesture is not an undo"
+                );
+            }
+
+            grid = session.cancel();
+            assert_eq!(grid, board_before, "and cancel restores the BOARD");
+        }
+    }
+
+    #[test]
+    fn r1609_a_nudge_with_nowhere_to_go_leaves_the_arrangement_equal() {
+        // R1549's rule: a held arrow key at a bound STOPS. It does not error
+        // (that would make a repeat a failure) and it does not silently pretend
+        // to have worked — the arrangement is a value, so "nothing happened" is
+        // one comparison, which is how Qt's own keyPressEvent detects it too.
+        let mut grid = TileGrid::new(4);
+        grid.place(Tile::new("one", 0, 0, 1, 1)).unwrap();
+        let id = TileId::new("one");
+        let edit = TileEdit::begin(&grid, &id).unwrap();
+
+        for nudge in [
+            TileNudge::Move(TileDirection::Left),
+            TileNudge::Move(TileDirection::Up),
+            TileNudge::Shrink(TileDirection::Left),
+            TileNudge::Shrink(TileDirection::Right),
+            TileNudge::Shrink(TileDirection::Up),
+            TileNudge::Shrink(TileDirection::Down),
+            TileNudge::Grow(TileDirection::Left),
+            TileNudge::Grow(TileDirection::Up),
+        ] {
+            let reflow = grid.nudge(&id, nudge).expect("a bound is not an error");
+            assert!(reflow.is_clean(), "{nudge:?} displaced something");
+            assert!(!edit.changed(&grid), "{nudge:?} changed the board");
+        }
+        assert_eq!(tile_of(&grid, "one"), Tile::new("one", 0, 0, 1, 1));
+        assert_eq!(
+            grid.nudge(&TileId::new("ghost"), TileNudge::Move(TileDirection::Down)),
+            Err(TileError::NoSuchTile(TileId::new("ghost")))
+        );
+    }
+
+    #[test]
+    fn r1609_a_session_can_be_taken_back_and_it_restores_the_whole_board() {
+        // ★ Qt saves `oldGeometry` on entering interactive mode and never reads
+        // it: Escape, Return and Enter share one arm. And even restoring the
+        // rectangle would not be enough — a move displaces OTHER cards.
+        let mut grid = dashboard();
+        let tall = TileId::new("tall");
+        let edit = TileEdit::begin(&grid, &tall).unwrap();
+        assert_eq!(edit.id(), &tall);
+        assert!(!edit.changed(&grid), "a fresh session has changed nothing");
+
+        for _ in 0..3 {
+            grid.nudge(&tall, TileNudge::Move(TileDirection::Up))
+                .unwrap();
+        }
+        assert_eq!(tile_of(&grid, "tall").row, 0);
+        assert!(edit.changed(&grid));
+        assert_ne!(
+            tile_of(&grid, "header").row,
+            0,
+            "the session displaced a card that is not the one being edited"
+        );
+
+        let restored = edit.cancel();
+        assert_eq!(
+            restored,
+            dashboard(),
+            "cancel puts the displaced cards back too, which a saved rectangle \
+             could not do"
+        );
+    }
+
+    #[test]
+    fn r1609_a_sessions_reflow_is_a_difference_and_not_a_sum() {
+        // Four presses that walk one card DOWN into another push that other card
+        // once per press, so the per-press reflows sum to four displacements of a
+        // card that moved a single time — 1>2, 2>3, 3>4, 4>5 — and an undo built
+        // from that list has to know to collapse it.
+        //
+        // ★ The first draft walked the card UP and measured 1 against 1: moving
+        // away from a card only ever collides with it once, so the fixture could
+        // not tell the sum from the difference at all.
+        let mut grid = TileGrid::new(4);
+        for tile in [Tile::new("hand", 0, 0, 2, 1), Tile::new("post", 0, 1, 2, 1)] {
+            grid.place(tile).unwrap();
+        }
+        let hand = TileId::new("hand");
+        let edit = TileEdit::begin(&grid, &hand).unwrap();
+
+        let mut summed = 0;
+        for _ in 0..4 {
+            summed += grid
+                .nudge(&hand, TileNudge::Move(TileDirection::Down))
+                .unwrap()
+                .displaced()
+                .len();
+        }
+        assert_eq!(summed, 4, "one displacement per press");
+
+        let session = edit.reflow(&grid);
+        assert_eq!(
+            session.displaced().len(),
+            1,
+            "one card moved, so one displacement: {:?}",
+            session.displaced()
+        );
+        assert_eq!(session.displaced()[0].id, TileId::new("post"));
+        assert_eq!(session.displaced()[0].from, 1);
+        assert_eq!(session.displaced()[0].to, tile_of(&grid, "post").row);
+        assert!(
+            summed > session.displaced().len(),
+            "the sum over presses ({summed}) over-counts the difference (1)"
+        );
+
+        // And a card the session never touched is in neither answer.
+        let untouched = TileEdit::begin(&grid, &hand).unwrap();
+        assert!(untouched.reflow(&grid).is_clean());
+        assert_eq!(
+            TileEdit::begin(&grid, &TileId::new("ghost")),
+            Err(TileError::NoSuchTile(TileId::new("ghost"))),
+            "a session on a card that is not there is an undo point for nothing"
+        );
+    }
+
+    #[test]
+    fn r1609_every_other_card_lies_beyond_exactly_the_edges_it_should() {
+        // ★ The theorem, asserted directly: `lies_beyond` is TOTAL over a legal
+        // arrangement, because "does not overlap" IS "separated on some axis in
+        // some direction". Run over a board that deliberately includes a card
+        // sharing neither a row nor a column with another.
+        let mut grid = dashboard();
+        grid.place(Tile::new("island", 8, 4, 2, 1)).unwrap();
+        assert!(grid.violations().is_empty());
+
+        for a in grid.tiles() {
+            for b in grid.tiles() {
+                if a.id == b.id {
+                    continue;
+                }
+                assert!(!a.overlaps(b));
+                let sides: Vec<TileDirection> = TileDirection::ALL
+                    .into_iter()
+                    .filter(|dir| b.lies_beyond(a, *dir))
+                    .collect();
+                assert!(
+                    !sides.is_empty(),
+                    "{} lies beyond no edge of {} — a card no arrow key reaches",
+                    b.id,
+                    a.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn r1609_arrow_navigation_prefers_the_band_and_reaches_every_card() {
+        let mut grid = dashboard();
+        grid.place(Tile::new("island", 8, 4, 2, 1)).unwrap();
+
+        // Within a row band, Right is the neighbour in that band — not a card
+        // further down that happens to start at a lower column.
+        let right_of_left = grid
+            .neighbour(&TileId::new("left"), TileDirection::Right)
+            .expect("a card to the right");
+        assert_eq!(right_of_left.id, TileId::new("right"));
+        assert_eq!(
+            grid.neighbour(&TileId::new("right"), TileDirection::Left)
+                .map(|t| t.id.clone()),
+            Some(TileId::new("left")),
+            "and the reverse arrow comes back"
+        );
+        assert!(
+            grid.neighbour(&TileId::new("header"), TileDirection::Up)
+                .is_none(),
+            "nothing lies above the top row"
+        );
+        assert!(
+            grid.neighbour(&TileId::new("ghost"), TileDirection::Up)
+                .is_none(),
+            "an unknown card has no neighbours rather than panicking"
+        );
+
+        // Totality, driven: a walk over the four arrows from any single card
+        // reaches all of them, `island` included — which is what the invariant
+        // buys and what `activateNextSubWindow` cannot promise about direction.
+        let start = grid.tiles()[0].id.clone();
+        let mut seen = vec![start.clone()];
+        let mut frontier = vec![start];
+        while let Some(at) = frontier.pop() {
+            for dir in TileDirection::ALL {
+                if let Some(next) = grid.neighbour(&at, dir) {
+                    let id = next.id.clone();
+                    if !seen.contains(&id) {
+                        seen.push(id.clone());
+                        frontier.push(id);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            seen.len(),
+            grid.tiles().len(),
+            "unreachable by keyboard: {:?}",
+            grid.tiles()
+                .iter()
+                .map(|t| t.id.as_str())
+                .filter(|id| !seen.iter().any(|s| s.as_str() == *id))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn r1609_a_handle_drag_and_a_nudge_are_the_same_derivation() {
+        // The round's claim, asserted rather than described: a `Grow` chord and a
+        // one-cell handle drag on the same side reach the identical arrangement.
+        for direction in TileDirection::ALL {
+            let edge = direction.edge();
+            let mut nudged = dashboard();
+            let mut dragged = dashboard();
+            let tall = TileId::new("tall");
+
+            nudged.nudge(&tall, TileNudge::Grow(direction)).unwrap();
+
+            let before = tile_of(&dragged, "tall");
+            let line = edge.line_of(&before);
+            let outward = if edge.is_start() {
+                line.saturating_sub(1)
+            } else {
+                line + 1
+            };
+            // The cell the pointer would be over for that line, per the edge's
+            // own half-open convention.
+            let cell = if edge.is_start() {
+                outward
+            } else {
+                outward - 1
+            };
+            let handle = match edge {
+                TileEdge::Left => TileHandle::Left,
+                TileEdge::Right => TileHandle::Right,
+                TileEdge::Top => TileHandle::Top,
+                TileEdge::Bottom => TileHandle::Bottom,
+            };
+            let (col, row) = if edge.is_horizontal() {
+                (cell, before.row)
+            } else {
+                (before.col, cell)
+            };
+            dragged.drag_handle(&tall, handle, col, row).unwrap();
+
+            assert_eq!(
+                nudged, dragged,
+                "Grow({direction:?}) and a one-cell {handle:?} drag differ"
+            );
+        }
     }
 }

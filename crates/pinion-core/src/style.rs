@@ -3722,6 +3722,23 @@ pub enum CursorHint {
     /// hand). R1405: an OSC-8 hyperlink cell the pointer is over declares
     /// this so a `TextGrid` link reads as clickable, the terminal convention.
     Pointer,
+    /// (R1609) A diagonal (top-left ↔ bottom-right, `⤡`) resize affordance — a
+    /// corner handle whose horizontal and vertical edges move together. Maps to
+    /// the CSS `nwse-resize` / winit `NwseResize`, and to Qt's
+    /// `Qt::SizeFDiagCursor`.
+    ///
+    /// ★ The capability was already proven in this tree and only this
+    /// *vocabulary* could not say it: the R1189 window-chrome resize path maps
+    /// `ResizeDirection::NorthWest | SouthEast` to `CursorIcon::NwseResize`
+    /// already, so a window corner has had a diagonal cursor for ~420 rounds
+    /// while a scene *node* declaring one was inexpressible. A tile card's
+    /// corner handle ([`TileHandle`](crate::widgets::tile_grid::TileHandle)) is
+    /// the forcing consumer.
+    NwseResize,
+    /// (R1609) A diagonal (top-right ↔ bottom-left, `⤢`) resize affordance —
+    /// the other corner pair. Maps to the CSS `nesw-resize` / winit
+    /// `NeswResize`, and to Qt's `Qt::SizeBDiagCursor`.
+    NeswResize,
 }
 
 impl LayoutStyle {

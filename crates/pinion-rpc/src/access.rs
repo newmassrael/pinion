@@ -124,6 +124,17 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if node.modal {
         obj.insert("modal".to_string(), Value::Bool(true));
     }
+    // R1609 — WAI-ARIA `aria-live`. Published because a live region is a
+    // *declaration* rather than a fired event, so "what will an AT say when this
+    // changes" is answerable from the scene (§2 #7). Qt's announcement event
+    // leaves no readable trace at all, so no external client can ask a running Qt
+    // application what it announces.
+    if let Some(live) = node.live {
+        obj.insert(
+            "live".to_string(),
+            Value::String(live.aria_name().to_string()),
+        );
+    }
     if let Some(expanded) = node.expanded {
         obj.insert("expanded".to_string(), Value::Bool(expanded));
     }

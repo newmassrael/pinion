@@ -33,17 +33,70 @@
 //! `scene/invoke /external/move_to "cpu,0,0"` / `resize "cpu,6,2"` / `compact` —
 //! so an agent rearranges the board with no pixel, and `last_reflow` reports
 //! what the last edit displaced. See `tools/demos/r1608_tile_dashboard.py`.
+//!
+//! ## R1609 — the board is editable without a pointer
+//!
+//! R1608 left the board **drag-and-RPC only**: there was no keyboard channel at
+//! all, so the assistive-technology nodes it added let a screen-reader user
+//! *read* the arrangement and never change it, and a resize existed only as a
+//! wire verb with no handle to grab. Both close here.
+//!
+//! **One focus stop, a roving current card.** The board is the Tab stop and the
+//! selected card is its `aria-activedescendant` — the pattern
+//! `hello-grid-nav`'s current cell and the toolbar's roving item already use.
+//! Thirty cards must not be thirty Tab stops, and Qt's MDI alternative
+//! (`QMdiArea::activateNextSubWindow`, a walk down a `QList` in creation order)
+//! is the reason it needs a *spatial* move instead: plain arrows change the
+//! selection through [`TileGrid::neighbour`], which is total over a legal
+//! arrangement.
+//!
+//! **The keymap is twelve chords and no mode**, because [`TileNudge`] is twelve
+//! values:
+//!
+//! | chord | effect |
+//! |---|---|
+//! | <kbd>←↑→↓</kbd> | move the *selection* to the neighbouring card |
+//! | <kbd>Shift</kbd>+arrow | `Move` — slide the card one cell |
+//! | <kbd>Alt</kbd>+arrow | `Grow` — push that side out |
+//! | <kbd>Alt</kbd>+<kbd>Shift</kbd>+arrow | `Shrink` — pull that side in |
+//! | <kbd>Escape</kbd> | cancel the session, board and all |
+//! | <kbd>Enter</kbd> | commit it |
+//!
+//! Qt reaches the same behaviours only after a system-menu round trip into
+//! `isInInteractiveMode`, warps the physical mouse cursor to do it, and treats
+//! <kbd>Escape</kbd> and <kbd>Enter</kbd> identically so a keyboard move there
+//! cannot be abandoned.
+//!
+//! **Eight handles, hit-tested from the same cell arithmetic.** A press resolves
+//! [`TileHandle::at`] over the grabbed card, so landing on a side or a corner
+//! resizes and landing in the middle drags — one press path, and the handle a
+//! card is showing carries [`TileHandle::cursor`], which is what forced
+//! `CursorHint`'s two diagonal arms (R1189 had commanded them for a *window*
+//! corner since ~R1189 and no scene node could ask for one).
+//!
+//! **The displacement is announced.** The board carries a `polite`
+//! [`AccessLive`] region whose text names what the last edit pushed, because the
+//! cards that moved are exactly the ones the user is not on. No widget in Qt
+//! fires an announcement for this — `qmdisubwindow.cpp`, `qmdiarea.cpp` and
+//! `qsizegrip.cpp` contain no accessibility notification of any kind, so a Qt
+//! MDI window that moves or resizes is silent to a screen reader even though
+//! `QAccessibleMdiSubWindow::state()` advertises `movable` and `sizeable`.
 
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y,
+};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
+use pinion_core::input::Modifiers;
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{BoxStyle, FlexDirection, GridTrack, LayoutStyle, TextStyle};
+use pinion_core::style::{BoxStyle, FlexDirection, GridTrack, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
-use pinion_core::widgets::tile_grid::{Reflow, Tile, TileGrid, TileId};
+use pinion_core::widgets::tile_grid::{
+    Reflow, Tile, TileDirection, TileEdit, TileGrid, TileHandle, TileId, TileNudge,
+};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 
@@ -55,6 +108,8 @@ const WIN_W: u32 = 760;
 const WIN_H: u32 = 420;
 const ROOT_TAG: &str = "dashboard";
 const THEME_TAG: &str = "app";
+/// (R1609) The live region that announces what an edit displaced.
+const REFLOW_TAG: &str = "dashboard.reflow";
 
 /// The dashboard's columns — the one number a Grafana layout declares.
 const COLUMNS: u32 = 12;
@@ -66,6 +121,19 @@ const MIN_ROWS: u32 = 5;
 
 const TITLE_FONT_PX: u32 = 15;
 const CARD_FONT_PX: u32 = 12;
+
+/// (R1609) A resize grip's short side, and its long side for an edge grip.
+const HANDLE_PX: u32 = 8;
+/// An edge grip runs along the middle of its side.
+const HANDLE_LONG_PX: u32 = 20;
+/// A selected card's content box, which the grips are positioned inside. Stated
+/// rather than measured because a grip is placed at view time and the resolved
+/// rect is a layout-pass output; the card's own painted extent is what an
+/// assistive technology and the wire read, and both come from
+/// [`TileGrid::placement`].
+const CARD_INNER_W: u32 = 40;
+/// The row pitch less the card's vertical padding.
+const CARD_INNER_H: u32 = ROW_H - 16;
 
 /// The board a fresh window opens with: the shape the R1607 measurement laid
 /// out, so the example and the layout test describe the same dashboard.
@@ -83,7 +151,16 @@ fn seed() -> TileGrid {
     grid
 }
 
-/// What a press latched: which card, and where inside it the grab happened.
+/// How much of each side of a card is a resize handle rather than its interior.
+///
+/// A quarter, so a card two cells wide still has a middle to drag by. The
+/// fraction is the binding's — [`TileHandle::at`] takes it as an argument
+/// exactly so the crate does not decide a card's feel, the same reason R1606
+/// made a hex dump's separator a parameter.
+const HANDLE_BAND: f32 = 0.25;
+
+/// What a press latched: which card, where inside it the grab happened, and
+/// whether it grabbed a handle.
 ///
 /// The offset is the reason a drag is a drag — see the module docs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -93,6 +170,12 @@ struct Grab {
     dx: u32,
     /// Rows between the card's top edge and the grabbed cell.
     dy: u32,
+    /// `Some` when the press landed on a side or a corner, so every following
+    /// move is a resize of that handle rather than a move of the whole card.
+    /// Latched at the press because the pointer travels away from the band
+    /// immediately and re-deriving it per move would turn a resize into a drag
+    /// the moment the cursor left the edge.
+    handle: Option<TileHandle>,
 }
 
 /// The board's state, held in signals the oracle and the view SHARE.
@@ -114,6 +197,16 @@ struct BoardState {
     last_reflow: Signal<String>,
     /// Why the last edit was refused, empty when it was not.
     refusal: Signal<String>,
+    /// (R1609) The roving current card — the board's `aria-activedescendant`,
+    /// and what a keyboard chord acts on. `None` before anything is selected.
+    current: Signal<Option<TileId>>,
+    /// (R1609) The open keyboard session, if any: the undo point <kbd>Escape</kbd>
+    /// restores. Opened lazily by the first editing chord, so there is no mode to
+    /// enter — Qt needs a system-menu action for this.
+    session: Signal<Option<TileEdit>>,
+    /// (R1609) The sentence the board's live region carries. What a screen reader
+    /// says when an edit pushes cards the user is not looking at.
+    announcement: Signal<String>,
 }
 
 impl BoardState {
@@ -124,6 +217,9 @@ impl BoardState {
             pending: Signal::new(false),
             last_reflow: Signal::new("clean".to_owned()),
             refusal: Signal::new(String::new()),
+            current: Signal::new(None),
+            session: Signal::new(None),
+            announcement: Signal::new(String::new()),
         }
     }
 }
@@ -222,6 +318,274 @@ impl DashboardOracle {
         Some((id, a, b))
     }
 
+    /// (R1609) Where inside a card a board-relative point falls, as `[0, 1]`
+    /// fractions — what [`TileHandle::at`] hit-tests.
+    ///
+    /// Exact rather than approximate, because the card's own extent is derived
+    /// from the same cell arithmetic the snap uses: a card occupies
+    /// `col/COLUMNS ..= right/COLUMNS` of the board's width. So the handle band
+    /// is a fraction of the *card*, which is what makes a two-cell card and a
+    /// twelve-cell card both grabbable in the middle.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a dashboard's column and row counts round-trip f32 exactly"
+    )]
+    fn card_fraction(tile: &Tile, rows: u32, x_rel: f32, y_rel: f32) -> (f32, f32) {
+        let u = (x_rel * COLUMNS as f32 - tile.col as f32) / tile.w as f32;
+        let v = (y_rel * rows.max(1) as f32 - tile.row as f32) / tile.h as f32;
+        (u, v)
+    }
+
+    /// (R1609) The sentence the live region carries after an edit.
+    ///
+    /// Two clauses: where the edited card now is, and what it pushed. The second
+    /// is the one that needs a live region at all — a displaced card is by
+    /// definition not the one the user is on, so navigating to it is not an
+    /// option. Slots are stated in CSS's one-based lines, the same numbers the
+    /// per-card AT value uses, because a user hearing "column 5" from one channel
+    /// and "column 4" from another has no way to tell which is the board's.
+    fn announce(grid: &TileGrid, id: &TileId, reflow: &Reflow) -> String {
+        let Some(tile) = grid.tile(id) else {
+            return String::new();
+        };
+        let mut sentence = format!(
+            "{} at column {}, row {}, {} by {}",
+            id,
+            tile.col + 1,
+            tile.row + 1,
+            tile.w,
+            tile.h
+        );
+        if !reflow.is_clean() {
+            let pushed = reflow
+                .displaced()
+                .iter()
+                .map(|d| format!("{} to row {}", d.id, d.to + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sentence.push_str("; pushed ");
+            sentence.push_str(&pushed);
+        }
+        sentence
+    }
+
+    /// (R1609) The current card, defaulting to the first one so a fresh Tab into
+    /// the board has something to act on.
+    fn current_id(state: &BoardState) -> Option<TileId> {
+        state
+            .current
+            .get()
+            .filter(|id| state.grid.get().tile(id).is_some())
+            .or_else(|| state.grid.get().tiles().first().map(|t| t.id.clone()))
+    }
+
+    /// (R1609) `"[Ctrl+][Alt+][Shift+]<key>"` — the chord vocabulary, so a
+    /// keyboard gesture is drivable over the wire exactly as it arrives from the
+    /// platform. Fixed modifier order, so one chord has one spelling.
+    fn chord(key: &str, modifiers: Modifiers) -> String {
+        let mut spelled = String::new();
+        if modifiers.command_key() {
+            spelled.push_str("Ctrl+");
+        }
+        if modifiers.alt_key() {
+            spelled.push_str("Alt+");
+        }
+        if modifiers.shift_key() {
+            spelled.push_str("Shift+");
+        }
+        spelled.push_str(key);
+        spelled
+    }
+
+    /// (R1609) A chord back into `(key, alt, shift)`. Unknown prefixes make the
+    /// whole chord unrecognised rather than being skipped, so a typo on the wire
+    /// is refused instead of silently doing something else.
+    fn parse_chord(chord: &str) -> Option<(&str, bool, bool)> {
+        let mut alt = false;
+        let mut shift = false;
+        let mut rest = chord;
+        loop {
+            if let Some(tail) = rest.strip_prefix("Ctrl+") {
+                rest = tail;
+            } else if let Some(tail) = rest.strip_prefix("Alt+") {
+                alt = true;
+                rest = tail;
+            } else if let Some(tail) = rest.strip_prefix("Shift+") {
+                shift = true;
+                rest = tail;
+            } else if rest.contains('+') {
+                return None;
+            } else {
+                return (!rest.is_empty()).then_some((rest, alt, shift));
+            }
+        }
+    }
+
+    /// (R1609) The arrow key a chord names, if it names one.
+    fn arrow(key: &str) -> Option<TileDirection> {
+        match key {
+            "ArrowLeft" => Some(TileDirection::Left),
+            "ArrowRight" => Some(TileDirection::Right),
+            "ArrowUp" => Some(TileDirection::Up),
+            "ArrowDown" => Some(TileDirection::Down),
+            _ => None,
+        }
+    }
+
+    /// (R1609) Run one keyboard chord. `true` when it was this board's.
+    ///
+    /// **No mode.** The chord says whether it navigates, moves, grows or
+    /// shrinks; Qt reads the same four arrow keys against a `currentOperation`
+    /// that a system-menu action set, so its meaning depends on invisible state.
+    fn key(state: &BoardState, chord: &str) -> bool {
+        let Some((key, alt, shift)) = Self::parse_chord(chord) else {
+            return false;
+        };
+        let Some(id) = Self::current_id(state) else {
+            return false;
+        };
+        if let Some(direction) = Self::arrow(key) {
+            // Plain arrows move the SELECTION, spatially. The cards are one Tab
+            // stop with a roving active descendant, so thirty cards are not
+            // thirty stops — and `neighbour` is what makes that navigable in two
+            // dimensions where `activateNextSubWindow` walks a creation-order
+            // list.
+            if !alt && !shift {
+                let Some(next) = state
+                    .grid
+                    .get()
+                    .neighbour(&id, direction)
+                    .map(|t| t.id.clone())
+                else {
+                    // Nothing that way: the selection stays put rather than
+                    // wrapping, which would move focus somewhere the arrow did
+                    // not point.
+                    return true;
+                };
+                state.current.set(Some(next.clone()));
+                state.announcement.set(Self::announce(
+                    &state.grid.get(),
+                    &next,
+                    &Reflow::default(),
+                ));
+                return true;
+            }
+            let nudge = match (alt, shift) {
+                (false, _) => TileNudge::Move(direction),
+                (true, false) => TileNudge::Grow(direction),
+                (true, true) => TileNudge::Shrink(direction),
+            };
+            // The session opens on the first editing chord and is what Escape
+            // restores — including the cards this edit displaces, which is why it
+            // holds the whole board and not the card's rectangle.
+            if state.session.get().is_none() {
+                if let Ok(session) = TileEdit::begin(&state.grid.get(), &id) {
+                    state.session.set(Some(session));
+                }
+            }
+            let before = state.grid.get();
+            let outcome = Self::edit(state, |grid| grid.nudge(&id, nudge));
+            let after = state.grid.get();
+            if outcome.is_ok() {
+                state.announcement.set(if before == after {
+                    // A held arrow at a bound stops. Saying so beats repeating
+                    // an unchanged slot, and beats silence.
+                    format!("{id} is already at the edge")
+                } else {
+                    Self::announce(&after, &id, &Reflow::between(&before, &after, &id))
+                });
+            }
+            return true;
+        }
+        match key {
+            "Escape" => {
+                // ★ Qt stores `oldGeometry` on entering interactive mode and
+                // never restores it — Escape, Return and Enter share one arm
+                // there, so Escape commits.
+                if let Some(session) = state.session.get() {
+                    let restored = session.cancel();
+                    let sentence = format!("{} restored", Self::describe(&restored));
+                    state.grid.set(restored);
+                    state.session.set(None);
+                    state.last_reflow.set("clean".to_owned());
+                    state.announcement.set(sentence);
+                }
+                true
+            }
+            "Enter" => {
+                if let Some(session) = state.session.get() {
+                    let reflow = session.reflow(&state.grid.get());
+                    let id = session.id().clone();
+                    state.session.set(None);
+                    state.announcement.set(format!(
+                        "{} committed",
+                        Self::announce(&state.grid.get(), &id, &reflow)
+                    ));
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A whole arrangement in one clause, for the cancel announcement.
+    fn describe(grid: &TileGrid) -> String {
+        format!("{} cards on {} columns", grid.tiles().len(), grid.columns())
+    }
+
+    /// (R1609) `"<id>,<handle>,<col>,<row>"` — a handle drag named rather than
+    /// hit-tested, so an agent reaches all eight handles with no pointer.
+    ///
+    /// Its own function because it owns its own parsing, and because the handle
+    /// name is resolved **against [`TileHandle::ALL`]** — so the vocabulary this
+    /// accepts and the one the `handles` slot advertises cannot drift apart,
+    /// which is R1564's rule for a refused `send` applied to a refused drag.
+    fn invoke_drag_handle(
+        state: &BoardState,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let bad = || {
+            InvokeError::Rejected(
+                "expected \"<id>,<handle>,<col>,<row>\" with a handle from the \
+                 `handles` slot"
+                    .into(),
+            )
+        };
+        let IntrospectValue::Text(spec) = args else {
+            return Err(bad());
+        };
+        let mut parts = spec.split(',').map(str::trim);
+        let (Some(id), Some(handle), Some(col), Some(row), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
+            return Err(bad());
+        };
+        let Some(handle) = TileHandle::ALL
+            .into_iter()
+            .find(|h| format!("{h:?}").eq_ignore_ascii_case(handle))
+        else {
+            return Err(bad());
+        };
+        let (Ok(col), Ok(row)) = (col.parse(), row.parse()) else {
+            return Err(bad());
+        };
+        let id = TileId::new(id);
+        let before = state.grid.get();
+        let outcome = Self::edit(state, |grid| grid.drag_handle(&id, handle, col, row))
+            .map_err(|sentence| InvokeError::Rejected(sentence.into()))?;
+        let after = state.grid.get();
+        state.announcement.set(Self::announce(
+            &after,
+            &id,
+            &Reflow::between(&before, &after, &id),
+        ));
+        Ok(IntrospectValue::Text(outcome))
+    }
+
     /// Apply an edit to the shared grid and record its outcome.
     fn edit(
         state: &BoardState,
@@ -274,26 +638,71 @@ impl External for DashboardOracle {
             return;
         };
         let grid = state.grid.get();
-        let (col, row) = Self::cell_at(Self::painted_rows(&grid), x_rel, y_rel);
+        let rows = Self::painted_rows(&grid);
+        let (col, row) = Self::cell_at(rows, x_rel, y_rel);
         if state.pending.get() {
             state.pending.set(false);
-            state
-                .grab
-                .set(Self::tile_at(&grid, col, row).map(|tile| Grab {
-                    id: tile.id.clone(),
-                    dx: col - tile.col,
-                    dy: row - tile.row,
-                }));
+            let selected = Self::current_id(state);
+            let latched = Self::tile_at(&grid, col, row).map(|tile| Grab {
+                id: tile.id.clone(),
+                dx: col - tile.col,
+                dy: row - tile.row,
+                // R1609 — the handle is resolved ONCE, at the press, for two
+                // separate reasons.
+                //
+                // *Once*, because the pointer leaves the band on the very first
+                // move: re-deriving it per move would turn every resize into a
+                // drag the instant it started.
+                //
+                // ★ And only on the card that is **already selected**, because
+                // that is the only card painting a grip ring. The first draft
+                // hit-tested every card and a test caught it: a press near any
+                // card's edge resized it with nothing on screen saying it would,
+                // so the paint and the gesture were reading two different facts.
+                // Selecting first and grabbing second is also what every real
+                // board does.
+                handle: (selected.as_ref() == Some(&tile.id))
+                    .then(|| {
+                        let (u, v) = Self::card_fraction(tile, rows, x_rel, y_rel);
+                        TileHandle::at(u, v, HANDLE_BAND)
+                    })
+                    .flatten(),
+            });
+            if let Some(grab) = &latched {
+                // Pressing a card selects it, so the pointer and the keyboard
+                // share one current card rather than two that drift apart.
+                state.current.set(Some(grab.id.clone()));
+                // And it opens the same session a chord opens, so Escape
+                // mid-drag puts the board back — including the cards the drag
+                // has already pushed.
+                if let Ok(session) = TileEdit::begin(&grid, &grab.id) {
+                    state.session.set(Some(session));
+                }
+            }
+            state.grab.set(latched);
             return;
         }
         let Some(grab) = state.grab.get() else {
             return;
         };
-        // ★ The grab offset is what keeps the card under the finger rather than
-        // teleporting its corner to the cursor.
-        let target_col = col.saturating_sub(grab.dx);
-        let target_row = row.saturating_sub(grab.dy);
-        let _ = Self::edit(state, |grid| grid.move_to(&grab.id, target_col, target_row));
+        let outcome = if let Some(handle) = grab.handle {
+            // A resize needs no grab offset: the dragged side follows the cursor
+            // and the opposite one holds still, which `set_edge` guarantees.
+            Self::edit(state, |grid| grid.drag_handle(&grab.id, handle, col, row))
+        } else {
+            // ★ The grab offset is what keeps the card under the finger rather
+            // than teleporting its corner to the cursor.
+            let target_col = col.saturating_sub(grab.dx);
+            let target_row = row.saturating_sub(grab.dy);
+            Self::edit(state, |grid| grid.move_to(&grab.id, target_col, target_row))
+        };
+        if outcome.is_ok() {
+            let after = state.grid.get();
+            let reflow = Reflow::between(&grid, &after, &grab.id);
+            state
+                .announcement
+                .set(Self::announce(&after, &grab.id, &reflow));
+        }
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -320,12 +729,27 @@ impl ExternalIntrospect for DashboardOracle {
                     SchemaField::new("last_refusal", "string"),
                     SchemaField::new("violations", "int"),
                     SchemaField::new("dragging", "string"),
+                    // R1609 — the keyboard half, readable so an agent can see
+                    // what a chord would act on and what a screen reader will
+                    // say. Qt keeps every one of these private: the current
+                    // subwindow's interactive mode, its saved geometry and its
+                    // announcement (which no widget sends) are all unreachable.
+                    SchemaField::new("current", "string"),
+                    SchemaField::new("handle", "string"),
+                    SchemaField::new("editing", "string"),
+                    SchemaField::new("session_reflow", "string"),
+                    SchemaField::new("announcement", "string"),
+                    SchemaField::new("handles", "string"),
+                    SchemaField::new("neighbours", "string"),
                     // The gestures, as verbs.
                     SchemaField::new("move_to", "string"),
                     SchemaField::new("resize", "string"),
                     SchemaField::new("compact", "string"),
                     SchemaField::new("remove", "string"),
                     SchemaField::new("send", "string"),
+                    SchemaField::new("key", "string"),
+                    SchemaField::new("select", "string"),
+                    SchemaField::new("drag_handle", "string"),
                 ]
             },
         )
@@ -350,6 +774,70 @@ impl ExternalIntrospect for DashboardOracle {
                     .get()
                     .map_or_else(String::new, |g| g.id.to_string()),
             )),
+            // R1609 — the roving current card, defaulted the same way a chord
+            // defaults it so the wire and the keyboard never disagree about what
+            // is selected.
+            "current" => Some(IntrospectValue::Text(
+                Self::current_id(state).map_or_else(String::new, |id| id.to_string()),
+            )),
+            // Which handle the live press grabbed, empty for an interior drag or
+            // no press. `QMdiSubWindowPrivate::Operation` is private, so Qt
+            // cannot be asked this at all.
+            "handle" => Some(IntrospectValue::Text(
+                state
+                    .grab
+                    .get()
+                    .and_then(|g| g.handle)
+                    .map_or_else(String::new, |h| format!("{h:?}")),
+            )),
+            // The open session's card, empty when no edit is in flight — the
+            // difference between "Escape restores something" and "Escape is inert".
+            "editing" => Some(IntrospectValue::Text(
+                state
+                    .session
+                    .get()
+                    .map_or_else(String::new, |s| s.id().to_string()),
+            )),
+            // What the whole session has displaced, as a DIFFERENCE against the
+            // arrangement it opened on rather than a sum over its chords.
+            "session_reflow" => Some(IntrospectValue::Text(
+                state
+                    .session
+                    .get()
+                    .map_or_else(String::new, |s| Self::reflow_text(&s.reflow(&grid))),
+            )),
+            // The live region's text: what an AT will say. Readable because a
+            // live region is declared, where Qt's announcement is a fired event
+            // that leaves nothing behind to ask about.
+            "announcement" => Some(IntrospectValue::Text(state.announcement.get())),
+            // Every handle a card offers, with the cursor each asks for — derived
+            // from `TileHandle::ALL`, so a client can enumerate the resize
+            // affordances. Qt's operation map is private and its enum is in a
+            // `_p.h`.
+            "handles" => Some(IntrospectValue::Text(
+                TileHandle::ALL
+                    .iter()
+                    .map(|h| format!("{h:?}:{:?}", h.cursor()))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )),
+            // Where each arrow key would take the selection — the spatial
+            // relation `activateNextSubWindow` does not have.
+            "neighbours" => Self::current_id(state).map(|id| {
+                IntrospectValue::Text(
+                    TileDirection::ALL
+                        .iter()
+                        .map(|dir| {
+                            let to = grid
+                                .neighbour(&id, *dir)
+                                .map_or("-", |t| t.id.as_str())
+                                .to_owned();
+                            format!("{dir:?}:{to}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
+            }),
             _ => None,
         }
     }
@@ -430,12 +918,48 @@ impl ExternalIntrospect for DashboardOracle {
                         "PointerUp" | "PointerLeave" | "PointerCancel" => {
                             state.pending.set(false);
                             state.grab.set(None);
+                            // R1609 — a release commits the pointer drag's
+                            // session, so Escape *during* a drag cancels it the
+                            // same way it cancels a keyboard edit. One undo
+                            // point for both entry points rather than one each.
+                            state.session.set(None);
                         }
                         _ => {}
                     }
                 }
                 Ok(IntrospectValue::Null)
             }
+            // R1609 — the keyboard, as a verb. The chord arrives spelled exactly
+            // as the platform path spells it (`Alt+Shift+ArrowLeft`), so an agent
+            // drives the same keymap a person does rather than a parallel one.
+            "key" => {
+                let IntrospectValue::Text(chord) = &args else {
+                    return Err(InvokeError::Rejected(
+                        "expected a chord, e.g. \"Alt+ArrowRight\"".into(),
+                    ));
+                };
+                Ok(IntrospectValue::Bool(Self::key(state, chord)))
+            }
+            // Move the roving selection outright. Refused by name for a card that
+            // is not there, so a stale id cannot silently select nothing.
+            "select" => {
+                let IntrospectValue::Text(id) = &args else {
+                    return Err(InvokeError::Rejected("expected \"<id>\"".into()));
+                };
+                let id = TileId::new(id.trim());
+                if state.grid.get().tile(&id).is_none() {
+                    let sentence = format!("no tile {id} in this grid");
+                    state.refusal.set(sentence.clone());
+                    return Err(InvokeError::Rejected(sentence.into()));
+                }
+                state.current.set(Some(id.clone()));
+                state.refusal.set(String::new());
+                Ok(IntrospectValue::Text(id.to_string()))
+            }
+            // A handle drag as one call. The pointer path resolves the handle
+            // from where the press landed; this names it, so a client can
+            // exercise all eight without pixels.
+            "drag_handle" => Self::invoke_drag_handle(state, &args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -451,7 +975,13 @@ impl ExternalIntrospect for DashboardOracle {
     reason = "the view-fn signature `WidgetCore::view` hands down is `&Frame`; \
               taking it by value here would put a copy at the one call site"
 )]
-fn view(grid: &TileGrid, rows: u32, dragging: Option<&TileId>, _frame: &Frame) -> Scene {
+fn view(
+    grid: &TileGrid,
+    rows: u32,
+    dragging: Option<&TileId>,
+    current: Option<&TileId>,
+    _frame: &Frame,
+) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let surface = theme.resolve(ColorRole::Surface);
     let card = theme.resolve(ColorRole::Outline);
@@ -464,16 +994,28 @@ fn view(grid: &TileGrid, rows: u32, dragging: Option<&TileId>, _frame: &Frame) -
             continue;
         };
         let held = dragging == Some(&tile.id);
-        let label = Scene::Text(
+        let selected = current == Some(&tile.id);
+        let mut card_children = vec![Scene::Text(
             TextNode::styled(
                 format!("{}  {}x{}", tile.id, tile.w, tile.h),
                 Rect::default(),
                 TextStyle::new().with_size_px(CARD_FONT_PX).with_fg(ink),
             )
             .with_tag(format!("card.{}.label", tile.id)),
-        );
+        )];
+        // R1609 — the handle ring, painted by iterating `TileHandle::ALL` rather
+        // than spelling eight positions out. Each one carries the cursor its own
+        // handle derives, so a corner asks for the diagonal `CursorHint` this
+        // round added and a side asks for the axis arrow. Only the selected card
+        // shows them, which is what keeps a twelve-card board from painting
+        // ninety-six grips.
+        if selected {
+            for handle in TileHandle::ALL {
+                card_children.push(handle_node(&tile.id, handle, accent));
+            }
+        }
         children.push(Scene::Container(
-            ContainerNode::new(vec![label])
+            ContainerNode::new(card_children)
                 .with_tag(format!("card.{}", tile.id))
                 .with_style(
                     BoxStyle::filled(if held { accent } else { card }).with_corner_radius(6),
@@ -501,7 +1043,11 @@ fn view(grid: &TileGrid, rows: u32, dragging: Option<&TileId>, _frame: &Frame) -
                 ContainerNode::new(children).with_tag(ROOT_TAG).with_layout(
                     LayoutStyle::new()
                         .grid_columns(vec![GridTrack::Fr(1.0); COLUMNS as usize])
-                        .with_grid_rows(vec![GridTrack::Px(ROW_H); rows as usize]),
+                        .with_grid_rows(vec![GridTrack::Px(ROW_H); rows as usize])
+                        // R1609 — ONE Tab stop for the whole board. The selected
+                        // card is its active descendant, so thirty cards are not
+                        // thirty stops in the focus ring.
+                        .with_focusable(true),
                 ),
             ),
         ])
@@ -512,6 +1058,49 @@ fn view(grid: &TileGrid, rows: u32, dragging: Option<&TileId>, _frame: &Frame) -
                 .with_gap(8)
                 .with_padding(Rect::new(12, 12, 12, 12)),
         ),
+    )
+}
+
+/// (R1609) One resize grip, positioned from which edges its handle moves.
+///
+/// Absolutely positioned inside the card, and both the position and the
+/// [`CursorHint`](pinion_core::style::CursorHint) come from
+/// [`TileHandle::horizontal`] / [`TileHandle::vertical`] — so adding a ninth
+/// handle would need no new painting code, and a grip cannot sit on a side its
+/// own drag does not move. Qt's nine `operationMap.insert` rows pair the region
+/// and the cursor by hand, in a private map.
+fn handle_node(id: &TileId, handle: TileHandle, ink: pinion_core::style::Color) -> Scene {
+    use pinion_core::widgets::tile_grid::TileEdge;
+
+    let grip = HANDLE_PX;
+    let long = HANDLE_LONG_PX;
+    let (w, h) = match (handle.horizontal(), handle.vertical()) {
+        (Some(_), Some(_)) => (grip, grip),
+        (Some(_), None) => (grip, long),
+        (None, _) => (long, grip),
+    };
+    // The card's padding is the grip's inset, so a grip sits on the edge it names
+    // rather than floating in the content box.
+    let left = match handle.horizontal() {
+        Some(TileEdge::Left) => 0,
+        Some(_) => CARD_INNER_W.saturating_sub(w),
+        None => CARD_INNER_W.saturating_sub(w) / 2,
+    };
+    let top = match handle.vertical() {
+        Some(TileEdge::Top) => 0,
+        Some(_) => CARD_INNER_H.saturating_sub(h),
+        None => CARD_INNER_H.saturating_sub(h) / 2,
+    };
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(format!("card.{id}.handle.{handle:?}"))
+            .with_style(BoxStyle::filled(ink).with_corner_radius(2))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(left, top)
+                    .with_size(Size::px(w, h))
+                    .with_cursor(handle.cursor()),
+            ),
     )
 }
 
@@ -542,7 +1131,39 @@ impl WidgetCore for DashboardView {
         let grid = state.grid.get();
         let rows = DashboardOracle::painted_rows(&grid);
         let dragging = state.grab.get().map(|g| g.id);
-        view(&grid, rows, dragging.as_ref(), frame)
+        let current = DashboardOracle::current_id(&state);
+        view(&grid, rows, dragging.as_ref(), current.as_ref(), frame)
+    }
+
+    /// (R1609) The keyboard, routed to the External's own `key` verb.
+    ///
+    /// Through the verb rather than into the state directly, so the platform
+    /// path, the assistive-technology path and an RPC client all drive **one**
+    /// keymap — §2 #2. The chord is spelled here because `forward_key_to_external`
+    /// carries no modifiers and this board's vocabulary is three-quarters
+    /// modified.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: Modifiers,
+    ) -> bool {
+        if focused != Some(ROOT_TAG) {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        matches!(
+            intro.invoke(
+                "key",
+                IntrospectValue::Text(DashboardOracle::chord(key, modifiers)),
+            ),
+            Ok(IntrospectValue::Bool(true))
+        )
     }
 
     fn event_name(_event: ()) -> &'static str {
@@ -561,7 +1182,11 @@ impl WidgetA11y for DashboardView {
     fn access_node(_state: &(), focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_board_state();
         let grid = state.grid.get();
-        let mut nodes = vec![
+        let current = DashboardOracle::current_id(&state);
+        // R1609 — every card is declared a child of the board, which is what
+        // makes the roving `aria-activedescendant` resolvable: the shell looks
+        // the active descendant up among the parent's declared children.
+        let board = grid.tiles().iter().fold(
             AccessNode::new(ROOT_TAG, AriaRole::Group)
                 .with_name("Tile dashboard")
                 .with_value(AccessValue::Text(format!(
@@ -573,21 +1198,58 @@ impl WidgetA11y for DashboardView {
                     focused: focused == Some(ROOT_TAG),
                     ..AccessState::default()
                 }),
-        ];
+            |node, tile| node.with_child(format!("card.{}", tile.id)),
+        );
+        let mut nodes = vec![board];
         for tile in grid.tiles() {
-            nodes.push(
-                AccessNode::new(format!("card.{}", tile.id), AriaRole::Group)
-                    .with_name(tile.id.to_string())
-                    .with_value(AccessValue::Text(format!(
-                        "column {}, row {}, {} by {}",
-                        tile.col + 1,
-                        tile.row + 1,
-                        tile.w,
-                        tile.h
-                    ))),
-            );
+            let mut node = AccessNode::new(format!("card.{}", tile.id), AriaRole::Group)
+                .with_name(tile.id.to_string())
+                .with_value(AccessValue::Text(format!(
+                    "column {}, row {}, {} by {}",
+                    tile.col + 1,
+                    tile.row + 1,
+                    tile.w,
+                    tile.h
+                )));
+            // R1609 — `aria-selected` on the roving current card. Qt's
+            // `QAccessibleMdiSubWindow::state()` advertises `movable` and
+            // `sizeable` and then nothing tells an AT which subwindow the
+            // keyboard would act on, because interactive mode is private.
+            if current.as_ref() == Some(&tile.id) {
+                node = node.with_selected(true);
+            }
+            nodes.push(node);
         }
+        // R1609 — ★ the announcement channel. The cards an edit displaces are by
+        // definition not the one the user is on, so a per-card value cannot carry
+        // the fact; a `polite` live region can, because an AT re-reads it when it
+        // changes without anyone navigating there.
+        //
+        // Qt has the capability (`QAccessibleAnnouncementEvent`, 6.8+) and no
+        // widget uses it: `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp`
+        // contain no accessibility notification at all, so a Qt MDI window that
+        // moves is silent.
+        nodes.push(
+            AccessNode::new(REFLOW_TAG, AriaRole::Status)
+                .with_name("Layout change")
+                .with_live(AccessLive::Polite)
+                .with_value(AccessValue::Text(state.announcement.get())),
+        );
         nodes
+    }
+
+    /// (R1609) The board owns the focus; the selected card is its active
+    /// descendant — the roving pattern, so the focus ring frames the current card
+    /// while the Tab ring holds one stop.
+    fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
+        if focused != Some(ROOT_TAG) {
+            return focused.map(AccessFocus::atomic);
+        }
+        let state = use_board_state();
+        Some(AccessFocus {
+            focus_tag: ROOT_TAG.to_owned(),
+            active_descendant: DashboardOracle::current_id(&state).map(|id| format!("card.{id}")),
+        })
     }
 }
 
@@ -830,7 +1492,12 @@ mod tests {
     fn the_at_tree_reads_the_same_slots_the_painter_places_from() {
         Owner::new().run(|| {
             let nodes = DashboardView::access_node(&(), Some(ROOT_TAG));
-            assert_eq!(nodes.len(), 6, "the board plus one group per card");
+            assert_eq!(
+                nodes.len(),
+                7,
+                "the board, one group per card, and R1609's live region — which \
+                 is the seventh and is why this count moved"
+            );
             let alarms = nodes
                 .iter()
                 .find(|n| n.tag == "card.alarms")
@@ -841,6 +1508,470 @@ mod tests {
                 "the AT tree states CSS's one-based lines, derived from the same \
                  placement the painter uses"
             );
+        });
+    }
+
+    // ---- R1609: the board is editable without a pointer ---------------------
+
+    fn key(oracle: &mut DashboardOracle, chord: &str) -> bool {
+        matches!(
+            oracle.invoke("key", IntrospectValue::Text(chord.to_owned())),
+            Ok(IntrospectValue::Bool(true))
+        )
+    }
+
+    #[test]
+    fn r1609_plain_arrows_move_the_selection_spatially() {
+        drive(|oracle| {
+            // The seed board: throughput full width on row 0, latency|loss on
+            // row 1, topology (0..4) and alarms (4..12) on row 2.
+            assert_eq!(
+                text(oracle, "current"),
+                "throughput",
+                "a fresh board selects its first card so a Tab into it can act"
+            );
+            assert!(key(oracle, "ArrowDown"));
+            assert_eq!(text(oracle, "current"), "latency");
+            assert!(key(oracle, "ArrowRight"));
+            assert_eq!(
+                text(oracle, "current"),
+                "loss",
+                "Right stays in the row band rather than jumping to a card that \
+                 happens to start at a lower column further down"
+            );
+            assert!(key(oracle, "ArrowDown"));
+            assert_eq!(text(oracle, "current"), "alarms");
+            assert!(key(oracle, "ArrowLeft"));
+            assert_eq!(text(oracle, "current"), "topology");
+
+            // Nothing that way: the selection holds rather than wrapping to
+            // somewhere the arrow did not point.
+            assert!(key(oracle, "ArrowLeft"));
+            assert_eq!(text(oracle, "current"), "topology");
+            assert_eq!(
+                text(oracle, "tiles"),
+                "throughput@0,0+12x1 latency@0,1+6x1 loss@6,1+6x1 topology@0,2+4x2 alarms@4,2+8x1",
+                "navigating moved no card"
+            );
+        });
+    }
+
+    #[test]
+    fn r1609_every_arrow_from_a_card_is_published() {
+        drive(|oracle| {
+            oracle
+                .invoke("select", IntrospectValue::Text("loss".to_owned()))
+                .unwrap();
+            assert_eq!(
+                text(oracle, "neighbours"),
+                "Left:latency Right:- Up:throughput Down:alarms",
+                "the spatial relation `activateNextSubWindow` does not have"
+            );
+        });
+    }
+
+    #[test]
+    fn r1609_the_keymap_has_no_mode_and_reaches_all_twelve_nudges() {
+        drive(|oracle| {
+            oracle
+                .invoke("select", IntrospectValue::Text("topology".to_owned()))
+                .unwrap();
+
+            // Shift = Move, Alt = Grow, Alt+Shift = Shrink. The same four arrow
+            // keys, and which one it is never depends on invisible state.
+            assert!(key(oracle, "Shift+ArrowRight"));
+            assert!(text(oracle, "tiles").contains("topology@1,2+4x2"));
+            assert!(key(oracle, "Alt+ArrowRight"));
+            assert!(text(oracle, "tiles").contains("topology@1,2+5x2"));
+            assert!(key(oracle, "Alt+Shift+ArrowRight"));
+            assert!(text(oracle, "tiles").contains("topology@1,2+4x2"));
+            assert!(key(oracle, "Alt+ArrowLeft"));
+            assert!(
+                text(oracle, "tiles").contains("topology@0,2+5x2"),
+                "growing the LEFT side changed the column and the width together \
+                 — one edge moved, the other held. Got {}",
+                text(oracle, "tiles")
+            );
+            assert!(key(oracle, "Alt+ArrowDown"));
+            assert!(text(oracle, "tiles").contains("topology@0,2+5x3"));
+            assert!(key(oracle, "Alt+Shift+ArrowUp"));
+            assert!(text(oracle, "tiles").contains("topology@0,3+5x2"));
+            assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+        });
+    }
+
+    #[test]
+    fn r1609_escape_restores_the_whole_board_and_enter_commits() {
+        drive(|oracle| {
+            let before = text(oracle, "tiles");
+            oracle
+                .invoke("select", IntrospectValue::Text("topology".to_owned()))
+                .unwrap();
+            assert_eq!(text(oracle, "editing"), "", "no session until an edit");
+
+            for _ in 0..2 {
+                assert!(key(oracle, "Shift+ArrowUp"));
+            }
+            assert_eq!(
+                text(oracle, "editing"),
+                "topology",
+                "the first editing chord opened the session — no menu round trip, \
+                 which is how Qt enters interactive mode"
+            );
+            assert_ne!(text(oracle, "session_reflow"), "clean");
+            assert_ne!(text(oracle, "tiles"), before);
+
+            assert!(key(oracle, "Escape"));
+            assert_eq!(
+                text(oracle, "tiles"),
+                before,
+                "★ Escape restored the cards the edit DISPLACED as well as the one \
+                 being edited; Qt saves `oldGeometry` and never reads it back"
+            );
+            assert_eq!(text(oracle, "editing"), "");
+            assert!(text(oracle, "announcement").contains("restored"));
+
+            // And Enter keeps the edit, closing the session.
+            assert!(key(oracle, "Shift+ArrowUp"));
+            let moved = text(oracle, "tiles");
+            assert!(key(oracle, "Enter"));
+            assert_eq!(text(oracle, "editing"), "");
+            assert_eq!(text(oracle, "tiles"), moved);
+            assert!(text(oracle, "announcement").contains("committed"));
+            // Escape after a commit has nothing to restore, and says so by
+            // leaving the board alone rather than reverting an older session.
+            assert!(key(oracle, "Escape"));
+            assert_eq!(text(oracle, "tiles"), moved);
+        });
+    }
+
+    #[test]
+    fn r1609_a_session_reflow_is_a_difference_over_the_whole_session() {
+        drive(|oracle| {
+            oracle
+                .invoke("select", IntrospectValue::Text("throughput".to_owned()))
+                .unwrap();
+            // Walk the full-width header DOWN through the board: it collides with
+            // a card on every press, so a per-press sum would count that card
+            // repeatedly.
+            for _ in 0..3 {
+                assert!(key(oracle, "Shift+ArrowDown"));
+            }
+            let session = text(oracle, "session_reflow");
+            let per_press = text(oracle, "last_reflow");
+            assert!(
+                session.matches("latency").count() == 1,
+                "a card that moved several times appears ONCE in the session's \
+                 difference: {session}"
+            );
+            assert!(
+                session.contains("latency:1>"),
+                "and it names where the session STARTED, not the last hop: {session}"
+            );
+            assert_ne!(
+                session, per_press,
+                "the session's difference and the last press's reflow are \
+                 different answers ({session} vs {per_press})"
+            );
+        });
+    }
+
+    #[test]
+    fn r1609_a_chord_at_a_bound_stops_and_says_so() {
+        drive(|oracle| {
+            oracle
+                .invoke("select", IntrospectValue::Text("throughput".to_owned()))
+                .unwrap();
+            let before = text(oracle, "tiles");
+            // Twelve columns wide in a grid of twelve: it cannot move sideways
+            // and cannot grow.
+            for chord in ["Shift+ArrowLeft", "Shift+ArrowUp", "Alt+ArrowRight"] {
+                assert!(key(oracle, chord));
+                assert_eq!(text(oracle, "tiles"), before, "{chord} moved something");
+                assert!(
+                    text(oracle, "announcement").contains("already at the edge"),
+                    "{chord} left the announcement stale: {}",
+                    text(oracle, "announcement")
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r1609_an_unknown_chord_is_declined_so_the_shell_keeps_tab() {
+        drive(|oracle| {
+            assert!(!key(oracle, "Tab"), "Tab belongs to the focus ring");
+            assert!(!key(oracle, "PageDown"));
+            assert!(!key(oracle, ""), "an empty chord names no key");
+            assert!(
+                !key(oracle, "Hyper+ArrowLeft"),
+                "an unrecognised modifier makes the whole chord unrecognised \
+                 rather than being skipped into a different gesture"
+            );
+            match oracle.invoke("key", IntrospectValue::Null) {
+                Err(InvokeError::Rejected(why)) => {
+                    assert!(why.to_string().contains("chord"), "{why:?}");
+                }
+                other => panic!("{other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn r1609_a_press_on_a_handle_resizes_and_a_press_in_the_middle_moves() {
+        drive(|oracle| {
+            // `topology` covers columns 0..4 on rows 2..4 of a five-row board.
+            // ★ A grip is live only where one is PAINTED, so the first press on
+            // an unselected card is a move even on its edge — select, then grab.
+            press(oracle);
+            oracle.pointer_move(3.9 / 12.0, 2.5 / 5.0);
+            assert_eq!(text(oracle, "dragging"), "topology");
+            assert_eq!(
+                text(oracle, "handle"),
+                "",
+                "an unselected card shows no grip, so its edge does not resize"
+            );
+            oracle
+                .invoke("send", IntrospectValue::Text("PointerUp".to_owned()))
+                .unwrap();
+            assert_eq!(text(oracle, "current"), "topology", "the press selected it");
+
+            // Now its RIGHT edge: u lands past 1 - HANDLE_BAND.
+            press(oracle);
+            oracle.pointer_move(3.9 / 12.0, 2.5 / 5.0);
+            assert_eq!(
+                text(oracle, "handle"),
+                "Right",
+                "the press landed in the right band of the selected card"
+            );
+
+            // Drag to column 7: the right edge follows and the left holds.
+            oracle.pointer_move(7.5 / 12.0, 2.5 / 5.0);
+            assert!(
+                text(oracle, "tiles").contains("topology@0,2+8x2"),
+                "a resize needs no grab offset — the dragged side tracks the \
+                 cursor. Got {}",
+                text(oracle, "tiles")
+            );
+            oracle
+                .invoke("send", IntrospectValue::Text("PointerUp".to_owned()))
+                .unwrap();
+
+            // Now the middle of the same card: no handle, so it moves.
+            press(oracle);
+            oracle.pointer_move(4.0 / 12.0, 2.5 / 5.0);
+            assert_eq!(
+                text(oracle, "handle"),
+                "",
+                "the interior is a drag, not a resize"
+            );
+            oracle.pointer_move(5.0 / 12.0, 2.5 / 5.0);
+            assert!(
+                text(oracle, "tiles").contains("topology@1,2+8x2"),
+                "the card moved and kept its size. Got {}",
+                text(oracle, "tiles")
+            );
+            assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+        });
+    }
+
+    #[test]
+    fn r1609_escape_cancels_a_pointer_drag_too() {
+        drive(|oracle| {
+            let before = text(oracle, "tiles");
+            press(oracle);
+            oracle.pointer_move(0.02, 2.5 / 5.0);
+            assert_eq!(text(oracle, "editing"), "topology");
+            oracle.pointer_move(0.02, 0.02);
+            assert_ne!(text(oracle, "tiles"), before);
+            assert!(key(oracle, "Escape"));
+            assert_eq!(
+                text(oracle, "tiles"),
+                before,
+                "one undo point serves both entry points rather than one each"
+            );
+        });
+    }
+
+    #[test]
+    fn r1609_all_eight_handles_are_enumerable_and_drivable_by_name() {
+        drive(|oracle| {
+            let handles = text(oracle, "handles");
+            for name in [
+                "Left",
+                "Right",
+                "Top",
+                "Bottom",
+                "TopLeft",
+                "TopRight",
+                "BottomLeft",
+                "BottomRight",
+            ] {
+                assert!(handles.contains(name), "{name} missing from {handles}");
+            }
+            assert!(
+                handles.contains("TopLeft:NwseResize") && handles.contains("TopRight:NeswResize"),
+                "each handle publishes the cursor it derives: {handles}"
+            );
+
+            // Every one is drivable, which is what makes a corner testable at all
+            // — the pointer path can only ever produce one handle per press.
+            for name in ["TopLeft", "BottomRight", "Top", "bottomleft"] {
+                oracle
+                    .invoke(
+                        "drag_handle",
+                        IntrospectValue::Text(format!("topology,{name},2,2")),
+                    )
+                    .unwrap_or_else(|e| panic!("{name} refused: {e:?}"));
+                assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+            }
+
+            // A name outside the published set is refused, so the accepted and
+            // advertised vocabularies cannot drift.
+            for spec in ["topology,Middle,2,2", "topology,Top,2", "topology,Top,x,2"] {
+                match oracle.invoke("drag_handle", IntrospectValue::Text(spec.to_owned())) {
+                    Err(InvokeError::Rejected(why)) => {
+                        assert!(why.to_string().contains("handles"), "{spec}: {why:?}");
+                    }
+                    other => panic!("{spec} answered {other:?}"),
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn r1609_a_stale_select_is_refused_by_name() {
+        drive(|oracle| {
+            assert_eq!(
+                oracle.invoke("select", IntrospectValue::Text("loss".to_owned())),
+                Ok(IntrospectValue::Text("loss".to_owned()))
+            );
+            match oracle.invoke("select", IntrospectValue::Text("ghost".to_owned())) {
+                Err(InvokeError::Rejected(why)) => {
+                    assert_eq!(why.to_string(), "no tile ghost in this grid");
+                }
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(
+                text(oracle, "current"),
+                "loss",
+                "a refused select left the selection alone"
+            );
+        });
+    }
+
+    #[test]
+    fn r1609_the_displacement_is_announced_through_a_live_region() {
+        Owner::new().run(|| {
+            let mut oracle = DashboardOracle::new();
+            oracle.attach(use_board_state());
+            oracle
+                .invoke("select", IntrospectValue::Text("topology".to_owned()))
+                .unwrap();
+            oracle
+                .invoke("key", IntrospectValue::Text("Shift+ArrowUp".to_owned()))
+                .unwrap();
+            oracle
+                .invoke("key", IntrospectValue::Text("Shift+ArrowUp".to_owned()))
+                .unwrap();
+
+            let nodes = DashboardView::access_node(&(), Some(ROOT_TAG));
+            let region = nodes
+                .iter()
+                .find(|n| n.tag == REFLOW_TAG)
+                .expect("the live region is in the tree");
+            assert_eq!(
+                region.live,
+                Some(AccessLive::Polite),
+                "★ Qt has QAccessibleAnnouncementEvent and no widget in \
+                 qtbase/src/widgets fires one"
+            );
+            let Some(AccessValue::Text(said)) = &region.value else {
+                panic!("the region carries the sentence")
+            };
+            assert!(
+                said.contains("topology at column 1, row 1"),
+                "it states the edited card's slot in the SAME one-based lines the \
+                 per-card value uses: {said}"
+            );
+            assert!(
+                said.contains("pushed"),
+                "and it names what moved out of the way, which is the half a \
+                 per-card value cannot carry: {said}"
+            );
+
+            // The board is one focus stop with the selected card as its active
+            // descendant — thirty cards are not thirty Tab stops.
+            let focus = DashboardView::access_focus_target(&(), Some(ROOT_TAG))
+                .expect("the board owns the focus");
+            assert_eq!(focus.focus_tag, ROOT_TAG);
+            assert_eq!(focus.active_descendant.as_deref(), Some("card.topology"));
+            let selected: Vec<&str> = nodes
+                .iter()
+                .filter(|n| n.selected == Some(true))
+                .map(|n| n.tag.as_str())
+                .collect();
+            assert_eq!(selected, vec!["card.topology"], "exactly one current card");
+            assert!(
+                nodes
+                    .iter()
+                    .filter(|n| n.tag == ROOT_TAG)
+                    .all(|n| n.children.len() == 5),
+                "every card is declared a child, which is what resolves the \
+                 active descendant"
+            );
+        });
+    }
+
+    #[test]
+    fn r1609_only_the_selected_card_paints_its_handle_ring() {
+        Owner::new().run(|| {
+            use pinion_core::style::CursorHint;
+
+            type Grip = (String, Option<CursorHint>);
+            fn grips(scene: &Scene, into: &mut Vec<Grip>) {
+                if let Scene::Container(c) = scene {
+                    if let Some(tag) = c.tag.as_deref()
+                        && tag.contains(".handle.")
+                    {
+                        into.push((tag.to_owned(), c.layout.cursor));
+                    }
+                    for child in &c.children {
+                        grips(child, into);
+                    }
+                }
+            }
+            let scene = DashboardView::view((), &Frame::new());
+            let mut found = Vec::new();
+            grips(&scene, &mut found);
+            assert_eq!(
+                found.len(),
+                8,
+                "one ring on the one selected card — a five-card board painting \
+                 every ring would be forty grips: {found:?}"
+            );
+            assert!(
+                found
+                    .iter()
+                    .all(|(tag, _)| tag.starts_with("card.throughput.handle."))
+            );
+
+            // ★ Each grip's cursor comes from its own handle, which is what
+            // forced `CursorHint`'s two diagonal arms — the icons the window
+            // chrome has commanded since R1189 while no scene node could ask.
+            let cursor_of = |name: &str| {
+                found
+                    .iter()
+                    .find(|(tag, _)| tag.ends_with(name))
+                    .unwrap_or_else(|| panic!("{name} grip missing from {found:?}"))
+                    .1
+            };
+            assert_eq!(cursor_of(".TopLeft"), Some(CursorHint::NwseResize));
+            assert_eq!(cursor_of(".BottomRight"), Some(CursorHint::NwseResize));
+            assert_eq!(cursor_of(".TopRight"), Some(CursorHint::NeswResize));
+            assert_eq!(cursor_of(".BottomLeft"), Some(CursorHint::NeswResize));
+            assert_eq!(cursor_of(".Left"), Some(CursorHint::ColResize));
+            assert_eq!(cursor_of(".Bottom"), Some(CursorHint::RowResize));
         });
     }
 
