@@ -175,6 +175,48 @@
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_view.cc"
     },
+    "NODE_OT_bake_node_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bake.hh"
+    },
+    "NODE_OT_bake_node_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bake.hh"
+    },
+    "NODE_OT_bake_node_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bake.hh"
+    },
+    "NODE_OT_capture_attribute_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_capture_attribute.hh"
+    },
+    "NODE_OT_capture_attribute_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_capture_attribute.hh"
+    },
+    "NODE_OT_capture_attribute_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_capture_attribute.hh"
+    },
     "NODE_OT_clear_viewer_border": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
@@ -196,12 +238,96 @@
       "verdict": "have",
       "where": "source/blender/editors/space_node/clipboard.cc"
     },
+    "NODE_OT_closure_input_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_closure_input_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_closure_input_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_closure_output_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_closure_output_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_closure_output_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_closure_to_list_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure_to_list.hh"
+    },
+    "NODE_OT_closure_to_list_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure_to_list.hh"
+    },
+    "NODE_OT_closure_to_list_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure_to_list.hh"
+    },
     "NODE_OT_collapse_hide_unused_toggle": {
       "covered_by": "Appearance::hide_unused_ports",
       "mechanism": "python-core",
       "proven_by": "pinion-node-graph::blender_collapse_hide_unused_toggle",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_combine_bundle_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bundle.hh"
+    },
+    "NODE_OT_combine_bundle_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bundle.hh"
+    },
+    "NODE_OT_combine_bundle_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bundle.hh"
     },
     "NODE_OT_connect_to_output": {
       "covered_by": "Blender's compositor viewer",
@@ -219,6 +345,13 @@
     },
     "NODE_OT_cryptomatte_layer_remove": {
       "covered_by": "Blender's cryptomatte compositing",
+      "mechanism": "cpp",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_deactivate_viewer": {
+      "covered_by": "deactivates Blender's own geometry-nodes VIEWER node \u2014 one of the 429 registered node types R1577 excluded as content",
       "mechanism": "cpp",
       "proven_by": "",
       "verdict": "app-content",
@@ -308,12 +441,243 @@
       "verdict": "composition",
       "where": "source/blender/editors/space_node/node_ops.cc"
     },
+    "NODE_OT_enum_definition_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_menu_switch.hh"
+    },
+    "NODE_OT_enum_definition_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_menu_switch.hh"
+    },
+    "NODE_OT_enum_definition_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_menu_switch.hh"
+    },
+    "NODE_OT_evaluate_closure_input_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_evaluate_closure_input_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_evaluate_closure_input_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_evaluate_closure_output_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_evaluate_closure_output_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_evaluate_closure_output_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_closure.hh"
+    },
+    "NODE_OT_field_to_grid_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_field_to_grid.hh"
+    },
+    "NODE_OT_field_to_grid_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_field_to_grid.hh"
+    },
+    "NODE_OT_field_to_grid_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_field_to_grid.hh"
+    },
+    "NODE_OT_field_to_list_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_field_to_list.hh"
+    },
+    "NODE_OT_field_to_list_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_field_to_list.hh"
+    },
+    "NODE_OT_field_to_list_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_field_to_list.hh"
+    },
+    "NODE_OT_file_output_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/composite/include/NOD_compositor_file_output.hh"
+    },
+    "NODE_OT_file_output_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/composite/include/NOD_compositor_file_output.hh"
+    },
+    "NODE_OT_file_output_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/composite/include/NOD_compositor_file_output.hh"
+    },
     "NODE_OT_find_node": {
       "covered_by": "a search across the tree AND the path to the hit",
       "mechanism": "cpp",
       "proven_by": "",
       "verdict": "absent",
       "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_foreach_geometry_element_zone_generation_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_generation_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_generation_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_input_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_input_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_input_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_main_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_main_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_foreach_geometry_element_zone_main_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_foreach_geometry_element.hh"
+    },
+    "NODE_OT_format_string_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/function/include/NOD_fn_format_string.hh"
+    },
+    "NODE_OT_format_string_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/function/include/NOD_fn_format_string.hh"
+    },
+    "NODE_OT_format_string_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/function/include/NOD_fn_format_string.hh"
+    },
+    "NODE_OT_geometry_nodes_viewer_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_viewer.hh"
+    },
+    "NODE_OT_geometry_nodes_viewer_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_viewer.hh"
+    },
+    "NODE_OT_geometry_nodes_viewer_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_viewer.hh"
     },
     "NODE_OT_gltf_settings_node_operator": {
       "covered_by": "an add-on, not Blender's node system",
@@ -377,6 +741,27 @@
       "proven_by": "pinion-node-graph::blender_hide_toggle",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_index_switch_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_index_switch.hh"
+    },
+    "NODE_OT_index_switch_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_index_switch.hh"
+    },
+    "NODE_OT_index_switch_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_index_switch.hh"
     },
     "NODE_OT_insert_offset": {
       "covered_by": "drop a node onto a link and push the rest along",
@@ -520,6 +905,13 @@
     },
     "NODE_OT_new_compositing_node_group": {
       "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "cpp",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_new_compositor_sequencer_node_group": {
+      "covered_by": "creates a compositor node group for Blender's sequencer \u2014 its own asset",
       "mechanism": "cpp",
       "proven_by": "",
       "verdict": "app-content",
@@ -735,6 +1127,27 @@
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
+    "NODE_OT_rasterize_points_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_rasterize_points.hh"
+    },
+    "NODE_OT_rasterize_points_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_rasterize_points.hh"
+    },
+    "NODE_OT_rasterize_points_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_rasterize_points.hh"
+    },
     "NODE_OT_read_viewlayers": {
       "covered_by": "Blender's compositor viewer",
       "mechanism": "cpp",
@@ -749,12 +1162,54 @@
       "verdict": "app-content",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
+    "NODE_OT_repeat_zone_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_repeat.hh"
+    },
+    "NODE_OT_repeat_zone_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_repeat.hh"
+    },
+    "NODE_OT_repeat_zone_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_repeat.hh"
+    },
     "NODE_OT_resize": {
       "covered_by": "Appearance::width / height (R1586, R1595)",
       "mechanism": "cpp",
       "proven_by": "pinion-node-graph::blender_resize",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_sample_attribute_items_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/shader/include/NOD_shader_raycast.hh"
+    },
+    "NODE_OT_sample_attribute_items_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/shader/include/NOD_shader_raycast.hh"
+    },
+    "NODE_OT_sample_attribute_items_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/shader/include/NOD_shader_raycast.hh"
     },
     "NODE_OT_select": {
       "covered_by": "a pointer gesture over painted geometry, which the binding owns",
@@ -826,6 +1281,27 @@
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
+    "NODE_OT_separate_bundle_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bundle.hh"
+    },
+    "NODE_OT_separate_bundle_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bundle.hh"
+    },
+    "NODE_OT_separate_bundle_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_bundle.hh"
+    },
     "NODE_OT_shader_script_update": {
       "covered_by": "Blender's shader/compositor tree kinds",
       "mechanism": "cpp",
@@ -839,6 +1315,27 @@
       "proven_by": "",
       "verdict": "addon",
       "where": "scripts/templates_py/Operator/node.py"
+    },
+    "NODE_OT_simulation_zone_item_add": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_simulation.hh"
+    },
+    "NODE_OT_simulation_zone_item_move": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_simulation.hh"
+    },
+    "NODE_OT_simulation_zone_item_remove": {
+      "covered_by": "one instantiation of Blender's `socket_items` operator templates for one of its own node types; the capability is judged once, at `socket_items::make_{add,remove_active,remove_item_by_index,move}_item_operator`",
+      "mechanism": "cpp-template-instance",
+      "proven_by": "",
+      "verdict": "instance",
+      "where": "source/blender/nodes/geometry/include/NOD_geo_simulation.hh"
     },
     "NODE_OT_sockets_sync": {
       "covered_by": "signature is DERIVED, so there is nothing to sync",
@@ -1165,540 +1662,1653 @@
       "proven_by": "pinion-node-graph::blender_node_updatefunc",
       "verdict": "have",
       "where": "source/blender/blenkernel/BKE_node.hh"
+    },
+    "socket_items::make_add_item_operator": {
+      "covered_by": "a node whose SOCKET LIST is authored per node \u2014 `NodeKind::inputs`/`outputs` answer per kind, so every node of a kind has the same ports and an item cannot be added to one of them. Unreal spells the same gap `AddOptionPin`",
+      "mechanism": "cpp-template",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "source/blender/nodes/NOD_socket_items_ops.hh"
+    },
+    "socket_items::make_common_operators": {
+      "covered_by": "calls the four makers above \u2014 covering the parts covers it",
+      "mechanism": "cpp-template",
+      "proven_by": "",
+      "verdict": "composition",
+      "where": "source/blender/nodes/NOD_socket_items_ops.hh"
+    },
+    "socket_items::make_move_item_operator": {
+      "covered_by": "reordering a per-node socket list; the list does not exist",
+      "mechanism": "cpp-template",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "source/blender/nodes/NOD_socket_items_ops.hh"
+    },
+    "socket_items::make_remove_active_item_operator": {
+      "covered_by": "removing the active item from a per-node socket list; the list does not exist",
+      "mechanism": "cpp-template",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "source/blender/nodes/NOD_socket_items_ops.hh"
+    },
+    "socket_items::make_remove_item_by_index_operator": {
+      "covered_by": "removing an item by index from a per-node socket list; the list does not exist",
+      "mechanism": "cpp-template",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "source/blender/nodes/NOD_socket_items_ops.hh"
     }
   },
   "unreal": {
-    "AddBreakpoint": {
+    "AnimGraph::AddBlendListPin": {
+      "covered_by": "adding a port to one node \u2014 the variadic-port gap, Blender's `socket_items::make_add_item_operator`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToAimOffsetGraph": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToAimOffsetLookAt": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToAimOffsetSimple": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToBSEvaluator": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToBSGraph": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToBSPlayer": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToPoseBlender": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToPoseByName": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToSeqEvaluator": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ConvertToSeqPlayer": {
+      "covered_by": "converts a node to one of Unreal's own animation node types; the MECHANISM is `Document::set_kind`, judged once at Blender's `NODE_OT_swap_node`",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::CreateSelfTransition": {
+      "covered_by": "a link whose source and sink are the same node. `connect` refuses it as a cycle on the data plane, and R1599's control plane has no self-edge constructor either",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::HideUnboundPropertyPins": {
+      "covered_by": "`Appearance` hides ports with neither a link nor a default, the hidden set filtered by the signature's defaults",
+      "mechanism": "AnimGraph",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_hide_no_connection_no_default_pins",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::OpenRelatedAsset": {
+      "covered_by": "opens the animation asset a node plays",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::RemoveBlendListPin": {
+      "covered_by": "removing a port from one node",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::ReverseTransition": {
+      "covered_by": "reversing an edge in place. `disconnect` then `connect` is a different edit \u2014 it loses the link's identity and anything keyed by it",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::SelectBone": {
+      "covered_by": "picking a skeleton bone",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::SetActiveState": {
+      "covered_by": "forcing a state machine's active state while debugging",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "AnimGraph::TogglePoseWatch": {
+      "covered_by": "a watch on a node's computed value",
+      "mechanism": "AnimGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AnimGraph/Public/AnimGraphCommands.h"
+    },
+    "BehaviorTree::NewBlackboard": {
+      "covered_by": "a behaviour tree's blackboard asset",
+      "mechanism": "BehaviorTree",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTree::SearchBT": {
+      "covered_by": "finding a node by name inside this graph",
+      "mechanism": "BehaviorTree",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeBlackboard::DeleteEntry": {
+      "covered_by": "a behaviour tree blackboard's own entries",
+      "mechanism": "BehaviorTreeBlackboard",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::BackInto": {
+      "covered_by": "stepping a graph's execution backwards into a subtree",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::BackOver": {
+      "covered_by": "stepping a graph's execution backwards",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::CurrentValues": {
+      "covered_by": "watching a running graph's live values",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::ForwardInto": {
+      "covered_by": "stepping a graph's execution forwards into a subtree",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::ForwardOver": {
+      "covered_by": "stepping a graph's execution forwards",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::OpenParentTree": {
+      "covered_by": "`EditPath::exit` \u2014 the containing tree of the definition being edited",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "pinion-node-graph::blender_group_enter_exit",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::OpenSubtree": {
+      "covered_by": "`EditPath::enter` \u2014 descending into an instance's definition",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "pinion-node-graph::blender_group_enter_exit",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::PausePlaySession": {
+      "covered_by": "Unreal's play-in-editor session",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::ResumePlaySession": {
+      "covered_by": "Unreal's play-in-editor session",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::SavedValues": {
+      "covered_by": "replaying a running graph's recorded values",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::StepOut": {
+      "covered_by": "stepping out of a subtree. `Document::run` derives a whole execution order and `tick` advances the clock; neither can be stopped part-way",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BehaviorTreeDebugger::StopPlaySession": {
+      "covered_by": "Unreal's play-in-editor session",
+      "mechanism": "BehaviorTreeDebugger",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/BehaviorTreeEditor/Private/BehaviorTreeEditorCommands.h"
+    },
+    "BlueprintEditor::AddNewAnimationLayer": {
+      "covered_by": "an animation Blueprint's layer",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::AddNewDelegate": {
+      "covered_by": "Blueprint's member model",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::AddNewEventGraph": {
+      "covered_by": "`Document::new_tree` \u2014 a second top-level graph in the same document",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "pinion-node-graph::blender_new_node_tree",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::AddNewFunction": {
+      "covered_by": "`Document::add_definition` \u2014 a new graph whose interface is derived",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "pinion-node-graph::blender_add_empty_group",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::AddNewLocalVariable": {
+      "covered_by": "Blueprint's member model",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::AddNewMacroDeclaration": {
+      "covered_by": "`Document::add_definition`; a macro is a definition whose instances are expanded, which `ungroup` already does",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "pinion-node-graph::blender_add_empty_group",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::AddNewVariable": {
+      "covered_by": "Blueprint's member model",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::BeginBlueprintMerge": {
+      "covered_by": "a three-way merge of two versions of a graph. A graph IS a value here (`Fragment`, serializable and comparable) and no diff or merge derivation is built on that",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ClearAllBreakpoints": {
+      "covered_by": "breakpoints on nodes",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ClearAllWatches": {
+      "covered_by": "watched pins",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::CompileBlueprint": {
+      "covered_by": "a graph here is INTERPRETED (`Document::run`) and never lowered to a separate artifact, so there is no compile step, no compiled/dirty state and no compile-time diagnostic list",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::DeleteUnusedVariables": {
+      "covered_by": "Blueprint variables are the reference application's own member model",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::DisableAllBreakpoints": {
+      "covered_by": "breakpoints on nodes",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::DumpCachedIndexData": {
+      "covered_by": "the Blueprint search index",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::EnableAllBreakpoints": {
+      "covered_by": "breakpoints on nodes",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::EnableSimulation": {
+      "covered_by": "simulating the previewed actor",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::FindInBlueprint": {
+      "covered_by": "finding a node by name inside this graph \u2014 Blender's `NODE_OT_find_node` is the same gap, and neither reference's is covered",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::FindInBlueprints": {
+      "covered_by": "a search across every Blueprint ASSET \u2014 an asset-registry question",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::FindReferencesFromBlueprint": {
+      "covered_by": "UObject asset references",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::FindReferencesFromClass": {
+      "covered_by": "UObject class references",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::GenerateSearchIndex": {
+      "covered_by": "the Blueprint search index",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::NavigateToChild": {
+      "covered_by": "`EditPath::enter` \u2014 descending into an instance's definition",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "pinion-node-graph::blender_group_enter_exit",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::NavigateToParent": {
+      "covered_by": "`EditPath::exit` \u2014 leaving a definition for the tree that instantiated it",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "pinion-node-graph::blender_group_enter_exit",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::NavigateToParentBackspace": {
+      "covered_by": "the same command on a second chord; one capability, two bindings",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "pinion-node-graph::blender_group_enter_exit",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::OpenBlueprintDebugger": {
+      "covered_by": "a debugger surface over a running graph; R1599/R1600 gave `run` and `tick` and nothing observes them from outside",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::RefreshAllNodes": {
+      "covered_by": "`Document::signature` is derived from `NodeKind` on every read, so the whole-graph refresh is the per-node one applied everywhere",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_reconstruct_nodes",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::RepairCorruptedBlueprint": {
+      "covered_by": "recovering a damaged UObject asset",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ReparentBlueprint": {
+      "covered_by": "changing a UClass's parent",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ResetCamera": {
+      "covered_by": "the Blueprint preview viewport, a 3D scene",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::SaveIntermediateBuildProducts": {
+      "covered_by": "Blueprint compiler diagnostics",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ShowActionMenuItemSignatures": {
+      "covered_by": "the node palette's own diagnostics",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ShowFloor": {
+      "covered_by": "the preview viewport's floor",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ShowGrid": {
+      "covered_by": "the preview viewport's grid",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ToggleHideUnrelatedNodes": {
+      "covered_by": "fading nodes not reachable from the selection. `Reach` answers the reachability half; no appearance is derived from it",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ZoomToSelection": {
+      "covered_by": "framing the view on the selection \u2014 Blender's `NODE_OT_view_selected`",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "BlueprintEditor::ZoomToWindow": {
+      "covered_by": "framing the view on the graph's extent; the crate carries positions and no viewport, and no binding derives one",
+      "mechanism": "BlueprintEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/Kismet/Private/BlueprintEditorCommands.h"
+    },
+    "GraphEditor::AddBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AddExecutionPin": {
+    "GraphEditor::AddExecutionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AddOptionPin": {
+    "GraphEditor::AddOptionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AddParentNode": {
+    "GraphEditor::AddParentNode": {
       "covered_by": "Unreal's Blueprint/level subject matter",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AlignNodesBottom": {
+    "GraphEditor::AlignNodesBottom": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AlignNodesCenter": {
+    "GraphEditor::AlignNodesCenter": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AlignNodesLeft": {
+    "GraphEditor::AlignNodesLeft": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AlignNodesMiddle": {
+    "GraphEditor::AlignNodesMiddle": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AlignNodesRight": {
+    "GraphEditor::AlignNodesRight": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AlignNodesTop": {
+    "GraphEditor::AlignNodesTop": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "AssignReferencedActor": {
+    "GraphEditor::AssignReferencedActor": {
       "covered_by": "Unreal's Blueprint/level subject matter",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "BreakNodeLinks": {
+    "GraphEditor::BreakNodeLinks": {
       "covered_by": "Document::disconnect",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_break_node_links",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_node_links",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "BreakPinLinks": {
+    "GraphEditor::BreakPinLinks": {
       "covered_by": "Document::disconnect",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_break_pin_links",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_pin_links",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "BreakThisLink": {
+    "GraphEditor::BreakThisLink": {
       "covered_by": "Document::disconnect",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_break_this_link",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_this_link",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ChangePinType": {
+    "GraphEditor::ChangePinType": {
       "covered_by": "per-PIN type: a wildcard port resolved per node, where set_kind changes the whole node",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ClearAllQuickJumps": {
+    "GraphEditor::ClearAllQuickJumps": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ClearQuickJump": {
+    "GraphEditor::ClearQuickJump": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "CollapseNodes": {
+    "GraphEditor::CollapseNodes": {
       "covered_by": "Document::group",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_collapse_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_collapse_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "CollapseSelectionToFunction": {
+    "GraphEditor::CollapseSelectionToFunction": {
       "covered_by": "Document::group",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_collapse_selection_to_function",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_collapse_selection_to_function",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "CollapseSelectionToMacro": {
+    "GraphEditor::CollapseSelectionToMacro": {
       "covered_by": "Document::group",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_collapse_selection_to_macro",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_collapse_selection_to_macro",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ConvertEventToFunction": {
+    "GraphEditor::ConvertEventToFunction": {
       "covered_by": "Unreal's Blueprint/level subject matter",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ConvertFunctionToEvent": {
+    "GraphEditor::ConvertFunctionToEvent": {
       "covered_by": "Unreal's Blueprint/level subject matter",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "CreateComment": {
+    "GraphEditor::CreateComment": {
       "covered_by": "NodeBody::Frame (R1589)",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_create_comment",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_create_comment",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "CreateCustomEvent": {
+    "GraphEditor::CreateCustomEvent": {
       "covered_by": "Unreal's Blueprint/level subject matter",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "CreateMatchingFunction": {
+    "GraphEditor::CreateMatchingFunction": {
       "covered_by": "Unreal's Blueprint/level subject matter",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "DeleteAndReconnectNodes": {
+    "GraphEditor::DeleteAndReconnectNodes": {
       "covered_by": "Document::dissolve",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_delete_and_reconnect_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_delete_and_reconnect_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "DisableBreakpoint": {
+    "GraphEditor::DisableBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "DisableNodes": {
+    "GraphEditor::DisableNodes": {
       "covered_by": "Document::set_bypassed",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_disable_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_disable_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "DistributeNodesHorizontally": {
+    "GraphEditor::DistributeNodesHorizontally": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "DistributeNodesVertically": {
+    "GraphEditor::DistributeNodesVertically": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "EnableBreakpoint": {
+    "GraphEditor::EnableBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "EnableNodes": {
+    "GraphEditor::EnableNodes": {
       "covered_by": "Document::set_bypassed",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_enable_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_enable_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "EnableNodes_Always": {
+    "GraphEditor::EnableNodes_Always": {
       "covered_by": "a build-configuration flag on Unreal's own node enablement",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "EnableNodes_DevelopmentOnly": {
+    "GraphEditor::EnableNodes_DevelopmentOnly": {
       "covered_by": "a build-configuration flag on Unreal's own node enablement",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ExpandNodes": {
+    "GraphEditor::ExpandNodes": {
       "covered_by": "Document::ungroup",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_expand_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_expand_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "FindAndReplaceReferences": {
+    "GraphEditor::FindAndReplaceReferences": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "FindReferences": {
+    "GraphEditor::FindReferences": {
       "covered_by": "a search across the tree and the path to the hit \u2014 Blender's find_node",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "FindReferencesByClassMemberGlobal": {
+    "GraphEditor::FindReferencesByClassMemberGlobal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "FindReferencesByClassMemberLocal": {
+    "GraphEditor::FindReferencesByClassMemberLocal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "FindReferencesByNameGlobal": {
+    "GraphEditor::FindReferencesByNameGlobal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "FindReferencesByNameLocal": {
+    "GraphEditor::FindReferencesByNameLocal": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "GetFindReferences": {
+    "GraphEditor::GetFindReferences": {
       "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "GoToDefinition": {
+    "GraphEditor::GoToDefinition": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "GoToDocumentation": {
+    "GraphEditor::GoToDocumentation": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "HideNoConnectionNoDefaultPins": {
+    "GraphEditor::HideNoConnectionNoDefaultPins": {
       "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_hide_no_connection_no_default_pins",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_hide_no_connection_no_default_pins",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "HideNoConnectionPins": {
+    "GraphEditor::HideNoConnectionPins": {
       "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_hide_no_connection_pins",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_hide_no_connection_pins",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "InsertExecutionPinAfter": {
+    "GraphEditor::InsertExecutionPinAfter": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "InsertExecutionPinBefore": {
+    "GraphEditor::InsertExecutionPinBefore": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "OpenInNewTab": {
+    "GraphEditor::OpenInNewTab": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "PromoteSelectionToFunction": {
+    "GraphEditor::PromoteSelectionToFunction": {
       "covered_by": "Document::group",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_promote_selection_to_function",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_promote_selection_to_function",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "PromoteSelectionToMacro": {
+    "GraphEditor::PromoteSelectionToMacro": {
       "covered_by": "Document::group",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_promote_selection_to_macro",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_promote_selection_to_macro",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "PromoteToLocalVariable": {
+    "GraphEditor::PromoteToLocalVariable": {
       "covered_by": "VARIABLES are Unreal's state model, and R1600 recorded why this crate's only state is a delay",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "PromoteToVariable": {
+    "GraphEditor::PromoteToVariable": {
       "covered_by": "VARIABLES are Unreal's state model, and R1600 recorded why this crate's only state is a delay",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "QuickJump": {
+    "GraphEditor::QuickJump": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "RecombineStructPin": {
+    "GraphEditor::RecombineStructPin": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ReconstructNodes": {
+    "GraphEditor::ReconstructNodes": {
       "covered_by": "the signature is DERIVED from the kind, so it cannot go stale",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_reconstruct_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_reconstruct_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "RemoveBreakpoint": {
+    "GraphEditor::RemoveBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "RemoveExecutionPin": {
+    "GraphEditor::RemoveExecutionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "RemoveOptionPin": {
+    "GraphEditor::RemoveOptionPin": {
       "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "RemoveOtherStructVarPins": {
+    "GraphEditor::RemoveOtherStructVarPins": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "RemoveThisStructVarPin": {
+    "GraphEditor::RemoveThisStructVarPin": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ResetPinToDefaultValue": {
+    "GraphEditor::ResetPinToDefaultValue": {
       "covered_by": "Document::clear_port_value (R1594)",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_reset_pin_to_default_value",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_reset_pin_to_default_value",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "RestoreAllStructVarPins": {
+    "GraphEditor::RestoreAllStructVarPins": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "SelectAllInputNodes": {
+    "GraphEditor::SelectAllInputNodes": {
       "covered_by": "Document::grow (Reach)",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_select_all_input_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_select_all_input_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "SelectAllOutputNodes": {
+    "GraphEditor::SelectAllOutputNodes": {
       "covered_by": "Document::grow (Reach)",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_select_all_output_nodes",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_select_all_output_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "SelectReferenceInLevel": {
+    "GraphEditor::SelectReferenceInLevel": {
       "covered_by": "Unreal's Blueprint/level subject matter",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "SetQuickJump": {
+    "GraphEditor::SetQuickJump": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ShowAllPins": {
+    "GraphEditor::ShowAllPins": {
       "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
-      "mechanism": "graph-editor-command",
-      "proven_by": "pinion-node-graph::unreal_show_all_pins",
+      "mechanism": "GraphEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_show_all_pins",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "SplitStructPin": {
+    "GraphEditor::SplitStructPin": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "StackNodesHorizontally": {
+    "GraphEditor::StackNodesHorizontally": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "StackNodesVertically": {
+    "GraphEditor::StackNodesVertically": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "StartWatchingPin": {
+    "GraphEditor::StartWatchingPin": {
       "covered_by": "WATCHES: a named port whose value is reported every step",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "StopWatchingPin": {
+    "GraphEditor::StopWatchingPin": {
       "covered_by": "WATCHES: a named port whose value is reported every step",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "StraightenConnections": {
+    "GraphEditor::StraightenConnections": {
       "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "SummonCreateNodeMenu": {
+    "GraphEditor::SummonCreateNodeMenu": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
-    "ToggleBreakpoint": {
+    "GraphEditor::ToggleBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
-      "mechanism": "graph-editor-command",
+      "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "absent",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "GraphEditor::ZoomIn": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "GraphEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "GraphEditor::ZoomOut": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "GraphEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "MaterialEditor::AddToFavorites": {
+      "covered_by": "the node palette's favourites",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::AlwaysRefreshAllPreviews": {
+      "covered_by": "per-node shader preview refresh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::Apply": {
+      "covered_by": "applies the material to the world",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::BreakAllLinks": {
+      "covered_by": "`Document::disconnect_node` \u2014 every link at a node, both ends",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_node_links",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::BreakLink": {
+      "covered_by": "`Document::disconnect` \u2014 one named link",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_this_link",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CameraHome": {
+      "covered_by": "framing the canvas view at its home position; the crate carries positions and no viewport",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CleanUnusedExpressions": {
+      "covered_by": "deleting every node that reaches no output. `Reach` answers which nodes those are and no edit consumes it",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ConvertNamedRerouteToReroute": {
+      "covered_by": "reroutes, named and not, are both absent",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ConvertObjects": {
+      "covered_by": "converts material expressions to parameters",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ConvertRerouteToNamedReroute": {
+      "covered_by": "reroutes, named and not, are both absent",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ConvertToConstant": {
+      "covered_by": "material parameter to constant expression",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ConvertToTextureObjects": {
+      "covered_by": "material texture expression kinds",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ConvertToTextureSamples": {
+      "covered_by": "material texture expression kinds",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CreateComponentMaskNode": {
+      "covered_by": "one of Unreal's material expression types",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CreateHorizontalMixNode": {
+      "covered_by": "a Substrate material node type",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CreateRerouteUsageFromDeclaration": {
+      "covered_by": "creating a named reroute's usage",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CreateSelectNode": {
+      "covered_by": "a Substrate material node type",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CreateSlabNode": {
+      "covered_by": "a Substrate material node type",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CreateVerticalLayerNode": {
+      "covered_by": "a Substrate material node type",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::CreateWeightNode": {
+      "covered_by": "a Substrate material node type",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::DeleteObjects": {
+      "covered_by": "`Document::remove_nodes`",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_delete",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::DeletePin": {
+      "covered_by": "removing a port from one node; ports come from the kind, so a node cannot have one fewer than its kind declares",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::DisableRealtimePreviewNode": {
+      "covered_by": "realtime shader preview of one node",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::DuplicateObjects": {
+      "covered_by": "`Document::duplicate` \u2014 a copy that lands back inside its frame",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_duplicate",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::EnableRealtimePreviewNode": {
+      "covered_by": "realtime shader preview of one node",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::FeatureLevel_All": {
+      "covered_by": "shader feature level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::FeatureLevel_Mobile": {
+      "covered_by": "shader feature level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::FeatureLevel_SM5": {
+      "covered_by": "shader feature level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::FeatureLevel_SM6": {
+      "covered_by": "shader feature level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::FindInMaterial": {
+      "covered_by": "finding a node by name inside this graph",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::FixupMismatchedSamplers": {
+      "covered_by": "material sampler types",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::Flatten": {
+      "covered_by": "bakes the material to a texture",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ForceRefreshPreviews": {
+      "covered_by": "per-node shader preview refresh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::MatertialPasteHere": {
+      "covered_by": "`Document::insert` takes the position the fragment lands at, so a paste HERE is the ordinary paste with a coordinate rather than a second verb",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::unreal_material_editor_matertial_paste_here",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::NewComment": {
+      "covered_by": "`Document::enframe` \u2014 a frame is a structural body this crate owns",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_create_comment",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::PreviewHoveredNode": {
+      "covered_by": "the same per-node flag, driven by hover rather than by selection",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_preview_toggle",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::PromoteToDouble": {
+      "covered_by": "material scalar precision",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::PromoteToFloat": {
+      "covered_by": "material scalar precision",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::PromoteToParameter": {
+      "covered_by": "`Document::expose` \u2014 an input becomes a port on the graph's interface, which is what a material parameter is",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_add_group_input_node",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::QualityLevel_All": {
+      "covered_by": "shader quality level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::QualityLevel_Epic": {
+      "covered_by": "shader quality level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::QualityLevel_High": {
+      "covered_by": "shader quality level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::QualityLevel_Low": {
+      "covered_by": "shader quality level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::QualityLevel_Medium": {
+      "covered_by": "shader quality level preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::RemoveFromFavorites": {
+      "covered_by": "the node palette's favourites",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ResetToDefault": {
+      "covered_by": "`Document::clear_port_value` \u2014 the authored value goes and the kind's declared default is what the port carries again",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_reset_pin_to_default_value",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SelectDownstreamNodes": {
+      "covered_by": "`Reach` forward from the selection",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_select_linked_to",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SelectNamedRerouteDeclaration": {
+      "covered_by": "a NAMED reroute \u2014 a wire endpoint referenced by name from elsewhere in the graph, so a value crosses the canvas without an edge. `NODE_OT_add_reroute` is absent too and this is the stronger form of it",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SelectNamedRerouteUsages": {
+      "covered_by": "the other direction of a named reroute",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SelectPreviewMeshMaterialSlots": {
+      "covered_by": "the preview mesh's material slots",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SelectUpstreamNodes": {
+      "covered_by": "`Reach` backward from the selection",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_select_linked_from",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SetCubePreview": {
+      "covered_by": "the 3D preview mesh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SetCylinderPreview": {
+      "covered_by": "the 3D preview mesh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SetPlanePreview": {
+      "covered_by": "the 3D preview mesh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SetPreviewMeshFromSelection": {
+      "covered_by": "the 3D preview mesh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SetShaderBallPreview": {
+      "covered_by": "the 3D preview mesh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::SetSpherePreview": {
+      "covered_by": "the 3D preview mesh",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ShowAllMaterialParameters": {
+      "covered_by": "the material's parameter panel",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ShowHideConnectors": {
+      "covered_by": "`Appearance` hides ports with no connection, published as the hidden set",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_hide_no_connection_pins",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::StartPreviewNode": {
+      "covered_by": "`Appearance::preview` \u2014 a per-node flag the evaluator may not read",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_preview_toggle",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::StopPreviewNode": {
+      "covered_by": "`Appearance::preview` \u2014 a per-node flag the evaluator may not read",
+      "mechanism": "MaterialEditor",
+      "proven_by": "pinion-node-graph::blender_preview_toggle",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ToggleHideUnrelatedNodes": {
+      "covered_by": "fading nodes not reachable from the selection; the reachability half exists and no appearance is derived from it",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ToggleLivePreview": {
+      "covered_by": "live shader compilation of the preview",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ToggleMaterialStats": {
+      "covered_by": "shader instruction counts",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::TogglePlatformStats": {
+      "covered_by": "per-platform shader statistics",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::TogglePreviewBackground": {
+      "covered_by": "the 3D preview's background",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::ToggleRealtimeExpressions": {
+      "covered_by": "animated expression previews",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "MaterialEditor::UseCurrentTexture": {
+      "covered_by": "assigns the content browser's texture asset",
+      "mechanism": "MaterialEditor",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/MaterialEditor/Public/MaterialEditorActions.h"
+    },
+    "SoundClassGraph::FindInSoundClassGraph": {
+      "covered_by": "finding a node by name inside this graph",
+      "mechanism": "SoundClassGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundClassEditorCommands.h"
+    },
+    "SoundClassGraph::ToggleMute": {
+      "covered_by": "the audio debugger's mute on a sound class",
+      "mechanism": "SoundClassGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundClassEditorCommands.h"
+    },
+    "SoundClassGraph::ToggleSolo": {
+      "covered_by": "the audio debugger's solo on a sound class",
+      "mechanism": "SoundClassGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundClassEditorCommands.h"
+    },
+    "SoundClassGraph::ViewReferences": {
+      "covered_by": "the asset reference viewer",
+      "mechanism": "SoundClassGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundClassEditorCommands.h"
+    },
+    "SoundCueGraph::AddInput": {
+      "covered_by": "adding a port to one node \u2014 the variadic-port gap",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::BreakLink": {
+      "covered_by": "`Document::disconnect` \u2014 one named link",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_this_link",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::BrowserSync": {
+      "covered_by": "selects the sound wave asset in the content browser",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::DeleteInput": {
+      "covered_by": "removing a port from one node",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::PlayCue": {
+      "covered_by": "plays the sound cue asset",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::PlayNode": {
+      "covered_by": "auditions one node's audio",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::StopCueNode": {
+      "covered_by": "stops audio playback",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::ToggleMute": {
+      "covered_by": "the audio debugger's mute on the asset, not a node bypass \u2014 the two are spelled alike and are not the same thing (R1586 records the distinction)",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::TogglePlayback": {
+      "covered_by": "audio playback",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
+    },
+    "SoundCueGraph::ToggleSolo": {
+      "covered_by": "read at the call site: `FSoundCueEditor::ToggleSolo` calls the audio debugger's `ToggleSoloSoundCue` on the ASSET, not on a node",
+      "mechanism": "SoundCueGraph",
+      "proven_by": "",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/AudioEditor/Public/SoundCueGraphEditorCommands.h"
     },
     "UEdGraphNode::AddPinSearchMetaDataInfo": {
       "covered_by": "which node kinds a palette offers, and how it is searched",
@@ -2144,7 +3754,7 @@
     "UEdGraphNode::ReconstructNode": {
       "covered_by": "the signature is derived from the kind, and set_kind names everything that did not survive",
       "mechanism": "UEdGraphNode",
-      "proven_by": "pinion-node-graph::unreal_reconstruct_nodes",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_reconstruct_nodes",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphNode.h"
     },
@@ -2268,21 +3878,21 @@
     "UEdGraphSchema::BreakNodeLinks": {
       "covered_by": "Document::disconnect over the links touching a node, each handed back",
       "mechanism": "UEdGraphSchema",
-      "proven_by": "pinion-node-graph::unreal_break_node_links",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_node_links",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
     "UEdGraphSchema::BreakPinLinks": {
       "covered_by": "Document::disconnect scoped to one end of one socket",
       "mechanism": "UEdGraphSchema",
-      "proven_by": "pinion-node-graph::unreal_break_pin_links",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_pin_links",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
     "UEdGraphSchema::BreakSinglePinLink": {
       "covered_by": "Document::disconnect, which answers the link it removed",
       "mechanism": "UEdGraphSchema",
-      "proven_by": "pinion-node-graph::unreal_break_this_link",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_break_this_link",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
@@ -2505,7 +4115,7 @@
     "UEdGraphSchema::GetCreateCommentAction": {
       "covered_by": "NodeBody::Frame is a structural body this crate owns, so a comment cannot be forgotten by an application",
       "mechanism": "UEdGraphSchema",
-      "proven_by": "pinion-node-graph::unreal_create_comment",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_create_comment",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
@@ -2761,7 +4371,7 @@
     "UEdGraphSchema::ReconstructNode": {
       "covered_by": "the signature is derived from the kind, and set_kind names everything that did not survive",
       "mechanism": "UEdGraphSchema",
-      "proven_by": "pinion-node-graph::unreal_reconstruct_nodes",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_reconstruct_nodes",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
@@ -2792,7 +4402,7 @@
     "UEdGraphSchema::ResetPinToAutogeneratedDefaultValue": {
       "covered_by": "Document::clear_port_value, which leaves NO authored value rather than a copy of the default",
       "mechanism": "UEdGraphSchema",
-      "proven_by": "pinion-node-graph::unreal_reset_pin_to_default_value",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_reset_pin_to_default_value",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
@@ -2825,7 +4435,7 @@
     "UEdGraphSchema::ShouldHidePinDefaultValue": {
       "covered_by": "the hidden set is published and the signature says which ports have defaults, so the rule is a filter over the two",
       "mechanism": "UEdGraphSchema",
-      "proven_by": "pinion-node-graph::unreal_hide_no_connection_no_default_pins",
+      "proven_by": "pinion-node-graph::unreal_graph_editor_hide_no_connection_no_default_pins",
       "verdict": "have",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
     },
@@ -2921,20 +4531,6 @@
       "mechanism": "UEdGraphSchema",
       "verdict": "app-content",
       "where": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h"
-    },
-    "ZoomIn": {
-      "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
-      "proven_by": "",
-      "verdict": "app-content",
-      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
-    },
-    "ZoomOut": {
-      "covered_by": "editor navigation over a viewport the crate does not hold",
-      "mechanism": "graph-editor-command",
-      "proven_by": "",
-      "verdict": "app-content",
-      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     }
   }
 }

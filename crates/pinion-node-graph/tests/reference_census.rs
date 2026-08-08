@@ -312,6 +312,8 @@ fn proofs() -> Vec<Proof> {
     let mut all = blender_proofs();
     all.extend(blender_hook_proofs());
     all.extend(unreal_proofs());
+    all.extend(unreal_wire_proofs());
+    all.extend(unreal_editor_proofs());
     all.extend(unreal_hook_proofs());
     all.extend(unreal_schema_hook_proofs());
     all
@@ -452,69 +454,220 @@ fn blender_hook_proofs() -> Vec<Proof> {
     ]
 }
 
+/// The generic canvas's commands that act on **structure** — which nodes exist,
+/// which tree they are in, and whether they take part.
 fn unreal_proofs() -> Vec<Proof> {
     vec![
-        proof("unreal", "BreakNodeLinks", unreal_break_node_links),
-        proof("unreal", "BreakPinLinks", unreal_break_pin_links),
-        proof("unreal", "BreakThisLink", unreal_break_this_link),
-        proof("unreal", "CollapseNodes", unreal_collapse_nodes),
         proof(
             "unreal",
-            "CollapseSelectionToFunction",
-            unreal_collapse_selection_to_function,
+            "GraphEditor::CollapseNodes",
+            unreal_graph_editor_collapse_nodes,
         ),
         proof(
             "unreal",
-            "CollapseSelectionToMacro",
-            unreal_collapse_selection_to_macro,
-        ),
-        proof("unreal", "CreateComment", unreal_create_comment),
-        proof(
-            "unreal",
-            "DeleteAndReconnectNodes",
-            unreal_delete_and_reconnect_nodes,
-        ),
-        proof("unreal", "DisableNodes", unreal_disable_nodes),
-        proof("unreal", "EnableNodes", unreal_enable_nodes),
-        proof("unreal", "ExpandNodes", unreal_expand_nodes),
-        proof(
-            "unreal",
-            "HideNoConnectionNoDefaultPins",
-            unreal_hide_no_connection_no_default_pins,
+            "GraphEditor::CollapseSelectionToFunction",
+            unreal_graph_editor_collapse_selection_to_function,
         ),
         proof(
             "unreal",
-            "HideNoConnectionPins",
-            unreal_hide_no_connection_pins,
+            "GraphEditor::CollapseSelectionToMacro",
+            unreal_graph_editor_collapse_selection_to_macro,
         ),
         proof(
             "unreal",
-            "PromoteSelectionToFunction",
-            unreal_promote_selection_to_function,
+            "GraphEditor::CreateComment",
+            unreal_graph_editor_create_comment,
         ),
         proof(
             "unreal",
-            "PromoteSelectionToMacro",
-            unreal_promote_selection_to_macro,
-        ),
-        proof("unreal", "ReconstructNodes", unreal_reconstruct_nodes),
-        proof(
-            "unreal",
-            "ResetPinToDefaultValue",
-            unreal_reset_pin_to_default_value,
+            "GraphEditor::DeleteAndReconnectNodes",
+            unreal_graph_editor_delete_and_reconnect_nodes,
         ),
         proof(
             "unreal",
-            "SelectAllInputNodes",
-            unreal_select_all_input_nodes,
+            "GraphEditor::DisableNodes",
+            unreal_graph_editor_disable_nodes,
         ),
         proof(
             "unreal",
-            "SelectAllOutputNodes",
-            unreal_select_all_output_nodes,
+            "GraphEditor::EnableNodes",
+            unreal_graph_editor_enable_nodes,
         ),
-        proof("unreal", "ShowAllPins", unreal_show_all_pins),
+        proof(
+            "unreal",
+            "GraphEditor::ExpandNodes",
+            unreal_graph_editor_expand_nodes,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::PromoteSelectionToFunction",
+            unreal_graph_editor_promote_selection_to_function,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::PromoteSelectionToMacro",
+            unreal_graph_editor_promote_selection_to_macro,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::ReconstructNodes",
+            unreal_graph_editor_reconstruct_nodes,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::SelectAllInputNodes",
+            unreal_graph_editor_select_all_input_nodes,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::SelectAllOutputNodes",
+            unreal_graph_editor_select_all_output_nodes,
+        ),
     ]
+}
+
+/// The generic canvas's commands that act on **ports and wires** — what a node
+/// shows and what reaches it.
+///
+/// Split from the structural half because one list of twenty is past the length
+/// this project lets a function have, and this is the seam it already had: a
+/// wire is not a node.
+fn unreal_wire_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "unreal",
+            "GraphEditor::BreakNodeLinks",
+            unreal_graph_editor_break_node_links,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::BreakPinLinks",
+            unreal_graph_editor_break_pin_links,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::BreakThisLink",
+            unreal_graph_editor_break_this_link,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::HideNoConnectionNoDefaultPins",
+            unreal_graph_editor_hide_no_connection_no_default_pins,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::HideNoConnectionPins",
+            unreal_graph_editor_hide_no_connection_pins,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::ResetPinToDefaultValue",
+            unreal_graph_editor_reset_pin_to_default_value,
+        ),
+        proof(
+            "unreal",
+            "GraphEditor::ShowAllPins",
+            unreal_graph_editor_show_all_pins,
+        ),
+    ]
+}
+
+/// The per-editor command lists R1605 added — the ones whose `have` needs a
+/// proof of its own rather than a citation of the generic canvas's.
+///
+/// There is one. That is the round's measurement rather than a small table:
+/// eight editor-specific lists, 152 commands, and every capability among them
+/// that this crate answers is answered by a mechanism the generic list already
+/// named — so 25 rows CITE and one owns.
+fn unreal_editor_proofs() -> Vec<Proof> {
+    vec![proof(
+        "unreal",
+        "MaterialEditor::MatertialPasteHere",
+        unreal_material_editor_matertial_paste_here,
+    )]
+}
+
+/// Unreal pastes the clipboard **at a point** rather than back where it came
+/// from, and the point has to mean the same thing for one node and for five.
+///
+/// `Fragment` stores every node's position relative to the selection's centroid
+/// (`Fragment::origin`), so `insert(.., at, ..)` puts the *fragment* there and
+/// the relative layout is carried untouched. The distinction is invisible with
+/// one node — `blender_clipboard_paste` pastes one and cannot tell an anchor
+/// from a per-node override — so this one pastes three at once and asserts both
+/// halves: where the group landed, and that its shape survived.
+///
+/// ★ Past Unreal 5.8: the anchor is a **value on the fragment**
+/// (`Fragment::origin`), so a client can ask a copied graph where it considers
+/// itself to be. Unreal's clipboard is a text blob
+/// (`FEdGraphUtilities::ExportNodesToText`) holding absolute node positions, and
+/// the averaging that turns it into a paste location lives inside
+/// `FBlueprintEditor::PasteNodesHere` — so nothing can ask the payload anything.
+#[test]
+fn unreal_material_editor_matertial_paste_here() {
+    let mut document: Document<Op> = Document::new("root");
+    let left = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(2)), 100, 50)
+        .unwrap();
+    let middle = document
+        .add_node(ROOT, NodeBody::Kind(Op::Double), 300, 50)
+        .unwrap();
+    let right = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 500, 90)
+        .unwrap();
+    wire(&mut document, left, 0, middle, 0);
+    wire(&mut document, middle, 0, right, 0);
+
+    let fragment = document.extract(ROOT, &[left, middle, right]).unwrap();
+    let pasted = document
+        .insert(
+            ROOT,
+            &fragment,
+            (1000, 1000),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    assert_eq!(pasted.nodes.len(), 3);
+
+    let placed: Vec<(i32, i32)> = pasted
+        .nodes
+        .iter()
+        .map(|&id| {
+            let node = document.tree(ROOT).unwrap().node(id).unwrap();
+            (node.x, node.y)
+        })
+        .collect();
+
+    // Where it landed: the centroid is the point that was asked for.
+    let centroid = (
+        placed.iter().map(|p| p.0).sum::<i32>() / 3,
+        placed.iter().map(|p| p.1).sum::<i32>() / 3,
+    );
+    assert_eq!(
+        centroid,
+        (1000, 1000),
+        "the fragment is placed, not each node"
+    );
+
+    // And its shape: every pairwise offset is the one it had before.
+    let before = [(100, 50), (300, 50), (500, 90)];
+    let mut sorted = placed.clone();
+    sorted.sort_unstable();
+    for index in 1..3 {
+        assert_eq!(
+            (
+                sorted[index].0 - sorted[index - 1].0,
+                sorted[index].1 - sorted[index - 1].1
+            ),
+            (
+                before[index].0 - before[index - 1].0,
+                before[index].1 - before[index - 1].1
+            ),
+            "a paste at a point must not distort what was copied"
+        );
+    }
+    assert_eq!(fragment.origin(), (300, 63), "and the anchor is readable");
 }
 
 /// The HOOK surface (R1603): the virtuals of `UEdGraphNode` and
@@ -1982,7 +2135,7 @@ fn blender_select_same_type_step() {
 /// name the set and that the node survives — which is the whole difference from
 /// deleting it.
 #[test]
-fn unreal_break_node_links() {
+fn unreal_graph_editor_break_node_links() {
     let mut chain = chain();
     let touching = links_touching(&chain.document, ROOT, chain.add);
     assert_eq!(touching.len(), 3);
@@ -2003,7 +2156,7 @@ fn unreal_break_node_links() {
 /// `Socket::new(add, 0)` names both — which is why a filter that ignores the
 /// end matches twice.
 #[test]
-fn unreal_break_pin_links() {
+fn unreal_graph_editor_break_pin_links() {
     let mut chain = chain();
     let pin = Socket::new(chain.add, 0);
     let either_end = chain
@@ -2051,7 +2204,7 @@ fn unreal_break_pin_links() {
 
 /// Break one named link, and hand it back so it can be put back.
 #[test]
-fn unreal_break_this_link() {
+fn unreal_graph_editor_break_this_link() {
     let mut chain = chain();
     let id = chain.document.tree(ROOT).unwrap().links()[0].id;
     let removed = chain.document.disconnect(ROOT, id).unwrap();
@@ -2067,7 +2220,7 @@ fn unreal_break_this_link() {
 
 /// Collapse a selection into a subgraph node.
 #[test]
-fn unreal_collapse_nodes() {
+fn unreal_graph_editor_collapse_nodes() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2095,7 +2248,7 @@ fn unreal_collapse_nodes() {
 /// subgraph is that it is **callable again**, so the proof instantiates it a
 /// second time and checks the two occurrences do not share a value.
 #[test]
-fn unreal_collapse_selection_to_function() {
+fn unreal_graph_editor_collapse_selection_to_function() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2124,7 +2277,7 @@ fn unreal_collapse_selection_to_function() {
 /// that gets **expanded back into the caller**, so the proof is that the
 /// collapse is reversible into the host with the value unchanged.
 #[test]
-fn unreal_collapse_selection_to_macro() {
+fn unreal_graph_editor_collapse_selection_to_macro() {
     let mut chain = chain();
     let before = chain.document.evaluate(ROOT, chain.sink);
     let made = chain.document.group(ROOT, &[chain.add], "Macro").unwrap();
@@ -2139,7 +2292,7 @@ fn unreal_collapse_selection_to_macro() {
 /// members compute exactly as before, and the boundary means nothing to the
 /// evaluator.
 #[test]
-fn unreal_create_comment() {
+fn unreal_graph_editor_create_comment() {
     let mut chain = chain();
     let before = arrives(&chain.document, Socket::new(chain.sink, 0));
     let comment = chain
@@ -2182,7 +2335,7 @@ fn unreal_create_comment() {
 /// Unreal's delete-and-reconnect, over a selection rather than one node — the
 /// reading that shows the derivation composes.
 #[test]
-fn unreal_delete_and_reconnect_nodes() {
+fn unreal_graph_editor_delete_and_reconnect_nodes() {
     let mut document: Document<Op> = Document::new("root");
     let two = num(&mut document, 2);
     let first = node(&mut document, Op::Double);
@@ -2210,7 +2363,7 @@ fn unreal_delete_and_reconnect_nodes() {
 /// derives, and the outputs no input can feed are **named** rather than being
 /// discovered as a missing wire.
 #[test]
-fn unreal_disable_nodes() {
+fn unreal_graph_editor_disable_nodes() {
     let mut chain = chain();
     assert!(!chain.document.set_bypassed(ROOT, chain.add, true).unwrap());
     assert!(
@@ -2235,7 +2388,7 @@ fn unreal_disable_nodes() {
 /// And back on. The flag is the graph's *meaning* rather than its looks, so it
 /// is a field of the node and not of `Appearance`.
 #[test]
-fn unreal_enable_nodes() {
+fn unreal_graph_editor_enable_nodes() {
     let mut chain = chain();
     chain.document.set_bypassed(ROOT, chain.add, true).unwrap();
     assert!(chain.document.set_bypassed(ROOT, chain.add, false).unwrap());
@@ -2268,7 +2421,7 @@ fn unreal_enable_nodes() {
 
 /// Unreal's Expand Node — the inverse of a collapse, back into the caller.
 #[test]
-fn unreal_expand_nodes() {
+fn unreal_graph_editor_expand_nodes() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2287,7 +2440,7 @@ fn unreal_expand_nodes() {
 
 /// Unreal hides unconnected pins.
 #[test]
-fn unreal_hide_no_connection_pins() {
+fn unreal_graph_editor_hide_no_connection_pins() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     wire(&mut chain.document, chain.two, 0, mul, 1);
@@ -2310,7 +2463,7 @@ fn unreal_hide_no_connection_pins() {
 /// says which ports have defaults, so the narrower rule is a filter an
 /// application writes — proven here by writing it.
 #[test]
-fn unreal_hide_no_connection_no_default_pins() {
+fn unreal_graph_editor_hide_no_connection_no_default_pins() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     chain
@@ -2340,7 +2493,7 @@ fn unreal_hide_no_connection_no_default_pins() {
 
 /// Unreal's Show All Pins, which is the same declaration read the other way.
 #[test]
-fn unreal_show_all_pins() {
+fn unreal_graph_editor_show_all_pins() {
     let mut chain = chain();
     let lonely = node(&mut chain.document, Op::Add);
     chain
@@ -2376,7 +2529,7 @@ fn unreal_show_all_pins() {
 /// boundary, read as a definition that outlives the place it came from: the
 /// proof deletes the original instance and instantiates the definition again.
 #[test]
-fn unreal_promote_selection_to_function() {
+fn unreal_graph_editor_promote_selection_to_function() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2401,7 +2554,7 @@ fn unreal_promote_selection_to_function() {
 /// And to a macro, whose reading is expansion — proven by round-tripping the
 /// boundary and asserting the graph means the same thing afterwards.
 #[test]
-fn unreal_promote_selection_to_macro() {
+fn unreal_graph_editor_promote_selection_to_macro() {
     let mut chain = chain();
     let before = chain.document.evaluate(ROOT, chain.sink);
     let made = chain
@@ -2421,7 +2574,7 @@ fn unreal_promote_selection_to_macro() {
 /// proven by changing the interface and observing the instance follow with the
 /// links that no longer fit **named**.
 #[test]
-fn unreal_reconstruct_nodes() {
+fn unreal_graph_editor_reconstruct_nodes() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let before = chain
@@ -2460,7 +2613,7 @@ fn unreal_reconstruct_nodes() {
 /// arrives, because "removed" and "overwritten with the default" look identical
 /// if only the second is checked.
 #[test]
-fn unreal_reset_pin_to_default_value() {
+fn unreal_graph_editor_reset_pin_to_default_value() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     wire(&mut chain.document, chain.two, 0, mul, 1);
@@ -2505,7 +2658,7 @@ fn unreal_reset_pin_to_default_value() {
 /// Unreal selects everything feeding the selection — the transitive question,
 /// which is the one a person actually has.
 #[test]
-fn unreal_select_all_input_nodes() {
+fn unreal_graph_editor_select_all_input_nodes() {
     let chain = chain();
     let grown = chain
         .document
@@ -2519,7 +2672,7 @@ fn unreal_select_all_input_nodes() {
 
 /// And everything the selection feeds.
 #[test]
-fn unreal_select_all_output_nodes() {
+fn unreal_graph_editor_select_all_output_nodes() {
     let chain = chain();
     let grown = chain
         .document

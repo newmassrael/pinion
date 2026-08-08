@@ -22,24 +22,74 @@ the rule was right and nobody had written the computation.
 
 ## What it computes
 
-**Blender registers node operators FOUR ways**, and the old census saw one:
+**Blender registers node operators FIVE ways**, and the first census saw one:
 
-| mechanism            | how it is written                                   |
-|----------------------|-----------------------------------------------------|
-| `cpp`                | `ot->idname = "NODE_OT_x"`                            |
-| `macro`              | `WM_operatortype_append_macro("NODE_OT_x", ...)`      |
-| `python-core`        | `bl_idname = "node.x"` under `scripts/startup/`       |
-| `python-addon`       | the same, anywhere else                               |
+| mechanism                | how it is written                                 |
+|--------------------------|---------------------------------------------------|
+| `cpp`                    | `<any>->idname = "NODE_OT_x"`, or `= __func__`     |
+| `macro`                  | `WM_operatortype_append_macro("NODE_OT_x", ...)`   |
+| `cpp-template`           | a `socket_items` maker, registering per accessor   |
+| `cpp-template-instance`  | the id one such maker registers, in `operator_idnames` |
+| `python-core`            | `bl_idname = "node.x"` under `scripts/startup/`     |
+| `python-addon`           | the same, anywhere else                            |
 
 The distinction is not bookkeeping. A **macro** is a composition of other
 operators (`NODE_OT_translate_attach` is `TRANSFORM_OT_translate` then
 `NODE_OT_attach`), so counting one as a missing capability is a *false gap* —
 the error R1577 already recorded for Blender's 429 registered node types. An
-**addon** operator is not Blender's node system at all.
+**addon** operator is not Blender's node system at all. And an **instance** is
+the mirror: 69 ids that are four behaviours, so counting them would put one
+capability in the denominator sixty-nine times.
+
+## R1605 — and reading C++ as text is not enough, so the residue is measured
+
+Three registrations were missed at once, each a different failure, and all three
+were found by asking the census to account for **every** `NODE_OT_` token rather
+than to find the ones it knew how to find:
+
+* `operator_type->idname = "…"` — the receiver is not always called `ot`, so a
+  regex keyed on the variable name reported a real operator as unregistered.
+  That is [[debt-blender-census-by-field-name]] recurring inside the tool built
+  to end it.
+* `ot->idname = __func__` — the id is not in the source at all. No text census
+  can read that one without knowing what the compiler substitutes.
+* the `socket_items` templates — 69 ids, in a different directory, written as
+  `static constexpr StringRefNull` members rather than as an assignment.
+
+So the answer to "is a text scan good enough" is **no on its own**, and what
+makes it sound anyway is that the classification is now exhaustive: every token
+is an id, a template constant, a registration function's own symbol, or a string
+naming a Python operator — and a token in none of those is a finding. The Unreal
+side carries the same check as [`unreal_command_residue`]. Comments are removed
+before matching ([`read_cxx`]), so a documented-but-absent virtual cannot be
+counted.
 
 **Unreal's peer unit is not a node class.** `UK2Node_*` is content (113 of them,
 the analogue of Blender's registered node types); the surface that answers "what
-can this editor DO" is `FGraphEditorCommandsImpl` in `GraphEditorActions.h`.
+can this editor DO" is a `TCommands<T>` subclass — and there is **not one of
+them**. See R1605 below.
+
+## R1605 — and the command surface is not one list either
+
+R1603 read `FGraphEditorCommandsImpl` and nothing else, so the census measured
+the *generic* node canvas and read every per-editor graph command as zero.
+Unreal ships at least nine graph-editor command classes: the generic one plus
+the Blueprint, material, animation, sound-cue, sound-class and behaviour-tree
+editors' own. `MaterialEditorActions.h` alone declares 68, and a material graph
+is half of what this axis is named for.
+
+Two measurement corrections came with reading them:
+
+* **The unit is the `TCommands` CLASS, not the header.** `BlueprintEditorCommands.h`
+  holds three classes and only one of them is the graph's;
+  `BehaviorTreeEditorCommands.h` holds three. R1603's single list happened to be
+  one class per file, so the difference was invisible.
+* **Scope is declared rather than assumed.** Every `TCommands` class under
+  `Engine/Source/Editor` is enumerated, and each must be either *read* by
+  [`UNREAL_COMMAND_CLASSES`] or *excluded by name* in [`UNREAL_COMMANDS_OUT`]
+  with a reason. A class in neither is a **finding** — so the next command list
+  Epic adds cannot be quietly outside the denominator, which is the failure this
+  round exists to stop repeating.
 
 ## What it refuses to do
 
@@ -115,7 +165,20 @@ VERDICTS = {
     "app-content": "the reference application's own subject matter, not editor mechanism",
     "addon": "not the reference's node system at all",
     "host-framework": "the reference's own object / UI framework, not its node system",
+    "instance": "one instantiation of a generic mechanism the pin judges once, by name",
 }
+
+#: R1605 — `instance` is the mirror of `composition`, and both exist because a
+#: count of registered names is not a count of capabilities.
+#:
+#: `composition` came from R1601: one macro registers under its own name and IS
+#: several operators, so counting it as a gap invents one. `instance` is the
+#: other direction: Blender's `socket_items` templates register **69** operator
+#: ids that are four behaviours instantiated for twenty-three of its own node
+#: types, and counting those 69 would put one capability in the denominator
+#: sixty-nine times. Each `instance` row names the row that carries the verdict,
+#: so the capability is judged exactly once and is still reachable from every
+#: name the reference gives it.
 
 #: R1603 — **a reference has more than one surface**, and a census that reads
 #: only one is blind to whole capability classes rather than merely incomplete.
@@ -138,19 +201,163 @@ SURFACES = {
     "surface, which no operator census can see",
 }
 
+#: The `TCommands` classes this census READS, and the short tag each row is
+#: keyed by. Every one is the command list of an editor whose document is a node
+#: graph; the tag drops the reference's own `F…Commands` furniture so a row reads
+#: `MaterialEditor::BreakLink`.
+#:
+#: R1605 — the generic canvas is `GraphEditor` and the other eight are the
+#: per-editor lists R1603 could not see. They are **not** disjoint from it: a
+#: material graph re-declares `BreakLink`, a sound-cue graph re-declares it
+#: again, and measuring that redundancy is the point — one pinion mechanism
+#: answering three reference rows is the same "the reference writes it three
+#: times and this derives it once" figure the proof fan-out already reports.
+UNREAL_COMMAND_CLASSES = {
+    "FGraphEditorCommandsImpl": "GraphEditor",
+    "FBlueprintEditorCommands": "BlueprintEditor",
+    "FMaterialEditorCommands": "MaterialEditor",
+    "FAnimGraphCommands": "AnimGraph",
+    "FSoundCueGraphEditorCommands": "SoundCueGraph",
+    "FSoundClassEditorCommands": "SoundClassGraph",
+    "FBTCommonCommands": "BehaviorTree",
+    "FBTDebuggerCommands": "BehaviorTreeDebugger",
+    "FBTBlackboardCommands": "BehaviorTreeBlackboard",
+}
+
+#: Every OTHER `TCommands` class under `Engine/Source/Editor`, by the reason its
+#: commands are not a node graph's. Grouped by reason rather than by module so
+#: the exclusion is per **class**: a module-wide rule would let a graph command
+#: list hide inside a large module, and `UnrealEd` — which is where
+#: `MaterialGraphSchema` lives — is exactly such a module.
+#:
+#: A class in neither table is a finding. That is the whole mechanism: this table
+#: has to grow when Unreal does, and forgetting is visible.
+UNREAL_COMMANDS_OUT = {
+    "the level editor, its viewport and its world — a scene, not a graph": [
+        "FLevelEditorCommands",
+        "FLevelEditorModesCommands",
+        "FLevelViewportCommands",
+        "FLightEditingCommands",
+        "FLevelInstanceEditorModeCommands",
+        "FLevelCollectionCommands",
+        "FLayersViewCommands",
+        "FActorBrowsingModeCommands",
+        "FEditorCommands",
+        "FHLODCompareCommands",
+        "FWorldBookmarkCommands",
+    ],
+    "a 3D viewport's own camera, show-flags and visualisation modes": [
+        "FEditorViewportCommands",
+        "FViewportNavigationCommands",
+        "FStandardToolModeCommands",
+        "FGPUSkinCacheVisualizationMenuCommands",
+        "FBufferVisualizationMenuCommands",
+        "FGroomVisualizationMenuCommands",
+        "FLumenVisualizationMenuCommands",
+        "FMegaLightsVisualizationMenuCommands",
+        "FNaniteVisualizationMenuCommands",
+        "FRayTracingDebugVisualizationMenuCommands",
+        "FShowFlagMenuCommands",
+        "FSubstrateVisualizationMenuCommands",
+        "FVirtualShadowMapVisualizationMenuCommands",
+        "FVirtualTextureVisualizationMenuCommands",
+        "FAdvancedPreviewSceneCommands",
+        "FCommonEditorViewportToolbarCommands",
+    ],
+    "the application shell — main frame, asset editor chrome, source control": [
+        "FMainFrameCommands",
+        "FGlobalEditorCommonCommands",
+        "FAssetEditorCommonCommands",
+        "FSourceControlCommands",
+        "FDerivedDataEditorMenuCommands",
+        "FZenStausBarCommands",
+        "FContentBrowserCommands",
+        "FUserAssetTagCommands",
+        "FPropertyEditorCommands",
+        "FPlayWorldCommands",
+    ],
+    "a curve or timeline editor — keys on a track, not nodes on a canvas": [
+        "FCurveEditorCommands",
+        "FDistCurveEditorCommands",
+        "FCurveTableEditorCommands",
+        "FSequencerCommands",
+        "FSequencerTrackFilterCommands",
+        "FSimpleViewCommands",
+        "FToolableTimelineCommands",
+        "FSequenceRecorderCommands",
+        "FAnimSequenceCurveEditorCommands",
+        "FAnimSequenceTimelineCommands",
+        "FAnimNotifyPanelCommands",
+        "FAnimSegmentsPanelCommands",
+        "FCurveViewerCommands",
+    ],
+    "a mesh, skeleton or physics asset editor — its document is geometry": [
+        "FStaticMeshEditorCommands",
+        "FStaticMeshViewportLODCommands",
+        "FSkeletalMeshEditorCommands",
+        "FSkeletonEditorCommands",
+        "FSkeletonTreeCommands",
+        "FPhysicsAssetEditorCommands",
+        "FAnimationEditorCommands",
+        "FAnimViewportShowCommands",
+        "FAnimViewportMenuCommands",
+        "FAnimViewportLODCommands",
+        "FAnimViewportPlaybackCommands",
+        "FPoseEditorCommands",
+        "FPersonaCommonCommands",
+        "FMeshPainterCommands",
+        "FClothPainterCommands",
+        "FClothPaintToolCommands_Gradient",
+        "FClothingAssetListCommands",
+        "FTextureEditorCommands",
+    ],
+    "a painting or terrain tool — a brush over a surface": [
+        "FLandscapeEditorCommands",
+        "FFoliageEditCommands",
+        "FFoliagePaletteCommands",
+    ],
+    "the Blueprint asset's own panels — its variable browser, toolbar and "
+    "component viewport, none of which act on the graph canvas": [
+        "FMyBlueprintCommands",
+        "FFullBlueprintEditorCommands",
+        "FSCSEditorViewportCommands",
+    ],
+    "the UMG widget designer — a widget tree laid out on a design surface": [
+        "FUMGEditorCommands",
+        "FDesignerCommands",
+        "FBindWidgetCommands",
+    ],
+    "a chord table that spawns one of the reference's OWN node types — the "
+    "node-type content class this campaign already excludes": [
+        "FBlueprintSpawnNodeCommands",
+        "FMaterialEditorSpawnNodeCommands",
+    ],
+    "a debugger or inspector over data the node system does not own": [
+        "FMassDebuggerCommands",
+        "FDataHierarchyEditorCommands",
+        "FPListEditorCommands",
+    ],
+}
+
 #: `mechanism` says how the reference writes it; the surface is a property of
 #: the mechanism rather than a second judgement.
+#:
+#: The command tags are folded in programmatically, so adding a command class
+#: cannot leave its rows answering `other` — a second place to remember is a
+#: second place to forget.
 SURFACE_OF = {
     "cpp": "operator",
     "macro": "operator",
+    "cpp-template": "operator",
+    "cpp-template-instance": "operator",
     "python-core": "operator",
     "python-addon": "operator",
-    "graph-editor-command": "command",
     "bNodeType": "hook",
     "bNodeTreeType": "hook",
     "bNodeSocketType": "hook",
     "UEdGraphSchema": "hook",
     "UEdGraphNode": "hook",
+    **{tag: "command" for tag in UNREAL_COMMAND_CLASSES.values()},
 }
 
 
@@ -166,9 +373,30 @@ class Operator:
 class Census:
     blender: dict[str, Operator] = field(default_factory=dict)
     unreal: dict[str, Operator] = field(default_factory=dict)
+    #: Operator names the tree MENTIONS and no mechanism registers. Empty is the
+    #: claim that the five mechanisms are exhaustive; non-empty is a sixth.
+    blender_unregistered: list[str] = field(default_factory=list)
 
     def all(self) -> dict[str, dict[str, Operator]]:
         return {"blender": self.blender, "unreal": self.unreal}
+
+
+#: R1605 — a comment is not a declaration.
+#:
+#: Both references are read as TEXT, which is the standing hazard this file was
+#: built for ([[debt-param-census-blind-to-variable-keys]]); a real C++ parse
+#: would need each tree's whole include graph and its build configuration, so it
+#: is out of reach rather than deferred. What IS in reach is to remove the parts
+#: of the text that are prose, and to MEASURE the residue instead of assuming it
+#: away — see [`residue`].
+#:
+#: Measured on `EdGraphSchema.h` / `EdGraphNode.h` at the pinned revision:
+#: stripping changes neither header's virtual count, so today it corrects
+#: nothing. It is here because "the reference happens not to document a virtual
+#: it does not declare" is luck, and a census that depends on luck is the thing
+#: this tool replaced.
+COMMENT_BLOCK = re.compile(r"/\*.*?\*/", re.S)
+COMMENT_LINE = re.compile(r"//[^\n]*")
 
 
 def read(path: Path) -> str:
@@ -176,6 +404,24 @@ def read(path: Path) -> str:
         return path.read_text(errors="replace")
     except OSError:
         return ""
+
+
+def _blank(match: re.Match[str]) -> str:
+    return "\n" * match.group(0).count("\n")
+
+
+def read_cxx(path: Path) -> str:
+    """A C or C++ file with its comments blanked, newlines preserved.
+
+    Blanked rather than deleted so a brace count is unaffected: `/* } */` in a
+    comment must not close a struct, and removing a line comment must not join
+    two lines a line-oriented regex reads one at a time.
+
+    Applied to the C/C++ scans **only**. `//` is floor division in Python, so
+    running this over Blender's `scripts/` would be the same class of error it
+    exists to prevent.
+    """
+    return COMMENT_LINE.sub("", COMMENT_BLOCK.sub(_blank, read(path)))
 
 
 def walk(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
@@ -188,12 +434,72 @@ def walk(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
 
 # ---------------------------------------------------------------- Blender
 
-CPP_IDNAME = re.compile(r'ot->idname\s*=\s*"(NODE_OT_[a-z_0-9]+)"')
+#: R1605 — the receiver is NOT always called `ot`.
+#:
+#: `NODE_OT_new_compositor_sequencer_node_group` writes
+#: `operator_type->idname = "…"`, and a regex that hard-codes `ot->` reported it
+#: as unregistered. That is [[debt-blender-census-by-field-name]] exactly — a
+#: census keyed on a *variable name* — recurring inside the tool built to end it.
+CPP_IDNAME = re.compile(r'\b[A-Za-z_][A-Za-z_0-9]*->idname\s*=\s*"(NODE_OT_[a-z_0-9]+)"')
 CPP_MACRO = re.compile(r'WM_operatortype_append_macro\(\s*"(NODE_OT_[a-z_0-9]+)"')
 PY_IDNAME = re.compile(r'bl_idname\s*=\s*"node\.([a-z_0-9]+)"')
 
+#: R1605 — and sometimes the string is not in the source at all.
+#:
+#: `NODE_OT_deactivate_viewer` writes `ot->idname = __func__`, so its id exists
+#: only after the compiler substitutes the enclosing function's name. **No
+#: text census can read that** without knowing what `__func__` means, which is
+#: the sharpest available answer to "is reading C++ as text good enough": not by
+#: itself, and the residue is what says so.
+CPP_IDNAME_FUNC = re.compile(
+    r"\bvoid\s+(NODE_OT_[a-z_0-9]+)\s*\([^)]*\)\s*\{(?:[^{}]|\{[^{}]*\})*?->idname\s*=\s*__func__"
+)
 
-def census_blender(root: Path) -> dict[str, Operator]:
+#: A registration FUNCTION's own symbol, which is not an operator id.
+#:
+#: `void NODE_OT_collapse_toggle(wmOperatorType *ot)` sets
+#: `ot->idname = "NODE_OT_hide_toggle"` — the function is named after a command
+#: the user sees and registers an operator with a different id. Counting the
+#: symbol would have invented an operator that does not exist, which is the
+#: `absent`-side twin of the error R1601 corrected.
+CPP_OPERATOR_FUNCTION = re.compile(r"\bvoid\s+(NODE_OT_[a-z_0-9]+)\s*\(\s*wmOperatorType\s*\*")
+
+#: R1605 — the FIFTH way Blender registers a node operator, and the one that
+#: made this census overstate Blender coverage.
+#:
+#: `NOD_socket_items_ops.hh` declares four `template<typename Accessor>` makers
+#: that call `WM_operatortype_append` with the idname taken from the accessor, so
+#: **no registration site anywhere writes `ot->idname = "NODE_OT_…"`**. The names
+#: live as `static constexpr StringRefNull` members of a per-accessor
+#: `struct operator_idnames`, in `source/blender/nodes/` rather than in
+#: `editors/space_node/` — a different directory, a different spelling, and 69
+#: operators the census read as zero.
+#:
+#: Blender's own comment beside the maker says why the string is written out at
+#: all: *"The idname is passed in explicitly, so that it is more searchable"* —
+#: the reference anticipated a text census and made itself findable, and this one
+#: still missed it, because it accepted exactly one spelling.
+#:
+#: The capability behind them is **variadic ports** — a node whose socket list is
+#: authored per node rather than fixed by its kind — which is the same thing
+#: Unreal spells `AddOptionPin` / `RemoveOptionPin`, already `absent`.
+CPP_TEMPLATE_IDNAMES = re.compile(r"struct\s+operator_idnames\s*\{(.*?)\};", re.S)
+CPP_TEMPLATE_IDNAME = re.compile(
+    r'static\s+constexpr\s+StringRefNull\s+[a-z_0-9]+\s*=\s*"(NODE_OT_[a-z_0-9]+)"'
+)
+#: The generic makers themselves — the unit the capability is judged at, because
+#: 69 instantiations of three behaviours are three behaviours. Same correction as
+#: R1601's on macros, in the opposite direction: there, one row hid several
+#: operators; here, many rows hide one capability.
+CPP_TEMPLATE_MAKER = re.compile(r"template<typename Accessor>\s+inline\s+void\s+([a-z_0-9]+)\(\)")
+BLENDER_TEMPLATE_OPS = "source/blender/nodes/NOD_socket_items_ops.hh"
+
+#: Every mention of an operator name, so the classification can be shown to be
+#: exhaustive rather than assumed to be.
+CPP_ANY_IDNAME = re.compile(r"\bNODE_OT_[a-z_0-9]+")
+
+
+def census_blender(root: Path) -> tuple[dict[str, Operator], list[str]]:
     """The four mechanisms, in precedence order.
 
     A name found by more than one mechanism keeps the FIRST — an operator with a
@@ -201,20 +507,34 @@ def census_blender(root: Path) -> dict[str, Operator]:
     is the R1598 attribution error stated as a rule instead of a hazard.
     """
     found: dict[str, Operator] = {}
+    #: Function symbols named `NODE_OT_*` — not operator ids. See
+    #: [`CPP_OPERATOR_FUNCTION`].
+    symbols: set[str] = set()
 
     def add(name: str, mechanism: str, where: str) -> None:
         found.setdefault(name, Operator(name, mechanism, where))
 
     source = root / "source" / "blender"
+    mentioned: set[str] = set()
     for path in walk(source, (".cc", ".c", ".cpp", ".hh")):
-        body = read(path)
+        body = read_cxx(path)
         if "NODE_OT_" not in body:
             continue
         rel = str(path.relative_to(root))
+        mentioned.update(CPP_ANY_IDNAME.findall(body))
+        symbols.update(CPP_OPERATOR_FUNCTION.findall(body))
         for name in CPP_IDNAME.findall(body):
+            add(name, "cpp", rel)
+        for name in CPP_IDNAME_FUNC.findall(body):
             add(name, "cpp", rel)
         for name in CPP_MACRO.findall(body):
             add(name, "macro", rel)
+        for block in CPP_TEMPLATE_IDNAMES.findall(body):
+            for name in CPP_TEMPLATE_IDNAME.findall(block):
+                add(name, "cpp-template-instance", rel)
+
+    for maker in CPP_TEMPLATE_MAKER.findall(read_cxx(root / BLENDER_TEMPLATE_OPS)):
+        add(f"socket_items::{maker}", "cpp-template", BLENDER_TEMPLATE_OPS)
 
     for path in walk(root / "scripts", (".py",)):
         body = read(path)
@@ -227,7 +547,21 @@ def census_blender(root: Path) -> dict[str, Operator]:
 
     for name, member, where in blender_hooks(root):
         add(f"{name}::{member}", name, where)
-    return found
+
+    # ★ The completeness claim, computed rather than asserted. Every `NODE_OT_*`
+    # token the C++ contains is exactly one of:
+    #
+    #   * an id assigned at a registration site (`cpp` / `macro`),
+    #   * a constant a `socket_items` template registers (`cpp-template-instance`),
+    #   * a registration FUNCTION's own symbol, which is not an id at all,
+    #   * a string referring to an operator Python registers (the R1598 case).
+    #
+    # A token in none of those is a registration mechanism nobody has read —
+    # which is what `cpp-template`, `__func__` and the non-`ot` receiver each
+    # turned out to be, all three found by asking this question rather than by
+    # reasoning about the regexes.
+    unregistered = sorted(mentioned - set(found) - symbols)
+    return found, unregistered
 
 
 #: A C function pointer field, `void (*insert_link)(..)`.
@@ -247,7 +581,7 @@ def blender_hooks(root: Path) -> list[tuple[str, str, str]]:
     question and a regex answering one is how a census acquires a hole.
     """
     where = "source/blender/blenkernel/BKE_node.hh"
-    lines = read(root / where).split("\n")
+    lines = read_cxx(root / where).split("\n")
     found: list[tuple[str, str, str]] = []
     for name in BLENDER_HOOK_STRUCTS:
         opening = f"struct {name} {{"
@@ -274,6 +608,19 @@ def blender_hooks(root: Path) -> list[tuple[str, str, str]]:
 UE_COMMAND = re.compile(r"TSharedPtr<\s*FUICommandInfo\s*>\s*([A-Za-z_0-9]+)")
 UE_VIRTUAL = re.compile(r"\bvirtual\s+[A-Za-z_0-9:<>&*,\s]+?\b([A-Za-z_0-9]+)\s*\(")
 
+#: `class [MODULE_API] FX : public TCommands<FX>`, with the base clause allowed
+#: to sit on the next line — which it does in a third of the tree, and a
+#: single-line regex silently reported those classes as holding no commands.
+UE_COMMANDS_CLASS = re.compile(
+    r"\bclass\s+(?:[A-Z][A-Z_0-9]*_API\s+)?([A-Za-z_][A-Za-z_0-9]*)"
+    r"\s*:\s*public\s+TCommands\s*<\s*\1\s*>"
+)
+
+#: Where the command classes are looked for. The hook headers are named exactly
+#: because they are two known types; a command class is found by SEARCHING,
+#: because the whole point is that nobody knows how many there are.
+UNREAL_EDITOR = "Engine/Source/Editor"
+
 #: Unreal's node-system extension surface, and the peer of Blender's three
 #: structs: what a *graph* answers (the schema) and what a *node* answers.
 UNREAL_HOOK_HEADERS = {
@@ -282,23 +629,273 @@ UNREAL_HOOK_HEADERS = {
 }
 
 
+def unreal_command_classes(root: Path) -> list[tuple[str, str, list[str], str]]:
+    """`(class, module, members, where)` for every `TCommands` subclass under
+    `Engine/Source/Editor`.
+
+    Brace-counted from the class's own opening brace, for the reason
+    [`blender_hooks`] is: a class's extent is a nesting question, and one file
+    holding three command classes is the case that makes the answer matter.
+    """
+    editor = root / UNREAL_EDITOR
+    found: list[tuple[str, str, list[str], str]] = []
+    for path in sorted(walk(editor, (".h",))):
+        body = read_cxx(path)
+        if "FUICommandInfo" not in body:
+            continue
+        module = path.relative_to(editor).parts[0]
+        rel = str(path.relative_to(root))
+        for match in UE_COMMANDS_CLASS.finditer(body):
+            start = body.find("{", match.end())
+            if start < 0:
+                continue
+            depth = 0
+            index = start
+            while index < len(body):
+                if body[index] == "{":
+                    depth += 1
+                elif body[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            found.append((match.group(1), module, UE_COMMAND.findall(body[start:index]), rel))
+    return found
+
+
+def unreal_command_residue(root: Path) -> list[str]:
+    """`FUICommandInfo` declarations that are in no `TCommands` class at all.
+
+    The honest answer to "is reading C++ as text good enough". A real parse is
+    out of reach (it would need each tree's include graph and build config), so
+    the residue is **measured** instead of assumed away: if these were command
+    lists the census reads none of them, and if they are not, the number should
+    stay small and the identifiers should look like parameters.
+
+    Measured at the pinned revision: 56, whose identifiers are `InCommand`,
+    `UICommand`, `InputCommand` and the like — function parameters and widget
+    members holding one command, not lists declaring many.
+    """
+    editor = root / UNREAL_EDITOR
+    spans: dict[Path, list[tuple[int, int]]] = {}
+    for path in sorted(walk(editor, (".h",))):
+        body = read_cxx(path)
+        if "FUICommandInfo" not in body:
+            continue
+        found: list[tuple[int, int]] = []
+        for match in UE_COMMANDS_CLASS.finditer(body):
+            start = body.find("{", match.end())
+            if start < 0:
+                continue
+            depth = 0
+            index = start
+            while index < len(body):
+                if body[index] == "{":
+                    depth += 1
+                elif body[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            found.append((start, index))
+        spans[path] = found
+    loose: list[str] = []
+    for path, found in spans.items():
+        body = read_cxx(path)
+        for match in UE_COMMAND.finditer(body):
+            if not any(start <= match.start() < end for start, end in found):
+                loose.append(match.group(1))
+    return sorted(loose)
+
+
+#: `void UWhatever::GetNodeContextMenuActions(` — a node class's own menu.
+UE_CONTEXT_MENU = re.compile(r"\bvoid\s+([A-Za-z_0-9]+)::GetNodeContextMenuActions\s*\(")
+#: The menu entry reaching a `TCommands` list, versus being built on the spot.
+UE_MENU_COMMAND = re.compile(r"F[A-Za-z_0-9]*Commands(?:Impl)?::Get\(\)")
+UE_MENU_INLINE = ("FUIAction(", "FExecuteAction::Create")
+
+
+def unreal_context_menu_units(root: Path) -> tuple[int, int, int]:
+    """`(reaches a command list, builds the action inline, neither)`.
+
+    R1603 registered "the per-node context menu might be a surface we do not
+    count" and said to **measure the unit first**, because choosing the wrong one
+    is the recorded failure ([[debt-blender-census-by-field-name]]). This is that
+    measurement, computed rather than remembered so it cannot go stale quietly.
+
+    The answer at the pinned revision is 17 / 16 / 3 of 36 overrides. The 17 name
+    a `FUICommandInfo` from a `TCommands` class, so they are the **same unit** as
+    the command surface and are already in the denominator now that the
+    per-editor lists are read. The 16 build an `FUIAction` on the spot: those
+    entries have **no name anywhere** — no id, no binding, nothing to key a row
+    on — so they cannot be a census unit at all, and what they expose (add a pin,
+    remove a pin, convert this node) is already named on the command lists.
+    """
+    reaches = inline = neither = 0
+    for path in walk(root / "Engine" / "Source", (".cpp",)):
+        body = read_cxx(path)
+        if "::GetNodeContextMenuActions(" not in body:
+            continue
+        for match in UE_CONTEXT_MENU.finditer(body):
+            start = body.find("{", match.end())
+            if start < 0:
+                continue
+            depth = 0
+            index = start
+            while index < len(body):
+                if body[index] == "{":
+                    depth += 1
+                elif body[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            menu = body[start:index]
+            if UE_MENU_COMMAND.search(menu):
+                reaches += 1
+            elif any(mark in menu for mark in UE_MENU_INLINE):
+                inline += 1
+            else:
+                neither += 1
+    return reaches, inline, neither
+
+
+#: The CRTP-free spelling, matched without knowing the class's own name — an
+#: independent way of asking "is there a command list here", so the structured
+#: parse can be checked against something that does not share its assumptions.
+UE_COMMANDS_BASE = re.compile(r"public\s+TCommands\s*<\s*([A-Za-z_][A-Za-z_0-9]*)\s*>")
+
+#: Names that are legitimately not a command class, with the reason.
+UNREAL_COMMANDS_NOT_A_CLASS = {
+    "CommandContextType": "the type PARAMETER of `TInteractiveToolCommands`, "
+    "a template base rather than a CRTP class",
+}
+
+
+#: A plugin module that declares its own graph type — i.e. an editor whose
+#: document is a node graph.
+UE_SCHEMA_SUBCLASS = re.compile(
+    r"class\s+(?:[A-Z][A-Z_0-9]*\s+)?U[A-Za-z_0-9]*\s*:\s*public\s+U(?:EdGraph|RigVMEdGraph)Schema"
+)
+
+
+def unreal_plugin_graph_scope(root: Path) -> tuple[int, int, int]:
+    """`(modules, command classes, commands)` under `Engine/Plugins` that this
+    census does **not** read.
+
+    R1605 found this and deliberately did not close it, so the size is computed
+    at every run rather than written down once. Unreal's modern node graphs —
+    Niagara, MetaSound, PCG, RigVM / Control Rig, StateTree, Optimus — ship as
+    plugins, and a census of `Engine/Source/Editor` cannot see any of them.
+
+    ★ It also found the reason the scope cannot simply be widened: a class NAME
+    is not unique. `FBlueprintEditorCommands` exists in both `Kismet` and
+    `SceneStateBlueprintEditor`, and `FEditorCommands` in both
+    `WorldPartitionEditor` and `MetasoundEditor` — so the key has to carry the
+    module before the denominator grows, or two different editors' commands
+    would merge into one row. See [[debt-census-stops-at-engine-source-editor]].
+    """
+    plugins = root / "Engine" / "Plugins"
+    if not plugins.is_dir():
+        return (0, 0, 0)
+    schema_modules: set[str] = set()
+    for path in walk(plugins, (".h",)):
+        parts = path.relative_to(plugins).parts
+        if "Source" not in parts:
+            continue
+        body = read_cxx(path)
+        if "Schema" in body and UE_SCHEMA_SUBCLASS.search(body):
+            schema_modules.add(parts[parts.index("Source") + 1])
+    classes = commands = 0
+    for path in walk(plugins, (".h",)):
+        parts = path.relative_to(plugins).parts
+        if "Source" not in parts or parts[parts.index("Source") + 1] not in schema_modules:
+            continue
+        body = read_cxx(path)
+        if "FUICommandInfo" not in body:
+            continue
+        for match in UE_COMMANDS_CLASS.finditer(body):
+            start = body.find("{", match.end())
+            if start < 0:
+                continue
+            depth = 0
+            index = start
+            while index < len(body):
+                if body[index] == "{":
+                    depth += 1
+                elif body[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            classes += 1
+            commands += len(UE_COMMAND.findall(body[start:index]))
+    return (len(schema_modules), classes, commands)
+
+
+def unreal_command_classes_missed(root: Path) -> list[str]:
+    """`public TCommands<X>` where the structured parse produced no class `X`.
+
+    ★ This check exists because a counterfactual PASSED without it. Narrowing
+    [`UE_COMMANDS_CLASS`] so it no longer matches a base clause on the next line
+    made whole command classes **vanish**, and [`unreal_command_scope`] could not
+    see it: that check iterates the classes the parser FOUND, so a class the
+    parser stops recognising leaves no trace in it at all. A scope check whose
+    input is the parser's own output cannot audit the parser.
+
+    So the audit is a second, deliberately dumber reading — a substring that does
+    not know the class's name — and a disagreement between the two is the
+    finding.
+    """
+    editor = root / UNREAL_EDITOR
+    missed: list[str] = []
+    for path in sorted(walk(editor, (".h",))):
+        body = read_cxx(path)
+        if "TCommands" not in body:
+            continue
+        parsed = set(UE_COMMANDS_CLASS.findall(body))
+        for name in UE_COMMANDS_BASE.findall(body):
+            if name not in parsed and name not in UNREAL_COMMANDS_NOT_A_CLASS:
+                missed.append(f"{name} ({path.relative_to(editor)})")
+    return sorted(set(missed))
+
+
+def unreal_command_scope(root: Path) -> list[str]:
+    """Command classes the census neither reads nor excludes by name.
+
+    The finding this returns is the one R1603 could not make: its scope was one
+    header, chosen by hand, and nothing said what was outside it.
+    """
+    excluded = {name for names in UNREAL_COMMANDS_OUT.values() for name in names}
+    return sorted(
+        name
+        for name, _module, _members, _where in unreal_command_classes(root)
+        if name not in UNREAL_COMMAND_CLASSES and name not in excluded
+    )
+
+
 def census_unreal(root: Path) -> dict[str, Operator]:
     """Two surfaces.
 
-    **Commands** — `FGraphEditorCommandsImpl`, the peer of Blender's operator
-    list. Deliberately NOT `UK2Node_*`: those are node *types*, the analogue of
-    the 429 registered node types this campaign already excludes as content.
+    **Commands** — the `TCommands` classes of Unreal's node-graph editors, the
+    peer of Blender's operator list. Deliberately NOT `UK2Node_*`: those are node
+    *types*, the analogue of the 429 registered node types this campaign already
+    excludes as content.
 
     **Hooks** — the virtuals of `UEdGraphSchema` and `UEdGraphNode`. R1601 named
     this surface as uncounted and R1602 measured why it matters: the two things
     R1593 and R1594 closed are on it and on no operator list anywhere.
     """
     found: dict[str, Operator] = {}
-    where = "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
-    for name in UE_COMMAND.findall(read(root / where)):
-        found.setdefault(name, Operator(name, "graph-editor-command", where))
+    for name, _module, members, where in unreal_command_classes(root):
+        tag = UNREAL_COMMAND_CLASSES.get(name)
+        if tag is None:
+            continue
+        for member in members:
+            key = f"{tag}::{member}"
+            found.setdefault(key, Operator(key, tag, where))
     for owner, header in UNREAL_HOOK_HEADERS.items():
-        for member in UE_VIRTUAL.findall(read(root / header)):
+        for member in UE_VIRTUAL.findall(read_cxx(root / header)):
             found.setdefault(f"{owner}::{member}", Operator(f"{owner}::{member}", owner, header))
     return found
 
@@ -381,6 +978,9 @@ def report(census: Census, pin: dict, strict: bool) -> int:
             print(f"  pinned coverage: {have}/{total} = {100 * have // total}%")
             # Per surface, because merging them lets a fat one hide a starved
             # one — which is exactly what happened before this surface existed.
+            # And per mechanism under it, for the same reason one level down:
+            # nine command lists summed into one percentage would let the
+            # generic canvas hide a per-editor list nobody had read.
             for surface in sorted({surface_of(row) for row in pinned.values()}):
                 s_have, s_total, s_absent = coverage(pinned, surface)
                 if not s_total:
@@ -389,12 +989,31 @@ def report(census: Census, pin: dict, strict: bool) -> int:
                     f"    {surface:<10} {s_have}/{s_total} = "
                     f"{100 * s_have // s_total}%   ({len(s_absent)} absent)"
                 )
+                mechanisms = sorted(
+                    {row.get("mechanism", "") for row in pinned.values()
+                     if surface_of(row) == surface}
+                )
+                if len(mechanisms) < 2:
+                    continue
+                for mechanism in mechanisms:
+                    rows = {n: r for n, r in pinned.items()
+                            if r.get("mechanism") == mechanism}
+                    m_have, m_total, _ = coverage(rows)
+                    if m_total:
+                        print(
+                            f"      {mechanism:<24} {m_have}/{m_total} = "
+                            f"{100 * m_have // m_total}%"
+                        )
             out = len(pinned) - total
             if out:
                 reasons: dict[str, int] = {}
                 for row in pinned.values():
                     verdict = row.get("verdict")
-                    if verdict in ("composition", "app-content", "addon", "host-framework"):
+                    # Every verdict that is not in the numerator or the
+                    # denominator, derived from the vocabulary rather than
+                    # listed again — a second list is a second place to forget
+                    # a class, and `instance` was added by exactly that route.
+                    if verdict in VERDICTS and verdict not in ("have", "absent"):
                         reasons[verdict] = reasons.get(verdict, 0) + 1
                 shape = ", ".join(f"{k} {v}" for k, v in sorted(reasons.items()))
                 print(f"  out of the denominator: {out} ({shape})")
@@ -404,6 +1023,36 @@ def report(census: Census, pin: dict, strict: bool) -> int:
         if not present:
             continue
         diff = compare(live, pinned)
+        if tree == "unreal":
+            diff["unscoped"] = unreal_command_scope(UNREAL)
+            diff["unparsed"] = unreal_command_classes_missed(UNREAL)
+            loose = unreal_command_residue(UNREAL)
+            print(
+                f"  {len(loose)} command declaration(s) in no TCommands class "
+                f"({', '.join(sorted(set(loose))[:4])}…) — parameters and widget "
+                "members, not lists"
+            )
+            modules, classes, commands = unreal_plugin_graph_scope(UNREAL)
+            print(
+                f"  OUT OF SCOPE: {commands} command(s) in {classes} class(es) "
+                f"across {modules} Engine/Plugins module(s) that declare a graph "
+                "schema (Niagara, MetaSound, PCG, RigVM, StateTree…) — "
+                "debt-census-stops-at-engine-source-editor"
+            )
+            reaches, inline, neither = unreal_context_menu_units(UNREAL)
+            print(
+                f"  per-node context menus: {reaches} reach a command list "
+                f"(same unit, counted), {inline} build the action inline "
+                f"(no name to count), {neither} neither"
+            )
+        if tree == "blender":
+            # Named `unregistered` rather than folded into `new`: these are not
+            # rows the pin lacks, they are names no mechanism explains.
+            diff["unregistered"] = [
+                name
+                for name in census.blender_unregistered
+                if name not in pinned or pinned[name].get("mechanism", "").startswith("cpp")
+            ]
         for kind, names in diff.items():
             if not names:
                 continue
@@ -502,8 +1151,23 @@ def selftest() -> int:
     )
     check(
         set(VERDICTS)
-        == {"have", "absent", "composition", "app-content", "addon", "host-framework"},
+        == {"have", "absent", "composition", "app-content", "addon",
+            "host-framework", "instance"},
         "and every out-of-denominator class has a stated reason",
+    )
+    pinned = {
+        "socket_items::make_add_item_operator": {"mechanism": "cpp-template",
+                                                 "verdict": "absent"},
+        "NODE_OT_repeat_zone_item_add": {"mechanism": "cpp-template-instance",
+                                         "verdict": "instance"},
+        "NODE_OT_simulation_zone_item_add": {"mechanism": "cpp-template-instance",
+                                             "verdict": "instance"},
+    }
+    have, total, absent = coverage(pinned)
+    check(
+        (have, total) == (0, 1) and absent == ["socket_items::make_add_item_operator"],
+        "★ 69 instantiations of one behaviour are ONE row in the denominator — "
+        "`instance` is `composition` in the other direction",
     )
 
     print("the regexes read what the references actually write")
@@ -521,6 +1185,60 @@ def selftest() -> int:
     check(
         PY_IDNAME.findall('    bl_idname = "node.swap_node"') == ["swap_node"],
         "a Python operator is found where the C++ census cannot see it",
+    )
+
+    print("R1605 — and reading C++ as text is not enough")
+    check(
+        CPP_IDNAME.findall('  operator_type->idname = "NODE_OT_new_group";')
+        == ["NODE_OT_new_group"],
+        "★ the receiver is not always called `ot` — a census keyed on a VARIABLE "
+        "name is the error this tool exists to end, and it had it",
+    )
+    check(
+        CPP_IDNAME_FUNC.findall(
+            "void NODE_OT_deactivate_viewer(wmOperatorType *ot)\n{\n"
+            '  ot->name = "Deactivate";\n  ot->idname = __func__;\n}\n'
+        )
+        == ["NODE_OT_deactivate_viewer"],
+        "★ and sometimes the id is `__func__`, so the string is not in the source",
+    )
+    check(
+        CPP_OPERATOR_FUNCTION.findall("void NODE_OT_collapse_toggle(wmOperatorType *ot)")
+        == ["NODE_OT_collapse_toggle"],
+        "a registration FUNCTION's symbol is recognised as a symbol",
+    )
+    collapse = (
+        "void NODE_OT_collapse_toggle(wmOperatorType *ot)\n{\n"
+        '  ot->idname = "NODE_OT_hide_toggle";\n}\n'
+    )
+    check(
+        CPP_IDNAME.findall(collapse) == ["NODE_OT_hide_toggle"]
+        and CPP_IDNAME_FUNC.findall(collapse) == [],
+        "★ and it is NOT the id: this function is named after one operator and "
+        "registers another, so counting the symbol would invent one",
+    )
+    check(
+        CPP_TEMPLATE_IDNAME.findall(
+            '    static constexpr StringRefNull add_item = "NODE_OT_repeat_zone_item_add";'
+        )
+        == ["NODE_OT_repeat_zone_item_add"],
+        "a template-registered id is found where no assignment exists",
+    )
+    check(
+        CPP_TEMPLATE_MAKER.findall(
+            "template<typename Accessor> inline void make_add_item_operator()"
+        )
+        == ["make_add_item_operator"],
+        "and so is the maker that registers it, which is where the verdict goes",
+    )
+    check(
+        CPP_IDNAME.findall(read_cxx.__doc__ or "") == []
+        and COMMENT_BLOCK.sub(_blank, '/* ot->idname = "NODE_OT_ghost"; */').strip() == "",
+        "★ a comment is not a declaration",
+    )
+    check(
+        COMMENT_BLOCK.sub(_blank, "a{/*\n}\n*/}b").count("\n") == 2,
+        "and blanking it preserves the newlines a brace count and a line regex need",
     )
     check(
         UE_COMMAND.findall("TSharedPtr< FUICommandInfo > CollapseNodes;")
@@ -548,6 +1266,58 @@ def selftest() -> int:
     check(
         set(SURFACE_OF.values()) <= set(SURFACES),
         "and every mechanism's surface is one this file states the meaning of",
+    )
+
+    print("R1605 — the command surface is not one list, and its unit is a CLASS")
+    check(
+        UE_COMMANDS_CLASS.findall("class FGraphEditorCommandsImpl : public "
+                                  "TCommands<FGraphEditorCommandsImpl>")
+        == ["FGraphEditorCommandsImpl"],
+        "a command class is found",
+    )
+    check(
+        UE_COMMANDS_CLASS.findall(
+            "class ADVANCEDPREVIEWSCENE_API FAdvancedPreviewSceneCommands \n"
+            "\t: public TCommands<FAdvancedPreviewSceneCommands>"
+        )
+        == ["FAdvancedPreviewSceneCommands"],
+        "★ and so is one whose base clause is on the NEXT line, which a third of "
+        "the tree writes and a single-line regex reports as holding no commands",
+    )
+    check(
+        UE_COMMANDS_CLASS.findall("class FThing : public TCommands<FOther>") == [],
+        "and a class parameterised by a DIFFERENT type is not one",
+    )
+    check(
+        UE_COMMANDS_BASE.findall("class FThing\n\t: public TCommands<FThing>")
+        == ["FThing"],
+        "★ the audit reads the base clause WITHOUT the class's name, so it does "
+        "not share the parse's assumptions — a check fed by the parser's own "
+        "output cannot audit the parser, which a counterfactual proved",
+    )
+    check(
+        set(UNREAL_COMMANDS_NOT_A_CLASS) == {"CommandContextType"},
+        "and the one name that is a template parameter rather than a class is "
+        "excluded by name, with its reason",
+    )
+    excluded = [name for names in UNREAL_COMMANDS_OUT.values() for name in names]
+    check(
+        len(excluded) == len(set(excluded)),
+        "no command class is excluded twice, for two different reasons",
+    )
+    check(
+        not (set(excluded) & set(UNREAL_COMMAND_CLASSES)),
+        "★ and none is both read and excluded — the two tables partition, which "
+        "is what makes 'in neither' a finding rather than an ambiguity",
+    )
+    check(
+        all(SURFACE_OF.get(tag) == "command" for tag in UNREAL_COMMAND_CLASSES.values()),
+        "every read command class answers the command surface, folded in rather "
+        "than restated",
+    )
+    check(
+        len(set(UNREAL_COMMAND_CLASSES.values())) == len(UNREAL_COMMAND_CLASSES),
+        "and two command classes do not share a tag, which would merge their rows",
     )
 
     print("the hook census reads what the reference actually writes")
@@ -712,9 +1482,11 @@ def main(argv: list[str]) -> int:
     if args.check_pin:
         return check_pin(load_pin())
 
+    blender, unregistered = census_blender(BLENDER) if BLENDER.is_dir() else ({}, [])
     census = Census(
-        blender=census_blender(BLENDER) if BLENDER.is_dir() else {},
+        blender=blender,
         unreal=census_unreal(UNREAL) if UNREAL.is_dir() else {},
+        blender_unregistered=unregistered,
     )
     pin = load_pin()
     if args.emit:
