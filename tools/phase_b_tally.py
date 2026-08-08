@@ -593,6 +593,35 @@ AXES = [
         # Blender 54/72 = 75% (operator 78, hook 62); Unreal 60/149 = 40%
         # (command 39, hook 40).
         #
+        # R1604.1 — ADDENDUM, not a rewrite: those are the figures this judgment
+        # was made against and they are left standing, because what a snapshot
+        # is FOR is saying what was known at the time. They have since moved,
+        # and the NEXT re-judgment must compute from the new ones rather than
+        # from the paragraph above. R1605 widened both censuses and the two
+        # halves moved differently, which is the part worth carrying:
+        #
+        #   * Unreal did NOT move — 40% before and after, command 39% before and
+        #     after (20/51 -> 45/113). Reading eight command lists instead of one
+        #     found that the generic canvas was REPRESENTATIVE, which is a result
+        #     rather than an absence of one.
+        #   * Blender DID — 75% -> 71% (operator 78 -> 73), because the census
+        #     had been reading C++ as text and a FIFTH registration mechanism
+        #     was invisible to it: `NOD_socket_items_ops.hh` registers 69
+        #     operator ids through four templates whose idnames live as
+        #     `static constexpr StringRefNull` in a per-accessor struct, so no
+        #     registration site writes `ot->idname` at all. Live 170 -> 246.
+        #
+        # So the node-graph third's inputs are now Blender 71 / Unreal 40, not
+        # 75 / 40. The completion here is NOT changed on that account: the tool
+        # did not demand a re-judgment (`round-axis` 23 -> 24 = +4%, inside the
+        # band), and moving a number on evidence the staleness check has not
+        # flagged would be exactly the hand-adjustment this table exists to
+        # stop. It is recorded so the next demanded look starts from the truth.
+        #
+        # ★ And the direction is now a pattern worth naming: R1601, R1603 and
+        # R1605 each widened this measurement and each time the coverage fell.
+        # Every widening so far has found more reference than it found pinion.
+        #
         # The node-graph figure. This axis's own name is TWO references' worth
         # of scope: Blender is the material-graph one at 75%, Unreal is the
         # visual-scripting one at 40%, and equal weight gives 57.5. Two stated
