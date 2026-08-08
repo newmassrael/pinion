@@ -85962,6 +85962,48 @@
         "absolute_position still anchors left/top only; no CSS `right: 0` analogue"
       ]
     },
+    "Round 1609.2": {
+      "decision_summary": "A grip's SIZE is the hit-test band, and the audit that found this was prompted by the user asking whether every new debt had been registered. The answer to that question was three debts; on the way to writing them, a third instance of the round's own defect class turned up. The painted grip was a fixed eight pixels thick and the hit-test band was a quarter of the card, which is TWO NUMBERS DESCRIBING ONE THING, and they disagree at every card size except the one where a quarter happens to be eight pixels: on a wide card a strip resizes with nothing drawn under it, and on a narrow one part of the painted grip does not resize. Fractional grid tracks make the ring BE the band by construction -- HANDLE_BAND for the two outer tracks and a derived HANDLE_CORE for the middle -- on both axes and at every card size, and HANDLE_PX is gone. The test now asserts the tracks against the very constant TileHandle::at is called with, plus that the three cover the card exactly and that the interior is non-empty. THIS IS THE THIRD TIME IN ONE ROUND that what is DRAWN and what RESPONDS were derived from different facts: R1609 hit-tested handles on cards that painted none, R1609.1 placed grips at a pixel inset off a stated width while a card's width is a layout-pass output, and this is the unit split. One was found by a test and two by audit, and every one of them passed a test that asserted only one side. That is now a registered class debt of its own, because the general form is real and unguarded -- an External receives pointer_move in its own fractions and computes its own hit regions, so every binding that does so can split the same way, and the framework's Scene::hit_test / hit_test_shape path is not what they use. Two more debts registered by the same audit: LayoutStyle::absolute_position anchors left and top only, with no CSS right/bottom analogue, which is what pushed R1609.1 into stating a width in the first place -- the vocabulary's hole moved a person toward the wrong answer; and AccessLive has exactly one consumer, while the tree already holds the widgets the channel is FOR (snackbar, status bar, progress), so this is not a missing-consumer defer but a coverage gap, and a declared region can be gated where a fired event could not.",
+      "changes_bullets": [
+        "the grip ring's tracks are the hit-test band, not a pixel; HANDLE_PX gone",
+        "the ring test asserts the tracks against the constant `at` is called with",
+        "three debts registered: the anchor gap, live-region adoption, the class"
+      ],
+      "verification_bullets": [
+        "26 example tests; both tile-dashboard demos re-pass unchanged",
+        "2 new counterfactuals CAUGHT: a narrower grip, tracks that overflow",
+        "clippy -p hello-tile-dashboard --all-targets clean; fmt clean",
+        "memory debt census re-scoped and re-run: 37 open, 0 stray status field"
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.40",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The three new debts are registered, not paid; none is analyzer-tool's"
+      ],
+      "publishable_decision_summary": "A grip's SIZE is the hit-test band, and the audit that found this was prompted by the user asking whether every new debt had been registered. The answer to that question was three debts; on the way to writing them, a third instance of the round's own defect class turned up. The painted grip was a fixed eight pixels thick and the hit-test band was a quarter of the card, which is TWO NUMBERS DESCRIBING ONE THING, and they disagree at every card size except the one where a quarter happens to be eight pixels: on a wide card a strip resizes with nothing drawn under it, and on a narrow one part of the painted grip does not resize. Fractional grid tracks make the ring BE the band by construction -- HANDLE_BAND for the two outer tracks and a derived HANDLE_CORE for the middle -- on both axes and at every card size, and HANDLE_PX is gone. The test now asserts the tracks against the very constant TileHandle::at is called with, plus that the three cover the card exactly and that the interior is non-empty. THIS IS THE THIRD TIME IN ONE ROUND that what is DRAWN and what RESPONDS were derived from different facts: R1609 hit-tested handles on cards that painted none, R1609.1 placed grips at a pixel inset off a stated width while a card's width is a layout-pass output, and this is the unit split. One was found by a test and two by audit, and every one of them passed a test that asserted only one side. That is now a registered class debt of its own, because the general form is real and unguarded -- an External receives pointer_move in its own fractions and computes its own hit regions, so every binding that does so can split the same way, and the framework's Scene::hit_test / hit_test_shape path is not what they use. Two more debts registered by the same audit: LayoutStyle::absolute_position anchors left and top only, with no CSS right/bottom analogue, which is what pushed R1609.1 into stating a width in the first place -- the vocabulary's hole moved a person toward the wrong answer; and AccessLive has exactly one consumer, while the tree already holds the widgets the channel is FOR (snackbar, status bar, progress), so this is not a missing-consumer defer but a coverage gap, and a declared region can be gated where a fired event could not.",
+      "publishable_changes_bullets": [
+        "the grip ring's tracks are the hit-test band, not a pixel; HANDLE_PX gone",
+        "the ring test asserts the tracks against the constant `at` is called with",
+        "three debts registered: the anchor gap, live-region adoption, the class"
+      ],
+      "publishable_verification_bullets": [
+        "26 example tests; both tile-dashboard demos re-pass unchanged",
+        "2 new counterfactuals CAUGHT: a narrower grip, tracks that overflow",
+        "clippy -p hello-tile-dashboard --all-targets clean; fmt clean",
+        "memory debt census re-scoped and re-run: 37 open, 0 stray status field"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.40",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The three new debts are registered, not paid; none is analyzer-tool's"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

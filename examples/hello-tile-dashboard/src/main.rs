@@ -124,10 +124,6 @@ const MIN_ROWS: u32 = 5;
 const TITLE_FONT_PX: u32 = 15;
 const CARD_FONT_PX: u32 = 12;
 
-/// (R1609) How thick a resize grip is. The ONLY pixel the ring states: its
-/// position is a grid cell, so nothing here has to know a card's size.
-const HANDLE_PX: u32 = 8;
-
 /// The board a fresh window opens with: the shape the R1607 measurement laid
 /// out, so the example and the layout test describe the same dashboard.
 fn seed() -> TileGrid {
@@ -151,6 +147,12 @@ fn seed() -> TileGrid {
 /// exactly so the crate does not decide a card's feel, the same reason R1606
 /// made a hex dump's separator a parameter.
 const HANDLE_BAND: f32 = 0.25;
+
+/// The ring's middle track — whatever the two bands leave.
+///
+/// Derived rather than stated, so the painted ring and the hit-test cannot
+/// describe two different shapes. See [`handle_ring`].
+const HANDLE_CORE: f32 = 1.0 - 2.0 * HANDLE_BAND;
 
 /// What a press latched: which card, where inside it the grab happened, and
 /// whether it grabbed a handle.
@@ -1106,11 +1108,17 @@ fn handle_ring(id: &TileId, ink: pinion_core::style::Color) -> Scene {
         })
         .collect();
 
+    // ★ The tracks are the HIT-TEST BAND, not a pixel. A grip drawn a fixed
+    // eight pixels thick beside a band that is a quarter of the card is two
+    // numbers describing one thing, and they disagree at every card size but
+    // one: on a wide card a strip resizes with no grip under it, and on a narrow
+    // one part of the painted grip does not resize. Fractional tracks make the
+    // ring the band by construction, on both axes and at any size.
     let tracks = || {
         vec![
-            GridTrack::Px(HANDLE_PX),
-            GridTrack::Fr(1.0),
-            GridTrack::Px(HANDLE_PX),
+            GridTrack::Fr(HANDLE_BAND),
+            GridTrack::Fr(HANDLE_CORE),
+            GridTrack::Fr(HANDLE_BAND),
         ]
     };
     Scene::Container(
@@ -2052,14 +2060,26 @@ mod tests {
                 &overlay.layout.grid_template_rows,
             ] {
                 assert_eq!(axis.len(), 3);
-                assert_eq!(axis[0], GridTrack::Px(HANDLE_PX), "a grip's thickness");
-                assert_eq!(axis[2], GridTrack::Px(HANDLE_PX));
+                // ★★ The grip's SIZE is the hit-test band, asserted against the
+                // very constant `TileHandle::at` is called with. A pixel grip
+                // beside a fractional band is two numbers for one thing and they
+                // disagree at every card size but one — the same paint-and-
+                // gesture split this round already paid for once, found the
+                // second time by audit rather than by test.
+                assert_eq!(axis[0], GridTrack::Fr(HANDLE_BAND), "a grip IS the band");
+                assert_eq!(axis[2], GridTrack::Fr(HANDLE_BAND));
+                assert_eq!(axis[1], GridTrack::Fr(HANDLE_CORE));
+                let GridTrack::Fr(core) = axis[1] else {
+                    panic!("the middle track is fractional")
+                };
+                let GridTrack::Fr(band) = axis[0] else {
+                    panic!("a band track is fractional")
+                };
                 assert!(
-                    matches!(axis[1], GridTrack::Fr(_)),
-                    "the middle track takes whatever is left, which is what makes \
-                     the ring track a card of any size: {:?}",
-                    axis[1]
+                    (band * 2.0 + core - 1.0).abs() < f32::EPSILON,
+                    "the three tracks cover the card exactly: {band} x2 + {core}"
                 );
+                assert!(core > 0.0, "a card must keep an interior to drag by");
             }
             assert_eq!(overlay.children.len(), 8);
         });
