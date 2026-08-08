@@ -85502,6 +85502,48 @@
         "The two crates' census files still duplicate the pin-reading; two is not three"
       ]
     },
+    "Round 1603.1": {
+      "decision_summary": "The two demos R1600 and R1601.1 left red are repaired, and CI is the thing that found it. R1600 changed hello-node-flow's SEED -- a register, a second task and a group, so drain moved into a definition and every node id after branch shifted -- and updated its own demo without updating r1599's, which mirrors the same fixture. R1601.1 then moved the force check from Machine to Document, so ForceError names the tree, and updated the example and the example's tests without updating r1600's demo. Both are the same failure: a demo asserts over the WIRE, so what broke it was a fixture's node ids and a framework's sentence, and neither is a thing the compiler or a crate-level blast radius can see. Every expectation here was RE-DERIVED by probing the live binary rather than read off the source -- the demo's own header says it mirrors the seed rather than importing it, precisely so a change to the fixture is caught, and reading the fixture back out to fix it would have thrown that away. Two claims moved rather than being renumbered. The join in section G was asserted on Branch.False, which is now the loop wire, so re-wiring it DISPLACES (a control output takes one successor) instead of joining; the free control output in the new seed is Task settle's, and joining that onto Finish's already-fed control input demonstrates the same rule -- measured, Finish then runs more than once down different paths. And section E's set_reading now converts the condition node itself, which SEVERS the wire that fed it, because a Reading has no inputs: that is set_kind reporting what did not survive rather than dropping it, so the round asserts the severed wire as a fact of its own and resets before F. The recurrence is recorded on debt-local-gate-misses-example-tests, whose own text already said \"the crates a round touched\" means \"the crates whose BEHAVIOUR changed, consumers included\" and did not say that a demo is one of those consumers. The gate's unit is a package and a demo is not a package; the mapping that would close it is the binary name each demo opens with RpcSubprocess, taken with a parser rather than a substring.",
+      "changes_bullets": [
+        "r1599's demo re-derived against the seed R1600 changed: ids, traces, link counts",
+        "r1600's demo takes R1601.1's refusal, which names the tree a NodeId is unique in",
+        "Section G moves to Task settle's free control output, which JOINS where Branch.1 displaces",
+        "Section E asserts the wire set_kind severed, then resets, because a Reading has no inputs"
+      ],
+      "verification_bullets": [
+        "Both demos PASS locally against a release build: r1599 3.73s, r1600 3.68s",
+        "Every expectation probed from the live binary first; none read out of the example",
+        "CI run 31236172245 named exactly these two of 542 sweep cases"
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The blast-radius gate still cannot name a DEMO — its unit is a package",
+        "debt-local-gate-misses-example-tests carries the recurrence and the prescription"
+      ],
+      "publishable_decision_summary": "The two demos R1600 and R1601.1 left red are repaired, and CI is the thing that found it. R1600 changed hello-node-flow's SEED -- a register, a second task and a group, so drain moved into a definition and every node id after branch shifted -- and updated its own demo without updating r1599's, which mirrors the same fixture. R1601.1 then moved the force check from Machine to Document, so ForceError names the tree, and updated the example and the example's tests without updating r1600's demo. Both are the same failure: a demo asserts over the WIRE, so what broke it was a fixture's node ids and a framework's sentence, and neither is a thing the compiler or a crate-level blast radius can see. Every expectation here was RE-DERIVED by probing the live binary rather than read off the source -- the demo's own header says it mirrors the seed rather than importing it, precisely so a change to the fixture is caught, and reading the fixture back out to fix it would have thrown that away. Two claims moved rather than being renumbered. The join in section G was asserted on Branch.False, which is now the loop wire, so re-wiring it DISPLACES (a control output takes one successor) instead of joining; the free control output in the new seed is Task settle's, and joining that onto Finish's already-fed control input demonstrates the same rule -- measured, Finish then runs more than once down different paths. And section E's set_reading now converts the condition node itself, which SEVERS the wire that fed it, because a Reading has no inputs: that is set_kind reporting what did not survive rather than dropping it, so the round asserts the severed wire as a fact of its own and resets before F. The recurrence is recorded on debt-local-gate-misses-example-tests, whose own text already said \"the crates a round touched\" means \"the crates whose BEHAVIOUR changed, consumers included\" and did not say that a demo is one of those consumers. The gate's unit is a package and a demo is not a package; the mapping that would close it is the binary name each demo opens with RpcSubprocess, taken with a parser rather than a substring.",
+      "publishable_changes_bullets": [
+        "r1599's demo re-derived against the seed R1600 changed: ids, traces, link counts",
+        "r1600's demo takes R1601.1's refusal, which names the tree a NodeId is unique in",
+        "Section G moves to Task settle's free control output, which JOINS where Branch.1 displaces",
+        "Section E asserts the wire set_kind severed, then resets, because a Reading has no inputs"
+      ],
+      "publishable_verification_bullets": [
+        "Both demos PASS locally against a release build: r1599 3.73s, r1600 3.68s",
+        "Every expectation probed from the live binary first; none read out of the example",
+        "CI run 31236172245 named exactly these two of 542 sweep cases"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The blast-radius gate still cannot name a DEMO — its unit is a package",
+        "debt-local-gate-misses-example-tests carries the recurrence and the prescription"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

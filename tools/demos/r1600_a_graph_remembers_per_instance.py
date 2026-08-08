@@ -294,8 +294,10 @@ def body() -> None:
         refused(tf, "force", f"{WARM},1")
         assert_eq(
             q(tf, "last_refusal"),
-            f"node {WARM} is not a register in this tree",
-            "F: and forcing a node that holds nothing is refused BY NAME",
+            f"node {WARM} in tree 0 is not a register",
+            "F: and forcing a node that holds nothing is refused BY NAME — the "
+            "refusal is the FRAMEWORK's since R1601.1, and it names the tree "
+            "too, because a NodeId is unique within one and nowhere else",
         )
 
         # ── (G) the machine survives an edit, and says what it lost ─────────

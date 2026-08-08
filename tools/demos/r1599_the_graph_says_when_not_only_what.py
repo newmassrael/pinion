@@ -70,7 +70,15 @@ EXT = "/external"
 
 #: `hello-node-flow`'s seed, mirrored rather than imported — a demo that read
 #: the fixture out of the code under test could not catch it changing.
-BEGIN, FORK, WARM, BRANCH, DRAIN, FINISH, READING, OVER = 0, 1, 2, 3, 4, 5, 6, 7
+#:
+#: R1603.1 — and it DID change: R1600 gave the seed a register, a second task
+#: and a group, so `drain` moved into a definition and the ids after `branch`
+#: all shifted. This demo was not updated with it and went red in CI for two
+#: rounds. The numbers below are the same ones `r1600_a_graph_remembers_per_
+#: instance.py` mirrors, re-derived here from the live surface rather than read
+#: off the source.
+BEGIN, FORK, WARM, BRANCH, SETTLE, FINISH = 0, 1, 2, 3, 4, 6
+BUMP, OVER, ELAPSED, STAGE = 7, 8, 9, 10
 
 
 def q(tf: RpcSubprocess, path: str):
@@ -120,7 +128,11 @@ def body() -> None:
             "A: and a pure node has no control port at all — Unreal's impure/"
             "pure split, here readable off the signature",
         )
-        assert_eq(q(tf, "pure_nodes"), f"{READING},{OVER}", "A: derived, not listed")
+        assert_eq(
+            q(tf, "pure_nodes"),
+            f"{BUMP},{OVER},{ELAPSED}",
+            "A: derived, not listed",
+        )
         assert_eq(q(tf, "valid"), "ok", "A: the seed is a valid document")
 
         # ── (B) the seed holds a LOOP, and that is not a defect ─────────────
@@ -160,7 +172,7 @@ def body() -> None:
         )
         assert_eq(
             q(tf, "never_ran"),
-            f"{DRAIN},{FINISH},{READING},{OVER}",
+            f"{SETTLE},{FINISH},{BUMP},{OVER},{ELAPSED},{STAGE}",
             "C: arm 1 never ran because arm 0 never completed — 'to completion, "
             "then the next' is a stack property, and it is observable",
         )
@@ -173,9 +185,10 @@ def body() -> None:
 
         # ── (E) the branch reads the VALUE plane ────────────────────────────
         assert_eq(
-            inv(tf, "set_reading", f"{READING},3"),
+            inv(tf, "set_reading", f"{OVER},3"),
             3,
-            "E: drop the reading under the limit — a datum, not a wire",
+            "E: make the branch's condition a constant under the limit — a "
+            "datum, not a wire",
         )
         assert_eq(
             q(tf, "stop"),
@@ -185,15 +198,18 @@ def body() -> None:
         )
         assert_eq(
             q(tf, "trace"),
-            f"{BEGIN},{FORK},{WARM},{BRANCH},{DRAIN},{FINISH}",
+            f"{BEGIN},{FORK},{WARM},{BRANCH},{SETTLE},{FINISH},5,{BUMP},{FINISH}",
             "E: arm 0 completed, THEN arm 1 ran — the sequence semantics, now "
-            "visible because the loop exits",
+            "visible because the loop exits. The bare 5 and 7 are INSIDE the "
+            "Stage definition, where ids are that tree's own (R1600)",
         )
         assert_eq(
             q(tf, "never_ran"),
-            f"{READING},{OVER}",
-            "E: and the only nodes that never ran are the PURE ones — they are "
-            "pulled, not run, which is why they are not in an order at all",
+            f"{OVER},{ELAPSED},{STAGE}",
+            "E: and what never ran are the PURE nodes — pulled, not run, so "
+            "they are not in an order at all — plus the group INSTANCE, which "
+            "takes no turn of its own: entering it shows as the first step "
+            "inside it",
         )
         assert_eq(
             q(tf, "control_loops"),
@@ -202,8 +218,17 @@ def body() -> None:
             "loop, and the static answer does not depend on the run",
         )
 
+        assert_eq(
+            q(tf, "links"),
+            10,
+            "E: and the swap COST a wire, which is the honest price: a Reading "
+            "has no inputs, so the value feeding the condition had nowhere to "
+            "land and set_kind severed it rather than dropping it in silence",
+        )
+
         # ── (F) a control output takes ONE successor ────────────────────────
-        assert_eq(q(tf, "links"), 8, "F: the seed's wires")
+        assert_eq(inv(tf, "reset", 0), "reset", "F: back to the seed first")
+        assert_eq(q(tf, "links"), 11, "F: the seed's wires")
         assert_eq(
             inv(tf, "wire", f"{BEGIN}.0,{FINISH}.0"),
             f"linked, displacing node {BEGIN}.0->node {FORK}.0",
@@ -211,7 +236,7 @@ def body() -> None:
             "output has exactly one — so the first gave way, and it is NAMED. "
             "Unreal displaces here too and returns a bare bool",
         )
-        assert_eq(q(tf, "links"), 8, "F: one went as one came")
+        assert_eq(q(tf, "links"), 11, "F: one went as one came")
         assert_eq(
             q(tf, "trace"),
             f"{BEGIN},{FINISH}",
@@ -226,24 +251,25 @@ def body() -> None:
         # pre-R1599 model could not hold, so it is asserted before anything is
         # added — a capability the fixture exercises by existing.
         assert_eq(
-            inv(tf, "wire", f"{BRANCH}.1,{FINISH}.0"),
+            inv(tf, "wire", f"{SETTLE}.0,{FINISH}.0"),
             "linked",
-            "G: nothing gives way — `Branch.False` is a FREE control output, "
-            "and `Finish`'s control input already has `Task drain` on it, so "
-            "the second predecessor JOINS. The exact mirror of the value rule",
+            "G: nothing gives way — `Task settle`'s control output is FREE, and "
+            "`Finish`'s control input already has the Stage on it, so the "
+            "second predecessor JOINS. The exact mirror of the value rule",
         )
-        assert_eq(q(tf, "links"), 9, "G: so the count GREW, where F's did not")
+        assert_eq(q(tf, "links"), 12, "G: so the count GREW, where F's did not")
         assert_eq(q(tf, "valid"), "ok", "G: two predecessors is a legal state")
         assert_eq(
-            inv(tf, "set_reading", f"{READING},3"),
+            inv(tf, "set_reading", f"{OVER},3"),
             3,
-            "G: and now the False arm goes somewhere",
+            "G: and now the loop exits, so both paths are walked",
         )
         assert_eq(
             q(tf, "trace"),
-            f"{BEGIN},{FORK},{WARM},{BRANCH},{FINISH},{DRAIN},{FINISH}",
-            "G: `Finish` runs TWICE, reached down two different paths — which "
-            "is what a join is for, and what a value input could never do",
+            f"{BEGIN},{FORK},{WARM},{BRANCH},{SETTLE},{FINISH},{FINISH},5,"
+            f"{BUMP},{FINISH}",
+            "G: `Finish` runs more than once, reached down different paths — "
+            "which is what a join is for, and what a value input could never do",
         )
         assert_eq(inv(tf, "reset", 0), "reset", "G: back to the seed")
 
@@ -262,7 +288,7 @@ def body() -> None:
             f"node {WARM}.0 carries control and node {OVER}.0 carries a value",
             "H: and the other direction, named the same way",
         )
-        assert_eq(q(tf, "links"), 8, "H: neither refusal touched the document")
+        assert_eq(q(tf, "links"), 11, "H: neither refusal touched the document")
 
         # ── (I) a VALUE cycle is still refused ──────────────────────────────
         refused(tf, "wire", f"{OVER}.0,{OVER}.0")
