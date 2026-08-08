@@ -101,6 +101,19 @@ if ! python3 "$repo_root/tools/test_binding_focus.py" >&2; then
     exit 1
 fi
 
+# R1600.1 — the counterfactual driver. Counterfactual verification is this
+# project's round-level discipline and until R1600 it had no mechanism: the
+# driver was rewritten in a scratchpad each round, and R1599 built two defects
+# into one copy of it, both of which reported success while being wrong (a case
+# scoped to a single test, so PASSED meant "that test does not catch it"; and a
+# classifier calling cargo's `error: test failed` a compile error). Its own
+# tests assert each of the five properties those defects cost.
+echo "pre-push: counterfactual driver ..." >&2
+if ! python3 "$repo_root/tools/test_counterfactual.py" >&2; then
+    echo "pre-push: the counterfactual driver failed its own tests" >&2
+    exit 1
+fi
+
 # R1582 — the blast-radius computation the consumer gate rests on, checked
 # against a synthetic workspace so its assertions state the graph they are
 # about. A gate whose arithmetic nothing verifies is the shape R1522 fixed for

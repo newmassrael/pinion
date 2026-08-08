@@ -750,6 +750,23 @@ fn pin_at(x: i32, y: i32, index: usize, output: bool) -> (i32, i32) {
     (px, y + HEAD_H + rows(index) * ROW_H + ROW_H / 2)
 }
 
+/// What a node's BODY is, named on the wire.
+///
+/// A free function rather than an arm, because every structural body this crate
+/// owns has to be named here and the match is exhaustive — so a body added
+/// upstream fails to compile until this says what to call it (R1600 added the
+/// fifth).
+fn body_name(body: &NodeBody<Op>) -> String {
+    match body {
+        NodeBody::Kind(op) => op.name(),
+        NodeBody::Group(inner) => format!("group:{}", inner.0),
+        NodeBody::Interface(InterfaceSide::Input) => "interface:input".to_owned(),
+        NodeBody::Interface(InterfaceSide::Output) => "interface:output".to_owned(),
+        NodeBody::Frame => "frame".to_owned(),
+        NodeBody::Delay(ty) => format!("delay:{ty:?}"),
+    }
+}
+
 fn node_scene(
     document: &Document<Op>,
     tree: TreeId,
@@ -771,7 +788,10 @@ fn node_scene(
     // A group instance is drawn in the container role, so "this node is another
     // graph" is visible without reading its title.
     let fill = theme.resolve(match node.body {
-        NodeBody::Group(_) => ColorRole::SurfaceContainerHighest,
+        // R1600 — a register joins the group instance in the container role:
+        // both are structural bodies this crate owns, and what each one is is a
+        // fact about the graph rather than about this taxonomy.
+        NodeBody::Group(_) | NodeBody::Delay(_) => ColorRole::SurfaceContainerHighest,
         // A frame is not a card: it is drawn by `frame_scene`, behind
         // everything, at an extent DERIVED from what it contains (R1589), so
         // the canvas loop never reaches this arm for one.
@@ -1509,13 +1529,7 @@ impl GroupsOracle {
                     .tree(tree)
                     .and_then(|t| t.node(id))
                     .ok_or_else(|| InvokeError::rejected(format!("no node {}", id.0)))?;
-                Ok(IntrospectValue::Text(match &node.body {
-                    NodeBody::Kind(op) => op.name(),
-                    NodeBody::Group(inner) => format!("group:{}", inner.0),
-                    NodeBody::Interface(InterfaceSide::Input) => "interface:input".to_owned(),
-                    NodeBody::Interface(InterfaceSide::Output) => "interface:output".to_owned(),
-                    NodeBody::Frame => "frame".to_owned(),
-                }))
+                Ok(IntrospectValue::Text(body_name(&node.body)))
             }
             "node_value" => {
                 let id = NodeId(Self::number(args)?);

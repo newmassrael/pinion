@@ -18,9 +18,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::machine::Machine;
 use crate::model::{
-    Conversion, Document, InterfaceSide, NodeBody, NodeId, NodeKind, PortRef, Socket, TreeId,
-    crossing,
+    Conversion, Document, Instance, InterfaceSide, NodeBody, NodeId, NodeKind, PortRef, Signature,
+    Socket, TreeId, crossing,
 };
 
 /// How deep the walk may recurse before it gives up.
@@ -32,12 +33,6 @@ use crate::model::{
 /// because "no value" and "we stopped looking" are different facts.
 const DEPTH_LIMIT: usize = 512;
 
-/// Which instance of which definition a value belongs to.
-///
-/// The chain of group nodes descended through, outermost first. Empty at the
-/// tree the evaluation started in.
-type Instance = Vec<(TreeId, NodeId)>;
-
 /// A memoised evaluation over one document.
 ///
 /// Hold one across several reads — a sink, a hovered node, a debugger's
@@ -46,6 +41,10 @@ type Instance = Vec<(TreeId, NodeId)>;
 /// this safe to call after an arbitrary edit.
 pub struct Evaluator<'a, K: NodeKind> {
     document: &'a Document<K>,
+    /// The registers every [`NodeBody::Delay`] reads (R1600), or `None` for a
+    /// reading taken with no machine — where every delay carries its authored
+    /// initial value, which is the reading at tick zero.
+    state: Option<&'a Machine<K>>,
     memo: BTreeMap<(Instance, NodeId), Vec<Option<K::Value>>>,
     visiting: BTreeSet<(Instance, NodeId)>,
     truncated: bool,
@@ -53,10 +52,31 @@ pub struct Evaluator<'a, K: NodeKind> {
 
 impl<K: NodeKind> Document<K> {
     /// An evaluator sharing one memo across many reads.
+    ///
+    /// Every [`NodeBody::Delay`] reads its authored initial value, because
+    /// there is no machine here to hold anything else — the reading at tick
+    /// zero. Use [`Self::evaluator_on`] to read a document that is running.
     #[must_use]
     pub fn evaluator(&self) -> Evaluator<'_, K> {
+        self.evaluator_with(None)
+    }
+
+    /// An evaluator that reads `state`'s registers (R1600).
+    ///
+    /// The same walk, with every [`NodeBody::Delay`] answering what the machine
+    /// is holding for *that instance* rather than its initial value. Taking the
+    /// machine by shared reference is the property that makes a reading
+    /// side-effect free: only [`Self::tick`] advances anything.
+    #[must_use]
+    pub fn evaluator_on<'a>(&'a self, state: &'a Machine<K>) -> Evaluator<'a, K> {
+        self.evaluator_with(Some(state))
+    }
+
+    /// The one constructor the two public forms are named arms of.
+    pub(crate) fn evaluator_with<'a>(&'a self, state: Option<&'a Machine<K>>) -> Evaluator<'a, K> {
         Evaluator {
             document: self,
+            state,
             memo: BTreeMap::new(),
             visiting: BTreeSet::new(),
             truncated: false,
@@ -79,15 +99,52 @@ impl<K: NodeKind> Evaluator<'_, K> {
     /// When `tree` is a definition, the evaluation runs as if an instance had
     /// been fed the interface's own port defaults.
     pub fn outputs(&mut self, tree: TreeId, node: NodeId) -> Vec<Option<K::Value>> {
-        let descent = self.top_descent(tree);
+        let descent = self.root_descent(tree);
         self.node_outputs(&descent, node, 0)
+    }
+
+    /// Every output of `node` **inside one instance** (R1600).
+    ///
+    /// [`Self::outputs`] is this at the root. A caller that has descended —
+    /// [`Document::run`](crate::Document::run) following control into a group,
+    /// [`Document::tick`](crate::Document::tick) finding the registers — asks
+    /// here, so there is one descent rather than one per walk.
+    pub fn outputs_in(&mut self, descent: &Descent<K>, node: NodeId) -> Vec<Option<K::Value>> {
+        self.node_outputs(descent, node, 0)
+    }
+
+    /// Every resolved input of `node` inside one instance (R1600).
+    pub fn inputs_in(&mut self, descent: &Descent<K>, node: NodeId) -> Vec<Option<K::Value>> {
+        self.node_inputs(descent, node, 0)
+    }
+
+    /// The descent for reading `tree` on its own — no group entered.
+    #[must_use]
+    pub fn root(&self, tree: TreeId) -> Descent<K> {
+        self.root_descent(tree)
+    }
+
+    /// One level in: the descent inside `node`, a group instance of
+    /// `definition` sitting in `descent`'s tree (R1600).
+    ///
+    /// The bindings are **this instance's** resolved inputs, which is the whole
+    /// reason a group cannot be run by walking its definition: two instances of
+    /// one definition are fed differently, so what a node inside sees is a
+    /// property of the instance and not of the tree it lives in.
+    pub fn enter(&mut self, descent: &Descent<K>, node: NodeId, definition: TreeId) -> Descent<K> {
+        let bindings = self.node_inputs(descent, node, 0);
+        Descent {
+            instance: descent.instance.inside(descent.tree, node),
+            tree: definition,
+            bindings,
+        }
     }
 
     /// Every resolved input of `node`, in port order: what actually arrives,
     /// which is the wired source's output when there is one and the port's own
     /// default when there is not.
     pub fn inputs(&mut self, tree: TreeId, node: NodeId) -> Vec<Option<K::Value>> {
-        let descent = self.top_descent(tree);
+        let descent = self.root_descent(tree);
         self.node_inputs(&descent, node, 0)
     }
 
@@ -117,7 +174,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
     }
 
     /// The starting descent level for a tree read on its own.
-    fn top_descent(&self, tree: TreeId) -> Descent<K> {
+    fn root_descent(&self, tree: TreeId) -> Descent<K> {
         let bindings = self.document.tree(tree).map_or_else(Vec::new, |t| {
             t.interface()
                 .inputs()
@@ -126,7 +183,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 .collect()
         });
         Descent {
-            instance: Instance::new(),
+            instance: Instance::root(),
             tree,
             bindings,
         }
@@ -174,34 +231,7 @@ impl<K: NodeKind> Evaluator<'_, K> {
         // and for a group instance, and a group instance must NOT be descended
         // into here — bypassing one is exactly the request not to run it.
         let mut outputs = if bypassed {
-            let inputs = self.node_inputs(descent, node, depth);
-            let routing = self
-                .document
-                .passthrough(descent.tree, node)
-                .unwrap_or_default();
-            let mut passed = vec![None; arity];
-            for route in routing.routes() {
-                // R1593 — a route may convert, and it converts by the taxonomy's
-                // one relation, asked in the direction the value travels. Read
-                // off the signature rather than carried on the route, because a
-                // `fn` pointer on a `Route` would make the routing a value that
-                // could not be compared.
-                let crossing = signature
-                    .inputs
-                    .get(route.input as usize)
-                    .zip(signature.outputs.get(route.output as usize))
-                    .map_or(Conversion::Refused, |(input, out)| {
-                        crossing::<K>(input, out)
-                    });
-                if let Some(slot) = passed.get_mut(route.output as usize) {
-                    *slot = inputs
-                        .get(route.input as usize)
-                        .cloned()
-                        .flatten()
-                        .and_then(|value| crossing.apply(value));
-                }
-            }
-            passed
+            self.passed_through(descent, node, depth, &signature)
         } else {
             match body {
                 NodeBody::Kind(kind) => {
@@ -219,12 +249,23 @@ impl<K: NodeKind> Evaluator<'_, K> {
                 // the answer is one value; the compiler still enumerates a new
                 // body here rather than defaulting it.
                 NodeBody::Interface(InterfaceSide::Output) | NodeBody::Frame => Vec::new(),
+                // R1600 — the one node whose output is not a function of its
+                // input. It does not read its input here at all, which is what
+                // breaks the recursion a value cycle would otherwise be: the
+                // register is a source. An empty register falls through to the
+                // authored-value block below, so a delay's *initial* value is
+                // R1594's mechanism rather than a second one — Lustre's `->`.
+                NodeBody::Delay(_) => {
+                    vec![
+                        self.state
+                            .and_then(|held| held.read(&descent.instance, node))
+                            .cloned(),
+                    ]
+                }
                 NodeBody::Group(definition) => {
                     let bindings = self.node_inputs(descent, node, depth);
-                    let mut instance = descent.instance.clone();
-                    instance.push((descent.tree, node));
                     let inner = Descent {
-                        instance,
+                        instance: descent.instance.inside(descent.tree, node),
                         tree: definition,
                         bindings,
                     };
@@ -274,6 +315,52 @@ impl<K: NodeKind> Evaluator<'_, K> {
         self.visiting.remove(&key);
         self.memo.insert(key, outputs.clone());
         outputs
+    }
+
+    /// What a **bypassed** node's outputs carry (R1586).
+    ///
+    /// Its inputs are still resolved — something has to pass through — and the
+    /// routing is derived from the signature rather than authored. Asked before
+    /// the body is looked at on purpose: it is the same answer for an
+    /// application kind and for a group instance, and a group instance must NOT
+    /// be descended into, since bypassing one is exactly the request not to run
+    /// it.
+    fn passed_through(
+        &mut self,
+        descent: &Descent<K>,
+        node: NodeId,
+        depth: usize,
+        signature: &Signature<K>,
+    ) -> Vec<Option<K::Value>> {
+        let arity = signature.outputs.len();
+        let inputs = self.node_inputs(descent, node, depth);
+        let routing = self
+            .document
+            .passthrough(descent.tree, node)
+            .unwrap_or_default();
+        let mut passed = vec![None; arity];
+        for route in routing.routes() {
+            // R1593 — a route may convert, and it converts by the taxonomy's one
+            // relation, asked in the direction the value travels. Read off the
+            // signature rather than carried on the route, because a `fn` pointer
+            // on a `Route` would make the routing a value that could not be
+            // compared.
+            let crossing = signature
+                .inputs
+                .get(route.input as usize)
+                .zip(signature.outputs.get(route.output as usize))
+                .map_or(Conversion::Refused, |(input, out)| {
+                    crossing::<K>(input, out)
+                });
+            if let Some(slot) = passed.get_mut(route.output as usize) {
+                *slot = inputs
+                    .get(route.input as usize)
+                    .cloned()
+                    .flatten()
+                    .and_then(|value| crossing.apply(value));
+            }
+        }
+        passed
     }
 
     fn node_inputs(
@@ -333,16 +420,50 @@ impl<K: NodeKind> Evaluator<'_, K> {
     }
 }
 
-/// One level of the descent.
+/// One level of the descent: **where** a reading is being taken.
 ///
 /// Named `Descent` and not `Frame`: R1589 gave this crate a
 /// [`NodeBody::Frame`], and a word that means a stack level in one module and a
 /// canvas container in another is the exact confusion R1586 spent a round
 /// untangling in Blender's own vocabulary.
-struct Descent<K: NodeKind> {
+///
+/// Public since R1600, because it is what
+/// [`Document::run`](crate::Document::run) and
+/// [`Document::tick`](crate::Document::tick) must **share** with the evaluator
+/// rather than duplicate. R1599 recorded the cost of not sharing it: control
+/// could not enter a group at all, because "a second copy would be free to
+/// disagree about the value a node inside a group sees". Its fields stay
+/// private — a descent is built by [`Evaluator::root`] and [`Evaluator::enter`]
+/// or not at all, so one cannot be assembled that names an instance the
+/// document does not have.
+pub struct Descent<K: NodeKind> {
     instance: Instance,
     tree: TreeId,
     /// What the instance above was fed, standing in for this tree's
     /// inside-input node.
     bindings: Vec<Option<K::Value>>,
+}
+
+impl<K: NodeKind> Descent<K> {
+    /// Which occurrence this is.
+    #[must_use]
+    pub const fn instance(&self) -> &Instance {
+        &self.instance
+    }
+
+    /// The tree being read at this level.
+    #[must_use]
+    pub const fn tree(&self) -> TreeId {
+        self.tree
+    }
+}
+
+impl<K: NodeKind> Clone for Descent<K> {
+    fn clone(&self) -> Self {
+        Self {
+            instance: self.instance.clone(),
+            tree: self.tree,
+            bindings: self.bindings.clone(),
+        }
+    }
 }

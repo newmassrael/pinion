@@ -87,6 +87,23 @@
 //! * **Evaluation** — [`Document::evaluator`], memoised, descending into groups,
 //!   keyed by *instance* so two instances of one definition do not share a
 //!   value.
+//! * **Two planes** — a [`Port`] carries a value or **control**
+//!   ([`Flow`]), and the two obey opposite laws
+//!   ([`Flow::multiplicity`]): a value input takes one producer, a control
+//!   output takes one successor. A value cycle is a contradiction and a control
+//!   cycle is a **loop** — authorable, named statically by
+//!   [`Document::control_loops`]. [`Document::run`] derives the execution order
+//!   from the control plane and **descends into group instances**, so a step's
+//!   [`Step::instance`] says which occurrence it happened in.
+//! * **Memory** — [`NodeBody::Delay`] is a value one step behind: SSA's φ,
+//!   Lustre's `pre`, Simulink's Unit Delay. It is the only node a value cycle
+//!   may pass through, which is Lustre's causality rule falling out of one
+//!   predicate, and its register lives in a [`Machine`] addressed by
+//!   [`Instance`] so two instances of one counting group count separately.
+//!   [`Document::tick`] advances every register **at one instant**;
+//!   [`Document::settle`] runs to a fixed point. A run *reads* the machine and
+//!   never advances it, so a tick's outcome is a function of the document and
+//!   the registers rather than of the walk.
 //! * **A standing check** — [`Document::validate`], for documents that arrive
 //!   from a file or a peer and have promised nothing.
 //!
@@ -170,6 +187,7 @@ mod fragment;
 mod frame;
 mod group;
 mod layout;
+mod machine;
 mod model;
 mod numbering;
 mod partition;
@@ -181,7 +199,7 @@ mod tests;
 
 pub use appearance::{Appearance, VisiblePorts};
 pub use bypass::{Bridge, Passthrough, Rewired, Route};
-pub use eval::Evaluator;
+pub use eval::{Descent, Evaluator};
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,
 };
@@ -191,8 +209,9 @@ pub use group::{
     Violation,
 };
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
+pub use machine::{Committed, Machine, Tick};
 pub use model::{
-    ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError, Flow,
+    ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError, Flow, Instance,
     Interface, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,
     NodeKind, Port, PortRef, PortValueError, ROOT, Removed, Side, Signature, Socket, Tree, TreeId,
     crossing,

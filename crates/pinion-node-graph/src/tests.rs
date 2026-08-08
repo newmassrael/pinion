@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Appearance, Carried, ConnectError, Control, Conversion, Crossings, Definitions, Document,
     DuplicateError, EditError, EditPath, Extent, ExtractError, Fragment, GroupError, Grow,
-    InsertError, InterfaceSide, Layered, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind,
-    Organic, Orphaned, ParentError, PathError, Port, PortRef, PortValueError, ROOT, Reach,
-    RepartitionError, Route, RunError, SelectError, Severed, Sharing, Side, Socket, Stop, TreeId,
-    UngroupError, Violation, crossing,
+    InsertError, Instance, InterfaceSide, Layered, Machine, Multiplicity, NestError, Node,
+    NodeBody, NodeId, NodeKind, Organic, Orphaned, ParentError, PathError, Port, PortRef,
+    PortValueError, ROOT, Reach, RepartitionError, Route, RunError, SelectError, Severed, Sharing,
+    Side, Socket, Stop, Tick, TreeId, UngroupError, Violation, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -7978,28 +7978,50 @@ fn r1599_a_run_names_what_it_could_not_do() {
         Err(RunError::NoSuchTree(TreeId(77)))
     );
 
-    // A group instance on the control plane is REFUSED rather than fallen
-    // through, because falling through would run the graph around the group and
-    // silently skip its body.
+    // R1600 — a run may not BEGIN at a group instance, because control enters
+    // one by a port and a run that starts there arrived by none.
     let a = step(&mut document, "a");
+    let after = document
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 0, 0)
+        .unwrap();
     document
         .connect(ROOT, Socket::new(start, 0), Socket::new(a, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(after, 0))
         .unwrap();
     let grouped = document
         .group(ROOT, &[a], "inner")
         .expect("the step collapses into a definition");
-    let refusal = document.run(ROOT, start, 10);
+    let refusal = document.run(ROOT, grouped.node, 10);
     assert_eq!(
         refusal,
-        Err(RunError::ControlEntersGroup {
+        Err(RunError::EntryIsAnInstance(grouped.node)),
+        "beginning at an instance names the reason rather than guessing a port"
+    );
+    assert!(
+        format!("{}", refusal.unwrap_err()).contains("by a port"),
+        "and the refusal says how one IS entered"
+    );
+
+    // The same instance, entered properly from outside, has a definition with
+    // no inside-input node once that node is removed — control tunnels to
+    // nothing, and that is named rather than treated as a halt.
+    let inside_input = document
+        .tree(grouped.definition)
+        .and_then(|t| t.interface_node(InterfaceSide::Input))
+        .map(|n| n.id)
+        .expect("the collapse built one");
+    document
+        .remove_node(grouped.definition, inside_input)
+        .unwrap();
+    assert_eq!(
+        document.run(ROOT, start, 10),
+        Err(RunError::GroupHasNoEntry {
             node: grouped.node,
             definition: grouped.definition,
         }),
-        "the boundary is named, not crossed silently"
-    );
-    assert!(
-        format!("{}", refusal.unwrap_err()).contains("does not descend"),
-        "and the refusal says why"
+        "a tunnel with nothing on the far side is a finding, not a stop"
     );
 }
 
@@ -8113,4 +8135,978 @@ fn r1599_control_to_control_is_the_one_pair_with_no_type_question() {
             .connect(ROOT, Socket::new(start, 0), Socket::new(end, 0))
             .is_ok()
     );
+}
+
+// ------------------------------------------ what a running graph keeps (R1600)
+//
+// Every claim about Blender and Unreal below is stated as a HELPER reproducing
+// its rule over this crate's types, so a divergence is ASSERTED rather than
+// described — the discipline R1577 and R1584 set. Blender facts are from
+// `~/blender-ref` at `8cf50599`; Unreal facts from a 5.8.1 tree.
+
+/// Build `[Const(seed)] -> Tally.A`, `Delay -> Tally.B`, `Tally -> Delay`: a
+/// value cycle closed **through a delay**, which is the whole point.
+///
+/// Answers `(document, delay, tally)`.
+fn counter_fixture(seed: i64) -> (Document<Flo>, NodeId, NodeId) {
+    let mut document = Document::new("root");
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(seed)), 0, 0)
+        .unwrap();
+    let tally = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 200, 0)
+        .unwrap();
+    let delay = document
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 100, 100)
+        .unwrap();
+    document
+        .set_port_value(ROOT, delay, PortRef::output(0), Val::Number(0))
+        .expect("the register's initial value is authored on its output port");
+    document
+        .connect(ROOT, Socket::new(one, 0), Socket::new(tally, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(delay, 0), Socket::new(tally, 1))
+        .unwrap();
+    // THE CLOSING WIRE. Accepted because the cycle it closes has a delay on it.
+    document
+        .connect(ROOT, Socket::new(tally, 0), Socket::new(delay, 0))
+        .expect("a cycle broken by a delay is legal — Lustre's causality rule");
+    (document, delay, tally)
+}
+
+fn held(value: Option<&Val>) -> Option<i64> {
+    value.and_then(Val::number)
+}
+
+#[test]
+fn r1600_a_value_cycle_may_close_only_through_a_delay() {
+    // Without one, the same shape is refused and the refusal names the path.
+    let mut plain = Document::new("root");
+    let a = plain
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 0, 0)
+        .unwrap();
+    let b = plain
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 100, 0)
+        .unwrap();
+    plain
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+    assert_eq!(
+        plain.connect(ROOT, Socket::new(b, 0), Socket::new(a, 0)),
+        Err(ConnectError::WouldCycle { path: vec![a, b] }),
+        "a data cycle with no cut on it is still a contradiction"
+    );
+
+    // With one, the very same closing wire is legal, and NOTHING reports a
+    // cycle afterwards — `connect`, `cycle_nodes` and `validate` all read the
+    // one `cuts_dependency` predicate, so they cannot disagree.
+    let (document, delay, tally) = counter_fixture(1);
+    assert!(
+        document.cycle_nodes(ROOT).is_empty(),
+        "the cycle is broken by the delay, so no node is on one"
+    );
+    assert!(document.validate().is_empty());
+
+    // And the cut is DIRECTIONAL: nothing downstream of the delay depends on
+    // anything upstream of it within a tick.
+    assert_eq!(
+        document.data_path_between(ROOT, delay, tally),
+        None,
+        "a dependency walk does not continue out of a delay"
+    );
+    assert_eq!(
+        document.data_path_between(ROOT, tally, delay),
+        Some(vec![tally, delay]),
+        "but reaching one is a real dependency: the tally feeds it"
+    );
+}
+
+#[test]
+fn r1600_a_delay_reads_its_authored_initial_value_until_a_tick_commits_one() {
+    let (document, delay, tally) = counter_fixture(1);
+
+    // Tick zero, with no machine at all: Lustre's `->`. The initial value is
+    // R1594's per-node authored value, not a second mechanism.
+    assert_eq!(held(document.evaluate(ROOT, delay)[0].as_ref()), Some(0));
+    assert_eq!(
+        held(document.evaluate(ROOT, tally)[0].as_ref()),
+        Some(1),
+        "1 + the register's initial 0"
+    );
+
+    // A machine that has committed nothing reads exactly the same.
+    let state: Machine<Flo> = Machine::new();
+    assert_eq!(state.ticks(), 0);
+    assert!(state.is_empty());
+    assert_eq!(
+        held(document.evaluator_on(&state).outputs(ROOT, delay)[0].as_ref()),
+        Some(0)
+    );
+}
+
+#[test]
+fn r1600_a_counter_counts_because_the_register_advances() {
+    let (document, delay, tally) = counter_fixture(1);
+    let mut state = Machine::new();
+
+    for expected in 1..=5_i64 {
+        let tick = document.tick(ROOT, &mut state);
+        assert_eq!(tick.at(), usize::try_from(expected).unwrap());
+        assert_eq!(tick.changed(), 1, "the one register moved");
+        assert_eq!(
+            held(state.read(&Instance::root(), delay)),
+            Some(expected),
+            "after {expected} tick(s) the register holds {expected}"
+        );
+        assert_eq!(
+            held(document.evaluator_on(&state).outputs(ROOT, tally)[0].as_ref()),
+            Some(expected + 1),
+            "and the graph reads one ahead of it"
+        );
+    }
+    assert_eq!(state.len(), 1);
+    assert_eq!(state.iter().count(), 1);
+
+    // The machine is a value: it saves and restores, which is what makes a
+    // scenario reproducible rather than merely repeatable.
+    let text = serde_json::to_string(&state).expect("a machine serializes");
+    let restored: Machine<Flo> = serde_json::from_str(&text).expect("and comes back");
+    assert_eq!(restored, state);
+}
+
+/// Advancing registers **one at a time**, each reading whatever has already
+/// been written — the obvious implementation, and the one that makes a graph's
+/// meaning depend on the order the walk happened to take.
+///
+/// Built out of the real evaluator and [`Machine::force`], so this is the
+/// rejected design actually running rather than arithmetic describing it.
+fn sequentially(
+    document: &Document<Flo>,
+    tree: TreeId,
+    state: &mut Machine<Flo>,
+    order: &[NodeId],
+) {
+    for node in order {
+        let arriving = {
+            let mut evaluator = document.evaluator_on(state);
+            let root = evaluator.root(tree);
+            evaluator
+                .inputs_in(&root, *node)
+                .into_iter()
+                .next()
+                .flatten()
+        };
+        if let Some(value) = arriving {
+            state.force(Instance::root(), *node, value);
+        }
+    }
+}
+
+#[test]
+fn r1600_registers_advance_together_so_a_pair_of_them_swaps() {
+    // Two delays, each fed by the other. Legal because each cycle has a cut on
+    // it; meaningful only because they advance at the same instant.
+    let mut document: Document<Flo> = Document::new("root");
+    let left = document
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 0, 0)
+        .unwrap();
+    let right = document
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 200, 0)
+        .unwrap();
+    document
+        .set_port_value(ROOT, left, PortRef::output(0), Val::Number(1))
+        .unwrap();
+    document
+        .set_port_value(ROOT, right, PortRef::output(0), Val::Number(2))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(left, 0), Socket::new(right, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(right, 0), Socket::new(left, 0))
+        .unwrap();
+    assert!(document.validate().is_empty());
+
+    let mut state = Machine::new();
+    let tick = document.tick(ROOT, &mut state);
+    assert_eq!(tick.changed(), 2);
+    assert_eq!(held(state.read(&Instance::root(), left)), Some(2));
+    assert_eq!(held(state.read(&Instance::root(), right)), Some(1));
+
+    // They keep swapping — a two-cycle, which is what a pair of registers does
+    // and what a sequential update could never produce.
+    document.tick(ROOT, &mut state);
+    assert_eq!(held(state.read(&Instance::root(), left)), Some(1));
+    assert_eq!(held(state.read(&Instance::root(), right)), Some(2));
+
+    // ★ The counterfactual, asserted rather than described: updating one
+    // register at a time gives BOTH of them the same value, because the second
+    // read sees the first write. The graph's meaning would be a function of
+    // node ordering.
+    let mut naive = Machine::new();
+    sequentially(&document, ROOT, &mut naive, &[left, right]);
+    assert_eq!(held(naive.read(&Instance::root(), left)), Some(2));
+    assert_eq!(
+        held(naive.read(&Instance::root(), right)),
+        Some(2),
+        "★ sequential update loses a value; simultaneous update swaps"
+    );
+}
+
+/// Blender's geometry-nodes simulation state is cached per node on the
+/// modifier: `ModifierCache::simulation_cache_by_id` is a
+/// `Map<int, std::unique_ptr<SimulationNodeCache>>`, and the `int` is a
+/// `bNestedNodeRef::id` — a **flattened** `{node_id, id_in_node}` path kept as
+/// a side table on the root tree and written into the .blend file.
+///
+/// This models what keying by the node alone would do here, which is what a
+/// node-graph substrate without an instance address is forced into.
+fn key_by_node_alone(_instance: &Instance, node: NodeId) -> NodeId {
+    node
+}
+
+#[test]
+fn r1600_two_instances_of_one_counting_group_count_separately() {
+    let (mut document, delay, tally) = counter_fixture(1);
+    // Collapse the counter into a definition, then place a second instance fed
+    // by a different seed. The register is inside the definition, so both
+    // instances share the NODE and must not share the VALUE.
+    let grouped = document
+        .group(ROOT, &[delay, tally], "Counter")
+        .expect("the counter collapses");
+    let seed = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(10)), 0, 400)
+        .unwrap();
+    let again = document
+        .instantiate(ROOT, grouped.definition, 300, 400)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(seed, 0), Socket::new(again, 0))
+        .unwrap();
+    assert!(document.validate().is_empty());
+
+    let first = Instance::root().inside(ROOT, grouped.node);
+    let second = Instance::root().inside(ROOT, again);
+    assert_ne!(first, second);
+    assert_eq!(first.depth(), 1);
+    assert_eq!(format!("{first}"), format!("/0:{}", grouped.node));
+    assert!(Instance::root().is_root());
+
+    let mut state = Machine::new();
+    for _ in 0..3 {
+        document.tick(ROOT, &mut state);
+    }
+    assert_eq!(
+        held(state.read(&first, delay)),
+        Some(3),
+        "the instance fed 1 counted by ones"
+    );
+    assert_eq!(
+        held(state.read(&second, delay)),
+        Some(30),
+        "the instance fed 10 counted by tens, from the same node"
+    );
+
+    // ★ Blender's address would have collided: keyed by the node alone, both
+    // instances name one register and one of the two counts is lost.
+    assert_eq!(
+        key_by_node_alone(&first, delay),
+        key_by_node_alone(&second, delay),
+        "★ a node-only key cannot tell the two instances apart"
+    );
+    assert_eq!(state.len(), 2, "the instance-keyed machine holds both");
+}
+
+#[test]
+fn r1600_a_tick_drops_the_register_of_a_delay_that_is_no_longer_there() {
+    let (mut document, delay, _) = counter_fixture(1);
+    let mut state = Machine::new();
+    document.tick(ROOT, &mut state);
+    assert_eq!(state.len(), 1);
+
+    let removed = document.remove_node(ROOT, delay).unwrap();
+    assert!(!removed.links.is_empty());
+    let tick = document.tick(ROOT, &mut state);
+    assert_eq!(
+        tick.dropped(),
+        &[(Instance::root(), delay)],
+        "the walk is the authority on which registers exist, and it says so"
+    );
+    assert!(state.is_empty(), "so a machine cannot grow across an edit");
+    assert!(!tick.truncated());
+}
+
+#[test]
+fn r1600_a_delay_with_nothing_arriving_clears_rather_than_remembers() {
+    let (mut document, delay, tally) = counter_fixture(1);
+    let mut state = Machine::new();
+    document.tick(ROOT, &mut state);
+    assert_eq!(held(state.read(&Instance::root(), delay)), Some(1));
+
+    // Cut the wire that feeds the register. Its input now resolves to nothing —
+    // and holding the old value would be a memory the graph no longer produces.
+    let feeding = document
+        .tree(ROOT)
+        .and_then(|t| t.link_into(Socket::new(delay, 0)))
+        .map(|l| l.id)
+        .expect("the closing wire");
+    document.disconnect(ROOT, feeding).unwrap();
+    let tick = document.tick(ROOT, &mut state);
+    assert_eq!(tick.committed().len(), 1);
+    assert_eq!(tick.committed()[0].before, Some(Val::Number(1)));
+    assert_eq!(tick.committed()[0].after, None);
+    assert!(tick.committed()[0].moved());
+    assert_eq!(
+        held(state.read(&Instance::root(), delay)),
+        None,
+        "cleared, so the next read falls back to the authored initial value"
+    );
+    assert_eq!(
+        held(document.evaluator_on(&state).outputs(ROOT, tally)[0].as_ref()),
+        Some(1),
+        "1 + the initial 0 again"
+    );
+}
+
+#[test]
+fn r1600_settle_stops_at_a_fixed_point_and_says_when_there_is_none() {
+    // A register fed by a constant reaches its fixed point in two ticks: one to
+    // take the value, one to observe that nothing moved.
+    let mut document: Document<Flo> = Document::new("root");
+    let seven = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(7)), 0, 0)
+        .unwrap();
+    let hold = document
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(seven, 0), Socket::new(hold, 0))
+        .unwrap();
+    let mut state = Machine::new();
+    let ticks = document.settle(ROOT, &mut state, 16);
+    assert_eq!(ticks.len(), 2);
+    assert_eq!(ticks[0].changed(), 1);
+    assert_eq!(ticks[1].changed(), 0, "the fixed point");
+    assert_eq!(held(state.read(&Instance::root(), hold)), Some(7));
+
+    // A counter never converges, and the budget is what says so — the last tick
+    // still moving IS "did not settle".
+    let (counter, _, _) = counter_fixture(1);
+    let mut counting = Machine::new();
+    let ticks = counter.settle(ROOT, &mut counting, 6);
+    assert_eq!(ticks.len(), 6);
+    assert_eq!(
+        ticks.last().map(Tick::changed),
+        Some(1),
+        "still moving when the budget ran out"
+    );
+}
+
+#[test]
+fn r1600_bypassing_a_delay_on_a_cycle_is_refused_and_names_the_path() {
+    let (mut document, delay, tally) = counter_fixture(1);
+    let refusal = document.set_bypassed(ROOT, delay, true);
+    assert_eq!(
+        refusal,
+        Err(EditError::BypassWouldCycle {
+            tree: ROOT,
+            node: delay,
+            path: vec![tally, delay],
+        }),
+        "a bypassed delay is a plain wire, so the cycle it was breaking is live"
+    );
+    assert!(
+        format!("{}", refusal.unwrap_err()).contains("would make a value cycle live"),
+        "and the refusal says why"
+    );
+
+    // A delay NOT on a cycle bypasses fine, and is then exactly a wire: the
+    // value arrives with no tick at all.
+    let mut plain: Document<Flo> = Document::new("root");
+    let nine = plain
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(9)), 0, 0)
+        .unwrap();
+    let hold = plain
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 200, 0)
+        .unwrap();
+    plain
+        .set_port_value(ROOT, hold, PortRef::output(0), Val::Number(0))
+        .unwrap();
+    plain
+        .connect(ROOT, Socket::new(nine, 0), Socket::new(hold, 0))
+        .unwrap();
+    assert_eq!(held(plain.evaluate(ROOT, hold)[0].as_ref()), Some(0));
+    assert_eq!(plain.set_bypassed(ROOT, hold, true), Ok(false));
+    assert_eq!(
+        held(plain.evaluate(ROOT, hold)[0].as_ref()),
+        Some(9),
+        "bypassed, it passes the value straight through — the delay is gone"
+    );
+}
+
+#[test]
+fn r1600_a_document_that_arrived_with_the_cut_taken_away_is_reported() {
+    // The state `set_bypassed` refuses is still reachable from a FILE, so
+    // `validate` has to answer for it — an invariant checked only at the edit
+    // is not an invariant.
+    let (document, delay, tally) = counter_fixture(1);
+    let text = serde_json::to_string(&document).unwrap();
+    assert!(text.contains("\"bypassed\":false"));
+    let tampered = text.replacen("\"bypassed\":false", "\"bypassed\":true", 3);
+    let arrived: Document<Flo> = serde_json::from_str(&tampered).expect("it parses");
+
+    let on_a_cycle = arrived.cycle_nodes(ROOT);
+    assert!(
+        on_a_cycle.contains(&delay) && on_a_cycle.contains(&tally),
+        "with every cut bypassed the loop is a contradiction again: {on_a_cycle:?}"
+    );
+    assert!(
+        arrived
+            .validate()
+            .iter()
+            .any(|found| matches!(found, Violation::Cycle { tree, .. } if *tree == ROOT)),
+        "and validate says so: {:?}",
+        arrived.validate()
+    );
+}
+
+#[test]
+fn r1600_a_delays_body_is_this_crates_and_its_initial_value_is_type_checked() {
+    let (mut document, delay, _) = counter_fixture(1);
+
+    // A delay is a structural body, so an application kind cannot be written
+    // over it: taking the cut away is not a rename.
+    assert_eq!(
+        document.set_kind(ROOT, delay, Flo::Tally),
+        Err(EditError::NotAKind {
+            tree: ROOT,
+            node: delay
+        })
+    );
+
+    // Its signature is DERIVED from the type it holds — one in, one out, both
+    // that type — so a delay cannot narrow or widen what passes through it.
+    let signature = document.signature(ROOT, delay).unwrap();
+    assert_eq!(signature.inputs.len(), 1);
+    assert_eq!(signature.outputs.len(), 1);
+    assert_eq!(signature.inputs[0].value_type(), Some(&Ty::Number));
+    assert_eq!(signature.outputs[0].value_type(), Some(&Ty::Number));
+
+    // The initial value goes through R1594's own gate, so a taxonomy that
+    // classifies its values has a delay's register type-checked with no code
+    // here at all — and one that DECLINES to classify (this one, `Flo`) is not
+    // held to a rule it cannot state, which is the same answer R1594 gives for
+    // an ordinary port.
+    assert_eq!(
+        Flo::value_type(&Val::Text("no".into())),
+        None,
+        "this taxonomy declines to classify, so nothing here can be checked"
+    );
+    assert!(
+        document
+            .set_port_value(ROOT, delay, PortRef::output(0), Val::Text("no".into()))
+            .is_ok()
+    );
+
+    // A taxonomy that DOES classify has it checked, by the same gate.
+    let mut typed: Document<LOp> = Document::new("root");
+    let register = typed
+        .add_node(ROOT, NodeBody::Delay(LTy::Vector), 0, 0)
+        .unwrap();
+    assert_eq!(
+        typed.set_port_value(ROOT, register, PortRef::output(0), LVal::Scalar(3)),
+        Err(PortValueError::WrongType {
+            port: PortRef::output(0),
+            expected: LTy::Vector,
+            found: LTy::Scalar,
+        }),
+        "a register cannot be started at a value its type cannot hold"
+    );
+    assert!(
+        typed
+            .set_port_value(ROOT, register, PortRef::output(0), LVal::Vector([1, 1, 1]))
+            .is_ok()
+    );
+    assert!(typed.validate().is_empty());
+}
+
+// ------------------------------ control descending into an instance (R1600)
+
+/// `Start -> a -> End`, with `a` collapsed into a definition so the run has a
+/// boundary to cross. Answers `(document, start, definition node, the step
+/// inside, the definition)`.
+fn tunnel_fixture() -> (Document<Flo>, NodeId, NodeId, NodeId, TreeId) {
+    let mut document = Document::new("root");
+    let start = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 0)
+        .unwrap();
+    let inner = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("a".into())), 100, 0)
+        .unwrap();
+    let end = document
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(inner, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(inner, 0), Socket::new(end, 0))
+        .unwrap();
+    let grouped = document.group(ROOT, &[inner], "Stage").expect("collapse");
+    let step_inside = document
+        .tree(grouped.definition)
+        .and_then(|t| t.nodes().find(|n| matches!(n.body, NodeBody::Kind(_))))
+        .map(|n| n.id)
+        .expect("the step moved in");
+    (
+        document,
+        start,
+        grouped.node,
+        step_inside,
+        grouped.definition,
+    )
+}
+
+#[test]
+fn r1600_control_enters_a_group_instance_and_comes_back_out() {
+    let (document, start, instance, step_inside, definition) = tunnel_fixture();
+
+    // The interface carries the control crossings, derived — nothing here
+    // declared a control port.
+    let interface = document.tree(definition).unwrap().interface().clone();
+    assert!(interface.inputs()[0].is_control());
+    assert!(interface.outputs()[0].is_control());
+
+    let run = document.run(ROOT, start, 20).expect("the run descends now");
+    assert_eq!(run.stop(), Stop::Halted);
+
+    let inside = Instance::root().inside(ROOT, instance);
+    let visited = run.visited();
+    assert_eq!(
+        visited.iter().map(|(i, _)| i.clone()).collect::<Vec<_>>(),
+        vec![
+            Instance::root(),
+            inside.clone(),
+            inside.clone(),
+            inside.clone(),
+            Instance::root(),
+        ],
+        "out, in, in, in, out — control crossed the boundary twice: {visited:?}"
+    );
+    assert_eq!(run.visits_in(&inside, step_inside), 1);
+    assert_eq!(run.entered(), vec![inside.clone()]);
+
+    // The group instance itself takes NO turn: it is not a computation, which
+    // is the same reason the evaluator descends through one rather than
+    // evaluating it. Entering shows up as the first step inside.
+    assert_eq!(run.visits_in(&Instance::root(), instance), 0);
+    // ★ And the flattened reading DISAGREES, which is the argument for having
+    // the other one: a `NodeId` is unique within its tree, so the instance's
+    // own id also names a node inside the definition, and counting by node
+    // alone credits this instance with a turn it did not take.
+    assert_eq!(
+        run.visits(instance),
+        1,
+        "★ flattening the instances collides ids across trees"
+    );
+    assert_eq!(visited[1].1, run.steps()[1].node);
+    assert_eq!(
+        run.steps().last().map(|s| s.node),
+        Some(
+            document
+                .tree(ROOT)
+                .unwrap()
+                .nodes()
+                .find(|n| n.body == NodeBody::Kind(Flo::End))
+                .unwrap()
+                .id
+        ),
+        "and control came back out to the node after the instance"
+    );
+}
+
+#[test]
+fn r1600_two_instances_of_one_definition_run_against_their_own_inputs() {
+    // A definition whose step's cost feeds a Tally outside it would be the
+    // dataflow reading; the control reading is that each instance's steps are
+    // ATTRIBUTED to that instance, so two runs through one definition are two
+    // sets of steps rather than one confused pile.
+    let (mut document, start, first, step_inside, definition) = tunnel_fixture();
+    let second = document
+        .instantiate(ROOT, definition, 400, 0)
+        .expect("a second instance");
+    // Chain it after the first: Start -> first -> second -> End.
+    let end = document
+        .tree(ROOT)
+        .unwrap()
+        .nodes()
+        .find(|n| n.body == NodeBody::Kind(Flo::End))
+        .map(|n| n.id)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(first, 0), Socket::new(second, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(second, 0), Socket::new(end, 0))
+        .unwrap();
+
+    let run = document.run(ROOT, start, 30).expect("run");
+    assert_eq!(run.stop(), Stop::Halted);
+    let a = Instance::root().inside(ROOT, first);
+    let b = Instance::root().inside(ROOT, second);
+    assert_eq!(run.entered(), {
+        let mut both = vec![a.clone(), b.clone()];
+        both.sort();
+        both
+    });
+    assert_eq!(
+        run.visits(step_inside),
+        2,
+        "the same node ran twice — flattened, that is all you could say"
+    );
+    assert_eq!(run.visits_in(&a, step_inside), 1);
+    assert_eq!(
+        run.visits_in(&b, step_inside),
+        1,
+        "and per instance it is one each, which is the fact a debugger needs"
+    );
+}
+
+#[test]
+fn r1600_a_group_is_entered_by_the_port_control_arrived_at() {
+    // Two arms of a branch, collapsed together: the instance then has TWO
+    // control inputs, and which one control arrives at decides where inside it
+    // lands. Falling through every control output of the inside-input node
+    // would run both arms, which is a different graph.
+    let mut document: Document<Flo> = Document::new("root");
+    let start = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 0)
+        .unwrap();
+    let branch = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Branch), 100, 0)
+        .unwrap();
+    let yes = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("yes".into())), 200, 0)
+        .unwrap();
+    let no = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("no".into())), 200, 100)
+        .unwrap();
+    let truth = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 200)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(branch, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(truth, 0), Socket::new(branch, 1))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(branch, 0), Socket::new(yes, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(branch, 1), Socket::new(no, 0))
+        .unwrap();
+    let grouped = document.group(ROOT, &[yes, no], "Arms").expect("collapse");
+    assert_eq!(
+        document
+            .tree(grouped.definition)
+            .unwrap()
+            .interface()
+            .inputs()
+            .len(),
+        2,
+        "one interface port per control crossing — control has many predecessors \
+         and one successor, so each crossing is its own port"
+    );
+
+    let run = document.run(ROOT, start, 20).expect("run");
+    let inside = Instance::root().inside(ROOT, grouped.node);
+    let names_inside: Vec<String> = run
+        .steps()
+        .iter()
+        .filter(|s| s.instance == inside)
+        .filter_map(|s| {
+            document
+                .tree(grouped.definition)
+                .and_then(|t| t.node(s.node))
+                .map(Node::display_name)
+        })
+        .collect();
+    assert!(
+        names_inside.contains(&"Step:yes".to_owned())
+            && !names_inside.contains(&"Step:no".to_owned()),
+        "only the arm the branch chose was entered: {names_inside:?}"
+    );
+}
+
+#[test]
+fn r1600_a_run_reads_the_registers_so_the_trace_changes_between_ticks() {
+    // The loop that can exit: a branch whose condition is a register, so the
+    // arm control takes is a function of how many ticks have been taken. The
+    // run does not advance the register — `tick` does — which is what keeps a
+    // tick's outcome a function of the document and not of the walk.
+    let mut document: Document<Flo> = Document::new("root");
+    let start = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 0)
+        .unwrap();
+    let branch = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Branch), 100, 0)
+        .unwrap();
+    let again = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Step("again".into())), 200, 0)
+        .unwrap();
+    let done = document
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 200, 100)
+        .unwrap();
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 200)
+        .unwrap();
+    let armed = document
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 100, 200)
+        .unwrap();
+    document
+        .set_port_value(ROOT, armed, PortRef::output(0), Val::Number(0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(branch, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(armed, 0), Socket::new(branch, 1))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(one, 0), Socket::new(armed, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(branch, 0), Socket::new(again, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(branch, 1), Socket::new(done, 0))
+        .unwrap();
+
+    let mut state = Machine::new();
+    let before = document.run_on(ROOT, start, 20, &state).expect("run");
+    assert_eq!(
+        before.trace(),
+        vec![start, branch, done],
+        "register still 0, so the branch takes its False arm"
+    );
+
+    document.tick(ROOT, &mut state);
+    let after = document.run_on(ROOT, start, 20, &state).expect("run");
+    assert_eq!(
+        after.trace(),
+        vec![start, branch, again],
+        "the world moved between the two runs, and the trace with it"
+    );
+
+    // And a run with no machine reads the initial value — the tick-zero
+    // reading, unchanged by anything the machine has since done.
+    assert_eq!(
+        document.run(ROOT, start, 20).unwrap().trace(),
+        before.trace()
+    );
+}
+
+// ------------------------------------ what the references do instead (R1600)
+
+/// Blender's Repeat Zone, from `geometry_nodes_repeat_zone.cc` at `8cf50599`:
+///
+/// > the graph is built with as many body copies as there are iterations. Since
+/// > this graph depends on the number of iterations, it can't be reused in
+/// > general.
+///
+/// So the cost of iterating is paid in *nodes*, and the count has to be a
+/// number known before the graph is built — which is why this helper takes one.
+fn blender_repeat_zone_body_copies(body_nodes: usize, iterations: usize) -> usize {
+    body_nodes * iterations
+}
+
+#[test]
+fn r1600_iterating_costs_one_register_where_blender_unrolls_the_body() {
+    let (document, _, _) = counter_fixture(1);
+    let nodes_before = document.tree(ROOT).unwrap().node_count();
+
+    let mut state = Machine::new();
+    for _ in 0..50 {
+        document.tick(ROOT, &mut state);
+    }
+    assert_eq!(
+        held(state.read(&Instance::root(), delay_of(&document))),
+        Some(50)
+    );
+    assert_eq!(
+        document.tree(ROOT).unwrap().node_count(),
+        nodes_before,
+        "fifty iterations and the graph is the same size"
+    );
+    assert_eq!(state.len(), 1, "one register, whatever the count");
+
+    // ★ Blender pays for the same fifty in nodes, every time, and cannot reuse
+    // the built graph across a different count.
+    assert_eq!(
+        blender_repeat_zone_body_copies(nodes_before, 50),
+        nodes_before * 50,
+        "★ the reference materialises one body per iteration"
+    );
+}
+
+/// The delay of `counter_fixture`, found by body rather than threaded through.
+fn delay_of(document: &Document<Flo>) -> NodeId {
+    document
+        .delays(ROOT)
+        .first()
+        .copied()
+        .expect("the fixture has one")
+}
+
+/// Unreal's recursion guard, `FindMacroCycle` in `KismetCompiler.cpp` at 5.8.1,
+/// reproduced exactly — including that it **returns on its first
+/// macro-instance child** instead of continuing the loop:
+///
+/// ```text
+/// for (const UEdGraphNode* ChildNode : MacroGraph->Nodes) {
+///   if (const UK2Node_MacroInstance* MacroInstanceNode = Cast<...>(ChildNode)) {
+///     UEdGraph* InnerMacroGraph = MacroInstanceNode->GetMacroGraph();
+///     if (VisitedMacroGraphs.Contains(InnerMacroGraph->GraphGuid)) { return true; }
+///     else { return FindMacroCycle(MacroInstanceNode, VisitedMacroGraphs, CurrentPath); }
+///   }
+/// }
+/// ```
+///
+/// A macro is expanded by cloning its graph, so a cycle there cannot terminate;
+/// this is the whole of what stands between a Blueprint and that.
+#[expect(
+    clippy::never_loop,
+    reason = "the lint is CORRECT and that is the point: Unreal returns on its \
+              first macro-instance child instead of continuing, which is the \
+              defect this helper exists to hold"
+)]
+fn unreal_find_macro_cycle(
+    graphs: &std::collections::BTreeMap<usize, Vec<usize>>,
+    root: usize,
+    visited: &mut BTreeSet<usize>,
+) -> bool {
+    visited.insert(root);
+    for child in graphs.get(&root).into_iter().flatten() {
+        if visited.contains(child) {
+            return true;
+        }
+        return unreal_find_macro_cycle(graphs, *child, visited);
+    }
+    false
+}
+
+#[test]
+fn r1600_a_nesting_cycle_is_found_where_unreals_check_returns_on_its_first_child() {
+    // Three definitions. `outer` contains an instance of `plain` FIRST and one
+    // of `loops` second; `loops` will be asked to contain `outer`.
+    let mut document: Document<Flo> = Document::new("root");
+    let seed = |document: &mut Document<Flo>, name: &str| {
+        let node = document
+            .add_node(ROOT, NodeBody::Kind(Flo::Const(0)), 0, 0)
+            .unwrap();
+        document
+            .group(ROOT, &[node], name)
+            .expect("collapse")
+            .definition
+    };
+    let plain = seed(&mut document, "plain");
+    let loops = seed(&mut document, "loops");
+    let outer = seed(&mut document, "outer");
+    document
+        .instantiate(outer, plain, 0, 0)
+        .expect("first child");
+    document
+        .instantiate(outer, loops, 0, 100)
+        .expect("second child");
+
+    // The closing placement: `loops` would contain `outer`, which already
+    // contains `loops`.
+    let refusal = document.instantiate(loops, outer, 0, 0);
+    assert_eq!(
+        refusal,
+        Err(NestError::Recursion {
+            chain: vec![outer, loops],
+        }),
+        "refused, and the chain is NAMED"
+    );
+
+    // ★ Unreal's check, on the same shape, answers false: it returns on the
+    // first macro-instance child it meets, so a cycle reachable only through
+    // the second one is never looked for.
+    let graphs = std::collections::BTreeMap::from([
+        (outer.0 as usize, vec![plain.0 as usize, loops.0 as usize]),
+        (loops.0 as usize, vec![outer.0 as usize]),
+        (plain.0 as usize, Vec::new()),
+    ]);
+    let mut visited = BTreeSet::new();
+    assert!(
+        !unreal_find_macro_cycle(&graphs, outer.0 as usize, &mut visited),
+        "★ the reference misses it: `return` inside the loop, not `continue`"
+    );
+    // With the offending child FIRST it does find one, which is what makes the
+    // miss a function of node order rather than of the graph.
+    let reordered = std::collections::BTreeMap::from([
+        (outer.0 as usize, vec![loops.0 as usize, plain.0 as usize]),
+        (loops.0 as usize, vec![outer.0 as usize]),
+        (plain.0 as usize, Vec::new()),
+    ]);
+    let mut visited = BTreeSet::new();
+    assert!(unreal_find_macro_cycle(
+        &reordered,
+        outer.0 as usize,
+        &mut visited
+    ));
+}
+
+#[test]
+fn r1600_a_wire_leaving_a_delay_can_never_close_a_cycle() {
+    // ★ Found by a counterfactual that PASSED. Removing `connect`'s check that
+    // the NEW link adds a dependency at all broke nothing, because every
+    // fixture happened to wire its feedback delay-first — where the walk's own
+    // cut already answers. This is the other order, and only that check admits
+    // it: `tally` reaches `delay` by a real dependency path, and the wire that
+    // closes the loop is the one LEAVING the delay.
+    let mut document: Document<Flo> = Document::new("root");
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 0)
+        .unwrap();
+    let tally = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Tally), 200, 0)
+        .unwrap();
+    let delay = document
+        .add_node(ROOT, NodeBody::Delay(Ty::Number), 100, 100)
+        .unwrap();
+    document
+        .set_port_value(ROOT, delay, PortRef::output(0), Val::Number(0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(one, 0), Socket::new(tally, 0))
+        .unwrap();
+    // The feedback FIRST, so the dependency runs consumer -> register.
+    document
+        .connect(ROOT, Socket::new(tally, 0), Socket::new(delay, 0))
+        .unwrap();
+    assert_eq!(
+        document.data_path_between(ROOT, tally, delay),
+        Some(vec![tally, delay]),
+        "the consumer really does reach the register — the walk cannot save this"
+    );
+
+    document
+        .connect(ROOT, Socket::new(delay, 0), Socket::new(tally, 1))
+        .expect("a link leaving a delay adds no dependency, so it closes nothing");
+    assert!(document.cycle_nodes(ROOT).is_empty());
+    assert!(document.validate().is_empty());
+
+    let mut state = Machine::new();
+    for expected in 1..=3_i64 {
+        document.tick(ROOT, &mut state);
+        assert_eq!(
+            held(state.read(&Instance::root(), delay)),
+            Some(expected),
+            "and it counts, wired in either order"
+        );
+    }
 }

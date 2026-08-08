@@ -410,12 +410,18 @@ enum Match {
 /// different definitions are not alike in any respect this model can see, and
 /// calling them one kind would grow a selection into nodes that have nothing to
 /// do with it.
+///
+/// **Two delays are the same kind only when they hold the same type** (R1600),
+/// which is the same argument one step down: a delay's whole signature is
+/// derived from the type it holds, so two that hold different types have no
+/// port in common.
 fn same_kind<K: NodeKind>(a: &Node<K>, b: &Node<K>) -> bool {
     match (&a.body, &b.body) {
         (NodeBody::Kind(a), NodeBody::Kind(b)) => a.name() == b.name(),
         (NodeBody::Group(a), NodeBody::Group(b)) => a == b,
         (NodeBody::Interface(a), NodeBody::Interface(b)) => a == b,
         (NodeBody::Frame, NodeBody::Frame) => true,
+        (NodeBody::Delay(a), NodeBody::Delay(b)) => a == b,
         _ => false,
     }
 }

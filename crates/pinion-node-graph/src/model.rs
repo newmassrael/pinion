@@ -60,6 +60,96 @@ impl Socket {
     }
 }
 
+/// **Which occurrence** of a node a fact belongs to (R1600).
+///
+/// A [`NodeId`] is unique within its tree, and a definition's tree is shared by
+/// every instance of it — so a node inside a group definition does not name one
+/// place in a running document, it names one place *per instance*. This is the
+/// missing half: the chain of group nodes descended through, outermost first,
+/// empty at the tree the reading started in.
+///
+/// It is the key of everything a run keeps. The evaluator's memo has been keyed
+/// by it since R1577 (two instances of one definition fed different values are
+/// two different results), and R1600 makes it the address of a
+/// [`Machine`](crate::Machine) register too — so two instances of a counting
+/// group count separately, for the same reason and by the same key rather than
+/// by a second convention.
+///
+/// # Against the references
+///
+/// **Blender needs the same address and materialises it.** A geometry-nodes
+/// simulation zone's state is cached per node in `ModifierCache` as
+/// `Map<int, std::unique_ptr<SimulationNodeCache>> simulation_cache_by_id`, and
+/// that `int` is a *flattened* path: `bNestedNodeRef { int32_t id;
+/// bNestedNodePath path; }` where the path is `{ node_id, id_in_node }`, a
+/// side table stored on the root tree and written into the .blend file. So the
+/// address exists there as **persisted data that must be kept in step with the
+/// tree**, with a struct field (`id_in_node`) its own comment describes as
+/// "Unused if the node is the final nested node". Here it is derived by the
+/// walk that needs it and stored nowhere.
+///
+/// **Unreal does not have this address at all**, because a macro instance is
+/// not an instance: `FKismetCompilerContext` expands one by calling
+/// `FEdGraphUtilities::CloneGraph(MacroGraph, ...)`, so N instances are N
+/// copies of the nodes and each copy is simply its own node. That is also why
+/// its recursion check has to exist (`FindMacroCycle`) — inlining cannot
+/// terminate on a cycle — where a group *instance* here is checked by
+/// [`Document::containment`] being acyclic and needs no expansion to run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Instance(Vec<(TreeId, NodeId)>);
+
+impl Instance {
+    /// The tree the reading started in: no group descended into.
+    #[must_use]
+    pub const fn root() -> Self {
+        Self(Vec::new())
+    }
+
+    /// The instance one level in: this one, then `node` of `tree`.
+    ///
+    /// `tree` is where the group *instance node* sits, not the definition it
+    /// stands for — the definition is reachable from the node and the host is
+    /// not, so naming the host is what makes a path resolvable in both
+    /// directions.
+    #[must_use]
+    pub fn inside(&self, tree: TreeId, node: NodeId) -> Self {
+        let mut deeper = self.0.clone();
+        deeper.push((tree, node));
+        Self(deeper)
+    }
+
+    /// The chain, outermost first.
+    #[must_use]
+    pub fn path(&self) -> &[(TreeId, NodeId)] {
+        &self.0
+    }
+
+    /// How many group instances were descended through.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether this is the tree the reading started in.
+    #[must_use]
+    pub fn is_root(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Display for Instance {
+    /// `/` at the root, else one `/<tree>:<node>` segment per descent.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            return f.write_str("/");
+        }
+        for (tree, node) in &self.0 {
+            write!(f, "/{tree}:{node}")?;
+        }
+        Ok(())
+    }
+}
+
 impl fmt::Display for Socket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "node {}.{}", self.node.0, self.port)
@@ -671,7 +761,11 @@ pub enum InterfaceSide {
 /// this crate's, and are what make a node able to *be* a graph and to *contain*
 /// one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum NodeBody<K> {
+#[serde(bound(
+    serialize = "K: Serialize, K::Type: Serialize",
+    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>"
+))]
+pub enum NodeBody<K: NodeKind> {
     /// An application node.
     Kind(K),
     /// An instance of a group definition. Its signature is that tree's
@@ -693,6 +787,62 @@ pub enum NodeBody<K> {
     /// the same separation [`Appearance`] draws. Blender's
     /// frame is an ordinary node type with sockets it happens not to declare.
     Frame,
+    /// **A value one step behind**: this node's output is what arrived at its
+    /// input at the previous [`Document::tick`], and its resting value until
+    /// then (R1600).
+    ///
+    /// Lustre's `pre`, Simulink's Unit Delay, SSA's φ at a loop header, a
+    /// hardware register. R1599 made a control **loop** authorable and left the
+    /// reason it could not yet mean anything: [`NodeKind::evaluate`] takes
+    /// `&self` and returns values, so a node that ran twice computed the same
+    /// thing twice. This is the one node whose output is not a function of its
+    /// input *now*, and therefore:
+    ///
+    /// * it is the **only** node a value cycle may pass through
+    ///   ([`Document::connect`] accepts the closing wire exactly when the cycle
+    ///   it would close has one of these on it, which is Lustre's causality
+    ///   rule), and
+    /// * it is where a run keeps its state, addressed by
+    ///   [`Instance`] so two instances of one definition do not share a
+    ///   register.
+    ///
+    /// # Why this crate owns it
+    ///
+    /// The same argument as [`Self::Frame`] and [`Self::Group`], plus a
+    /// structural one an application cannot argue with: there is nowhere in
+    /// [`NodeKind`] to put the register. `evaluate(&self, inputs)` is a pure
+    /// function by design — that purity is what makes
+    /// [`Document::evaluate`] safe to call after an arbitrary edit — so a
+    /// taxonomy trying to supply a delay would have to reach outside itself,
+    /// and one that forgot would have no loops at all.
+    ///
+    /// It carries the socket **type** it holds, because it holds a value and a
+    /// value here is typed; it carries no *initial* value, because that is a
+    /// per-node authored value ([`Node::values`], R1594) on its output port —
+    /// which is Lustre's `->` and needed no new mechanism.
+    ///
+    /// # Against the references
+    ///
+    /// **Blender cannot express this and unrolls instead.** Its Repeat Zone
+    /// builds the body graph once per iteration —
+    /// `geometry_nodes_repeat_zone.cc`, "the graph is built with as many body
+    /// copies as there are iterations. Since this graph depends on the number
+    /// of iterations, it can't be reused in general" — so the count must be
+    /// known before evaluation and a data-dependent exit is inexpressible.
+    /// Carrying a value across *frames* is a different mechanism again (the
+    /// Simulation Zone), whose state does not live in the node tree at all but
+    /// in the modifier's bake cache.
+    ///
+    /// **Unreal has no unit delay.** State there is a Blueprint *variable*: a
+    /// `UK2Node_VariableSet` writing a property on the object, read back by a
+    /// `UK2Node_VariableGet` — arbitrary mutable state, so which value a read
+    /// sees depends on where the execution wire happens to have gone, and the
+    /// graph's meaning is not a function of the graph. (Its `UK2Node_Delay`
+    /// is a *latent time* delay, not this.) The tradeoff is deliberate here:
+    /// the only state is a delay, so a tick's result is a function of the
+    /// registers and the inputs, and that is what makes
+    /// [`Document::tick`] reproducible.
+    Delay(K::Type),
 }
 
 /// Which side of a node's own signature a port sits on (R1594).
@@ -755,8 +905,8 @@ impl fmt::Display for PortRef {
 /// have been given.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "K: Serialize, K::Value: Serialize",
-    deserialize = "K: Deserialize<'de>, K::Value: Deserialize<'de>"
+    serialize = "K: Serialize, K::Type: Serialize, K::Value: Serialize",
+    deserialize = "K: Deserialize<'de>, K::Type: Deserialize<'de>, K::Value: Deserialize<'de>"
 ))]
 pub struct Node<K: NodeKind> {
     /// Stable within its tree.
@@ -874,6 +1024,7 @@ impl<K: NodeKind> Node<K> {
             NodeBody::Interface(InterfaceSide::Input) => "Group Input".to_owned(),
             NodeBody::Interface(InterfaceSide::Output) => "Group Output".to_owned(),
             NodeBody::Frame => "Frame".to_owned(),
+            NodeBody::Delay(_) => "Delay".to_owned(),
         }
     }
 
@@ -882,6 +1033,13 @@ impl<K: NodeKind> Node<K> {
     #[must_use]
     pub const fn is_frame(&self) -> bool {
         matches!(self.body, NodeBody::Frame)
+    }
+
+    /// Whether this node is a [`NodeBody::Delay`] — the one body that holds a
+    /// value between ticks (R1600).
+    #[must_use]
+    pub const fn is_delay(&self) -> bool {
+        matches!(self.body, NodeBody::Delay(_))
     }
 
     /// Take on every fact about `source` that is not its identity, its body or
@@ -1263,7 +1421,47 @@ impl<K: NodeKind> Document<K> {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
             },
+            // R1600 — one in, one out, both of the type it holds. Derived here
+            // rather than authored, so a delay cannot be built that narrows or
+            // widens what passes through it: what comes back out a tick later
+            // is the thing that went in.
+            NodeBody::Delay(ty) => Signature {
+                inputs: vec![Port::new("In", ty.clone())],
+                outputs: vec![Port::new("Out", ty.clone())],
+            },
         })
+    }
+
+    /// Every [`NodeBody::Delay`] in `tree`, ascending (R1600).
+    ///
+    /// The registers of one tree. Which *instance* each belongs to is the
+    /// caller's descent — see [`Machine`](crate::Machine).
+    #[must_use]
+    pub fn delays(&self, tree: TreeId) -> Vec<NodeId> {
+        let Some(host) = self.tree(tree) else {
+            return Vec::new();
+        };
+        let mut found: Vec<NodeId> = host
+            .nodes()
+            .filter(|node| matches!(node.body, NodeBody::Delay(_)))
+            .map(|node| node.id)
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    /// Whether `node` **cuts** the dependency graph: its output this step is
+    /// not a function of its input this step (R1600).
+    ///
+    /// True for a [`NodeBody::Delay`] that is computing. A *bypassed* delay is
+    /// not one — bypassing is the request to take the node's behaviour out, and
+    /// a delay's whole behaviour is the cut, so a bypassed one is a plain wire
+    /// and the cycle it was holding open is live again. That is why
+    /// [`Self::set_bypassed`] refuses to bypass a delay a cycle runs through.
+    fn cuts_dependency(&self, tree: TreeId, node: NodeId) -> bool {
+        self.tree(tree)
+            .and_then(|host| host.node(node))
+            .is_some_and(|held| matches!(held.body, NodeBody::Delay(_)) && !held.bypassed)
     }
 
     /// Add a node to `tree` and answer its fresh id.
@@ -1645,9 +1843,16 @@ impl<K: NodeKind> Document<K> {
         // it does NOT do is notice a control cycle: an execution loop with no
         // exit compiles, and is caught by counting iterations at run time
         // (`EBlueprintExceptionType::InfiniteLoop`).
-        let closes_a_data_cycle = source.value_type().is_some();
-        if closes_a_data_cycle && let Some(path) = self.data_path_between(tree, to.node, from.node)
-        {
+        //
+        // R1600 — and a value link leaving a DELAY adds no dependency at all,
+        // so it can no more close a cycle than a control link can: what leaves
+        // a delay is what arrived a tick ago. That is the causality rule
+        // Lustre states as "every cycle must be broken by a `pre`", and it is
+        // asked here as one predicate rather than re-derived, so the wire this
+        // accepts is exactly the wire `cycle_nodes` will not report.
+        let adds_a_dependency =
+            source.value_type().is_some() && !self.cuts_dependency(tree, from.node);
+        if adds_a_dependency && let Some(path) = self.data_path_between(tree, to.node, from.node) {
             return Err(ConnectError::WouldCycle { path });
         }
 
@@ -1719,13 +1924,35 @@ impl<K: NodeKind> Document<K> {
     ///
     /// # Errors
     ///
-    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchNode`].
+    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchNode`], and
+    /// [`EditError::BypassWouldCycle`] for the one node whose behaviour *is*
+    /// the acyclicity of the data plane (R1600).
     pub fn set_bypassed(
         &mut self,
         tree: TreeId,
         node: NodeId,
         bypassed: bool,
     ) -> Result<bool, EditError> {
+        // R1600 — bypassing a delay makes it a plain wire, so the cycle it was
+        // holding open becomes live. Refused with the cycle named, for the same
+        // reason `connect` refuses the wire that would close one: a document
+        // this crate built never has a value cycle in it, and an edit that
+        // would create one by *removing* a cut is the same edit.
+        if bypassed && self.cuts_dependency(tree, node) {
+            let feeds = self
+                .tree(tree)
+                .into_iter()
+                .flat_map(Tree::links)
+                .filter(|link| link.from.node == node)
+                .map(|link| link.to.node)
+                .collect::<Vec<_>>();
+            if let Some(path) = feeds
+                .into_iter()
+                .find_map(|downstream| self.data_path_between(tree, downstream, node))
+            {
+                return Err(EditError::BypassWouldCycle { tree, node, path });
+            }
+        }
         let host = self
             .trees
             .get_mut(tree.0 as usize)
@@ -1850,12 +2077,23 @@ impl<K: NodeKind> Document<K> {
             return successors;
         };
         for link in &host.links {
-            if self.link_is_control(tree, link) == control {
-                successors
-                    .entry(link.from.node)
-                    .or_default()
-                    .push(link.to.node);
+            if self.link_is_control(tree, link) != control {
+                continue;
             }
+            // R1600 — on the DATA plane a delay is a source: what leaves it is
+            // what arrived a tick ago, so nothing downstream of it depends on
+            // anything upstream of it *now*. Dropping its outgoing edges is the
+            // whole of the causality rule — Lustre's "every cycle must be
+            // broken by a `pre`" — and it is one condition rather than a second
+            // walk, so `cycle_nodes`, `validate` and `connect` cannot disagree
+            // about which cycles are legal.
+            if !control && self.cuts_dependency(tree, link.from.node) {
+                continue;
+            }
+            successors
+                .entry(link.from.node)
+                .or_default()
+                .push(link.to.node);
         }
         successors
     }
@@ -1885,6 +2123,12 @@ impl<K: NodeKind> Document<K> {
         let mut queue = std::collections::VecDeque::from([start]);
         let mut seen = std::collections::BTreeSet::from([start]);
         while let Some(current) = queue.pop_front() {
+            // R1600 — the same cut `successors_on` makes, for the same reason:
+            // a walk that continued out of a delay would report a dependency
+            // path that does not exist within one tick.
+            if self.cuts_dependency(tree, current) {
+                continue;
+            }
             for link in host
                 .links
                 .iter()
@@ -2257,6 +2501,7 @@ mod node_map {
     ) -> Result<S::Ok, S::Error>
     where
         K: NodeKind + Serialize,
+        K::Type: Serialize,
         K::Value: Serialize,
         S: Serializer,
     {
@@ -2268,6 +2513,7 @@ mod node_map {
     ) -> Result<BTreeMap<NodeId, Node<K>>, D::Error>
     where
         K: NodeKind + Deserialize<'de>,
+        K::Type: Deserialize<'de>,
         K::Value: Deserialize<'de>,
         D: Deserializer<'de>,
     {
@@ -2418,12 +2664,14 @@ pub enum EditError {
         node: NodeId,
     },
     /// The node is there, but its body is one this crate owns — a frame, a
-    /// group instance or an interface node — so an application kind cannot be
-    /// written over it (R1598).
+    /// group instance, an interface node or a delay — so an application kind
+    /// cannot be written over it (R1598, widened R1600).
     ///
     /// A structural body is not the application's to overwrite: a frame with a
-    /// signature would be linkable, and a group instance whose body was replaced
-    /// would leave its definition with no instance to reach it by.
+    /// signature would be linkable, a group instance whose body was replaced
+    /// would leave its definition with no instance to reach it by, and a delay
+    /// whose body was replaced would be a cut removed from the data plane
+    /// without anything having asked whether a cycle depended on it.
     NotAKind {
         /// The tree it is in.
         tree: TreeId,
@@ -2448,6 +2696,23 @@ pub enum EditError {
         /// How many ports that side actually has.
         arity: u32,
     },
+    /// Bypassing this [`NodeBody::Delay`] would make a value cycle live
+    /// (R1600).
+    ///
+    /// A delay's whole behaviour is that its output does not depend on its
+    /// input *this* step, which is what lets a cycle pass through it. Bypassing
+    /// it makes it a plain wire, so the cycle it was breaking becomes a
+    /// contradiction — the same state [`Document::connect`] refuses to author
+    /// directly, reached by taking the cut away instead of adding the wire.
+    BypassWouldCycle {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The delay that was going to be bypassed.
+        node: NodeId,
+        /// The dependency path that would close, from something the delay
+        /// feeds back round to the delay itself.
+        path: Vec<NodeId>,
+    },
 }
 
 impl fmt::Display for EditError {
@@ -2462,8 +2727,8 @@ impl fmt::Display for EditError {
             }
             Self::NotAKind { tree, node } => write!(
                 f,
-                "node {} in tree {} is a frame, a group instance or an interface \
-                 node, whose body this crate owns",
+                "node {} in tree {} is a frame, a group instance, an interface \
+                 node or a delay, whose body this crate owns",
                 node.0, tree.0
             ),
             Self::NoSuchInterfacePort {
@@ -2475,6 +2740,16 @@ impl fmt::Display for EditError {
                 f,
                 "tree {}'s interface has {arity} {side:?} ports, so there is no port {index}",
                 tree.0
+            ),
+            Self::BypassWouldCycle { tree, node, path } => write!(
+                f,
+                "bypassing delay {} in tree {} would make a value cycle live: {}",
+                node.0,
+                tree.0,
+                path.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
             ),
         }
     }

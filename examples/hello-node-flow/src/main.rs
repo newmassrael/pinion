@@ -40,7 +40,10 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_node_graph::{Document, NodeBody, NodeId, NodeKind, Port, ROOT, Socket, Stop, TreeId};
+use pinion_node_graph::{
+    Document, Instance, Machine, NodeBody, NodeId, NodeKind, Port, PortRef, ROOT, Socket, Stop,
+    TreeId,
+};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +63,10 @@ const BODY_FONT_PX: u32 = 13;
 /// so a run need not terminate and the bound is the caller's decision — which
 /// is why `Document::run` takes it rather than owning a constant.
 const STEP_BUDGET: usize = 24;
+
+/// How far ahead `ticks_to_finish` will look before answering. A scenario need
+/// not converge at all, so the horizon is stated rather than implied.
+const TICK_HORIZON: usize = 64;
 
 // ---------------------------------------------------------------- taxonomy
 
@@ -105,6 +112,9 @@ enum Op {
     Reading(i64),
     /// Pure: is the reading over the budget?
     Over,
+    /// Pure: one more than what arrived. The step a register advances by —
+    /// pure, because the *remembering* is the delay's job and not a kind's.
+    Bump,
 }
 
 impl Op {
@@ -117,6 +127,7 @@ impl Op {
             Self::Finish => "Finish".into(),
             Self::Reading(n) => format!("Reading {n}"),
             Self::Over => "Over budget?".into(),
+            Self::Bump => "Bump +1".into(),
         }
     }
 }
@@ -138,6 +149,7 @@ impl NodeKind for Op {
                 Port::new("Reading", Ty::Number),
                 Port::new("Limit", Ty::Number).with_default(Val::Number(40)),
             ],
+            Self::Bump => vec![Port::new("In", Ty::Number)],
         }
     }
 
@@ -150,7 +162,7 @@ impl NodeKind for Op {
                 .collect(),
             Self::Branch => vec![Port::control("True"), Port::control("False")],
             Self::Finish => Vec::new(),
-            Self::Reading(_) | Self::Over => vec![Port::new("Out", Ty::Number)],
+            Self::Reading(_) | Self::Over | Self::Bump => vec![Port::new("Out", Ty::Number)],
         }
     }
 
@@ -172,6 +184,7 @@ impl NodeKind for Op {
                     .zip(number(1))
                     .map(|(reading, limit)| Val::Number(i64::from(reading > limit))),
             ],
+            Self::Bump => vec![number(0).map(|n| Val::Number(n + 1))],
         }
     }
 
@@ -197,15 +210,29 @@ type Graph = Document<Op>;
 
 struct FlowState {
     document: Signal<Graph>,
+    /// The registers, R1600. Held beside the document rather than inside it,
+    /// because a machine is what the graph *is doing* and the document is what
+    /// it *is* — and only one of the two is saved with the file.
+    machine: Signal<Machine<Op>>,
     budget: Signal<usize>,
     refusal: Signal<String>,
 }
 
-/// `Begin -> Fork x2`; arm 0 is `Task warm -> Branch`, whose True arm loops back
-/// to `Task warm` and whose False arm finishes; arm 1 is `Task drain -> Finish`.
+/// A scenario with **both** things a loop needs to mean something (R1600).
 ///
-/// A seed with a **loop** in it on purpose: it is the shape the whole round is
-/// about, and the shape every other node-graph binding here refuses to hold.
+/// Control: `Begin -> Fork x2`. Arm 0 is `Task warm -> Branch`, whose False arm
+/// loops back to `Task warm` and whose True arm settles. Arm 1 is a **group
+/// instance** — control descends into it and comes back out — followed by
+/// `Finish`. Arm 1 is only ever reached once arm 0 *completes*, because a fork
+/// runs each arm to completion before the next.
+///
+/// Data: `elapsed(Delay) -> Bump +1 -> elapsed` is a value cycle closed through
+/// a register, which is the only kind of value cycle there is. `elapsed` feeds
+/// `Over budget?`, which feeds the branch — so **how many ticks the scenario
+/// takes** is a question with an answer, and the answer needs the register.
+///
+/// Before R1600 this seed ran the loop until the step budget ran out, every
+/// time, because nothing in the graph could change between iterations.
 fn seed() -> (Graph, Vec<NodeId>) {
     let mut document = Document::new("scenario");
     let add = |document: &mut Graph, op: Op, x: i32, y: i32| {
@@ -215,10 +242,23 @@ fn seed() -> (Graph, Vec<NodeId>) {
     let fork = add(&mut document, Op::Fork(2), 40, 110);
     let warm = add(&mut document, Op::Task("warm".into()), 40, 190);
     let branch = add(&mut document, Op::Branch, 40, 260);
-    let drain = add(&mut document, Op::Task("drain".into()), 40, 340);
-    let finish = add(&mut document, Op::Finish, 40, 410);
-    let reading = add(&mut document, Op::Reading(55), 480, 260);
-    let over = add(&mut document, Op::Over, 700, 260);
+    let settle = add(&mut document, Op::Task("settle".into()), 40, 330);
+    let drain = add(&mut document, Op::Task("drain".into()), 260, 400);
+    let finish = add(&mut document, Op::Finish, 260, 470);
+    let bump = add(&mut document, Op::Bump, 700, 190);
+    let over = add(&mut document, Op::Over, 700, 330);
+    // THE REGISTER. Its initial value is authored on its own output port, which
+    // is R1594's mechanism rather than a second one -- Lustre's `->`.
+    let elapsed = document
+        .add_node(TREE, NodeBody::Delay(Ty::Number), 480, 260)
+        .unwrap();
+    document
+        .set_port_value(TREE, elapsed, PortRef::output(0), Val::Number(0))
+        .expect("a Number register starts at a Number");
+    // And the limit is authored on the node that reads it, not on the kind.
+    document
+        .set_port_value(TREE, over, PortRef::input(1), Val::Number(LIMIT))
+        .expect("the limit is this node's");
 
     let wire = |document: &mut Graph, from: (NodeId, u32), to: (NodeId, u32)| {
         document
@@ -228,20 +268,37 @@ fn seed() -> (Graph, Vec<NodeId>) {
     wire(&mut document, (begin, 0), (fork, 0));
     wire(&mut document, (fork, 0), (warm, 0));
     wire(&mut document, (warm, 0), (branch, 0));
+    wire(&mut document, (branch, 0), (settle, 0));
     wire(&mut document, (fork, 1), (drain, 0));
     wire(&mut document, (drain, 0), (finish, 0));
-    // The value plane, feeding the branch's decision.
-    wire(&mut document, (reading, 0), (over, 0));
+    // The value plane. `elapsed -> bump -> elapsed` closes a cycle through the
+    // register: legal, and refused for any other node.
+    wire(&mut document, (elapsed, 0), (bump, 0));
+    wire(&mut document, (bump, 0), (elapsed, 0));
+    wire(&mut document, (elapsed, 0), (over, 0));
     wire(&mut document, (over, 0), (branch, 1));
-    // THE LOOP. `connect` accepts this because it closes a cycle through
+    // THE CONTROL LOOP. `connect` accepts this because it closes a cycle through
     // CONTROL links, and a control cycle is a loop rather than a contradiction.
-    wire(&mut document, (branch, 0), (warm, 0));
+    wire(&mut document, (branch, 1), (warm, 0));
+
+    // Arm 1's stage becomes a re-usable definition, so control has a boundary
+    // to cross. The interface is DERIVED from the control links that crossed.
+    let stage = document
+        .group(TREE, &[drain], "Stage")
+        .expect("one step collapses");
 
     (
         document,
-        vec![begin, fork, warm, branch, drain, finish, reading, over],
+        vec![
+            begin, fork, warm, branch, settle, stage.node, finish, bump, over, elapsed,
+        ],
     )
 }
+
+/// How many ticks the loop runs for. Authored onto the `Over budget?` node's
+/// own Limit port, so the scenario's length is data rather than a constant the
+/// taxonomy carries.
+const LIMIT: i64 = 3;
 
 fn use_flow_state() -> Rc<FlowState> {
     Owner::current()
@@ -250,21 +307,48 @@ fn use_flow_state() -> Rc<FlowState> {
             let (document, _) = seed();
             FlowState {
                 document: Signal::new(document),
+                machine: Signal::new(Machine::new()),
                 budget: Signal::new(STEP_BUDGET),
                 refusal: Signal::new(String::new()),
             }
         })
 }
 
-/// The run as it stands: the trace, and why it stopped.
-fn current_run(document: &Graph, budget: usize) -> (Vec<NodeId>, Option<Stop>) {
+/// The run as it stands **against the registers as they are**: the trace with
+/// each step's instance, and why it stopped (R1600).
+///
+/// A run reads the machine; it does not advance it. So this is a pure function
+/// of `(document, machine, budget)`, and asking it twice cannot answer twice.
+fn current_run(
+    document: &Graph,
+    machine: &Machine<Op>,
+    budget: usize,
+) -> (Vec<(Instance, NodeId)>, Option<Stop>) {
     let Some(&entry) = document.entry_points(TREE).first() else {
         return (Vec::new(), None);
     };
-    document.run(TREE, entry, budget).map_or_else(
+    document.run_on(TREE, entry, budget, machine).map_or_else(
         |_| (Vec::new(), None),
-        |run| (run.trace(), Some(run.stop())),
+        |run| (run.visited(), Some(run.stop())),
     )
+}
+
+/// A node's title, wherever in the instance tree it sits.
+fn titled(document: &Graph, instance: &Instance, id: NodeId) -> String {
+    let tree = instance.path().last().map_or(TREE, |(host, node)| {
+        document
+            .tree(*host)
+            .and_then(|t| t.node(*node))
+            .and_then(|held| match held.body {
+                NodeBody::Group(definition) => Some(definition),
+                _ => None,
+            })
+            .unwrap_or(TREE)
+    });
+    document
+        .tree(tree)
+        .and_then(|t| t.node(id))
+        .map_or_else(String::new, pinion_node_graph::Node::display_name)
 }
 
 fn node_title(document: &Graph, id: NodeId) -> String {
@@ -273,6 +357,13 @@ fn node_title(document: &Graph, id: NodeId) -> String {
         .and_then(|t| t.node(id))
         .map_or_else(String::new, |node| match &node.body {
             NodeBody::Kind(op) => op.title(),
+            // R1600 — a register says what it holds. Left as an explicit arm
+            // rather than a `{other:?}` fall-through, because a body this crate
+            // owns is one this view is expected to be able to name.
+            NodeBody::Delay(ty) => format!("Delay <{ty:?}>"),
+            NodeBody::Group(definition) => document
+                .tree(*definition)
+                .map_or_else(|| "Group".to_owned(), |t| format!("Group {}", t.name)),
             other => format!("{other:?}"),
         })
 }
@@ -304,7 +395,8 @@ fn text(body: String, tag: String, x: u32, y: u32, w: u32, px: u32, fg: Color) -
 fn roster(
     document: &Graph,
     theme: &pinion_core::theme::Theme,
-    trace: &[NodeId],
+    machine: &Machine<Op>,
+    trace: &[(Instance, NodeId)],
     loops: &[NodeId],
 ) -> Vec<Scene> {
     let ink = theme.resolve(ColorRole::OnSurface);
@@ -317,8 +409,14 @@ fn roster(
     ids.sort_unstable();
     let mut out = Vec::new();
     for (row, id) in ids.iter().enumerate() {
-        let y = 86 + u32::try_from(row).unwrap_or(0) * ROW_H;
-        let ran = trace.iter().filter(|t| *t == id).count();
+        let y = 100 + u32::try_from(row).unwrap_or(0) * ROW_H;
+        let ran = trace
+            .iter()
+            .filter(|(instance, node)| instance.is_root() && node == id)
+            .count();
+        let register = machine
+            .read(&Instance::root(), *id)
+            .map(|value| format!("holds {}", value.number()));
         let on_loop = loops.contains(id);
         let is_pure = document.signature(TREE, *id).is_some_and(|s| {
             !s.inputs.iter().any(Port::is_control) && !s.outputs.iter().any(Port::is_control)
@@ -351,7 +449,9 @@ fn roster(
             format!(
                 "{}  ·  {}",
                 node_title(document, *id),
-                if is_pure {
+                if let Some(register) = register {
+                    register
+                } else if is_pure {
                     "pure — pulled, never in the trace".to_owned()
                 } else if ran == 0 {
                     "did not run".to_owned()
@@ -370,19 +470,25 @@ fn roster(
     out
 }
 
-fn view() -> Scene {
-    let state = use_flow_state();
-    let theme = use_theme(THEME_TAG).theme_animated();
-    let document = state.document.get();
-    let budget = state.budget.get();
+/// The two header lines: what the run did, and what the world holds.
+///
+/// Lifted out of `view` because the round gave the header a second subject —
+/// the machine — and a view function that paints the whole screen in one body
+/// stops being readable at exactly the point it starts having sections.
+fn header(
+    document: &Graph,
+    machine: &Machine<Op>,
+    trace: &[(Instance, NodeId)],
+    stop: Option<Stop>,
+    budget: usize,
+    loops: &[NodeId],
+    theme: &pinion_core::theme::Theme,
+) -> Vec<Scene> {
     let ink = theme.resolve(ColorRole::OnSurface);
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
-    let (trace, stop) = current_run(&document, budget);
-    let loops = document.control_loops(TREE);
-
-    let mut children = vec![
+    vec![
         text(
-            "Control plane — which nodes run, in what order".into(),
+            "Control plane — which nodes run, when, and what the graph remembers".into(),
             format!("{VIEW_TAG}.title"),
             20,
             16,
@@ -404,7 +510,7 @@ fn view() -> Scene {
                 } else {
                     loops
                         .iter()
-                        .map(|id| node_title(&document, *id))
+                        .map(|id| node_title(document, *id))
                         .collect::<Vec<_>>()
                         .join(", ")
                 },
@@ -417,24 +523,67 @@ fn view() -> Scene {
             BODY_FONT_PX,
             muted,
         ),
-    ];
+        text(
+            format!(
+                "tick {}   ·   {} register(s) held   ·   {}",
+                machine.ticks(),
+                machine.len(),
+                machine
+                    .iter()
+                    .map(|(instance, node, value)| format!(
+                        "{instance}@{node} = {}",
+                        value.number()
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("  ")
+            ),
+            format!("{VIEW_TAG}.machine"),
+            20,
+            60,
+            WIN_W - 40,
+            BODY_FONT_PX,
+            muted,
+        ),
+    ]
+}
 
-    children.extend(roster(&document, &theme, &trace, &loops));
+fn view() -> Scene {
+    let state = use_flow_state();
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let document = state.document.get();
+    let machine = state.machine.get();
+    let budget = state.budget.get();
+    let ink = theme.resolve(ColorRole::OnSurface);
+    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    let (trace, stop) = current_run(&document, &machine, budget);
+    let loops = document.control_loops(TREE);
+
+    let mut children = header(&document, &machine, &trace, stop, budget, &loops, &theme);
+
+    children.extend(roster(&document, &theme, &machine, &trace, &loops));
 
     // Right column: the trace itself, in order.
     children.push(text(
         "Trace".into(),
         format!("{VIEW_TAG}.trace.title"),
         480,
-        86,
+        100,
         420,
         BODY_FONT_PX,
         ink,
     ));
-    for (step, id) in trace.iter().enumerate().take(16) {
-        let y = 110 + u32::try_from(step).unwrap_or(0) * 22;
+    for (step, (instance, id)) in trace.iter().enumerate().take(16) {
+        let y = 124 + u32::try_from(step).unwrap_or(0) * 22;
         children.push(text(
-            format!("{step}. {}", node_title(&document, *id)),
+            format!(
+                "{step}. {}{}",
+                titled(&document, instance, *id),
+                if instance.is_root() {
+                    String::new()
+                } else {
+                    format!("   in {instance}")
+                }
+            ),
             format!("{VIEW_TAG}.trace.{step}"),
             480,
             y,
@@ -540,6 +689,15 @@ impl ExternalIntrospect for FlowOracle {
                     SchemaField::new("never_ran", "string"),
                     SchemaField::new("port_flows", "string"),
                     SchemaField::new("last_refusal", "string"),
+                    // R1600 -- what the graph REMEMBERS, and where control
+                    // went. Neither is readable from the document alone.
+                    SchemaField::new("ticks", "int"),
+                    SchemaField::new("registers", "string"),
+                    SchemaField::new("delays", "string"),
+                    SchemaField::new("trace_instances", "string"),
+                    SchemaField::new("entered", "string"),
+                    SchemaField::new("at_fixed_point", "string"),
+                    SchemaField::new("ticks_to_finish", "int"),
                 ]
             },
         )
@@ -548,8 +706,9 @@ impl ExternalIntrospect for FlowOracle {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         let state = self.state.as_ref()?;
         let document = state.document.get();
+        let machine = state.machine.get();
         let budget = state.budget.get();
-        let (trace, stop) = current_run(&document, budget);
+        let (trace, stop) = current_run(&document, &machine, budget);
         let int = |v: usize| Some(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
         let ids = |list: &[NodeId]| {
             IntrospectValue::Text(
@@ -570,7 +729,7 @@ impl ExternalIntrospect for FlowOracle {
                 format!("{:?}", document.validate())
             })),
             "entries" => Some(ids(&document.entry_points(TREE))),
-            "trace" => Some(ids(&trace)),
+            "trace" => Some(ids(&trace.iter().map(|(_, id)| *id).collect::<Vec<_>>())),
             "steps" => int(trace.len()),
             "stop" => Some(IntrospectValue::Text(
                 match stop {
@@ -603,7 +762,7 @@ impl ExternalIntrospect for FlowOracle {
                     .tree(TREE)?
                     .nodes()
                     .map(|node| node.id)
-                    .filter(|id| !trace.contains(id))
+                    .filter(|id| !trace.iter().any(|(_, ran)| ran == id))
                     .collect();
                 cold.sort_unstable();
                 Some(ids(&cold))
@@ -630,7 +789,9 @@ impl ExternalIntrospect for FlowOracle {
                 Some(IntrospectValue::Text(rows.join(",")))
             }
             "last_refusal" => Some(IntrospectValue::Text(state.refusal.get())),
-            _ => None,
+            // R1600 -- the machine, read in its own function so this one stays
+            // about the document.
+            _ => Self::machine_read(&document, &machine, budget, path),
         }
     }
 
@@ -641,7 +802,8 @@ impl ExternalIntrospect for FlowOracle {
         match path {
             "nodes" | "links" | "valid" | "entries" | "trace" | "steps" | "stop" | "budget"
             | "control_loops" | "cycle_nodes" | "pure_nodes" | "never_ran" | "port_flows"
-            | "last_refusal" => Err(InterveneError::ReadOnly),
+            | "last_refusal" | "ticks" | "registers" | "delays" | "trace_instances" | "entered"
+            | "at_fixed_point" | "ticks_to_finish" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -660,6 +822,176 @@ impl ExternalIntrospect for FlowOracle {
 }
 
 impl FlowOracle {
+    /// The machine's own half of the read surface (R1600).
+    ///
+    /// Split out because it answers about a DIFFERENT thing: `query` above
+    /// reads the document, and everything here reads what the graph is
+    /// currently holding — which is the same separation `Machine` itself draws
+    /// by holding no reference to a document.
+    fn machine_read(
+        document: &Graph,
+        machine: &Machine<Op>,
+        budget: usize,
+        path: &str,
+    ) -> Option<IntrospectValue> {
+        let int = |v: usize| Some(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
+        let ids = |list: &[NodeId]| {
+            IntrospectValue::Text(
+                list.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        };
+        let (trace, _) = current_run(document, machine, budget);
+        match path {
+            // R1600 -- the machine.
+            "ticks" => int(machine.ticks()),
+            "registers" => Some(IntrospectValue::Text(
+                machine
+                    .iter()
+                    .map(|(instance, node, value)| format!("{instance}@{node}={}", value.number()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )),
+            "delays" => Some(ids(&document.delays(TREE))),
+            // The trace WITH its instances: two runs through one definition are
+            // two sets of steps, and flattening them loses which is which.
+            //
+            // `@` separates the instance from the node ON PURPOSE, and the
+            // reason was found by reading this wire rather than this code: an
+            // instance prints as `/0:10` and a node as `6`, so concatenating
+            // them gives `/0:106`, which is also what instance `/0:106` at the
+            // root would print. A composite address needs its own separator.
+            "trace_instances" => Some(IntrospectValue::Text(
+                trace
+                    .iter()
+                    .map(|(instance, node)| format!("{instance}@{node}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )),
+            "entered" => Some(IntrospectValue::Text(
+                document
+                    .run_on(TREE, *document.entry_points(TREE).first()?, budget, machine)
+                    .map(|run| {
+                        run.entered()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default(),
+            )),
+            // Whether ticking again would change anything -- asked without
+            // advancing, by ticking a COPY. The machine is a value, so this
+            // costs a clone and no side effect.
+            "at_fixed_point" => {
+                let mut probe = machine.clone();
+                Some(IntrospectValue::Text(
+                    if document.tick(TREE, &mut probe).changed() == 0 {
+                        "yes".to_owned()
+                    } else {
+                        "no".to_owned()
+                    },
+                ))
+            }
+            // How many more ticks until the scenario HALTS: the question the
+            // whole round exists to make answerable, and it is answered on a
+            // copy so asking it does not move the world.
+            "ticks_to_finish" => {
+                let mut probe = machine.clone();
+                let mut taken = 0_usize;
+                while taken <= TICK_HORIZON {
+                    if current_run(document, &probe, budget).1 == Some(Stop::Halted) {
+                        break;
+                    }
+                    document.tick(TREE, &mut probe);
+                    taken += 1;
+                }
+                int(taken)
+            }
+            _ => None,
+        }
+    }
+
+    /// The machine's own verbs (R1600).
+    fn act_on_machine(
+        state: &Rc<FlowState>,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // R1600 -- advance every register once, simultaneously.
+            "tick" => {
+                let document = state.document.get();
+                let mut machine = state.machine.get();
+                let tick = document.tick(TREE, &mut machine);
+                let moved = tick.changed();
+                let at = tick.at();
+                let dropped = tick.dropped().len();
+                state.machine.set(machine);
+                state.refusal.set(String::new());
+                Ok(IntrospectValue::Text(format!(
+                    "tick {at}: {moved} moved, {dropped} dropped"
+                )))
+            }
+            // Tick until nothing changes, or the budget runs out. The last tick
+            // still moving IS "did not converge".
+            "settle" => {
+                let budget = Self::number(args)? as usize;
+                let document = state.document.get();
+                let mut machine = state.machine.get();
+                let taken = document.settle(TREE, &mut machine, budget);
+                let converged = taken.last().is_some_and(|last| last.changed() == 0);
+                let count = taken.len();
+                state.machine.set(machine);
+                state.refusal.set(String::new());
+                Ok(IntrospectValue::Text(format!(
+                    "{count} tick(s), converged: {converged}"
+                )))
+            }
+            // Write a register directly -- the debugger's verb, and the one
+            // thing that moves state without a tick.
+            "force" => {
+                let IntrospectValue::Text(spec) = args else {
+                    return Err(InvokeError::Rejected("expected \"<node>,<value>\"".into()));
+                };
+                let mut parts = spec.split(',');
+                let id = parts
+                    .next()
+                    .and_then(|p| p.trim().parse::<u32>().ok())
+                    .ok_or_else(|| InvokeError::Rejected(format!("{spec:?}: no node id").into()))?;
+                let value = parts
+                    .next()
+                    .and_then(|p| p.trim().parse::<i64>().ok())
+                    .ok_or_else(|| InvokeError::Rejected(format!("{spec:?}: no value").into()))?;
+                if !state.document.get().delays(TREE).contains(&NodeId(id)) {
+                    return Err(InvokeError::Rejected(
+                        format!("node {id} is not a register in this tree").into(),
+                    ));
+                }
+                let mut machine = state.machine.get();
+                let was = machine.force(Instance::root(), NodeId(id), Val::Number(value));
+                state.machine.set(machine);
+                state.refusal.set(String::new());
+                Ok(IntrospectValue::Text(match was {
+                    Some(before) => format!("was {}", before.number()),
+                    None => "was unset".to_owned(),
+                }))
+            }
+            // Back to tick zero, keeping the document. The scenario's RESTART,
+            // which is a different verb from rebuilding the graph.
+            "rewind" => {
+                let mut machine = state.machine.get();
+                machine.reset();
+                state.machine.set(machine);
+                state.refusal.set(String::new());
+                Ok(IntrospectValue::Text("rewound".to_owned()))
+            }
+            other => Err(InvokeError::Rejected(format!("no verb {other:?}").into())),
+        }
+    }
+
     fn act(&mut self, path: &str, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         let state = self.bound()?.clone();
         match path {
@@ -728,9 +1060,14 @@ impl FlowOracle {
                 state.refusal.set(String::new());
                 Ok(IntrospectValue::Text(format!("was {was}")))
             }
+            // R1600 -- the machine's own verbs, in their own function for the
+            // same reason its reads are: they act on what the graph is DOING
+            // rather than on what it is.
+            "tick" | "settle" | "force" | "rewind" => Self::act_on_machine(&state, path, args),
             "reset" => {
                 let (document, _) = seed();
                 state.document.set(document);
+                state.machine.set(Machine::new());
                 state.budget.set(STEP_BUDGET);
                 state.refusal.set(String::new());
                 Ok(IntrospectValue::Text("reset".to_owned()))
@@ -801,12 +1138,15 @@ impl WidgetA11y for NodeFlowView {
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_flow_state();
         let document = state.document.get();
-        let (trace, stop) = current_run(&document, state.budget.get());
+        let machine = state.machine.get();
+        let (trace, stop) = current_run(&document, &machine, state.budget.get());
         vec![
             AccessNode::new(VIEW_TAG, AriaRole::Group)
                 .with_name("Scenario control graph")
                 .with_value(AccessValue::Text(format!(
-                    "{} steps, {}, {} node(s) on a control loop",
+                    "tick {}, {} steps, {}, {} node(s) on a control loop, \
+                     {} register(s) held",
+                    machine.ticks(),
                     trace.len(),
                     match stop {
                         Some(Stop::Halted) => "halted",
@@ -814,6 +1154,7 @@ impl WidgetA11y for NodeFlowView {
                         None => "no entry point",
                     },
                     document.control_loops(TREE).len(),
+                    machine.len(),
                 ))),
         ]
     }
