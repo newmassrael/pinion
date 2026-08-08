@@ -122,6 +122,7 @@ members = [
     "examples/hello-polar",
     "examples/hello-time-chart",
     "examples/hello-hex-dump",
+    "examples/hello-tile-dashboard",
     "examples/hello-hyperlink",
     "examples/hello-crosshair",
     "examples/hello-heatmap",

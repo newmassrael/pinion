@@ -4212,6 +4212,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-tile-dashboard"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-time-chart"
 version = "0.0.1"
 dependencies = [

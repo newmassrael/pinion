@@ -85806,6 +85806,50 @@
         "Named presets are a map of name to TileGrid, which serde already gives an app"
       ]
     },
+    "Round 1608": {
+      "decision_summary": "The tile dashboard gets its gesture, and the model's claim gets a cursor. R1607 built TileGrid, measured that R1560's CSS Grid already holds a Grafana-class dashboard, and then stopped without a consumer -- writing in its own changelog that a consumer was the only thing that could tell us whether the reflow's LOCALITY holds under a real pointer. It does. Three layers meet in examples/hello-tile-dashboard and only one is new: the layout is R1560's grid, the arrangement is R1607's model, and the gesture is this file. A press latches the card under the cursor AND the cell the grab happened at relative to that card; each move snaps the cursor to a cell and subtracts the grab offset; the release lets go. THE GRAB OFFSET IS THE WHOLE TRICK. Snapping the cursor's cell and moving the card's top-left there makes a card jump under the pointer the moment it is grabbed anywhere but its corner, which is exactly the difference between a drag and a teleport, and it is the kind of thing no amount of model testing surfaces. THE MODEL CANNOT TRAVEL THROUGH WidgetCore::State, because State is Copy and an arrangement is a Vec. The canonical shape for a model this size is hello-node-groups': the state lives in an Owner::cache'd signal that the external mutates and the view reads. That is not a workaround -- it is what makes the painter and the wire read ONE arrangement instead of two copies that could disagree, which is the same argument R1607 used for putting the zero-based-to-CSS conversion in exactly one place. Every gesture is a verb over the wire (move_to / resize / compact / remove) and the whole board is one JSON read (layout), so an agent rearranges the dashboard with no pixel; every slot is read-only, and a read-only refusal is told apart from an unknown path, which is R1566's rule rather than this binding's invention. Past Grafana on the wire as well as in the model: last_reflow names what a gesture displaced INCLUDING the transitive case, a card pushed by a card that was itself pushed. FOUR OF THIS ROUND'S ASSERTIONS WERE WRONG AND THE CODE WAS RIGHT EVERY TIME, which is the round's real content rather than an embarrassment to bury. `alarms` is eight columns wide in a grid of twelve, so it cannot move at all and the drag fixture had to be a narrower card -- the model's clamp was correct and the test's choice of card was not. The displacement list was longer than expected, because the reflow is transitive. A 6x2 resize came out clean, correctly, because the rows it grew into were empty by then. And a card that shares no column with the dragged one is not touched at all: that is the locality the model's doc claimed, that R1607 could not test, and that the demo now asserts over the wire. The visible-deliverable obligation R1607 recorded itself as breaking is met here: a real binding, a real window, and a demo with forty assertions over ten sections that reads the painted board out of scene/snapshot rather than assuming it.",
+      "changes_bullets": [
+        "examples/hello-tile-dashboard: press-drag with a grab offset, snapped to grid cells",
+        "The board lives in an Owner::cache'd signal the oracle and the view SHARE",
+        "Gestures are verbs over the wire; the whole arrangement is one JSON read",
+        "tools/demos/r1608_tile_dashboard.py: 40 assertions, including the painted grid"
+      ],
+      "verification_bullets": [
+        "13 example tests + the demo PASS against a real window (release binary, RPC)",
+        "Four wrong assertions corrected in favour of the code, each recorded in place",
+        "clippy -p hello-tile-dashboard --all-targets clean; cargo fmt --all clean",
+        "The locality claim R1607 could not test is now asserted over the wire"
+      ],
+      "impact_refs": [
+        "5.21",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Resize has no pointer gesture yet — only the verb; a corner handle is the next slice",
+        "No keyboard channel: the board is drag- and RPC-driven, as the brush examples are"
+      ],
+      "publishable_decision_summary": "The tile dashboard gets its gesture, and the model's claim gets a cursor. R1607 built TileGrid, measured that R1560's CSS Grid already holds a Grafana-class dashboard, and then stopped without a consumer -- writing in its own changelog that a consumer was the only thing that could tell us whether the reflow's LOCALITY holds under a real pointer. It does. Three layers meet in examples/hello-tile-dashboard and only one is new: the layout is R1560's grid, the arrangement is R1607's model, and the gesture is this file. A press latches the card under the cursor AND the cell the grab happened at relative to that card; each move snaps the cursor to a cell and subtracts the grab offset; the release lets go. THE GRAB OFFSET IS THE WHOLE TRICK. Snapping the cursor's cell and moving the card's top-left there makes a card jump under the pointer the moment it is grabbed anywhere but its corner, which is exactly the difference between a drag and a teleport, and it is the kind of thing no amount of model testing surfaces. THE MODEL CANNOT TRAVEL THROUGH WidgetCore::State, because State is Copy and an arrangement is a Vec. The canonical shape for a model this size is hello-node-groups': the state lives in an Owner::cache'd signal that the external mutates and the view reads. That is not a workaround -- it is what makes the painter and the wire read ONE arrangement instead of two copies that could disagree, which is the same argument R1607 used for putting the zero-based-to-CSS conversion in exactly one place. Every gesture is a verb over the wire (move_to / resize / compact / remove) and the whole board is one JSON read (layout), so an agent rearranges the dashboard with no pixel; every slot is read-only, and a read-only refusal is told apart from an unknown path, which is R1566's rule rather than this binding's invention. Past Grafana on the wire as well as in the model: last_reflow names what a gesture displaced INCLUDING the transitive case, a card pushed by a card that was itself pushed. FOUR OF THIS ROUND'S ASSERTIONS WERE WRONG AND THE CODE WAS RIGHT EVERY TIME, which is the round's real content rather than an embarrassment to bury. `alarms` is eight columns wide in a grid of twelve, so it cannot move at all and the drag fixture had to be a narrower card -- the model's clamp was correct and the test's choice of card was not. The displacement list was longer than expected, because the reflow is transitive. A 6x2 resize came out clean, correctly, because the rows it grew into were empty by then. And a card that shares no column with the dragged one is not touched at all: that is the locality the model's doc claimed, that R1607 could not test, and that the demo now asserts over the wire. The visible-deliverable obligation R1607 recorded itself as breaking is met here: a real binding, a real window, and a demo with forty assertions over ten sections that reads the painted board out of scene/snapshot rather than assuming it.",
+      "publishable_changes_bullets": [
+        "examples/hello-tile-dashboard: press-drag with a grab offset, snapped to grid cells",
+        "The board lives in an Owner::cache'd signal the oracle and the view SHARE",
+        "Gestures are verbs over the wire; the whole arrangement is one JSON read",
+        "tools/demos/r1608_tile_dashboard.py: 40 assertions, including the painted grid"
+      ],
+      "publishable_verification_bullets": [
+        "13 example tests + the demo PASS against a real window (release binary, RPC)",
+        "Four wrong assertions corrected in favour of the code, each recorded in place",
+        "clippy -p hello-tile-dashboard --all-targets clean; cargo fmt --all clean",
+        "The locality claim R1607 could not test is now asserted over the wire"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Resize has no pointer gesture yet — only the verb; a corner handle is the next slice",
+        "No keyboard channel: the board is drag- and RPC-driven, as the brush examples are"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [
