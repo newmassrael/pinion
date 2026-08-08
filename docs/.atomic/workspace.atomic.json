@@ -85398,6 +85398,60 @@
         "5.38"
       ]
     },
+    "Round 1602": {
+      "decision_summary": "A census verdict is PROVEN BY A TEST. R1601 made the reference census a tool, and what a tool of that shape proves is COMPLETENESS -- no upstream operator is silently absorbed into a percentage. It proves nothing whatever about whether a verdict is TRUE, and the 214 judgements in docs/reference-census.json were one session's hand reading. The two error directions are not symmetric, which is what makes that dangerous: a wrong `absent` puts a fake item on the gap list and the next round discovers it by trying to close it, so it self-corrects; a wrong `have` INFLATES THE COVERAGE NUMBER AND NOBODY TRIPS OVER IT. That is exactly the direction R1601 itself had to correct, 93% down to 78%. So every `have` row now carries `proven_by`, addressed <crate>::<test>, and 67 proofs land: 61 in crates/pinion-node-graph/tests/reference_census.rs and 3 in crates/pinion-core/tests/reference_census.rs -- the region-select trio, whose capability R1590 measured as belonging to the painted surface rather than to a node model, which is why a proof is addressed by CRATE rather than by a bare name. Each proof reaches the capability through the PUBLIC API only, the position an application is in, and asserts an outcome that would differ if the capability were missing; measured by isolation, each of four broken mechanisms fails exactly the census proofs resting on it and no others. THE CHECK IS TWO HALVES THAT NEED EACH OTHER: reference_census.py --check-pin resolves the address to a census file that exists, which is a question about paths, so no Rust is parsed and the census-over-text failure this whole tool exists to stop is not reintroduced; and each crate's own census file asserts a BIJECTION between the pin rows addressed to it and the proofs it holds, where the compiler is the one reading. Together, a `have` cannot be added without a test, a proof cannot be deleted or renamed without the pin noticing, and a verdict that leaves the numerator may not keep its evidence. The verdicts most worth doubting were named in the debt and they were the COMPOSITION claims -- \"call expose again\", \"there is nothing to sync\", \"disconnect covers break-node-links\" -- because a composition is a HYPOTHESIS UNTIL IT IS RUN, which R1571 already learned by building R1555's written prescription and finding it harmful. All of them hold, and writing them out produced two facts the pin could not have stated: a Socket names a port INDEX and takes its side from which end of the Link it sits on, so \"break this pin's links\" must choose an end and a filter that ignores the end matches twice; and Unreal's HideNoConnectionNoDefaultPins is a filter over the published hidden set crossed with the signature's declared defaults, not a second appearance flag, so the crate supplies the parts and the narrower rule is the application's. THE SHAPE OF THE BINDING WAS CHOSEN BY A COUNTERFACTUAL, not by reasoning. The first draft stored a bare fn() pointer beside each row, and CF-2 -- rename a proof -- was NOT CAUGHT: the bijection compared operator names on both sides and the derived name against the pin, so the function's own identifier was never in the comparison at all, and `proven_by` was free to name a test that no longer existed. The fix is a generic proof() helper whose type parameter is the function's ITEM type, so type_name_of_val answers with its path: the identifier is written once, at the call site, and the string it is checked against comes from the compiler. This closes axis 1 of debt-reference-census-verdicts-are-unreviewed. Axis 2 -- the Unreal census is ONE header, so 39% is a lower bound -- stays open and is R1603, and the finding this round adds to it is that the second source is not more of the same unit: UEdGraphSchema's virtuals are the axis an OPERATOR census is structurally blind to, and R1593's implicit conversion and R1594's per-socket default value are both on it, both read as zero, and both were prerequisites.",
+      "changes_bullets": [
+        "Every `have` verdict names the test that runs it: `proven_by`, addressed `<crate>::<test>`",
+        "67 proofs land, 61 in pinion-node-graph and 3 in pinion-core, each through the PUBLIC API only",
+        "The two halves need each other: --check-pin resolves the address, each crate asserts the bijection",
+        "The binding reads the proof's name off the FUNCTION (type_name_of_val), not from a string beside it",
+        "A verdict out of the numerator may not carry evidence, so a downgrade cannot keep its proof"
+      ],
+      "verification_bullets": [
+        "67 census proofs green: 63 in pinion-node-graph, 4 in pinion-core",
+        "8/8 counterfactuals CAUGHT across two plans (mechanism 4, capability discrimination 4)",
+        "CF-2 PASSED on the first draft and that is the finding: a renamed proof was invisible",
+        "Isolation measured: each broken mechanism fails exactly the census proofs resting on it",
+        "reference_census.py --selftest all green with six new assertions; --check-pin 214 judged, 0 problems",
+        "cargo clippy -p pinion-node-graph --all-targets clean; cargo fmt --all clean"
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Axis 2 of debt-reference-census-verdicts-are-unreviewed stays open and is R1603",
+        "The Unreal census is ONE header, so 39% is a lower bound and was named as one",
+        "The pin/proof check is duplicated in two crates; two is not three, so no lift yet",
+        "A proof asserts the capability, not the pin's covered_by prose, which stays a hand claim"
+      ],
+      "publishable_decision_summary": "A census verdict is PROVEN BY A TEST. R1601 made the reference census a tool, and what a tool of that shape proves is COMPLETENESS -- no upstream operator is silently absorbed into a percentage. It proves nothing whatever about whether a verdict is TRUE, and the 214 judgements in docs/reference-census.json were one session's hand reading. The two error directions are not symmetric, which is what makes that dangerous: a wrong `absent` puts a fake item on the gap list and the next round discovers it by trying to close it, so it self-corrects; a wrong `have` INFLATES THE COVERAGE NUMBER AND NOBODY TRIPS OVER IT. That is exactly the direction R1601 itself had to correct, 93% down to 78%. So every `have` row now carries `proven_by`, addressed <crate>::<test>, and 67 proofs land: 61 in crates/pinion-node-graph/tests/reference_census.rs and 3 in crates/pinion-core/tests/reference_census.rs -- the region-select trio, whose capability R1590 measured as belonging to the painted surface rather than to a node model, which is why a proof is addressed by CRATE rather than by a bare name. Each proof reaches the capability through the PUBLIC API only, the position an application is in, and asserts an outcome that would differ if the capability were missing; measured by isolation, each of four broken mechanisms fails exactly the census proofs resting on it and no others. THE CHECK IS TWO HALVES THAT NEED EACH OTHER: reference_census.py --check-pin resolves the address to a census file that exists, which is a question about paths, so no Rust is parsed and the census-over-text failure this whole tool exists to stop is not reintroduced; and each crate's own census file asserts a BIJECTION between the pin rows addressed to it and the proofs it holds, where the compiler is the one reading. Together, a `have` cannot be added without a test, a proof cannot be deleted or renamed without the pin noticing, and a verdict that leaves the numerator may not keep its evidence. The verdicts most worth doubting were named in the debt and they were the COMPOSITION claims -- \"call expose again\", \"there is nothing to sync\", \"disconnect covers break-node-links\" -- because a composition is a HYPOTHESIS UNTIL IT IS RUN, which R1571 already learned by building R1555's written prescription and finding it harmful. All of them hold, and writing them out produced two facts the pin could not have stated: a Socket names a port INDEX and takes its side from which end of the Link it sits on, so \"break this pin's links\" must choose an end and a filter that ignores the end matches twice; and Unreal's HideNoConnectionNoDefaultPins is a filter over the published hidden set crossed with the signature's declared defaults, not a second appearance flag, so the crate supplies the parts and the narrower rule is the application's. THE SHAPE OF THE BINDING WAS CHOSEN BY A COUNTERFACTUAL, not by reasoning. The first draft stored a bare fn() pointer beside each row, and CF-2 -- rename a proof -- was NOT CAUGHT: the bijection compared operator names on both sides and the derived name against the pin, so the function's own identifier was never in the comparison at all, and `proven_by` was free to name a test that no longer existed. The fix is a generic proof() helper whose type parameter is the function's ITEM type, so type_name_of_val answers with its path: the identifier is written once, at the call site, and the string it is checked against comes from the compiler. This closes axis 1 of debt-reference-census-verdicts-are-unreviewed. Axis 2 -- the Unreal census is ONE header, so 39% is a lower bound -- stays open and is R1603, and the finding this round adds to it is that the second source is not more of the same unit: UEdGraphSchema's virtuals are the axis an OPERATOR census is structurally blind to, and R1593's implicit conversion and R1594's per-socket default value are both on it, both read as zero, and both were prerequisites.",
+      "publishable_changes_bullets": [
+        "Every `have` verdict names the test that runs it: `proven_by`, addressed `<crate>::<test>`",
+        "67 proofs land, 61 in pinion-node-graph and 3 in pinion-core, each through the PUBLIC API only",
+        "The two halves need each other: --check-pin resolves the address, each crate asserts the bijection",
+        "The binding reads the proof's name off the FUNCTION (type_name_of_val), not from a string beside it",
+        "A verdict out of the numerator may not carry evidence, so a downgrade cannot keep its proof"
+      ],
+      "publishable_verification_bullets": [
+        "67 census proofs green: 63 in pinion-node-graph, 4 in pinion-core",
+        "8/8 counterfactuals CAUGHT across two plans (mechanism 4, capability discrimination 4)",
+        "CF-2 PASSED on the first draft and that is the finding: a renamed proof was invisible",
+        "Isolation measured: each broken mechanism fails exactly the census proofs resting on it",
+        "reference_census.py --selftest all green with six new assertions; --check-pin 214 judged, 0 problems",
+        "cargo clippy -p pinion-node-graph --all-targets clean; cargo fmt --all clean"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Axis 2 of debt-reference-census-verdicts-are-unreviewed stays open and is R1603",
+        "The Unreal census is ONE header, so 39% is a lower bound and was named as one",
+        "The pin/proof check is duplicated in two crates; two is not three, so no lift yet",
+        "A proof asserts the capability, not the pin's covered_by prose, which stays a hand claim"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

@@ -49,11 +49,32 @@ per operator, and an operator the pin does not judge is reported as a
 point: a census that silently absorbs a new upstream operator into a percentage
 is the thing that went wrong.
 
+## R1602 — and a judgement is not a claim, it is a test
+
+Enumerating completely still leaves every verdict a hand judgement, and the two
+directions are not equally safe: a wrong `absent` puts a fake item on the gap
+list and the next round finds it by trying to close it, while a wrong **`have`
+inflates the coverage number and nobody trips over it**. That is the direction
+R1601 itself had to correct.
+
+So each `have` row carries `proven_by`, addressed `<crate>::<test>`, and the
+named crate holds a `tests/reference_census.rs` whose own test asserts a
+**bijection** between the pin's rows addressed to it and the proofs it contains.
+Between the two halves — this file checks the address resolves to a census file
+that exists, and that file checks the address is answered — a `have` cannot be
+added without a test, a proof cannot be deleted without the pin noticing, and a
+row cannot name a proof belonging to a different capability, because the proof's
+name is *derived* from the operator rather than transcribed.
+
+`covered_by` stays: it names the API, which is what a person reading the pin
+wants. `proven_by` names what runs.
+
 ## Running it
 
     python3 tools/reference_census.py              # live vs pinned
     python3 tools/reference_census.py --emit       # a starter pin from the live trees
     python3 tools/reference_census.py --selftest   # the tool's own arithmetic
+    python3 tools/reference_census.py --check-pin  # the committed judgement, tree-free
 
 The reference trees are GPL / EULA'd and live outside this repo, so they cannot
 be vendored and the census cannot be a `cargo test`. Absent trees **fail open**
@@ -73,7 +94,16 @@ from pathlib import Path
 
 BLENDER = Path(os.environ.get("PINION_BLENDER_REF", Path.home() / "blender-ref"))
 UNREAL = Path(os.environ.get("PINION_UNREAL_REF", Path.home() / "UnrealEngine"))
-PIN = Path(__file__).resolve().parent.parent / "docs" / "reference-census.json"
+REPO = Path(__file__).resolve().parent.parent
+PIN = REPO / "docs" / "reference-census.json"
+
+#: Where a crate's own census proofs live. One file per crate, so the crate that
+#: owns the capability is the crate that proves it.
+PROOF_FILE = "tests/reference_census.rs"
+
+#: `<crate>::<test>` — a bare test name would not say which crate runs it, and
+#: the capabilities behind these verdicts are not all in one.
+PROOF_ADDRESS = re.compile(r"^([a-z0-9][a-z0-9-]*)::([a-z][a-z0-9_]*)$")
 
 #: Verdicts a pinned operator may carry. `have` and `absent` are the two that
 #: move the coverage number; the other three take it out of the denominator,
@@ -291,6 +321,7 @@ def emit(census: Census, pin: dict) -> None:
                 "mechanism": op.mechanism,
                 "verdict": previous.get("verdict", ""),
                 "covered_by": previous.get("covered_by", ""),
+                "proven_by": previous.get("proven_by", ""),
                 "where": op.where,
             }
         out[tree] = rows
@@ -383,6 +414,40 @@ def selftest() -> int:
         "and Unreal's command list parses",
     )
 
+    print("R1602 — a `have` names the test that runs it")
+    here = Path(__file__).resolve().parent.parent
+    row = {
+        "mechanism": "cpp",
+        "verdict": "have",
+        "covered_by": "Document::group",
+        "proven_by": "pinion-node-graph::blender_group_make",
+    }
+    check(
+        proof_problems("blender", "NODE_OT_group_make", row, here) == [],
+        "an address whose crate holds a census file resolves",
+    )
+    check(
+        len(proof_problems("blender", "x", {**row, "proven_by": ""}, here)) == 1,
+        "★ a `have` with no proof is a problem — the wrong verdict is the one "
+        "that inflates the number, so it is the one that has to cost something",
+    )
+    check(
+        len(proof_problems("blender", "x", {**row, "proven_by": "group_make"}, here)) == 1,
+        "a bare test name is refused: it does not say which crate runs it",
+    )
+    check(
+        len(proof_problems("blender", "x", {**row, "proven_by": "pinion-nope::t"}, here)) == 1,
+        "and an address into a crate with no census file is refused",
+    )
+    check(
+        proof_problems("blender", "x", {"verdict": "absent", "proven_by": ""}, here) == [],
+        "an `absent` needs no proof",
+    )
+    check(
+        len(proof_problems("blender", "x", {"verdict": "absent", "proven_by": "a::b"}, here)) == 1,
+        "and may not carry one — evidence belongs to the verdict it is evidence for",
+    )
+
     if FAILURES:
         print(f"\nreference census: {len(FAILURES)} failure(s)")
         return 1
@@ -390,8 +455,44 @@ def selftest() -> int:
     return 0
 
 
-def check_pin(pin: dict) -> int:
-    """The pin judges everything it holds, and says why for each.
+def proof_problems(tree: str, name: str, row: dict, repo: Path) -> list[str]:
+    """Whether this row's `proven_by` resolves to a census file that exists.
+
+    Deliberately only half the check. Whether the named *test* is there is a
+    question about Rust, and asking it here would be a census over text — the
+    failure this whole tool exists to stop. The other half is the bijection test
+    inside each crate's own census file, where the compiler is the one reading.
+    """
+    verdict = row.get("verdict", "")
+    proven_by = row.get("proven_by", "")
+    if verdict != "have":
+        if proven_by:
+            return [
+                f"{tree}/{name}: verdict {verdict!r} carries proven_by "
+                f"{proven_by!r} — only a `have` is in the numerator, so only a "
+                "`have` may claim evidence"
+            ]
+        return []
+    if not proven_by:
+        return [
+            f"{tree}/{name}: `have` with no proof. Name the test that exercises "
+            f"it, as <crate>::<test>, and add it to that crate's {PROOF_FILE}."
+        ]
+    match = PROOF_ADDRESS.match(proven_by)
+    if not match:
+        return [f"{tree}/{name}: proven_by {proven_by!r} is not <crate>::<test>"]
+    crate = match.group(1)
+    if not (repo / "crates" / crate / PROOF_FILE).is_file():
+        return [
+            f"{tree}/{name}: proven_by names {crate}, which has no "
+            f"{PROOF_FILE} to hold the proof"
+        ]
+    return []
+
+
+def check_pin(pin: dict, repo: Path = REPO) -> int:
+    """The pin judges everything it holds, says why for each, and — for the ones
+    that move the number up — names the test that runs it.
 
     Runnable with no reference tree, which is what makes it a gate: the trees are
     outside this repo and may be absent, but the JUDGEMENT is committed here and
@@ -399,6 +500,7 @@ def check_pin(pin: dict) -> int:
     and would quietly leave the denominator.
     """
     problems: list[str] = []
+    proven: dict[str, int] = {}
     for tree, rows in pin.items():
         for name, row in sorted(rows.items()):
             verdict = row.get("verdict", "")
@@ -413,10 +515,20 @@ def check_pin(pin: dict) -> int:
                 )
             if not row.get("mechanism"):
                 problems.append(f"{tree}/{name}: no mechanism")
+            found = proof_problems(tree, name, row, repo)
+            problems.extend(found)
+            if verdict == "have" and not found:
+                crate = row["proven_by"].split("::", 1)[0]
+                proven[crate] = proven.get(crate, 0) + 1
     for line in problems:
         print(f"  {line}")
     total = sum(len(rows) for rows in pin.values())
     print(f"reference census pin: {total} judged operator(s), {len(problems)} problem(s)")
+    if proven:
+        shape = ", ".join(f"{crate} {count}" for crate, count in sorted(proven.items()))
+        print(f"  {sum(proven.values())} `have` verdict(s) name a proof: {shape}")
+        print("  (that the named TEST exists is asserted by each crate's own "
+              f"{PROOF_FILE})")
     return 1 if problems else 0
 
 

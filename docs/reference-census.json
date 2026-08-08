@@ -27,6 +27,7 @@
     "NODE_OT_add_empty_group": {
       "covered_by": "Document::add_definition + instantiate",
       "mechanism": "python-core",
+      "proven_by": "pinion-node-graph::blender_add_empty_group",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -39,6 +40,7 @@
     "NODE_OT_add_group": {
       "covered_by": "Document::instantiate",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_add_group",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
@@ -51,6 +53,7 @@
     "NODE_OT_add_group_input_node": {
       "covered_by": "Document::expose + Tree::interface_node",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_add_group_input_node",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
@@ -123,6 +126,7 @@
     "NODE_OT_attach": {
       "covered_by": "Document::set_parent",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_attach",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -159,18 +163,21 @@
     "NODE_OT_clipboard_copy": {
       "covered_by": "Document::extract (Fragment)",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_clipboard_copy",
       "verdict": "have",
       "where": "source/blender/editors/space_node/clipboard.cc"
     },
     "NODE_OT_clipboard_paste": {
       "covered_by": "Document::insert (Fragment)",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_clipboard_paste",
       "verdict": "have",
       "where": "source/blender/editors/space_node/clipboard.cc"
     },
     "NODE_OT_collapse_hide_unused_toggle": {
       "covered_by": "Appearance::hide_unused_ports",
       "mechanism": "python-core",
+      "proven_by": "pinion-node-graph::blender_collapse_hide_unused_toggle",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -201,6 +208,7 @@
     "NODE_OT_delete": {
       "covered_by": "Document::remove_node",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_delete",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -213,12 +221,14 @@
     "NODE_OT_delete_reconnect": {
       "covered_by": "Document::dissolve",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_delete_reconnect",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_detach": {
       "covered_by": "Document::set_parent(None) / unframe",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_detach",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -231,6 +241,7 @@
     "NODE_OT_duplicate": {
       "covered_by": "Document::duplicate",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_duplicate",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -279,36 +290,42 @@
     "NODE_OT_group_edit": {
       "covered_by": "EditPath::enter / exit",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_group_edit",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_group.cc"
     },
     "NODE_OT_group_enter_exit": {
       "covered_by": "EditPath::enter / exit",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_group_enter_exit",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_group.cc"
     },
     "NODE_OT_group_insert": {
       "covered_by": "Document::group_insert",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_group_insert",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_group.cc"
     },
     "NODE_OT_group_make": {
       "covered_by": "Document::group",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_group_make",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_group.cc"
     },
     "NODE_OT_group_separate": {
       "covered_by": "Document::group_separate",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_group_separate",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_group.cc"
     },
     "NODE_OT_group_ungroup": {
       "covered_by": "Document::ungroup",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_group_ungroup",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_group.cc"
     },
@@ -321,6 +338,7 @@
     "NODE_OT_hide_toggle": {
       "covered_by": "Appearance::collapsed",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_hide_toggle",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -333,6 +351,7 @@
     "NODE_OT_interface_item_duplicate": {
       "covered_by": "Document::expose / unexpose",
       "mechanism": "python-core",
+      "proven_by": "pinion-node-graph::blender_interface_item_duplicate",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -345,6 +364,7 @@
     "NODE_OT_interface_item_new": {
       "covered_by": "Document::expose / unexpose",
       "mechanism": "python-core",
+      "proven_by": "pinion-node-graph::blender_interface_item_new",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -357,6 +377,7 @@
     "NODE_OT_interface_item_remove": {
       "covered_by": "Document::expose / unexpose",
       "mechanism": "python-core",
+      "proven_by": "pinion-node-graph::blender_interface_item_remove",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -369,6 +390,7 @@
     "NODE_OT_join": {
       "covered_by": "Document::enframe",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_join",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -381,12 +403,14 @@
     "NODE_OT_join_nodes": {
       "covered_by": "Document::enframe",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_join_nodes",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
     "NODE_OT_link": {
       "covered_by": "Document::connect",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_link",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -399,6 +423,7 @@
     "NODE_OT_link_make": {
       "covered_by": "Document::connect",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_link_make",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -411,18 +436,21 @@
     "NODE_OT_links_cut": {
       "covered_by": "Document::disconnect",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_links_cut",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
     "NODE_OT_links_detach": {
       "covered_by": "Document::detach",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_links_detach",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
     "NODE_OT_links_mute": {
       "covered_by": "Document::set_link_muted",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_links_mute",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
@@ -441,6 +469,7 @@
     "NODE_OT_mute_toggle": {
       "covered_by": "Document::set_bypassed",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_mute_toggle",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -471,6 +500,7 @@
     "NODE_OT_new_node_tree": {
       "covered_by": "Document::add_definition",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_new_node_tree",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_add.cc"
     },
@@ -615,18 +645,21 @@
     "NODE_OT_options_toggle": {
       "covered_by": "Appearance::show_options",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_options_toggle",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
     "NODE_OT_parent_set": {
       "covered_by": "Document::set_parent",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_parent_set",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_relationships.cc"
     },
     "NODE_OT_preview_toggle": {
       "covered_by": "Appearance::show_preview",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_preview_toggle",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -645,6 +678,7 @@
     "NODE_OT_resize": {
       "covered_by": "Appearance::width / height (R1586, R1595)",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_resize",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_edit.cc"
     },
@@ -663,24 +697,28 @@
     "NODE_OT_select_box": {
       "covered_by": "Region + Document::grow (R1591/R1592)",
       "mechanism": "cpp",
+      "proven_by": "pinion-core::blender_select_box",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
     "NODE_OT_select_circle": {
       "covered_by": "Region + Document::grow (R1591/R1592)",
       "mechanism": "cpp",
+      "proven_by": "pinion-core::blender_select_circle",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
     "NODE_OT_select_grouped": {
       "covered_by": "Document::grow (Grow::Grouped)",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_select_grouped",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
     "NODE_OT_select_lasso": {
       "covered_by": "Region + Document::grow (R1591/R1592)",
       "mechanism": "cpp",
+      "proven_by": "pinion-core::blender_select_lasso",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
@@ -693,18 +731,21 @@
     "NODE_OT_select_linked_from": {
       "covered_by": "Document::grow (Reach)",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_select_linked_from",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
     "NODE_OT_select_linked_to": {
       "covered_by": "Document::grow (Reach)",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_select_linked_to",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
     "NODE_OT_select_same_type_step": {
       "covered_by": "Document::same_kind_run",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_select_same_type_step",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_select.cc"
     },
@@ -723,6 +764,7 @@
     "NODE_OT_sockets_sync": {
       "covered_by": "signature is DERIVED, so there is nothing to sync",
       "mechanism": "cpp",
+      "proven_by": "pinion-node-graph::blender_sockets_sync",
       "verdict": "have",
       "where": "source/blender/editors/space_node/node_sync_sockets.cc"
     },
@@ -741,6 +783,7 @@
     "NODE_OT_swap_node": {
       "covered_by": "Document::set_kind (R1598)",
       "mechanism": "python-core",
+      "proven_by": "pinion-node-graph::blender_swap_node",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -783,6 +826,7 @@
     "NODE_OT_tree_path_parent": {
       "covered_by": "EditPath::exit",
       "mechanism": "python-core",
+      "proven_by": "pinion-node-graph::blender_tree_path_parent",
       "verdict": "have",
       "where": "scripts/startup/bl_operators/node.py"
     },
@@ -887,18 +931,21 @@
     "BreakNodeLinks": {
       "covered_by": "Document::disconnect",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_break_node_links",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "BreakPinLinks": {
       "covered_by": "Document::disconnect",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_break_pin_links",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "BreakThisLink": {
       "covered_by": "Document::disconnect",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_break_this_link",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -923,18 +970,21 @@
     "CollapseNodes": {
       "covered_by": "Document::group",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_collapse_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "CollapseSelectionToFunction": {
       "covered_by": "Document::group",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_collapse_selection_to_function",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "CollapseSelectionToMacro": {
       "covered_by": "Document::group",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_collapse_selection_to_macro",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -953,6 +1003,7 @@
     "CreateComment": {
       "covered_by": "NodeBody::Frame (R1589)",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_create_comment",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -971,6 +1022,7 @@
     "DeleteAndReconnectNodes": {
       "covered_by": "Document::dissolve",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_delete_and_reconnect_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -983,6 +1035,7 @@
     "DisableNodes": {
       "covered_by": "Document::set_bypassed",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_disable_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1007,6 +1060,7 @@
     "EnableNodes": {
       "covered_by": "Document::set_bypassed",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_enable_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1025,6 +1079,7 @@
     "ExpandNodes": {
       "covered_by": "Document::ungroup",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_expand_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1085,12 +1140,14 @@
     "HideNoConnectionNoDefaultPins": {
       "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_hide_no_connection_no_default_pins",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "HideNoConnectionPins": {
       "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_hide_no_connection_pins",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1115,12 +1172,14 @@
     "PromoteSelectionToFunction": {
       "covered_by": "Document::group",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_promote_selection_to_function",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "PromoteSelectionToMacro": {
       "covered_by": "Document::group",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_promote_selection_to_macro",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1151,6 +1210,7 @@
     "ReconstructNodes": {
       "covered_by": "the signature is DERIVED from the kind, so it cannot go stale",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_reconstruct_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1187,6 +1247,7 @@
     "ResetPinToDefaultValue": {
       "covered_by": "Document::clear_port_value (R1594)",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_reset_pin_to_default_value",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1199,12 +1260,14 @@
     "SelectAllInputNodes": {
       "covered_by": "Document::grow (Reach)",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_select_all_input_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
     "SelectAllOutputNodes": {
       "covered_by": "Document::grow (Reach)",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_select_all_output_nodes",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
@@ -1223,6 +1286,7 @@
     "ShowAllPins": {
       "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
       "mechanism": "graph-editor-command",
+      "proven_by": "pinion-node-graph::unreal_show_all_pins",
       "verdict": "have",
       "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
     },
