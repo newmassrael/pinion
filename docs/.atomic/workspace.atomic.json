@@ -85758,6 +85758,54 @@
         "A hex EDITOR needs writes; this is the read geometry, and Nibble is the seam for it"
       ]
     },
+    "Round 1607": {
+      "decision_summary": "A dashboard's tiles are a value, and the layout it needs already existed. THE FINDING IS WHAT THIS ROUND DID NOT BUILD. debt-no-tile-grid-dashboard-substrate asked for one thing before any code: measure whether R1560's CSS Grid already holds a Grafana-class dashboard, rather than adding a second layout kind on the strength of an argument. It does, and pinion-runtime's tile_dashboard_measurement is that measurement as a TEST -- a full-width header, two halves and a two-row-tall card placed on twelve Fr(1.0) tracks resolve to exactly the pixels a twelve-column dashboard wants at 1200 wide, and a second case asserts the property a splitter tree cannot have: widening one card leaves the other rows' columns alone, because grid tracks are sized once ACROSS the container while a column of flex rows measures each row on its own. So the layout is not the gap and no new one was written. What was missing is the half a layout engine has no opinion about -- which tile is where, the rule that keeps two of them off one slot, and what a drag does to the tiles it lands on. THE INVARIANT IS THE TYPE. TileGrid holds tiles that do not overlap; every operation either keeps that true or is refused by name, and violations() exists for a grid that arrived from a file and has promised nothing, which is Document::validate's own argument one domain over. The difficulty is not rejection: a drag onto an occupied slot does not fail, it DISPLACES, so the interesting part is a reflow that terminates and is deterministic. Both properties come from one rule -- a displaced tile only ever moves down, and only to just below the lowest tile it collided with -- so rows increase monotonically over a finite set and the walk cannot cycle; the settle bound in the loop is a backstop for a caller who handed us a grid already in violation, not part of the argument. TWO THINGS PAST GRAFANA, which pushes displaced panels down silently, as a side effect of its drag. A move REPORTS what it displaced: Reflow names every tile that moved and the row it came from, which is what an undo record, a \"your layout changed\" notice and an agent driving the board over the wire all need and none of which Grafana can answer. And compaction is a VERB rather than a consequence: Grafana floats tiles up to close gaps after every drag, so a gesture moves tiles the user never touched and its inverse is not a gesture; compact() is a separate call, is idempotent, and names what it moved. A FAILING TEST THAT THE IMPLEMENTATION WON. The first draft of the displacement test expected a drag to push a tile in a column it does not share, and the reflow correctly left it where it was. The effect is LOCAL, which the module doc claimed and which is now a thing a test asserts rather than a thing a comment says -- and the assertion records that the expectation was the wrong half. DELIBERATE INCOMPLETENESS, NAMED RATHER THAN HIDDEN. There is no consumer and therefore no demo, so this round does not satisfy the standing per-round visible-deliverable obligation, and it says so instead of letting a unit test stand in for one. The debt keeps its gesture axis open: what closes it is a binding that wires a pointer drag and an RPC verb to move_to / resize / compact, which is also what would tell us whether the reflow's locality feels right under a real cursor. The model is the half that could be built correctly without one; the gesture is not.",
+      "changes_bullets": [
+        "pinion_core::widgets::tile_grid: TileGrid / Tile / TileId / Reflow / Displaced / TileError",
+        "pinion-runtime tile_dashboard_measurement: the R1560 grid holds a 12-column dashboard",
+        "A move displaces downward, deterministically, and NAMES every tile it pushed",
+        "compact() is a separate verb, idempotent, so a drag's inverse stays a drag",
+        "placement() is the one place zero-based model coordinates become CSS grid lines"
+      ],
+      "verification_bullets": [
+        "13 model tests including the invariant re-checked after a scripted run of edits",
+        "2 runtime layout measurements asserting resolved pixels, not intentions",
+        "6/6 counterfactuals CAUGHT; clippy -p pinion-core -p pinion-runtime clean",
+        "A failing test corrected the TEST rather than the code: the reflow is local"
+      ],
+      "impact_refs": [
+        "5.21",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "NO CONSUMER AND NO DEMO — the round breaks the visible-deliverable rule and says so",
+        "The debt's gesture axis stays open: pointer drag + RPC verb onto move_to / resize",
+        "Named presets are a map of name to TileGrid, which serde already gives an app"
+      ],
+      "publishable_decision_summary": "A dashboard's tiles are a value, and the layout it needs already existed. THE FINDING IS WHAT THIS ROUND DID NOT BUILD. debt-no-tile-grid-dashboard-substrate asked for one thing before any code: measure whether R1560's CSS Grid already holds a Grafana-class dashboard, rather than adding a second layout kind on the strength of an argument. It does, and pinion-runtime's tile_dashboard_measurement is that measurement as a TEST -- a full-width header, two halves and a two-row-tall card placed on twelve Fr(1.0) tracks resolve to exactly the pixels a twelve-column dashboard wants at 1200 wide, and a second case asserts the property a splitter tree cannot have: widening one card leaves the other rows' columns alone, because grid tracks are sized once ACROSS the container while a column of flex rows measures each row on its own. So the layout is not the gap and no new one was written. What was missing is the half a layout engine has no opinion about -- which tile is where, the rule that keeps two of them off one slot, and what a drag does to the tiles it lands on. THE INVARIANT IS THE TYPE. TileGrid holds tiles that do not overlap; every operation either keeps that true or is refused by name, and violations() exists for a grid that arrived from a file and has promised nothing, which is Document::validate's own argument one domain over. The difficulty is not rejection: a drag onto an occupied slot does not fail, it DISPLACES, so the interesting part is a reflow that terminates and is deterministic. Both properties come from one rule -- a displaced tile only ever moves down, and only to just below the lowest tile it collided with -- so rows increase monotonically over a finite set and the walk cannot cycle; the settle bound in the loop is a backstop for a caller who handed us a grid already in violation, not part of the argument. TWO THINGS PAST GRAFANA, which pushes displaced panels down silently, as a side effect of its drag. A move REPORTS what it displaced: Reflow names every tile that moved and the row it came from, which is what an undo record, a \"your layout changed\" notice and an agent driving the board over the wire all need and none of which Grafana can answer. And compaction is a VERB rather than a consequence: Grafana floats tiles up to close gaps after every drag, so a gesture moves tiles the user never touched and its inverse is not a gesture; compact() is a separate call, is idempotent, and names what it moved. A FAILING TEST THAT THE IMPLEMENTATION WON. The first draft of the displacement test expected a drag to push a tile in a column it does not share, and the reflow correctly left it where it was. The effect is LOCAL, which the module doc claimed and which is now a thing a test asserts rather than a thing a comment says -- and the assertion records that the expectation was the wrong half. DELIBERATE INCOMPLETENESS, NAMED RATHER THAN HIDDEN. There is no consumer and therefore no demo, so this round does not satisfy the standing per-round visible-deliverable obligation, and it says so instead of letting a unit test stand in for one. The debt keeps its gesture axis open: what closes it is a binding that wires a pointer drag and an RPC verb to move_to / resize / compact, which is also what would tell us whether the reflow's locality feels right under a real cursor. The model is the half that could be built correctly without one; the gesture is not.",
+      "publishable_changes_bullets": [
+        "pinion_core::widgets::tile_grid: TileGrid / Tile / TileId / Reflow / Displaced / TileError",
+        "pinion-runtime tile_dashboard_measurement: the R1560 grid holds a 12-column dashboard",
+        "A move displaces downward, deterministically, and NAMES every tile it pushed",
+        "compact() is a separate verb, idempotent, so a drag's inverse stays a drag",
+        "placement() is the one place zero-based model coordinates become CSS grid lines"
+      ],
+      "publishable_verification_bullets": [
+        "13 model tests including the invariant re-checked after a scripted run of edits",
+        "2 runtime layout measurements asserting resolved pixels, not intentions",
+        "6/6 counterfactuals CAUGHT; clippy -p pinion-core -p pinion-runtime clean",
+        "A failing test corrected the TEST rather than the code: the reflow is local"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NO CONSUMER AND NO DEMO — the round breaks the visible-deliverable rule and says so",
+        "The debt's gesture axis stays open: pointer drag + RPC verb onto move_to / resize",
+        "Named presets are a map of name to TileGrid, which serde already gives an app"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

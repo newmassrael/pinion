@@ -47,6 +47,7 @@ pub mod spin_button;
 pub mod table;
 pub mod text_edit;
 pub mod text_field;
+pub mod tile_grid;
 pub mod toggle;
 pub mod toggle_group;
 pub mod toolbar;

@@ -3712,3 +3712,116 @@ mod tests {
         }
     }
 }
+
+// ── R1607 §5.21 — does the R1560 grid hold a TILE DASHBOARD? ──
+
+#[cfg(test)]
+mod tile_dashboard_measurement {
+    use super::*;
+    use pinion_core::style::{Display, GridPlacement, GridTrack, LayoutStyle};
+
+    fn cache() -> LayoutCache {
+        LayoutCache::new()
+    }
+
+    /// A Grafana-class dashboard is a fixed set of equal columns with cards
+    /// placed at `(col, row)` covering `(w, h)` of them. R1560 added CSS Grid
+    /// for a text table's rowspans; the tile-dashboard debt predicted that the
+    /// SAME layout holds a dashboard and asked for the prediction to be
+    /// **measured before a second layout kind is built**. This is that
+    /// measurement, and it is a test rather than a paragraph.
+    #[test]
+    fn r1607_twelve_equal_columns_place_spanning_cards_where_a_dashboard_wants_them() {
+        let tile = |col: u16, row: u16, w: u16, h: u16| {
+            Scene::Container(
+                ContainerNode::new(Vec::new()).with_layout(
+                    LayoutStyle::default()
+                        .with_grid_column(GridPlacement::spanning(col, w))
+                        .with_grid_row(GridPlacement::spanning(row, h)),
+                ),
+            )
+        };
+        // The classic layout: a full-width header, then two halves, then a
+        // third that is twice as tall as the row above it.
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![
+                tile(1, 1, 12, 1),
+                tile(1, 2, 6, 1),
+                tile(7, 2, 6, 1),
+                tile(1, 3, 4, 2),
+            ])
+            .with_layout(
+                LayoutStyle::default()
+                    .grid_columns(vec![GridTrack::Fr(1.0); 12])
+                    .with_grid_rows(vec![GridTrack::Px(50); 4]),
+            ),
+        );
+        assert_eq!(
+            scene.layout_style().map(|l| l.display),
+            Some(Display::Grid),
+            "declaring tracks is what puts a container in grid mode"
+        );
+
+        compute_layout(&mut scene, &mut cache(), 1200, 400);
+        let Scene::Container(root) = &scene else {
+            panic!("a container")
+        };
+        let rect = |i: usize| root.children[i].rect();
+
+        // 1200 / 12 = 100 per column, 50 per row.
+        assert_eq!((rect(0).w, rect(0).h), (1200, 50), "the full-width header");
+        assert_eq!((rect(1).x, rect(1).w), (0, 600), "the left half");
+        assert_eq!((rect(2).x, rect(2).w), (600, 600), "the right half");
+        assert_eq!(rect(1).y, 50, "and it sits on the second row");
+        assert_eq!(
+            (rect(3).x, rect(3).y, rect(3).w, rect(3).h),
+            (0, 100, 400, 100),
+            "★ a card two rows tall — the thing a nest of flex rows cannot express, \
+             which is the whole reason a dashboard needed a grid and not a splitter tree"
+        );
+    }
+
+    /// The other half of the prediction: a splitter tree could not do this.
+    /// Widening one card must not re-shape its neighbours' tracks, because the
+    /// tracks are sized once across the container rather than per row.
+    #[test]
+    fn r1607_widening_one_card_leaves_the_other_rows_columns_alone() {
+        let tile = |col: u16, row: u16, w: u16| {
+            Scene::Container(
+                ContainerNode::new(Vec::new()).with_layout(
+                    LayoutStyle::default()
+                        .with_grid_column(GridPlacement::spanning(col, w))
+                        .with_grid_row(GridPlacement::at(row)),
+                ),
+            )
+        };
+        let build = |first_width: u16| {
+            Scene::Container(
+                ContainerNode::new(vec![tile(1, 1, first_width), tile(1, 2, 3), tile(4, 2, 3)])
+                    .with_layout(
+                        LayoutStyle::default()
+                            .grid_columns(vec![GridTrack::Fr(1.0); 6])
+                            .with_grid_rows(vec![GridTrack::Px(40); 2]),
+                    ),
+            )
+        };
+        let mut narrow = build(2);
+        let mut wide = build(5);
+        compute_layout(&mut narrow, &mut cache(), 600, 200);
+        compute_layout(&mut wide, &mut cache(), 600, 200);
+
+        let row_two = |scene: &Scene| {
+            let Scene::Container(root) = scene else {
+                panic!("a container")
+            };
+            (root.children[1].rect().w, root.children[2].rect().x)
+        };
+        assert_eq!(
+            row_two(&narrow),
+            row_two(&wide),
+            "row two is untouched by row one's width — a splitter tree would have \
+             had to re-divide the whole parent"
+        );
+        assert_eq!(row_two(&narrow), (300, 300));
+    }
+}
