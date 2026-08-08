@@ -1,0 +1,1290 @@
+{
+  "blender": {
+    "NODE_OT_activate_viewer": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_add_closure_zone": {
+      "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_add_collection": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_color": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_empty_group": {
+      "covered_by": "Document::add_definition + instantiate",
+      "mechanism": "python-core",
+      "verdict": "have",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_add_foreach_geometry_element_zone": {
+      "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_add_group": {
+      "covered_by": "Document::instantiate",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_group_asset": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_group_input_node": {
+      "covered_by": "Document::expose + Tree::interface_node",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_image": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_import_node": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_mask": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_material": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_node": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_add_object": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_repeat_zone": {
+      "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_add_reroute": {
+      "covered_by": "no reroute body: a transparent 1-in/1-out node that inherits its type",
+      "mechanism": "cpp",
+      "verdict": "absent",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_add_simulation_zone": {
+      "covered_by": "a ZONE KIND of Blender's geometry-node content; the mechanism is add_zone",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_add_typed_bundle": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_add_zone": {
+      "covered_by": "a ZONE: a bracketed region of ONE tree with evaluation semantics \u2014 neither a Frame (no semantics) nor a Group (another tree)",
+      "mechanism": "python-core",
+      "verdict": "absent",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_attach": {
+      "covered_by": "Document::set_parent",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_backimage_fit": {
+      "covered_by": "Blender's compositor backdrop image",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_view.cc"
+    },
+    "NODE_OT_backimage_move": {
+      "covered_by": "Blender's compositor backdrop image",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_view.cc"
+    },
+    "NODE_OT_backimage_sample": {
+      "covered_by": "Blender's compositor backdrop image",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_view.cc"
+    },
+    "NODE_OT_backimage_zoom": {
+      "covered_by": "Blender's compositor backdrop image",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_view.cc"
+    },
+    "NODE_OT_clear_viewer_border": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_clipboard_copy": {
+      "covered_by": "Document::extract (Fragment)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/clipboard.cc"
+    },
+    "NODE_OT_clipboard_paste": {
+      "covered_by": "Document::insert (Fragment)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/clipboard.cc"
+    },
+    "NODE_OT_collapse_hide_unused_toggle": {
+      "covered_by": "Appearance::hide_unused_ports",
+      "mechanism": "python-core",
+      "verdict": "have",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_connect_to_output": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/connect_to_output.py"
+    },
+    "NODE_OT_cryptomatte_layer_add": {
+      "covered_by": "Blender's cryptomatte compositing",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_cryptomatte_layer_remove": {
+      "covered_by": "Blender's cryptomatte compositing",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_default_group_width_set": {
+      "covered_by": "a user preference, not a graph fact",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_group.cc"
+    },
+    "NODE_OT_delete": {
+      "covered_by": "Document::remove_node",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_delete_copy_reconnect": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_delete_reconnect": {
+      "covered_by": "Document::dissolve",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_detach": {
+      "covered_by": "Document::set_parent(None) / unframe",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_detach_translate_attach": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_duplicate": {
+      "covered_by": "Document::duplicate",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_duplicate_compositing_modifier_node_group": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_duplicate_compositing_node_group": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_duplicate_move": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_duplicate_move_keep_inputs": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_duplicate_move_linked": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_find_node": {
+      "covered_by": "a search across the tree AND the path to the hit",
+      "mechanism": "cpp",
+      "verdict": "absent",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_gltf_settings_node_operator": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/io_scene_gltf2/blender/com/gltf2_blender_ui.py"
+    },
+    "NODE_OT_group_edit": {
+      "covered_by": "EditPath::enter / exit",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_group.cc"
+    },
+    "NODE_OT_group_enter_exit": {
+      "covered_by": "EditPath::enter / exit",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_group.cc"
+    },
+    "NODE_OT_group_insert": {
+      "covered_by": "Document::group_insert",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_group.cc"
+    },
+    "NODE_OT_group_make": {
+      "covered_by": "Document::group",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_group.cc"
+    },
+    "NODE_OT_group_separate": {
+      "covered_by": "Document::group_separate",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_group.cc"
+    },
+    "NODE_OT_group_ungroup": {
+      "covered_by": "Document::ungroup",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_group.cc"
+    },
+    "NODE_OT_hide_socket_toggle": {
+      "covered_by": "per-socket manual hide: Appearance derives hidden ports and cannot be told",
+      "mechanism": "cpp",
+      "verdict": "absent",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_hide_toggle": {
+      "covered_by": "Appearance::collapsed",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_insert_offset": {
+      "covered_by": "drop a node onto a link and push the rest along",
+      "mechanism": "cpp",
+      "verdict": "absent",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_interface_item_duplicate": {
+      "covered_by": "Document::expose / unexpose",
+      "mechanism": "python-core",
+      "verdict": "have",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_interface_item_make_panel_toggle": {
+      "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
+      "mechanism": "python-core",
+      "verdict": "absent",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_interface_item_new": {
+      "covered_by": "Document::expose / unexpose",
+      "mechanism": "python-core",
+      "verdict": "have",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_interface_item_new_panel_toggle": {
+      "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
+      "mechanism": "python-core",
+      "verdict": "absent",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_interface_item_remove": {
+      "covered_by": "Document::expose / unexpose",
+      "mechanism": "python-core",
+      "verdict": "have",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_interface_item_unlink_panel_toggle": {
+      "covered_by": "interface PANELS: grouping a definition's ports into collapsible sections",
+      "mechanism": "python-core",
+      "verdict": "absent",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_join": {
+      "covered_by": "Document::enframe",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_join_named": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_join_nodes": {
+      "covered_by": "Document::enframe",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_link": {
+      "covered_by": "Document::connect",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_link_drag_operation_test": {
+      "covered_by": "an internal drag-state probe, not a user capability",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/link_drag_search.cc"
+    },
+    "NODE_OT_link_make": {
+      "covered_by": "Document::connect",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_link_viewer": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_links_cut": {
+      "covered_by": "Document::disconnect",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_links_detach": {
+      "covered_by": "Document::detach",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_links_mute": {
+      "covered_by": "Document::set_link_muted",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_move_detach_links": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_move_detach_links_release": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_mute_toggle": {
+      "covered_by": "Document::set_bypassed",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_new_compositing_node_group": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_new_geometry_node_group_assign": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/geometry_nodes.py"
+    },
+    "NODE_OT_new_geometry_node_group_tool": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/geometry_nodes.py"
+    },
+    "NODE_OT_new_geometry_nodes_modifier": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/geometry_nodes.py"
+    },
+    "NODE_OT_new_node_tree": {
+      "covered_by": "Document::add_definition",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_node_color_preset_add": {
+      "covered_by": "a colour preset list, Blender UI furniture",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/presets.py"
+    },
+    "NODE_OT_node_copy_color": {
+      "covered_by": "colour is not in Appearance \u2014 a representation decision comes first",
+      "mechanism": "cpp",
+      "verdict": "absent",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_nw_add_reroutes": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/add_reroutes.py"
+    },
+    "NODE_OT_nw_add_texture": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/add_texture_setup.py"
+    },
+    "NODE_OT_nw_add_textures_for_principled": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/add_principled_setup.py"
+    },
+    "NODE_OT_nw_align_nodes": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/align_selected.py"
+    },
+    "NODE_OT_nw_batch_change": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/batch_change.py"
+    },
+    "NODE_OT_nw_center_nodes": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/center_selected.py"
+    },
+    "NODE_OT_nw_clear_label": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/labels_clear.py"
+    },
+    "NODE_OT_nw_copy_label": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/copy_label.py"
+    },
+    "NODE_OT_nw_copy_settings": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/copy_settings.py"
+    },
+    "NODE_OT_nw_detach_outputs": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/detach_outputs.py"
+    },
+    "NODE_OT_nw_factor": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/change_factor.py"
+    },
+    "NODE_OT_nw_lazy_connect": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/lazy_connect.py"
+    },
+    "NODE_OT_nw_lazy_mix": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/lazy_mix.py"
+    },
+    "NODE_OT_nw_link_active_to_selected": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/link_active_to_selected.py"
+    },
+    "NODE_OT_nw_link_out": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/link_to_output.py"
+    },
+    "NODE_OT_nw_merge_nodes": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/merge_selected.py"
+    },
+    "NODE_OT_nw_modify_labels": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/labels_modify.py"
+    },
+    "NODE_OT_nw_reload_images": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/reload_images.py"
+    },
+    "NODE_OT_nw_reset_nodes": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/reset_selected.py"
+    },
+    "NODE_OT_nw_save_viewer": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/save_viewer_image.py"
+    },
+    "NODE_OT_nw_select_parent_child": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/addons_core/node_wrangler/operators/select_hierarchy.py"
+    },
+    "NODE_OT_options_toggle": {
+      "covered_by": "Appearance::show_options",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_parent_set": {
+      "covered_by": "Document::set_parent",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_relationships.cc"
+    },
+    "NODE_OT_preview_toggle": {
+      "covered_by": "Appearance::show_preview",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_read_viewlayers": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_render_changed": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_resize": {
+      "covered_by": "Appearance::width / height (R1586, R1595)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_select": {
+      "covered_by": "a pointer gesture over painted geometry, which the binding owns",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_all": {
+      "covered_by": "a pointer gesture over painted geometry, which the binding owns",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_box": {
+      "covered_by": "Region + Document::grow (R1591/R1592)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_circle": {
+      "covered_by": "Region + Document::grow (R1591/R1592)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_grouped": {
+      "covered_by": "Document::grow (Grow::Grouped)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_lasso": {
+      "covered_by": "Region + Document::grow (R1591/R1592)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_link_viewer": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_select_linked_from": {
+      "covered_by": "Document::grow (Reach)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_linked_to": {
+      "covered_by": "Document::grow (Reach)",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_select_same_type_step": {
+      "covered_by": "Document::same_kind_run",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_select.cc"
+    },
+    "NODE_OT_shader_script_update": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_simple_operator": {
+      "covered_by": "an add-on, not Blender's node system",
+      "mechanism": "python-addon",
+      "verdict": "addon",
+      "where": "scripts/templates_py/Operator/node.py"
+    },
+    "NODE_OT_sockets_sync": {
+      "covered_by": "signature is DERIVED, so there is nothing to sync",
+      "mechanism": "cpp",
+      "verdict": "have",
+      "where": "source/blender/editors/space_node/node_sync_sockets.cc"
+    },
+    "NODE_OT_swap_empty_group": {
+      "covered_by": "no verb changes which definition an instance stands for",
+      "mechanism": "python-core",
+      "verdict": "absent",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_swap_group_asset": {
+      "covered_by": "no verb changes which definition an instance stands for",
+      "mechanism": "cpp",
+      "verdict": "absent",
+      "where": "source/blender/editors/space_node/node_add.cc"
+    },
+    "NODE_OT_swap_node": {
+      "covered_by": "Document::set_kind (R1598)",
+      "mechanism": "python-core",
+      "verdict": "have",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_swap_typed_bundle": {
+      "covered_by": "adds one of Blender's own node types \u2014 the 429-node-type content class R1577 already excluded",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_swap_zone": {
+      "covered_by": "changing a zone's kind, which needs zones",
+      "mechanism": "python-core",
+      "verdict": "absent",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_test_inlining_shader_nodes": {
+      "covered_by": "Blender's shader/compositor tree kinds",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_toggle_viewer": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_translate_attach": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_translate_attach_remove_on_cancel": {
+      "covered_by": "a macro over other operators \u2014 covering the parts covers it",
+      "mechanism": "macro",
+      "verdict": "composition",
+      "where": "source/blender/editors/space_node/node_ops.cc"
+    },
+    "NODE_OT_tree_path_parent": {
+      "covered_by": "EditPath::exit",
+      "mechanism": "python-core",
+      "verdict": "have",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_view_all": {
+      "covered_by": "pure viewport framing; the crate deliberately holds no viewport",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_view.cc"
+    },
+    "NODE_OT_view_selected": {
+      "covered_by": "pure viewport framing; the crate deliberately holds no viewport",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_view.cc"
+    },
+    "NODE_OT_viewer_border": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "cpp",
+      "verdict": "app-content",
+      "where": "source/blender/editors/space_node/node_edit.cc"
+    },
+    "NODE_OT_viewer_shortcut_get": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    },
+    "NODE_OT_viewer_shortcut_set": {
+      "covered_by": "Blender's compositor viewer",
+      "mechanism": "python-core",
+      "verdict": "app-content",
+      "where": "scripts/startup/bl_operators/node.py"
+    }
+  },
+  "unreal": {
+    "AddBreakpoint": {
+      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AddExecutionPin": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AddOptionPin": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AddParentNode": {
+      "covered_by": "Unreal's Blueprint/level subject matter",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AlignNodesBottom": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AlignNodesCenter": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AlignNodesLeft": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AlignNodesMiddle": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AlignNodesRight": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AlignNodesTop": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "AssignReferencedActor": {
+      "covered_by": "Unreal's Blueprint/level subject matter",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "BreakNodeLinks": {
+      "covered_by": "Document::disconnect",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "BreakPinLinks": {
+      "covered_by": "Document::disconnect",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "BreakThisLink": {
+      "covered_by": "Document::disconnect",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ChangePinType": {
+      "covered_by": "per-PIN type: a wildcard port resolved per node, where set_kind changes the whole node",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ClearAllQuickJumps": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ClearQuickJump": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "CollapseNodes": {
+      "covered_by": "Document::group",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "CollapseSelectionToFunction": {
+      "covered_by": "Document::group",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "CollapseSelectionToMacro": {
+      "covered_by": "Document::group",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ConvertEventToFunction": {
+      "covered_by": "Unreal's Blueprint/level subject matter",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ConvertFunctionToEvent": {
+      "covered_by": "Unreal's Blueprint/level subject matter",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "CreateComment": {
+      "covered_by": "NodeBody::Frame (R1589)",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "CreateCustomEvent": {
+      "covered_by": "Unreal's Blueprint/level subject matter",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "CreateMatchingFunction": {
+      "covered_by": "Unreal's Blueprint/level subject matter",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "DeleteAndReconnectNodes": {
+      "covered_by": "Document::dissolve",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "DisableBreakpoint": {
+      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "DisableNodes": {
+      "covered_by": "Document::set_bypassed",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "DistributeNodesHorizontally": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "DistributeNodesVertically": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "EnableBreakpoint": {
+      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "EnableNodes": {
+      "covered_by": "Document::set_bypassed",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "EnableNodes_Always": {
+      "covered_by": "a build-configuration flag on Unreal's own node enablement",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "EnableNodes_DevelopmentOnly": {
+      "covered_by": "a build-configuration flag on Unreal's own node enablement",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ExpandNodes": {
+      "covered_by": "Document::ungroup",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "FindAndReplaceReferences": {
+      "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "FindReferences": {
+      "covered_by": "a search across the tree and the path to the hit \u2014 Blender's find_node",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "FindReferencesByClassMemberGlobal": {
+      "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "FindReferencesByClassMemberLocal": {
+      "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "FindReferencesByNameGlobal": {
+      "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "FindReferencesByNameLocal": {
+      "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "GetFindReferences": {
+      "covered_by": "a reading of FindReferences scoped to Unreal's own symbol kinds",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "GoToDefinition": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "GoToDocumentation": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "HideNoConnectionNoDefaultPins": {
+      "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "HideNoConnectionPins": {
+      "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "InsertExecutionPinAfter": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "InsertExecutionPinBefore": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "OpenInNewTab": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "PromoteSelectionToFunction": {
+      "covered_by": "Document::group",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "PromoteSelectionToMacro": {
+      "covered_by": "Document::group",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "PromoteToLocalVariable": {
+      "covered_by": "VARIABLES are Unreal's state model, and R1600 recorded why this crate's only state is a delay",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "PromoteToVariable": {
+      "covered_by": "VARIABLES are Unreal's state model, and R1600 recorded why this crate's only state is a delay",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "QuickJump": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "RecombineStructPin": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ReconstructNodes": {
+      "covered_by": "the signature is DERIVED from the kind, so it cannot go stale",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "RemoveBreakpoint": {
+      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "RemoveExecutionPin": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "RemoveOptionPin": {
+      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE \u2014 Sequence gaining a Then, Select gaining an option",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "RemoveOtherStructVarPins": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "RemoveThisStructVarPin": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ResetPinToDefaultValue": {
+      "covered_by": "Document::clear_port_value (R1594)",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "RestoreAllStructVarPins": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "SelectAllInputNodes": {
+      "covered_by": "Document::grow (Reach)",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "SelectAllOutputNodes": {
+      "covered_by": "Document::grow (Reach)",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "SelectReferenceInLevel": {
+      "covered_by": "Unreal's Blueprint/level subject matter",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "SetQuickJump": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ShowAllPins": {
+      "covered_by": "Appearance::hide_unused_ports / Document::visible_ports",
+      "mechanism": "graph-editor-command",
+      "verdict": "have",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "SplitStructPin": {
+      "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "StackNodesHorizontally": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "StackNodesVertically": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "StartWatchingPin": {
+      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "StopWatchingPin": {
+      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "StraightenConnections": {
+      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "SummonCreateNodeMenu": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ToggleBreakpoint": {
+      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "mechanism": "graph-editor-command",
+      "verdict": "absent",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ZoomIn": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    },
+    "ZoomOut": {
+      "covered_by": "editor navigation over a viewport the crate does not hold",
+      "mechanism": "graph-editor-command",
+      "verdict": "app-content",
+      "where": "Engine/Source/Editor/GraphEditor/Public/GraphEditorActions.h"
+    }
+  }
+}

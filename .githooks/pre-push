@@ -101,6 +101,23 @@ if ! python3 "$repo_root/tools/test_binding_focus.py" >&2; then
     exit 1
 fi
 
+# R1601 — the reference census. The node-graph campaign's coverage claim is a
+# count of what Blender and Unreal can do, and that count was a hand-written
+# grep that was measurably wrong in BOTH directions: it missed 25 core operators
+# (every Python one, including the whole zone family) and counted 11 macros —
+# compositions of other operators — as capabilities. `--check-pin` needs no
+# reference tree, which is what makes it a gate: the trees live outside this
+# repo, but the JUDGEMENT is committed here and is the thing that rots.
+echo "pre-push: reference census ..." >&2
+if ! python3 "$repo_root/tools/reference_census.py" --selftest >&2; then
+    echo "pre-push: the reference census failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/reference_census.py" --check-pin >&2; then
+    echo "pre-push: docs/reference-census.json holds an unjudged operator" >&2
+    exit 1
+fi
+
 # R1600.1 — the counterfactual driver. Counterfactual verification is this
 # project's round-level discipline and until R1600 it had no mechanism: the
 # driver was rewritten in a scratchpad each round, and R1599 built two defects
