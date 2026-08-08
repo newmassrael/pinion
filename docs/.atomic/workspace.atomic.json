@@ -85922,6 +85922,46 @@
         "A named layout preset is a name-to-TileGrid map and stays the app's"
       ]
     },
+    "Round 1609.1": {
+      "decision_summary": "The close audit found a defect in R1609's own paint, and it is the class this round had already named twice. The grip ring was eight absolutely-positioned nodes whose insets were computed from two stated constants, CARD_INNER_W 40 and CARD_INNER_H, and a card's resolved width is a LAYOUT-PASS OUTPUT -- so any inset a view function can state is a guess that happens to fit one card size. On the seed board the twelve-column header's right-hand grips would have floated somewhere in its middle. The framework cannot express it that way either: LayoutStyle::absolute_position anchors left and top only, and CSS's `right: 0` has no analogue here, so stating the inset was not a shortcut but the only thing the vocabulary allowed. THE FIX IS A GRID, and it makes the ring say exactly what it means in one place: an overlay pinned at (0,0) with Auto size, so it resolves to the card's content rect, carrying three tracks per axis -- the outer two a grip thick, the middle Fr(1.0). Each grip's cell is DERIVED from the same TileHandle::horizontal / vertical pair its cursor already comes from, mapping a near edge to line 1, no edge to 2 and a far edge to 3. So the ring is correct at every card size with no arithmetic that can be wrong, it is ONE node rather than eight positioned ones, and R1560's CSS Grid is now used twice inside one round -- the board's own layout is the other. Two constants went away and one stayed, HANDLE_PX, which is the only pixel the ring states. THE TEST COULD NOT SEE THE DEFECT, which is the second finding. It asserted every grip's tag and every grip's cursor and said nothing about where a grip IS, so it passed against both the broken and the fixed paint. It now asserts each grip's grid cell, that the eight cells are distinct, that the middle cell is not a grip, and -- after a counterfactual came back BROKEN rather than caught -- the track KINDS, because replacing all three tracks with Px(HANDLE_PX) kept every placement assertion true while squeezing the card's content into eight pixels. A broken counterfactual is normally just a plan to fix; this one pointed at a real coverage gap on the way.",
+      "changes_bullets": [
+        "handle_ring: one overlay, a 3x3 grid, grips placed by derived cell",
+        "CARD_INNER_W / CARD_INNER_H retired; HANDLE_PX is the only pixel left",
+        "the ring test asserts cells, distinctness and track kinds, not just tags"
+      ],
+      "verification_bullets": [
+        "26 example tests; demo r1609 and r1608 both re-pass unchanged",
+        "3 new counterfactuals CAUGHT: the derived cell, the pin, the tracks",
+        "CF-25 came back BROKEN and its fix exposed the missing track assertion",
+        "clippy -p hello-tile-dashboard --all-targets clean; fmt clean"
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "absolute_position still anchors left/top only; no CSS `right: 0` analogue"
+      ],
+      "publishable_decision_summary": "The close audit found a defect in R1609's own paint, and it is the class this round had already named twice. The grip ring was eight absolutely-positioned nodes whose insets were computed from two stated constants, CARD_INNER_W 40 and CARD_INNER_H, and a card's resolved width is a LAYOUT-PASS OUTPUT -- so any inset a view function can state is a guess that happens to fit one card size. On the seed board the twelve-column header's right-hand grips would have floated somewhere in its middle. The framework cannot express it that way either: LayoutStyle::absolute_position anchors left and top only, and CSS's `right: 0` has no analogue here, so stating the inset was not a shortcut but the only thing the vocabulary allowed. THE FIX IS A GRID, and it makes the ring say exactly what it means in one place: an overlay pinned at (0,0) with Auto size, so it resolves to the card's content rect, carrying three tracks per axis -- the outer two a grip thick, the middle Fr(1.0). Each grip's cell is DERIVED from the same TileHandle::horizontal / vertical pair its cursor already comes from, mapping a near edge to line 1, no edge to 2 and a far edge to 3. So the ring is correct at every card size with no arithmetic that can be wrong, it is ONE node rather than eight positioned ones, and R1560's CSS Grid is now used twice inside one round -- the board's own layout is the other. Two constants went away and one stayed, HANDLE_PX, which is the only pixel the ring states. THE TEST COULD NOT SEE THE DEFECT, which is the second finding. It asserted every grip's tag and every grip's cursor and said nothing about where a grip IS, so it passed against both the broken and the fixed paint. It now asserts each grip's grid cell, that the eight cells are distinct, that the middle cell is not a grip, and -- after a counterfactual came back BROKEN rather than caught -- the track KINDS, because replacing all three tracks with Px(HANDLE_PX) kept every placement assertion true while squeezing the card's content into eight pixels. A broken counterfactual is normally just a plan to fix; this one pointed at a real coverage gap on the way.",
+      "publishable_changes_bullets": [
+        "handle_ring: one overlay, a 3x3 grid, grips placed by derived cell",
+        "CARD_INNER_W / CARD_INNER_H retired; HANDLE_PX is the only pixel left",
+        "the ring test asserts cells, distinctness and track kinds, not just tags"
+      ],
+      "publishable_verification_bullets": [
+        "26 example tests; demo r1609 and r1608 both re-pass unchanged",
+        "3 new counterfactuals CAUGHT: the derived cell, the pin, the tracks",
+        "CF-25 came back BROKEN and its fix exposed the missing track assertion",
+        "clippy -p hello-tile-dashboard --all-targets clean; fmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "absolute_position still anchors left/top only; no CSS `right: 0` analogue"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

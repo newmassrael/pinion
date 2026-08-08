@@ -92,7 +92,9 @@ use pinion_core::external::{
 use pinion_core::input::Modifiers;
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{BoxStyle, FlexDirection, GridTrack, LayoutStyle, Size, TextStyle};
+use pinion_core::style::{
+    BoxStyle, FlexDirection, GridPlacement, GridTrack, LayoutStyle, TextStyle,
+};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::tile_grid::{
     Reflow, Tile, TileDirection, TileEdit, TileGrid, TileHandle, TileId, TileNudge,
@@ -122,18 +124,9 @@ const MIN_ROWS: u32 = 5;
 const TITLE_FONT_PX: u32 = 15;
 const CARD_FONT_PX: u32 = 12;
 
-/// (R1609) A resize grip's short side, and its long side for an edge grip.
+/// (R1609) How thick a resize grip is. The ONLY pixel the ring states: its
+/// position is a grid cell, so nothing here has to know a card's size.
 const HANDLE_PX: u32 = 8;
-/// An edge grip runs along the middle of its side.
-const HANDLE_LONG_PX: u32 = 20;
-/// A selected card's content box, which the grips are positioned inside. Stated
-/// rather than measured because a grip is placed at view time and the resolved
-/// rect is a layout-pass output; the card's own painted extent is what an
-/// assistive technology and the wire read, and both come from
-/// [`TileGrid::placement`].
-const CARD_INNER_W: u32 = 40;
-/// The row pitch less the card's vertical padding.
-const CARD_INNER_H: u32 = ROW_H - 16;
 
 /// The board a fresh window opens with: the shape the R1607 measurement laid
 /// out, so the example and the layout test describe the same dashboard.
@@ -1010,9 +1003,7 @@ fn view(
         // shows them, which is what keeps a twelve-card board from painting
         // ninety-six grips.
         if selected {
-            for handle in TileHandle::ALL {
-                card_children.push(handle_node(&tile.id, handle, accent));
-            }
+            card_children.push(handle_ring(&tile.id, accent));
         }
         children.push(Scene::Container(
             ContainerNode::new(card_children)
@@ -1061,45 +1052,78 @@ fn view(
     )
 }
 
-/// (R1609) One resize grip, positioned from which edges its handle moves.
+/// (R1609) The whole grip ring for one card, as a 3x3 grid overlay.
 ///
-/// Absolutely positioned inside the card, and both the position and the
+/// ★ **The first draft placed each grip at an absolutely-positioned pixel inset
+/// off two stated constants, and the round's own close audit found that wrong**:
+/// a card's resolved width is a layout-pass output, so any inset a view function
+/// can state is a guess that happens to fit one card size — the right-hand grips
+/// of a twelve-column card would have floated somewhere in its middle. The
+/// framework cannot express it that way either, because
+/// [`LayoutStyle::absolute_position`] anchors left/top only and CSS's `right: 0`
+/// has no analogue here.
+///
+/// A grid says it exactly and says it in one place: three tracks per axis, the
+/// outer two a grip thick and the middle one `Fr(1.0)`, so the ring is on the
+/// card's edges at every size with no arithmetic to be wrong. That makes this
+/// R1560's grid used a second time inside one round — the tile board's layout is
+/// the first — and the ring is one overlay node rather than eight positioned
+/// ones, so it can be turned on and off without touching the card's own content.
+///
+/// Every grip's grid cell **and** its
 /// [`CursorHint`](pinion_core::style::CursorHint) come from
-/// [`TileHandle::horizontal`] / [`TileHandle::vertical`] — so adding a ninth
-/// handle would need no new painting code, and a grip cannot sit on a side its
-/// own drag does not move. Qt's nine `operationMap.insert` rows pair the region
-/// and the cursor by hand, in a private map.
-fn handle_node(id: &TileId, handle: TileHandle, ink: pinion_core::style::Color) -> Scene {
+/// [`TileHandle::horizontal`] / [`TileHandle::vertical`], so a ninth handle would
+/// need no new painting code and a grip cannot sit on a side its own drag does
+/// not move. Qt's nine `operationMap.insert` rows pair a private region with a
+/// cursor by hand, and `updateDirtyRegions` has to rebuild every one of them
+/// whenever the widget's geometry changes.
+fn handle_ring(id: &TileId, ink: pinion_core::style::Color) -> Scene {
     use pinion_core::widgets::tile_grid::TileEdge;
 
-    let grip = HANDLE_PX;
-    let long = HANDLE_LONG_PX;
-    let (w, h) = match (handle.horizontal(), handle.vertical()) {
-        (Some(_), Some(_)) => (grip, grip),
-        (Some(_), None) => (grip, long),
-        (None, _) => (long, grip),
-    };
-    // The card's padding is the grip's inset, so a grip sits on the edge it names
-    // rather than floating in the content box.
-    let left = match handle.horizontal() {
-        Some(TileEdge::Left) => 0,
-        Some(_) => CARD_INNER_W.saturating_sub(w),
-        None => CARD_INNER_W.saturating_sub(w) / 2,
-    };
-    let top = match handle.vertical() {
-        Some(TileEdge::Top) => 0,
-        Some(_) => CARD_INNER_H.saturating_sub(h),
-        None => CARD_INNER_H.saturating_sub(h) / 2,
+    /// 1-based CSS grid line for an axis: the near track, the middle, or the far.
+    fn line(edge: Option<TileEdge>) -> u16 {
+        match edge {
+            Some(TileEdge::Left | TileEdge::Top) => 1,
+            None => 2,
+            Some(_) => 3,
+        }
+    }
+
+    let grips = TileHandle::ALL
+        .into_iter()
+        .map(|handle| {
+            Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag(format!("card.{id}.handle.{handle:?}"))
+                    .with_style(BoxStyle::filled(ink).with_corner_radius(2))
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_grid_column(GridPlacement::at(line(handle.horizontal())))
+                            .with_grid_row(GridPlacement::at(line(handle.vertical())))
+                            .with_cursor(handle.cursor()),
+                    ),
+            )
+        })
+        .collect();
+
+    let tracks = || {
+        vec![
+            GridTrack::Px(HANDLE_PX),
+            GridTrack::Fr(1.0),
+            GridTrack::Px(HANDLE_PX),
+        ]
     };
     Scene::Container(
-        ContainerNode::new(Vec::new())
-            .with_tag(format!("card.{id}.handle.{handle:?}"))
-            .with_style(BoxStyle::filled(ink).with_corner_radius(2))
+        ContainerNode::new(grips)
+            .with_tag(format!("card.{id}.handles"))
             .with_layout(
                 LayoutStyle::new()
-                    .with_absolute_position(left, top)
-                    .with_size(Size::px(w, h))
-                    .with_cursor(handle.cursor()),
+                    // `Auto` size on an absolute child resolves to the parent's
+                    // content rect, which is what makes the ring track the card
+                    // without anybody stating the card's size.
+                    .with_absolute_position(0, 0)
+                    .grid_columns(tracks())
+                    .with_grid_rows(tracks()),
             ),
     )
 }
@@ -1928,13 +1952,28 @@ mod tests {
         Owner::new().run(|| {
             use pinion_core::style::CursorHint;
 
-            type Grip = (String, Option<CursorHint>);
+            /// A grip's tag, the cursor it asks for, and the grid cell it sits in.
+            type Grip = (String, Option<CursorHint>, (Option<u16>, Option<u16>));
+            fn ring<'a>(scene: &'a Scene, tag: &str) -> Option<&'a ContainerNode> {
+                match scene {
+                    Scene::Container(c) if c.tag.as_deref() == Some(tag) => Some(c),
+                    Scene::Container(c) => c.children.iter().find_map(|kid| ring(kid, tag)),
+                    _ => None,
+                }
+            }
             fn grips(scene: &Scene, into: &mut Vec<Grip>) {
                 if let Scene::Container(c) = scene {
                     if let Some(tag) = c.tag.as_deref()
                         && tag.contains(".handle.")
                     {
-                        into.push((tag.to_owned(), c.layout.cursor));
+                        into.push((
+                            tag.to_owned(),
+                            c.layout.cursor,
+                            (
+                                c.layout.grid_column.and_then(|p| p.start_line),
+                                c.layout.grid_row.and_then(|p| p.start_line),
+                            ),
+                        ));
                     }
                     for child in &c.children {
                         grips(child, into);
@@ -1953,25 +1992,76 @@ mod tests {
             assert!(
                 found
                     .iter()
-                    .all(|(tag, _)| tag.starts_with("card.throughput.handle."))
+                    .all(|(tag, ..)| tag.starts_with("card.throughput.handle."))
             );
 
+            let grip = |name: &str| {
+                found
+                    .iter()
+                    .find(|(tag, ..)| tag.ends_with(name))
+                    .unwrap_or_else(|| panic!("{name} grip missing from {found:?}"))
+            };
             // ★ Each grip's cursor comes from its own handle, which is what
             // forced `CursorHint`'s two diagonal arms — the icons the window
             // chrome has commanded since R1189 while no scene node could ask.
-            let cursor_of = |name: &str| {
-                found
-                    .iter()
-                    .find(|(tag, _)| tag.ends_with(name))
-                    .unwrap_or_else(|| panic!("{name} grip missing from {found:?}"))
-                    .1
-            };
-            assert_eq!(cursor_of(".TopLeft"), Some(CursorHint::NwseResize));
-            assert_eq!(cursor_of(".BottomRight"), Some(CursorHint::NwseResize));
-            assert_eq!(cursor_of(".TopRight"), Some(CursorHint::NeswResize));
-            assert_eq!(cursor_of(".BottomLeft"), Some(CursorHint::NeswResize));
-            assert_eq!(cursor_of(".Left"), Some(CursorHint::ColResize));
-            assert_eq!(cursor_of(".Bottom"), Some(CursorHint::RowResize));
+            assert_eq!(grip(".TopLeft").1, Some(CursorHint::NwseResize));
+            assert_eq!(grip(".BottomRight").1, Some(CursorHint::NwseResize));
+            assert_eq!(grip(".TopRight").1, Some(CursorHint::NeswResize));
+            assert_eq!(grip(".BottomLeft").1, Some(CursorHint::NeswResize));
+            assert_eq!(grip(".Left").1, Some(CursorHint::ColResize));
+            assert_eq!(grip(".Bottom").1, Some(CursorHint::RowResize));
+
+            // ★★ And each one's PLACE is a grid cell rather than a pixel inset.
+            // The round's close audit found the first draft positioning grips at
+            // an absolute offset off a stated card width, which is a layout-pass
+            // output a view function cannot know — the right-hand grips of a
+            // twelve-column card floated in its middle. This assertion is what
+            // the fix needed: it is about where a grip IS, and the first version
+            // of this test only checked tags and cursors, so it could not see the
+            // defect at all.
+            assert_eq!(grip(".TopLeft").2, (Some(1), Some(1)), "near / near");
+            assert_eq!(grip(".Top").2, (Some(2), Some(1)), "middle / near");
+            assert_eq!(grip(".TopRight").2, (Some(3), Some(1)), "far / near");
+            assert_eq!(grip(".Left").2, (Some(1), Some(2)), "near / middle");
+            assert_eq!(grip(".Right").2, (Some(3), Some(2)), "far / middle");
+            assert_eq!(grip(".BottomLeft").2, (Some(1), Some(3)), "near / far");
+            assert_eq!(grip(".Bottom").2, (Some(2), Some(3)), "middle / far");
+            assert_eq!(grip(".BottomRight").2, (Some(3), Some(3)), "far / far");
+            // No two grips share a cell, so the ring is a bijection onto the
+            // eight cells around the middle one.
+            let mut cells: Vec<_> = found.iter().map(|g| g.2).collect();
+            cells.sort();
+            cells.dedup();
+            assert_eq!(cells.len(), 8, "two grips shared a cell: {found:?}");
+            assert!(
+                !cells.contains(&(Some(2), Some(2))),
+                "the middle cell is the card's content, not a grip"
+            );
+
+            // The ring is ONE overlay node pinned to the card's content rect,
+            // which is what lets it track a card of any size with no arithmetic.
+            let overlay = ring(&scene, "card.throughput.handles").expect("the ring is tagged");
+            assert_eq!(overlay.layout.absolute_position, Some((0, 0)));
+            // ★ The TRACK KINDS, not just their count: a broken counterfactual
+            // exposed this gap — replacing all three with `Px(HANDLE_PX)` kept
+            // every placement assertion above true while squeezing the card's
+            // content into eight pixels, so the ring's shape needed asserting
+            // too.
+            for axis in [
+                &overlay.layout.grid_template_columns,
+                &overlay.layout.grid_template_rows,
+            ] {
+                assert_eq!(axis.len(), 3);
+                assert_eq!(axis[0], GridTrack::Px(HANDLE_PX), "a grip's thickness");
+                assert_eq!(axis[2], GridTrack::Px(HANDLE_PX));
+                assert!(
+                    matches!(axis[1], GridTrack::Fr(_)),
+                    "the middle track takes whatever is left, which is what makes \
+                     the ring track a card of any size: {:?}",
+                    axis[1]
+                );
+            }
+            assert_eq!(overlay.children.len(), 8);
         });
     }
 
