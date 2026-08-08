@@ -560,9 +560,63 @@ AXES = [
         #
         # Composition now: property grid ~98, data grid ~98, node graph 95 -> 97,
         # which averages 97.7.
-        "judged_at": 1598,
-        "completion": 98,
-        "evidence_snapshot": {"example-name": 29, "round-axis": 18},
+        #
+        # R1604 RE-JUDGED **DOWN**, 98 -> 86, DEMANDED by the tool (`round-axis`
+        # 18 -> 23 = +28%), absorbing R1599, R1600, R1601, R1602 and R1603. It
+        # is the largest single move this table has had, and the second
+        # DOWNWARD one; R1577 was the first, for the same reason.
+        #
+        # TWO FORCES, and they point opposite ways.
+        #
+        # UP: the item every judgment in this series has named as the cap is
+        # CLOSED. "Execution semantics — control flow, iteration, side effects,
+        # time — are inexpressible in `evaluate(inputs) -> outputs`, so the
+        # control plane is at zero" was the stated reason not to reach 99, three
+        # judgments running. R1599 gave a port a FLOW, so a graph has two kinds
+        # of edge whose laws invert, a control cycle is a LOOP rather than a
+        # contradiction, and `Document::run` derives an execution order. R1600
+        # gave it MEMORY — `NodeBody::Delay`, a machine addressed by INSTANCE,
+        # `tick` and `settle` — so a loop can compute something different on its
+        # second pass. That cap is gone.
+        #
+        # DOWN, and it dominates: for the first time this axis has a MEASURED,
+        # test-backed figure for its node-graph third, and it is far below what
+        # the 98 rested on. The 98 was set against a hand census claiming 93%.
+        # R1601 made that census a tool and WITHDREW the number for a measured
+        # 78% (Blender, operator surface). R1602 made every `have` verdict name
+        # a TEST that exercises it through the public API, so a verdict can no
+        # longer be a hand claim. R1603 then found the census was BLIND rather
+        # than incomplete — R1593's implicit conversion and R1594's per-socket
+        # default are `UEdGraphSchema` virtuals and `bNodeType` callbacks, not
+        # operators, so an operator census read two PREREQUISITES as zero — and
+        # censused the hook surface on both references. Measured, per surface:
+        # Blender 54/72 = 75% (operator 78, hook 62); Unreal 60/149 = 40%
+        # (command 39, hook 40).
+        #
+        # The node-graph figure. This axis's own name is TWO references' worth
+        # of scope: Blender is the material-graph one at 75%, Unreal is the
+        # visual-scripting one at 40%, and equal weight gives 57.5. Two stated
+        # biases push that up and neither is a measurement, so they buy a little
+        # and not a lot: R1603's judging rule was "when unsure prefer `absent`",
+        # which biases the number LOW by construction, and the absences CLUSTER
+        # — Unreal's 89 are about eight distinct capabilities counted many times
+        # (alignment 11, variadic ports 6, struct pins 5, breakpoints 5, watches
+        # 2, relinking 3, per-node permissions 6, colour 5). Node graph: 62.
+        #
+        # The method is UNCHANGED on purpose — the three families averaged, as
+        # every judgment in this series has done. Changing the method and the
+        # inputs in one re-judgment would make the move unreadable. Composition:
+        # property grid ~98 and data grid ~98 (neither has had a round since
+        # R1571), node graph 97 -> 62, which averages 86.
+        #
+        # ★ THE DROP IS NOT A REGRESSION. Nothing this axis had was lost; three
+        # rounds built a meter and this is its first full reading. That is
+        # R1519's own lesson, which this table exists for: a completion nobody
+        # checked against a reference is not a measurement, and R1577 already
+        # recorded that checking one moves it DOWN.
+        "judged_at": 1604,
+        "completion": 86,
+        "evidence_snapshot": {"example-name": 30, "round-axis": 23},
     },
     {
         "key": "modelview",

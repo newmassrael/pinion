@@ -85544,6 +85544,48 @@
         "debt-local-gate-misses-example-tests carries the recurrence and the prescription"
       ]
     },
+    "Round 1604": {
+      "decision_summary": "The Advanced DCC axis is re-judged DOWN, 98 -> 86, and it is the largest single move this table has had and the second downward one. The tool demanded it (round-axis 18 -> 23 = +28%, past the band) and it absorbs five rounds: R1599, R1600, R1601, R1602, R1603. TWO FORCES, POINTING OPPOSITE WAYS. Up: the item every judgment in this series has named as the cap is CLOSED. \"Execution semantics -- control flow, iteration, side effects, time -- are inexpressible in evaluate(inputs) -> outputs, so the control plane is at zero\" was the stated reason not to reach 99, three judgments running. R1599 gave a port a FLOW, so a graph has two kinds of edge whose laws invert, a control cycle is a LOOP rather than a contradiction, and Document::run derives an execution order from the control plane; R1600 gave it MEMORY -- NodeBody::Delay, a machine addressed by INSTANCE, tick and settle -- so a loop can compute something different on its second pass. That cap is gone. Down, and it dominates: for the first time this axis has a MEASURED, test-backed figure for its node-graph third, and it is far below what the 98 rested on, which was a hand census claiming 93%. R1601 made that census a tool and WITHDREW the number for a measured 78%. R1602 made every have verdict name a TEST that exercises the capability through the public API, so a verdict can no longer be a hand claim, and the shape of that binding was itself chosen by a counterfactual. R1603 then found the census was BLIND rather than incomplete -- R1593's implicit conversion and R1594's per-socket default value are UEdGraphSchema virtuals and bNodeType callbacks, not operators, so an operator census read two PREREQUISITES as zero -- and censused the hook surface on both references, reporting per surface because one denominator lets a fat surface hide a starved one. Measured: Blender 54/72 = 75% (operator 78, hook 62), Unreal 60/149 = 40% (command 39, hook 40). THE NODE-GRAPH FIGURE. This axis's own name is two references' worth of scope -- \"visual scripting / material graph\" -- so Blender at 75 and Unreal at 40 at equal weight give 57.5. Two stated biases push that up and neither is a measurement, so they buy a little and not a lot: R1603's judging rule was \"when unsure prefer absent\", which biases the number LOW by construction, and the absences CLUSTER, since Unreal's 89 are about eight distinct capabilities counted many times (alignment 11, variadic ports 6, struct pins 5, breakpoints 5, watches 2, relinking 3, per-node permissions 6, colour 5). Node graph lands at 62. The METHOD is unchanged on purpose -- the three families averaged, as every judgment in this series has done -- because changing the method and the inputs in one re-judgment would make the move unreadable: property grid ~98 and data grid ~98, neither having had a round since R1571, and node graph 97 -> 62, which averages 86. THE DROP IS NOT A REGRESSION. Nothing this axis had was lost. Three rounds built a meter and this is its first full reading, which is precisely the lesson R1519 built this table to record -- a completion nobody checked against a reference is not a measurement -- and precisely what R1577 recorded when the first census moved this same axis down. The consequence for the campaign is the point: DCC goes from LAST at 60 leverage to FIRST at 280, the widest any axis has carried here and three times the next, so the derived order now sends every round to the axis whose number just fell. The ledger row is declared `none` rather than `dcc`: a re-judgment advances no axis, and declaring the one it judged would let an axis credit itself for having been looked at.",
+      "changes_bullets": [
+        "tools/phase_b_tally.py: dcc judged_at 1604, completion 86, snapshot ex 30 / rd 23",
+        "CLAUDE.md: the Northern-star table, the axis detail and the derived order all move",
+        "Phase B goes 88 -> 86 all-axes and 94 -> 91 buildable; true north stays ~32%",
+        "docs/phase-b-rounds.tsv declares `none`, because a re-judgment advances no axis"
+      ],
+      "verification_bullets": [
+        "tools/phase_b_tally.py --selftest: PASS; the axis is no longer STALE",
+        "The tool now ranks DCC first at 280 leverage, three times the next axis",
+        "Every input is a committed measurement: reference-census.json plus 102 census proofs"
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Property grid and data grid are still ~98 by a judgment with no reference census",
+        "The node-graph figure weights two references equally, which is a choice, not a measurement"
+      ],
+      "publishable_decision_summary": "The Advanced DCC axis is re-judged DOWN, 98 -> 86, and it is the largest single move this table has had and the second downward one. The tool demanded it (round-axis 18 -> 23 = +28%, past the band) and it absorbs five rounds: R1599, R1600, R1601, R1602, R1603. TWO FORCES, POINTING OPPOSITE WAYS. Up: the item every judgment in this series has named as the cap is CLOSED. \"Execution semantics -- control flow, iteration, side effects, time -- are inexpressible in evaluate(inputs) -> outputs, so the control plane is at zero\" was the stated reason not to reach 99, three judgments running. R1599 gave a port a FLOW, so a graph has two kinds of edge whose laws invert, a control cycle is a LOOP rather than a contradiction, and Document::run derives an execution order from the control plane; R1600 gave it MEMORY -- NodeBody::Delay, a machine addressed by INSTANCE, tick and settle -- so a loop can compute something different on its second pass. That cap is gone. Down, and it dominates: for the first time this axis has a MEASURED, test-backed figure for its node-graph third, and it is far below what the 98 rested on, which was a hand census claiming 93%. R1601 made that census a tool and WITHDREW the number for a measured 78%. R1602 made every have verdict name a TEST that exercises the capability through the public API, so a verdict can no longer be a hand claim, and the shape of that binding was itself chosen by a counterfactual. R1603 then found the census was BLIND rather than incomplete -- R1593's implicit conversion and R1594's per-socket default value are UEdGraphSchema virtuals and bNodeType callbacks, not operators, so an operator census read two PREREQUISITES as zero -- and censused the hook surface on both references, reporting per surface because one denominator lets a fat surface hide a starved one. Measured: Blender 54/72 = 75% (operator 78, hook 62), Unreal 60/149 = 40% (command 39, hook 40). THE NODE-GRAPH FIGURE. This axis's own name is two references' worth of scope -- \"visual scripting / material graph\" -- so Blender at 75 and Unreal at 40 at equal weight give 57.5. Two stated biases push that up and neither is a measurement, so they buy a little and not a lot: R1603's judging rule was \"when unsure prefer absent\", which biases the number LOW by construction, and the absences CLUSTER, since Unreal's 89 are about eight distinct capabilities counted many times (alignment 11, variadic ports 6, struct pins 5, breakpoints 5, watches 2, relinking 3, per-node permissions 6, colour 5). Node graph lands at 62. The METHOD is unchanged on purpose -- the three families averaged, as every judgment in this series has done -- because changing the method and the inputs in one re-judgment would make the move unreadable: property grid ~98 and data grid ~98, neither having had a round since R1571, and node graph 97 -> 62, which averages 86. THE DROP IS NOT A REGRESSION. Nothing this axis had was lost. Three rounds built a meter and this is its first full reading, which is precisely the lesson R1519 built this table to record -- a completion nobody checked against a reference is not a measurement -- and precisely what R1577 recorded when the first census moved this same axis down. The consequence for the campaign is the point: DCC goes from LAST at 60 leverage to FIRST at 280, the widest any axis has carried here and three times the next, so the derived order now sends every round to the axis whose number just fell. The ledger row is declared `none` rather than `dcc`: a re-judgment advances no axis, and declaring the one it judged would let an axis credit itself for having been looked at.",
+      "publishable_changes_bullets": [
+        "tools/phase_b_tally.py: dcc judged_at 1604, completion 86, snapshot ex 30 / rd 23",
+        "CLAUDE.md: the Northern-star table, the axis detail and the derived order all move",
+        "Phase B goes 88 -> 86 all-axes and 94 -> 91 buildable; true north stays ~32%",
+        "docs/phase-b-rounds.tsv declares `none`, because a re-judgment advances no axis"
+      ],
+      "publishable_verification_bullets": [
+        "tools/phase_b_tally.py --selftest: PASS; the axis is no longer STALE",
+        "The tool now ranks DCC first at 280 leverage, three times the next axis",
+        "Every input is a committed measurement: reference-census.json plus 102 census proofs"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Property grid and data grid are still ~98 by a judgment with no reference census",
+        "The node-graph figure weights two references equally, which is a choice, not a measurement"
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [
