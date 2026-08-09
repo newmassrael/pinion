@@ -32672,6 +32672,78 @@
         "cursor, which is a trigger this router does not have."
       ]
     },
+    "R1620": {
+      "decision_summary": "R1620 — a drag reaches past the edge.\n\nR1619 made drag-select expressible; it could still only select what was on screen. A row that is not painted is never entered, so a sweep stopped at the last visible line — and every virtualized view in this tree is windowed, so that is most of the model. Auto-scroll is the other half, and the reference names it on its abstract item view: an auto-scroll property, an edge-margin property, and a start entry point. No view without it can select past its own bottom edge.\n\nTHE DEBT NOTE THIS ROUND OPENED WITH WAS WRONG, AND A TEST SAID SO IN FIVE MINUTES. R1619 wrote it, one round earlier, and it claimed the hard part was re-resolving hover when content moves under a stationary cursor — that the router had no trigger for it and that building the timer without that would leave the view scrolling while the selection stood still. Measured: the trigger exists. `refresh_hover_for_all_active_pointers` runs on every repaint and skips only pointers a gesture has PINNED, which a plain drag-select is not, so scrolling the content mid-sweep already extended the selection (`[[0,1]]` -> `[[0,2]]` -> `[[0,3]]`, cursor untouched). That is two rounds running where a debt note's diagnosis was false — R1619 on an inherited note, R1620 on its own, one round old. A note written at round-end without a test is a guess, and the cost lands on the next round as the time to disprove it.\n\nWHAT WAS ACTUALLY MISSING was the ramp and the frame tick, and the design parts from the reference on the axis that matters. Read from its source rather than assumed: a counter starts at zero when auto-scroll begins and increments once per timer tick, capped at the page step, and THAT counter is the per-tick distance. So the speed is a function of elapsed time alone, and the pointer's depth into the margin is read as a boolean — in, or out. A user who wants to go faster cannot; one who overshoots waits for the ramp to restart. Here the band IS the ramp: zero at its inner edge, the declared maximum at the viewport boundary, linear between, saturating outside so a pointer dragged far past the window asks for max speed and not for an unbounded jump. Measured over ten identical frames through the wire: 61 px shallow against 231 px deep. It also removes a state — there is no ramp counter to reset, because speed is a pure function of position. And it integrates a velocity against the frame's own `dt`, where the reference scrolls a fixed step per 50 or 150 ms timer tick, hard-coded, with a source comment wishing it were a style hint.\n\nNOTHING IS FABRICATED. Scrolling moves content under a stationary cursor, so the address under the pointer changes with no input at all. The reference handles that by SYNTHESISING a mouse-move and posting it to the viewport, flagged as framework-synthesised — an event the application receives and, at the widget, cannot tell from the user's. Here the new hover target is a derivation of the new picture. That is why the probe mattered before anything was built: the round leans on that path, so it proved it first rather than assuming it.\n\nTHE PIN IS THE GESTURE. The scroll region is captured at the press — weakly, so a panel torn down mid-drag ends the gesture rather than being kept alive by it, and with its viewport rect AND its declared policy beside it. All three are read at the moment the pointer is OUTSIDE the region, where a hit-test finds nothing, and that is not an edge case: it is where auto-scroll does its work. Pinning also makes the gesture belong to ONE region, the way its selection already does. The policy is snapshotted for a reason a counterfactual proved: a default-valued fallback switched a region that had declared auto-scroll OFF back on at exactly the moment the pin starts being used.\n\nA COUNTERFACTUAL MADE THE ROUND DELETE CODE, which is the best outcome one can have. The tick was gated both on `held_buttons(id).is_empty()` and on the pin's presence, and nothing could catch removing the first — because a pin exists exactly while a button is held, so the two could never disagree. Two readers of one fact. The fix was to delete a check rather than to write a test for it.\n\nANOTHER MOVED THE COMPOSITION. `tick_auto_repeat(..) || tick_auto_scroll(..)` short-circuits, so a press that is both repeating a step and holding an edge loses half of itself the moment the first says yes — a bug invisible in either mechanism's own tests. The composition sat in the shell, where no fixture could drive both at once, so it moved onto the router next to the R1549 auto-repeat fixtures and got the test it could not otherwise have had. The per-frame shell seam is renamed `tick_pointer_hold_for_window` to match: a second continuation arriving under a name that promises only the first is how three backends end up with two seams that drift.\n\nA THIRD found that `off()` zeroes both the band and the speed, so no test could say which half of `is_enabled` was load-bearing; a zero-width band beside a live speed now has one. Nine counterfactuals, nine caught, after one was retired as mis-written — its edit was inert because the real gate sits a level below where it cut, and the property it named is covered by the pin case. R1619's own baseline gate on the driver paid for itself here: every run started from a verified-green tree.",
+      "changes_bullets": [
+        "pinion-core scroll: AutoScroll { margin, max_speed }, off(), speed_at() ramp",
+        "ScrollNode gains auto_scroll + with_auto_scroll; defaults ON, as the reference does",
+        "InputRouter::tick_auto_scroll + auto_scroll_step + the sub-pixel remainder",
+        "InputRouter::tick_pointer_hold -- both continuations, asked unconditionally",
+        "AutoScrollPin: the region, its rect and its policy, captured at the press",
+        "note_button_edge takes and drops the pin on the gesture's own transitions",
+        "CoreShell::tick_auto_repeat_for_window renamed tick_pointer_hold_for_window",
+        "InputStateSnapshot.auto_scroll + the scene/input_state field (null = no gesture)",
+        "the redundant held-button gate DELETED, on a counterfactual's evidence",
+        "tools/demos/r1620_a_drag_reaches_past_the_edge.py (new)"
+      ],
+      "verification_bullets": [
+        "6 new router tests: the sweep past the edge, the ramp's shape, the pin, the",
+        "remainder, off-inside, and both continuations in one frame",
+        "each carries a negative control -- release, hover, off, and the shallow/deep pair",
+        "9 counterfactuals, 9 caught, every run from a verified-green baseline",
+        "Demo r1620: 33 assertions; the ramp read off the wire at four depths, both edges",
+        "12 blast-radius demos re-pass, including the auto-repeat and scroll families",
+        "cargo fmt, clippy -D pedantic on 5 crates, and the full changed-crate suites green"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.35",
+        "5.38",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "none -- no external dependency, and the debt R1619 left is closed.",
+        "Stated limits rather than carries: a resize mid-drag measures the ramp against",
+        "the press-time rect until the pointer returns inside the region, and the",
+        "horizontal axis rides the same ramp but is clamped away by a vertical-only",
+        "region's own bounds rather than by the policy."
+      ],
+      "publishable_decision_summary": "R1620 — a drag reaches past the edge.\n\nR1619 made drag-select expressible; it could still only select what was on screen. A row that is not painted is never entered, so a sweep stopped at the last visible line — and every virtualized view in this tree is windowed, so that is most of the model. Auto-scroll is the other half, and the reference names it on its abstract item view: an auto-scroll property, an edge-margin property, and a start entry point. No view without it can select past its own bottom edge.\n\nTHE DEBT NOTE THIS ROUND OPENED WITH WAS WRONG, AND A TEST SAID SO IN FIVE MINUTES. R1619 wrote it, one round earlier, and it claimed the hard part was re-resolving hover when content moves under a stationary cursor — that the router had no trigger for it and that building the timer without that would leave the view scrolling while the selection stood still. Measured: the trigger exists. `refresh_hover_for_all_active_pointers` runs on every repaint and skips only pointers a gesture has PINNED, which a plain drag-select is not, so scrolling the content mid-sweep already extended the selection (`[[0,1]]` -> `[[0,2]]` -> `[[0,3]]`, cursor untouched). That is two rounds running where a debt note's diagnosis was false — R1619 on an inherited note, R1620 on its own, one round old. A note written at round-end without a test is a guess, and the cost lands on the next round as the time to disprove it.\n\nWHAT WAS ACTUALLY MISSING was the ramp and the frame tick, and the design parts from the reference on the axis that matters. Read from its source rather than assumed: a counter starts at zero when auto-scroll begins and increments once per timer tick, capped at the page step, and THAT counter is the per-tick distance. So the speed is a function of elapsed time alone, and the pointer's depth into the margin is read as a boolean — in, or out. A user who wants to go faster cannot; one who overshoots waits for the ramp to restart. Here the band IS the ramp: zero at its inner edge, the declared maximum at the viewport boundary, linear between, saturating outside so a pointer dragged far past the window asks for max speed and not for an unbounded jump. Measured over ten identical frames through the wire: 61 px shallow against 231 px deep. It also removes a state — there is no ramp counter to reset, because speed is a pure function of position. And it integrates a velocity against the frame's own `dt`, where the reference scrolls a fixed step per 50 or 150 ms timer tick, hard-coded, with a source comment wishing it were a style hint.\n\nNOTHING IS FABRICATED. Scrolling moves content under a stationary cursor, so the address under the pointer changes with no input at all. The reference handles that by SYNTHESISING a mouse-move and posting it to the viewport, flagged as framework-synthesised — an event the application receives and, at the widget, cannot tell from the user's. Here the new hover target is a derivation of the new picture. That is why the probe mattered before anything was built: the round leans on that path, so it proved it first rather than assuming it.\n\nTHE PIN IS THE GESTURE. The scroll region is captured at the press — weakly, so a panel torn down mid-drag ends the gesture rather than being kept alive by it, and with its viewport rect AND its declared policy beside it. All three are read at the moment the pointer is OUTSIDE the region, where a hit-test finds nothing, and that is not an edge case: it is where auto-scroll does its work. Pinning also makes the gesture belong to ONE region, the way its selection already does. The policy is snapshotted for a reason a counterfactual proved: a default-valued fallback switched a region that had declared auto-scroll OFF back on at exactly the moment the pin starts being used.\n\nA COUNTERFACTUAL MADE THE ROUND DELETE CODE, which is the best outcome one can have. The tick was gated both on `held_buttons(id).is_empty()` and on the pin's presence, and nothing could catch removing the first — because a pin exists exactly while a button is held, so the two could never disagree. Two readers of one fact. The fix was to delete a check rather than to write a test for it.\n\nANOTHER MOVED THE COMPOSITION. `tick_auto_repeat(..) || tick_auto_scroll(..)` short-circuits, so a press that is both repeating a step and holding an edge loses half of itself the moment the first says yes — a bug invisible in either mechanism's own tests. The composition sat in the shell, where no fixture could drive both at once, so it moved onto the router next to the R1549 auto-repeat fixtures and got the test it could not otherwise have had. The per-frame shell seam is renamed `tick_pointer_hold_for_window` to match: a second continuation arriving under a name that promises only the first is how three backends end up with two seams that drift.\n\nA THIRD found that `off()` zeroes both the band and the speed, so no test could say which half of `is_enabled` was load-bearing; a zero-width band beside a live speed now has one. Nine counterfactuals, nine caught, after one was retired as mis-written — its edit was inert because the real gate sits a level below where it cut, and the property it named is covered by the pin case. R1619's own baseline gate on the driver paid for itself here: every run started from a verified-green tree.",
+      "publishable_changes_bullets": [
+        "pinion-core scroll: AutoScroll { margin, max_speed }, off(), speed_at() ramp",
+        "ScrollNode gains auto_scroll + with_auto_scroll; defaults ON, as the reference does",
+        "InputRouter::tick_auto_scroll + auto_scroll_step + the sub-pixel remainder",
+        "InputRouter::tick_pointer_hold -- both continuations, asked unconditionally",
+        "AutoScrollPin: the region, its rect and its policy, captured at the press",
+        "note_button_edge takes and drops the pin on the gesture's own transitions",
+        "CoreShell::tick_auto_repeat_for_window renamed tick_pointer_hold_for_window",
+        "InputStateSnapshot.auto_scroll + the scene/input_state field (null = no gesture)",
+        "the redundant held-button gate DELETED, on a counterfactual's evidence",
+        "tools/demos/r1620_a_drag_reaches_past_the_edge.py (new)"
+      ],
+      "publishable_verification_bullets": [
+        "6 new router tests: the sweep past the edge, the ramp's shape, the pin, the",
+        "remainder, off-inside, and both continuations in one frame",
+        "each carries a negative control -- release, hover, off, and the shallow/deep pair",
+        "9 counterfactuals, 9 caught, every run from a verified-green baseline",
+        "Demo r1620: 33 assertions; the ramp read off the wire at four depths, both edges",
+        "12 blast-radius demos re-pass, including the auto-repeat and scroll families",
+        "cargo fmt, clippy -D pedantic on 5 crates, and the full changed-crate suites green"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.35",
+        "5.38",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none -- no external dependency, and the debt R1619 left is closed.",
+        "Stated limits rather than carries: a resize mid-drag measures the ramp against",
+        "the press-time rect until the pointer returns inside the region, and the",
+        "horizontal axis rides the same ramp but is clamped away by a vertical-only",
+        "region's own bounds rather than by the policy."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

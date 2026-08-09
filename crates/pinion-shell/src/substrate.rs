@@ -4019,7 +4019,7 @@ impl<V: WidgetView> ShellCore<V> {
                     let mut tails = Vec::new();
                     pinion_runtime::substep(dt, |step| {
                         self.core.tick_animations_for_window(window_id, step);
-                        tails.push(self.core.tick_auto_repeat_for_window(window_id, step).0);
+                        tails.push(self.core.tick_pointer_hold_for_window(window_id, step).0);
                     });
                     for tail in &tails {
                         self.handle_tail(tail);
@@ -4809,8 +4809,9 @@ impl<V: WidgetView> ShellCore<V> {
         // no clock and fires no input.
         let paused = self.target_fps_for_window(window_key) == Some(0);
         let repeat_dt = if paused { 0.0 } else { dt.max(0.0) };
-        let (repeat_tail, repeat_armed) =
-            self.core.tick_auto_repeat_for_window(window_key, repeat_dt);
+        let (repeat_tail, repeat_armed) = self
+            .core
+            .tick_pointer_hold_for_window(window_key, repeat_dt);
         self.handle_tail(&repeat_tail);
         // R1006 §5.23 §5.22 — publish the layout viewport to the binding
         // BEFORE the view runs, so a reflow Effect (e.g. a PTY winsize ioctl)

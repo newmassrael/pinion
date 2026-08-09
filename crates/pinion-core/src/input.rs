@@ -433,6 +433,34 @@ pub struct InputStateSnapshot {
     /// R1074 §5.39 §5.16 — multi-window key-dispatch gate state, or
     /// `None` on a single-OS-window backend. See [`KeyDispatchFocus`].
     pub key_dispatch: Option<KeyDispatchFocus>,
+    /// R1620 §5.45 §5.16 — what the mouse pointer's **auto-scroll** is doing,
+    /// or `None` when no gesture is holding a scroll region.
+    ///
+    /// A view that moves on its own is the one thing an agent watching
+    /// `scene/scroll_state` cannot explain: the offset changes with no call
+    /// having been made. This says which gesture is doing it and at what
+    /// speed — and, because the declared band travels with it, also answers
+    /// the harder question of why a drag near an edge is NOT scrolling.
+    pub auto_scroll: Option<AutoScrollState>,
+}
+
+/// R1620 §5.45 §5.16 — the live auto-scroll of one held pointer: the region's
+/// declared ramp and the velocity that ramp is currently asking for.
+///
+/// Present only while a button is held over a pinned scroll region, which is
+/// the same gate the behaviour itself has — so "absent" means "no gesture owns
+/// a scroll region", never "the axis is unavailable".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AutoScrollState {
+    /// Logical px/s along x; negative scrolls toward the origin. `0.0` when the
+    /// pointer is outside the band on this axis.
+    pub velocity_x: f64,
+    /// Logical px/s along y.
+    pub velocity_y: f64,
+    /// The region's declared edge band, in logical px (`0.0` = auto-scroll off).
+    pub margin: f64,
+    /// The region's declared top speed, in logical px/s.
+    pub max_speed: f64,
 }
 
 /// R1074 §5.39 §5.16 — the multi-window keyboard-dispatch gate state,

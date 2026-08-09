@@ -564,6 +564,127 @@ pub fn max_scroll_offset(content: u32, viewport: u32) -> i32 {
     i32::try_from(content.saturating_sub(viewport)).unwrap_or(i32::MAX)
 }
 
+/// R1620 §5.45 §5.35 — **auto-scroll**: how a scroll region keeps moving while a
+/// pointer holds a button near its edge.
+///
+/// A drag-select reaches the addresses it can see, and no further: the pointer
+/// leaves the viewport and the rows below it are never entered, so the sweep
+/// stops at the last painted one. Auto-scroll is what makes a drag able to
+/// select more than a screenful — the reference names it `autoScroll` +
+/// `autoScrollMargin` + a `startAutoScroll` entry point on its abstract item
+/// view, and no view without it can select past its own bottom edge.
+///
+/// ## Speed is a function of the POINTER, not of elapsed time
+///
+/// This is the one place the design deliberately parts from the reference,
+/// which was read rather than assumed. There, a counter starts at zero when
+/// auto-scroll begins and increments by one per timer tick (capped at the page
+/// step), and THAT counter is the per-tick scroll distance. So the speed
+/// depends only on how long the drag has been going: a user who wants to move
+/// faster cannot, and one who overshoots must wait for the ramp to restart.
+/// The pointer's position inside the margin is read as a boolean — in, or out.
+///
+/// Here the margin is a **ramp**: at its inner edge the speed is zero and at
+/// the viewport boundary it is [`max_speed`](Self::max_speed), linearly
+/// between. Pushing further out goes faster, and easing back slows down, which
+/// is the behaviour every drawing tool, timeline and code editor has and the
+/// gesture people already know. It also removes a whole state: there is no ramp
+/// counter to reset, because speed is a pure function of where the pointer is.
+///
+/// ## And it is in px/s against a real delta
+///
+/// The reference scrolls a fixed number of items per timer tick (150 ms per
+/// item, 50 ms per pixel — hard-coded, with a source comment wishing it were a
+/// style hint), so its speed is whatever the timer manages to deliver. This
+/// carries a velocity and is integrated against the frame's own `dt`, so a
+/// slow frame scrolls the same distance a fast one does and the gesture feels
+/// the same at 30 fps and 144.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoScroll {
+    /// The edge band, in logical pixels, inside which a held pointer scrolls.
+    /// Zero disables auto-scroll for this region entirely — an explicit
+    /// "off" rather than a separate boolean, because a zero-wide ramp IS no
+    /// ramp and two spellings of off would need a rule about disagreement.
+    pub margin: f64,
+    /// The speed, in logical pixels per second, reached when the pointer is at
+    /// the viewport boundary (and beyond it — the ramp saturates rather than
+    /// running away when the pointer leaves the window).
+    pub max_speed: f64,
+}
+
+impl AutoScroll {
+    /// The default edge band: 16 logical pixels, the same width the reference
+    /// picked, so a gesture tuned against one feels the same against the other.
+    pub const DEFAULT_MARGIN: f64 = 16.0;
+
+    /// The default top speed: 720 logical pixels per second — a 40-px row every
+    /// ~56 ms at full push, which is about the reference's per-item cadence at
+    /// its ramp's midpoint, reached here by pushing rather than by waiting.
+    pub const DEFAULT_MAX_SPEED: f64 = 720.0;
+
+    /// Auto-scroll off: no band, so no held pointer ever scrolls this region.
+    #[must_use]
+    pub const fn off() -> Self {
+        Self {
+            margin: 0.0,
+            max_speed: 0.0,
+        }
+    }
+
+    /// Whether this policy can ever scroll. A zero (or negative) band or a
+    /// non-positive speed is off.
+    #[must_use]
+    pub fn is_enabled(self) -> bool {
+        self.margin > 0.0 && self.max_speed > 0.0
+    }
+
+    /// The signed speed, in logical px/s, for a pointer at `pos` along an axis
+    /// whose viewport spans `[lo, hi)`. Negative scrolls toward the origin
+    /// (the pointer is near `lo`), positive away from it; `0.0` when the
+    /// pointer is in the middle, or when this policy is off.
+    ///
+    /// Saturates outside the viewport rather than accelerating without bound:
+    /// a pointer dragged far past the edge — or off the window entirely — asks
+    /// for [`max_speed`](Self::max_speed) and no more. Without that clamp the
+    /// distance travelled in one frame would depend on how far outside the
+    /// window the user happened to be, which is not a control anyone is aiming.
+    #[must_use]
+    pub fn speed_at(self, pos: f64, lo: f64, hi: f64) -> f64 {
+        if !self.is_enabled() || hi <= lo {
+            return 0.0;
+        }
+        // A band wider than half the viewport would overlap itself in the
+        // middle and make every position scroll. Clamp so a small region
+        // degrades to "the two halves" instead of behaving unpredictably.
+        let margin = self.margin.min((hi - lo) / 2.0);
+        let depth = if pos < lo + margin {
+            // Toward the origin: how far INTO the band, as a fraction.
+            -((lo + margin - pos) / margin)
+        } else if pos > hi - margin {
+            (pos - (hi - margin)) / margin
+        } else {
+            0.0
+        };
+        self.max_speed * depth.clamp(-1.0, 1.0)
+    }
+}
+
+impl Default for AutoScroll {
+    /// On, with the default band and speed: a scroll region that says nothing
+    /// still lets a drag reach past its edge.
+    ///
+    /// Defaulting ON is the fail-safe direction here, matching the reference
+    /// (whose property defaults true). A region that auto-scrolls when it need
+    /// not is a gesture the user can simply not make; one that does not when it
+    /// should is a selection they cannot express at all.
+    fn default() -> Self {
+        Self {
+            margin: Self::DEFAULT_MARGIN,
+            max_speed: Self::DEFAULT_MAX_SPEED,
+        }
+    }
+}
+
 /// R55.B §5.45 — Resolve (or lazily initialize) the
 /// [`ScrollState`] for the current view scope.
 ///

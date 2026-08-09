@@ -534,6 +534,52 @@ pub struct InputRouter {
     /// channel (R1416 carries modifiers on both edges); this is the same fix
     /// for the wire every other widget listens on.
     held_modifiers: Modifiers,
+    /// R1620 §5.45 §5.35 — the sub-pixel remainder each pointer's auto-scroll
+    /// has accrued but not yet spent, per axis.
+    ///
+    /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
+    /// moves whole pixels, and a velocity integrated against a frame's `dt`
+    /// rarely lands on one: at 60 fps a 30 px/s crawl is half a pixel a frame,
+    /// which truncates to zero and stalls the gesture completely at exactly the
+    /// speeds a user reaches for when they are being careful. Carrying the
+    /// remainder makes the distance travelled a function of elapsed time rather
+    /// than of frame boundaries — the same reason the wheel path keeps
+    /// `wheel_remainders`.
+    auto_scroll_frac: HashMap<PointerId, (f64, f64)>,
+    /// R1620 §5.45 §5.35 — the scroll region a held pointer's gesture began in,
+    /// pinned for the gesture's whole life.
+    ///
+    /// Auto-scroll's most useful moment is when the pointer is dragged PAST the
+    /// edge — that is where the ramp saturates and the view moves fastest — and
+    /// at that moment the cursor is outside the viewport, so resolving the
+    /// region by hit-test finds nothing. Pinning at the press is also what
+    /// makes the gesture belong to ONE region: a drag that begins in a list and
+    /// wanders over a neighbouring one must keep scrolling the list it started
+    /// in, exactly as its selection keeps belonging there.
+    ///
+    /// Held as a [`Weak`](std::rc::Weak) so a region torn down mid-gesture
+    /// (a panel closed by a shortcut) ends the auto-scroll instead of keeping
+    /// its state alive. The viewport rect is snapshotted beside it, because the
+    /// ramp needs an edge to measure against and the node it came from may no
+    /// longer be reachable by hit-test; a resize mid-drag therefore measures
+    /// against the press-time rect until the pointer returns inside, which is
+    /// stated rather than hidden.
+    auto_scroll_pin: HashMap<PointerId, AutoScrollPin>,
+}
+
+/// R1620 §5.45 §5.35 — the scroll region a held pointer's gesture opened over,
+/// captured at the press: the region itself (weakly, so a torn-down panel ends
+/// the gesture rather than being kept alive by it), the viewport rect the ramp
+/// measures against, and the policy that region declared.
+///
+/// All three are snapshotted because all three are read at the moment the
+/// pointer is OUTSIDE the region, where a hit-test finds nothing — and that is
+/// not an edge case, it is where auto-scroll does its work.
+#[derive(Debug)]
+struct AutoScrollPin {
+    state: std::rc::Weak<ScrollState>,
+    viewport: Rect,
+    policy: pinion_core::widgets::scroll::AutoScroll,
 }
 
 /// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
@@ -884,10 +930,52 @@ impl InputRouter {
     /// exactly the thing that goes stale silently.
     pub fn note_button_edge(&mut self, id: PointerId, button: PointerButton, edge: PointerEdge) {
         let held = self.held_buttons.entry(id).or_default();
+        let was_empty = held.is_empty();
         *held = match edge {
             PointerEdge::Down => held.with(button),
             PointerEdge::Up => held.without(button),
         };
+        let now_empty = held.is_empty();
+        // R1620 — the gesture's boundaries are exactly the transitions of this
+        // set, which is why the auto-scroll pin is taken and released here
+        // rather than in one of the several press arms: those are per-button
+        // and per-channel, and a chord would open two gestures out of one.
+        if was_empty && !now_empty {
+            self.pin_auto_scroll_region(id);
+        } else if now_empty {
+            self.auto_scroll_pin.remove(&id);
+            self.auto_scroll_frac.remove(&id);
+        }
+    }
+
+    /// R1620 §5.45 — remember which scroll region this pointer is over as its
+    /// gesture opens. `None` under the cursor simply leaves no pin, and the
+    /// gesture then auto-scrolls nothing.
+    fn pin_auto_scroll_region(&mut self, id: PointerId) {
+        let Some(&(x, y)) = self.cursors.get(&id) else {
+            return;
+        };
+        let Some(paint) = self.last_paint_scene.as_ref() else {
+            return;
+        };
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a window-local logical cursor; negatives cannot hit a viewport rect"
+        )]
+        let hit = paint.scroll_target_at(x.max(0.0) as u32, y.max(0.0) as u32);
+        if let Some(node) = hit
+            && let Some(state) = node.state.as_ref()
+        {
+            self.auto_scroll_pin.insert(
+                id,
+                AutoScrollPin {
+                    state: std::rc::Rc::downgrade(state),
+                    viewport: node.viewport,
+                    policy: node.auto_scroll,
+                },
+            );
+        }
     }
 
     /// R1619 §5.35 — the set of buttons `id` currently holds, the READ peer of
@@ -928,6 +1016,179 @@ impl InputRouter {
     #[must_use]
     pub fn held_modifiers(&self) -> Modifiers {
         self.held_modifiers
+    }
+
+    /// R1620 §5.35 §5.38 §5.45 — advance everything a held press keeps doing,
+    /// by one frame, and answer whether any of it is still going.
+    ///
+    /// The two continuations are asked **unconditionally**: a press can be
+    /// repeating a step AND auto-scrolling at the same time (a stepper inside
+    /// a scrolling panel), so `a() || b()` would stop asking the second the
+    /// moment the first said yes and silently halve the gesture. Written with
+    /// both results bound before they are combined, and the composition lives
+    /// HERE rather than in the shell so it sits beside the fixtures that can
+    /// exercise both at once — a counterfactual found the shell-side version
+    /// untestable in practice, which is the same thing as untested.
+    pub fn tick_pointer_hold(&mut self, dt: f32, state_scene: &mut Scene) -> bool {
+        let repeating = self.tick_auto_repeat(dt, state_scene);
+        let scrolling = self.tick_auto_scroll(dt);
+        repeating || scrolling
+    }
+
+    /// R1620 §5.45 §5.35 — advance every held pointer's **auto-scroll** by one
+    /// frame, and answer whether any of them is still scrolling (so the
+    /// backend knows to schedule another).
+    ///
+    /// A drag reaches the addresses it can see and no further: the pointer
+    /// leaves the viewport and the rows past the edge are never entered, so a
+    /// sweep stops at the last painted one. This is what lets it keep going —
+    /// the reference's `autoScroll`, and the reason its abstract item view can
+    /// select past its own bottom edge.
+    ///
+    /// ## Gated on a HELD BUTTON, which is why this round follows R1619
+    ///
+    /// A hovering pointer resting near an edge must not drag the view out from
+    /// under the reader. The reference gates on its own drag states; here the
+    /// gate is [`held_buttons`](Self::held_buttons) — the fact R1619 put on
+    /// every event and in this router. Before that there was nothing to gate
+    /// on outside a capture, which is the same absence that blocked
+    /// drag-select itself.
+    ///
+    /// ## The selection follows WITHOUT a synthetic event
+    ///
+    /// Scrolling moves content under a stationary cursor, so the address the
+    /// pointer is over changes with no input at all. The reference solves that
+    /// by **fabricating a mouse-move** and posting it to the viewport, flagged
+    /// as synthesised-by-the-framework — observable to the application and,
+    /// at the widget, indistinguishable from the user having moved. Here nothing is fabricated: the scroll marks the region dirty,
+    /// the next paint re-runs
+    /// [`refresh_hover_for_all_active_pointers`](Self::refresh_hover_for_all_active_pointers),
+    /// and the new hover target is a DERIVATION of the new picture. That path
+    /// already existed and R1620 proved it end to end before relying on it.
+    ///
+    /// Returns `true` while any pointer's ramp is live. The value feeds the
+    /// same "another frame, please" answer
+    /// [`tick_auto_repeat`](Self::tick_auto_repeat) gives, because both are
+    /// continuations of one held press.
+    pub fn tick_auto_scroll(&mut self, dt: f32) -> bool {
+        let mut live = false;
+        // R1620 — iterate the PINS, not every pointer with a cursor. A pin
+        // exists exactly while a gesture is open (`note_button_edge` takes one
+        // on the empty -> non-empty transition and drops it on the way back),
+        // so "is a button held" needs no second spelling here. A draft had
+        // both and a counterfactual proved the extra one redundant: nothing
+        // could catch its removal, because it could never disagree with the
+        // pin. Two readers of one fact is the drift this codebase keeps
+        // paying for, so the answer was to delete a check rather than to test
+        // it.
+        let ids: Vec<PointerId> = self.auto_scroll_pin.keys().copied().collect();
+        for id in ids {
+            let Some(step) = self.auto_scroll_step(id, dt) else {
+                self.auto_scroll_frac.remove(&id);
+                continue;
+            };
+            live = true;
+            let (state, dx, dy) = step;
+            let frac = self.auto_scroll_frac.entry(id).or_insert((0.0, 0.0));
+            frac.0 += dx;
+            frac.1 += dy;
+            let (whole_x, whole_y) = (frac.0.trunc(), frac.1.trunc());
+            frac.0 -= whole_x;
+            frac.1 -= whole_y;
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "whole_* is a trunc()ed per-frame pixel step, far inside i32"
+            )]
+            let (whole_x, whole_y) = (whole_x as i32, whole_y as i32);
+            if whole_x != 0 || whole_y != 0 {
+                state.scroll_by(whole_x, whole_y);
+            }
+        }
+        live
+    }
+
+    /// R1620 §5.45 §5.16 — what `id`'s auto-scroll is doing right now, for the
+    /// `scene/input_state` READ peer. `None` when no gesture holds a region.
+    ///
+    /// Derived from the same `auto_scroll_step` the tick integrates, at a
+    /// notional one-second `dt` so the reported numbers ARE the velocities —
+    /// one derivation, so the published answer cannot describe a ramp
+    /// different from the one moving the view.
+    #[must_use]
+    pub fn auto_scroll_state(&self, id: PointerId) -> Option<pinion_core::input::AutoScrollState> {
+        if self.held_buttons(id).is_empty() {
+            return None;
+        }
+        let pin = self.auto_scroll_pin.get(&id)?;
+        pin.state.upgrade()?;
+        let (velocity_x, velocity_y) = self
+            .auto_scroll_step(id, 1.0)
+            .map_or((0.0, 0.0), |(_, dx, dy)| (dx, dy));
+        Some(pinion_core::input::AutoScrollState {
+            velocity_x,
+            velocity_y,
+            margin: pin.policy.margin,
+            max_speed: pin.policy.max_speed,
+        })
+    }
+
+    /// R1620 §5.45 — the scroll region under `id`'s cursor and the distance its
+    /// auto-scroll wants to travel this frame, or `None` when the pointer is
+    /// over no scrollable region, the region declares auto-scroll off, or the
+    /// cursor sits outside every edge band.
+    ///
+    /// Split out so the borrow of `last_paint_scene` ends before the caller
+    /// mutates the remainder map, and so the geometry is testable without a
+    /// clock.
+    fn auto_scroll_step(
+        &self,
+        id: PointerId,
+        dt: f32,
+    ) -> Option<(
+        std::rc::Rc<pinion_core::widgets::scroll::ScrollState>,
+        f64,
+        f64,
+    )> {
+        let &(x, y) = self.cursors.get(&id)?;
+        let paint = self.last_paint_scene.as_ref()?;
+        let pin = self.auto_scroll_pin.get(&id)?;
+        // Prefer the LIVE node when the cursor is still inside it — its rect and
+        // its policy are this frame's. Outside it (the ramp's most useful
+        // moment) fall back to the press-time snapshot, which is the whole
+        // reason the pin exists.
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a window-local logical cursor; negatives cannot hit a viewport rect"
+        )]
+        let live = paint
+            .scroll_target_at(x.max(0.0) as u32, y.max(0.0) as u32)
+            .filter(|node| {
+                node.state
+                    .as_ref()
+                    .is_some_and(|s| std::rc::Weak::ptr_eq(&std::rc::Rc::downgrade(s), &pin.state))
+            });
+        let state = pin.state.upgrade()?;
+        // The POLICY is snapshotted in the pin as well, not re-derived from a
+        // default: a region that declared auto-scroll OFF must stay off once
+        // the pointer wanders outside it, and a default-valued fallback would
+        // have switched it on at exactly the moment the pin starts being used.
+        let (policy, rect) = live.map_or((pin.policy, pin.viewport), |node| {
+            (node.auto_scroll, node.viewport)
+        });
+        if !policy.is_enabled() {
+            return None;
+        }
+        let state = &state;
+        let (lo_x, hi_x) = (f64::from(rect.x), f64::from(rect.x + rect.w));
+        let (lo_y, hi_y) = (f64::from(rect.y), f64::from(rect.y + rect.h));
+        let vx = policy.speed_at(x, lo_x, hi_x);
+        let vy = policy.speed_at(y, lo_y, hi_y);
+        if vx == 0.0 && vy == 0.0 {
+            return None;
+        }
+        let dt = f64::from(dt);
+        Some((std::rc::Rc::clone(state), vx * dt, vy * dt))
     }
 
     /// R762 §5.36 §5.38 — last known cursor position (window-local
@@ -5406,7 +5667,433 @@ mod tests {
         assert_eq!(rows(&state), "[]", "hovering is not dragging");
     }
 
-    /// R1619 §5.35 §5.39 — the held set is forgotten on blur, and a
+    /// R1620 §5.45 §5.35 — a scroll region built over `state`, `h` px tall,
+    /// with `rows` 40-px rows of content. The row tags are the DATA index, so
+    /// which rows are painted is a function of the offset — the shape a
+    /// virtualized list has, and the one that makes "did the sweep reach a row
+    /// that was off screen" answerable.
+    fn scrolling_rows(
+        state: &std::rc::Rc<pinion_core::widgets::scroll::ScrollState>,
+        rows: u32,
+        h: u32,
+    ) -> Scene {
+        let row = |i: u32| {
+            let mut node = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag(format!("sel#{i}"))
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut node {
+                // Content coordinates; the scroll node applies the offset.
+                c.rect = Rect::new(0, i * 40, 200, 40);
+            }
+            node
+        };
+        let mut content = Scene::Container(ContainerNode::new((0..rows).map(row).collect()));
+        if let Scene::Container(c) = &mut content {
+            c.rect = Rect::new(0, 0, 200, rows * 40);
+        }
+        let offset = state.offset();
+        let scroll = ScrollNode::new(Rect::new(0, 0, 200, h), content)
+            .with_state(std::rc::Rc::clone(state))
+            .with_offset(offset.0, offset.1);
+        let mut root = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 200, h);
+        }
+        root
+    }
+
+    /// R1620 §5.45 §5.35 — **a drag-select reaches past the viewport.**
+    ///
+    /// The gesture the reference calls auto-scroll: hold the primary button
+    /// near the bottom edge and the view keeps moving, so the sweep can select
+    /// rows that were never painted when it began. Before this round a sweep
+    /// stopped at the last painted row, because a row that is not painted is
+    /// never entered.
+    ///
+    /// Driven through the real router against the real coordinator, with the
+    /// selection read off the published wire form.
+    #[test]
+    fn r1620_a_held_pointer_at_the_edge_scrolls_and_the_sweep_follows() {
+        use pinion_core::external::IntrospectValue;
+        use pinion_core::widgets::scroll::ScrollState;
+        use pinion_core::widgets::virtual_select::VirtualSelectExternal;
+
+        fn rows(state: &Scene) -> String {
+            let Scene::External(node) = state else {
+                panic!("external root")
+            };
+            match node
+                .handle
+                .introspect()
+                .expect("introspect")
+                .query("selection")
+            {
+                Some(IntrospectValue::Json(list)) => list.to_string(),
+                other => panic!("selection query answered {other:?}"),
+            }
+        }
+        let scroll = ScrollState::new();
+        // 40 rows of 40 px in a 160-px viewport: four rows visible, 36 not.
+        scroll.set_max(0, 40 * 40 - 160);
+        let scroll = std::rc::Rc::new(scroll);
+        let mut state = Scene::External(
+            ExternalNode::new(Box::new(VirtualSelectExternal::new_multi(40))).with_tag("sel"),
+        );
+        let mut router = InputRouter::new();
+        router.update_paint_scene(scrolling_rows(&scroll, 40, 160), &mut state);
+
+        // Press row 0, then drag to the BOTTOM EDGE and hold there.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 155.0, &mut state);
+        assert_eq!(
+            rows(&state),
+            "[[0,3]]",
+            "the sweep reaches the last PAINTED row and, without auto-scroll, \
+             would stop there forever",
+        );
+        assert_eq!(scroll.offset().1, 0, "nothing has scrolled yet");
+
+        // Now hold still and let frames pass. Each tick scrolls, the app
+        // repaints, and the newly-arrived rows are entered.
+        for _ in 0..12 {
+            assert!(
+                router.tick_auto_scroll(0.016),
+                "the ramp is live while the pointer holds inside the margin",
+            );
+            router.update_paint_scene(scrolling_rows(&scroll, 40, 160), &mut state);
+        }
+        let scrolled = scroll.offset().1;
+        assert!(scrolled > 0, "the view moved: offset {scrolled}");
+        let reached = rows(&state);
+        assert_ne!(
+            reached, "[[0,3]]",
+            "and the selection grew past the four rows that were painted",
+        );
+        // The range is still anchored at the press and contiguous — the sweep
+        // followed the content rather than jumping.
+        assert!(
+            reached.starts_with("[[0,"),
+            "still anchored where the finger went down: {reached}",
+        );
+
+        // NEGATIVE CONTROL 1 — the release stops it. Nothing about the cursor
+        // changes; only the held set does.
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let after_release = scroll.offset().1;
+        assert!(
+            !router.tick_auto_scroll(0.016),
+            "a pointer that holds nothing is hovering, not dragging",
+        );
+        assert_eq!(
+            scroll.offset().1,
+            after_release,
+            "and the view does not move under a resting pointer",
+        );
+    }
+
+    /// R1620 §5.45 — **the speed is a function of the pointer, not of elapsed
+    /// time**, which is the one place this parts from the reference (whose
+    /// counter ramps per timer tick and reads the margin as a boolean).
+    #[test]
+    fn r1620_the_ramp_is_proportional_to_depth_and_saturates_outside() {
+        use pinion_core::widgets::scroll::AutoScroll;
+        let policy = AutoScroll {
+            margin: 20.0,
+            max_speed: 100.0,
+        };
+        // Viewport 0..200 on this axis.
+        let (lo, hi) = (0.0, 200.0);
+        // `near`, not `assert_eq!`: these are computed f64s and the workspace
+        // lints reject exact float comparison, for the usual reason.
+        let near = |got: f64, want: f64| assert!((got - want).abs() < 1e-9, "{got} != {want}");
+        near(policy.speed_at(100.0, lo, hi), 0.0); // the middle is still
+        near(policy.speed_at(180.0, lo, hi), 0.0); // the band's inner edge
+        assert!(
+            (policy.speed_at(190.0, lo, hi) - 50.0).abs() < 1e-9,
+            "halfway into the band is half speed — the reference cannot express \
+             this at all, because its speed does not read the position",
+        );
+        assert!(
+            (policy.speed_at(200.0, lo, hi) - 100.0).abs() < 1e-9,
+            "at the edge"
+        );
+        assert!(
+            (policy.speed_at(9_999.0, lo, hi) - 100.0).abs() < 1e-9,
+            "and it SATURATES outside: a pointer dragged far past the window \
+             asks for max speed, not for an unbounded one",
+        );
+        // The near edge is the mirror image, negative.
+        assert!((policy.speed_at(10.0, lo, hi) + 50.0).abs() < 1e-9);
+        assert!((policy.speed_at(0.0, lo, hi) + 100.0).abs() < 1e-9);
+        assert!((policy.speed_at(-500.0, lo, hi) + 100.0).abs() < 1e-9);
+        // A band wider than half the viewport folds to the two halves rather
+        // than overlapping itself in the middle.
+        let fat = AutoScroll {
+            margin: 500.0,
+            max_speed: 100.0,
+        };
+        near(fat.speed_at(100.0, lo, hi), 0.0);
+        assert!(fat.speed_at(150.0, lo, hi) > 0.0);
+        assert!(fat.speed_at(50.0, lo, hi) < 0.0);
+        // Off is off, at every position.
+        for pos in [0.0, 100.0, 200.0, -50.0] {
+            near(AutoScroll::off().speed_at(pos, lo, hi), 0.0);
+        }
+        assert!(!AutoScroll::off().is_enabled());
+        assert!(AutoScroll::default().is_enabled());
+        // Either half at zero is off. `off()` zeroes both, so a test that only
+        // uses it cannot tell which half is load-bearing — a counterfactual
+        // dropping the band check from `is_enabled` passed against exactly
+        // that. A band of zero width IS how a region declines, whatever speed
+        // sits beside it.
+        let no_band = AutoScroll {
+            margin: 0.0,
+            max_speed: 100.0,
+        };
+        assert!(!no_band.is_enabled(), "a zero-width band is off");
+        for pos in [0.0, 1.0, 100.0, 199.0, 200.0] {
+            near(no_band.speed_at(pos, lo, hi), 0.0);
+        }
+        let no_speed = AutoScroll {
+            margin: 16.0,
+            max_speed: 0.0,
+        };
+        assert!(!no_speed.is_enabled(), "and so is a zero speed");
+        near(no_speed.speed_at(199.0, lo, hi), 0.0);
+    }
+
+    /// R1620 §5.45 — the gesture belongs to the region it STARTED in, and keeps
+    /// scrolling once the pointer is dragged outside — which is where the ramp
+    /// saturates and where a hit-test finds nothing.
+    ///
+    /// Also the negative control for the policy: a region that declared
+    /// auto-scroll OFF must stay off once the pointer leaves it, which a
+    /// default-valued fallback would silently have switched on.
+    #[test]
+    fn r1620_the_region_is_pinned_at_the_press_and_keeps_its_policy() {
+        use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
+        let scroll = ScrollState::new();
+        scroll.set_max(0, 1_000);
+        let scroll = std::rc::Rc::new(scroll);
+        let mut state = Scene::Container(ContainerNode::new(vec![]));
+
+        let mut router = InputRouter::new();
+        router.update_paint_scene(scrolling_rows(&scroll, 40, 160), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 80.0, &mut state); // mid-viewport
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        // Drag WELL BELOW the window: no scroll node covers this point.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 900.0, &mut state);
+        assert!(
+            router.tick_auto_scroll(0.016),
+            "the pinned region keeps scrolling with the pointer outside it",
+        );
+        assert!(scroll.offset().1 > 0);
+
+        // The same gesture over a region that declared auto-scroll OFF.
+        let quiet = std::rc::Rc::new(ScrollState::new());
+        quiet.set_max(0, 1_000);
+        let paint_off = |st: &std::rc::Rc<ScrollState>| {
+            let inner = scrolling_rows(st, 40, 160);
+            let Scene::Container(mut root) = inner else {
+                panic!("container root")
+            };
+            if let Some(Scene::Scroll(node)) = root.children.first_mut() {
+                node.auto_scroll = AutoScroll::off();
+            }
+            Scene::Container(root)
+        };
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint_off(&quiet), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 80.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 900.0, &mut state);
+        assert!(
+            !router.tick_auto_scroll(0.016),
+            "a region that declared OFF stays off outside its own rect",
+        );
+        assert_eq!(quiet.offset().1, 0);
+    }
+
+    /// R1620 §5.35 §5.38 §5.45 — **both continuations run in the same frame.**
+    ///
+    /// A press inside a scrolling panel can be repeating a step AND holding
+    /// the view's edge. `tick_pointer_hold` must ask both every frame: a
+    /// short-circuited `a() || b()` stops asking the second the moment the
+    /// first says yes, and the gesture silently loses half of itself — which
+    /// is a bug nobody would see in either mechanism's own tests.
+    ///
+    /// This test exists because a counterfactual found nothing catching it,
+    /// and the composition was moved onto the router so it could be written at
+    /// all: the shell-side version had no fixture that could drive both.
+    #[test]
+    fn r1620_a_repeating_press_still_auto_scrolls_in_the_same_frame() {
+        use pinion_core::widgets::scroll::ScrollState;
+        let scroll = std::rc::Rc::new(ScrollState::new());
+        scroll.set_max(0, 1_000);
+        // A real auto-repeating button, painted at the BOTTOM of a scroll
+        // region so one press is inside both mechanisms at once.
+        let mut state = state_with_real_button(Some(pinion_core::AutoRepeat::new(0.0, 0.01)));
+        let paint = {
+            let mut btn = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag("main_btn")
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut btn {
+                c.rect = Rect::new(0, 120, 200, 40);
+            }
+            let mut content = Scene::Container(ContainerNode::new(vec![btn]));
+            if let Scene::Container(c) = &mut content {
+                c.rect = Rect::new(0, 0, 200, 1_160);
+            }
+            let node = ScrollNode::new(Rect::new(0, 0, 200, 160), content)
+                .with_state(std::rc::Rc::clone(&scroll));
+            let mut root = Scene::Container(ContainerNode::new(vec![Scene::Scroll(node)]));
+            if let Scene::Container(c) = &mut root {
+                c.rect = Rect::new(0, 0, 200, 160);
+            }
+            root
+        };
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint, &mut state);
+        // Press the button, which sits inside the bottom edge band.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 152.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        let _ = drain_clicks(&mut state);
+
+        let armed = router.tick_pointer_hold(0.05, &mut state);
+        assert!(armed, "the hold is live");
+        let repeats = drain_clicks(&mut state);
+        let scrolled = scroll.offset().1;
+        assert!(repeats > 0, "the repeat fired in this frame");
+        assert!(
+            scrolled > 0,
+            "and the SAME frame auto-scrolled: {scrolled} px — a short-circuit \
+             here would have left this at 0 with the repeat still passing",
+        );
+    }
+
+    /// R1620 §5.45 §5.16 — a region that declares auto-scroll **off** does not
+    /// scroll even with the pointer pressed inside its own band, and the
+    /// published state says the ramp is still — so an agent asking "why is my
+    /// drag not scrolling" reads the declared band rather than guessing.
+    ///
+    /// Both halves exist because counterfactuals found nothing catching
+    /// either: the off-inside case (the outside case was already covered), and
+    /// the published velocity being a constant rather than the step that moves
+    /// the view.
+    #[test]
+    fn r1620_off_inside_the_band_is_still_off_and_the_wire_agrees() {
+        use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
+        let scroll = std::rc::Rc::new(ScrollState::new());
+        scroll.set_max(0, 1_000);
+        let mut state = Scene::Container(ContainerNode::new(vec![]));
+        let paint = |st: &std::rc::Rc<ScrollState>, policy: AutoScroll| {
+            let inner = scrolling_rows(st, 40, 160);
+            let Scene::Container(mut root) = inner else {
+                panic!("container root")
+            };
+            if let Some(Scene::Scroll(node)) = root.children.first_mut() {
+                node.auto_scroll = policy;
+            }
+            Scene::Container(root)
+        };
+
+        // OFF, with the pointer pressed deep inside the bottom band.
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint(&scroll, AutoScroll::off()), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 155.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert!(!router.tick_auto_scroll(0.016), "off is off, inside too");
+        assert_eq!(scroll.offset().1, 0);
+        let reported = router
+            .auto_scroll_state(PointerId::MOUSE)
+            .expect("a gesture holds the region, so the axis is present");
+        assert!(
+            (reported.velocity_y).abs() < 1e-9,
+            "the wire reports a still ramp: {reported:?}",
+        );
+        assert!(
+            (reported.margin).abs() < 1e-9,
+            "and publishes the band that explains WHY it is still",
+        );
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert!(
+            router.auto_scroll_state(PointerId::MOUSE).is_none(),
+            "absent once no gesture holds a region — never a zeroed object",
+        );
+
+        // ON, same geometry: the published velocity is the one that moves it.
+        let live = std::rc::Rc::new(ScrollState::new());
+        live.set_max(0, 1_000);
+        let policy = AutoScroll {
+            margin: 16.0,
+            max_speed: 500.0,
+        };
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint(&live, policy), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 155.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        let reported = router
+            .auto_scroll_state(PointerId::MOUSE)
+            .expect("gesture open");
+        assert!(reported.velocity_y > 0.0, "downward: {reported:?}");
+        // One second of ticking must travel the velocity the wire published —
+        // the read and the motion are one derivation or neither is trustworthy.
+        for _ in 0..100 {
+            router.tick_auto_scroll(0.01);
+        }
+        let travelled = f64::from(live.offset().1);
+        assert!(
+            (travelled - reported.velocity_y).abs() <= 2.0,
+            "travelled {travelled} px in 1s against a published {} px/s",
+            reported.velocity_y,
+        );
+    }
+
+    /// R1620 §5.45 — a slow ramp still moves. The remainder is carried between
+    /// frames, so a speed below one pixel per frame accumulates instead of
+    /// truncating to nothing — which is what it would do at exactly the speeds
+    /// a careful user reaches for.
+    #[test]
+    fn r1620_a_sub_pixel_speed_accumulates_instead_of_stalling() {
+        use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
+        let scroll = std::rc::Rc::new(ScrollState::new());
+        scroll.set_max(0, 1_000);
+        let mut state = Scene::Container(ContainerNode::new(vec![]));
+        let paint = |st: &std::rc::Rc<ScrollState>| {
+            let inner = scrolling_rows(st, 40, 160);
+            let Scene::Container(mut root) = inner else {
+                panic!("container root")
+            };
+            if let Some(Scene::Scroll(node)) = root.children.first_mut() {
+                // 30 px/s is half a pixel per 60 fps frame.
+                node.auto_scroll = AutoScroll {
+                    margin: 16.0,
+                    max_speed: 30.0,
+                };
+            }
+            Scene::Container(root)
+        };
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint(&scroll), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 80.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 160.0, &mut state); // full push
+        for _ in 0..4 {
+            router.tick_auto_scroll(0.016);
+        }
+        assert!(
+            scroll.offset().1 >= 1,
+            "four frames of half a pixel is two pixels, not zero: {}",
+            scroll.offset().1,
+        );
+    }
+
+    /// R1619 §5.35 §5.39 — the held set is forgotten on blur, and a    /// R1619 §5.35 §5.39 — the held set is forgotten on blur, and a
     /// [`PointerCancel`](pinion_core::input::PointerWireEvent::Cancel) clears
     /// it too. Both are the same rule: the release that would have cleared it
     /// is one this router will never see, and a stranded press is worse than a

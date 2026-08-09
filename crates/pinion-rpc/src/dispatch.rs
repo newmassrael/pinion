@@ -7146,6 +7146,13 @@ fn export_pdf_error_to_rpc(err: &ExportPdfError) -> RpcError {
 ///   "axis unavailable" spelling would be unreachable and therefore a lie.
 ///   An AI driving a drag-select reads this between the press and the moves
 ///   to confirm the gesture it opened is still open.
+/// * `auto_scroll` — R1620 §5.45, `null` when no gesture holds a scroll
+///   region, else `{velocity: {x, y}, margin, max_speed}` for the mouse
+///   pointer: the px/s the ramp is currently asking for, plus the band the
+///   region declared. A view that moves with no call having been made is the
+///   one thing `scene/scroll_state` cannot explain on its own, and the
+///   declared band is what answers the harder question — why a drag near an
+///   edge is NOT scrolling.
 /// * `cursor` — `{x, y}` of the dispatch-scoped window's last mouse
 ///   cursor position (what every `scene/click` / `scene/hover` /
 ///   `scene/drag` write moves), or `null` before the first cursor
@@ -7204,10 +7211,21 @@ fn handle_scene_input_state(
             "focused": kd.focused,
         })
     });
+    // R1620 — `null` when no gesture holds a scroll region, which is the same
+    // gate the behaviour has; an object whenever one does, so "why is my drag
+    // not scrolling" is answerable from the declared band rather than guessed.
+    let auto_scroll = snap.auto_scroll.map_or(Value::Null, |a| {
+        serde_json::json!({
+            "velocity": { "x": a.velocity_x, "y": a.velocity_y },
+            "margin": a.margin,
+            "max_speed": a.max_speed,
+        })
+    });
     Ok(serde_json::json!({
         "modifiers": modifiers,
         "held_keys": snap.held_keys,
         "held_pointer_buttons": snap.held_pointer_buttons,
+        "auto_scroll": auto_scroll,
         "cursor": cursor,
         "key_dispatch": key_dispatch,
     }))

@@ -1123,7 +1123,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     pub fn tick_auto_repeat(&mut self, dt: f32) -> bool {
         let (tail, armed) = self
             .core
-            .tick_auto_repeat_for_window(pinion_runtime::DEFAULT_WINDOW, dt);
+            .tick_pointer_hold_for_window(pinion_runtime::DEFAULT_WINDOW, dt);
         let _ = self.handle_tail(&tail);
         self.auto_repeat_armed.set(armed);
         armed

@@ -2044,6 +2044,13 @@ impl<V: WidgetCore> CoreShell<V> {
                 .routers
                 .get(window_id)
                 .and_then(|r| r.cursor_position(PointerId::MOUSE)),
+            // R1620 §5.45 §5.16 — the live auto-scroll of the window's mouse
+            // pointer, read from the same router the cursor and the held
+            // buttons come from.
+            auto_scroll: self
+                .routers
+                .get(window_id)
+                .and_then(|r| r.auto_scroll_state(PointerId::MOUSE)),
             key_dispatch,
         })
     }
@@ -2644,35 +2651,52 @@ impl<V: WidgetCore> CoreShell<V> {
         (self.tail(), pan_dispatched)
     }
 
-    /// R1549 §5.35 §5.38 — advance the addressed window's press-and-hold
-    /// **auto-repeat** by `dt` seconds, firing whatever repeats that
-    /// crosses, and harvest the result through the normal
-    /// [`Self::tail`] (so a repeat is observationally a click: same
-    /// intents, same `read_state` projection).
+    /// R1549 / R1620 §5.35 §5.38 §5.45 — advance everything the addressed
+    /// window's **held press** keeps doing by `dt` seconds, and harvest the
+    /// result through the normal [`Self::tail`].
     ///
-    /// The second tuple element is whether a hold is currently armed —
+    /// Two continuations travel this one entry, because they are two answers to
+    /// one question — *what does a press that is still down go on doing?*
+    ///
+    /// * **auto-repeat** (R1549): a held arrow / stepper keeps firing, and a
+    ///   repeat is observationally a click (same intents, same `read_state`
+    ///   projection).
+    /// * **auto-scroll** (R1620): a held pointer near a scroll region's edge
+    ///   keeps moving the view, so a drag-select can reach past what is
+    ///   painted.
+    ///
+    /// R1620 renamed this from `tick_auto_repeat_for_window`. The name is the
+    /// point: a second continuation arriving under a name that promised only
+    /// the first is how a shell ends up with two per-frame seams that drift,
+    /// and there are three backends calling this one.
+    ///
+    /// The second tuple element is whether EITHER is still live —
     /// the backend's "request another frame" cue, mirroring
     /// [`Self::wheel_with_modifiers_for_window`]'s repaint flag. Without
     /// it a `ControlFlow::Wait` event loop would paint one frame of the
-    /// hold and then sleep, and the repeat would stop dead until the user
+    /// hold and then sleep, and the gesture would stop dead until the user
     /// jiggled the mouse.
     ///
     /// Called once per paint cycle with the measured frame delta, and by
     /// the `scene/tick` RPC with the injected one — one entry, so a hold
     /// an AI client drives is the same hold a finger drives.
-    pub fn tick_auto_repeat_for_window(
+    pub fn tick_pointer_hold_for_window(
         &mut self,
         window_id: &str,
         dt: f32,
     ) -> (DispatchTail<V::State>, bool) {
         let Self { scene, routers, .. } = self;
         // `.get_mut`, not the lazy-creating `router_for`: a window that has
-        // never seen input has no press to repeat, and a per-frame call
+        // never seen input has no press to continue, and a per-frame call
         // must not conjure a router for every window that merely paints
         // (the R882.1 no-phantom-router hygiene).
+        // R1620 — the composition itself lives on the router
+        // ([`InputRouter::tick_pointer_hold`]), next to the fixtures that can
+        // drive both continuations at once. This is the per-window funnel, and
+        // nothing here decides anything.
         let armed = routers
             .get_mut(window_id)
-            .is_some_and(|router| router.tick_auto_repeat(dt, scene));
+            .is_some_and(|router| router.tick_pointer_hold(dt, scene));
         (self.tail(), armed)
     }
 

@@ -3749,6 +3749,22 @@ pub struct ScrollNode {
     /// [`state`](Self::state) the `Rc` link is substrate-internal and not
     /// serialised by `scene/query`.
     pub measured_rows: Option<Rc<MeasuredRowState>>,
+    /// R1620 §5.45 §5.35 — how this region auto-scrolls while a pointer holds a
+    /// button near its edge ([`AutoScroll`](crate::widgets::scroll::AutoScroll)).
+    ///
+    /// Declared on the NODE rather than on the shared
+    /// [`state`](Self::state), because it is a property of a viewport and two
+    /// linked panes sharing one state can want different bands — a frozen
+    /// column strip is narrower than the body it slides with. It is also what
+    /// the router reads at tick time, and the router has the paint scene.
+    ///
+    /// Defaults to [`AutoScroll::default`](crate::widgets::scroll::AutoScroll::default),
+    /// which is ON: a region that says
+    /// nothing still lets a drag reach past its edge, the reference's own
+    /// default and the fail-safe direction (an unwanted auto-scroll is a
+    /// gesture the user can decline to make; a missing one is a selection they
+    /// cannot express).
+    pub auto_scroll: crate::widgets::scroll::AutoScroll,
     /// R55.G.4 §5.45 — layout sidecar mirroring the
     /// `{Box,Text,Path,Image,Container,External}Node` shape. Drives
     /// the §5.21 R23 taffy pass: how this scroll participates in
@@ -3780,6 +3796,7 @@ impl ScrollNode {
             tag: None,
             state: None,
             measured_rows: None,
+            auto_scroll: crate::widgets::scroll::AutoScroll::default(),
             // R55.G.4 §5.45 — default the layout size to the clip-window
             // dimensions so taffy treats Scroll as a fixed-size leaf
             // unless the caller chains `with_layout(...)` to opt into
@@ -3794,6 +3811,20 @@ impl ScrollNode {
     #[must_use]
     pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// R1620 §5.45 §5.35 — declare this region's
+    /// [`auto_scroll`](Self::auto_scroll) policy. Pass
+    /// [`AutoScroll::off`](crate::widgets::scroll::AutoScroll::off) for a
+    /// viewport a held drag must not move — a code minimap, a fixed legend,
+    /// anything whose extent IS the thing being pointed at.
+    #[must_use]
+    pub const fn with_auto_scroll(
+        mut self,
+        auto_scroll: crate::widgets::scroll::AutoScroll,
+    ) -> Self {
+        self.auto_scroll = auto_scroll;
         self
     }
 
