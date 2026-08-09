@@ -739,19 +739,14 @@ fn engine_schema_hook_proofs() -> Vec<Proof> {
 /// `node`.
 fn proof_name(tree: &str, operator: &str) -> String {
     if let Some((owner, member)) = operator.split_once("::") {
-        let tag = owner
-            .trim_start_matches('b')
-            .trim_start_matches('U')
-            .trim_start_matches("EdGraph")
-            .trim_end_matches("Type");
-        return format!("{tree}_{}_{}", snake(tag), snake(member));
+        // R1612 — the owner arrives already reduced to this stem, so the four
+        // trims that used to strip a vendor's class prefix here are gone rather
+        // than merely unreachable. They were also the last spelling of that
+        // prefix left in a published file, and short enough that the name
+        // census did not recognise them.
+        return format!("{tree}_{}_{}", snake(owner), snake(member));
     }
-    let stem = if tree == "dcc" {
-        operator.trim_start_matches("NODE_OT_").to_owned()
-    } else {
-        snake(operator)
-    };
-    format!("{tree}_{stem}")
+    format!("{tree}_{}", snake(operator))
 }
 
 /// Pascal or snake in, snake out. A name already in snake case is unchanged.

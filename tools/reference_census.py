@@ -1132,6 +1132,7 @@ PUBLIC_OWNER = {
     "bNodeType": "node",
     "bNodeSocketType": "node_socket",
     "bNodeTreeType": "node_tree",
+    "BlueprintEditor": "script_editor",
 }
 
 PUBLIC_MECHANISM = {
@@ -1140,6 +1141,7 @@ PUBLIC_MECHANISM = {
     "bNodeType": "node-type",
     "bNodeSocketType": "socket-type",
     "bNodeTreeType": "tree-type",
+    "BlueprintEditor": "script-editor",
 }
 
 

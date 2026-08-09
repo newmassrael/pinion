@@ -1718,222 +1718,6 @@
       "proven_by": "",
       "verdict": "app-content"
     },
-    "BlueprintEditor::AddNewAnimationLayer": {
-      "covered_by": "an animation Blueprint's layer",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::AddNewDelegate": {
-      "covered_by": "Blueprint's member model",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::AddNewEventGraph": {
-      "covered_by": "`Document::new_tree` — a second top-level graph in the same document",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "pinion-node-graph::dcc_new_node_tree",
-      "verdict": "have"
-    },
-    "BlueprintEditor::AddNewFunction": {
-      "covered_by": "`Document::add_definition` — a new graph whose interface is derived",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "pinion-node-graph::dcc_add_empty_group",
-      "verdict": "have"
-    },
-    "BlueprintEditor::AddNewLocalVariable": {
-      "covered_by": "Blueprint's member model",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::AddNewMacroDeclaration": {
-      "covered_by": "`Document::add_definition`; a macro is a definition whose instances are expanded, which `ungroup` already does",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "pinion-node-graph::dcc_add_empty_group",
-      "verdict": "have"
-    },
-    "BlueprintEditor::AddNewVariable": {
-      "covered_by": "Blueprint's member model",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::BeginBlueprintMerge": {
-      "covered_by": "a three-way merge of two versions of a graph. A graph IS a value here (`Fragment`, serializable and comparable) and no diff or merge derivation is built on that",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::ClearAllBreakpoints": {
-      "covered_by": "breakpoints on nodes",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::ClearAllWatches": {
-      "covered_by": "watched pins",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::CompileBlueprint": {
-      "covered_by": "a graph here is INTERPRETED (`Document::run`) and never lowered to a separate artifact, so there is no compile step, no compiled/dirty state and no compile-time diagnostic list",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::DeleteUnusedVariables": {
-      "covered_by": "Blueprint variables are the reference application's own member model",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::DisableAllBreakpoints": {
-      "covered_by": "breakpoints on nodes",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::DumpCachedIndexData": {
-      "covered_by": "the Blueprint search index",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::EnableAllBreakpoints": {
-      "covered_by": "breakpoints on nodes",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::EnableSimulation": {
-      "covered_by": "simulating the previewed actor",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::FindInBlueprint": {
-      "covered_by": "finding a node by name inside this graph — the DCC's `find_node` is the same gap, and neither reference's is covered",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::FindInBlueprints": {
-      "covered_by": "a search across every Blueprint ASSET — an asset-registry question",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::FindReferencesFromBlueprint": {
-      "covered_by": "UObject asset references",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::FindReferencesFromClass": {
-      "covered_by": "UObject class references",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::GenerateSearchIndex": {
-      "covered_by": "the Blueprint search index",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::NavigateToChild": {
-      "covered_by": "`EditPath::enter` — descending into an instance's definition",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "pinion-node-graph::dcc_group_enter_exit",
-      "verdict": "have"
-    },
-    "BlueprintEditor::NavigateToParent": {
-      "covered_by": "`EditPath::exit` — leaving a definition for the tree that instantiated it",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "pinion-node-graph::dcc_group_enter_exit",
-      "verdict": "have"
-    },
-    "BlueprintEditor::NavigateToParentBackspace": {
-      "covered_by": "the same command on a second chord; one capability, two bindings",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "pinion-node-graph::dcc_group_enter_exit",
-      "verdict": "have"
-    },
-    "BlueprintEditor::OpenBlueprintDebugger": {
-      "covered_by": "a debugger surface over a running graph; R1599/R1600 gave `run` and `tick` and nothing observes them from outside",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::RefreshAllNodes": {
-      "covered_by": "`Document::signature` is derived from `NodeKind` on every read, so the whole-graph refresh is the per-node one applied everywhere",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "pinion-node-graph::engine_graph_editor_reconstruct_nodes",
-      "verdict": "have"
-    },
-    "BlueprintEditor::RepairCorruptedBlueprint": {
-      "covered_by": "recovering a damaged UObject asset",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::ReparentBlueprint": {
-      "covered_by": "changing a UClass's parent",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::ResetCamera": {
-      "covered_by": "the Blueprint preview viewport, a 3D scene",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::SaveIntermediateBuildProducts": {
-      "covered_by": "Blueprint compiler diagnostics",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::ShowActionMenuItemSignatures": {
-      "covered_by": "the node palette's own diagnostics",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::ShowFloor": {
-      "covered_by": "the preview viewport's floor",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::ShowGrid": {
-      "covered_by": "the preview viewport's grid",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "app-content"
-    },
-    "BlueprintEditor::ToggleHideUnrelatedNodes": {
-      "covered_by": "fading nodes not reachable from the selection. `Reach` answers the reachability half; no appearance is derived from it",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::ZoomToSelection": {
-      "covered_by": "framing the view on the selection — the DCC's `view_selected`",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
-    "BlueprintEditor::ZoomToWindow": {
-      "covered_by": "framing the view on the graph's extent; the crate carries positions and no viewport, and no binding derives one",
-      "mechanism": "BlueprintEditor",
-      "proven_by": "",
-      "verdict": "absent"
-    },
     "GraphEditor::AddBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
       "mechanism": "GraphEditor",
@@ -1953,7 +1737,7 @@
       "verdict": "absent"
     },
     "GraphEditor::AddParentNode": {
-      "covered_by": "the engine's Blueprint/level subject matter",
+      "covered_by": "the engine's visual script/level subject matter",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content"
@@ -1995,7 +1779,7 @@
       "verdict": "absent"
     },
     "GraphEditor::AssignReferencedActor": {
-      "covered_by": "the engine's Blueprint/level subject matter",
+      "covered_by": "the engine's visual script/level subject matter",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content"
@@ -2055,13 +1839,13 @@
       "verdict": "have"
     },
     "GraphEditor::ConvertEventToFunction": {
-      "covered_by": "the engine's Blueprint/level subject matter",
+      "covered_by": "the engine's visual script/level subject matter",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content"
     },
     "GraphEditor::ConvertFunctionToEvent": {
-      "covered_by": "the engine's Blueprint/level subject matter",
+      "covered_by": "the engine's visual script/level subject matter",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content"
@@ -2073,13 +1857,13 @@
       "verdict": "have"
     },
     "GraphEditor::CreateCustomEvent": {
-      "covered_by": "the engine's Blueprint/level subject matter",
+      "covered_by": "the engine's visual script/level subject matter",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content"
     },
     "GraphEditor::CreateMatchingFunction": {
-      "covered_by": "the engine's Blueprint/level subject matter",
+      "covered_by": "the engine's visual script/level subject matter",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content"
@@ -2325,7 +2109,7 @@
       "verdict": "have"
     },
     "GraphEditor::SelectReferenceInLevel": {
-      "covered_by": "the engine's Blueprint/level subject matter",
+      "covered_by": "the engine's visual script/level subject matter",
       "mechanism": "GraphEditor",
       "proven_by": "",
       "verdict": "app-content"
@@ -2937,7 +2721,7 @@
       "verdict": "absent"
     },
     "node::CanJumpToDefinition": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -2991,7 +2775,7 @@
       "verdict": "have"
     },
     "node::DiffProperties": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3003,7 +2787,7 @@
       "verdict": "host-framework"
     },
     "node::FindDiffs": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3021,37 +2805,37 @@
       "verdict": "absent"
     },
     "node::GetDeprecationResponse": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::GetDescriptiveCompiledName": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::GetDocumentationExcerptName": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::GetDocumentationLink": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::GetFindReferenceSearchString": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::GetFindReferenceSearchString_Impl": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3063,7 +2847,7 @@
       "verdict": "app-content"
     },
     "node::GetJumpTargetForDoubleClick": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3147,7 +2931,7 @@
       "verdict": "absent"
     },
     "node::GetPropertyNameAndValueForDiff": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3171,13 +2955,13 @@
       "verdict": "absent"
     },
     "node::HasDeprecatedReference": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::HasExternalDependencies": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3201,25 +2985,25 @@
       "verdict": "absent"
     },
     "node::IsCompilerRelevant": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::IsDeprecated": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::IsInDevelopmentMode": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
     },
     "node::JumpToDefinition": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3351,7 +3135,7 @@
       "verdict": "absent"
     },
     "node::ShouldMergeChildGraphs": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-node",
       "proven_by": "",
       "verdict": "app-content"
@@ -3405,7 +3189,7 @@
       "verdict": "host-framework"
     },
     "schema::AllowsFunctionVariants": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3495,7 +3279,7 @@
       "verdict": "have"
     },
     "schema::CanGraphBeDropped": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3519,7 +3303,7 @@
       "verdict": "absent"
     },
     "schema::CanVariableBeDropped": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3561,7 +3345,7 @@
       "verdict": "absent"
     },
     "schema::CreatePromotedConnection": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3597,19 +3381,19 @@
       "verdict": "absent"
     },
     "schema::DroppedAssetsOnGraph": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::DroppedAssetsOnNode": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::DroppedAssetsOnPin": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3645,19 +3429,19 @@
       "verdict": "app-content"
     },
     "schema::GetAssetsGraphHoverMessage": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::GetAssetsNodeHoverMessage": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::GetAssetsPinHoverMessage": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3681,13 +3465,13 @@
       "verdict": "app-content"
     },
     "schema::GetFindReferenceSearchTerm": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::GetGraphCategory": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3711,7 +3495,7 @@
       "verdict": "absent"
     },
     "schema::GetLocalVariables": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3747,7 +3531,7 @@
       "verdict": "app-content"
     },
     "schema::GetPersistentItemDefiningObject": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3771,7 +3555,7 @@
       "verdict": "absent"
     },
     "schema::GetReorderIndexInContainer": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3813,7 +3597,7 @@
       "verdict": "host-framework"
     },
     "schema::IsAVariable": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3831,13 +3615,13 @@
       "verdict": "absent"
     },
     "schema::IsDelegateCategory": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::IsParentable": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3855,7 +3639,7 @@
       "verdict": "have"
     },
     "schema::IsSelfPin": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3867,19 +3651,19 @@
       "verdict": "app-content"
     },
     "schema::MakeActionFromVariableDescription": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::MarkBlueprintDirtyFromNewNode": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::MovePersistentItemToCategory": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3933,19 +3717,19 @@
       "verdict": "app-content"
     },
     "schema::RequestVariableDropOnNode": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::RequestVariableDropOnPanel": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::RequestVariableDropOnPin": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -3987,7 +3771,7 @@
       "verdict": "have"
     },
     "schema::ShouldShowAssetPickerForPin": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -4047,7 +3831,7 @@
       "verdict": "absent"
     },
     "schema::TrySetDefaultObject": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
@@ -4065,16 +3849,232 @@
       "verdict": "have"
     },
     "schema::TrySetGraphCategory": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
     },
     "schema::TryToGetChildEvents": {
-      "covered_by": "the engine's Blueprint/asset subject matter",
+      "covered_by": "the engine's visual script/asset subject matter",
       "mechanism": "graph-schema",
       "proven_by": "",
       "verdict": "app-content"
+    },
+    "script_editor::AddNewAnimationLayer": {
+      "covered_by": "an animation visual script's layer",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::AddNewDelegate": {
+      "covered_by": "visual script's member model",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::AddNewEventGraph": {
+      "covered_by": "`Document::new_tree` — a second top-level graph in the same document",
+      "mechanism": "script-editor",
+      "proven_by": "pinion-node-graph::dcc_new_node_tree",
+      "verdict": "have"
+    },
+    "script_editor::AddNewFunction": {
+      "covered_by": "`Document::add_definition` — a new graph whose interface is derived",
+      "mechanism": "script-editor",
+      "proven_by": "pinion-node-graph::dcc_add_empty_group",
+      "verdict": "have"
+    },
+    "script_editor::AddNewLocalVariable": {
+      "covered_by": "visual script's member model",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::AddNewMacroDeclaration": {
+      "covered_by": "`Document::add_definition`; a macro is a definition whose instances are expanded, which `ungroup` already does",
+      "mechanism": "script-editor",
+      "proven_by": "pinion-node-graph::dcc_add_empty_group",
+      "verdict": "have"
+    },
+    "script_editor::AddNewVariable": {
+      "covered_by": "visual script's member model",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::BeginBlueprintMerge": {
+      "covered_by": "a three-way merge of two versions of a graph. A graph IS a value here (`Fragment`, serializable and comparable) and no diff or merge derivation is built on that",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::ClearAllBreakpoints": {
+      "covered_by": "breakpoints on nodes",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::ClearAllWatches": {
+      "covered_by": "watched pins",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::CompileBlueprint": {
+      "covered_by": "a graph here is INTERPRETED (`Document::run`) and never lowered to a separate artifact, so there is no compile step, no compiled/dirty state and no compile-time diagnostic list",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::DeleteUnusedVariables": {
+      "covered_by": "visual script variables are the reference application's own member model",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::DisableAllBreakpoints": {
+      "covered_by": "breakpoints on nodes",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::DumpCachedIndexData": {
+      "covered_by": "the visual script search index",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::EnableAllBreakpoints": {
+      "covered_by": "breakpoints on nodes",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::EnableSimulation": {
+      "covered_by": "simulating the previewed actor",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::FindInBlueprint": {
+      "covered_by": "finding a node by name inside this graph — the DCC's `find_node` is the same gap, and neither reference's is covered",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::FindInBlueprints": {
+      "covered_by": "a search across every visual script ASSET — an asset-registry question",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::FindReferencesFromBlueprint": {
+      "covered_by": "UObject asset references",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::FindReferencesFromClass": {
+      "covered_by": "UObject class references",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::GenerateSearchIndex": {
+      "covered_by": "the visual script search index",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::NavigateToChild": {
+      "covered_by": "`EditPath::enter` — descending into an instance's definition",
+      "mechanism": "script-editor",
+      "proven_by": "pinion-node-graph::dcc_group_enter_exit",
+      "verdict": "have"
+    },
+    "script_editor::NavigateToParent": {
+      "covered_by": "`EditPath::exit` — leaving a definition for the tree that instantiated it",
+      "mechanism": "script-editor",
+      "proven_by": "pinion-node-graph::dcc_group_enter_exit",
+      "verdict": "have"
+    },
+    "script_editor::NavigateToParentBackspace": {
+      "covered_by": "the same command on a second chord; one capability, two bindings",
+      "mechanism": "script-editor",
+      "proven_by": "pinion-node-graph::dcc_group_enter_exit",
+      "verdict": "have"
+    },
+    "script_editor::OpenBlueprintDebugger": {
+      "covered_by": "a debugger surface over a running graph; R1599/R1600 gave `run` and `tick` and nothing observes them from outside",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::RefreshAllNodes": {
+      "covered_by": "`Document::signature` is derived from `NodeKind` on every read, so the whole-graph refresh is the per-node one applied everywhere",
+      "mechanism": "script-editor",
+      "proven_by": "pinion-node-graph::engine_graph_editor_reconstruct_nodes",
+      "verdict": "have"
+    },
+    "script_editor::RepairCorruptedBlueprint": {
+      "covered_by": "recovering a damaged UObject asset",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::ReparentBlueprint": {
+      "covered_by": "changing a UClass's parent",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::ResetCamera": {
+      "covered_by": "the visual script preview viewport, a 3D scene",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::SaveIntermediateBuildProducts": {
+      "covered_by": "visual script compiler diagnostics",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::ShowActionMenuItemSignatures": {
+      "covered_by": "the node palette's own diagnostics",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::ShowFloor": {
+      "covered_by": "the preview viewport's floor",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::ShowGrid": {
+      "covered_by": "the preview viewport's grid",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "app-content"
+    },
+    "script_editor::ToggleHideUnrelatedNodes": {
+      "covered_by": "fading nodes not reachable from the selection. `Reach` answers the reachability half; no appearance is derived from it",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::ZoomToSelection": {
+      "covered_by": "framing the view on the selection — the DCC's `view_selected`",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
+    },
+    "script_editor::ZoomToWindow": {
+      "covered_by": "framing the view on the graph's extent; the crate carries positions and no viewport, and no binding derives one",
+      "mechanism": "script-editor",
+      "proven_by": "",
+      "verdict": "absent"
     }
   }
 }

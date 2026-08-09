@@ -139,8 +139,16 @@ SYMBOL_PATTERNS: list[tuple[str, str]] = [
     (r"\bbpy\.[A-Za-z_.]+", "DCC python api"),
     (r"\b(?:bNode|bNodeTree|bNodeSocket|bNodeLink)[A-Za-z]*\b", "DCC C struct"),
     (r"\bED_node_[a-z_]+\b", "DCC editor function"),
-    (r"\b(?:UEdGraph|UK2Node|FEdGraph|SGraphNode|UBlueprint|FBlueprint|EEdGraphPin)"
-     r"[A-Za-z]*\b", "engine graph class"),
+    # R1612.1 -- widened after the round found its own blind spot. The first
+    # spelling listed whole class names, so `EdGraphSchema_K2.cpp` and
+    # `FKismetCompilerContext` went uncounted: a file name drops the `U`, and an
+    # underscore ends `[A-Za-z]*`. Counting on doubt means the STEM is the
+    # pattern, not the class.
+    (r"\b[A-Z]*EdGraph[A-Za-z0-9_]*\b", "engine graph class"),
+    (r"\b[A-Z]?Kismet[A-Za-z0-9_]*\b", "engine compiler class"),
+    (r"\b[A-Z]*K2Node[A-Za-z0-9_]*\b", "engine node class"),
+    (r"\b[A-Z]?Blueprint[A-Za-z0-9_]*\b", "engine asset class"),
+    (r"\bbl_(?:idname|label|info)\b", "DCC python marker"),
 ]
 
 # Tokens that match a symbol pattern and are not a citation. Each carries the
@@ -307,6 +315,10 @@ CASES: list[tuple[str, int, str]] = [
     ("blender and Blender and BLENDER", 3, "case-insensitive, each occurrence"),
     ("a bNodeSocket carries the default", 1, "the C struct counts"),
     ("UEdGraphPin holds the direction", 1, "the engine class counts"),
+    ("EdGraphSchema_K2.cpp names the file", 1, "a file name drops the prefix"),
+    ("FKismetCompilerContext expands it", 1, "the compiler class counts"),
+    ("bl_idname = 'node.x'", 1, "the scripting marker counts"),
+    ("a blueprint of the layout", 0, "lowercase is the ordinary word"),
     ("we compose a scene and it reacts", 0, "ordinary English is not a product"),
     ("a Compose-class toolkit", 1, "capitalised, so the product"),
     ("paint composition and compose a scene", 0, "lowercase stays the verb"),
