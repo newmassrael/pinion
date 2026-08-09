@@ -655,8 +655,11 @@ impl ExternalIntrospect for DatePickerExternal {
                     // strips a held-modifier third segment ("prev:PointerUp:c"
                     // would otherwise read "PointerUp:c" as the event name
                     // and the month-roll click was silently rejected).
-                    let (key, event_name, _mods) =
-                        crate::composite_tag::require_send_payload("datepicker.send", s)?;
+                    let crate::composite_tag::SendPayload {
+                        key,
+                        event: event_name,
+                        ..
+                    } = crate::composite_tag::require_send_payload("datepicker.send", s)?;
                     // Composite nav sub-tags: a click on the paint
                     // `"<tag>#prev"` / `"<tag>#next"` button arrives here
                     // as `"prev:<EventName>"` / `"next:<EventName>"` (the

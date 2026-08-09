@@ -930,7 +930,12 @@ impl TableExternal {
         // strips a held-modifier third segment (a hand-rolled
         // split_once read "PointerUp:c" as the event name and
         // a Ctrl+click on a cell/header was silently rejected).
-        let (key, event_name, mods) = crate::composite_tag::require_send_payload("table.send", s)?;
+        let crate::composite_tag::SendPayload {
+            key,
+            event: event_name,
+            modifiers: mods,
+            ..
+        } = crate::composite_tag::require_send_payload("table.send", s)?;
         // R730 §5.40 / R777.1 — the `'#'`-split sub-key is
         // decoded by the shared `GridSendKey` SSOT (the same
         // grammar the paint producer encodes and
@@ -2443,10 +2448,15 @@ mod tests {
     #[test]
     fn r1562_an_eager_band_press_selects_the_line() {
         use crate::composite_tag::compose_send_payload;
-        use crate::input::Modifiers;
+        use crate::input::{Modifiers, PointerButtons};
         let arc = |ext: &mut TableExternal, key: &str| {
             for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                let wire = compose_send_payload(Some(key), ev, Modifiers::default());
+                let wire = compose_send_payload(
+                    Some(key),
+                    ev,
+                    Modifiers::default(),
+                    PointerButtons::empty(),
+                );
                 let _ = ext.invoke("send", IntrospectValue::Text(wire));
             }
         };
@@ -2472,7 +2482,12 @@ mod tests {
             from_body.query("focused_col")
         );
         // Out of range is refused rather than silently ignored.
-        let bad = compose_send_payload(Some("r99"), "PointerUp", Modifiers::default());
+        let bad = compose_send_payload(
+            Some("r99"),
+            "PointerUp",
+            Modifiers::default(),
+            PointerButtons::empty(),
+        );
         assert_refused_saying(
             &from_band.invoke("send", IntrospectValue::Text(bad)),
             "no row 99 in this table",
@@ -2486,9 +2501,14 @@ mod tests {
     #[test]
     fn r1562_an_eager_band_press_selects_the_whole_row_rectangle() {
         use crate::composite_tag::compose_send_payload;
-        use crate::input::Modifiers;
+        use crate::input::{Modifiers, PointerButtons};
         let mut ext = cell_select_items_ext();
-        let wire = compose_send_payload(Some("r1"), "PointerUp", Modifiers::default());
+        let wire = compose_send_payload(
+            Some("r1"),
+            "PointerUp",
+            Modifiers::default(),
+            PointerButtons::empty(),
+        );
         assert_eq!(
             ext.invoke("send", IntrospectValue::Text(wire)),
             Ok(IntrospectValue::Text("1,0,1,1".to_string())),
@@ -2505,8 +2525,15 @@ mod tests {
     #[test]
     fn r1562_the_eager_corner_toggles_the_whole_model() {
         use crate::composite_tag::compose_send_payload;
-        use crate::input::Modifiers;
-        let press = || compose_send_payload(Some("c"), "PointerUp", Modifiers::default());
+        use crate::input::{Modifiers, PointerButtons};
+        let press = || {
+            compose_send_payload(
+                Some("c"),
+                "PointerUp",
+                Modifiers::default(),
+                PointerButtons::empty(),
+            )
+        };
         let mut multi = TableExternal::with_multiselect(
             vec!["Name".to_string(), "Round".to_string()],
             vec![
@@ -2547,10 +2574,15 @@ mod tests {
     #[test]
     fn r954_select_items_click_selects_cell_not_row() {
         use crate::composite_tag::compose_send_payload;
-        use crate::input::Modifiers;
+        use crate::input::{Modifiers, PointerButtons};
         let mut ext = cell_select_items_ext();
         assert_eq!(ext.selection_behavior(), SelectionBehavior::SelectItems);
-        let wire = compose_send_payload(Some("1_1"), "PointerUp", Modifiers::default());
+        let wire = compose_send_payload(
+            Some("1_1"),
+            "PointerUp",
+            Modifiers::default(),
+            PointerButtons::empty(),
+        );
         assert_eq!(
             ext.invoke("send", IntrospectValue::Text(wire)),
             Ok(IntrospectValue::Text("1,1,1,1".to_string())),
@@ -2579,9 +2611,14 @@ mod tests {
     #[test]
     fn r954_select_items_shift_click_extends_rectangle() {
         use crate::composite_tag::compose_send_payload;
-        use crate::input::Modifiers;
+        use crate::input::{Modifiers, PointerButtons};
         let mut ext = cell_select_items_ext();
-        let plain = compose_send_payload(Some("0_0"), "PointerUp", Modifiers::default());
+        let plain = compose_send_payload(
+            Some("0_0"),
+            "PointerUp",
+            Modifiers::default(),
+            PointerButtons::empty(),
+        );
         let _ = ext.invoke("send", IntrospectValue::Text(plain));
         let shift = compose_send_payload(
             Some("2_1"),
@@ -2590,6 +2627,7 @@ mod tests {
                 shift: true,
                 ..Default::default()
             },
+            PointerButtons::empty(),
         );
         assert_eq!(
             ext.invoke("send", IntrospectValue::Text(shift)),
@@ -2612,10 +2650,15 @@ mod tests {
     #[test]
     fn r954_select_items_non_activate_phases_are_inert() {
         use crate::composite_tag::compose_send_payload;
-        use crate::input::Modifiers;
+        use crate::input::{Modifiers, PointerButtons};
         let mut ext = cell_select_items_ext();
         for ev in ["PointerEnter", "PointerDown", "PointerLeave"] {
-            let wire = compose_send_payload(Some("1_1"), ev, Modifiers::default());
+            let wire = compose_send_payload(
+                Some("1_1"),
+                ev,
+                Modifiers::default(),
+                PointerButtons::empty(),
+            );
             assert_eq!(
                 ext.invoke("send", IntrospectValue::Text(wire)),
                 Ok(IntrospectValue::Null)
@@ -2639,7 +2682,7 @@ mod tests {
     #[test]
     fn r954_select_rows_default_click_still_washes_row() {
         use crate::composite_tag::compose_send_payload;
-        use crate::input::Modifiers;
+        use crate::input::{Modifiers, PointerButtons};
         let mut ext = cell_sample_ext(); // SelectRows (default)
         assert_eq!(ext.selection_behavior(), SelectionBehavior::SelectRows);
         // The full pointer cycle — the radio activate edge is Pressed->Hover on
@@ -2647,7 +2690,12 @@ mod tests {
         // the Up *is* the cell activate edge).
         let mut up_ret = Ok(IntrospectValue::Null);
         for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-            let wire = compose_send_payload(Some("1_1"), ev, Modifiers::default());
+            let wire = compose_send_payload(
+                Some("1_1"),
+                ev,
+                Modifiers::default(),
+                PointerButtons::empty(),
+            );
             let r = ext.invoke("send", IntrospectValue::Text(wire));
             if ev == "PointerUp" {
                 up_ret = r;

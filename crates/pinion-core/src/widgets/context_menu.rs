@@ -273,8 +273,11 @@ impl ContextMenuExternal {
         // modifier-held release ("barrier:PointerUp:c") still parses and a
         // Ctrl+click outside the popup dismisses it (the hand-rolled
         // split_once read "PointerUp:c" as the event name).
-        let (sub, event_name, _mods) =
-            crate::composite_tag::require_send_payload("context_menu.send", payload)?;
+        let crate::composite_tag::SendPayload {
+            key: sub,
+            event: event_name,
+            ..
+        } = crate::composite_tag::require_send_payload("context_menu.send", payload)?;
         let event = PointerWireEvent::from_wire_name(event_name).ok_or_else(|| {
             InvokeError::rejected(format!(
                 "context_menu.send: {event_name:?} is not a pointer event name"

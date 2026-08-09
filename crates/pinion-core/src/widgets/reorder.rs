@@ -396,7 +396,7 @@ impl ReorderModel {
                     return Err(InvokeError::TypeMismatch);
                 };
                 // R781 — modifiers ignored (reorder press has no modifier axis).
-                let (visual, event, _): (usize, &str, _) =
+                let (visual, crate::composite_tag::SendPayload { event, .. }): (usize, _) =
                     require_parsed_send_payload("reorder.send", payload)?;
                 if event == PointerWireEvent::Down.as_wire_name() && visual < self.count {
                     self.pressed.set(Some(visual));

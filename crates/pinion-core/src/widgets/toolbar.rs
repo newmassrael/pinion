@@ -390,8 +390,12 @@ impl ToolbarExternal {
     /// rejected the activation). Returns the roving cursor as the
     /// round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
-        let (idx, event_name, _mods): (usize, &str, _) =
-            crate::composite_tag::require_parsed_send_payload("toolbar.send", payload)?;
+        let (
+            idx,
+            crate::composite_tag::SendPayload {
+                event: event_name, ..
+            },
+        ): (usize, _) = crate::composite_tag::require_parsed_send_payload("toolbar.send", payload)?;
         let event = PointerWireEvent::from_wire_name(event_name).ok_or_else(|| {
             InvokeError::rejected(format!(
                 "toolbar.send: {event_name:?} is not a pointer event name"

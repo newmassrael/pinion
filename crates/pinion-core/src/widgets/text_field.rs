@@ -2192,7 +2192,13 @@ impl TextFieldExternal {
         // `PointerDown` / `PointerEnter` / `PointerLeave` edges the router fires
         // around the click are a recognized no-op. Decoded before the bare-event
         // path so the sub never reaches `from_name` (which would reject it).
-        if let Some((sub, event, mods)) = split_send_payload(name) {
+        if let Some(crate::composite_tag::SendPayload {
+            key: sub,
+            event,
+            modifiers: mods,
+            ..
+        }) = split_send_payload(name)
+        {
             if let Some(key) = TextFieldSendKey::parse(sub) {
                 if is_activation_event(event) {
                     match key {

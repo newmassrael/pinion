@@ -853,8 +853,12 @@ impl GroupOrderExternal {
     /// segment (the group id) toggles that group on the activation edge
     /// (`PointerUp` / `KeyboardActivate`); every other arc event is a no-op.
     fn handle_send(&self, payload: &str) {
-        let Some((group, event_name, _modifiers)) =
-            crate::composite_tag::parse_send_payload::<usize>(payload)
+        let Some((
+            group,
+            crate::composite_tag::SendPayload {
+                event: event_name, ..
+            },
+        )) = crate::composite_tag::parse_send_payload::<usize>(payload)
         else {
             return;
         };

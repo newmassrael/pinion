@@ -1037,8 +1037,8 @@ impl ExternalIntrospect for DirectoryExternal {
                 // a held-modifier third segment ("3:PointerUp:c" activated
                 // nothing under the hand-rolled split_once). A bare payload
                 // (no `:`) keeps the pre-R880.1 inert shape.
-                let (sub, event, _mods) = crate::composite_tag::split_send_payload(raw)
-                    .unwrap_or((raw, "", crate::input::Modifiers::empty()));
+                let (sub, event) = crate::composite_tag::split_send_payload(raw)
+                    .map_or((raw, ""), |sent| (sent.key, sent.event));
                 // R794 — a `PointerDown` on a row arms a drag from it (the
                 // source the router's `begin_drag` reads). Only numeric row
                 // subs arm; the "up" breadcrumb is not a draggable source.

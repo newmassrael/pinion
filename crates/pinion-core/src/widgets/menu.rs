@@ -940,8 +940,11 @@ impl MenuBarExternal {
         // modifier-held release ("barrier:PointerUp:c") still parses (the
         // hand-rolled split_once read "PointerUp:c" as the event name and a
         // Ctrl+click outside the dropdown failed to dismiss it).
-        let (sub, event_name, _mods) =
-            crate::composite_tag::require_send_payload("menu.send", payload)?;
+        let crate::composite_tag::SendPayload {
+            key: sub,
+            event: event_name,
+            ..
+        } = crate::composite_tag::require_send_payload("menu.send", payload)?;
         // R1543 §5.39 — `KeyboardActivate` is not a pointer event and must be
         // decoded before the pointer vocabulary, which would reject it. It is
         // the wire a MNEMONIC arrives on: the shell resolves `Alt+F` to the

@@ -7136,6 +7136,16 @@ fn export_pdf_error_to_rpc(err: &ExportPdfError) -> RpcError {
 ///   `scene/key state:"down"` writes, currently the `Space` pan chord;
 ///   a non-chord key's down/up edge is accepted but never cached, so it
 ///   reads back absent by design).
+/// * `held_pointer_buttons` — R1619 §5.35, array of canonical button names
+///   (`"left"` / `"middle"` / `"right"`) currently held by the
+///   dispatch-scoped window's mouse pointer: the READ peer of the
+///   `scene/pointer_button` writes, exactly as `held_keys` is of `scene/key`.
+///   An empty array means nothing is held. **Unlike `modifiers` there is no
+///   `null` arm**, because the framework owns this state rather than
+///   mirroring a platform cache — every backend can answer it, so an
+///   "axis unavailable" spelling would be unreachable and therefore a lie.
+///   An AI driving a drag-select reads this between the press and the moves
+///   to confirm the gesture it opened is still open.
 /// * `cursor` — `{x, y}` of the dispatch-scoped window's last mouse
 ///   cursor position (what every `scene/click` / `scene/hover` /
 ///   `scene/drag` write moves), or `null` before the first cursor
@@ -7197,6 +7207,7 @@ fn handle_scene_input_state(
     Ok(serde_json::json!({
         "modifiers": modifiers,
         "held_keys": snap.held_keys,
+        "held_pointer_buttons": snap.held_pointer_buttons,
         "cursor": cursor,
         "key_dispatch": key_dispatch,
     }))

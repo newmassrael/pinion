@@ -43,7 +43,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
-use crate::input::Modifiers;
+use crate::input::{Modifiers, PointerWireEvent};
 use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
 use crate::widgets::cell_selection::{CellSelection, ColumnSpan, SelectionBehavior};
@@ -412,6 +412,25 @@ impl VirtualSelect {
     /// collapses to a plain select. Out-of-range indices are ignored.
     /// Returns `true` if anything changed.
     pub fn extend_to(&mut self, index: usize) -> bool {
+        self.extend_to_with(index, RangeWrite::Replace)
+    }
+
+    /// R1619 §5.35 §5.40 — [`extend_to`](Self::extend_to) that **adds** the
+    /// range instead of replacing with it: the `Ctrl`-anchored drag sweep (the
+    /// toolkit's Ctrl+drag over a view, which grows the selection rather than
+    /// restarting it).
+    ///
+    /// It exists because a sweep and a `Shift`-click are the same *range* and
+    /// a different *write*, and the difference is not expressible by composing
+    /// the ops that were here: a `Ctrl`-press followed by
+    /// [`extend_to`](Self::extend_to) discards everything the user had
+    /// already picked, which is precisely the thing a `Ctrl` chord promises
+    /// not to do.
+    pub fn extend_to_adding(&mut self, index: usize) -> bool {
+        self.extend_to_with(index, RangeWrite::Add)
+    }
+
+    fn extend_to_with(&mut self, index: usize, write: RangeWrite) -> bool {
         if index >= self.item_count {
             return false;
         }
@@ -432,9 +451,7 @@ impl VirtualSelect {
         // on a large model is the *cheapest* thing a user can ask for and was
         // the most expensive thing the model could do.
         let moved = self.cursor != Some(index) || self.cursor_column.is_some();
-        let changed = self
-            .cells
-            .replace(&IndexRuns::run(lo, hi), &ColumnSpan::All);
+        let changed = write.apply(&mut self.cells, &IndexRuns::run(lo, hi), &ColumnSpan::All);
         self.cursor = Some(index);
         self.cursor_column = None;
         changed || moved
@@ -593,6 +610,17 @@ impl VirtualSelect {
     /// [`select_cell`](Self::select_cell), the row axis's rule for a
     /// `Shift`-press with no anchor.
     pub fn extend_to_cell(&mut self, row: usize, col: usize) -> bool {
+        self.extend_to_cell_with(row, col, RangeWrite::Replace)
+    }
+
+    /// R1619 §5.40 — the cell axis's peer of
+    /// [`extend_to_adding`](Self::extend_to_adding): a `Ctrl`-anchored sweep
+    /// grows the selection by the swept rectangle.
+    pub fn extend_to_cell_adding(&mut self, row: usize, col: usize) -> bool {
+        self.extend_to_cell_with(row, col, RangeWrite::Add)
+    }
+
+    fn extend_to_cell_with(&mut self, row: usize, col: usize, write: RangeWrite) -> bool {
         if !self.cell_exists(row, col) {
             return false;
         }
@@ -605,7 +633,7 @@ impl VirtualSelect {
         let rows = span_between(anchor_row, row);
         let cols = span_between(anchor_col, col);
         let moved = self.cursor != Some(row) || self.cursor_column != Some(col);
-        let changed = self.cells.replace(&rows, &ColumnSpan::Runs(cols));
+        let changed = write.apply(&mut self.cells, &rows, &ColumnSpan::Runs(cols));
         self.cursor = Some(row);
         self.cursor_column = Some(col);
         changed || moved
@@ -656,6 +684,17 @@ impl VirtualSelect {
     /// column from the extension origin's column to it. With no column origin
     /// yet, behaves as a plain [`select_column`](Self::select_column).
     pub fn extend_to_column(&mut self, col: usize) -> bool {
+        self.extend_to_column_with(col, RangeWrite::Replace)
+    }
+
+    /// R1619 §5.40 — the section axis's peer of
+    /// [`extend_to_adding`](Self::extend_to_adding): a `Ctrl`-anchored sweep
+    /// across column headers grows the selection.
+    pub fn extend_to_column_adding(&mut self, col: usize) -> bool {
+        self.extend_to_column_with(col, RangeWrite::Add)
+    }
+
+    fn extend_to_column_with(&mut self, col: usize, write: RangeWrite) -> bool {
         if !self.column_exists(col) || self.item_count == 0 {
             return false;
         }
@@ -666,8 +705,10 @@ impl VirtualSelect {
             return self.select_column(col);
         };
         let moved = self.cursor_column != Some(col);
-        let changed = self.cells.replace(
-            &self.all_rows(),
+        let rows = self.all_rows();
+        let changed = write.apply(
+            &mut self.cells,
+            &rows,
             &ColumnSpan::Runs(span_between(anchor_col, col)),
         );
         self.cursor = Some(0);
@@ -726,6 +767,60 @@ impl VirtualSelect {
     fn cell_exists(&self, row: usize, col: usize) -> bool {
         row < self.item_count && self.column_exists(col)
     }
+}
+
+/// R1619 §5.40 — how a range-extend writes its range: over the selection, or
+/// into it.
+///
+/// The three extends (row, column, cell) each compute a range and then write
+/// it, and the *only* thing a `Ctrl`-anchored drag sweep changes is the write.
+/// Naming that one difference keeps the three ops single-bodied — the
+/// alternative was six near-identical functions whose ranges could drift apart
+/// while every one of them still compiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RangeWrite {
+    /// The selection becomes the range (a `Shift`-click, a plain drag).
+    Replace,
+    /// The range joins the selection (a `Ctrl`-anchored drag sweep).
+    Add,
+}
+
+impl RangeWrite {
+    fn apply(self, cells: &mut CellSelection, rows: &IndexRuns, columns: &ColumnSpan) -> bool {
+        match self {
+            RangeWrite::Replace => cells.replace(rows, columns),
+            RangeWrite::Add => cells.add(rows, columns),
+        }
+    }
+}
+
+/// R1619 §5.35 §5.40 — one in-flight pointer drag over a selectable surface:
+/// the address the press landed on, the chord it was made with, and whether
+/// the pointer has since entered a *different* address (which is what turns a
+/// click into a sweep).
+///
+/// ## Why this can be state, when "am I pressed" could not
+///
+/// A coordinator that keeps its own "the button is down" flag goes wrong the
+/// moment a release lands somewhere it does not hear about — releasing outside
+/// the window delivers no `PointerUp` to the presser at all, and the flag
+/// latches forever ([[debt-pointer-wire-omits-held-button-state]], measured at
+/// R1562). This record keeps no such flag. Every pointer event now carries the
+/// held set ([`PointerButtons`](crate::input::PointerButtons)), so the *live*
+/// question is re-read from each event and the record is dropped the instant an
+/// event arrives with the primary button up — including one that arrives long
+/// after the release, on a pointer that wandered back in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DragSelect {
+    /// The address the press landed on, re-applied once at the sweep's start
+    /// so the anchor is where the user put their finger down.
+    anchor: PressAxis,
+    /// The chord held at the press, which decides how the sweep writes.
+    chord: crate::input::SelectionChord,
+    /// Whether a sweep has actually begun (the pointer entered another
+    /// address). Until it has, the gesture is still a click and the release
+    /// must run the ordinary activation.
+    swept: bool,
 }
 
 /// The inclusive run between two endpoints, in either order — the shared half
@@ -788,6 +883,9 @@ pub struct VirtualSelectExternal {
     grid_gesture: Option<Box<GridGestureFn>>,
     /// R1563 — what a press on a horizontal header section does.
     section_press: SectionPress,
+    /// R1619 §5.35 §5.40 — the in-flight pointer drag, when one is open. See
+    /// [`DragSelect`].
+    drag: Option<DragSelect>,
 }
 
 /// R1563 — which axis a decoded press resolved to, so one chord vocabulary can
@@ -825,6 +923,7 @@ impl VirtualSelectExternal {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Single)),
             grid_gesture: None,
             section_press: SectionPress::Inert,
+            drag: None,
         }
     }
 
@@ -870,6 +969,7 @@ impl VirtualSelectExternal {
             em: IntentEmitter::new(VirtualSelect::new(item_count, SelectionMode::Multi)),
             grid_gesture: None,
             section_press: SectionPress::Inert,
+            drag: None,
         }
     }
 
@@ -1043,6 +1143,17 @@ impl VirtualSelectExternal {
         true
     }
 
+    /// R1619 — the `Ctrl`-anchored drag sweep on the row axis
+    /// ([`VirtualSelect::extend_to_adding`]): the range joins the selection
+    /// instead of replacing it. On a real change, queues the selection intent.
+    pub fn extend_to_adding(&mut self, index: usize) -> bool {
+        if !self.em.inner.extend_to_adding(index) {
+            return false;
+        }
+        self.push_selection_intent();
+        true
+    }
+
     /// `Ctrl+A` select-all (multi-select interaction). A no-op in a
     /// single-select model. On a real change, queues the selection intent.
     /// Returns `true` if the selection grew.
@@ -1123,6 +1234,12 @@ impl VirtualSelectExternal {
         self.interaction(|model| model.extend_to_cell(row, col))
     }
 
+    /// R1619 — the `Ctrl`-anchored drag sweep on the cell axis
+    /// ([`VirtualSelect::extend_to_cell_adding`]).
+    pub fn extend_to_cell_adding(&mut self, row: usize, col: usize) -> bool {
+        self.interaction(|model| model.extend_to_cell_adding(row, col))
+    }
+
     /// R1563 — plain press on the header section for `col`
     /// ([`VirtualSelect::select_column`]).
     pub fn select_column(&mut self, col: usize) -> bool {
@@ -1139,6 +1256,12 @@ impl VirtualSelectExternal {
     /// ([`VirtualSelect::extend_to_column`]).
     pub fn extend_to_column(&mut self, col: usize) -> bool {
         self.interaction(|model| model.extend_to_column(col))
+    }
+
+    /// R1619 — the `Ctrl`-anchored drag sweep on the section axis
+    /// ([`VirtualSelect::extend_to_column_adding`]).
+    pub fn extend_to_column_adding(&mut self, col: usize) -> bool {
+        self.interaction(|model| model.extend_to_column_adding(col))
     }
 
     /// R1563 — run one model transition on the **interaction** path: apply it,
@@ -1211,7 +1334,12 @@ impl VirtualSelectExternal {
     /// structure, so it falls back to a plain integer parse: one
     /// coordinator, both collection shapes, one wire grammar.
     fn handle_send(&mut self, payload: &str) {
-        let Some((key, event_name, modifiers)) = crate::composite_tag::split_send_payload(payload)
+        let Some(crate::composite_tag::SendPayload {
+            key,
+            event: event_name,
+            modifiers,
+            buttons,
+        }) = crate::composite_tag::split_send_payload(payload)
         else {
             return;
         };
@@ -1234,9 +1362,63 @@ impl VirtualSelectExternal {
             }
             return;
         }
+        // R1619 §5.35 — the drag-select machine, ahead of the activation gate
+        // because its two interesting edges (`PointerDown`, `PointerEnter`)
+        // are precisely the ones that gate rejects.
+        //
+        // **The gesture ends on the first event that reports the button up**,
+        // and it is taken here rather than tested later because the release IS
+        // such an event — an earlier draft cleared the record before the
+        // release could read it, and every sweep collapsed back to one row on
+        // mouse-up. Reading the set off every event is also what makes a
+        // release this widget never saw (the pointer left the window and let
+        // go there) harmless: whatever arrives next reports an empty set and
+        // closes the gesture, where a coordinator's own flag would have
+        // latched. A cancel revokes it outright — that is what a cancel is.
+        let held = buttons.contains(crate::input::PointerButton::Left);
+        let ended = if held { None } else { self.drag.take() };
+        if event_name == PointerWireEvent::Cancel.as_wire_name() {
+            self.drag = None;
+            return;
+        }
+        if let Some(axis) = self.press_axis(parsed, key) {
+            match event_name {
+                name if name == PointerWireEvent::Down.as_wire_name() && held => {
+                    self.begin_drag_select(axis, modifiers);
+                    return;
+                }
+                name if name == PointerWireEvent::Enter.as_wire_name() && held => {
+                    self.sweep_drag_select(axis);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        // A sweep has already written the selection it means; the release that
+        // ends it must not collapse that range back to the one address the
+        // pointer happens to be over. A press that never swept is still a
+        // click, and takes the ordinary path below unchanged.
+        if ended.is_some_and(|d| d.swept) {
+            return;
+        }
         if !crate::input::is_activation_event(event_name) {
             return;
         }
+        let Some(axis) = self.press_axis(parsed, key) else {
+            return;
+        };
+        self.press(axis, modifiers);
+    }
+
+    /// R1619 §5.40 — resolve a decoded send address to the selection
+    /// [`PressAxis`] it names, or `None` when it names none.
+    ///
+    /// Lifted out of [`handle_send`](Self::handle_send) so the click path and
+    /// the drag path resolve an address through **one** function. That is the
+    /// R1562 argument applied a second time: a sweep that resolved addresses
+    /// its own way could select a cell where a click on the same pixel selects
+    /// a row, and the two would still both compile.
+    fn press_axis(&self, parsed: Option<GridSendKey>, key: &str) -> Option<PressAxis> {
         // R1563 — a horizontal section press, when the grid declared that its
         // sections select. Handled before the row fall-through because a header
         // has no row: `GridSendKey::row()` answers `None` for it, so without
@@ -1245,26 +1427,83 @@ impl VirtualSelectExternal {
             && grid_key.row().is_none()
             && let Some(col) = grid_key.col()
         {
-            self.press(PressAxis::Column(col), modifiers);
-            return;
+            return Some(PressAxis::Column(col));
         }
-        let row = match parsed {
+        let index = match parsed {
             Some(grid_key) => grid_key.row(),
             None => key.parse::<usize>().ok(),
-        };
-        let Some(index) = row else {
-            return;
-        };
+        }?;
         // R1563 — what a press on a *cell* selects is the grid's declared
         // behaviour (the toolkit `setSelectionBehavior`). A row header carries no column and
         // always selects its row: it is the address of a record, which is why
         // the band exists. A bare list-item key has no column either.
-        let axis = match (self.behavior(), parsed.and_then(GridSendKey::col)) {
+        Some(match (self.behavior(), parsed.and_then(GridSendKey::col)) {
             (SelectionBehavior::SelectItems, Some(col)) => PressAxis::Cell(index, col),
             (SelectionBehavior::SelectColumns, Some(col)) => PressAxis::Column(col),
             _ => PressAxis::Row(index),
+        })
+    }
+
+    /// R1619 §5.35 §5.40 — a press over a selectable address opens a drag
+    /// candidate. **Nothing is selected yet**: pinion activates on the release
+    /// edge, and a press that never moves must keep meaning exactly what it
+    /// meant before this round.
+    fn begin_drag_select(&mut self, axis: PressAxis, modifiers: Modifiers) {
+        self.drag = Some(DragSelect {
+            anchor: axis,
+            chord: crate::input::SelectionChord::from_modifiers(modifiers),
+            swept: false,
+        });
+    }
+
+    /// R1619 §5.35 §5.40 — the pointer entered `axis` with the primary button
+    /// held: the toolkit's `sectionEntered`, generalised to every address this
+    /// coordinator understands.
+    ///
+    /// The first entered address that differs from the anchor **starts** the
+    /// sweep by applying the press that was deferred at
+    /// [`begin_drag_select`](Self::begin_drag_select) — so the anchor lands
+    /// where the finger went down — and every entry after that extends to the
+    /// entered address. Extending re-derives the whole range from the fixed
+    /// anchor, so sweeping back over ground already covered shrinks the range
+    /// rather than ratcheting.
+    ///
+    /// The chord held at the **press** decides the write, which is what a
+    /// chord means: a plain sweep replaces, a `Shift` sweep extends the range
+    /// the user already had, and a `Ctrl` sweep adds to the selection instead
+    /// of restarting it ([`RangeWrite::Add`]).
+    fn sweep_drag_select(&mut self, axis: PressAxis) {
+        use crate::input::SelectionChord as Chord;
+        let Some(drag) = self.drag else {
+            return;
         };
-        self.press(axis, modifiers);
+        if drag.anchor == axis {
+            return;
+        }
+        if !drag.swept {
+            // A `Shift`-anchored sweep deliberately does NOT re-press its
+            // anchor: `Shift` means "from where the selection already began",
+            // and pressing the anchor would move that origin to the press.
+            if drag.chord != Chord::Extend {
+                self.press_chord(drag.chord, drag.anchor);
+            }
+            self.drag = Some(DragSelect {
+                swept: true,
+                ..drag
+            });
+        }
+        match (drag.chord, axis) {
+            (Chord::Toggle, PressAxis::Row(row)) => {
+                self.extend_to_adding(row);
+            }
+            (Chord::Toggle, PressAxis::Column(col)) => {
+                self.extend_to_column_adding(col);
+            }
+            (Chord::Toggle, PressAxis::Cell(row, col)) => {
+                self.extend_to_cell_adding(row, col);
+            }
+            (Chord::Replace | Chord::Extend, other) => self.press_chord(Chord::Extend, other),
+        }
     }
 
     /// R781 §5.35 §5.40 / R1563 — the modifier-aware press, the pointer peer of
@@ -1286,8 +1525,21 @@ impl VirtualSelectExternal {
     /// vocabulary — which is the shape R1562 removed on the row axis and the
     /// reason a band press and a cell press cannot mean different things.
     fn press(&mut self, axis: PressAxis, modifiers: Modifiers) {
+        self.press_chord(
+            crate::input::SelectionChord::from_modifiers(modifiers),
+            axis,
+        );
+    }
+
+    /// R1619 §5.35 §5.40 — [`press`](Self::press) with the chord already
+    /// decoded, so a drag sweep can name the chord it needs
+    /// ([`Extend`](crate::input::SelectionChord::Extend)) instead of
+    /// synthesising a `Shift` that was never held. The chord and the modifier
+    /// state are different things, and only one of them is what the selection
+    /// vocabulary is a function of.
+    fn press_chord(&mut self, chord: crate::input::SelectionChord, axis: PressAxis) {
         use crate::input::SelectionChord as Chord;
-        match (Chord::from_modifiers(modifiers), axis) {
+        match (chord, axis) {
             (Chord::Replace, PressAxis::Row(row)) => self.select(row),
             (Chord::Toggle, PressAxis::Row(row)) => self.toggle(row),
             (Chord::Extend, PressAxis::Row(row)) => self.extend_to(row),
@@ -2162,6 +2414,116 @@ mod tests {
             Some(5),
             "header click leaves the selection intact"
         );
+    }
+
+    /// R1619 §5.35 §5.40 — **drag-select**: press a row, sweep across others
+    /// with the primary button held, and the range follows the pointer.
+    ///
+    /// The toolkit reaches this through `sectionEntered` / `setSelection` on a
+    /// mouse-move it receives because of an implicit grab. Here the enabling
+    /// fact is on the wire: `PointerEnter` carries the held-button set
+    /// ([`SendPayload::buttons`](crate::composite_tag::SendPayload::buttons)),
+    /// so the coordinator reads whether a crossing is a sweep instead of
+    /// keeping a flag that a release it never sees would strand.
+    #[test]
+    fn r1619_a_held_primary_button_turns_a_crossing_into_a_sweep() {
+        let mut s = VirtualSelectExternal::new_multi(10);
+        // Press row 2, then cross rows 3 and 4 with the button held.
+        s.handle_send("2:PointerDown::l");
+        assert_eq!(
+            s.selection().iter().collect::<Vec<_>>(),
+            Vec::<usize>::new(),
+            "a press alone selects nothing — pinion activates on release, and \
+             a press that never moves must keep meaning what it always did",
+        );
+        s.handle_send("3:PointerEnter::l");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![2, 3]);
+        s.handle_send("4:PointerEnter::l");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![2, 3, 4]);
+        // Sweeping BACK shrinks the range: it is re-derived from the fixed
+        // anchor each time, not ratcheted.
+        s.handle_send("3:PointerEnter::l");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![2, 3]);
+        // The release ends the sweep and must NOT collapse the range to the
+        // one row the pointer happens to be over.
+        s.handle_send("3:PointerUp");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![2, 3]);
+    }
+
+    /// R1619 — the **negative control**, and the round's actual claim: the same
+    /// crossings with no button held select nothing at all. Without this the
+    /// test above would pass just as well against a coordinator that extended
+    /// on every hover.
+    #[test]
+    fn r1619_a_crossing_with_no_button_held_is_a_hover() {
+        let mut s = VirtualSelectExternal::new_multi(10);
+        s.handle_send("2:PointerDown::l");
+        // The button comes up somewhere this widget never hears about; the
+        // next event it DOES see reports an empty held set, which is what
+        // closes the gesture. Pre-R1619 a coordinator's own flag stayed
+        // latched here forever.
+        s.handle_send("3:PointerEnter");
+        s.handle_send("4:PointerEnter");
+        assert_eq!(
+            s.selection().iter().collect::<Vec<_>>(),
+            Vec::<usize>::new(),
+            "hovering is not selecting",
+        );
+        // And a plain click still behaves exactly as it did before the round.
+        s.handle_send("4:PointerDown::l");
+        s.handle_send("4:PointerUp");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![4]);
+    }
+
+    /// R1619 — the chord held at the **press** decides how the sweep writes,
+    /// which is what a chord means. `Ctrl` adds the swept range to what the
+    /// user already had; a plain sweep replaces it. The two differ only in the
+    /// write ([`RangeWrite`]), which is why they share one range derivation.
+    #[test]
+    fn r1619_a_ctrl_anchored_sweep_adds_instead_of_replacing() {
+        let mut s = VirtualSelectExternal::new_multi(10);
+        s.handle_send("0:PointerDown::l");
+        s.handle_send("0:PointerUp");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![0]);
+        // Ctrl-press row 5 and sweep to 7: rows 5..7 JOIN row 0.
+        s.handle_send("5:PointerDown:c:l");
+        s.handle_send("6:PointerEnter:c:l");
+        s.handle_send("7:PointerEnter:c:l");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![0, 5, 6, 7]);
+        s.handle_send("7:PointerUp:c");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![0, 5, 6, 7]);
+        // A PLAIN sweep over the same ground replaces — the control that shows
+        // the `Ctrl` arm is doing something, not just running the same code.
+        s.handle_send("5:PointerDown::l");
+        s.handle_send("6:PointerEnter::l");
+        assert_eq!(s.selection().iter().collect::<Vec<_>>(), vec![5, 6]);
+    }
+
+    /// R1619 §5.40 — **drag-select across sections**: the item the Model/View
+    /// axis has been carrying as blocked since R1562. A press on a column
+    /// header and a sweep across its neighbours selects the span, through the
+    /// same `press_axis` resolution and the same chord vocabulary a cell press
+    /// travels.
+    #[test]
+    fn r1619_a_sweep_across_header_sections_selects_the_span() {
+        let mut s = VirtualSelectExternal::new_multi(4)
+            .with_columns(5)
+            .with_section_press(SectionPress::Select);
+        s.handle_send("h1:PointerDown::l");
+        s.handle_send("h2:PointerEnter::l");
+        s.handle_send("h3:PointerEnter::l");
+        let cells = s.cells();
+        for col in 1..=3 {
+            for row in 0..4 {
+                assert!(cells.contains(row, col), "({row}, {col}) is in the span");
+            }
+        }
+        for col in [0, 4] {
+            assert!(
+                !cells.contains(0, col),
+                "column {col} is outside the swept span",
+            );
+        }
     }
 
     #[test]

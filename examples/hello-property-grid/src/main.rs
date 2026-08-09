@@ -2037,8 +2037,11 @@ impl PropertyGridExternal {
     }
 
     fn dispatch_send(&mut self, s: &str) -> Result<IntrospectValue, InvokeError> {
-        let (key, event_name, _) =
-            pinion_core::composite_tag::require_send_payload("property_grid.send", s)?;
+        let pinion_core::composite_tag::SendPayload {
+            key,
+            event: event_name,
+            ..
+        } = pinion_core::composite_tag::require_send_payload("property_grid.send", s)?;
         if key == "dismiss" {
             if event_name == "PointerUp" {
                 self.close_popup();

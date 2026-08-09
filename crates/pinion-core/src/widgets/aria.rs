@@ -39,7 +39,7 @@
 
 use crate::composite_tag::{compose_send_payload, split_subindex};
 use crate::external::IntrospectValue;
-use crate::input::Modifiers;
+use crate::input::{Modifiers, PointerButtons};
 use crate::scene::Scene;
 
 /// R1543 §5.38 §5.39 — fire the SCXML `KeyboardActivate` event at the widget
@@ -70,7 +70,12 @@ use crate::scene::Scene;
 #[must_use]
 pub fn send_keyboard_activate(scene: &mut Scene, target: &str) -> bool {
     let (primary, sub) = split_subindex(target);
-    let payload = compose_send_payload(sub, "KeyboardActivate", Modifiers::empty());
+    let payload = compose_send_payload(
+        sub,
+        "KeyboardActivate",
+        Modifiers::empty(),
+        PointerButtons::empty(),
+    );
     let Some(node) = scene.find_external_with_tag_mut(primary) else {
         return false;
     };

@@ -786,7 +786,12 @@ mod tests {
             };
             // A real click is the full pointer cycle; only PointerUp activates.
             for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                let wire = compose_send_payload(Some(cell), ev, mods);
+                let wire = compose_send_payload(
+                    Some(cell),
+                    ev,
+                    mods,
+                    pinion_core::input::PointerButtons::empty(),
+                );
                 let _ = intro.invoke("send", IntrospectValue::Text(wire));
             }
         };

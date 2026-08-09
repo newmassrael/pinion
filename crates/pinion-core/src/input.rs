@@ -416,6 +416,18 @@ pub struct InputStateSnapshot {
     pub modifiers: Option<Modifiers>,
     /// Canonical named spellings of the held chord keys.
     pub held_keys: Vec<&'static str>,
+    /// R1619 §5.35 §5.16 — canonical wire names of the pointer buttons held
+    /// right now ([`PointerButtons::held_names`]), for the dispatch-scoped
+    /// window's mouse pointer.
+    ///
+    /// The READ peer of the `scene/pointer_button` writes, exactly as
+    /// [`held_keys`](Self::held_keys) is of `scene/key`: an AI that drives a
+    /// drag-select over the wire can confirm the press it sent is still held
+    /// before sending the moves that depend on it. An empty list means no
+    /// button is held — a backend that cannot answer the axis at all does not
+    /// arise here, because the framework itself owns the state (unlike
+    /// [`modifiers`](Self::modifiers), which mirrors a platform cache).
+    pub held_pointer_buttons: Vec<&'static str>,
     /// Last cursor position in the dispatch-scoped window.
     pub cursor: Option<(f64, f64)>,
     /// R1074 §5.39 §5.16 — multi-window key-dispatch gate state, or
@@ -1034,13 +1046,37 @@ impl PointerEdge {
 /// R1418 §5.35 §5.15 — the set of mouse buttons currently held, the pinion
 /// peer of the toolkit `buttons()` and the DOM `MouseEvent.buttons` bitmask.
 ///
+/// A **state**, not an edge. [`PointerButton`] + [`PointerEdge`] say *what just
+/// happened*; this says *what is currently down*. Following the DOM / the
+/// toolkit convention, the set reflects the state **after** the transition: a
+/// press INCLUDES the pressed button, a release EXCLUDES the released one.
+///
 /// Carried on [`RawPointerButton`] so a raw sink reads WHICH buttons are down at each edge,
 /// not only the single [`button`](RawPointerButton::button) that just changed — a
 /// chord (press left, then right) reports `{left, right}` on the right-down edge, and the
 /// state an xterm SGR motion report or a toolkit drag-with-buttons gesture
-/// needs. Following the DOM / the toolkit convention, the set reflects the
-/// state **after** the transition: a press INCLUDES the pressed button, a
-/// release EXCLUDES the released one.
+/// needs.
+///
+/// **R1619 — it is no longer only the raw channel's.** The router keeps one
+/// per-pointer set and stamps it onto *every* dispatched pointer event, so a
+/// widget that never opted into the raw stream still learns that a
+/// [`PointerEnter`](PointerWireEvent::Enter) arrived with the primary button
+/// held — which is the inner step of every drag-select and, before R1619, was
+/// byte-identical on the wire to a plain hover. The set travels as the send
+/// payload's fourth segment ([`as_wire_token`](Self::as_wire_token)) and is
+/// published for reading on `scene/input_state`
+/// ([`InputStateSnapshot::held_pointer_buttons`]).
+///
+/// Against the reference: the toolkit carries the held set on its
+/// **single-point event base**, so its mouse, hover and **enter** events all
+/// answer it — but its *leave* is not a pointing event at all. That handler
+/// takes the framework's plain BASE event type, which has no position, no
+/// modifiers and no buttons, so "did the pointer leave me mid-drag?" can only
+/// be answered there by consulting global state at an unrelated moment. Here
+/// [`Leave`](PointerWireEvent::Leave) is stamped like every other arm.
+/// (Read from the reference source; the exact class and handler names are in
+/// the round's memory note rather than here, so this file cites the capability
+/// and not another project's namespace.)
 ///
 /// A `u8` bitmask over the three [`PointerButton`]s (no external `bitflags`
 /// dependency, and `unsafe_code` is forbidden workspace-wide), exposed through
@@ -1105,6 +1141,30 @@ impl PointerButtons {
             token.push('r');
         }
         token
+    }
+
+    /// R1619 §5.35 §5.16 — enumerate the held buttons by their canonical wire
+    /// spelling ([`PointerButton::as_wire_name`]) in the closed set's
+    /// declaration order.
+    ///
+    /// One home for the enumeration, so the `scene/input_state` READ peer
+    /// serializes exactly the set the button-edge WRITES built — the
+    /// [`HeldKeys::held_names`] discipline, where the read is the inverse of
+    /// the writes by construction rather than by a second spelling. Distinct
+    /// from [`as_wire_token`](Self::as_wire_token), which packs the same set
+    /// into ONE payload segment: a JSON reader wants names, a `:`-separated
+    /// grammar with no room for a separator wants letters.
+    #[must_use]
+    pub fn held_names(self) -> Vec<&'static str> {
+        [
+            PointerButton::Left,
+            PointerButton::Middle,
+            PointerButton::Right,
+        ]
+        .into_iter()
+        .filter(|&b| self.contains(b))
+        .map(PointerButton::as_wire_name)
+        .collect()
     }
 
     /// Decode a held-set wire token (any order of the `lmr` letters) back into

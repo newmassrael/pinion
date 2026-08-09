@@ -2722,6 +2722,16 @@ impl<V: WidgetView> ShellCore<V> {
         edge: pinion_core::PointerEdge,
     ) {
         use pinion_core::{PointerButton, PointerEdge};
+        // R1619 §5.35 — record the EDGE before any routing decision. This is
+        // the one seam every button edge crosses (native `MouseInput` and the
+        // `scene/pointer_button` RPC drain), and the routing below is
+        // per-button and asymmetric — a right release has no arm at all, a raw
+        // sink consumes the edge and returns early — so a set assembled from
+        // the routing arms alone would be missing exactly the buttons whose
+        // arms do the least. The note is idempotent, so the arms that DO reach
+        // the router and note their own edge stay correct.
+        self.core
+            .note_pointer_button_for_window(window_id, PointerId::MOUSE, button, edge);
         if self.core.raw_pointer_button_for_window(
             window_id,
             PointerId::MOUSE,
@@ -4303,8 +4313,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// `winit::keyboard::ModifiersState` to the abstract
     /// [`Modifiers`] so the substrate stays backend-agnostic for the
     /// §2 #6 GUI/TUI dual invariant.
+    /// R1619 §5.35 §5.41 — the same absolute state is pushed down to every
+    /// window's router, which stamps it onto **every** dispatched pointer event
+    /// (press and hover included, not only the release edge the shell passes
+    /// per-call). One funnel, both consumers.
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
+        self.core.set_pointer_modifiers(modifiers);
     }
 
     /// R882 §5.39 §5.35 — held-key absolute-state funnel: record that
@@ -4449,6 +4464,11 @@ impl<V: WidgetView> ShellCore<V> {
     pub fn window_blurred(&mut self) {
         self.focus.save();
         self.core.clear_held_keys();
+        // R1619 §5.35 §5.39 — the pointer peer of the missed-keyup rule: the
+        // mouse-up after a focus loss goes to whichever window took focus, so
+        // a button held at blur is a button whose release this window will
+        // never see.
+        self.core.clear_held_pointer_buttons();
     }
 
     /// R1419 §5.39 §5.16 — the SINGLE write path for

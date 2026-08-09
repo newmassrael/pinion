@@ -645,6 +645,70 @@ fn r1074_scene_input_state_key_dispatch_null_vs_empty_are_distinct() {
     );
 }
 
+/// R1619 §5.35 §5.16 — `scene/input_state` publishes the held pointer buttons,
+/// the READ peer of the `scene/pointer_button` writes.
+///
+/// Two things are asserted that the field's mere presence does not give:
+/// nothing held serializes as an **empty array** (never `null` — the framework
+/// owns this state on every backend, so "axis unavailable" would be a lie the
+/// wire cannot tell), and the names are the same closed vocabulary
+/// `scene/pointer_button` accepts, so a client can round-trip what it reads.
+#[test]
+fn r1619_input_state_publishes_the_held_pointer_buttons() {
+    use pinion_core::{PointerButton, PointerButtons};
+    let mut scene = counted_scene(3);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+
+    // (1) Nothing held → an empty array, not null.
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_input_state(pinion_core::InputStateSnapshot::default());
+    let resp = dispatch(
+        &mut ctx,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v: serde_json::Value = serde_json::from_str(&resp).expect("valid response json");
+    let held = &v["result"]["held_pointer_buttons"];
+    assert_eq!(
+        held.as_array().expect("an array, never null").len(),
+        0,
+        "nothing held is an empty list — this axis has no unavailable arm",
+    );
+
+    // (2) A left+right chord → both names, in the closed set's order.
+    let snap = pinion_core::InputStateSnapshot {
+        held_pointer_buttons: PointerButtons::empty()
+            .with(PointerButton::Left)
+            .with(PointerButton::Right)
+            .held_names(),
+        ..Default::default()
+    };
+    let mut ctx2 = DispatchContext::new(&mut scene, &previews, &revision).with_input_state(snap);
+    let resp2 = dispatch(
+        &mut ctx2,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v2: serde_json::Value = serde_json::from_str(&resp2).expect("valid response json");
+    assert_eq!(
+        v2["result"]["held_pointer_buttons"],
+        serde_json::json!(["left", "right"]),
+    );
+    // The read is in the write's vocabulary: every name it published decodes
+    // back through the same codec `scene/pointer_button {button}` parses with.
+    for name in v2["result"]["held_pointer_buttons"]
+        .as_array()
+        .expect("array")
+    {
+        let name = name.as_str().expect("string");
+        assert!(
+            PointerButton::from_wire_name(name).is_some(),
+            "{name:?} is not a button `scene/pointer_button` would accept",
+        );
+    }
+}
+
 #[test]
 fn r889_unknown_window_ctx_rejects_before_method_routing() {
     // The verdict threaded on the context rejects the WHOLE request

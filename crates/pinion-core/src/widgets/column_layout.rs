@@ -1320,7 +1320,9 @@ impl ColumnLayout {
     /// with, and the toolkit has no keyboard peer of `sectionClicked` to copy.
     #[must_use]
     pub fn handle_send(&self, payload: &str) -> Option<usize> {
-        let (sub, event, _mods) = split_send_payload(payload)?;
+        let crate::composite_tag::SendPayload {
+            key: sub, event, ..
+        } = split_send_payload(payload)?;
         let visual: usize = sub.parse().ok()?;
         if event == PointerWireEvent::Down.as_wire_name() {
             if visual < self.count {

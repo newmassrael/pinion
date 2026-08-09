@@ -38,7 +38,7 @@ use pinion_platform_storage::{AppStorage, use_app_storage};
 // `<key>:<EventName>` send-payload consumer
 // (TodoDeleteExternal / TodoToggleExternal / TodoFilterExternal —
 // 3-of-3 Rule of Three fired per [[abstraction-needs-second-consumer]]).
-use pinion_core::composite_tag::require_parsed_send_payload;
+use pinion_core::composite_tag::{SendPayload, require_parsed_send_payload};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -1470,8 +1470,12 @@ impl ExternalIntrospect for TodoDeleteExternal {
             // so the dispatch loop does not re-route to a sibling.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name, _): (u64, &str, _) =
-                        require_parsed_send_payload("todo_delete.send", payload)?;
+                    let (
+                        id,
+                        SendPayload {
+                            event: event_name, ..
+                        },
+                    ): (u64, _) = require_parsed_send_payload("todo_delete.send", payload)?;
                     if event_name == "PointerDown" {
                         let was_present = self.todos.get().iter().any(|item| item.id == id);
                         self.delete_by_id(id);
@@ -1615,8 +1619,12 @@ impl ExternalIntrospect for TodoToggleExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name, _): (u64, &str, _) =
-                        require_parsed_send_payload("todo_toggle.send", payload)?;
+                    let (
+                        id,
+                        SendPayload {
+                            event: event_name, ..
+                        },
+                    ): (u64, _) = require_parsed_send_payload("todo_toggle.send", payload)?;
                     if event_name == "PointerDown" {
                         let was_present = self.todos.get().iter().any(|item| item.id == id);
                         self.toggle_by_id(id);
@@ -1829,8 +1837,12 @@ impl ExternalIntrospect for TodoEditExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name, _): (u64, &str, _) =
-                        require_parsed_send_payload("todo_edit.send", payload)?;
+                    let (
+                        id,
+                        SendPayload {
+                            event: event_name, ..
+                        },
+                    ): (u64, _) = require_parsed_send_payload("todo_edit.send", payload)?;
                     if event_name == "DoubleClick" {
                         let was_present = self.begin_edit(id);
                         Ok(IntrospectValue::Bool(was_present))

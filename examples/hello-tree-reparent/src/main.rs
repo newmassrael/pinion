@@ -563,7 +563,7 @@ impl ExternalIntrospect for OutlinerExternal {
                 let IntrospectValue::Text(payload) = args else {
                     return Err(InvokeError::TypeMismatch);
                 };
-                let (id, event, _): (String, &str, _) =
+                let (id, pinion_core::composite_tag::SendPayload { event, .. }): (String, _) =
                     pinion_core::composite_tag::require_parsed_send_payload(
                         "tree_reparent.send",
                         &payload,

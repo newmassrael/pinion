@@ -1186,8 +1186,9 @@ impl WidgetCore for TreeGridView {
     fn update(_state: (), intent: &Intent) -> Vec<pinion_core::command::Command> {
         if intent.tag_str() == CLICK_INTENT_TAG
             && let IntrospectValue::Text(payload) = &intent.payload
-            && let Some((id, _event, modifiers)) = split_send_payload(payload)
+            && let Some(sent) = split_send_payload(payload)
         {
+            let (id, modifiers) = (sent.key, sent.modifiers);
             let tree_state = use_tree_state();
             match SelectionChord::from_modifiers(modifiers) {
                 SelectionChord::Replace => {
@@ -1813,6 +1814,7 @@ mod tests {
             Some(id),
             pinion_widget_paint::tree_view::TREE_ROW_CLICK_EVENT,
             modifiers,
+            pinion_core::input::PointerButtons::empty(),
         );
         Intent::new_static(CLICK_INTENT_TAG, IntrospectValue::Text(payload))
     }

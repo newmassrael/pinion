@@ -49,72 +49,159 @@
 //! composite-tag invoke arm in the workspace shares one parser.
 
 use crate::external::InvokeError;
-use crate::input::Modifiers;
+use crate::input::{Modifiers, PointerButtons};
 use core::str::FromStr;
 
+/// R1619 §5.35 §5.41 — one decoded composite-tag send payload: the address it
+/// names, the event that happened, and the **input context that was live when
+/// it happened**.
+///
+/// ## Why a struct and not a tuple
+///
+/// The wire has grown a segment three times (R51.42 `<key>:<Event>`, R781
+/// `:<mods>`, R1619 `:<buttons>`), and each growth re-broke every consumer's
+/// destructuring — not because the consumer was wrong, but because an
+/// anonymous 3-tuple has no way to say "there is now a fourth fact and you
+/// may ignore it". Naming the fields ends that: a consumer reads
+/// [`event`](Self::event) and is unaffected by a fifth context axis, while a
+/// consumer that *wants* the context does not have to count commas to find
+/// it. This is the same argument [`GridSendKey`] makes for the `'#'` sub-key
+/// — the grammar is a type, not a shape.
+///
+/// ## The context fields are state, not edges
+///
+/// [`event`](Self::event) is the edge (*what just happened*);
+/// [`modifiers`](Self::modifiers) and [`buttons`](Self::buttons) are state
+/// (*what was held while it happened*). A drag-select is exactly the
+/// conjunction: `PointerEnter` **with** [`buttons`](Self::buttons) non-empty
+/// is a range extension, the same event with an empty set is a hover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SendPayload<'a> {
+    /// The raw `<key>` segment — the `'#'` sub-index the paint tag carried,
+    /// or `""` for the R880 bare (background) target.
+    pub key: &'a str,
+    /// The event name (`"PointerEnter"`, `"PointerUp"`, `"DoubleClick"`, …),
+    /// borrowed out of the payload.
+    pub event: &'a str,
+    /// R781 — the keyboard modifiers held at this event; empty when the
+    /// optional third segment is absent.
+    pub modifiers: Modifiers,
+    /// R1619 — the pointer buttons held at this event (the W3C
+    /// `PointerEvent.buttons` state); empty when the optional fourth segment
+    /// is absent.
+    pub buttons: PointerButtons,
+}
+
+impl SendPayload<'_> {
+    /// The `<key>` segment parsed as `K`, or `None` when it is not one —
+    /// the typed-address view [`parse_send_payload`] is built from.
+    #[must_use]
+    pub fn key_as<K: FromStr>(&self) -> Option<K> {
+        self.key.parse().ok()
+    }
+}
+
 /// R781 §5.35 §5.41 — split a composite-tag send payload
-/// `"<key>:<EventName>[:<mods>]"` into its three wire segments: the raw
-/// key string, the event name, and the held [`Modifiers`] (empty when the
-/// optional third segment is absent).
+/// `"<key>:<EventName>[:<mods>[:<buttons>]]"` into its wire segments: the raw
+/// key string, the event name, the held [`Modifiers`] (empty when the optional
+/// third segment is absent) and the held [`PointerButtons`] (empty when the
+/// optional fourth segment is absent).
 ///
 /// This is the `:` grammar SSOT that [`parse_send_payload`] (typed-key
 /// consumers) and the row-only key parsers (e.g.
 /// [`VirtualSelectExternal`](crate::widgets::virtual_select) via
-/// [`GridSendKey`]) both decode through, so the modifier segment is
+/// [`GridSendKey`]) both decode through, so the context segments are
 /// stripped in exactly one place — a divergence would let one consumer see
 /// `"PointerUp:sc"` as the event name and break activation matching.
 ///
 /// Returns `None` when malformed: missing `:` (no event), empty event name
-/// (`"7:"`), or an unparseable modifier token (`Modifiers::from_wire_token`
-/// rejects any non-`scam` letter). Event names are colon-free (the closed
-/// `Pointer*` vocabulary), so the third `:` segment unambiguously belongs
-/// to the modifiers — R781 retires the pre-R781 "colon kept in the event
-/// suffix" behaviour, which never carried a real event name.
+/// (`"7:"`), an unparseable modifier token (`Modifiers::from_wire_token`
+/// rejects any non-`scam` letter), or an unparseable button token
+/// (`PointerButtons::from_wire_token` rejects any non-`lmr` letter). Event
+/// names are colon-free (the closed `Pointer*` vocabulary), so the trailing
+/// `:` segments unambiguously belong to the context — R781 retires the
+/// pre-R781 "colon kept in the event suffix" behaviour, which never carried a
+/// real event name.
+///
+/// R1619 — the *modifier* segment may be empty while the button segment is
+/// present (`"3:PointerEnter::l"`): the two context axes are independent, and
+/// an empty `scam` token is a legal spelling of "no modifiers"
+/// ([`Modifiers::from_wire_token`] accepts `""`). Only the **trailing** empty
+/// segments are elided by the encoder, so there is exactly one spelling of
+/// every state.
 ///
 /// R880 — the key segment may be **empty**: `":<EventName>:<token>"` is the
-/// bare-target (background) modifier wire an
+/// bare-target (background) context wire an
 /// [`External::wants_bare_send_modifiers`](crate::external::External::wants_bare_send_modifiers)
 /// opt-in receives. The empty key means "no sub-target"; consumers map it
-/// to their background arm. A bare send *without* held modifiers stays the
+/// to their background arm. A bare send *without* held context stays the
 /// colon-free `"<EventName>"` (this fn returns `None` for it — the
 /// established "`None` = bare event" decode contract).
 #[must_use]
-pub fn split_send_payload(payload: &str) -> Option<(&str, &str, Modifiers)> {
-    let mut parts = payload.splitn(3, ':');
-    let key_str = parts.next()?;
-    let event_name = parts.next()?;
-    if event_name.is_empty() {
+pub fn split_send_payload(payload: &str) -> Option<SendPayload<'_>> {
+    let mut parts = payload.splitn(4, ':');
+    let key = parts.next()?;
+    let event = parts.next()?;
+    if event.is_empty() {
         return None;
     }
     let modifiers = match parts.next() {
         Some(token) => Modifiers::from_wire_token(token)?,
         None => Modifiers::empty(),
     };
-    Some((key_str, event_name, modifiers))
+    let buttons = match parts.next() {
+        Some(token) => PointerButtons::from_wire_token(token)?,
+        None => PointerButtons::empty(),
+    };
+    Some(SendPayload {
+        key,
+        event,
+        modifiers,
+        buttons,
+    })
 }
 
 /// R880.1 — the **encode twin** of [`split_send_payload`]: build the send
-/// wire from its three segments. `Some(key)` is a composite target (a
+/// wire from its segments. `Some(key)` is a composite target (a
 /// `'#'` sub-index); `None` is a bare (background) target, which emits the
-/// colon-free event name unless modifiers are held, in which case the
-/// R880 empty-key three-segment wire `":<EventName>:<token>"` is produced.
-/// An empty modifier state always yields the back-compat form (no trailing
-/// segment).
+/// colon-free event name unless context is held, in which case the
+/// R880 empty-key wire `":<EventName>:<token>"` is produced.
+/// An empty context always yields the back-compat form (no trailing
+/// segments).
 ///
 /// One producer + one splitter in one module (the [`GridSendKey`] R773
 /// precedent: encoders and decoders share the grammar instead of
-/// re-deriving it inline), so the R781/R880 `:` grammar cannot fork — the
-/// runtime router is the wire's only emitter and goes through here.
-/// Callers gate *whether* to pass modifiers (the router's
+/// re-deriving it inline), so the R781/R880/R1619 `:` grammar cannot fork —
+/// the runtime router is the wire's only emitter and goes through here.
+/// Callers gate *whether* to pass context (the router's
 /// `wants_bare_send_modifiers` opt-in for bare targets); this fn only
 /// encodes.
+///
+/// R1619 — the button segment can only be reached through a modifier
+/// segment, so a button-only state emits an **empty** third segment
+/// (`"3:PointerEnter::l"`). Trailing-empty elision keeps the encoding
+/// canonical: `split(compose(x)) == x` for every input, and no state has two
+/// spellings.
 #[must_use]
-pub fn compose_send_payload(key: Option<&str>, event_name: &str, mods: Modifiers) -> String {
-    match (key, mods.is_empty()) {
-        (Some(key), false) => format!("{key}:{event_name}:{}", mods.as_wire_token()),
-        (Some(key), true) => format!("{key}:{event_name}"),
-        (None, false) => format!(":{event_name}:{}", mods.as_wire_token()),
-        (None, true) => event_name.to_string(),
+pub fn compose_send_payload(
+    key: Option<&str>,
+    event_name: &str,
+    mods: Modifiers,
+    buttons: PointerButtons,
+) -> String {
+    let head = match key {
+        Some(key) => format!("{key}:{event_name}"),
+        None if mods.is_empty() && buttons.is_empty() => return event_name.to_string(),
+        None => format!(":{event_name}"),
+    };
+    match (mods.is_empty(), buttons.is_empty()) {
+        (true, true) => head,
+        (_, true) => format!("{head}:{}", mods.as_wire_token()),
+        (_, false) => format!(
+            "{head}:{}:{}",
+            mods.as_wire_token(),
+            buttons.as_wire_token()
+        ),
     }
 }
 
@@ -137,8 +224,8 @@ pub fn compose_send_payload(key: Option<&str>, event_name: &str, mods: Modifiers
 /// [`is_activation_event`](crate::input::is_activation_event) precedent).
 #[must_use]
 pub fn send_activation_key(payload: &str) -> Option<&str> {
-    let (key, event, _mods) = split_send_payload(payload)?;
-    crate::input::is_activation_event(event).then_some(key)
+    let decoded = split_send_payload(payload)?;
+    crate::input::is_activation_event(decoded.event).then_some(decoded.key)
 }
 
 /// The numeric sub-target index a send payload addresses on its
@@ -176,18 +263,16 @@ pub fn prefixed_index(key: &str, prefix: &str) -> Option<usize> {
 ///   against `K = u64`),
 /// * an unparseable modifier token (the R781 third segment).
 ///
-/// On the happy path returns the typed key, a borrowed event-name slice
-/// into `payload` (callers typically match against `"PointerDown"` /
-/// `"PointerUp"` / …), and the held [`Modifiers`] (R781 — empty for the
-/// two-segment back-compat wire). Built on the [`split_send_payload`] `:`
-/// SSOT.
+/// On the happy path returns the typed key alongside the whole decoded
+/// [`SendPayload`] (whose `key` is the raw slice the typed one was parsed
+/// from). Built on the [`split_send_payload`] `:` SSOT.
 ///
 /// The dispatcher contract is documented at the [module level](self).
 #[must_use]
-pub fn parse_send_payload<K: FromStr>(payload: &str) -> Option<(K, &str, Modifiers)> {
-    let (key_str, event_name, modifiers) = split_send_payload(payload)?;
-    let key = key_str.parse().ok()?;
-    Some((key, event_name, modifiers))
+pub fn parse_send_payload<K: FromStr>(payload: &str) -> Option<(K, SendPayload<'_>)> {
+    let decoded = split_send_payload(payload)?;
+    let key = decoded.key_as()?;
+    Some((key, decoded))
 }
 
 /// R1451 §5.35 — parse a **typed two-value argument payload** —
@@ -236,10 +321,11 @@ pub fn parse_pair<A: FromStr, B: FromStr>(payload: &str, sep: char) -> Option<(A
 pub fn require_send_payload<'a>(
     action: &str,
     payload: &'a str,
-) -> Result<(&'a str, &'a str, Modifiers), InvokeError> {
+) -> Result<SendPayload<'a>, InvokeError> {
     split_send_payload(payload).ok_or_else(|| {
         InvokeError::rejected(format!(
-            "{action}: malformed send payload {payload:?} (expected \"<key>:<EventName>[:<mods>]\")"
+            "{action}: malformed send payload {payload:?} \
+             (expected \"<key>:<EventName>[:<mods>[:<buttons>]]\")"
         ))
     })
 }
@@ -259,14 +345,15 @@ pub fn require_send_payload<'a>(
 pub fn require_parsed_send_payload<'a, K: FromStr>(
     action: &str,
     payload: &'a str,
-) -> Result<(K, &'a str, Modifiers), InvokeError> {
-    let (key_str, event_name, modifiers) = require_send_payload(action, payload)?;
-    let key = key_str.parse().map_err(|_| {
+) -> Result<(K, SendPayload<'a>), InvokeError> {
+    let decoded = require_send_payload(action, payload)?;
+    let key = decoded.key_as().ok_or_else(|| {
+        let key_str = decoded.key;
         InvokeError::rejected(format!(
             "{action}: send key {key_str:?} is not a valid target for this surface"
         ))
     })?;
-    Ok((key, event_name, modifiers))
+    Ok((key, decoded))
 }
 
 /// R1564 §5.15 — [`parse_pair`] as a refusal that states why, for the `invoke`
@@ -828,12 +915,34 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        GridSendKey, GridTag, compose_send_payload, parse_pair, parse_send_payload, prefixed_index,
-        send_activation_index, send_activation_key, split_send_payload, split_subindex,
+        GridSendKey, GridTag, SendPayload, compose_send_payload, parse_pair, parse_send_payload,
+        prefixed_index, send_activation_index, send_activation_key, split_send_payload,
+        split_subindex,
     };
-    use crate::input::Modifiers;
+    use crate::input::{Modifiers, PointerButton, PointerButtons};
 
     const NONE: Modifiers = Modifiers::empty();
+    const SHIFT: Modifiers = Modifiers {
+        shift: true,
+        ctrl: false,
+        alt: false,
+        meta: false,
+    };
+    const SHIFT_CTRL: Modifiers = Modifiers {
+        shift: true,
+        ctrl: true,
+        alt: false,
+        meta: false,
+    };
+    /// No button held — named `UP` so an assertion reads as the state it is
+    /// (`PointerButtons::empty()` spelled out at 40 call sites would bury the
+    /// axis that varies).
+    const UP: PointerButtons = PointerButtons::empty();
+    const LEFT: PointerButtons = PointerButtons::empty().with(PointerButton::Left);
+    const MIDDLE: PointerButtons = PointerButtons::empty().with(PointerButton::Middle);
+    const LEFT_RIGHT: PointerButtons = PointerButtons::empty()
+        .with(PointerButton::Left)
+        .with(PointerButton::Right);
 
     #[test]
     fn parse_pair_reads_each_half_at_its_own_type() {
@@ -1066,72 +1175,171 @@ mod tests {
         assert_eq!(split_subindex("a#b#c"), ("a", Some("b#c")));
     }
 
+    /// The decoded shape every test below asserts against — spelled once so a
+    /// new context axis adds a field here rather than a tuple element at each
+    /// call.
+    fn decoded<'a>(
+        key: &'a str,
+        event: &'a str,
+        modifiers: Modifiers,
+        buttons: PointerButtons,
+    ) -> SendPayload<'a> {
+        SendPayload {
+            key,
+            event,
+            modifiers,
+            buttons,
+        }
+    }
+
     #[test]
     fn r659_parse_u64_pointer_down_happy_path() {
-        let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("42:PointerDown");
-        assert_eq!(parsed, Some((42_u64, "PointerDown", NONE)));
+        let parsed: Option<(u64, SendPayload<'_>)> = parse_send_payload("42:PointerDown");
+        assert_eq!(
+            parsed,
+            Some((42_u64, decoded("42", "PointerDown", NONE, UP)))
+        );
     }
 
     #[test]
     fn r659_parse_usize_arbitrary_event_name() {
-        let parsed: Option<(usize, &str, Modifiers)> = parse_send_payload("0:PointerEnter");
-        assert_eq!(parsed, Some((0_usize, "PointerEnter", NONE)));
+        let parsed: Option<(usize, SendPayload<'_>)> = parse_send_payload("0:PointerEnter");
+        assert_eq!(
+            parsed,
+            Some((0_usize, decoded("0", "PointerEnter", NONE, UP)))
+        );
     }
 
     #[test]
     fn r659_missing_colon_separator_returns_none() {
-        let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("noseparator");
-        assert_eq!(parsed, None);
+        let parsed: Option<(u64, SendPayload<'_>)> = parse_send_payload("noseparator");
+        assert!(parsed.is_none());
     }
 
     #[test]
     fn r659_empty_event_name_returns_none() {
-        let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("7:");
-        assert_eq!(parsed, None);
+        let parsed: Option<(u64, SendPayload<'_>)> = parse_send_payload("7:");
+        assert!(parsed.is_none());
     }
 
     #[test]
     fn r659_non_parseable_key_returns_none() {
-        let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("xx:PointerDown");
-        assert_eq!(parsed, None);
+        let parsed: Option<(u64, SendPayload<'_>)> = parse_send_payload("xx:PointerDown");
+        assert!(parsed.is_none());
     }
 
     #[test]
     fn r781_third_segment_is_the_modifier_token() {
         // R781 retires the pre-R781 "internal colon kept in the event
         // suffix" behaviour: the third `:` segment is the modifier token
-        // (event names are colon-free). `sc` → shift+ctrl.
-        let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("3:PointerUp:sc");
+        // (event names are colon-free). `sc` -> shift+ctrl.
+        let parsed: Option<(u64, SendPayload<'_>)> = parse_send_payload("3:PointerUp:sc");
         assert_eq!(
             parsed,
-            Some((
-                3_u64,
-                "PointerUp",
-                Modifiers {
-                    shift: true,
-                    ctrl: true,
-                    alt: false,
-                    meta: false
-                }
-            )),
+            Some((3_u64, decoded("3", "PointerUp", SHIFT_CTRL, UP))),
         );
         // The raw splitter agrees (the SSOT both paths decode through).
         assert_eq!(
             split_send_payload("4_2:PointerUp:s"),
-            Some((
-                "4_2",
-                "PointerUp",
-                Modifiers {
-                    shift: true,
-                    ctrl: false,
-                    alt: false,
-                    meta: false
-                }
-            )),
+            Some(decoded("4_2", "PointerUp", SHIFT, UP)),
         );
         // An unparseable modifier token rejects the whole payload.
-        let bad: Option<(u64, &str, Modifiers)> = parse_send_payload("3:PointerUp:Move");
-        assert_eq!(bad, None, "non-scam modifier token is malformed");
+        let bad: Option<(u64, SendPayload<'_>)> = parse_send_payload("3:PointerUp:Move");
+        assert!(bad.is_none(), "non-scam modifier token is malformed");
+    }
+
+    /// R1619 — the **fourth** segment is the held-button set, and the two
+    /// context axes are independent: a button-only state spells the modifier
+    /// segment empty rather than moving the buttons up a slot, so no state has
+    /// two spellings and no decoder has to guess which axis a lone token means.
+    #[test]
+    fn r1619_fourth_segment_is_the_held_button_set() {
+        // Buttons with no modifiers — the drag-select case.
+        assert_eq!(
+            split_send_payload("3:PointerEnter::l"),
+            Some(decoded("3", "PointerEnter", NONE, LEFT)),
+        );
+        // Both axes at once, and the set is order-insensitive on decode.
+        assert_eq!(
+            split_send_payload("3:PointerEnter:sc:lr"),
+            Some(decoded("3", "PointerEnter", SHIFT_CTRL, LEFT_RIGHT)),
+        );
+        assert_eq!(
+            split_send_payload("3:PointerEnter::rl"),
+            Some(decoded("3", "PointerEnter", NONE, LEFT_RIGHT)),
+        );
+        // A `scam` letter in the button slot is malformed, not a silent drop —
+        // the two vocabularies are disjoint and the decoder enforces it.
+        assert!(split_send_payload("3:PointerEnter::s").is_none());
+        assert!(split_send_payload("3:PointerEnter:l:").is_none());
+        // A fifth segment is not swallowed by the fourth: `splitn(4)` puts the
+        // remainder in the button slot, where it fails the `lmr` vocabulary.
+        assert!(split_send_payload("3:PointerEnter::l:x").is_none());
+        // The bare (background) target reaches the button axis too.
+        assert_eq!(
+            split_send_payload(":PointerEnter::m"),
+            Some(decoded("", "PointerEnter", NONE, MIDDLE)),
+        );
+    }
+
+    /// R1619 — **every** state round-trips through compose -> split, including
+    /// the ones whose encoding elides a segment. This is the property the two
+    /// halves exist to keep: an encoder that dropped a held-button set, or a
+    /// decoder that read the button token as modifiers, breaks exactly here.
+    #[test]
+    fn r1619_compose_and_split_are_inverses_over_the_whole_context_grid() {
+        let keys = [Some("4"), Some("4_2"), None];
+        let mods = [NONE, SHIFT, SHIFT_CTRL];
+        let buttons = [UP, LEFT, MIDDLE, LEFT_RIGHT];
+        for key in keys {
+            for m in mods {
+                for b in buttons {
+                    let wire = compose_send_payload(key, "PointerEnter", m, b);
+                    let want_key = key.unwrap_or("");
+                    match split_send_payload(&wire) {
+                        Some(got) => assert_eq!(
+                            got,
+                            decoded(want_key, "PointerEnter", m, b),
+                            "round-trip {wire:?}"
+                        ),
+                        // The one non-splitting form is the colon-free bare
+                        // event, which is only legal when there is no context
+                        // at all (the "None = bare event" decode contract).
+                        None => assert!(
+                            key.is_none() && m.is_empty() && b.is_empty(),
+                            "{wire:?} lost context"
+                        ),
+                    }
+                }
+            }
+        }
+        // Pin the exact spellings the grid asserts round-trip, so a change to
+        // the encoding is a deliberate single-site edit rather than a
+        // self-consistent drift both halves agree on.
+        assert_eq!(
+            compose_send_payload(Some("4"), "PointerEnter", NONE, LEFT),
+            "4:PointerEnter::l"
+        );
+        assert_eq!(
+            compose_send_payload(Some("4"), "PointerEnter", SHIFT, LEFT),
+            "4:PointerEnter:s:l"
+        );
+        assert_eq!(
+            compose_send_payload(Some("4"), "PointerEnter", SHIFT, UP),
+            "4:PointerEnter:s"
+        );
+        assert_eq!(
+            compose_send_payload(Some("4"), "PointerEnter", NONE, UP),
+            "4:PointerEnter"
+        );
+        assert_eq!(
+            compose_send_payload(None, "PointerEnter", NONE, LEFT),
+            ":PointerEnter::l"
+        );
+        assert_eq!(
+            compose_send_payload(None, "PointerEnter", NONE, UP),
+            "PointerEnter"
+        );
     }
 
     #[test]
@@ -1147,29 +1355,31 @@ mod tests {
             meta: false,
         };
         assert_eq!(
-            compose_send_payload(Some("4"), "PointerUp", ctrl),
+            compose_send_payload(Some("4"), "PointerUp", ctrl, UP),
             "4:PointerUp:c"
         );
         assert_eq!(
             split_send_payload("4:PointerUp:c"),
-            Some(("4", "PointerUp", ctrl)),
+            Some(decoded("4", "PointerUp", ctrl, UP)),
         );
         assert_eq!(
-            compose_send_payload(Some("4"), "PointerUp", NONE),
+            compose_send_payload(Some("4"), "PointerUp", NONE, UP),
             "4:PointerUp"
         );
         assert_eq!(
-            compose_send_payload(None, "PointerUp", ctrl),
+            compose_send_payload(None, "PointerUp", ctrl, UP),
             ":PointerUp:c"
         );
         assert_eq!(
             split_send_payload(":PointerUp:c"),
-            Some(("", "PointerUp", ctrl))
+            Some(decoded("", "PointerUp", ctrl, UP))
         );
-        assert_eq!(compose_send_payload(None, "PointerUp", NONE), "PointerUp");
         assert_eq!(
-            split_send_payload("PointerUp"),
-            None,
+            compose_send_payload(None, "PointerUp", NONE, UP),
+            "PointerUp"
+        );
+        assert!(
+            split_send_payload("PointerUp").is_none(),
             "bare = no-split contract"
         );
     }
@@ -1182,7 +1392,7 @@ mod tests {
         // no special-casing in the splitter.
         assert_eq!(
             split_send_payload(":PointerUp:c"),
-            Some((
+            Some(decoded(
                 "",
                 "PointerUp",
                 Modifiers {
@@ -1190,12 +1400,13 @@ mod tests {
                     ctrl: true,
                     alt: false,
                     meta: false
-                }
+                },
+                UP
             )),
         );
         // A modifier-free bare event stays the colon-free back-compat wire:
         // no `:` at all, so the splitter answers `None` (= bare event).
-        assert_eq!(split_send_payload("PointerUp"), None);
+        assert!(split_send_payload("PointerUp").is_none());
     }
 
     #[test]
@@ -1203,10 +1414,13 @@ mod tests {
         // `0` parses to all numeric `K`; the helper does not treat it
         // as a sentinel. Filter mode discriminant 0 (Active) and id 0
         // both land here legitimately.
-        let parsed: Option<(usize, &str, Modifiers)> = parse_send_payload("0:PointerDown");
-        assert_eq!(parsed, Some((0_usize, "PointerDown", NONE)));
-        let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("0:PointerDown");
-        assert_eq!(parsed, Some((0_u64, "PointerDown", NONE)));
+        let parsed: Option<(usize, SendPayload<'_>)> = parse_send_payload("0:PointerDown");
+        assert_eq!(
+            parsed,
+            Some((0_usize, decoded("0", "PointerDown", NONE, UP)))
+        );
+        let parsed: Option<(u64, SendPayload<'_>)> = parse_send_payload("0:PointerDown");
+        assert_eq!(parsed, Some((0_u64, decoded("0", "PointerDown", NONE, UP))));
     }
 
     #[test]
@@ -1214,8 +1428,8 @@ mod tests {
         // FromStr::<u64> rejects `-1`, so the helper surfaces `None`
         // without panic — defensive against a stale composite tag
         // from an older protocol revision.
-        let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("-1:PointerDown");
-        assert_eq!(parsed, None);
+        let parsed: Option<(u64, SendPayload<'_>)> = parse_send_payload("-1:PointerDown");
+        assert!(parsed.is_none());
     }
 
     #[test]

@@ -488,11 +488,17 @@ impl SceneScaleExternal {
         Ok(())
     }
 
-    /// The R51.42 composite-pointer arc: `"<region>:<EventName>"`.
+    /// The R51.42 composite-pointer arc: `"<region>:<EventName>[:<mods>[:<buttons>]]"`.
+    ///
+    /// R1619 — decoded through the grammar SSOT. The hand-rolled
+    /// `split_once(':')` this replaces read `"grow:PointerUp:s"` as the event
+    /// name `"PointerUp:s"`, so a Shift-click on any region was already
+    /// silently inert before the held-button segment existed.
     fn handle_send(&mut self, payload: &str) {
-        let Some((region, event)) = payload.split_once(':') else {
+        let Some(sent) = pinion_core::composite_tag::split_send_payload(payload) else {
             return;
         };
+        let (region, event) = (sent.key, sent.event);
         if event != "PointerUp" {
             return;
         }

@@ -487,19 +487,69 @@ pub struct InputRouter {
     /// `HashMap` (R1423 pressure + R1429 tilt were the first two consumers; R1430
     /// lifts the storage + forward + target-resolution the copies shared).
     axes: HashMap<PointerId, PointerAxisValues>,
+    /// R1619 §5.35 §5.41 — the SET of pointer buttons currently held, per
+    /// pointer: the W3C `PointerEvent.buttons` state — the same fact the
+    /// toolkit hangs off its single-point event base — and the one every drag
+    /// gesture is built on.
+    ///
+    /// Written **only** by [`InputRouter::note_button_edge`], which every
+    /// button-edge entry point calls before it dispatches — so the send wire's
+    /// stamp is the state *after* the transition (a press includes its button,
+    /// a release excludes it), the DOM / toolkit convention [`RawPointerButton`]
+    /// already followed. The write is idempotent (a bit assignment, not a
+    /// count), which is what lets the left channel note itself, the pan channel
+    /// note the same edge, and the shell's one button seam note all three
+    /// buttons, without a census of which of those overlap on any given path.
+    ///
+    /// Absent → [`PointerButtons::empty`]: a pointer that has never reported an
+    /// edge holds nothing. Cleared wholesale on window blur
+    /// ([`InputRouter::clear_held_buttons`]) for the [`HeldKeys`] reason — a
+    /// release that raced the focus loss never arrives, and a stranded press
+    /// would make every later hover read as a drag.
+    ///
+    /// R1619 folded the pre-existing per-grab copy into this map: `RawGrab`
+    /// used to keep its own set, seeded EMPTY at the grab's first press, so a
+    /// raw sink grabbed while another button was already down was told that
+    /// button was up. One home, one answer.
+    ///
+    /// [`HeldKeys`]: pinion_core::input::HeldKeys
+    held_buttons: HashMap<PointerId, PointerButtons>,
+    /// R1619 §5.35 §5.41 — the keyboard modifiers held right now, stamped onto
+    /// every dispatched pointer event.
+    ///
+    /// Written **only** by [`InputRouter::set_held_modifiers`], from the same
+    /// out-of-band absolute-state funnel the shell already fed
+    /// (`ModifiersChanged` natively, `scene/modifiers` over RPC) — one writer,
+    /// so the press's answer and the release's cannot come from two caches.
+    ///
+    /// Before R1619 only the RELEASE carried modifiers
+    /// ([`pointer_up_with_modifiers`](InputRouter::pointer_up_with_modifiers),
+    /// which still takes its own parameter and is unaffected): the press went
+    /// through the zero-modifier path, so a `Ctrl`-press was
+    /// **indistinguishable from a plain one** on the wire. That was invisible
+    /// while every chord-aware widget acted on the release edge, and became
+    /// load-bearing the moment a gesture began at the press — a drag sweep is a
+    /// function of the chord held when the finger went down, and there was no
+    /// way to read it. `RawPointerButton` had already fixed this on its own
+    /// channel (R1416 carries modifiers on both edges); this is the same fix
+    /// for the wire every other widget listens on.
+    held_modifiers: Modifiers,
 }
 
 /// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
-/// grabbed tag plus the SET of buttons currently held on it (the toolkit `buttons()`
-/// state, tracked here so it doubles as the grab's lifetime). The grab lives
-/// from the first button press (the set goes empty → non-empty) until the last
-/// release (the set empties again), so a multi-button chord (press left, press
-/// right, release left, release right) keeps the grab through the whole span —
-/// the toolkit implicit-grab discipline (grab holds until every button is up).
+/// grabbed tag. The grab lives from the first button press until the last
+/// release, so a multi-button chord (press left, press right, release left,
+/// release right) keeps the grab through the whole span — the toolkit
+/// implicit-grab discipline (grab holds until every button is up).
+///
+/// R1619 — the held SET that decides that lifetime moved to
+/// [`InputRouter::held_buttons`], because it was never a property of the grab:
+/// it is a property of the pointer, and keeping a second copy here meant the
+/// grab's answer and the pointer's answer could differ (they did — the grab's
+/// set was seeded empty at its first press, ignoring anything already down).
 #[derive(Debug)]
 struct RawGrab {
     tag: String,
-    buttons: PointerButtons,
 }
 
 /// R1549 §5.35 §5.38 — everything one in-flight press knows about itself:
@@ -641,6 +691,19 @@ enum PanButton {
     Left,
     /// The middle (W3C auxiliary) button — the chord-free R881 pan.
     Middle,
+}
+
+impl PanButton {
+    /// R1619 §5.35 — the physical button this pan channel is riding. The pan
+    /// vocabulary is a *routing* choice (which channel owns the press); the
+    /// held set is a *physical* fact, so the two are related by this one
+    /// projection rather than by a parallel set of `note` calls.
+    const fn physical(self) -> PointerButton {
+        match self {
+            PanButton::Left => PointerButton::Left,
+            PanButton::Middle => PointerButton::Middle,
+        }
+    }
 }
 
 /// R881 §5.35 §5.49 — one held pan-channel press. `pan` is `None`
@@ -801,6 +864,70 @@ impl InputRouter {
     #[must_use]
     pub fn hover_target(&self, id: PointerId) -> Option<&str> {
         self.hover_targets.get(&id).map(String::as_str)
+    }
+
+    /// R1619 §5.35 §5.41 — record one pointer-button **edge** into `id`'s held
+    /// set: the single writer of the W3C `PointerEvent.buttons` state this
+    /// router stamps onto every dispatched pointer event.
+    ///
+    /// Call it **before** dispatching the edge's own event, so the stamp is the
+    /// state *after* the transition — a `PointerDown` reports its button held,
+    /// the matching `PointerUp` reports it released. That is the DOM and the
+    /// toolkit convention, and it is what makes "buttons is empty" mean the
+    /// gesture is over rather than about to be.
+    ///
+    /// **Idempotent**: it assigns a bit rather than counting, so every entry
+    /// point that represents a button edge may note its own edge without
+    /// coordinating with the others. That is deliberate — the alternative is a
+    /// census of which of `pointer_down` / `left_pan_down` / the shell's button
+    /// seam / the raw channel run on any given press, and a census like that is
+    /// exactly the thing that goes stale silently.
+    pub fn note_button_edge(&mut self, id: PointerId, button: PointerButton, edge: PointerEdge) {
+        let held = self.held_buttons.entry(id).or_default();
+        *held = match edge {
+            PointerEdge::Down => held.with(button),
+            PointerEdge::Up => held.without(button),
+        };
+    }
+
+    /// R1619 §5.35 — the set of buttons `id` currently holds, the READ peer of
+    /// [`note_button_edge`](Self::note_button_edge). A pointer that has never
+    /// reported an edge holds nothing.
+    #[must_use]
+    pub fn held_buttons(&self, id: PointerId) -> PointerButtons {
+        self.held_buttons.get(&id).copied().unwrap_or_default()
+    }
+
+    /// R1619 §5.35 §5.39 — forget every held button on every pointer: the
+    /// window-blur arm, the
+    /// [`HeldKeys::clear`](pinion_core::input::HeldKeys::clear) peer.
+    ///
+    /// A release that raced the focus loss never arrives, so the alternative to
+    /// forgetting is a permanently stranded press — and the two errors are not
+    /// symmetric. A forgotten button ends a drag early, which the user sees and
+    /// can redo; a phantom one leaves every later hover reading as a drag, with
+    /// no gesture the user can perform to clear it. R1610's rule: when the
+    /// model can go stale, make it stale in the direction that self-corrects.
+    pub fn clear_held_buttons(&mut self) {
+        self.held_buttons.clear();
+    }
+
+    /// R1619 §5.35 §5.41 — set the keyboard modifiers every dispatched pointer
+    /// event is stamped with, from the shell's out-of-band absolute-state cache
+    /// (winit `ModifiersChanged`, the `scene/modifiers` RPC).
+    ///
+    /// Absolute, not an edge: the platform reports the whole state, so this
+    /// replaces rather than merges. One writer by design — see
+    /// [`held_modifiers`](Self::held_modifiers).
+    pub fn set_held_modifiers(&mut self, modifiers: Modifiers) {
+        self.held_modifiers = modifiers;
+    }
+
+    /// R1619 §5.35 — the modifiers this router stamps, the READ peer of
+    /// [`set_held_modifiers`](Self::set_held_modifiers).
+    #[must_use]
+    pub fn held_modifiers(&self) -> Modifiers {
+        self.held_modifiers
     }
 
     /// R762 §5.36 §5.38 — last known cursor position (window-local
@@ -1198,6 +1325,11 @@ impl InputRouter {
 
     /// R881 / R882 §5.35 — the shared pan-channel press arm.
     fn pan_down(&mut self, id: PointerId, button: PanButton) {
+        // R1619 §5.35 — a pan press is a button press. Noted here rather than
+        // at the two public arms so the middle and left channels cannot answer
+        // differently, and ahead of the exclusivity guard for the same reason
+        // `pointer_down` does it: routing refusals do not un-press a button.
+        self.note_button_edge(id, button.physical(), PointerEdge::Down);
         // R881.1 §5.35 — gesture exclusivity: a pointer already owned
         // by a routed gesture (capture lock, DnD session, or a tracked
         // press) does not open a pan gesture — panning a container
@@ -1324,6 +1456,10 @@ impl InputRouter {
     /// drains the gesture's refusal counter and resolves `NoPress`
     /// too: only the press that opened the gesture may close it.
     fn pan_up(&mut self, id: PointerId, button: PanButton) -> PanRelease {
+        // R1619 — the release half, noted before every `NoPress` early return
+        // below: those mean "this channel had no gesture to close", not "the
+        // button is still down".
+        self.note_button_edge(id, button.physical(), PointerEdge::Up);
         let Some(gesture) = self.drag_pans.get_mut(&id) else {
             return PanRelease::NoPress;
         };
@@ -1458,8 +1594,15 @@ impl InputRouter {
         if self.gesture_pins_hover(id) {
             return;
         }
+        let (modifiers, buttons) = (self.held_modifiers, self.held_buttons(id));
         if let Some(tag) = self.hover_targets.remove(&id) {
-            dispatch_send(state_scene, &tag, PointerWireEvent::Leave.as_wire_name());
+            dispatch_send(
+                state_scene,
+                &tag,
+                PointerWireEvent::Leave.as_wire_name(),
+                modifiers,
+                buttons,
+            );
         }
     }
 
@@ -1501,6 +1644,12 @@ impl InputRouter {
     /// second press, unifying the native winit and RPC-injected paths
     /// at the framework tier per [[r47-class-incident-prevention]].
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
+        // R1619 §5.35 — the physical button is down whatever routing decides,
+        // so the held set is written BEFORE the exclusivity guard below can
+        // return. A gesture that swallows the press does not un-press it, and
+        // a held set that skipped those paths would report a released button
+        // to every widget the pointer later crosses.
+        self.note_button_edge(id, PointerButton::Left, PointerEdge::Down);
         // R881.1 §5.35 — gesture exclusivity: while a pan-class gesture
         // (middle drag or R882 Space-chord left drag) owns the pointer, a
         // routed press is swallowed. R882.1 widened the guard from
@@ -1524,7 +1673,13 @@ impl InputRouter {
             return;
         }
         if let Some(tag) = self.hover_targets.get(&id).cloned() {
-            dispatch_send(state_scene, &tag, PointerWireEvent::Down.as_wire_name());
+            dispatch_send(
+                state_scene,
+                &tag,
+                PointerWireEvent::Down.as_wire_name(),
+                self.held_modifiers,
+                self.held_buttons(id),
+            );
             // R876 §5.49 §5.51 — open the click-vs-drag tracker for this
             // press (origin = the press cursor). Every press over a tagged
             // target is a click *candidate*; `cursor_moved` latches it to a
@@ -1605,7 +1760,13 @@ impl InputRouter {
                 _ => false,
             };
             if is_double {
-                dispatch_send(state_scene, &tag, "DoubleClick");
+                dispatch_send(
+                    state_scene,
+                    &tag,
+                    "DoubleClick",
+                    self.held_modifiers,
+                    self.held_buttons(id),
+                );
                 // Detail=2 fired; the next press starts a fresh cycle
                 // (no rolling triple-click — pinion stops at binary
                 // single/double until a 2nd consumer surfaces).
@@ -1679,6 +1840,7 @@ impl InputRouter {
             // `target` is cloned out because the fire below needs
             // `&mut state_scene` while the record is borrowed for the
             // accumulate; the QUERY itself is a shared read.
+            let (mods, held) = (self.held_modifiers, self.held_buttons(id));
             if widget_auto_repeat(state_scene, &target).is_none() {
                 if let Some(press) = self.press_gestures.get_mut(&id) {
                     press.disarm();
@@ -1714,8 +1876,23 @@ impl InputRouter {
                 }
                 press.since_last_fire -= threshold;
                 press.fires += 1;
-                dispatch_send(state_scene, &target, PointerWireEvent::Up.as_wire_name());
-                dispatch_send(state_scene, &target, PointerWireEvent::Down.as_wire_name());
+                // R1619 — a repeat is a synthetic press cycle while the
+                // physical button is still down, so both halves carry the
+                // real held set (the finger never left the button).
+                dispatch_send(
+                    state_scene,
+                    &target,
+                    PointerWireEvent::Up.as_wire_name(),
+                    mods,
+                    held,
+                );
+                dispatch_send(
+                    state_scene,
+                    &target,
+                    PointerWireEvent::Down.as_wire_name(),
+                    mods,
+                    held,
+                );
             }
         }
         armed_any
@@ -1799,6 +1976,17 @@ impl InputRouter {
         state_scene: &mut Scene,
         modifiers: Modifiers,
     ) {
+        // R1619 §5.35 — the release edge, recorded before any guard returns
+        // (the press half's argument, mirrored). Read back immediately so
+        // every dispatch below stamps ONE set: the release's own event must
+        // report the button as no longer held.
+        self.note_button_edge(id, PointerButton::Left, PointerEdge::Up);
+        let buttons = self.held_buttons(id);
+        // R1619 — this arm's explicit `modifiers` parameter predates the
+        // router's cache and carries the same absolute state, so it WRITES the
+        // cache rather than being read beside it: one source, or the press and
+        // the release could disagree about a chord the user never changed.
+        self.set_held_modifiers(modifiers);
         // R881.1 §5.35 — gesture exclusivity, the release half: the
         // matching `pointer_down` was swallowed while a pan-class
         // gesture (middle drag or R882 Space-chord left drag) owned
@@ -1914,11 +2102,12 @@ impl InputRouter {
             // press-to-drag determination (`track_press_drag`), shared with the double-click
             // detector.
             if !became_drag {
-                dispatch_send_mods(
+                dispatch_send(
                     state_scene,
                     &session.source_tag,
                     PointerWireEvent::Up.as_wire_name(),
                     modifiers,
+                    buttons,
                 );
             }
             self.refresh_hover(id, state_scene);
@@ -1931,18 +2120,25 @@ impl InputRouter {
             } else {
                 PointerWireEvent::Up
             };
-            dispatch_send_mods(state_scene, &cap_tag, event.as_wire_name(), modifiers);
+            dispatch_send(
+                state_scene,
+                &cap_tag,
+                event.as_wire_name(),
+                modifiers,
+                buttons,
+            );
             self.captured_targets.remove(&id);
             self.refresh_hover(id, state_scene);
         } else if let Some(tag) = self.hover_targets.get(&id).cloned() {
             // Free (no-capture) release: the cursor is over the target
             // (a mid-press stray already drove the SCXML out of Pressed
             // via `cursor_moved`'s `PointerLeave`).
-            dispatch_send_mods(
+            dispatch_send(
                 state_scene,
                 &tag,
                 PointerWireEvent::Up.as_wire_name(),
                 modifiers,
+                buttons,
             );
         }
     }
@@ -2013,17 +2209,18 @@ impl InputRouter {
         // resolves to no raw sink cannot poison the next real press's
         // double-click window.
         let (click_count, pending_mark) = self.raw_click_for(id, button, edge);
-        // The held-button SET after this edge (the toolkit `buttons()` semantics: a
-        // press adds, a release removes) — the grab holds the running set, so
-        // it is computed relative to whatever was held before.
-        let apply = |held: PointerButtons| match edge {
-            PointerEdge::Down => held.with(button),
-            PointerEdge::Up => held.without(button),
-        };
+        // R1619 — the held-button SET after this edge is now the router's own
+        // per-pointer state, noted once here (the toolkit `buttons()`
+        // semantics: a press adds, a release removes). Pre-R1619 this arm
+        // applied the edge to a copy kept on the grab, seeded EMPTY at the
+        // grab's first press — so a raw sink grabbed while another button was
+        // already down was told that button was up, and the router's answer
+        // and the grab's answer could differ. One writer, one answer.
+        self.note_button_edge(id, button, edge);
+        let buttons = self.held_buttons(id);
         // An active grab pins the target regardless of the cursor location.
         if let Some(grab) = self.raw_grabs.get(&id) {
             let tag = grab.tag.clone();
-            let buttons = apply(grab.buttons);
             let event = RawPointerButton {
                 button,
                 edge,
@@ -2037,9 +2234,6 @@ impl InputRouter {
                     // Last button lifted — release the grab and re-settle hover.
                     self.raw_grabs.remove(&id);
                     self.refresh_hover(id, state_scene);
-                } else if let Some(grab) = self.raw_grabs.get_mut(&id) {
-                    // Still held — carry the updated set forward.
-                    grab.buttons = buttons;
                 }
                 return true;
             }
@@ -2049,8 +2243,9 @@ impl InputRouter {
             self.raw_grabs.remove(&id);
         }
         // No grab: resolve the target the same way hover / capture does. The
-        // held set starts empty (nothing was tracked), so a fresh press reports
-        // just its button and a lone release reports the empty set.
+        // held set is the pointer's, so a press over a fresh sink reports
+        // everything the pointer holds — including a button pressed before the
+        // sink was reached, which the pre-R1619 per-grab set could not see.
         let Some(target) = self
             .captured_targets
             .get(&id)
@@ -2059,7 +2254,6 @@ impl InputRouter {
         else {
             return false;
         };
-        let buttons = apply(PointerButtons::empty());
         let event = RawPointerButton {
             button,
             edge,
@@ -2075,13 +2269,7 @@ impl InputRouter {
         // held set); a lone release (no matching press held) delivers without
         // opening one.
         if edge == PointerEdge::Down {
-            self.raw_grabs.insert(
-                id,
-                RawGrab {
-                    tag: target,
-                    buttons,
-                },
-            );
+            self.raw_grabs.insert(id, RawGrab { tag: target });
         }
         true
     }
@@ -2576,8 +2764,18 @@ impl InputRouter {
             .cloned()
             .or_else(|| self.captured_targets.get(&id).cloned());
         if let Some(tag) = target {
-            dispatch_send(state_scene, &tag, PointerWireEvent::Cancel.as_wire_name());
+            // R1619 — the cancel still reports what was held when the gesture
+            // was revoked; the set is cleared immediately after, because a
+            // cancelled gesture's release is exactly the one that never comes.
+            dispatch_send(
+                state_scene,
+                &tag,
+                PointerWireEvent::Cancel.as_wire_name(),
+                self.held_modifiers,
+                self.held_buttons(id),
+            );
         }
+        self.held_buttons.remove(&id);
         // R937.1 §5.51 — a cancelled gesture revokes an in-flight drag this
         // pointer started: remove the session (so the next `cursor_moved` can
         // never route to a dead `update_drag` — `cursor_moved` checks
@@ -3097,7 +3295,7 @@ impl InputRouter {
     fn refresh_hover(&mut self, id: PointerId, state_scene: &mut Scene) {
         let now = match (self.cursors.get(&id), &self.last_paint_scene) {
             // R1497 — the hover target is the deepest node that can RECEIVE the
-            // event, so `pointer_down` cannot arm a tag `dispatch_send_mods` will
+            // event, so `pointer_down` cannot arm a tag `dispatch_send` will
             // then drop, and `hover_wants_capture` is read off the widget that
             // owns the region rather than off decoration painted over it.
             (Some(&(x, y)), Some(scene)) => resolve_pointer_tag(scene, x, y),
@@ -3107,6 +3305,9 @@ impl InputRouter {
         if prev == now {
             return;
         }
+        // R1619 — read once: the crossing's leave and enter report the SAME
+        // context, because a crossing is neither a button edge nor a key edge.
+        let (modifiers, buttons) = (self.held_modifiers, self.held_buttons(id));
         if let Some(prev_tag) = prev {
             self.hover_targets.remove(&id);
             self.hover_wants_capture.remove(&id);
@@ -3115,6 +3316,8 @@ impl InputRouter {
                 state_scene,
                 &prev_tag,
                 PointerWireEvent::Leave.as_wire_name(),
+                modifiers,
+                buttons,
             );
         }
         if let Some(target) = now {
@@ -3124,7 +3327,13 @@ impl InputRouter {
             // R1405 — cache the hover-move opt-in once, on the Enter.
             self.hover_wants_move
                 .insert(id, widget_wants_hover_move(state_scene, &target));
-            dispatch_send(state_scene, &target, PointerWireEvent::Enter.as_wire_name());
+            dispatch_send(
+                state_scene,
+                &target,
+                PointerWireEvent::Enter.as_wire_name(),
+                modifiers,
+                buttons,
+            );
         }
     }
 }
@@ -3142,7 +3351,7 @@ impl InputRouter {
 ///
 /// A tagged decorative child — a header section's own label, an icon inside a
 /// row — must not become the pointer target: `pointer_down` would dispatch to
-/// it, [`dispatch_send_mods`] would find no `External` for its primary half, and
+/// it, [`dispatch_send`] would find no `External` for its primary half, and
 /// the event would be **dropped silently**. Measured on `hello-column-reorder`
 /// (R1497): `scene/click` on `colhdr#3` / `colhdr#4` was lost 100% of the time
 /// while `#0` / `#1` / `#2` worked, and the discriminator was exactly whether the
@@ -3293,10 +3502,6 @@ fn source_accepts_outer_dock(
 /// payload is rewritten to the `"<idx>:<EventName>"` format
 /// (`"2:PointerEnter"`) that composite widgets like `RadioGroup`
 /// parse in their own `invoke("send", ...)` handler.
-fn dispatch_send(state_scene: &mut Scene, target_tag: &str, event_name: &str) {
-    dispatch_send_mods(state_scene, target_tag, event_name, Modifiers::empty());
-}
-
 /// R781 §5.35 §5.41 — [`dispatch_send`] carrying the held keyboard
 /// `modifiers`. On a composite target (`'#'` sub-index present) and a
 /// non-empty modifier state, the wire payload gains a third segment
@@ -3314,28 +3519,36 @@ fn dispatch_send(state_scene: &mut Scene, target_tag: &str, event_name: &str) {
 /// empty-key three-segment wire `":<EventName>:<token>"` — the same
 /// `split_send_payload` grammar, `""` as the key. Every non-opted target
 /// keeps the exact bare event name, held modifiers or not.
-fn dispatch_send_mods(
+fn dispatch_send(
     state_scene: &mut Scene,
     target_tag: &str,
     event_name: &str,
     modifiers: Modifiers,
+    buttons: PointerButtons,
 ) {
     let (primary, sub_index) = split_subindex(target_tag);
     let Some(external) = state_scene.find_external_with_tag_mut(primary) else {
         return;
     };
     // The bare wire doubles as the SCXML event name, so it only carries the
-    // token under the target's opt-in; composite consumers all decode via
+    // context under the target's opt-in; composite consumers all decode via
     // the `split_send_payload` SSOT, so they take it unconditionally.
-    let wire_mods = if sub_index.is_some() || external.handle.wants_bare_send_modifiers() {
-        modifiers
-    } else {
-        Modifiers::empty()
-    };
+    //
+    // R1619 — the held-button axis rides the SAME gate as the modifier axis,
+    // and deliberately so: the gate exists because a bare payload doubles as
+    // an SCXML event name, which any extra segment breaks. That is a property
+    // of the payload's shape, not of which context axis filled it, so a second
+    // opt-in would be a second answer to one question.
+    let (wire_mods, wire_buttons) =
+        if sub_index.is_some() || external.handle.wants_bare_send_modifiers() {
+            (modifiers, buttons)
+        } else {
+            (Modifiers::empty(), PointerButtons::empty())
+        };
     let Some(intro) = external.handle.introspect_mut() else {
         return;
     };
-    let payload = compose_send_payload(sub_index, event_name, wire_mods);
+    let payload = compose_send_payload(sub_index, event_name, wire_mods, wire_buttons);
     let _ = intro.invoke("send", IntrospectValue::Text(payload));
 }
 
@@ -5019,6 +5232,245 @@ mod tests {
         assert_eq!(router.hover_target(PointerId::MOUSE), None);
     }
 
+    /// R1619 §5.35 — a paint scene of two composite sections of one
+    /// `External`, the shape a header band / list body has: `sel#0` on the
+    /// left half, `sel#1` on the right. Crossing from one to the other is the
+    /// drag-select gesture's inner step.
+    fn paint_with_two_sections() -> Scene {
+        let section = |tag: &'static str, x: u32| {
+            let mut node = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag(tag)
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut node {
+                c.rect = Rect::new(x, 0, 100, 40);
+            }
+            node
+        };
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![section("sel#0", 0), section("sel#1", 100)])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 200, 40);
+        }
+        root
+    }
+
+    /// R1619 §5.35 §5.41 — **the pointer wire says which buttons are held.**
+    ///
+    /// The W3C `PointerEvent.buttons` axis (the toolkit's single-point event
+    /// base carries the same set): a `PointerEnter` delivered while the primary button is *held* is a
+    /// different fact from one delivered with nothing held — it is the inner
+    /// step of every drag-select (a header band's `sectionEntered`, a list's
+    /// range drag, a marquee outside a node canvas). Before this round the two
+    /// were **byte-identical on the wire**, so no consumer could tell them
+    /// apart and every drag-select was blocked at the substrate.
+    ///
+    /// Driven twice over the same geometry, changing only whether a press
+    /// happened first — the negative control is the round's own claim, since a
+    /// stamp that appears unconditionally would prove nothing.
+    #[test]
+    fn r1619_enter_says_which_buttons_are_held() {
+        fn cross_sections(press_first: bool) -> Vec<String> {
+            let (capture, captures) = CaptureExternal::new();
+            let mut state = Scene::External(ExternalNode::new(Box::new(capture)).with_tag("sel"));
+            let mut router = InputRouter::new();
+            router.update_paint_scene(paint_with_two_sections(), &mut state);
+            router.cursor_moved(PointerId::MOUSE, 50.0, 20.0, &mut state); // over sel#0
+            if press_first {
+                router.pointer_down(PointerId::MOUSE, &mut state);
+            }
+            router.cursor_moved(PointerId::MOUSE, 150.0, 20.0, &mut state); // over sel#1
+            read(&captures)
+        }
+
+        let dragging = cross_sections(true);
+        let hovering = cross_sections(false);
+        // Both streams end with the crossing: leave 0, enter 1.
+        assert_eq!(
+            hovering,
+            vec![
+                "0:PointerEnter".to_string(),
+                "0:PointerLeave".into(),
+                "1:PointerEnter".into()
+            ],
+            "a plain hover crossing carries no button context",
+        );
+        assert_eq!(
+            dragging,
+            vec![
+                "0:PointerEnter".to_string(),
+                "0:PointerDown::l".into(),
+                "0:PointerLeave::l".into(),
+                "1:PointerEnter::l".into(),
+            ],
+            "every event delivered while the primary button is held says so",
+        );
+    }
+
+    /// R1619 §5.35 §5.40 — the whole chain, driven through the REAL router
+    /// against the REAL selection coordinator: press a row, drag across two
+    /// more, release. Nothing here stubs the property under test — the router
+    /// stamps the held set because a press happened, and
+    /// [`VirtualSelectExternal`](pinion_core::widgets::virtual_select::VirtualSelectExternal)
+    /// sweeps because it reads that stamp off the wire.
+    ///
+    /// The unit tests on either side of this one can each pass while the two
+    /// halves disagree about the payload; this is the one that cannot.
+    #[test]
+    fn r1619_a_drag_across_rows_selects_the_range_end_to_end() {
+        use pinion_core::external::IntrospectValue;
+        use pinion_core::widgets::virtual_select::VirtualSelectExternal;
+
+        // `"selection"` answers the selection as JSON **runs** (`[[lo, hi]]`)
+        // — the wire an RPC
+        // client reads, so this asserts against the published form rather than
+        // a Rust-only accessor. Compared as its serialized text because
+        // `pinion-runtime` does not depend on `serde_json` and should not
+        // start to for a test.
+        fn rows(state: &Scene) -> String {
+            let Scene::External(node) = state else {
+                panic!("external root")
+            };
+            match node
+                .handle
+                .introspect()
+                .expect("introspect")
+                .query("selection")
+            {
+                Some(IntrospectValue::Json(list)) => list.to_string(),
+                other => panic!("selection query answered {other:?}"),
+            }
+        }
+        // Four stacked rows `sel#0..#3`, 40px each, over one coordinator.
+        let paint = {
+            let row = |i: u32| {
+                let mut node = Scene::Container(
+                    ContainerNode::new(vec![])
+                        .with_tag(format!("sel#{i}"))
+                        .with_style(BoxStyle::filled(Color::default())),
+                );
+                if let Scene::Container(c) = &mut node {
+                    c.rect = Rect::new(0, i * 40, 200, 40);
+                }
+                node
+            };
+            let mut root = Scene::Container(
+                ContainerNode::new((0..4).map(row).collect())
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut root {
+                c.rect = Rect::new(0, 0, 200, 160);
+            }
+            root
+        };
+        let mut state = Scene::External(
+            ExternalNode::new(Box::new(VirtualSelectExternal::new_multi(4))).with_tag("sel"),
+        );
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint, &mut state);
+
+        // Press row 0, drag through 1 into 2, release over 2.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(rows(&state), "[]", "the press alone selects nothing");
+        assert!(
+            router
+                .held_buttons(PointerId::MOUSE)
+                .contains(pinion_core::PointerButton::Left),
+            "the router knows the primary button is down",
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        assert_eq!(rows(&state), "[[0,1]]", "crossing into row 1 sweeps");
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        assert_eq!(rows(&state), "[[0,2]]");
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(rows(&state), "[[0,2]]", "the release keeps the range");
+        assert!(
+            router.held_buttons(PointerId::MOUSE).is_empty(),
+            "and the release empties the held set",
+        );
+
+        // NEGATIVE CONTROL — the identical cursor path with no press selects
+        // nothing. Without it this test would pass against a router that
+        // stamped every event unconditionally.
+        let mut state = Scene::External(
+            ExternalNode::new(Box::new(VirtualSelectExternal::new_multi(4))).with_tag("sel"),
+        );
+        router.refresh_hover_for_all_active_pointers(&mut state);
+        for y in [20.0, 60.0, 100.0] {
+            router.cursor_moved(PointerId::MOUSE, 100.0, y, &mut state);
+        }
+        assert_eq!(rows(&state), "[]", "hovering is not dragging");
+    }
+
+    /// R1619 §5.35 §5.39 — the held set is forgotten on blur, and a
+    /// [`PointerCancel`](pinion_core::input::PointerWireEvent::Cancel) clears
+    /// it too. Both are the same rule: the release that would have cleared it
+    /// is one this router will never see, and a stranded press is worse than a
+    /// forgotten one.
+    #[test]
+    fn r1619_a_revoked_or_blurred_gesture_forgets_its_buttons() {
+        let mut router = InputRouter::new();
+        let (mut state, _captures) = state_with_button();
+        router.update_paint_scene(
+            paint_with_button(200, 200, Rect::new(80, 80, 40, 40)),
+            &mut state,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert!(!router.held_buttons(PointerId::MOUSE).is_empty());
+        router.pointer_cancel(PointerId::MOUSE, &mut state);
+        assert!(
+            router.held_buttons(PointerId::MOUSE).is_empty(),
+            "a revoked gesture holds nothing",
+        );
+        // The blur arm, on a fresh press.
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert!(!router.held_buttons(PointerId::MOUSE).is_empty());
+        router.clear_held_buttons();
+        assert!(router.held_buttons(PointerId::MOUSE).is_empty());
+    }
+
+    /// R1619 §5.35 — every button edge the router can be told about moves the
+    /// held set, and the note is idempotent so the seams that overlap on a real
+    /// press cannot double-count. The census this replaces would have been a
+    /// list of which entry points to check; the property is stated instead.
+    #[test]
+    fn r1619_every_button_edge_moves_the_held_set_idempotently() {
+        use pinion_core::{PointerButton, PointerEdge};
+        let mut router = InputRouter::new();
+        let mut state = Scene::Container(ContainerNode::new(vec![]));
+        // The three buttons are independent bits.
+        for button in [
+            PointerButton::Left,
+            PointerButton::Middle,
+            PointerButton::Right,
+        ] {
+            router.note_button_edge(PointerId::MOUSE, button, PointerEdge::Down);
+            assert!(router.held_buttons(PointerId::MOUSE).contains(button));
+        }
+        assert_eq!(
+            router.held_buttons(PointerId::MOUSE).as_wire_token(),
+            "lmr",
+            "a three-button chord is a set, not a last-writer",
+        );
+        // Idempotent: repeating an edge is not a second press.
+        router.note_button_edge(PointerId::MOUSE, PointerButton::Left, PointerEdge::Down);
+        router.middle_down(PointerId::MOUSE);
+        assert_eq!(router.held_buttons(PointerId::MOUSE).as_wire_token(), "lmr");
+        // The router's own left channel notes its own edges, so a driver that
+        // never touches `note_button_edge` still gets a correct set.
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(router.held_buttons(PointerId::MOUSE).as_wire_token(), "mr");
+        router.middle_up(PointerId::MOUSE);
+        assert_eq!(router.held_buttons(PointerId::MOUSE).as_wire_token(), "r");
+        // Per-pointer: a second pointer's set is its own.
+        assert!(router.held_buttons(PointerId::touch(7)).is_empty());
+    }
+
     #[test]
     fn r1196_cursor_hint_resolves_the_hinted_node_under_the_pointer() {
         use pinion_core::scene::{BoxNode, ContainerNode, Rect};
@@ -5831,7 +6283,10 @@ mod tests {
             read(&events),
             vec![
                 "PointerEnter".to_string(),
-                "PointerDown".into(),
+                // R1619 — the held-button axis rides the SAME bare-target
+                // opt-in as the modifier axis, so an opted-in target sees the
+                // press's button on the empty-key wire.
+                ":PointerDown::l".into(),
                 ":PointerUp:c".into()
             ],
         );
@@ -6828,7 +7283,7 @@ mod tests {
             read(&captures),
             vec![
                 "2:PointerEnter".to_string(),
-                "2:PointerDown".into(),
+                "2:PointerDown::l".into(),
                 "2:PointerUp".into(),
             ],
         );
@@ -6836,6 +7291,68 @@ mod tests {
         // hover map so subsequent leave-on-stray still routes to
         // the right sub-region.
         assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_group#2"));
+    }
+
+    /// R1619 §5.35 §5.41 — the **press** carries the chord it was made with.
+    ///
+    /// R781 put modifiers on the release only, and that held up for 838 rounds
+    /// because every chord-aware widget acted on the activation edge. It stops
+    /// holding the moment a gesture *begins* at the press: a drag sweep is a
+    /// function of the chord held when the finger went down, and there was no
+    /// way to read it.
+    ///
+    /// This test exists because a counterfactual found nothing catching it —
+    /// the round's own demo did, over the real wire, but a demo is not the gate
+    /// a round is judged by (the R1618 lesson, recurring).
+    #[test]
+    fn r1619_the_press_carries_the_chord_it_was_made_with() {
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_primary_external("main_group");
+        let paint = paint_with_subindex_tag(200, 200, Rect::new(80, 80, 40, 40), "main_group", "2");
+        router.update_paint_scene(paint, &mut state);
+        let ctrl = Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        // The chord is absolute state, set out of band exactly as the platform
+        // reports it (winit `ModifiersChanged` / the `scene/modifiers` RPC) —
+        // never inferred from a key event this router did not see.
+        router.set_held_modifiers(ctrl);
+        assert_eq!(router.held_modifiers(), ctrl);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, ctrl);
+        assert_eq!(
+            read(&captures),
+            vec![
+                // Every arm of the cycle, not only the release: a hover that
+                // arrives mid-chord is as much a fact as a click.
+                "2:PointerEnter:c".to_string(),
+                "2:PointerDown:c:l".into(),
+                "2:PointerUp:c".into(),
+            ],
+        );
+        // NEGATIVE CONTROL — with no chord held the wire is the bare form, so
+        // the stamp above is the modifier state and not an unconditional token.
+        let (mut state, captures) = state_with_primary_external("main_group");
+        let mut plain = InputRouter::new();
+        plain.update_paint_scene(
+            paint_with_subindex_tag(200, 200, Rect::new(80, 80, 40, 40), "main_group", "2"),
+            &mut state,
+        );
+        plain.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        plain.pointer_down(PointerId::MOUSE, &mut state);
+        plain.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            read(&captures),
+            vec![
+                "2:PointerEnter".to_string(),
+                "2:PointerDown::l".into(),
+                "2:PointerUp".into(),
+            ],
+        );
     }
 
     #[test]
@@ -6862,7 +7379,9 @@ mod tests {
             read(&captures),
             vec![
                 "2:PointerEnter".to_string(),
-                "2:PointerDown".into(),
+                // R1619 — the press says the primary button is down; the
+                // release says it is not, and carries the modifier token.
+                "2:PointerDown::l".into(),
                 "2:PointerUp:sc".into(),
             ],
             "the activate edge carries the modifier token, hover/press do not",
@@ -10015,12 +10534,19 @@ mod tests {
         ) -> Result<IntrospectValue, InvokeError> {
             if method == "send" {
                 if let IntrospectValue::Text(name) = args {
-                    // Composite "{idx}:{Event}" wire form (R51.42).
-                    if let Some((idx, event)) = name.split_once(':') {
-                        if event == "PointerDown" {
-                            if let Ok(i) = idx.parse::<usize>() {
-                                self.pressed.set(Some(i));
-                            }
+                    // Composite "{idx}:{Event}[:<mods>[:<buttons>]]" wire form
+                    // (R51.42 / R781 / R1619), decoded through the grammar SSOT.
+                    // R1619 — this fixture used to `split_once(':')` and compare
+                    // the remainder to `"PointerDown"`, which stopped matching
+                    // the moment the wire grew its fourth segment. A fixture
+                    // that re-derives the grammar is exactly what
+                    // `split_send_payload` exists to prevent, and it is not
+                    // exempt from that argument for being a fixture.
+                    if let Some(sent) = pinion_core::composite_tag::split_send_payload(&name) {
+                        if sent.event == PointerWireEvent::Down.as_wire_name()
+                            && let Ok(i) = sent.key.parse::<usize>()
+                        {
+                            self.pressed.set(Some(i));
                         }
                         self.log.lock().expect("poisoned").push(name.clone());
                     }
@@ -10075,7 +10601,7 @@ mod tests {
         // PointerDown reached row 0, the drag armed, drag_to saw the
         // absolute cursor resolve to row 1, the drop committed on row 1,
         // and the trailing PointerUp still reached the statechart.
-        assert!(log.contains(&"0:PointerDown".to_string()), "{log:?}");
+        assert!(log.contains(&"0:PointerDown::l".to_string()), "{log:?}");
         assert!(log.contains(&"begin:0".to_string()), "{log:?}");
         assert!(
             log.iter().any(|s| s == "to:0:dnd#1"),
@@ -10191,7 +10717,7 @@ mod tests {
     ///
     /// Pre-R1497 `resolve_hover_tag` answered the deepest TAG, so hover settled
     /// on `main_btn_label#0`; `pointer_down` dispatched there,
-    /// `dispatch_send_mods` split off the primary `main_btn_label`, found no
+    /// `dispatch_send` split off the primary `main_btn_label`, found no
     /// `External`, and returned — dropping the press with no diagnostic. On
     /// `hello-column-reorder` that made `scene/click` on two of five header
     /// sections a silent no-op, and the discriminator was exactly whether the
@@ -10207,7 +10733,8 @@ mod tests {
         router.pointer_up(PointerId::MOUSE, &mut state);
         let log = read(&captures);
         assert!(
-            log.contains(&"0:PointerDown".to_string()),
+            // R1619 — the press carries the button it was made with.
+            log.contains(&"0:PointerDown::l".to_string()),
             "the press reaches the widget that owns the region: {log:?}"
         );
         assert!(
@@ -10332,7 +10859,8 @@ mod tests {
         router.pointer_up(PointerId::MOUSE, &mut state);
         let log = read(&captures);
         assert!(
-            log.contains(&"0:PointerDown".to_string()) && log.contains(&"0:PointerUp".to_string()),
+            log.contains(&"0:PointerDown::l".to_string())
+                && log.contains(&"0:PointerUp".to_string()),
             "and the press reaches it: {log:?}",
         );
     }

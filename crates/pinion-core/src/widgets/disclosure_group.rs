@@ -411,11 +411,15 @@ impl ExternalIntrospect for DisclosureGroupExternal {
             "send" => match args {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
-                    let (idx, event_name, _): (usize, &str, _) =
-                        crate::composite_tag::require_parsed_send_payload(
-                            "disclosure_group.send",
-                            s,
-                        )?;
+                    let (
+                        idx,
+                        crate::composite_tag::SendPayload {
+                            event: event_name, ..
+                        },
+                    ): (usize, _) = crate::composite_tag::require_parsed_send_payload(
+                        "disclosure_group.send",
+                        s,
+                    )?;
                     if idx >= self.count() {
                         return Err(InvokeError::rejected(format!(
                             "disclosure_group.send: no section {idx} in this group (it has {})",

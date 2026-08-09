@@ -739,7 +739,11 @@ impl GridSortExternal {
         // modifier-held header release ("h1:PointerUp:s") still cycles the
         // sort (the hand-rolled split_once read "PointerUp:s" as the event
         // name and the activation test silently failed).
-        let Some((key, event_name, _mods)) = crate::composite_tag::split_send_payload(payload)
+        let Some(crate::composite_tag::SendPayload {
+            key,
+            event: event_name,
+            ..
+        }) = crate::composite_tag::split_send_payload(payload)
         else {
             return;
         };

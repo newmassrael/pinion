@@ -469,11 +469,15 @@ impl ExternalIntrospect for SelRowExternal {
             // Pointer: "<id>:<Event>" — a row release toggles its membership.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name, _): (u64, &str, _) =
-                        pinion_core::composite_tag::require_parsed_send_payload(
-                            "selection_toolbar.send",
-                            payload,
-                        )?;
+                    let (
+                        id,
+                        pinion_core::composite_tag::SendPayload {
+                            event: event_name, ..
+                        },
+                    ): (u64, _) = pinion_core::composite_tag::require_parsed_send_payload(
+                        "selection_toolbar.send",
+                        payload,
+                    )?;
                     if event_name == "PointerUp" {
                         Ok(IntrospectValue::Bool(self.toggle_by_id(id)))
                     } else {

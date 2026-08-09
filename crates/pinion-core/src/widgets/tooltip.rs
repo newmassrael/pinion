@@ -163,8 +163,7 @@ impl TooltipExternal {
         // hand-rolled split_once would have read "PointerUp:c" as the
         // event name (inert here since only Enter/Leave act, but every
         // send decoder shares one grammar).
-        let name = crate::composite_tag::split_send_payload(name)
-            .map_or(name, |(_sub, event, _mods)| event);
+        let name = crate::composite_tag::split_send_payload(name).map_or(name, |sent| sent.event);
         match PointerWireEvent::from_wire_name(name) {
             Some(PointerWireEvent::Enter) => self.pointer_enter(),
             Some(PointerWireEvent::Leave) => self.pointer_leave(),

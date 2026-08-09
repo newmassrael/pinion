@@ -524,11 +524,15 @@ impl ExternalIntrospect for ChipDeleteExternal {
             // this event removed a chip.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name, _): (u64, &str, _) =
-                        pinion_core::composite_tag::require_parsed_send_payload(
-                            "input_chip.send",
-                            payload,
-                        )?;
+                    let (
+                        id,
+                        pinion_core::composite_tag::SendPayload {
+                            event: event_name, ..
+                        },
+                    ): (u64, _) = pinion_core::composite_tag::require_parsed_send_payload(
+                        "input_chip.send",
+                        payload,
+                    )?;
                     let committed = self.drive(id, event_name);
                     if committed && self.is_present(id) {
                         self.delete_by_id(id);

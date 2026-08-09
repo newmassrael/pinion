@@ -4701,7 +4701,7 @@ impl ExternalIntrospect for TabWellExternal {
         // Split `"sub_index:Event[:mods]"` via the `:` grammar SSOT (a
         // held-modifier click still carries the trailing token).
         let (sub_index, event_name) = match pinion_core::composite_tag::split_send_payload(raw) {
-            Some((sub, ev, _mods)) => (Some(sub), ev),
+            Some(sent) => (Some(sent.key), sent.event),
             None => (None, raw),
         };
         let parsed_index = sub_index.and_then(|s| s.parse::<usize>().ok());
@@ -7937,7 +7937,7 @@ impl ExternalIntrospect for DockPanelExternal {
         // split_once read "PointerUp:c" as the event name and returned
         // UnknownPath, skipping the Up arm).
         let (sub_index, event_name) = match pinion_core::composite_tag::split_send_payload(raw) {
-            Some((sub, ev, _mods)) => (Some(sub), ev),
+            Some(sent) => (Some(sent.key), sent.event),
             None => (None, raw),
         };
         match PointerWireEvent::from_wire_name(event_name) {

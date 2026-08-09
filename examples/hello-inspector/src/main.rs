@@ -961,7 +961,13 @@ impl InspectorExternal {
     /// 3rd bare-model embedder makes the mutate tail uniform (R922.1 carry; the
     /// keyboard `apply_key` is the peer fork of `nav_select_key`).
     fn handle_send(&self, payload: &str) {
-        let Some((key, event_name, modifiers)) = split_send_payload(payload) else {
+        let Some(pinion_core::composite_tag::SendPayload {
+            key,
+            event: event_name,
+            modifiers,
+            ..
+        }) = split_send_payload(payload)
+        else {
             return;
         };
         // R1249 — a DOUBLE-click on an Int/Float value cell (`inspector#typein<i>`)

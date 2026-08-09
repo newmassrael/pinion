@@ -914,7 +914,7 @@ impl ExternalIntrospect for ColumnResizeExternal {
         // Composite payload: "<sub>:<Event>[:<mods>]" — decoded through the
         // R880.1 `:` grammar SSOT; `None` covers the bare "<Event>" wire
         // (the documented non-composite decode contract of the splitter).
-        let event = split_send_payload(raw).map_or(raw, |(_, event, _)| event);
+        let event = split_send_payload(raw).map_or(raw, |sent| sent.event);
         match PointerWireEvent::from_wire_name(event) {
             // R1347 §5.20 — the release pair diverges only in the commit
             // channel: `Up` settles the gesture and emits `"width_committed"`,

@@ -5440,8 +5440,8 @@ impl NodeGraphExternal {
         // `wants_bare_send_modifiers`, so a `Ctrl`/`Shift` marquee release
         // carries its token).
         let (sub, event, mods) = match split_send_payload(payload) {
-            Some(("", event, mods)) => (None, event, mods),
-            Some((key, event, mods)) => (Some(key), event, mods),
+            Some(sent) if sent.key.is_empty() => (None, sent.event, sent.modifiers),
+            Some(sent) => (Some(sent.key), sent.event, sent.modifiers),
             None => (None, payload, Modifiers::empty()),
         };
         match (sub, event) {

@@ -60,8 +60,8 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
 };
-use pinion_core::input::Modifiers;
 use pinion_core::input::PointerWireEvent;
+use pinion_core::input::{Modifiers, PointerButtons};
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
@@ -1081,6 +1081,7 @@ impl TreeRowClickExternal {
                 Some(&id),
                 TREE_ROW_CLICK_EVENT,
                 modifiers,
+                PointerButtons::empty(),
             ))
         } else {
             IntrospectValue::Text(id)
@@ -1185,11 +1186,17 @@ impl ExternalIntrospect for TreeRowClickExternal {
                     // R902.1 — the held modifiers (3rd segment) ride the click
                     // intent when `with_click_modifiers` is on (else discarded,
                     // the pre-R902.1 "press has no modifier axis" behaviour).
-                    let (id, event_name, modifiers): (String, &str, Modifiers) =
-                        pinion_core::composite_tag::require_parsed_send_payload(
-                            "tree_row.send",
-                            payload,
-                        )?;
+                    let (
+                        id,
+                        pinion_core::composite_tag::SendPayload {
+                            event: event_name,
+                            modifiers,
+                            ..
+                        },
+                    ): (String, _) = pinion_core::composite_tag::require_parsed_send_payload(
+                        "tree_row.send",
+                        payload,
+                    )?;
                     match PointerWireEvent::from_wire_name(event_name) {
                         Some(PointerWireEvent::Down) => {
                             self.pressed_id = Some(id);

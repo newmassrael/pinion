@@ -2,7 +2,7 @@
 """Tests for `tools/counterfactual.py` (R1600.1).
 
 The driver exists because R1599 wrote two defects into an uncommitted copy of it
-and both reported success while being wrong. Each of the five properties the
+and both reported success while being wrong. Each of the six properties the
 debt note demanded has an assertion here, and `pre-push` runs this file — so the
 thing that verifies every round is itself verified.
 
@@ -171,6 +171,58 @@ def test_the_file_is_restored_and_the_hash_says_so() -> None:
         )
 
 
+def test_a_red_baseline_is_refused() -> None:
+    """Property 6 (R1619): a gate that is already failing must stop the run.
+
+    This is the failure mode that reads as success — every case reports CAUGHT
+    because the gate was red before anything was broken, and the summary says
+    `N/N caught`. Measured for real: a killed run left a file mutated and the
+    next run's eight CAUGHT verdicts were all void.
+    """
+    print("a red baseline is refused")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "guard.txt").write_text("WRONG\n")
+        plan = {
+            # Red from the start: the invariant the gate reads is not there.
+            "gate": ["bash", "-c", "grep -q THE-INVARIANT guard.txt"],
+            "cases": [
+                {
+                    "name": "CF-1 anything at all",
+                    "file": "guard.txt",
+                    "find": "WRONG",
+                    "replace": "ALSO-WRONG",
+                    "why": "the verdict would be CAUGHT for the wrong reason",
+                }
+            ],
+        }
+        (root / "plan.json").write_text(json.dumps(plan))
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parent / "counterfactual.py"),
+                str(root / "plan.json"),
+                "--root",
+                str(root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        blob = completed.stdout + completed.stderr
+        check("ALREADY RED" in blob, "the run refuses and says why")
+        # No per-case verdict line and no tally — the refusal's own prose
+        # mentions the word CAUGHT, so the check is on the driver's output
+        # SHAPE rather than on a substring the message happens to contain.
+        check("[cf] ok " not in blob, "and reports no verdict at all")
+        check("caught" not in blob.replace("CAUGHT", ""), "nor a tally")
+        check(completed.returncode != 0, "with a non-zero exit")
+        check(
+            (root / "guard.txt").read_text() == "WRONG\n",
+            "and nothing was mutated",
+        )
+
+
 def test_the_driver_runs_end_to_end() -> None:
     """The whole thing, over a real plan file and a real (trivial) gate."""
     print("end to end")
@@ -226,6 +278,7 @@ def test_the_driver_runs_end_to_end() -> None:
 def main() -> int:
     for test in (
         test_compile_error_is_not_a_catch,
+        test_a_red_baseline_is_refused,
         test_a_scoped_gate_is_refused,
         test_an_anchor_that_does_not_match_is_reported,
         test_the_file_is_restored_and_the_hash_says_so,

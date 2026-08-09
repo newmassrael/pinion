@@ -772,7 +772,12 @@ impl ExternalIntrospect for ListBoxExternal {
             "send" => match args {
                 IntrospectValue::Text(ref s) => {
                     // R781 — modifiers ignored (no modifier-aware activation).
-                    let (idx, event_name, _): (usize, &str, _) =
+                    let (
+                        idx,
+                        crate::composite_tag::SendPayload {
+                            event: event_name, ..
+                        },
+                    ): (usize, _) =
                         crate::composite_tag::require_parsed_send_payload("listbox.send", s)?;
                     if idx >= self.count() {
                         return Err(InvokeError::rejected(format!(

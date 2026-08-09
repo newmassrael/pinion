@@ -10,7 +10,7 @@ nine rounds running.
 Every round runs them. Until now nothing ran them *the same way twice*: the
 driver was rewritten in a scratchpad each round, and R1599 built two defects
 into one, both of which reported success while being wrong. This is that driver,
-committed, with the five properties those defects cost stated as assertions in
+committed, with the six properties those defects cost stated as assertions in
 `tools/test_counterfactual.py`.
 
     python3 tools/counterfactual.py plan.json
@@ -33,7 +33,7 @@ committed, with the five properties those defects cost stated as assertions in
 Exit code is 0 only when every case was CAUGHT. `PASSED` and `BROKEN` are both
 failures of the *round*, for opposite reasons, and both are reported by name.
 
-## The five properties, and what each one cost
+## The six properties, and what each one cost
 
 1. **The edit must actually apply.** R1594 lost a whole counterfactual to
    `cargo fmt` having re-indented the target after the anchor was written: zero
@@ -52,6 +52,12 @@ failures of the *round*, for opposite reasons, and both are reported by name.
    tree mutated (R1557, R1578). Every file is hashed before and after.
 5. **The driver has its own tests**, in the same place `tools/test_rpc_verify.py`
    sits, and `pre-push` runs them.
+6. **The baseline must be green.** R1619 killed a run mid-case, which left one
+   file mutated (the R1617 lesson, hit again); the next run started from a red
+   tree, and every case reported CAUGHT because the gate was already failing.
+   The summary read `8/12 caught` and all eight were void. This is the only
+   failure mode here that looks like success, so the gate is now run once
+   **unmutated** first and a red baseline is refused.
 """
 
 from __future__ import annotations
@@ -146,6 +152,38 @@ def check_gate(gate: list[str]) -> None:
             )
 
 
+def check_baseline(root: Path, gate: list[str]) -> None:
+    """Property 6 (R1619): the gate must be GREEN before anything is broken.
+
+    A red baseline makes every case report CAUGHT — the gate was already
+    failing, so it fails again with the mechanism broken, and the driver cannot
+    tell the two apart. Measured R1619: a killed run left one file mutated (the
+    R1617 lesson, hit again), the next run started from a red tree, and **all
+    eight CAUGHT verdicts were void** while the summary said `8/12 caught`.
+
+    That is the worst failure mode this driver has, because it reads as
+    success. The other four verdicts announce themselves; this one does not.
+    """
+    completed = subprocess.run(
+        gate, cwd=root, capture_output=True, text=True, check=False
+    )
+    if completed.returncode != 0:
+        blob = (completed.stdout or "") + (completed.stderr or "")
+        failing = [
+            row.strip()
+            for row in blob.splitlines()
+            if row.strip().startswith("---- ") or " FAILED" in row
+        ]
+        raise SystemExit(
+            "counterfactual: the gate is ALREADY RED before any case ran, so "
+            "every case would report CAUGHT for the wrong reason. Fix the "
+            "baseline first (a killed earlier run may have left the tree "
+            "mutated — check `git diff`).\n  "
+            + ("\n  ".join(failing[:5]) or f"exit {completed.returncode}")
+        )
+    print("[cf] baseline green")
+
+
 def run_case(root: Path, gate: list[str], case: Case) -> Outcome:
     target = root / case.file
     if not target.is_file():
@@ -202,6 +240,7 @@ def main(argv: list[str]) -> int:
     cases = [Case(**one) for one in plan["cases"]]
 
     print(f"[cf] gate: {' '.join(gate)}")
+    check_baseline(args.root.resolve(), gate)
     outcomes: list[Outcome] = []
     for case in cases:
         outcome = run_case(args.root.resolve(), gate, case)

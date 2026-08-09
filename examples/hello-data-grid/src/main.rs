@@ -2484,8 +2484,11 @@ impl DataGridExternal {
     fn dispatch_send(&mut self, s: &str) -> Result<IntrospectValue, InvokeError> {
         // R880.1 — the `split_send_payload` `:` grammar SSOT strips a held-modifier
         // third segment (a hand-rolled split read "PointerUp:c" as the event name).
-        let (key, event_name, _mods) =
-            pinion_core::composite_tag::require_send_payload("data_grid.send", s)?;
+        let pinion_core::composite_tag::SendPayload {
+            key,
+            event: event_name,
+            ..
+        } = pinion_core::composite_tag::require_send_payload("data_grid.send", s)?;
         // R940 — the choice dropdown's light-dismiss barrier + option targets,
         // routed back through this one `send` funnel (the property-grid popup
         // shape): `dismiss` closes the popup, `opt<i>` commits / hovers option i.

@@ -2029,6 +2029,17 @@ impl<V: WidgetCore> CoreShell<V> {
         Some(pinion_core::InputStateSnapshot {
             modifiers,
             held_keys: self.held_keys.held_names(),
+            // R1619 §5.35 §5.16 — the pointer-button half of the held state,
+            // read out of the same router the cursor comes from. The READ is
+            // the inverse of the button-edge WRITES by construction (one
+            // enumeration, `PointerButtons::held_names`), the `held_keys`
+            // discipline applied to the button axis.
+            held_pointer_buttons: self
+                .routers
+                .get(window_id)
+                .map(|r| r.held_buttons(PointerId::MOUSE))
+                .unwrap_or_default()
+                .held_names(),
             cursor: self
                 .routers
                 .get(window_id)
@@ -2878,6 +2889,80 @@ impl<V: WidgetCore> CoreShell<V> {
     /// cache is RPC-owned (§2 #6 carry).
     pub fn clear_held_keys(&mut self) {
         self.held_keys.clear();
+    }
+
+    /// R1619 §5.35 §5.39 — forget every held pointer button on every window:
+    /// the pointer peer of [`Self::clear_held_keys`], called from the same
+    /// blur arm and for the same reason. A mouse-up delivered to whichever
+    /// window took focus never reaches the one that saw the press, so a
+    /// stranded button would make every later hover in the blurred window read
+    /// as a drag.
+    ///
+    /// Every window's router is cleared, not just the blurred one: the held
+    /// set is a property of the physical pointer, and the pointer does not
+    /// have one press per window.
+    pub fn clear_held_pointer_buttons(&mut self) {
+        for router in self.routers.values_mut() {
+            router.clear_held_buttons();
+        }
+    }
+
+    /// R1619 §5.35 §5.41 — publish the shell's absolute modifier state to every
+    /// window's router, so a pointer event dispatched from ANY of them is
+    /// stamped with the chord that was actually held.
+    ///
+    /// Every window, not the focused one: modifiers are a property of the
+    /// keyboard, and a press in a floating panel is made with the same fingers
+    /// as one in the main window.
+    ///
+    /// Before R1619 only the release edge carried modifiers (the shell passed
+    /// them per-call to `pointer_up_with_modifiers`), so a `Ctrl`-press was
+    /// indistinguishable from a plain one — invisible while every chord-aware
+    /// widget acted on release, and load-bearing the moment a gesture began at
+    /// the press.
+    pub fn set_pointer_modifiers(&mut self, modifiers: pinion_core::Modifiers) {
+        for router in self.routers.values_mut() {
+            router.set_held_modifiers(modifiers);
+        }
+    }
+
+    /// R1619 §5.35 §5.15 §2 #2 — record one pointer-button EDGE against
+    /// `window_id`'s router: the substrate funnel the GUI shell's single
+    /// `MouseInput` seam and its RPC peer both reach, so the native and the
+    /// AI-driven press write the same state
+    /// ([[r47-class-incident-prevention]]).
+    ///
+    /// This exists because the *routing* arms are per-button and asymmetric —
+    /// left runs the press/capture/DnD arc, middle runs the pan channel, right
+    /// opens a context menu and its release has no arm at all — while the held
+    /// SET is one fact about one pointer. Routing that never reaches the router
+    /// (a right press, consumed chrome, a raw sink) must still move the set,
+    /// and the note is idempotent, so this call sits *ahead* of the routing
+    /// switch and the per-arm notes stay correct where routing does arrive.
+    pub fn note_pointer_button_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        button: pinion_core::PointerButton,
+        edge: pinion_core::PointerEdge,
+    ) {
+        let Self { routers, .. } = self;
+        router_for(routers, window_id).note_button_edge(pid, button, edge);
+    }
+
+    /// R1619 §5.35 — the buttons `pid` currently holds in `window_id`, the READ
+    /// peer of [`Self::note_pointer_button_for_window`]. Empty when the window
+    /// has no router entry (never painted) or the pointer has reported no edge.
+    #[must_use]
+    pub fn held_pointer_buttons_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> pinion_core::PointerButtons {
+        self.routers
+            .get(window_id)
+            .map(|r| r.held_buttons(pid))
+            .unwrap_or_default()
     }
 
     /// R882.1 §5.35 §5.39 — the LEFT-button **press front door**: one
@@ -5386,6 +5471,64 @@ mod tests {
         assert!(
             core.input_state_snapshot("no-such-window", None, None)
                 .is_none()
+        );
+    }
+
+    /// R1619 §5.35 §5.16 — the held-pointer-button leg of the snapshot is the
+    /// **inverse of the button-edge writes**, not a constant.
+    ///
+    /// This test exists because a counterfactual found nothing catching it: the
+    /// `pinion-rpc` handler test asserts the serialization, and the router test
+    /// asserts the state, and between them sat the producer that joins the two
+    /// — reachable by both suites and covered by neither.
+    #[test]
+    fn r1619_input_state_snapshot_reports_the_held_pointer_buttons() {
+        use pinion_core::{PointerButton, PointerEdge};
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let snap = core
+            .input_state_snapshot(crate::DEFAULT_WINDOW, None, None)
+            .expect("default window router is seeded at construction");
+        assert!(
+            snap.held_pointer_buttons.is_empty(),
+            "nothing held before anything is pressed",
+        );
+        core.note_pointer_button_for_window(
+            crate::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            PointerButton::Left,
+            PointerEdge::Down,
+        );
+        core.note_pointer_button_for_window(
+            crate::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            PointerButton::Right,
+            PointerEdge::Down,
+        );
+        let snap = core
+            .input_state_snapshot(crate::DEFAULT_WINDOW, None, None)
+            .expect("known window");
+        assert_eq!(
+            snap.held_pointer_buttons,
+            vec!["left", "right"],
+            "the read enumerates exactly the edges that were written",
+        );
+        assert!(
+            snap.held_keys.is_empty(),
+            "and it does not leak into the key axis — two held-state axes, two \
+             questions",
+        );
+        // The blur arm reaches every window, because the pointer has one set.
+        core.clear_held_pointer_buttons();
+        assert!(
+            core.input_state_snapshot(crate::DEFAULT_WINDOW, None, None)
+                .expect("known window")
+                .held_pointer_buttons
+                .is_empty(),
+        );
+        assert!(
+            core.held_pointer_buttons_for_window(crate::DEFAULT_WINDOW, PointerId::MOUSE)
+                .is_empty(),
+            "and the typed accessor agrees with the snapshot",
         );
     }
 
