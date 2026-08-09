@@ -145,5 +145,12 @@ syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
 
+# R1621 §5.16 — the EWMH `_NET_WORKAREA` probe behind `UsableRegion`. Already in
+# the tree transitively (winit's own X11 backend depends on it), pinned to the
+# same version so this adds a direct edge rather than a second copy. Target-
+# scoped because the module's other arms need no dependency at all.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = "0.13"
+
 [lints]
 workspace = true

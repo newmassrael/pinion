@@ -660,6 +660,9 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("logical_size", WireTy::Object, Some("LogicalSizeOutcome")),
                 WireField::new("refresh_mhz", WireTy::Integer, None).nullable(),
                 WireField::new("primary", WireTy::Boolean, None),
+                // R1621 — the usable region and its provenance travel together,
+                // which is the type's whole point.
+                WireField::new("usable", WireTy::Object, Some("UsableRegionWire")),
             ],
         },
     },
@@ -1842,6 +1845,19 @@ pub const WIRE_TYPES: &[WireType] = &[
             fields: &[
                 WireField::new("subscription", WireTy::Integer, None),
                 WireField::new("delivered_count", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "UsableRegionWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("rect", WireTy::Object, Some("DisplayRectOutcome")),
+                // R1616 — a closed value set says so and says which values. The
+                // list is DERIVED from the arms (`UsableRegion::WIRE_NAMES`), so
+                // it cannot go stale against the type it describes.
+                WireField::new("provenance", WireTy::String, None)
+                    .accepting(&pinion_core::display::UsableRegion::WIRE_NAMES),
             ],
         },
     },

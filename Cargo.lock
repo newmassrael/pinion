@@ -6245,6 +6245,7 @@ dependencies = [
  "tracing-subscriber",
  "vello",
  "winit",
+ "x11rb",
 ]
 
 [[package]]

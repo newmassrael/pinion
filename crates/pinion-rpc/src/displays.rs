@@ -139,6 +139,51 @@ pub struct DisplayOutcome {
     pub refresh_mhz: Option<u32>,
     /// Is this the primary display? At most one display in a response is.
     pub primary: bool,
+    /// R1621 §5.16 — how much of this display is usable (bounds minus panels
+    /// and docks) **and how well that is known**:
+    /// `{"rect": {...}, "provenance": "reported" | "desktop_wide" |
+    /// "unpublished" | "unprobed"}`.
+    ///
+    /// The rectangle is always present, so a client placing a window can use it
+    /// without reading the provenance. The provenance is there because the
+    /// reference's own accessor cannot be trusted at face value: its X11 plugin
+    /// returns the full screen bounds for **every** display as soon as more
+    /// than one is attached, with nothing to say it did — so "all of it is
+    /// available" and "I could not tell" arrive there as the same value.
+    /// `reported` is the only arm that is a measurement.
+    pub usable: UsableRegionWire,
+}
+
+/// R1621 §5.16 — one display's usable region on the wire: the rectangle **and**
+/// the provenance, side by side.
+///
+/// A struct rather than a tagged-enum derive of
+/// [`UsableRegion`](pinion_core::display::UsableRegion), because a client
+/// placing a window wants the rectangle and should not have to match a variant
+/// to reach it — while a client deciding whether to TRUST the rectangle needs
+/// the arm. Declared here rather than in core for the reason
+/// [`DisplayHomeWire`](crate::dispatch::DisplayHomeWire) is: the census that
+/// keeps `rpc/schema` honest reads only this crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UsableRegionWire {
+    /// The rectangle to use. Always present — the display's bounds when no
+    /// work area could be attributed, which is what a caller would fall back
+    /// to anyway.
+    pub rect: DisplayRectOutcome,
+    /// Which of the four answers this is: `reported` (a measurement),
+    /// `desktop_wide` (a work area exists but cannot be attributed to this
+    /// display), `unpublished` (the platform has no work area), `unprobed`
+    /// (nobody asked). Only `reported` is a measurement.
+    pub provenance: &'static str,
+}
+
+impl From<pinion_core::display::UsableRegion> for UsableRegionWire {
+    fn from(usable: pinion_core::display::UsableRegion) -> Self {
+        Self {
+            rect: usable.rect().into(),
+            provenance: usable.as_wire_name(),
+        }
+    }
 }
 
 impl From<&Display> for DisplayOutcome {
@@ -152,6 +197,7 @@ impl From<&Display> for DisplayOutcome {
             logical_size: LogicalSizeOutcome { w: lw, h: lh },
             refresh_mhz: d.refresh_mhz(),
             primary: d.primary(),
+            usable: d.usable().into(),
         }
     }
 }
@@ -444,6 +490,66 @@ fn invalid(name: &str) -> RpcError {
 
 #[cfg(test)]
 mod tests {
+
+    /// R1621 §5.16 — the wire carries the arm the model derived, for every
+    /// arm, and the census's declared value set IS that arm set.
+    ///
+    /// Both halves exist because counterfactuals found nothing catching them:
+    /// the conversion could publish a constant, and the schema's closed value
+    /// set could be hand-written — which is the second-copy failure this
+    /// project keeps paying for. The demo could not catch either, because a
+    /// real desk produces one arm out of four.
+    #[test]
+    fn r1621_every_arm_reaches_the_wire_and_the_schema_declares_them_all() {
+        use crate::displays::UsableRegionWire;
+        use pinion_core::display::{DisplayRect, UsableRegion};
+        let r = DisplayRect::new(3, 5, 800, 600);
+        let cases = [
+            (UsableRegion::Reported(r), "reported"),
+            (UsableRegion::DesktopWide(r), "desktop_wide"),
+            (UsableRegion::Unpublished(r), "unpublished"),
+            (UsableRegion::Unprobed(r), "unprobed"),
+        ];
+        let mut seen = Vec::new();
+        for (region, want) in cases {
+            let wire: UsableRegionWire = region.into();
+            assert_eq!(wire.provenance, want, "{region:?} publishes its own arm");
+            assert_eq!(
+                wire.rect,
+                r.into(),
+                "and the rectangle survives every arm — a client placing a \
+                 window never has to match to reach it",
+            );
+            seen.push(wire.provenance);
+        }
+        // The four spellings are distinct, so the provenance can be read.
+        let mut sorted = seen.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 4, "four arms, four spellings: {seen:?}");
+
+        // The schema declares exactly this set, and it is DERIVED from the
+        // arms rather than retyped.
+        let declared = crate::wire_census::WIRE_TYPES
+            .iter()
+            .find(|t| t.name == "UsableRegionWire")
+            .and_then(|t| match &t.shape {
+                crate::wire_census::WireShape::Object { fields } => fields
+                    .iter()
+                    .find(|f| f.name == "provenance")
+                    .and_then(|f| f.values),
+                _ => None,
+            })
+            .expect("the census declares the closed value set");
+        let mut declared: Vec<&str> = declared.to_vec();
+        declared.sort_unstable();
+        let mut emitted = seen;
+        emitted.sort_unstable();
+        assert_eq!(
+            declared, emitted,
+            "the published set and the set the code can emit are ONE set",
+        );
+    }
     use super::{DisplayAsk, DisplayRect, DisplaysOutcome, displays};
     use pinion_core::display::{DisplayInfo, DisplayTopology};
     use serde_json::json;

@@ -72,6 +72,8 @@ pub mod typeahead;
 pub mod vello_capture;
 pub mod waiter;
 pub mod window_control;
+/// R1621 §5.16 §5.41 — the platform probe behind `UsableRegion`.
+pub mod work_area;
 
 // R51.175 §5.41 — shared Vello-side test fixture surface. Exposes a
 // minimal `VelloRenderer`-conforming `TestRenderer` plus

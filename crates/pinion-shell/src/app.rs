@@ -101,6 +101,11 @@ fn topology_from(
             })
             .collect(),
     )
+    // R1621 — the work area is a SEPARATE platform call from the monitor
+    // enumeration, so it is applied as a separate step. A topology this was
+    // not called on reports `Unprobed`, which is what a TUI or a unit-test
+    // desk honestly is.
+    .with_work_area(crate::work_area::probe_work_area())
 }
 
 /// R670.B §5.16 §5.41 — per-window state cluster.

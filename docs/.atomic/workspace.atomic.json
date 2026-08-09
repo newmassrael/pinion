@@ -32744,6 +32744,76 @@
         "region's own bounds rather than by the policy."
       ]
     },
+    "R1621": {
+      "decision_summary": "R1621 — a display says how much of it is usable, and how sure it is.\n\nThe last BUILDABLE analyzer-tool plane-C gap. A dashboard that tears a widget off into its own window could say where to put it — R1087 position, R1576 display-relative placement, R1617 `display_home` — but not where it was ALLOWED to go, so a torn-off window opens under the panel.\n\nTHE REFERENCE'S OWN SOURCE IS THE FINDING, and it was read rather than assumed. Its X11 plugin carries an internal comment saying that deriving a per-monitor work area from the desktop-wide atom is unreliable, that window managers disagree about what the atom means with several monitors attached, and that the window-manager specification has no atom for the per-monitor answer at all. Its conclusion is the part that matters: its screen accessor RETURNS THE FULL BOUNDS for every display as soon as more than one is attached, unless an environment variable overrides. So on any two-monitor desk the reference answers \"all of it is available\", and the caller cannot tell that from a measurement. Two different facts arriving as one value with the difference discarded at the boundary — R1617's shape, one field over.\n\nSO THE ANSWER CARRIES ITS PROVENANCE. Four arms rather than `Option<Rect>`: `Reported` (a measurement), `DesktopWide` (a work area exists, but this desk has several displays and the clip cannot be attributed to one), `Unpublished` (the platform has none — Wayland, where the protocol does not tell a client where the shell's panels are), `Unprobed` (nobody asked). `rect()` answers on every arm, so a client placing a window never has to match; `is_measured()` is true only for the first. An `Option` would have fused \"this desk has no panels\", \"the platform cannot say\" and \"nobody looked\" into one absence, and those are three different things to a client deciding where to open something.\n\nAND THE DERIVATION RECOVERS DISPLAYS THE REFERENCE GIVES UP ON. If the desktop-wide work area takes NOTHING from a display, that display's whole bounds are usable and that is a real answer, however many displays the desk has. A dock down the left monitor therefore leaves the right monitor with a measurement, where the reference loses both. Only the displays the atom actually clips are unattributable, and they say so. A display the work area misses entirely reports its bounds rather than an empty rectangle, because \"none of this display can be used\" is the one answer that is certainly wrong.\n\nTHE PROBE IS REAL AND IT RAN. `x11rb` was already in the tree transitively through winit's own X11 backend, so the dependency is a direct edge at the same version rather than a second copy, and it is target-scoped. Measured on this desk through the wire: `usable 2494x1568+66+32, reported` — a 66-pixel left dock and a 32-pixel top bar, read off the live root window. A Wayland session is refused BEFORE connecting, because under XWayland the atom describes the X root window rather than the compositor's panels, and answering would be a confident guess about the wrong desk. Every failure inside the probe collapses to `None` deliberately: a work area is an optimisation on window placement, and a shell that refused to start because a property was missing would trade a cosmetic answer for the whole application.\n\nTHREE COUNTERFACTUALS PASSED FIRST AND ALL THREE WERE REAL. Nothing caught \"probed and told there is nothing\" collapsing into \"never probed\" — which is the distinction the type exists for. Nothing caught the wire publishing a constant provenance. And nothing caught the schema's closed value set being hand-written rather than derived from the arms, which is the second-copy failure this project keeps paying for. The demo could catch none of them, because a real desk produces one arm out of four. All three now have tests, and the schema test asserts that the DECLARED set equals the set the conversion can actually emit — the R1616 published-equals-accepted property, applied to a set this round introduced.\n\nThe wire type is declared in `pinion-rpc` rather than in core, following `DisplayHomeWire`: the census that keeps `rpc/schema` honest reads only that crate. The closed value set is R1616's `values` slot, fed from `UsableRegion::WIRE_NAMES` — a `const` computed from the arms, so it cannot go stale against the type it describes.",
+      "changes_bullets": [
+        "pinion-core display: UsableRegion (4 arms), rect(), is_measured(), WIRE_NAMES",
+        "pinion-core display: usable_regions() -- the derivation, with the clip test",
+        "DisplayTopology::with_work_area; Display::usable(); fresh topologies say Unprobed",
+        "pinion-shell work_area: the EWMH _NET_WORKAREA probe, Wayland refused up front",
+        "x11rb as a direct target-scoped dep, same version winit already pulls",
+        "pinion-rpc UsableRegionWire + scene/displays.usable + the wire census entry",
+        "the census declares the value set from UsableRegion::WIRE_NAMES, not by hand",
+        "tools/demos/r1621_a_display_says_how_sure_it_is.py (new)"
+      ],
+      "verification_bullets": [
+        "5 new tests: the clip test, single-display attribution, the three absences,",
+        "probed-vs-unprobed, and every arm reaching the wire beside the declared set",
+        "the probe has its own test, shape-only, because CI is headless and a desk is not",
+        "10 counterfactuals, 10 caught, from a verified-green baseline",
+        "3 of them PASSED first and all three were real gaps a real desk cannot expose",
+        "Demo r1621: 20 assertions, reading the vocabulary off rpc/schema before parsing",
+        "measured live on this desk: usable 2494x1568+66+32, provenance reported",
+        "5 display-family demos re-pass; fmt, clippy -D pedantic and the suites green"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "none for the buildable part. Stated limits rather than carries: Wayland has no",
+        "work area to publish and reports Unpublished by design; the Mac and Windows",
+        "native probes are the GATED half of this axis and are untouched, which is what",
+        "that axis is judged short on; and a desk whose window manager publishes a",
+        "per-desktop list has only its FIRST quadruple read, because a display model has",
+        "no concept of the WM's other virtual desktops to attribute the rest to."
+      ],
+      "publishable_decision_summary": "R1621 — a display says how much of it is usable, and how sure it is.\n\nThe last BUILDABLE analyzer-tool plane-C gap. A dashboard that tears a widget off into its own window could say where to put it — R1087 position, R1576 display-relative placement, R1617 `display_home` — but not where it was ALLOWED to go, so a torn-off window opens under the panel.\n\nTHE REFERENCE'S OWN SOURCE IS THE FINDING, and it was read rather than assumed. Its X11 plugin carries an internal comment saying that deriving a per-monitor work area from the desktop-wide atom is unreliable, that window managers disagree about what the atom means with several monitors attached, and that the window-manager specification has no atom for the per-monitor answer at all. Its conclusion is the part that matters: its screen accessor RETURNS THE FULL BOUNDS for every display as soon as more than one is attached, unless an environment variable overrides. So on any two-monitor desk the reference answers \"all of it is available\", and the caller cannot tell that from a measurement. Two different facts arriving as one value with the difference discarded at the boundary — R1617's shape, one field over.\n\nSO THE ANSWER CARRIES ITS PROVENANCE. Four arms rather than `Option<Rect>`: `Reported` (a measurement), `DesktopWide` (a work area exists, but this desk has several displays and the clip cannot be attributed to one), `Unpublished` (the platform has none — Wayland, where the protocol does not tell a client where the shell's panels are), `Unprobed` (nobody asked). `rect()` answers on every arm, so a client placing a window never has to match; `is_measured()` is true only for the first. An `Option` would have fused \"this desk has no panels\", \"the platform cannot say\" and \"nobody looked\" into one absence, and those are three different things to a client deciding where to open something.\n\nAND THE DERIVATION RECOVERS DISPLAYS THE REFERENCE GIVES UP ON. If the desktop-wide work area takes NOTHING from a display, that display's whole bounds are usable and that is a real answer, however many displays the desk has. A dock down the left monitor therefore leaves the right monitor with a measurement, where the reference loses both. Only the displays the atom actually clips are unattributable, and they say so. A display the work area misses entirely reports its bounds rather than an empty rectangle, because \"none of this display can be used\" is the one answer that is certainly wrong.\n\nTHE PROBE IS REAL AND IT RAN. `x11rb` was already in the tree transitively through winit's own X11 backend, so the dependency is a direct edge at the same version rather than a second copy, and it is target-scoped. Measured on this desk through the wire: `usable 2494x1568+66+32, reported` — a 66-pixel left dock and a 32-pixel top bar, read off the live root window. A Wayland session is refused BEFORE connecting, because under XWayland the atom describes the X root window rather than the compositor's panels, and answering would be a confident guess about the wrong desk. Every failure inside the probe collapses to `None` deliberately: a work area is an optimisation on window placement, and a shell that refused to start because a property was missing would trade a cosmetic answer for the whole application.\n\nTHREE COUNTERFACTUALS PASSED FIRST AND ALL THREE WERE REAL. Nothing caught \"probed and told there is nothing\" collapsing into \"never probed\" — which is the distinction the type exists for. Nothing caught the wire publishing a constant provenance. And nothing caught the schema's closed value set being hand-written rather than derived from the arms, which is the second-copy failure this project keeps paying for. The demo could catch none of them, because a real desk produces one arm out of four. All three now have tests, and the schema test asserts that the DECLARED set equals the set the conversion can actually emit — the R1616 published-equals-accepted property, applied to a set this round introduced.\n\nThe wire type is declared in `pinion-rpc` rather than in core, following `DisplayHomeWire`: the census that keeps `rpc/schema` honest reads only that crate. The closed value set is R1616's `values` slot, fed from `UsableRegion::WIRE_NAMES` — a `const` computed from the arms, so it cannot go stale against the type it describes.",
+      "publishable_changes_bullets": [
+        "pinion-core display: UsableRegion (4 arms), rect(), is_measured(), WIRE_NAMES",
+        "pinion-core display: usable_regions() -- the derivation, with the clip test",
+        "DisplayTopology::with_work_area; Display::usable(); fresh topologies say Unprobed",
+        "pinion-shell work_area: the EWMH _NET_WORKAREA probe, Wayland refused up front",
+        "x11rb as a direct target-scoped dep, same version winit already pulls",
+        "pinion-rpc UsableRegionWire + scene/displays.usable + the wire census entry",
+        "the census declares the value set from UsableRegion::WIRE_NAMES, not by hand",
+        "tools/demos/r1621_a_display_says_how_sure_it_is.py (new)"
+      ],
+      "publishable_verification_bullets": [
+        "5 new tests: the clip test, single-display attribution, the three absences,",
+        "probed-vs-unprobed, and every arm reaching the wire beside the declared set",
+        "the probe has its own test, shape-only, because CI is headless and a desk is not",
+        "10 counterfactuals, 10 caught, from a verified-green baseline",
+        "3 of them PASSED first and all three were real gaps a real desk cannot expose",
+        "Demo r1621: 20 assertions, reading the vocabulary off rpc/schema before parsing",
+        "measured live on this desk: usable 2494x1568+66+32, provenance reported",
+        "5 display-family demos re-pass; fmt, clippy -D pedantic and the suites green"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none for the buildable part. Stated limits rather than carries: Wayland has no",
+        "work area to publish and reports Unpublished by design; the Mac and Windows",
+        "native probes are the GATED half of this axis and are untouched, which is what",
+        "that axis is judged short on; and a desk whose window manager publishes a",
+        "per-desktop list has only its FIRST quadruple read, because a display model has",
+        "no concept of the WM's other virtual desktops to attribute the rest to."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

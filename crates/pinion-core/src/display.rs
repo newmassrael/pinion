@@ -82,18 +82,184 @@
 //!    A toolkit application can be asked about its screens from outside its
 //!    process.
 //!
-//! # What this module deliberately does not model
+//! 7. **A display says how much of it is usable, and how sure it is.** R1621 —
+//!    [`UsableRegion`], the toolkit's `availableGeometry()` peer, with the
+//!    provenance the reference discards. See below.
 //!
-//! A display's **usable region** — the toolkit's `availableGeometry()`, the bounds minus panels
-//! and docks. It is absent because nothing underneath reports it: winit's `MonitorHandle`
-//! has no work-area accessor, and EWMH's `_NET_WORKAREA` is one rectangle for the whole
-//! *desktop* rather than one per monitor (the toolkit's X11 plugin intersects
-//! it with each screen's geometry and calls the result available). Modelling a
-//! field the supply cannot fill would put a permanent `None` on every display on
-//! every platform. It is the next slice of this axis, and it is a *platform
-//! probe*, not geometry.
+//! # The usable region, and why it is four answers rather than a rectangle
+//!
+//! R1621 — a display's **usable region** is its bounds minus panels, docks and
+//! taskbars. Every toolkit exposes it as a plain rectangle, and on X11 that
+//! rectangle is a guess whose quality nobody can see.
+//!
+//! Measured in the reference's own source rather than assumed. Its X11 plugin
+//! carries a long internal comment saying that deriving a per-monitor work area
+//! from the desktop-wide `_NET_WORKAREA` is unreliable, that window managers
+//! disagree about what the atom means with several monitors attached, and that
+//! "WM specification does not have an atom for this. Thus, [the screen type] is
+//! limited by the lack of support from the underlying system." And its
+//! conclusion is
+//! the part that matters here: on a multi-head system its screen accessor
+//! **returns the full bounds**, unless an environment variable is set to
+//! override — so on any two-monitor desk the reference answers "all of it is
+//! available" and the caller cannot tell that from a real measurement.
+//!
+//! That is the R1617 shape again: two different facts arriving as one value,
+//! with the difference discarded at the boundary. So this models the answer AND
+//! its provenance:
+//!
+//! * [`UsableRegion::Reported`] — the platform published a work area and it can
+//!   be attributed to this display.
+//! * [`UsableRegion::DesktopWide`] — a work area was published, but it covers
+//!   the whole desktop and this desk has more than one display, so attributing
+//!   it would be the guess the reference makes silently. The bounds come back,
+//!   **labelled as bounds**.
+//! * [`UsableRegion::Unpublished`] — the platform has no such concept to
+//!   publish. Wayland is the honest case: the protocol does not tell a client
+//!   the work area at all.
+//! * [`UsableRegion::Unprobed`] — nobody asked. A headless or TUI backend, or a
+//!   display enumerated before the probe ran.
+//!
+//! Every arm still yields a rectangle through [`UsableRegion::rect`], so a
+//! caller that only wants somewhere to put a window gets one without matching.
+//! The arm is there for the caller that would otherwise have to guess.
 
 use std::collections::BTreeMap;
+
+/// R1621 §5.16 — how much of a display is usable, and **how well that is
+/// known**: the toolkit's `availableGeometry()` peer, plus the provenance the
+/// reference throws away at its own boundary (see the [module docs](self)).
+///
+/// Not `Option<Rect>`: `None` would fuse "this desk has no panels", "the
+/// platform cannot say", and "nobody looked" into one absence, and those are
+/// three different things to a client deciding where to put a window. It is
+/// the [`DisplayHome`] five-arm argument from R1617 applied one field over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsableRegion {
+    /// The platform published a work area attributable to this display.
+    Reported(DisplayRect),
+    /// A work area was published, but it is **one rectangle for the whole
+    /// desktop** and this desk has more than one display, so splitting it
+    /// between them would be a guess. The display's own bounds are carried,
+    /// and the caller is told they are bounds.
+    ///
+    /// This is precisely the case the reference resolves by returning the
+    /// bounds with no indication that it did.
+    DesktopWide(DisplayRect),
+    /// The platform has no work area to publish — Wayland, where the protocol
+    /// does not give a client one. The bounds are carried; the absence is a
+    /// property of the platform, not of this desk.
+    Unpublished(DisplayRect),
+    /// Nobody probed. A headless or TUI backend, or a display enumerated
+    /// before a probe ran. Distinct from [`Unpublished`](Self::Unpublished):
+    /// that one asked and was told there is nothing; this one did not ask.
+    Unprobed(DisplayRect),
+}
+
+impl UsableRegion {
+    /// The rectangle to actually use — the reported work area when there is
+    /// one, else the display's bounds.
+    ///
+    /// Every arm answers, so a caller that just needs somewhere to put a window
+    /// never has to match. Falling back to the full bounds rather than to
+    /// nothing is the same choice the reference makes, and the right one: a
+    /// window placed under a panel is visible and movable, where a window
+    /// placed nowhere is not a window.
+    #[must_use]
+    pub const fn rect(self) -> DisplayRect {
+        match self {
+            Self::Reported(r) | Self::DesktopWide(r) | Self::Unpublished(r) | Self::Unprobed(r) => {
+                r
+            }
+        }
+    }
+
+    /// Whether this rectangle is a **measurement** rather than a fallback.
+    /// `true` only for [`Reported`](Self::Reported).
+    #[must_use]
+    pub const fn is_measured(self) -> bool {
+        matches!(self, Self::Reported(_))
+    }
+
+    /// The canonical wire spelling of the arm — the provenance an agent reads
+    /// beside the rectangle.
+    #[must_use]
+    pub const fn as_wire_name(self) -> &'static str {
+        match self {
+            Self::Reported(_) => "reported",
+            Self::DesktopWide(_) => "desktop_wide",
+            Self::Unpublished(_) => "unpublished",
+            Self::Unprobed(_) => "unprobed",
+        }
+    }
+
+    /// Every spelling [`as_wire_name`](Self::as_wire_name) can emit, for the
+    /// schema's closed-value-set declaration (R1616). Derived from the arms by
+    /// construction — a hand-written list here would be the second copy this
+    /// project keeps paying for.
+    pub const WIRE_NAMES: [&'static str; 4] = {
+        const Z: DisplayRect = DisplayRect::new(0, 0, 0, 0);
+        [
+            Self::Reported(Z).as_wire_name(),
+            Self::DesktopWide(Z).as_wire_name(),
+            Self::Unpublished(Z).as_wire_name(),
+            Self::Unprobed(Z).as_wire_name(),
+        ]
+    };
+}
+
+/// R1621 §5.16 — derive each display's [`UsableRegion`] from the platform's
+/// **desktop-wide** work area, or from its absence.
+///
+/// This is the whole platform-independent half of the axis, and it is where
+/// this framework's rule differs from the reference's:
+///
+/// * No work area at all (`None`) — every display answers with `absent(bounds)`,
+///   which the caller picks as [`Unpublished`](UsableRegion::Unpublished) (the
+///   platform has no such concept) or [`Unprobed`](UsableRegion::Unprobed)
+///   (nobody asked). Only the caller knows which.
+/// * A work area that **does not clip** this display — nothing is taken from
+///   it, so its whole bounds ARE usable and that is a measurement:
+///   [`Reported`](UsableRegion::Reported).
+/// * A work area that **clips** this display, on a desk with only one — the
+///   clip is attributable, so the intersection is the answer.
+/// * A work area that clips this display on a **multi-display** desk — the
+///   atom is one rectangle for the whole desktop, so a panel on a neighbour's
+///   edge clips this one too and the clip cannot be attributed.
+///   [`DesktopWide`](UsableRegion::DesktopWide): the bounds, labelled.
+///
+/// The reference gives up one step earlier — its accessor returns the full
+/// bounds for **every** display as soon as there is more than one, so a desk
+/// where only the left monitor has a panel loses the right monitor's answer
+/// too, and loses it silently. The clip test recovers those displays, and the
+/// ones it cannot recover say so.
+#[must_use]
+pub fn usable_regions(bounds: &[DisplayRect], work_area: Option<DisplayRect>) -> Vec<UsableRegion> {
+    let Some(work_area) = work_area else {
+        return bounds.iter().map(|&b| UsableRegion::Unprobed(b)).collect();
+    };
+    let multi = bounds.len() > 1;
+    bounds
+        .iter()
+        .map(|&b| match work_area.intersection(b) {
+            // The work area takes nothing from this display: a real answer,
+            // and available on a multi-head desk where the reference has none.
+            Some(clipped) if clipped == b => UsableRegion::Reported(b),
+            Some(clipped) if !multi => UsableRegion::Reported(clipped),
+            // Two ways to reach the same answer, and they are one arm because
+            // the answer is the same FACT: this display's usable region is not
+            // derivable, so its bounds come back labelled.
+            //
+            // `Some(_)` — it clips, and with several displays the clip belongs
+            // to whichever of them the panel is actually on, which the atom
+            // does not say. `None` — the work area does not cover this display
+            // at all, which happens where the atom describes only the primary;
+            // reporting an empty usable region there would say the display
+            // cannot be used, and that is the one answer certainly wrong.
+            Some(_) | None => UsableRegion::DesktopWide(b),
+        })
+        .collect()
+}
 
 /// An axis-aligned rectangle in the virtual-desktop space: **physical device
 /// pixels**, **signed** origin.
@@ -403,6 +569,13 @@ pub struct Display {
     scale_factor: f64,
     refresh_mhz: Option<u32>,
     primary: bool,
+    /// R1621 — skipped by this derive on purpose. The wire shape of a usable
+    /// region is `{rect, provenance}`, and that shape is declared in
+    /// `pinion-rpc` so the census which keeps `rpc/schema` honest can see it
+    /// (the `DisplayHomeWire` precedent). A derive here would have published a
+    /// second, tagged-enum spelling of the same fact.
+    #[serde(skip)]
+    usable: UsableRegion,
 }
 
 impl Display {
@@ -417,6 +590,14 @@ impl Display {
     #[must_use]
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// R1621 §5.16 — how much of this display is usable, and how well that is
+    /// known. See [`UsableRegion`], and the [module docs](self) for why it is
+    /// four answers rather than a rectangle.
+    #[must_use]
+    pub const fn usable(&self) -> UsableRegion {
+        self.usable
     }
 
     /// Physical bounds in the virtual-desktop space.
@@ -510,6 +691,38 @@ pub struct DisplayTopology {
 }
 
 impl DisplayTopology {
+    /// R1621 §5.16 — fill in every display's [`UsableRegion`] from the
+    /// platform's desktop-wide work area, or from its considered absence.
+    ///
+    /// Separate from [`new`](Self::new) because enumerating monitors and
+    /// probing the work area are different platform calls with different
+    /// failure modes, and a topology that has not been probed must be able to
+    /// say so rather than to look like one whose desk simply has no panels.
+    ///
+    /// `work_area` of `None` means the platform was asked and had nothing:
+    /// every display becomes [`Unpublished`](UsableRegion::Unpublished), which
+    /// is the Wayland answer. A topology this was never called on keeps
+    /// [`Unprobed`](UsableRegion::Unprobed) — the two are the point.
+    #[must_use]
+    pub fn with_work_area(mut self, work_area: Option<DisplayRect>) -> Self {
+        let bounds: Vec<DisplayRect> = self.displays.iter().map(Display::bounds).collect();
+        for (display, region) in self
+            .displays
+            .iter_mut()
+            .zip(usable_regions(&bounds, work_area))
+        {
+            display.usable = match region {
+                // The derivation cannot know whether the platform was ASKED;
+                // reaching this function means it was, so its "nothing
+                // published" answer becomes the platform's, not the absence
+                // of a probe.
+                UsableRegion::Unprobed(r) => UsableRegion::Unpublished(r),
+                other => other,
+            };
+        }
+        self
+    }
+
     /// Canonicalise a platform report into a topology.
     ///
     /// Order is preserved — it is the platform's enumeration order, and the
@@ -554,6 +767,13 @@ impl DisplayTopology {
                     id,
                     label: info.label.unwrap_or_default(),
                     bounds: info.bounds,
+                    // R1621 — the topology is built from what the platform
+                    // enumerated; the work area is a SEPARATE probe that may
+                    // not have run, so a fresh topology says `Unprobed` and
+                    // `with_usable_regions` fills it in. Defaulting to
+                    // "reported: all of it" would have been the reference's
+                    // silent answer with none of its excuse.
+                    usable: UsableRegion::Unprobed(info.bounds),
                     scale_factor: if info.scale_factor.is_finite() && info.scale_factor > 0.0 {
                         info.scale_factor
                     } else {
@@ -1164,6 +1384,138 @@ fn slug(label: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{UsableRegion, usable_regions};
+
+    /// R1621 §5.16 — the usable region is derived from the desktop-wide work
+    /// area, and each display says how well its answer is known.
+    #[test]
+    fn r1621_a_work_area_that_clips_nothing_is_a_measurement() {
+        // Two 1920x1080 monitors side by side; a 40-px panel along the bottom
+        // of the LEFT one. `_NET_WORKAREA` is one rect for the whole desktop,
+        // so it is 3840 wide and 1040 tall — which clips BOTH monitors.
+        let left = DisplayRect::new(0, 0, 1920, 1080);
+        let right = DisplayRect::new(1920, 0, 1920, 1080);
+        let desk = DisplayRect::new(0, 0, 3840, 1040);
+        let got = usable_regions(&[left, right], Some(desk));
+        // Neither is attributable: the atom cannot say which monitor the panel
+        // is on. Both answer with their bounds, LABELLED — where the reference
+        // answers with the bounds and says nothing.
+        assert_eq!(
+            got,
+            vec![
+                UsableRegion::DesktopWide(left),
+                UsableRegion::DesktopWide(right),
+            ]
+        );
+        for region in &got {
+            assert_eq!(region.rect(), region.rect(), "every arm yields a rect");
+            assert!(!region.is_measured(), "and none of them is a measurement");
+        }
+
+        // Now a dock down the LEFT edge instead: the desk work area starts at
+        // x=40 and runs full height. It clips the left monitor and leaves the
+        // right one entirely alone — so the right one's whole bounds are
+        // usable, and that is a measurement. This is the answer the reference
+        // discards, because its accessor returns bounds for EVERY display as
+        // soon as there is more than one.
+        let side_dock = DisplayRect::new(40, 0, 3800, 1080);
+        let got = usable_regions(&[left, right], Some(side_dock));
+        assert_eq!(
+            got,
+            vec![
+                UsableRegion::DesktopWide(left),
+                UsableRegion::Reported(right)
+            ],
+            "the clipped display says it cannot attribute; the untouched one \
+             answers for real",
+        );
+        assert!(!got[0].is_measured());
+        assert!(got[1].is_measured());
+        assert_eq!(got[1].rect(), right, "all of it");
+    }
+
+    /// R1621 — one display can attribute the clip, because there is nothing
+    /// else it could belong to.
+    #[test]
+    fn r1621_a_single_display_attributes_its_own_clip() {
+        let only = DisplayRect::new(0, 0, 1920, 1080);
+        let desk = DisplayRect::new(0, 27, 1920, 1013); // menu bar on top
+        let got = usable_regions(&[only], Some(desk));
+        assert_eq!(got, vec![UsableRegion::Reported(desk)]);
+        assert_eq!(got[0].rect(), desk, "the work area IS the usable region");
+        assert!(got[0].is_measured());
+    }
+
+    /// R1621 — a PROBED desk that published nothing answers `Unpublished`, and
+    /// an unprobed topology answers `Unprobed`. The two are the point of the
+    /// type, and nothing caught them collapsing until a counterfactual said so.
+    #[test]
+    fn r1621_probing_and_not_probing_are_different_answers() {
+        use super::{DisplayInfo, DisplayTopology};
+        let bounds = DisplayRect::new(0, 0, 1920, 1080);
+        let fresh = DisplayTopology::new(vec![DisplayInfo::new("DP-1", bounds).as_primary()]);
+        assert_eq!(
+            fresh.iter().next().expect("one display").usable(),
+            UsableRegion::Unprobed(bounds),
+            "a topology nobody probed says so",
+        );
+        let asked = DisplayTopology::new(vec![DisplayInfo::new("DP-1", bounds).as_primary()])
+            .with_work_area(None);
+        assert_eq!(
+            asked.iter().next().expect("one display").usable(),
+            UsableRegion::Unpublished(bounds),
+            "asking and being told there is nothing is a DIFFERENT answer from \
+             never asking — the Wayland case, and not a failure",
+        );
+        // And a probe that DID find one reaches the derivation.
+        let panelled = DisplayTopology::new(vec![DisplayInfo::new("DP-1", bounds).as_primary()])
+            .with_work_area(Some(DisplayRect::new(0, 32, 1920, 1048)));
+        assert_eq!(
+            panelled.iter().next().expect("one display").usable(),
+            UsableRegion::Reported(DisplayRect::new(0, 32, 1920, 1048)),
+        );
+        assert!(
+            panelled
+                .iter()
+                .next()
+                .expect("one display")
+                .usable()
+                .is_measured()
+        );
+    }
+
+    /// R1621 — absence is not zero, and the three absences stay apart.
+    #[test]
+    fn r1621_no_work_area_yields_bounds_and_says_why() {
+        let a = DisplayRect::new(0, 0, 800, 600);
+        let b = DisplayRect::new(800, 0, 800, 600);
+        let got = usable_regions(&[a, b], None);
+        assert_eq!(
+            got,
+            vec![UsableRegion::Unprobed(a), UsableRegion::Unprobed(b)],
+            "with nothing published the derivation answers UNPROBED; only the \
+             caller knows whether the platform was asked",
+        );
+        for region in got {
+            assert!(!region.is_measured());
+            assert_eq!(region.rect(), region.rect());
+        }
+        // A display the work area misses entirely is NOT reported as unusable:
+        // an empty usable region is the one answer that is certainly wrong.
+        let far = DisplayRect::new(9_000, 0, 800, 600);
+        let got = usable_regions(&[a, far], Some(DisplayRect::new(0, 0, 1600, 560)));
+        assert_eq!(got[1], UsableRegion::DesktopWide(far));
+        assert_eq!(got[1].rect(), far, "its whole bounds, not an empty rect");
+        // The four wire names are distinct and derived from the arms.
+        let mut names = UsableRegion::WIRE_NAMES.to_vec();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 4, "four arms, four spellings");
+        assert_eq!(UsableRegion::Reported(a).as_wire_name(), "reported");
+        assert_eq!(UsableRegion::DesktopWide(a).as_wire_name(), "desktop_wide");
+        assert_eq!(UsableRegion::Unpublished(a).as_wire_name(), "unpublished");
+        assert_eq!(UsableRegion::Unprobed(a).as_wire_name(), "unprobed");
+    }
     use super::{
         Anchor, Anchored, DisplayHome, DisplayId, DisplayInfo, DisplayRect, DisplayTopology, slug,
         union_px,
