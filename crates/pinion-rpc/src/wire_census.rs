@@ -1119,6 +1119,45 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "MarkRunWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("name", WireTy::String, None),
+                WireField::new("start", WireTy::Integer, None),
+                WireField::new("end", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "MarkStackWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("index", WireTy::Integer, None),
+                WireField::new("names", WireTy::Array, None),
+                // R1615 — always present when a position was named, null when
+                // nothing covers it. "Nothing covers this byte" is an answer.
+                WireField::new("top", WireTy::String, None).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "MarksOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("kind", WireTy::String, None),
+                // R1615 — the reason a `published: false` is worth reading.
+                // Without it an agent cannot tell a node that could have named
+                // its runs and did not from one whose kind has nothing to name.
+                WireField::new("channel", WireTy::String, None),
+                WireField::new("published", WireTy::Boolean, None),
+                WireField::new("domain", WireTy::String, None).optional(),
+                WireField::new("runs", WireTy::Array, Some("MarkRunWire")).optional(),
+                WireField::new("at", WireTy::Object, Some("MarkStackWire")).optional(),
+            ],
+        },
+    },
+    WireType {
         name: "MemoryArena",
         shape: WireShape::Object {
             fields: &[

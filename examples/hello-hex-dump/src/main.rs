@@ -61,6 +61,14 @@
 //! byte index to its `"col,row"`, `byte_window` maps a `"low,high"` brush
 //! fraction pair to its `"lo,hi"` byte range (the same SSOT the view
 //! paints from). See `tools/demos/r1400_hex_dump.py`.
+//!
+//! R1615 — *why* a byte is lit is asked of the SCENE, not of an oracle:
+//! `scene/marks {tag: "hex_grid", index: 12}` answers with the whole stack of
+//! named runs covering byte 12, in the order that decided the paint. The two
+//! gestures live in two different externals — the brush is a sibling
+//! `RangeSliderExternal`, the drag is this binding's own — so neither oracle
+//! could ever answer it; the view is where they are composed, so the view
+//! publishes the composition on the grid node.
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{Brush, BrushStripColors};
@@ -70,15 +78,14 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
     selection_copy_payload,
 };
+use pinion_core::marks::{Mark, MarkSet, MarkedGrid, domain};
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::hex_dump::{ByteSelection, Cell, HexLayout, Mark, MarkSet};
+use pinion_core::widgets::hex_dump::{ByteSelection, Cell, HexLayout};
 use pinion_core::widgets::range_slider::RangeSliderExternal;
-use pinion_core::{
-    CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermColor, WidgetCore,
-};
+use pinion_core::{CellMetric, CursorShape, Frame, GridCursor, Scene, TermColor, WidgetCore};
 use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::hex_dump::{HexPalette, MarkInk, view_hex_dump};
@@ -183,10 +190,19 @@ const BOOT_BYTE_HI: usize = 24;
     reason = "small byte counts -> f32 are exact"
 )]
 fn boot_window() -> (f32, f32) {
-    (
-        BOOT_BYTE_LO as f32 / SAMPLE_LEN as f32,
-        BOOT_BYTE_HI as f32 / SAMPLE_LEN as f32,
-    )
+    (byte_fraction(BOOT_BYTE_LO), byte_fraction(BOOT_BYTE_HI))
+}
+
+/// `byte` as a fraction of the buffer — the brush coordinate that selects it.
+///
+/// One place, because every caller has the same exactness argument to make and
+/// there is no reason to make it twice.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "small byte counts -> f32 are exact"
+)]
+fn byte_fraction(byte: usize) -> f32 {
+    byte as f32 / SAMPLE_LEN as f32
 }
 
 /// The byte-offset brush — the [`Brush`] substrate (R1394) over the extent
@@ -258,6 +274,10 @@ fn selected_bytes(low: f32, high: f32) -> (usize, usize) {
 /// each maps to. The marks carry no colour, so `MarkSet::names_at(byte)`
 /// answers *why* a byte is lit with the run's own name rather than with an
 /// ink a reader has to reverse-engineer.
+///
+/// R1615 — and the answer reaches a client, because the assembled set rides on
+/// the grid node (`Scene::marks_for_tag` / `scene/marks`) instead of being
+/// folded into cell colours and dropped.
 const MARK_FIELD: &str = "field";
 const MARK_SELECTION: &str = "selection";
 
@@ -298,14 +318,14 @@ impl CellColors {
 /// Declared brush-first so the selection wins where they overlap — one
 /// direction for every visual channel, which is the rule `MarkSet` states.
 fn marks(brush: core::ops::Range<usize>, selection: Option<(usize, usize)>) -> MarkSet {
-    let mut set = MarkSet::new().marking(MARK_FIELD, brush.start, brush.end);
+    let mut set = MarkSet::over(domain::BYTE).marking(MARK_FIELD, brush.start, brush.end);
     if let Some((start, end)) = selection {
         set.push(Mark::new(MARK_SELECTION, start, end));
     }
     set
 }
 
-/// Build the hex-dump [`GridBuffer`]. Two orthogonal visual channels ride each
+/// Build the hex-dump [`MarkedGrid`]. Two orthogonal visual channels ride each
 /// byte's three cells (two hex digits + its ascii glyph): the `field` mark
 /// (`lo..hi`) fills the background (R1400 field highlight), and the
 /// `selection` mark (`start..end`) reverse-videos the cells (R1402 drag
@@ -318,16 +338,21 @@ fn marks(brush: core::ops::Range<usize>, selection: Option<(usize, usize)>) -> M
 /// real defect: the offset column was formatted to a fixed eight hex digits
 /// and then truncated to `offset_digits`, so any narrower offset field printed
 /// `0000` on every row.
+///
+/// R1615 — the marks come back out with the cells rather than being consumed
+/// and forgotten, so the node can publish *why* each byte is lit. The two
+/// gestures live in two different externals, so nothing but the view was ever
+/// in a position to assemble them.
 fn hex_dump_buffer(
     bytes: &[u8],
     brush_sel: core::ops::Range<usize>,
     reverse_sel: Option<(usize, usize)>,
     colors: &CellColors,
-) -> GridBuffer {
+) -> MarkedGrid {
     view_hex_dump(
         &LAYOUT,
         bytes,
-        &marks(brush_sel, reverse_sel),
+        marks(brush_sel, reverse_sel),
         &colors.palette(),
         |name| colors.ink(name),
     )
@@ -378,7 +403,7 @@ fn view(low: f32, high: f32, sel: Option<Selection>, _frame: &Frame) -> Scene {
     // The brush field background (R1400) + the drag selection reverse-video
     // (R1402), plus a block GridCursor on the selection's focus byte.
     let reverse_sel = sel.map(|s| (s.start, s.end));
-    let mut cells = hex_dump_buffer(&bytes, lo..hi, reverse_sel, &colors);
+    let painted = hex_dump_buffer(&bytes, lo..hi, reverse_sel, &colors);
     let cursor = sel.map_or_else(GridCursor::default, |s| {
         GridCursor::new(
             u16::try_from(hex_col(s.focus % BYTES_PER_ROW)).unwrap_or(0),
@@ -387,12 +412,15 @@ fn view(low: f32, high: f32, sel: Option<Selection>, _frame: &Frame) -> Scene {
             true,
         )
     });
-    cells = cells.with_cursor(cursor);
+    // The cursor is an overlay, not a reason: it moves the caret without
+    // changing why any byte is coloured, so it maps the cells and leaves the
+    // marks alone.
+    let painted = painted.map_cells(|cells| cells.with_cursor(cursor));
 
     let grid = Scene::TextGrid(
         TextGridNode::new(CellMetric::DEFAULT)
             .with_tag(GRID_TAG)
-            .with_cells(cells)
+            .with_marked_grid(painted)
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(GRID_POS.0, GRID_POS.1)
@@ -624,7 +652,6 @@ impl ExternalIntrospect for HexDumpOracle {
                     SchemaField::new("select_range", "string"),
                     SchemaField::new("byte_window", "string"),
                     // R1613 — why a byte is lit: the named runs covering it.
-                    SchemaField::new("marks_at", "string"),
                     // The router's pointer press / release symbolic events.
                     SchemaField::new("send", "string"),
                 ]
@@ -724,50 +751,6 @@ impl ExternalIntrospect for HexDumpOracle {
                     let (low, high) = parse_pair(s).ok_or(InvokeError::TypeMismatch)?;
                     let (lo, hi) = selected_bytes(low, high);
                     Ok(IntrospectValue::Text(format!("{lo},{hi}")))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // R1613 — WHY a byte is drawn the way it is: the names of the runs
-            // covering it, innermost last, joined by `,` (or "none").
-            //
-            // The field run belongs to the sibling brush external rather than
-            // to this one, so the caller names it: the args are
-            // `"byte,lo,hi"`, where `lo,hi` is what `byte_window` answered for
-            // the current brush. Composing the two is the honest shape — this
-            // oracle owns the selection and nothing else — and what it
-            // demonstrates is `MarkSet::names_at`: the mark stack answers with
-            // NAMES, where a list of coloured ranges has only a colour left by
-            // the time anyone asks.
-            "marks_at" => match args {
-                IntrospectValue::Text(ref s) => {
-                    let mut parts = s.split(',').map(str::trim);
-                    let byte: usize = parts
-                        .next()
-                        .and_then(|p| p.parse().ok())
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    let lo: usize = parts
-                        .next()
-                        .and_then(|p| p.parse().ok())
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    let hi: usize = parts
-                        .next()
-                        .and_then(|p| p.parse().ok())
-                        .ok_or(InvokeError::TypeMismatch)?;
-                    if parts.next().is_some() {
-                        return Err(InvokeError::TypeMismatch);
-                    }
-                    if byte >= SAMPLE_LEN {
-                        return Err(InvokeError::rejected(format!(
-                            "no byte {byte} in this buffer (it holds {SAMPLE_LEN})"
-                        )));
-                    }
-                    let set = marks(lo..hi, self.range());
-                    let names = set.names_at(byte);
-                    Ok(IntrospectValue::Text(if names.is_empty() {
-                        "none".to_owned()
-                    } else {
-                        names.join(",")
-                    }))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1007,14 +990,18 @@ mod tests {
 
     #[test]
     fn buffer_dimensions_derive_from_the_layout() {
-        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors());
+        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors())
+            .into_parts()
+            .0;
         assert_eq!(buf.cols(), c(TOTAL_COLS));
         assert_eq!(buf.rows(), c(ROWS));
     }
 
     #[test]
     fn row_zero_offset_and_hex_and_ascii_render() {
-        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors());
+        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors())
+            .into_parts()
+            .0;
         // Offset column: "00000000".
         let offset: String = (0..LAYOUT.offset_digits())
             .map(|col| buf.cell(c(col), 0).unwrap().cluster.clone())
@@ -1029,7 +1016,9 @@ mod tests {
 
     #[test]
     fn non_printable_bytes_show_a_dot_in_the_gutter() {
-        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors());
+        let buf = hex_dump_buffer(&sample(), 0..0, None, &test_colors())
+            .into_parts()
+            .0;
         // Byte 3 is 0x01 (non-printable) -> '.' in the muted tint.
         let cell = buf.cell(c(ascii_col(3)), 0).unwrap();
         assert_eq!(cell.cluster, ".");
@@ -1043,7 +1032,9 @@ mod tests {
     fn selection_highlights_both_the_hex_and_ascii_regions() {
         let colors = test_colors();
         // Select bytes 8..12 (row 0, second group).
-        let buf = hex_dump_buffer(&sample(), 8..12, None, &colors);
+        let buf = hex_dump_buffer(&sample(), 8..12, None, &colors)
+            .into_parts()
+            .0;
         for b in 8..12usize {
             let hc = c(hex_col(b));
             // Both hex digit cells carry the highlight background.
@@ -1073,31 +1064,44 @@ mod tests {
 
     #[test]
     fn a_byte_says_which_runs_lit_it() {
-        // ★ R1613 — the query a list of coloured ranges cannot answer. Two
-        // gestures mark the same buffer; a byte in both reports BOTH names, in
-        // the order that decided the paint, and the last one is the one the
-        // painter obeyed.
-        let mut o = HexDumpOracle::new();
-        o.invoke("select_range", IntrospectValue::Text("10,20".into()))
-            .expect("select");
-        // Field = bytes 8..16, from the brush; selection = 10..20, this
-        // oracle's own.
-        let mut names = |byte: usize| match o
-            .invoke("marks_at", IntrospectValue::Text(format!("{byte},8,16")))
-            .expect("marks_at")
-        {
-            IntrospectValue::Text(t) => t,
-            other => panic!("expected text, got {other:?}"),
+        // ★ R1615 — the question is asked of the SCENE, with the byte alone.
+        //
+        // R1613 asked it of this binding's oracle, which owns the drag
+        // selection and nothing else, so the brush window had to be fetched
+        // from the sibling external and handed back in as an argument. The
+        // caller was reassembling a fact the view had already assembled and
+        // then discarded. Now the view publishes it and the picture answers.
+        let (low, high) = (byte_fraction(8), byte_fraction(16));
+        let sel = Selection {
+            start: 10,
+            end: 20,
+            focus: 19,
         };
-        assert_eq!(names(9), "field", "in the brush window only");
-        assert_eq!(names(12), "field,selection", "in both, selection last");
-        assert_eq!(names(18), "selection", "in the drag only");
-        assert_eq!(names(40), "none", "in neither");
+        let scene = pinion_core::Owner::new().run(|| view(low, high, Some(sel), &Frame::new()));
+        let marks = scene.marks_for_tag(GRID_TAG);
+        assert_eq!(
+            marks
+                .published()
+                .expect("the grid publishes why it painted")
+                .domain(),
+            "byte",
+            "the index space is stated, and it is NOT the cell grid"
+        );
 
-        // The paint agrees with the query: byte 12 is filled AND reversed,
-        // byte 9 filled only, byte 18 reversed only.
-        let colors = test_colors();
-        let buf = hex_dump_buffer(&sample(), 8..16, Some((10, 20)), &colors);
+        let names = |byte: usize| marks.names_at(byte).join(",");
+        assert_eq!(names(9), MARK_FIELD, "in the brush window only");
+        assert_eq!(
+            names(12),
+            format!("{MARK_FIELD},{MARK_SELECTION}"),
+            "in both, selection last -- the order that decided the paint"
+        );
+        assert_eq!(names(18), MARK_SELECTION, "in the drag only");
+        assert!(names(40).is_empty(), "in neither");
+
+        // The paint agrees with the query, cell by cell: byte 12 is filled AND
+        // reversed, byte 9 filled only, byte 18 reversed only. Same node, so
+        // the explanation cannot be one frame out of date with the picture.
+        let buf = grid_buffer(&scene);
         let hex = |b: usize| {
             buf.cell(
                 c(hex_col(b % BYTES_PER_ROW)),
@@ -1106,34 +1110,55 @@ mod tests {
             .unwrap()
             .clone()
         };
-        assert_eq!(hex(12).bg, colors.highlight);
         assert!(hex(12).attrs.reverse);
-        assert_eq!(hex(9).bg, colors.highlight);
         assert!(!hex(9).attrs.reverse);
-        assert_eq!(hex(18).bg, TermColor::Default);
         assert!(hex(18).attrs.reverse);
+        assert_eq!(hex(9).bg, hex(12).bg, "both are in the brush field");
+        assert_ne!(hex(18).bg, hex(9).bg, "18 is outside it");
     }
 
     #[test]
-    fn marks_at_rejects_what_it_cannot_answer() {
-        let mut o = HexDumpOracle::new();
-        assert!(matches!(
-            o.invoke("marks_at", IntrospectValue::Text("0,8".into())),
-            Err(InvokeError::TypeMismatch)
-        ));
-        assert!(matches!(
-            o.invoke("marks_at", IntrospectValue::Text("0,8,16,24".into())),
-            Err(InvokeError::TypeMismatch)
-        ));
-        assert!(matches!(
-            o.invoke("marks_at", IntrospectValue::Int(3)),
-            Err(InvokeError::TypeMismatch)
-        ));
-        let past = o.invoke("marks_at", IntrospectValue::Text("999,0,8".into()));
-        assert!(
-            matches!(past, Err(InvokeError::Rejected { .. })),
-            "a byte outside the buffer is rejected with a reason, got {past:?}"
-        );
+    fn the_published_marks_explain_every_lit_cell_and_no_other() {
+        // ★ The property that makes this an explanation rather than a label:
+        // for EVERY byte, "the marks say it is lit" and "the cell is drawn
+        // lit" are the same predicate. A stale mark set would pass a
+        // spot-check and fail here.
+        let (low, high) = (byte_fraction(4), byte_fraction(12));
+        let sel = Selection {
+            start: 20,
+            end: 26,
+            focus: 25,
+        };
+        let scene = pinion_core::Owner::new().run(|| view(low, high, Some(sel), &Frame::new()));
+        let marks = scene.marks_for_tag(GRID_TAG);
+        let buf = grid_buffer(&scene);
+        let cell = |b: usize| {
+            buf.cell(
+                c(hex_col(b % BYTES_PER_ROW)),
+                u16::try_from(b / BYTES_PER_ROW).unwrap(),
+            )
+            .unwrap()
+            .clone()
+        };
+        let mut lit = 0;
+        for byte in 0..SAMPLE_LEN {
+            let names = marks.names_at(byte);
+            let painted = cell(byte);
+            assert_eq!(
+                names.contains(&MARK_FIELD),
+                painted.bg != TermColor::Default,
+                "byte {byte}: the field mark and the fill disagree"
+            );
+            assert_eq!(
+                names.contains(&MARK_SELECTION),
+                painted.attrs.reverse,
+                "byte {byte}: the selection mark and the reverse video disagree"
+            );
+            if !names.is_empty() {
+                lit += 1;
+            }
+        }
+        assert_eq!(lit, 14, "8 brushed + 6 selected, disjoint here");
     }
 
     #[test]
@@ -1534,7 +1559,7 @@ mod tests {
     }
 
     /// The `GridBuffer` carried by the hex-dump grid in a built scene.
-    fn grid_buffer(scene: &Scene) -> GridBuffer {
+    fn grid_buffer(scene: &Scene) -> pinion_core::GridBuffer {
         let Scene::Container(root) = scene else {
             panic!("view root is a Container");
         };

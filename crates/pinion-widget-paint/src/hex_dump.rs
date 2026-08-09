@@ -27,7 +27,7 @@
 //!
 //! The crate does not pick colours, the same way R1606 declined to pick the
 //! separator between hex groups. The application declares
-//! [`pinion_core::widgets::hex_dump::MarkSet`] — *named* byte runs,
+//! [`pinion_core::marks::MarkSet`] — *named* byte runs,
 //! no colour — and hands down a [`HexPalette`] for the cells that are not
 //! marked plus a function from a mark's **name** to its [`MarkInk`].
 //!
@@ -37,7 +37,8 @@
 //! `(start, length, format)` decorations — what a mature toolkit offers over a
 //! text layout — has thrown the name away by the time anyone can ask.
 
-use pinion_core::widgets::hex_dump::{Cell, CellRole, HexLayout, Mark, MarkSet};
+use pinion_core::marks::{Mark, MarkSet, MarkedGrid};
+use pinion_core::widgets::hex_dump::{Cell, CellRole, HexLayout};
 use pinion_core::{CellAttrs, GridBuffer, TermCell, TermColor};
 
 /// The colours of a dump's unmarked cells.
@@ -136,7 +137,7 @@ impl HexPalette {
 ///
 /// Where two marks both speak to a channel, the later-declared one wins — one
 /// direction, for every channel alike. See
-/// [`pinion_core::widgets::hex_dump::MarkSet`] for why that is worth
+/// [`pinion_core::marks::MarkSet`] for why that is worth
 /// stating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MarkInk {
@@ -219,13 +220,21 @@ where
         .fold(MarkInk::none(), |acc, name| acc.under(ink_for(name)))
 }
 
-/// The dump as a [`GridBuffer`]: one cell per column per row, every one of
-/// them classified by `layout` and filled from `bytes`.
+/// The dump as a [`MarkedGrid`]: one cell per column per row, every one of
+/// them classified by `layout` and filled from `bytes` — **and** the `marks`
+/// that decided their ink, carried out beside them.
 ///
 /// `ink_for` maps a mark's name to how its bytes are drawn; a name it does not
 /// recognise should answer [`MarkInk::none`], which draws that run in the
 /// palette like anything else. Marks over bytes the buffer does not have are
 /// simply never reached.
+///
+/// R1615 — the marks come in by value and go out with the cells because the
+/// picture and the reasons for it are one result. A `Scene::TextGrid` built
+/// from this through
+/// [`with_marked_grid`](pinion_core::scene::TextGridNode::with_marked_grid)
+/// can answer *why* a byte is lit, over the wire, from the byte alone; before
+/// this the fold happened here and the names were dropped on the floor.
 ///
 /// The grid is exactly [`HexLayout::total_cols`] by [`HexLayout::rows`], so a
 /// caller sizing a `Scene::TextGrid` reads both off the same declaration it
@@ -233,10 +242,10 @@ where
 pub fn view_hex_dump<F>(
     layout: &HexLayout,
     bytes: &[u8],
-    marks: &MarkSet,
+    marks: MarkSet,
     palette: &HexPalette,
     ink_for: F,
-) -> GridBuffer
+) -> MarkedGrid
 where
     F: Fn(&str) -> MarkInk,
 {
@@ -262,7 +271,7 @@ where
             };
             let base_fg = palette.role_ink(region.role(), substituted);
             let ink = match region.byte() {
-                Some(byte) => ink_at(marks, byte, &ink_for),
+                Some(byte) => ink_at(&marks, byte, &ink_for),
                 None => MarkInk::none(),
             };
             let attrs = CellAttrs::empty().with_reverse(ink.reverse.unwrap_or(false));
@@ -277,12 +286,13 @@ where
         }
         buffer = buffer.with_row(u16::try_from(row).unwrap_or(u16::MAX), cells);
     }
-    buffer
+    MarkedGrid::new(buffer, marks)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::marks::domain;
     use pinion_core::widgets::hex_dump::{Nibble, Region};
 
     /// The palette every test below reads assertions off — six distinguishable
@@ -310,8 +320,9 @@ mod tests {
         bytes
     }
 
-    fn cell_at(buffer: &GridBuffer, cell: Cell) -> TermCell {
-        buffer
+    fn cell_at(painted: &MarkedGrid, cell: Cell) -> TermCell {
+        painted
+            .cells()
             .cell(
                 u16::try_from(cell.col).expect("col fits"),
                 u16::try_from(cell.row).expect("row fits"),
@@ -324,11 +335,15 @@ mod tests {
     fn the_grid_is_exactly_the_layouts_extent() {
         let bytes = sample();
         let layout = HexLayout::new(bytes.len());
-        let buffer = view_hex_dump(&layout, &bytes, &MarkSet::new(), &palette(), |_| {
-            MarkInk::none()
-        });
-        assert_eq!(usize::from(buffer.cols()), layout.total_cols());
-        assert_eq!(usize::from(buffer.rows()), layout.rows());
+        let buffer = view_hex_dump(
+            &layout,
+            &bytes,
+            MarkSet::over(domain::BYTE),
+            &palette(),
+            |_| MarkInk::none(),
+        );
+        assert_eq!(usize::from(buffer.cells().cols()), layout.total_cols());
+        assert_eq!(usize::from(buffer.cells().rows()), layout.rows());
     }
 
     #[test]
@@ -346,9 +361,13 @@ mod tests {
                 .with_offset_digits(4)
                 .with_gutter(1),
         ] {
-            let buffer = view_hex_dump(&layout, &bytes, &MarkSet::new(), &palette(), |_| {
-                MarkInk::none()
-            });
+            let buffer = view_hex_dump(
+                &layout,
+                &bytes,
+                MarkSet::over(domain::BYTE),
+                &palette(),
+                |_| MarkInk::none(),
+            );
             for row in 0..layout.rows() {
                 for col in 0..layout.total_cols() {
                     let at = Cell::new(col, row);
@@ -391,8 +410,8 @@ mod tests {
         // paint could only make about itself.
         let bytes = sample();
         let layout = HexLayout::new(bytes.len());
-        let marks = MarkSet::new().marking("field", 4, 8);
-        let buffer = view_hex_dump(&layout, &bytes, &marks, &palette(), |name| {
+        let marks = MarkSet::over(domain::BYTE).marking("field", 4, 8);
+        let buffer = view_hex_dump(&layout, &bytes, marks, &palette(), |name| {
             assert_eq!(name, "field");
             MarkInk::filled(TermColor::Indexed(20), TermColor::Indexed(21))
         });
@@ -417,7 +436,7 @@ mod tests {
         // ★ One direction for every channel, and the reason is queryable.
         let bytes = sample();
         let layout = HexLayout::new(bytes.len());
-        let marks = MarkSet::new()
+        let marks = MarkSet::over(domain::BYTE)
             .marking("frame", 0, 24)
             .marking("header", 0, 8)
             .marking("length", 4, 8);
@@ -433,7 +452,7 @@ mod tests {
             },
             _ => MarkInk::none(),
         };
-        let buffer = view_hex_dump(&layout, &bytes, &marks, &palette(), ink_for);
+        let buffer = view_hex_dump(&layout, &bytes, marks, &palette(), ink_for);
 
         // Byte 5 is in all three. The last mark to speak to a channel wins it,
         // so the foreground is `length`'s and the background is `header`'s --
@@ -446,14 +465,17 @@ mod tests {
             TermColor::Indexed(32),
             "header decides the fill; length said nothing about it"
         );
-        assert_eq!(marks.names_at(5), vec!["frame", "header", "length"]);
+        assert_eq!(
+            buffer.marks().names_at(5),
+            vec!["frame", "header", "length"]
+        );
 
         // Byte 2: frame and header, no length -- header decides both channels.
         let at = layout.hex_cell(2).expect("inside");
         let painted = cell_at(&buffer, at);
         assert_eq!(painted.fg, TermColor::Indexed(31));
         assert_eq!(painted.bg, TermColor::Indexed(32));
-        assert_eq!(marks.names_at(2), vec!["frame", "header"]);
+        assert_eq!(buffer.marks().names_at(2), vec!["frame", "header"]);
 
         // Byte 20: frame alone -- which sets only a background, so the
         // foreground stays the palette's.
@@ -465,7 +487,7 @@ mod tests {
 
     #[test]
     fn ink_at_is_the_fold_the_painter_uses() {
-        let marks = MarkSet::new()
+        let marks = MarkSet::over(domain::BYTE)
             .marking("a", 0, 8)
             .marking("b", 4, 12)
             .marking("quiet", 0, 16);
@@ -499,10 +521,10 @@ mod tests {
     fn reverse_video_is_a_channel_like_the_others() {
         let bytes = sample();
         let layout = HexLayout::new(bytes.len());
-        let marks = MarkSet::new()
+        let marks = MarkSet::over(domain::BYTE)
             .marking("field", 0, 12)
             .marking("selection", 8, 16);
-        let buffer = view_hex_dump(&layout, &bytes, &marks, &palette(), |name| match name {
+        let buffer = view_hex_dump(&layout, &bytes, marks, &palette(), |name| match name {
             "field" => MarkInk::filled(TermColor::Indexed(40), TermColor::Indexed(41)),
             "selection" => MarkInk::reversed(),
             _ => MarkInk::none(),
@@ -528,9 +550,13 @@ mod tests {
         // read `0000`.
         let bytes = vec![0u8; 512];
         let layout = HexLayout::new(bytes.len()).with_offset_digits(4);
-        let buffer = view_hex_dump(&layout, &bytes, &MarkSet::new(), &palette(), |_| {
-            MarkInk::none()
-        });
+        let buffer = view_hex_dump(
+            &layout,
+            &bytes,
+            MarkSet::over(domain::BYTE),
+            &palette(),
+            |_| MarkInk::none(),
+        );
         let row = 3;
         let digits: String = (0..4)
             .map(|col| cell_at(&buffer, Cell::new(col, row)).cluster.into_owned())
@@ -546,7 +572,7 @@ mod tests {
         let buffer = view_hex_dump(
             &layout,
             &bytes,
-            &MarkSet::new().marking("gone", 40, 60),
+            MarkSet::over(domain::BYTE).marking("gone", 40, 60),
             &palette(),
             |_| MarkInk::filled(TermColor::Indexed(9), TermColor::Indexed(9)),
         );

@@ -8,6 +8,10 @@
 //! [`StyleRun`] per coloured token (uncoloured text — identifiers, punctuation,
 //! whitespace — carries no run and paints in the field's base style).
 //!
+//! R1615: each run **names its class** ([`token`]), so the scene can say why a
+//! word is blue instead of only that it is. The classification was always
+//! computed here and always discarded.
+//!
 //! ## Seam, not a framework `Language` trait
 //!
 //! There is no `Language` trait or registry: the configurable `keywords` slice
@@ -41,6 +45,34 @@
 
 use crate::scene::StyleRun;
 use crate::style::{Color, TextStyle};
+
+/// R1615 §5.36 §2 #7 — the token classes [`highlight_code`] recognises, and
+/// the name each run is declared under.
+///
+/// A highlighter's whole job is classification, and before this the class was
+/// **thrown away**: the tokeniser decided "keyword" and kept only a colour, so
+/// the scene could not say why a word was blue. Worse, the colour is not even
+/// a stable name for the class — [`SyntaxPalette::classic`] and
+/// [`SyntaxPalette::dark`] paint the same class two different colours, so a
+/// reader matching on ink gets a different answer per theme.
+///
+/// These are the names, published once so a client matches a constant rather
+/// than a spelling, and asserted against [`SyntaxPalette`]'s fields so a class
+/// added to the palette without a name here fails a test rather than paints
+/// anonymously.
+pub mod token {
+    /// A language keyword (`fn`, `let`, `if`, …).
+    pub const KEYWORD: &str = "keyword";
+    /// A double-quoted string literal.
+    pub const STRING: &str = "string";
+    /// A `// …` line comment.
+    pub const COMMENT: &str = "comment";
+    /// A numeric literal.
+    pub const NUMBER: &str = "number";
+
+    /// Every class this module names, in palette-field order.
+    pub const ALL: [&str; 4] = [KEYWORD, STRING, COMMENT, NUMBER];
+}
 
 /// R904 §5.36 — a syntax colour scheme: one [`Color`] per token class. A
 /// *syntax* theme, deliberately separate from the UI `ColorRole` palette.
@@ -129,21 +161,49 @@ pub fn highlight_code(
         let Some(c) = rest.chars().next() else { break };
         if rest.starts_with("//") {
             let end = line_comment_end(text, i);
-            push_token(&mut runs, i, end, palette.comment, font_size_px);
+            push_token(
+                &mut runs,
+                i,
+                end,
+                palette.comment,
+                font_size_px,
+                token::COMMENT,
+            );
             i = end;
         } else if c == '"' {
             let end = string_end(text, i);
-            push_token(&mut runs, i, end, palette.string, font_size_px);
+            push_token(
+                &mut runs,
+                i,
+                end,
+                palette.string,
+                font_size_px,
+                token::STRING,
+            );
             i = end;
         } else if c.is_ascii_digit() {
             let end = number_end(text, i);
-            push_token(&mut runs, i, end, palette.number, font_size_px);
+            push_token(
+                &mut runs,
+                i,
+                end,
+                palette.number,
+                font_size_px,
+                token::NUMBER,
+            );
             i = end;
         } else if c == '_' || c.is_alphabetic() {
             let end = word_end(text, i);
             let word = &text[i..end];
             if keywords.contains(&word) {
-                push_token(&mut runs, i, end, palette.keyword, font_size_px);
+                push_token(
+                    &mut runs,
+                    i,
+                    end,
+                    palette.keyword,
+                    font_size_px,
+                    token::KEYWORD,
+                );
             }
             i = end;
         } else {
@@ -153,18 +213,30 @@ pub fn highlight_code(
     runs
 }
 
-/// Append a coloured run over `[start, end)` (no-op for an empty range). The
-/// run's style is the field's base size with the token colour overlaid.
-fn push_token(runs: &mut Vec<StyleRun>, start: usize, end: usize, color: Color, font_size_px: u32) {
+/// Append a run of class `class` over `[start, end)` (no-op for an empty
+/// range). The run's style is the field's base size with the token colour
+/// overlaid, and the run **names its class**, so the ink and the reason for it
+/// are one declaration that cannot drift apart.
+fn push_token(
+    runs: &mut Vec<StyleRun>,
+    start: usize,
+    end: usize,
+    color: Color,
+    font_size_px: u32,
+    class: &'static str,
+) {
     if end <= start {
         return;
     }
     if let (Ok(s), Ok(e)) = (u32::try_from(start), u32::try_from(end)) {
-        runs.push(StyleRun::new(
-            s,
-            e,
-            TextStyle::new().with_size_px(font_size_px).with_fg(color),
-        ));
+        runs.push(
+            StyleRun::new(
+                s,
+                e,
+                TextStyle::new().with_size_px(font_size_px).with_fg(color),
+            )
+            .named(class),
+        );
     }
 }
 
@@ -226,7 +298,7 @@ fn word_end(text: &str, start: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{SyntaxPalette, highlight_code};
+    use super::{SyntaxPalette, highlight_code, token};
 
     const KW: &[&str] = &["fn", "let", "if", "return", "true"];
     const SIZE: u32 = 16;
@@ -316,5 +388,83 @@ mod tests {
         );
         assert_eq!(SyntaxPalette::for_dark(true), SyntaxPalette::dark());
         assert_eq!(SyntaxPalette::for_dark(false), SyntaxPalette::classic());
+    }
+
+    #[test]
+    fn r1615_every_run_names_the_class_that_produced_it() {
+        let code = "let x = 12; // note\nlet s = \"hi\";";
+        let runs = highlight_code(code, KW, SyntaxPalette::classic(), SIZE);
+        let named: Vec<(&str, &str)> = runs
+            .iter()
+            .map(|r| {
+                (
+                    r.name().expect("every emitted run names its class"),
+                    &code[r.start as usize..r.end as usize],
+                )
+            })
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                (token::KEYWORD, "let"),
+                (token::NUMBER, "12"),
+                (token::COMMENT, "// note"),
+                (token::KEYWORD, "let"),
+                (token::STRING, "\"hi\""),
+            ],
+        );
+    }
+
+    #[test]
+    fn r1615_the_class_survives_a_theme_swap_where_the_colour_does_not() {
+        // The reason a name is needed rather than a colour: the SAME class is
+        // two different inks under the two schemes, so a reader keying off ink
+        // gets a theme-dependent answer to a theme-independent question.
+        let code = "fn";
+        let light = highlight_code(code, KW, SyntaxPalette::classic(), SIZE);
+        let dark = highlight_code(code, KW, SyntaxPalette::dark(), SIZE);
+        assert_ne!(
+            light[0].style.fg_color, dark[0].style.fg_color,
+            "the ink changes with the scheme",
+        );
+        assert_eq!(
+            light[0].name(),
+            dark[0].name(),
+            "the class does not -- which is why it is the identity",
+        );
+        assert_eq!(light[0].name(), Some(token::KEYWORD));
+    }
+
+    #[test]
+    fn r1615_the_published_names_account_for_every_palette_field() {
+        // A class added to the palette without a name here would paint
+        // anonymously and nothing else would notice. `SyntaxPalette` is
+        // exhaustively destructured, so adding a field fails to compile until
+        // it is named and covered.
+        let palette = SyntaxPalette::classic();
+        let SyntaxPalette {
+            keyword,
+            string,
+            comment,
+            number,
+        } = palette;
+        let by_class = [
+            (token::KEYWORD, keyword, "fn"),
+            (token::STRING, string, "\"s\""),
+            (token::COMMENT, comment, "// c"),
+            (token::NUMBER, number, "7"),
+        ];
+        assert_eq!(
+            by_class.len(),
+            token::ALL.len(),
+            "token::ALL and the palette fields are the same census",
+        );
+        for (class, colour, source) in by_class {
+            assert!(token::ALL.contains(&class), "{class} missing from ALL");
+            let runs = highlight_code(source, KW, palette, SIZE);
+            assert_eq!(runs.len(), 1, "{source:?} is one token");
+            assert_eq!(runs[0].name(), Some(class));
+            assert_eq!(runs[0].style.fg_color, colour, "{class} ink");
+        }
     }
 }

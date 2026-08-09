@@ -5088,6 +5088,137 @@ fn scene_locate_region_missing_w_is_invalid_params() {
     assert_eq!(err.code, -32602);
 }
 
+// ---- R1615: scene/marks JSON-RPC wire ----
+
+/// A paint scene shaped like a dump beside its chrome: a marked grid, a silent
+/// grid, and a box. One producer, so a `from: "paint"` call has a frame.
+fn marked_paint_scene() -> Scene {
+    use pinion_core::cell_metric::CellMetric;
+    use pinion_core::marks::{MarkSet, domain};
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextGridNode};
+    use pinion_core::style::BoxStyle;
+    Scene::Container(ContainerNode::new(vec![
+        Scene::Box(BoxNode::new(Rect::new(0, 0, 8, 8), BoxStyle::default()).with_tag("chrome")),
+        Scene::TextGrid(
+            TextGridNode::new(CellMetric::DEFAULT)
+                .with_tag("dump")
+                .with_marks(
+                    MarkSet::over(domain::BYTE)
+                        .marking("frame", 0, 64)
+                        .marking("header", 0, 16)
+                        .marking("length", 4, 8),
+                ),
+        ),
+        Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT).with_tag("quiet")),
+    ]))
+}
+
+/// Dispatch one request against a fresh context whose paint producer answers
+/// with [`marked_paint_scene`]. Fresh each call because `dispatch` *takes* the
+/// producer out of the context, so a second call on one context has none.
+fn marks_dispatch(req: &str) -> Response {
+    let mut state = box_scene(0, 0, 10, 10);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut produce = |_w: u32, _h: u32| -> Scene { marked_paint_scene() };
+    let mut ctx =
+        DispatchContext::new(&mut state, &previews, &revision).with_paint_producer(&mut produce);
+    parse_response(&dispatch(&mut ctx, req).expect("dispatch answered"))
+}
+
+#[test]
+fn r1615_scene_marks_answers_a_byte_from_the_painted_frame() {
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"dump","index":5},"id":700}"#;
+    let resp = marks_dispatch(req);
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let result = resp.result.expect("result");
+    // The whole question from the byte alone: no sibling external's answer had
+    // to be fetched first and handed back in.
+    assert_eq!(result.get("published"), Some(&Value::Bool(true)));
+    assert_eq!(result.get("domain"), Some(&Value::String("byte".into())));
+    let at = result.get("at").expect("a position was named");
+    assert_eq!(at.get("top"), Some(&Value::String("length".into())));
+    let names = at.get("names").and_then(Value::as_array).expect("names");
+    assert_eq!(names.len(), 3);
+    assert_eq!(names[0], Value::String("frame".into()));
+    assert_eq!(names[2], Value::String("length".into()));
+}
+
+#[test]
+fn r1615_scene_marks_defaults_to_the_paint_scene() {
+    // Marks are a paint fact. A binding's STATE scene holds none of the nodes
+    // the view emits, so the default has to be the frame or every real call
+    // would need to say so.
+    let a = marks_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"dump"},"id":701}"#,
+    );
+    let b = marks_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"dump","from":"paint"},"id":701}"#,
+    );
+    assert!(b.error.is_none(), "explicit paint errored: {:?}", b.error);
+    assert_eq!(a.result, b.result, "the default IS \"paint\"");
+    assert!(a.result.expect("result").get("runs").is_some());
+
+    // ...and the state scene is a different question with a different answer:
+    // the view's nodes are not in it at all.
+    let state = marks_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"dump","from":"state"},"id":701}"#,
+    );
+    assert!(
+        state.error.is_some(),
+        "the state tree carries no painted node called `dump`"
+    );
+}
+
+#[test]
+fn r1615_scene_marks_separates_silent_from_no_channel_from_no_tag() {
+    let silent = marks_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"quiet"},"id":703}"#,
+    )
+    .result
+    .expect("a real node answers");
+    assert_eq!(silent.get("published"), Some(&Value::Bool(false)));
+    assert_eq!(
+        silent.get("channel"),
+        Some(&Value::String("carries".into()))
+    );
+
+    let uniform = marks_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"chrome"},"id":704}"#,
+    )
+    .result
+    .expect("a real node answers");
+    assert_eq!(uniform.get("published"), Some(&Value::Bool(false)));
+    assert_eq!(
+        uniform.get("channel"),
+        Some(&Value::String("uniform".into())),
+        "the wire says WHY, so an agent need not read our source"
+    );
+
+    let err = marks_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"nobody"},"id":705}"#,
+    )
+    .error
+    .expect("an unknown tag is not an answer");
+    assert_eq!(err.code, -32602);
+}
+
+#[test]
+fn r1615_scene_marks_refuses_a_missing_tag_and_a_non_integer_index() {
+    let mut scene = box_scene(0, 0, 10, 10);
+    for req in [
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"index":1,"from":"state"},"id":706}"#,
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"x","index":"five","from":"state"},"id":707}"#,
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"x","index":-1,"from":"state"},"id":708}"#,
+        r#"{"jsonrpc":"2.0","method":"scene/marks","params":{"tag":"x","from":"sideways"},"id":709}"#,
+    ] {
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected a refusal");
+        assert_eq!(err.code, -32602, "req: {req}");
+    }
+}
+
 // ---- R39.3: scene/bbox JSON-RPC wire ----
 
 #[test]
@@ -9146,6 +9277,10 @@ fn probe_params() -> serde_json::Value {
     params.insert("glyph_id".to_owned(), serde_json::json!(1));
     params.insert("font_id".to_owned(), serde_json::json!(1));
     params.insert("bytes".to_owned(), serde_json::json!([0]));
+    // R1615 — `scene/marks` reads a non-negative integer position; a
+    // path-shaped string would be refused on the VALUE and the method would
+    // never reach its tag parse.
+    params.insert("index".to_owned(), serde_json::json!(0));
     // ★R1591 — the eight the census could not see until it normalised
     // whitespace, plus the three R1591 added. Each is the shape its method's own
     // refusal asks for; a path-shaped string here would be refused on the VALUE
@@ -9195,6 +9330,7 @@ const PROBE_PARAM_NAMES: &[&str] = &[
     "form",
     "from",
     "glyph_id",
+    "index",
     "intent",
     "key",
     "kind",

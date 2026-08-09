@@ -463,6 +463,22 @@ pub(crate) fn current_line_band_tag(field_tag: &str) -> String {
     format!("{field_tag}-current-line")
 }
 
+/// R1615 §2 #7 — the tag on the field's own text node: `{field_tag}-text`.
+///
+/// The node carries the field's [`pinion_core::scene::StyleRun`]s,
+/// and since R1615 those runs can name what they are — a syntax highlighter's
+/// token class, a find match, a spelling error. `scene/marks` addresses a node
+/// **by tag**, so without one the only thing that could be asked about the
+/// runs was their ink, which is exactly the loss that channel exists to undo.
+///
+/// A passive paint node like the current-line band: same suffix discipline (no
+/// `#` composite separator, so the `InputRouter` never routes to it) and a
+/// suffix that cannot collide with the field's own `tag`.
+#[must_use]
+pub fn field_text_tag(field_tag: &str) -> String {
+    format!("{field_tag}-text")
+}
+
 /// (R657 §5.16) Preedit underline color — opaque Accent. Mirrors
 /// the M3 / canonical IME convention where the underline matches
 /// the active control hue so caret + underline + selection all
@@ -851,7 +867,10 @@ pub fn view_field(
     // stays fully on parley (the R1070.1 caret contract).
     let mut text_node =
         pinion_core::scene::TextNode::styled(effective_text.clone(), Rect::default(), text_style)
-            .caret_bearing();
+            .caret_bearing()
+            // R1615 — addressable, so `scene/marks` can ask this node why a
+            // byte of the field's text is drawn the way it is.
+            .with_tag(field_text_tag(tag));
     // R767 §5.36 — paint the field's styled runs (rich text). The paint
     // adapter emits one Vello glyph run per `StyleRun` (R713); the same
     // `runs` were just shaped into the caret / selection geometry above
@@ -866,7 +885,16 @@ pub fn view_field(
             LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Px(wrap_w))),
         );
     }
-    let text_node = Scene::Text(text_node);
+    // R1615 — the tag makes this node ADDRESSABLE, not clickable. A tagged
+    // node is a candidate hit-target for the input router, and the current-line
+    // band one block below already records why that matters: it is
+    // `pointer_transparent` "so a click on the current line falls through to
+    // the field's caret hit-test", and it works "only because the untagged text
+    // node paints on top and shadows it". Tagging the text node removed that
+    // shadow, and clicks stopped positioning the caret — measured, by
+    // `r762_textfield_click_caret`, which reported every interior click landing
+    // at one end of the string or the other.
+    let text_node = Scene::Text(text_node.map_layout(|l| l.with_pointer_transparent(true)));
 
     // Caret painted only when focused/editing AND blink phase is
     // visible. R56.1.h ties blink's enabled gate to SCXML state, so
@@ -1629,6 +1657,51 @@ mod tests {
                 "Test input",
             );
             assert!(scene.contains_tag("tf_test"));
+        });
+    }
+
+    #[test]
+    fn r1615_the_fields_text_node_is_addressable_by_its_own_tag() {
+        // ★ Found by a counterfactual: deleting the tag left every Rust test
+        // green, because the only thing that noticed was a demo. A public
+        // `field_text_tag` whose emitter never has to use it is a name with no
+        // referent -- and `scene/marks` addresses a node BY TAG, so an
+        // untagged text node cannot be asked why it painted.
+        with_owner(|| {
+            let theme = Theme::light();
+            let scene = view_field(
+                "tf_test",
+                TextFieldState::Idle,
+                0,
+                &theme,
+                &TextFieldStyle::default(),
+                "Test input",
+            );
+            let text_tag = field_text_tag("tf_test");
+            let node = scene
+                .find_with_tag(&text_tag)
+                .expect("the field's text node carries field_text_tag");
+            assert_eq!(
+                node.node_kind(),
+                pinion_core::scene::SceneNodeKind::Text,
+                "and it is the TEXT node, not some wrapper that borrowed the name",
+            );
+            assert_ne!(text_tag, "tf_test", "a suffix, so it cannot collide");
+            assert!(
+                !text_tag.contains('#'),
+                "no composite separator -- the input router must never route here",
+            );
+            // ★ And addressable is not clickable. A TAGGED node is a candidate
+            // hit-target for the input router, so tagging this one made it
+            // swallow the clicks that used to position the caret -- every
+            // interior click landed at one end of the string. Nothing in the
+            // Rust suite saw it; `r762_textfield_click_caret` did. This is the
+            // assertion that moves that catch into the unit gate.
+            assert!(
+                node.is_pointer_transparent(),
+                "the field's text node is passive paint: a click must fall \
+                 through to the field's own caret hit-test",
+            );
         });
     }
 

@@ -147,6 +147,14 @@ const VOCABULARY_32602: &[&str] = &[
     "UnknownInvokePath",
     "UnknownLevel",
     "UnknownPath",
+    // R1615 — `UnknownProposalKind` was on the wire and unpublished. The scan
+    // that should have caught it recognised the `"Word: {detail}"` shape by
+    // two hard-coded `contains` checks naming the two call sites that existed
+    // when it was written, so a third one was invisible. Generalising the rule
+    // surfaced it in the same round that added `UnknownTag` — the fifth
+    // instance of a census finding only what it was told to look for.
+    "UnknownProposalKind",
+    "UnknownTag",
     "UnknownWindow",
     "UnmappedSurfaceError",
     "UnsupportedPath",
@@ -382,6 +390,43 @@ mod tests {
         is_vocabulary_word(word).then_some(word)
     }
 
+    /// R1615 — every vocabulary word a string literal on this line opens with,
+    /// in the `"Word: {detail}"` shape the -32602 entry tells clients to match
+    /// by prefix.
+    ///
+    /// Derived from the shape, not from a list of the three call sites that
+    /// currently use it. The two hard-coded `line.contains("\"UnknownWindow:
+    /// {requested:?}")` checks this replaces would have called R1615's
+    /// `UnknownTag` a dead entry — the scan would have been blind to a word
+    /// genuinely on the wire, which is precisely what this gate exists to
+    /// catch one layer down.
+    ///
+    /// The `: ` after the word is what keeps it from swallowing prose: a
+    /// sentence like `"params.tag missing"` does not start with an upper-case
+    /// bare word, and a word followed by a colon-space in a payload literal is
+    /// the documented shape.
+    fn colon_prefixed_words(line: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut rest = line;
+        while let Some(i) = rest.find('"') {
+            rest = &rest[i + 1..];
+            let Some(end) = rest.find('"') else { break };
+            let literal = &rest[..end];
+            // A vocabulary word, and long enough to be one: `is_vocabulary_word`
+            // alone admits a single capital, and a debug format like `"P: {x}"`
+            // is not a refusal.
+            if let Some((word, _)) = literal.split_once(": ")
+                && is_vocabulary_word(word)
+                && word.len() >= 4
+                && word.chars().any(char::is_lowercase)
+            {
+                out.push(word);
+            }
+            rest = &rest[end + 1..];
+        }
+        out
+    }
+
     /// R1610 — every word emitted by a `let variant = match err { … }` block
     /// whose function reaches `RpcError::invalid_params(variant)`.
     ///
@@ -479,17 +524,15 @@ mod tests {
                         }
                     }
                 }
-                // `UnknownWindow` is built by `format!`, so the scan sees the
-                // prefix rather than a whole literal — the one member whose
-                // payload is not a bare word, and the reason the entry's
-                // `meaning` tells a client to match it by prefix.
-                if line.contains("\"UnknownWindow: {requested:?}") {
-                    emitted.push("UnknownWindow");
-                }
-                // R1576 — the same `format!` shape, one module over.
-                if line.contains("\"MalformedDisplayAsk: {name}") {
-                    emitted.push("MalformedDisplayAsk");
-                }
+                // Shape two: a word built by `format!` with the offending
+                // name appended after a colon, which the -32602 entry tells
+                // clients to match by prefix. Recognised by SHAPE rather than
+                // by a list of the call sites: R1615 added a third
+                // (`UnknownTag`) and the two hard-coded `contains` checks that
+                // used to stand here would have reported it dead — a census
+                // that only finds the shapes it was told about is the defect
+                // this file exists to prevent one layer down.
+                emitted.extend(colon_prefixed_words(line));
                 // R1610 — shape three: a bare word handed straight to
                 // `invalid_params`. Invisible to the two openers above, which
                 // is how `InputInjectionUnavailable` reached the wire from 24

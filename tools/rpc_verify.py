@@ -964,6 +964,56 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None
         return resp.result
 
+    def marks(
+        self,
+        tag: str,
+        index: Optional[int] = None,
+        *,
+        source: str = "paint",
+        viewport: Optional[tuple[int, int]] = None,
+    ) -> dict[str, Any]:
+        """`scene/marks` typed wrapper (R1615 §5.12 §2 #7) — *why* the node
+        tagged `tag` looks the way it does.
+
+        Answers with `{tag, kind, channel, published}` plus, when the node
+        published named runs, the `domain` its indices count in and the `runs`
+        themselves in declaration order. Pass `index` to also get `at`: the
+        whole stack covering that position, innermost last, and `top` — the one
+        the painter obeyed.
+
+        `published: false` is not one fact but two, and `channel` says which:
+        `"carries"` is a node that could have named its runs and did not,
+        anything else is a node whose KIND has nothing to attribute.
+
+        Defaults to `source="paint"` unlike its spatial neighbours, because
+        marks are a paint fact: a view-fn binding's state tree holds none of
+        the nodes the view emits.
+        """
+        params: dict[str, Any] = {"tag": tag, "from": source}
+        if index is not None:
+            params["index"] = index
+        if viewport is not None:
+            params["viewport"] = {"w": viewport[0], "h": viewport[1]}
+        resp = self.request("scene/marks", params)
+        assert resp is not None, "scene/marks answered nothing"
+        assert isinstance(resp.result, dict), f"scene/marks: {resp.error}"
+        return resp.result
+
+    def mark_names(
+        self,
+        tag: str,
+        index: int,
+        *,
+        viewport: Optional[tuple[int, int]] = None,
+    ) -> list[str]:
+        """The names covering `index`, in declaration order — the common case
+        of [`marks`], with the envelope unwrapped. Empty when the node
+        published nothing or nothing covers that position; the two are
+        distinguished by `marks(...)["published"]`."""
+        answer = self.marks(tag, index, viewport=viewport)
+        at = answer.get("at")
+        return [] if at is None else at["names"]
+
     def cache_stats(self, *, window: Optional[str] = None) -> dict[str, Any]:
         """`scene/cache_stats` typed wrapper (R682.B §5.16 / R883.1).
 

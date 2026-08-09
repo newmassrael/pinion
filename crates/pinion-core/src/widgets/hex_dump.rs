@@ -56,6 +56,8 @@
 
 use std::fmt;
 
+use crate::marks::Mark;
+
 /// One cell of the dump grid.
 ///
 /// Column-major-free: a cell is a pair, and which pair belongs to which byte is
@@ -718,190 +720,18 @@ impl fmt::Display for ByteSelection {
     }
 }
 
-/// A named run of bytes, `[start, end)`.
+/// R1615 — the mark over the bytes a [`ByteSelection`] holds, ready to be
+/// declared in a [`MarkSet`](crate::marks::MarkSet).
 ///
-/// The thing an inspector actually has: not "these bytes are blue" but "these
-/// bytes are the length field". The name is the point — it is what a caller
-/// keys colour off, what an assistant reads back over the wire, and what
-/// [`MarkSet::names_at`] answers with when someone asks *why* a byte is lit.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mark {
-    name: String,
-    start: usize,
-    end: usize,
-}
-
-impl Mark {
-    /// A mark called `name` over `[start, end)`. An inverted or empty range is
-    /// stored as it was ordered, then reports [`Mark::is_empty`].
+/// The general type lives in [`crate::marks`] now: a named run is not a hex
+/// concept, and the same question — *why does this look like that* — is asked
+/// of a styled paragraph in the same words. What stays here is this one line
+/// of glue, because only a byte selection knows it is a byte range.
+impl ByteSelection {
+    /// This selection as a mark called `name`.
     #[must_use]
-    pub fn new(name: impl Into<String>, start: usize, end: usize) -> Self {
-        let (start, end) = if start <= end {
-            (start, end)
-        } else {
-            (end, start)
-        };
-        Self {
-            name: name.into(),
-            start,
-            end,
-        }
-    }
-
-    /// The mark over the bytes a [`ByteSelection`] holds.
-    #[must_use]
-    pub fn of_selection(name: impl Into<String>, selection: ByteSelection) -> Self {
-        Self::new(name, selection.start(), selection.end())
-    }
-
-    /// What this run is called.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// First marked byte.
-    #[must_use]
-    pub const fn start(&self) -> usize {
-        self.start
-    }
-
-    /// One past the last marked byte.
-    #[must_use]
-    pub const fn end(&self) -> usize {
-        self.end
-    }
-
-    /// How many bytes the run covers.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.end - self.start
-    }
-
-    /// Whether the run covers no bytes.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.start >= self.end
-    }
-
-    /// Whether `byte` is in the run.
-    #[must_use]
-    pub const fn contains(&self, byte: usize) -> bool {
-        self.start <= byte && byte < self.end
-    }
-}
-
-/// The marks over one buffer, in declaration order.
-///
-/// ## Overlap resolves in ONE direction, and the direction is queryable
-///
-/// Marks overlap constantly — a packet's length field is inside its header is
-/// inside the frame — so a byte can carry several, and something has to decide
-/// which one a painter obeys. Two decisions are made here and both are
-/// deliberate.
-///
-/// **Declaration order, later wins, for every visual channel alike.** A caller
-/// that declares the frame, then the header, then the field gets the field on
-/// top, which is the order it wrote them in. The reference for this is a
-/// mature toolkit's list of range decorations over a text layout, and it is
-/// worth naming what is different: there the ordering is *split by channel* —
-/// a later range's background overpaints an earlier one, while a later range's
-/// foreground is suppressed wherever an earlier one already drew text, so
-/// background is last-wins and foreground is first-wins **in the same loop**.
-/// Two directions in one list is a rule nobody can hold, and it is not written
-/// down anywhere in that interface. One direction, stated, is the choice here.
-///
-/// **A mark carries a name and no colour.** The same reference's range
-/// decoration is `(start, length, format)` — the format *is* the colour, so
-/// the run has no identity apart from how it looks, and once the list is built
-/// there is no way to ask which entries cover a position: the list is stored
-/// and re-scanned by whoever wants to know. [`MarkSet::names_at`] is that
-/// question, answered.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MarkSet {
-    marks: Vec<Mark>,
-}
-
-impl MarkSet {
-    /// No marks.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self { marks: Vec::new() }
-    }
-
-    /// The same set with `mark` declared after everything already in it — so
-    /// it wins wherever it overlaps.
-    #[must_use]
-    pub fn with(mut self, mark: Mark) -> Self {
-        self.marks.push(mark);
-        self
-    }
-
-    /// The same set with a mark called `name` over `[start, end)` declared
-    /// last. The builder for the common case.
-    #[must_use]
-    pub fn marking(self, name: impl Into<String>, start: usize, end: usize) -> Self {
-        self.with(Mark::new(name, start, end))
-    }
-
-    /// Declare `mark` last, in place.
-    pub fn push(&mut self, mark: Mark) {
-        self.marks.push(mark);
-    }
-
-    /// The marks, in declaration order.
-    pub fn iter(&self) -> impl Iterator<Item = &Mark> {
-        self.marks.iter()
-    }
-
-    /// How many marks are declared.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.marks.len()
-    }
-
-    /// Whether nothing is marked.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.marks.is_empty()
-    }
-
-    /// The mark by that name, if one is declared. The last, if a name is
-    /// declared twice — the same rule overlap follows.
-    #[must_use]
-    pub fn get(&self, name: &str) -> Option<&Mark> {
-        self.marks.iter().rev().find(|mark| mark.name == name)
-    }
-
-    /// Every mark covering `byte`, in declaration order.
-    ///
-    /// **Why a byte looks the way it does.** A painter obeys the last of
-    /// these; a reader — a person, or an assistant over the wire — gets the
-    /// whole stack, so "the length field, inside the header, inside the frame"
-    /// is answerable rather than inferred from a colour.
-    #[must_use]
-    pub fn at(&self, byte: usize) -> impl DoubleEndedIterator<Item = &Mark> {
-        self.marks.iter().filter(move |mark| mark.contains(byte))
-    }
-
-    /// The names covering `byte`, in declaration order.
-    #[must_use]
-    pub fn names_at(&self, byte: usize) -> Vec<&str> {
-        self.at(byte).map(Mark::name).collect()
-    }
-
-    /// The mark a painter obeys at `byte` — the last declared one covering it.
-    #[must_use]
-    pub fn top_at(&self, byte: usize) -> Option<&Mark> {
-        self.at(byte).next_back()
-    }
-}
-
-impl FromIterator<Mark> for MarkSet {
-    fn from_iter<I: IntoIterator<Item = Mark>>(iter: I) -> Self {
-        Self {
-            marks: iter.into_iter().collect(),
-        }
+    pub fn mark(self, name: impl Into<String>) -> Mark {
+        Mark::new(name, self.start, self.end)
     }
 }
 
@@ -1379,101 +1209,20 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_marks_resolve_in_declaration_order_last_wins() {
-        // ★ ONE direction, unlike the split the reference interface has.
-        let marks = MarkSet::new()
-            .marking("frame", 0, 64)
-            .marking("header", 0, 16)
-            .marking("length", 4, 8);
-        assert_eq!(marks.len(), 3);
-        assert_eq!(marks.names_at(5), vec!["frame", "header", "length"]);
-        assert_eq!(marks.top_at(5).map(Mark::name), Some("length"));
-        assert_eq!(marks.names_at(12), vec!["frame", "header"]);
-        assert_eq!(marks.top_at(12).map(Mark::name), Some("header"));
-        assert_eq!(marks.names_at(40), vec!["frame"]);
-        assert_eq!(marks.top_at(40).map(Mark::name), Some("frame"));
-        assert!(marks.names_at(100).is_empty());
-        assert_eq!(marks.top_at(100), None);
-    }
-
-    #[test]
-    fn a_byte_says_why_it_is_lit() {
-        // ★ The query the reference's range-decoration list has no form of:
-        // the whole stack covering a byte, in the order that decided it.
-        // A colour cannot answer this -- two marks that resolve to the same
-        // ink are indistinguishable once drawn.
-        let marks = MarkSet::new()
-            .marking("frame", 0, 64)
-            .marking("header", 0, 16)
-            .marking("length", 4, 8);
-        let why = marks.names_at(6);
-        assert_eq!(why, vec!["frame", "header", "length"]);
-        assert_eq!(
-            why.last().copied(),
-            Some("length"),
-            "the last of the stack is the one paint obeys"
-        );
-
-        // Model of the split-direction rule: background takes the LAST range
-        // covering a byte, foreground the FIRST. Two marks, two answers, and
-        // no way to ask which run a byte belongs to.
-        let ranges = [("frame", 0usize, 64usize), ("length", 4, 8)];
-        let covering = |byte: usize| -> Vec<&str> {
-            ranges
-                .iter()
-                .filter(|(_, s, e)| (*s..*e).contains(&byte))
-                .map(|(n, _, _)| *n)
-                .collect()
-        };
-        let split = covering(6);
-        assert_eq!(split.first().copied(), Some("frame"), "foreground: first");
-        assert_eq!(split.last().copied(), Some("length"), "background: last");
-        assert_ne!(
-            split.first(),
-            split.last(),
-            "the two channels of one byte come from DIFFERENT runs -- which is \
-             the rule this module refuses"
-        );
-        let ours = MarkSet::new()
-            .marking("frame", 0, 64)
-            .marking("length", 4, 8);
-        assert_eq!(
-            ours.top_at(6).map(Mark::name),
-            Some("length"),
-            "here both channels come from the same run, and it is nameable"
-        );
-    }
-
-    #[test]
-    fn a_mark_is_a_run_and_says_so() {
-        let mark = Mark::new("payload", 8, 24);
-        assert_eq!(mark.name(), "payload");
-        assert_eq!((mark.start(), mark.end(), mark.len()), (8, 24, 16));
-        assert!(mark.contains(8));
-        assert!(mark.contains(23));
-        assert!(!mark.contains(24));
-        assert!(!mark.is_empty());
-        // An inverted range is ordered rather than rejected -- a drag runs
-        // either way and the run is the same run.
-        assert_eq!(Mark::new("x", 9, 3), Mark::new("x", 3, 9));
-        assert!(Mark::new("empty", 5, 5).is_empty());
-        // A selection is a run with a focus; a mark is the run.
+    fn a_selection_becomes_a_mark_over_the_bytes_it_holds() {
+        // The one line of mark glue that stays here: a drag runs either way,
+        // and the run it names is the ordered one.
         let selection = ByteSelection::drag(11, 4);
-        let of_sel = Mark::of_selection("selection", selection);
-        assert_eq!((of_sel.start(), of_sel.end()), (4, 12));
-    }
-
-    #[test]
-    fn a_mark_set_is_queryable_by_name_and_collectable() {
-        let marks: MarkSet = [Mark::new("a", 0, 4), Mark::new("b", 4, 8)]
-            .into_iter()
-            .collect();
-        assert_eq!(marks.get("b").map(Mark::start), Some(4));
-        assert_eq!(marks.get("missing"), None);
-        assert!(MarkSet::new().is_empty());
-        // A name declared twice resolves the way overlap does: the last one.
-        let shadowed = MarkSet::new().marking("f", 0, 4).marking("f", 8, 12);
-        assert_eq!(shadowed.get("f").map(Mark::start), Some(8));
-        assert_eq!(shadowed.iter().count(), 2);
+        let mark = selection.mark("selection");
+        assert_eq!(mark.name(), "selection");
+        assert_eq!((mark.start(), mark.end()), (4, 12));
+        assert_eq!(mark.len(), selection.len());
+        for byte in 0..20 {
+            assert_eq!(
+                mark.contains(byte),
+                selection.contains(byte),
+                "the mark and the selection disagree at {byte}"
+            );
+        }
     }
 }

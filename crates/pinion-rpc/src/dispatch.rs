@@ -2905,6 +2905,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                         HandlerKind::Read,
                     )
                 }
+                "scene/marks" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_marks(
+                            scene,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/bbox" => (
                     handle_scene_bbox(scene, request.params.as_ref()),
                     HandlerKind::Read,
@@ -7734,6 +7750,79 @@ where
         Ok(outcome) => Ok(locate_region_outcome_to_json(&outcome)),
         Err(err) => Err(RpcError::invalid_params(err.to_string())),
     }
+}
+
+/// `scene/marks` — R1615 §5.12 §2 #7: **why** the node tagged `params.tag`
+/// looks the way it does.
+///
+/// `params.index` is optional; with it the answer carries the stack covering
+/// that position in the reported domain, without it the whole run list. See
+/// [`crate::marks`] for the four outcomes and why they are four.
+///
+/// Reads the **paint** scene by default, unlike its spatial neighbours. Marks
+/// are a paint fact: the view is where the appearance is decided, and a view-fn
+/// binding's state scene holds none of the nodes the view emits, so `from:
+/// "state"` answers `UnknownTag` for every one of them. The parameter exists so
+/// a caller can say which scene it means rather than discover the default by
+/// experiment.
+fn handle_scene_marks<F>(
+    scene: &Scene,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let params = require_params(params)?;
+    let tag = params
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.tag missing or not a string"))?;
+    let index = match params.get("index") {
+        None | Some(Value::Null) => None,
+        Some(raw) => Some(
+            usize::try_from(raw.as_u64().ok_or_else(|| {
+                RpcError::invalid_params("params.index is not a non-negative integer")
+            })?)
+            .map_err(|_| RpcError::invalid_params("params.index exceeds this platform's range"))?,
+        ),
+    };
+
+    let painted;
+    let target = match params
+        .get("from")
+        .and_then(Value::as_str)
+        .unwrap_or("paint")
+    {
+        "paint" => {
+            if let Some(frame) = last_paint_scene {
+                frame
+            } else if let Some(producer) = paint_producer {
+                let (w, h) = parse_snapshot_viewport(params)?;
+                painted = (producer)(w, h);
+                &painted
+            } else {
+                return Err(RpcError::invalid_params(
+                    "params.from \"paint\" needs a paint producer or a stored frame",
+                ));
+            }
+        }
+        "state" => scene,
+        other => {
+            return Err(RpcError::invalid_params(format!(
+                "params.from {other:?} is not \"paint\" or \"state\""
+            )));
+        }
+    };
+
+    // R1615 — a matchable word, not prose. A node that EXISTS and cannot be
+    // attributed answers instead (`published: false` plus the channel saying
+    // why), so this refusal means exactly one thing: nothing carries that tag.
+    let outcome = crate::marks::marks_outcome(target, tag, index).ok_or_else(|| {
+        RpcError::invalid_params(String::new()).with_data_string(format!("UnknownTag: {tag}"))
+    })?;
+    serde_json::to_value(outcome).map_err(RpcError::internal_error)
 }
 
 /// Parse the region a `scene/locate_region` call is asking about.

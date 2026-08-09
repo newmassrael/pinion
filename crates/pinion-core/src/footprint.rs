@@ -247,8 +247,13 @@ impl Footprint for crate::style::TextStyle {
 
 impl Footprint for crate::scene::StyleRun {
     fn footprint(&self) -> usize {
-        let Self { start, end, style } = self;
-        start.footprint() + end.footprint() + style.footprint()
+        let Self {
+            start,
+            end,
+            style,
+            name,
+        } = self;
+        start.footprint() + end.footprint() + style.footprint() + name.footprint()
     }
 }
 

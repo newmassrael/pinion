@@ -29,6 +29,7 @@ use std::time::Duration;
 
 use crate::cell_metric::CellMetric;
 use crate::external::ExternalIntrospect;
+use crate::marks::{MarkRun, MarkedRuns, MarksChannel, MarksLookup};
 use crate::mnemonic::Mnemonic;
 use crate::region::{Region, RegionError, RegionFit};
 use crate::style::{
@@ -194,6 +195,28 @@ impl SceneNodeKind {
             Self::Scroll => "Scroll",
             Self::ImmediateModeNode => "ImmediateModeNode",
             Self::TextGrid => "TextGrid",
+        }
+    }
+
+    /// R1615 §2 #7 — whether this kind can name the declarations that
+    /// produced its appearance, and when it cannot, why not.
+    ///
+    /// Exhaustive on purpose. A node kind added later has to answer this,
+    /// which is what separates a channel that is *absent by decision* from a
+    /// channel that was *forgotten*; a `_ =>` arm would silently give every
+    /// future kind the second one.
+    ///
+    /// [`Text`](Self::Text) carries it through its named
+    /// [`StyleRun`]s and [`TextGrid`](Self::TextGrid) through its
+    /// [`marks`](TextGridNode::marks). The other eight are each a different
+    /// reason, not a shared shrug — see [`MarksChannel`].
+    #[must_use]
+    pub const fn marks_channel(self) -> MarksChannel {
+        match self {
+            Self::Text | Self::TextGrid => MarksChannel::Carries,
+            Self::Box | Self::Path | Self::Image => MarksChannel::Uniform,
+            Self::Container | Self::Scroll => MarksChannel::Structural,
+            Self::Effect | Self::External | Self::ImmediateModeNode => MarksChannel::Opaque,
         }
     }
 
@@ -644,6 +667,81 @@ impl Scene {
     /// composed Container, so the canonical
     /// `scene.find_external_with_tag(V::tag())` call resolves O(1)
     /// for the common case.
+    /// R1615 §5.32 — the first node carrying `target` as its
+    /// [`tag`](Self::tag), of **any** kind, in DFS pre-order.
+    ///
+    /// The kind-blind peer of
+    /// [`find_external_with_tag`](Self::find_external_with_tag). A question
+    /// asked *about a tag* — why does this look like that, what is it — has to
+    /// reach the node before it can decide the kind is wrong for the question,
+    /// or it cannot tell "no such tag" from "that tag is not an External",
+    /// which are different answers a client acts on differently.
+    #[must_use]
+    pub fn find_with_tag(&self, target: &str) -> Option<&Scene> {
+        if self.tag() == Some(target) {
+            return Some(self);
+        }
+        match self {
+            Scene::Container(c) => c.children.iter().find_map(|s| s.find_with_tag(target)),
+            Scene::Scroll(s) => s.content.find_with_tag(target),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::External(_)
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => None,
+        }
+    }
+
+    /// R1615 §2 #7 — **why the node tagged `target` looks the way it does**:
+    /// the named runs it published, in declaration order.
+    ///
+    /// The scene answers this, not a widget's own introspection, and that is
+    /// the point. A widget's appearance is routinely decided by more than one
+    /// piece of state — a dump's cells are lit by an overview brush *and* by a
+    /// drag selection, and those live in two sibling externals — so no single
+    /// oracle owns the assembled fact. The view is where the assembly happens,
+    /// so the view publishes it, and the question is asked of the picture.
+    ///
+    /// Ask the **paint** scene. A view-fn binding's state scene is the
+    /// authority on values, not on what was drawn; marks are a paint fact, and
+    /// a state-scene lookup answers [`NoSuchTag`](MarksLookup::NoSuchTag) for
+    /// every node the view emits.
+    ///
+    /// The four outcomes are four different facts — see [`MarksLookup`].
+    #[must_use]
+    pub fn marks_for_tag(&self, target: &str) -> MarksLookup<'_> {
+        let Some(node) = self.find_with_tag(target) else {
+            return MarksLookup::NoSuchTag;
+        };
+        match node {
+            Scene::Text(n) => {
+                let runs: Vec<MarkRun<'_>> = n
+                    .runs
+                    .iter()
+                    .filter_map(|run| {
+                        run.name().map(|name| MarkRun {
+                            name,
+                            start: run.start as usize,
+                            end: run.end as usize,
+                        })
+                    })
+                    .collect();
+                if runs.is_empty() {
+                    MarksLookup::Silent
+                } else {
+                    MarksLookup::Published(MarkedRuns::new(crate::marks::domain::UTF8_BYTE, runs))
+                }
+            }
+            Scene::TextGrid(n) => n.marks.as_ref().map_or(MarksLookup::Silent, |set| {
+                MarksLookup::Published(MarkedRuns::from(set))
+            }),
+            other => MarksLookup::NoChannel(other.node_kind().marks_channel()),
+        }
+    }
+
     #[must_use]
     pub fn find_external_with_tag(&self, target: &str) -> Option<&ExternalNode> {
         match self {
@@ -2236,6 +2334,25 @@ pub fn capture_surface(tag: impl Into<Cow<'static, str>>, rect: Rect, focusable:
 /// span have no effect. Authoring convention: build each run's style
 /// from the node's base style so it inherits the paragraph-level
 /// fields and overrides only the run-level ones.
+///
+/// # A run can say what it *is*, not only how it looks (R1615)
+///
+/// [`name`](Self::name) is the run's identity, and it is what makes the ink
+/// explicable. A syntax highlighter classifies a token as a keyword or a
+/// string and then, without this, keeps only a colour — and the same class
+/// paints two different colours under a light and a dark scheme, so the colour
+/// is not a stable name for it either. The reference interface this model
+/// comes from has no such field: its run *is* its format. (A name can be
+/// smuggled through that format type's open integer-keyed property space, but
+/// nothing declares one, so no reader can expect it and no surface reports
+/// it.)
+///
+/// A named run is published through [`Scene::marks_for_tag`] as a
+/// [`MarkRun`], so "which declarations cover byte N"
+/// is one call rather than every caller's own loop over the list. Unnamed runs
+/// keep working exactly as before and simply decline to be attributed —
+/// `None` means "this run claims no identity", which is a different fact from
+/// a run named `""`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct StyleRun {
@@ -2245,13 +2362,37 @@ pub struct StyleRun {
     pub end: u32,
     /// The fully-resolved style for the bytes in `[start, end)`.
     pub style: TextStyle,
+    /// R1615 — what this run *is* (a token class, a field, a match), when the
+    /// producer names it. `None` for a run that declares no identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<Cow<'static, str>>,
 }
 
 impl StyleRun {
-    /// Construct a styled run over the UTF-8 byte range `[start, end)`.
+    /// Construct a styled run over the UTF-8 byte range `[start, end)`, with
+    /// no declared identity. Pair with [`named`](Self::named) when the
+    /// producer knows what the run is.
     #[must_use]
     pub fn new(start: u32, end: u32, style: TextStyle) -> Self {
-        Self { start, end, style }
+        Self {
+            start,
+            end,
+            style,
+            name: None,
+        }
+    }
+
+    /// The same run, declaring itself `name` (builder form).
+    #[must_use]
+    pub fn named(mut self, name: impl Into<Cow<'static, str>>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// What this run says it is, if it says.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     /// Whether this run covers `byte_offset`.
@@ -4181,6 +4322,26 @@ pub struct TextGridNode {
     /// set) — so `cols == buffer_cols` is the steady state under either
     /// authority and a divergence means what the docs already say it means.
     pub winsize: Option<(u16, u16)>,
+    /// R1615 §2 #7 — the named runs that decided how these cells look, over
+    /// the *producer's* index space rather than over the cells.
+    ///
+    /// A grid's [`cells`](Self::cells) carry resolved colours and nothing
+    /// else, so the picture cannot say why it is that colour. A dump lights a
+    /// byte because it is inside the length field, inside the header, inside
+    /// the frame; one background survives all three, and two runs that resolve
+    /// to the same ink are indistinguishable once drawn.
+    ///
+    /// The set states its own [`domain`](crate::marks::MarkSet::domain)
+    /// because the index space is **not** the cell grid: one byte occupies
+    /// three cells in a hex dump, so a client that assumed cells would read a
+    /// plausible wrong answer rather than an error.
+    ///
+    /// `None` is a grid that declares nothing — every grid built before this
+    /// field existed, and every grid whose colours are the producer's own
+    /// (a terminal emulator's SGR state is already the authority on why a cell
+    /// is red). Distinct from `Some(empty)`, which is a grid that publishes
+    /// the channel and happens to have no runs this frame.
+    pub marks: Option<crate::marks::MarkSet>,
 }
 
 impl TextGridNode {
@@ -4200,6 +4361,7 @@ impl TextGridNode {
             palette: Palette::xterm_default(),
             font_size_px: None,
             winsize: None,
+            marks: None,
         }
     }
 
@@ -4207,6 +4369,33 @@ impl TextGridNode {
     #[must_use]
     pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// R1615 — publish the named runs that decided these cells' appearance
+    /// (builder form). See [`marks`](Self::marks).
+    ///
+    /// Prefer [`with_marked_grid`](Self::with_marked_grid) when the cells and
+    /// the marks were produced together: this setter cannot tell whether the
+    /// runs it is handed are the ones that produced the cells already on the
+    /// node.
+    #[must_use]
+    pub fn with_marks(mut self, marks: crate::marks::MarkSet) -> Self {
+        self.marks = Some(marks);
+        self
+    }
+
+    /// R1615 — set the cells **and** the named runs that produced them, from
+    /// the one value a painter returned (builder form).
+    ///
+    /// The pairing is the point: a call site that updates the picture without
+    /// updating the explanation is not expressible here, because there is one
+    /// argument.
+    #[must_use]
+    pub fn with_marked_grid(mut self, grid: crate::marks::MarkedGrid) -> Self {
+        let (cells, marks) = grid.into_parts();
+        self.cells = cells;
+        self.marks = Some(marks);
         self
     }
 
@@ -7491,6 +7680,211 @@ mod tests {
                 scene.box_style().is_some()
             );
         }
+    }
+
+    /// R1615 — the marks classification and what a node of that kind
+    /// actually answers are two separate matches, and only a fixture of
+    /// every kind makes them meet. A kind that says `Uniform` while its node
+    /// quietly published runs (or the reverse) would make the census a
+    /// statement about nothing.
+    #[test]
+    fn r1615_every_kind_answers_the_marks_channel_it_declares() {
+        const TAG: &str = "subject";
+        for kind in SceneNodeKind::ALL {
+            let scene = crate::test_fixtures::tagged_scene_of_kind(kind, TAG);
+            let answer = scene.marks_for_tag(TAG);
+            if scene.tag().is_none() {
+                // Unreachable by tag at all -- derived from the node, not
+                // hard-coded, so a kind that gains a tag field starts being
+                // held to the rule below without this test changing.
+                assert_eq!(
+                    answer,
+                    MarksLookup::NoSuchTag,
+                    "{} carries no tag, so nothing can address it",
+                    kind.name()
+                );
+                assert_eq!(kind, SceneNodeKind::Effect, "a second untagged kind");
+                continue;
+            }
+            // ★ The expected channel is DERIVED from what other parts of the
+            // framework do with a node of this kind -- never from
+            // `marks_channel` itself. The first draft of this test compared
+            // the declaration to the declaration (`match kind.marks_channel()
+            // { other => assert_eq!(answer, NoChannel(other)) }`), so the
+            // assertion and the code under it were one fact and a
+            // counterfactual that retagged `Container` as `Opaque` passed.
+            //
+            // Each observable below is a DIFFERENT match, written for a
+            // different purpose:
+            //   * descends  -- `find_with_tag` reaches a tagged child
+            //   * external  -- `find_external_with_tag` resolves it
+            //   * immediate -- `find_immediate_with_tag` resolves it
+            //   * untagged  -- an Effect has no tag field at all
+            let child = Scene::Box(BoxNode::new(rect_a(), BoxStyle::default()).with_tag("inner"));
+            let descends = crate::test_fixtures::scene_of_kind_containing(kind, child)
+                .is_some_and(|holder| holder.find_with_tag("inner").is_some());
+            let opaque = scene.find_external_with_tag(TAG).is_some()
+                || scene.find_immediate_with_tag(TAG).is_some();
+            let expected = if answer == MarksLookup::Silent {
+                MarksChannel::Carries
+            } else if descends {
+                MarksChannel::Structural
+            } else if opaque {
+                MarksChannel::Opaque
+            } else {
+                MarksChannel::Uniform
+            };
+            assert_eq!(
+                kind.marks_channel(),
+                expected,
+                "{} declares {} and behaves like {expected}",
+                kind.name(),
+                kind.marks_channel(),
+            );
+            // ...and the answer carries the declaration, so the wire and the
+            // census cannot say different things about the same node.
+            if expected != MarksChannel::Carries {
+                assert_eq!(answer, MarksLookup::NoChannel(expected), "{}", kind.name());
+            }
+        }
+    }
+
+    #[test]
+    fn r1615_a_grid_publishes_the_stack_that_lit_each_byte() {
+        const TAG: &str = "dump";
+        let marks = crate::marks::MarkSet::over(crate::marks::domain::BYTE)
+            .marking("frame", 0, 64)
+            .marking("header", 0, 16)
+            .marking("length", 4, 8);
+        let scene = Scene::Container(ContainerNode::new(vec![
+            box_a(),
+            Scene::TextGrid(
+                TextGridNode::new(CellMetric::DEFAULT)
+                    .with_tag(TAG)
+                    .with_marks(marks),
+            ),
+        ]));
+
+        let answer = scene.marks_for_tag(TAG);
+        let runs = answer.published().expect("the grid published");
+        assert_eq!(runs.domain(), "byte", "the index space is stated");
+        assert_eq!(runs.runs().len(), 3);
+        // The whole question, from the byte alone -- no sibling's answer fed
+        // back in by the caller.
+        assert_eq!(answer.names_at(5), vec!["frame", "header", "length"]);
+        assert_eq!(runs.top_at(5), Some("length"), "the one paint obeys");
+        assert_eq!(answer.names_at(12), vec!["frame", "header"]);
+        assert_eq!(answer.names_at(40), vec!["frame"]);
+        assert!(answer.names_at(999).is_empty());
+    }
+
+    #[test]
+    fn r1615_a_grid_that_declares_an_empty_set_is_not_a_grid_that_declares_nothing() {
+        // ★ Found by a counterfactual. `TextGridNode::marks` documents
+        // `Some(empty)` and `None` as different facts -- "this frame has no
+        // runs" and "this producer does not attribute its cells at all" -- and
+        // nothing held the node to it: filtering empty sets to `Silent` left
+        // the whole suite green. The distinction was tested one layer up, on
+        // `MarksLookup`, which is not the layer that can get it wrong.
+        const TAG: &str = "dump";
+        let declared = Scene::TextGrid(
+            TextGridNode::new(CellMetric::DEFAULT)
+                .with_tag(TAG)
+                .with_marks(crate::marks::MarkSet::over(crate::marks::domain::BYTE)),
+        );
+        let answer = declared.marks_for_tag(TAG);
+        let runs = answer
+            .published()
+            .expect("an empty set is still a published set");
+        assert!(runs.is_empty(), "it publishes no runs");
+        assert_eq!(runs.domain(), "byte", "and still states its index space");
+
+        let undeclared = Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT).with_tag(TAG));
+        assert_eq!(undeclared.marks_for_tag(TAG), MarksLookup::Silent);
+        assert_ne!(
+            answer,
+            undeclared.marks_for_tag(TAG),
+            "a terminal emulator that never attributes its cells and a dump \
+             with nothing selected this frame are not the same answer"
+        );
+    }
+
+    #[test]
+    fn r1615_a_text_node_publishes_its_named_runs_and_only_those() {
+        const TAG: &str = "code";
+        let node = TextNode::new("let x = 1;".to_string(), rect_a())
+            .with_tag(TAG)
+            .with_runs(vec![
+                StyleRun::new(0, 3, TextStyle::new()).named("keyword"),
+                // An unnamed run still paints; it just claims no identity, so
+                // it is not attributable and must not appear.
+                StyleRun::new(4, 5, TextStyle::new()),
+                StyleRun::new(8, 9, TextStyle::new()).named("number"),
+            ]);
+        let scene = Scene::Text(node);
+
+        let answer = scene.marks_for_tag(TAG);
+        let runs = answer.published().expect("the text published");
+        assert_eq!(runs.domain(), "utf8_byte");
+        assert_eq!(runs.runs().len(), 2, "the unnamed run is not attributable");
+        assert_eq!(answer.names_at(1), vec!["keyword"]);
+        assert!(
+            answer.names_at(4).is_empty(),
+            "a byte covered only by an unnamed run has no explanation to give"
+        );
+        assert_eq!(answer.names_at(8), vec!["number"]);
+
+        // A node whose runs are ALL unnamed is Silent, not Published-empty:
+        // it carries the channel and says nothing on it.
+        let anonymous = Scene::Text(
+            TextNode::new("ab".to_string(), rect_a())
+                .with_tag(TAG)
+                .with_runs(vec![StyleRun::new(0, 1, TextStyle::new())]),
+        );
+        assert_eq!(anonymous.marks_for_tag(TAG), MarksLookup::Silent);
+    }
+
+    #[test]
+    fn r1615_a_missing_tag_and_a_wrong_kind_are_different_answers() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::new(rect_a(), BoxStyle::default()).with_tag("plain")),
+            Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT).with_tag("dump")),
+        ]));
+        assert_eq!(scene.marks_for_tag("nobody"), MarksLookup::NoSuchTag);
+        assert_eq!(
+            scene.marks_for_tag("plain"),
+            MarksLookup::NoChannel(MarksChannel::Uniform),
+            "a Box is a real node that has nothing to attribute"
+        );
+        assert_eq!(scene.marks_for_tag("dump"), MarksLookup::Silent);
+    }
+
+    #[test]
+    fn r1615_find_with_tag_reaches_a_node_of_any_kind_through_scroll() {
+        // The kind-blind walk descends the same two containers the External
+        // walk does; a node inside a Scroll is reachable, and the first match
+        // in DFS pre-order is the one returned.
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(
+            ScrollNode::new(
+                rect_a(),
+                Scene::Container(ContainerNode::new(vec![Scene::Text(
+                    TextNode::new("x".to_string(), rect_a()).with_tag("deep"),
+                )])),
+            )
+            .with_tag("scroller"),
+        )]));
+        assert_eq!(
+            scene.find_with_tag("deep").and_then(Scene::tag),
+            Some("deep")
+        );
+        assert_eq!(
+            scene.find_with_tag("scroller").map(Scene::node_kind),
+            Some(SceneNodeKind::Scroll)
+        );
+        assert!(scene.find_with_tag("absent").is_none());
+        // ...and the kind-blind walk finds what the External walk cannot,
+        // which is the asymmetry it exists to remove.
+        assert!(scene.find_external_with_tag("deep").is_none());
     }
 
     /// Every kind is in `ALL` exactly once. `ALL` is hand-ordered (the

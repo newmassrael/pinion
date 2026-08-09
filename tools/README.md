@@ -76,6 +76,21 @@ one response per line out. Errors raise `RpcError(code, message, data)`
 so demos can pattern-match on JSON-RPC error codes (`-32601` method
 not found, `-32602` invalid params, …).
 
+## Censuses that sit beside the harness
+
+Not every tool here drives a shell. Two count something about the tree and
+answer a question a round would otherwise estimate:
+
+- `assembled_state.py` (R1615) — how many bindings paint from state assembled
+  out of **more than one external**, and how many of those publish the
+  assembly. `--verbose` prints the per-binding rows and every tag argument it
+  could not resolve; `--selftest` runs the scan's own cases, including the two
+  it was measurably wrong about first (a direct-form-only scan misses the
+  binding that reads its sibling through a typed reader, and the check that the
+  typed-reader list is not short first counted four rustdoc mentions).
+- `reference_names.py`, `reference_census.py`, `phase_b_tally.py` — the
+  standing gates; each has its own `--selftest` and the push hook runs them.
+
 ## Why Python, not Rust
 
 The Rust workspace has `pinion-rpc` unit tests that drive an in-process

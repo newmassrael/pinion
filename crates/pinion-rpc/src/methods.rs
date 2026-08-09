@@ -202,6 +202,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/list_previews", MethodOcc::Read, MethodWindow::Scope),
     ("scene/locate", MethodOcc::Read, MethodWindow::Scope),
     ("scene/locate_region", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/marks", MethodOcc::Read, MethodWindow::Scope),
     ("scene/memory", MethodOcc::Read, MethodWindow::Scope),
     ("scene/mnemonics", MethodOcc::Read, MethodWindow::Scope),
     ("scene/modifiers", MethodOcc::Mutate, MethodWindow::Scope),

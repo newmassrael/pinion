@@ -21,7 +21,7 @@ checks both without a pixel:
     `0000` on every row; the derivation has no such seam.
   * **A byte says why it is lit.** The two gestures — the overview brush's
     field and the drag selection — are now *named* runs
-    (`MarkSet`), not colours, so `/external/marks_at` answers with the stack
+    (`MarkSet`), not colours, so `scene/marks` answers with the stack
     covering a byte in the order that decided the paint. A list of coloured
     ranges cannot answer that: by the time anyone asks, only the colour is
     left, and two runs that resolve to the same ink are indistinguishable.
@@ -45,7 +45,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (
     RpcSubprocess,
-    assert_action_refused,
     assert_eq,
     assert_rpc_error,
     find_by_tag,
@@ -111,12 +110,17 @@ def byte_window(tf, low: float, high: float) -> tuple[int, int]:
 
 
 def marks_at(tf, b: int, lo: int, hi: int) -> str:
-    """The named runs covering byte `b` when the field is `[lo, hi)`.
+    """The named runs covering byte `b`, joined by `,` (or `""` for none).
 
-    The field belongs to the sibling brush external rather than to the dump's
-    own oracle, so the caller names it — which is exactly the seam, stated.
+    R1615 — `lo`/`hi` are accepted and ignored. They used to be *required*:
+    the field run belongs to the sibling brush external rather than to the
+    dump's own oracle, so the caller had to fetch the window and hand it back
+    in, reassembling on the client side a fact the view had already assembled.
+    The view publishes it now, so the byte alone is the whole question and the
+    two arguments are kept only to leave this demo's call sites legible.
     """
-    return tf.invoke("/external/marks_at", f"{b},{lo},{hi}")
+    del lo, hi
+    return ",".join(tf.mark_names(GRID, b, viewport=WIN))
 
 
 def set_brush(tf, low: float, high: float) -> tuple[int, int, object]:
@@ -254,11 +258,11 @@ def body() -> None:
         assert_eq(marks_at(tf, 9, lo, hi), "field", "9 is in the brush field alone")
         assert_eq(marks_at(tf, 13, lo, hi), "field,selection", "13 is in both")
         assert_eq(marks_at(tf, 18, lo, hi), "selection", "18 is in the drag alone")
-        assert_eq(marks_at(tf, 40, lo, hi), "none", "40 is in neither")
+        assert_eq(marks_at(tf, 40, lo, hi), "", "40 is in neither")
         assert_eq(marks_at(tf, 8, lo, hi), "field", "the field's first byte")
-        assert_eq(marks_at(tf, 7, lo, hi), "none", "the byte before it is out")
+        assert_eq(marks_at(tf, 7, lo, hi), "", "the byte before it is out")
         assert_eq(marks_at(tf, 19, lo, hi), "selection", "the drag's last byte")
-        assert_eq(marks_at(tf, 20, lo, hi), "none", "one past the drag is out")
+        assert_eq(marks_at(tf, 20, lo, hi), "", "one past the drag is out")
 
         # The names come back innermost-LAST, which is the order the paint
         # resolves in: one direction, every channel alike.
@@ -300,7 +304,7 @@ def body() -> None:
         assert_eq((lo, hi), (64, 80), "the field moved to the fourth row")
         snap = select(tf, 70, 74)
         rows = rows_of(snap)
-        assert_eq(marks_at(tf, 13, lo, hi), "none", "the old field is gone")
+        assert_eq(marks_at(tf, 13, lo, hi), "", "the old field is gone")
         assert_eq(marks_at(tf, 65, lo, hi), "field", "the new field is here")
         assert_eq(marks_at(tf, 71, lo, hi), "field,selection", "and the drag inside it")
         assert_eq(channels(13), (False, False), "the old bytes are plain again")
@@ -329,17 +333,15 @@ def body() -> None:
         )
 
         # --- what the query rejects -----------------------------------------
-        assert_action_refused(
-            lambda: tf.invoke("/external/marks_at", "999,0,8"),
-            saying="no byte 999 in this buffer",
+        # R1615 — the refusals moved with the question. An unknown TAG is not
+        # an answer; a real node that cannot be attributed is.
+        assert_rpc_error(
+            lambda: tf.request("scene/marks", {"tag": "no_such_node"}),
+            data="UnknownTag: no_such_node",
         )
         assert_rpc_error(
-            lambda: tf.invoke("/external/marks_at", "0,8"),
-            data="InvokeTypeMismatch",
-        )
-        assert_rpc_error(
-            lambda: tf.invoke("/external/marks_at", 7),
-            data="InvokeTypeMismatch",
+            lambda: tf.request("scene/marks", {"tag": GRID, "index": "twelve"}),
+            data="params.index is not a non-negative integer",
         )
 
 

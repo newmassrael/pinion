@@ -349,6 +349,63 @@ pub fn scene_of_kind(kind: SceneNodeKind) -> Scene {
     }
 }
 
+/// R1615 — [`scene_of_kind`], with `tag` attached wherever the kind can carry
+/// one.
+///
+/// Needed because a question asked *about a tag* — "why does this look like
+/// that" — has to reach the node before it can decide the kind cannot answer.
+/// The match is exhaustive for the same reason its sibling is: a new node kind
+/// must state whether it is addressable by tag.
+///
+/// [`Scene::Effect`] is the one that comes back untagged, and that is not an
+/// oversight here — an [`EffectNode`] has no tag field at all, so it is
+/// unreachable by tag by construction. Callers derive that from
+/// [`Scene::tag`] rather than hard-coding the exception.
+#[must_use]
+pub fn tagged_scene_of_kind(kind: SceneNodeKind, tag: &'static str) -> Scene {
+    match scene_of_kind(kind) {
+        Scene::Box(n) => Scene::Box(n.with_tag(tag)),
+        Scene::Text(n) => Scene::Text(n.with_tag(tag)),
+        Scene::Path(n) => Scene::Path(n.with_tag(tag)),
+        Scene::Image(n) => Scene::Image(n.with_tag(tag)),
+        Scene::Container(n) => Scene::Container(n.with_tag(tag)),
+        Scene::External(n) => Scene::External(n.with_tag(tag)),
+        Scene::Scroll(n) => Scene::Scroll(n.with_tag(tag)),
+        Scene::ImmediateModeNode(n) => Scene::ImmediateModeNode(n.with_tag(tag)),
+        Scene::TextGrid(n) => Scene::TextGrid(n.with_tag(tag)),
+        // An `EffectNode` carries no tag field; see the doc above.
+        effect @ Scene::Effect(_) => effect,
+    }
+}
+
+/// R1615 — a node of `kind` holding `child`, or `None` when that kind has no
+/// child slot at all.
+///
+/// The structural fact "this kind contains other nodes", stated once by
+/// construction rather than asserted as a list. A test that wants to know
+/// whether a kind descends builds one of these and asks the walk, which is an
+/// independent question from anything a kind *declares* about itself — the
+/// distinction that matters when the two are supposed to agree.
+///
+/// Exhaustive, so a node kind with a new child slot has to be added here
+/// instead of quietly answering `None`.
+#[must_use]
+pub fn scene_of_kind_containing(kind: SceneNodeKind, child: Scene) -> Option<Scene> {
+    let rect = Rect::new(1, 2, 30, 40);
+    match kind {
+        SceneNodeKind::Container => Some(Scene::Container(ContainerNode::new(vec![child]))),
+        SceneNodeKind::Scroll => Some(Scene::Scroll(ScrollNode::new(rect, child))),
+        SceneNodeKind::Box
+        | SceneNodeKind::Text
+        | SceneNodeKind::Path
+        | SceneNodeKind::Image
+        | SceneNodeKind::Effect
+        | SceneNodeKind::External
+        | SceneNodeKind::ImmediateModeNode
+        | SceneNodeKind::TextGrid => None,
+    }
+}
+
 /// Minimal Button binding for substrate-level tests.
 ///
 /// Carries a [`ButtonExternal`] so the SCXML statechart stays
