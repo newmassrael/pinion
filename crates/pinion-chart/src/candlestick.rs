@@ -282,8 +282,8 @@ impl CandlestickChart {
     }
 
     /// Override the three direction colours (the toolkit has the first two as
-    /// `increasingColor` / `decreasingColor`; the third has no the toolkit equivalent because a doji has
-    /// no the toolkit name).
+    /// `increasingColor` / `decreasingColor`; the third has a toolkit equivalent because a doji has
+    /// a toolkit name).
     #[must_use]
     pub const fn with_direction_colors(
         mut self,

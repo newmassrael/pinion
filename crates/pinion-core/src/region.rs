@@ -20,7 +20,7 @@
 //! — comparable, copyable, with no interior state — and therefore expressible
 //! on a wire: `scene/locate` takes one, so something with no pointer at all can ask what
 //! a lasso covers. A painter path is an opaque mutable object that can only be
-//! built in-process, which is why no the toolkit application can be asked that
+//! built in-process, which is why a toolkit application can be asked that
 //! from outside it. (The wire spelling lives in `pinion-rpc`, beside every other scene
 //! type's — [`Rect`] itself is not `serde` either.)
 //!
@@ -527,7 +527,7 @@ mod tests {
     /// selected when the disc intersects it (`BLI_rctf_isect_circle` against
     /// `node->runtime->draw_bounds`). Present so the agreement is asserted
     /// rather than assumed — the divergence is the FIT, not the geometry.
-    fn blender_circle_hits(centre: Point, radius: i64, rect: Rect) -> bool {
+    fn dcc_circle_hits(centre: Point, radius: i64, rect: Rect) -> bool {
         let (l, t) = (i64::from(rect.x), i64::from(rect.y));
         let (r, b) = (l + i64::from(rect.w), t + i64::from(rect.h));
         let nx = centre.x.clamp(l, r - 1);
@@ -568,7 +568,7 @@ mod tests {
         for rect in [straddling, swallowed, Rect::new(0, 0, 5, 5)] {
             assert_eq!(
                 disc.covers(rect, RegionFit::Intersects),
-                blender_circle_hits(Point::new(50, 50), 20, rect),
+                dcc_circle_hits(Point::new(50, 50), 20, rect),
                 "{rect:?}"
             );
         }

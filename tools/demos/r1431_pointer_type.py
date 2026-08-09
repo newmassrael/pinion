@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """R1431 §5.35 §5.15 — the pointer DEVICE type on the raw surface.
 
-This is the last member of Qt `QTabletEvent`: after pressure (R1423), tilt
+This is the last member of the toolkit tablet event: after pressure (R1423), tilt
 (R1429), and twist / tangential / height (R1430), R1431 adds pointerType — the
 device that produced the stream. `External::pointer_kind` forwards the W3C
-`PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()`: mouse / pen /
-eraser / touch. The `eraser` variant is the stylus's eraser end (a Qt distinction
+`PointerEvent.pointerType` / the toolkit `pointerType()`: mouse / pen /
+eraser / touch. The `eraser` variant is the stylus's eraser end (a toolkit distinction
 W3C folds into `pen`), so an eraser-aware surface flips to erase without a device
 query.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R916 §5.38 §5.40 — node-editor Details panel (select -> inspect -> edit).
 
-Drives `hello-node-editor` via JSON-RPC. The node-graph editor gains the Unreal
+Drives `hello-node-editor` via JSON-RPC. The node-graph editor gains the engine
 "Details panel": a right sidebar that reflects the *single selected* node's
 editable properties (title / position / per-port defaults) as rows. Addressing
 is selection-relative — `detail.<field>` resolves against the selected node (the

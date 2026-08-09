@@ -4,7 +4,7 @@
 Drives `hello-data-grid` via JSON-RPC. R914 added the numeric cell scrub but, by
 calibrating a zero-travel scrub on the R51.35 press-time forward, *absorbed* a
 plain click on a numeric cell (it neither scrubbed nor focused). R915 completes
-the gesture the canonical DCC way (Blender / Unreal / Excel): a press whose
+the gesture the canonical DCC way (the DCC / the engine / the spreadsheet): a press whose
 cursor stays within `DRAG_CLICK_THRESHOLD_PX` is a **click** (focuses the cell);
 only a press that strays past the threshold becomes a **scrub** (which suppresses
 the focus-click). The discriminator is the shared `DragCalibration::traveled_beyond`

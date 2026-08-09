@@ -13,11 +13,11 @@ business knowing what its numbers mean, so `Region` is now signed throughout and
 What this script checks, and why each check discriminates:
 
 * **The marquee still means what it meant.** Its "touching counts" rule (stated
-  since R880, and Qt's rubber-band semantics) survives the migration: a card's
+  since R880, and the toolkit's rubber-band semantics) survives the migration: a card's
   far edge is passed as part of the card, which is now a sentence rather than an
   off-by-one in a filter. `r880_node_marquee_select.py` is the regression proof;
   this script re-drives the same rule through the new verbs.
-* **PAST BLENDER: a lasso and a circle are the SAME call.** `NODE_OT_select_lasso`
+* **PAST the DCC: a lasso and a circle are the SAME call.** `NODE_OT_select_lasso`
   and `NODE_OT_select_circle` are two operators with two implementations there.
   Here both are one `Region` value handed to the one selection policy the
   pointer marquee uses, so a lasso and a rubber band cannot disagree about what
@@ -30,8 +30,8 @@ What this script checks, and why each check discriminates:
   rather than from the screen, so no pixel geometry is involved at any point.
 * **A degenerate shape is NAMED.** A two-vertex lasso is refused rather than
   answered with zero, so "your lasso was two points" and "the sweep took
-  nothing" stay different facts — Blender's operators cannot report the
-  difference and Qt's `items(QPolygonF, ..)` answers both with an empty list.
+  nothing" stay different facts — the DCC's operators cannot report the
+  difference and the toolkit's `items(polygon F, ..)` answers both with an empty list.
 
 Run from the workspace root:
     cargo build -p hello-node-editor --release

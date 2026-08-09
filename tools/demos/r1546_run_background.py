@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R1546 §5.36 §5.12 — a text run states its background (Qt `setBackground`).
+"""R1546 §5.36 §5.12 — a text run states its background (the toolkit `setBackground`).
 
 Before this round a `TextStyle` had a foreground and no background. The
 terminal cell had carried both since the §5.41 grid arm existed, so one
@@ -9,8 +9,8 @@ layer, which hand-rolls FOUR band kinds (selection / find-match / current-line
 / IME-preedit), each an absolute-positioned box with its own fill function, and
 a comment conceding all four bodies were byte-identical.
 
-R1546 makes the background a property of the RUN, the way Qt's
-`QTextCharFormat::setBackground` and CSS's inline `background-color` are, and
+R1546 makes the background a property of the RUN, the way the toolkit's
+`setBackground` and CSS's inline `background-color` are, and
 derives the painted band from the SHAPED LAYOUT through the very function the
 selection band already uses — so a highlight and a selection over the same
 bytes cannot disagree about where they are.
@@ -21,8 +21,8 @@ What this demo asserts, over the wire, against a real application:
     on every style that declares none, which is a different fact from a
     transparent one;
   * `scene/text_backgrounds` carries the CONSEQUENCE — where the band was
-    actually painted. This is the half Qt has no accessor for at all: the rect
-    is computed inside the private `QTextLayout::draw` and discarded, so a Qt
+    actually painted. This is the half the toolkit has no accessor for at all: the rect
+    is computed inside the private `draw` and discarded, so a toolkit
     application re-derives it from `cursorToX` and hopes its second
     implementation agrees with the painter's;
   * the published band lands inside the node it belongs to, checked against
@@ -30,7 +30,7 @@ What this demo asserts, over the wire, against a real application:
     two introspection channels are cross-verified rather than self-consistent;
   * the band's WCAG contrast is published, and the Toggle drives it ACROSS the
     4.5 body-text bar — 11:1 down to 1.3:1 — while the geometry does not move
-    by a pixel. Qt will paint any brush behind any pen and say nothing;
+    by a pixel. The toolkit will paint any brush behind any pen and say nothing;
   * a run declaring NO background inside a base style that has one punches a
     hole: two bands with a gap, because a `StyleRun` carries a fully-resolved
     style and a byte has exactly one background;

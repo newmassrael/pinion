@@ -21,9 +21,9 @@ encoding) AND `linear_color_at` (the same value through a plain linear map).
 At the target they DISAGREE, which is the whole reason `map_diverging` exists.
 If they agreed, every assertion here would be worthless.
 
-Qt reference: `QXYSeries::setPointConfiguration` (per-point colour) and
+the toolkit reference: `setPointConfiguration` (per-point colour) and
 `Q3DTheme::ColorStyleRangeGradient` (colour by value), with a colour-scale axis
-in the QCustomPlot ecosystem. What is checked below goes past pixels: the ramp
+in the custom plot ecosystem. What is checked below goes past pixels: the ramp
 rides in the scene as gradient stops, so the encoding is verifiable as data.
 
 Run from the workspace root:

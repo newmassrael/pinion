@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1497 §5.35 §5.51 §2#2 §2#7 — a pointer target is a node that can receive it.
 
-Qt reference: `Qt::WA_TransparentForMouseEvents`; the web spells the same rule
+the toolkit reference: `WA_TransparentForMouseEvents`; the web spells the same rule
 `pointer-events: none`. Decoration does not intercept the pointer. pinion needs
 no such declaration, because a tag already says whether anything is behind it:
 the event target is the `External`, and a tag is only its name.
@@ -176,7 +176,7 @@ def body() -> None:
         # true for the two wide ones, false for the three narrow ones, which is
         # exactly why the hazard could not be inferred from the tree.
         #
-        # R1504 gave the label a BOX that spans its section (Qt's
+        # R1504 gave the label a BOX that spans its section (the toolkit's
         # `defaultAlignment` needs somewhere to align within), so every label
         # now covers its cell's centre. The asymmetry is gone and the round's
         # claim is stronger for it: `pointer_transparent` is load-bearing in

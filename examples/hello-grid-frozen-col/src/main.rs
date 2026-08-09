@@ -19,13 +19,13 @@
 //! ```
 //!
 //! Both panes' vertical scrolls reference the **same** body
-//! [`ScrollState`](pinion_core::widgets::scroll::ScrollState), so they slide
-//! together. Only the scrolling pane's vertical scroll is the *primary* that
-//! publishes its measured viewport / max bounds; the frozen pane's is a
+//! [`ScrollState`](pinion_core::widgets::scroll::ScrollState), so they slide together.
+//! Only the scrolling pane's vertical scroll is the *primary* that publishes
+//! its measured viewport / max bounds; the frozen pane's is a
 //! [follower](pinion_core::scene::ScrollNode::as_follower). Without that
-//! distinction the two panes' mismatched widths would flip-flop the shared
-//! `measured_w` every frame and spin a perpetual scroll-dirty re-pass — the
-//! reason real data grids (the toolkit table view, AG-Grid, Excel) link one
+//! distinction the two panes' mismatched widths would flip-flop the shared `measured_w`
+//! every frame and spin a perpetual scroll-dirty re-pass — the reason real
+//! data grids (the toolkit table view, AG-Grid, the spreadsheet) link one
 //! scrollbar to a passive follower rather than running two publishers.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)

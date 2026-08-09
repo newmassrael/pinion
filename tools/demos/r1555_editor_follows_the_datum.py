@@ -2,9 +2,9 @@
 """R1555 §5.27 §5.12 §5.40 — the cell-editor FACTORY, over the wire.
 
 R1532 gave the virtualized grid a per-column paint delegate and R1544 gave it
-the editing seam. Both are the *override* half of Qt's editing decomposition
-(`setItemDelegateForColumn`). The other half — `QItemEditorFactory`, a registry
-from the datum's TYPE to an editor, which `QStyledItemDelegate` consults when no
+the editing seam. Both are the *override* half of the toolkit's editing decomposition
+(`setItemDelegateForColumn`). The other half — item editor factory, a registry
+from the datum's TYPE to an editor, which styled item delegate consults when no
 delegate overrides it — did not exist, so one inline text field was the built-in
 editor for all six `CellKind`s. For two of the six that editor cannot work at
 all: `Bool` and `Choice` refuse every keystroke and parse to nothing, so the seam
@@ -15,8 +15,8 @@ This drives `hello-cell-editors`, one column per kind, and proves each piece fro
 the outside:
 
   (A) the factory is ENUMERABLE — `scene/cell_editors` publishes kind -> form
-      plus the behaviour that follows. Qt cannot be asked at all:
-      `createEditor` *instantiates a QWidget*, and `creatorMap` is private, so
+      plus the behaviour that follows. The toolkit cannot be asked at all:
+      `createEditor` *instantiates a widget*, and `creatorMap` is private, so
       there is no "which types do you handle".
   (B) the form follows the DATUM, not the column position — each column opens
       the editor its kind names, and the read-only column opens none.
@@ -26,19 +26,19 @@ the outside:
       editor sub-part with its own address, because up and down are two targets
       inside one cell with nothing else to tell them apart.
   (E) every commit outcome is NAMED: `malformed` (the model was never asked),
-      `refused` (it was, and said no), `committed`. Qt's `commitData` discards
+      `refused` (it was, and said no), `committed`. The toolkit's `commitData` discards
       `setData`'s verdict and its validators make the malformed case
       unreachable — so both failures are the same non-event there.
-  (F) a toggle edit is REVERTIBLE. Qt's `editorEvent` calls `setModelData` on
-      the click, so a mis-click on a Qt check column is already committed.
+  (F) a toggle edit is REVERTIBLE. The toolkit's `editorEvent` calls `setModelData` on
+      the click, so a mis-click on a toolkit check column is already committed.
   (G) a selector keeps its DOMAIN across a commit — the options are part of the
-      value, which is why an edit role carries a datum and why Qt's type-keyed
+      value, which is why an edit role carries a datum and why the toolkit's type-keyed
       factory cannot populate a combo box for an enumerated cell.
-  (H) the open editor reaches assistive technology with its form's role. Qt
-      reaches a role by accident of construction, so a Qt bool cell announces
-      as a COMBO BOX and a Qt colour cell announces nothing at all.
-  (I) a float survives an untouched open-and-commit. Qt's default factory hands
-      a `QDoubleSpinBox` left at `decimals() == 2`, which silently rounds.
+  (H) the open editor reaches assistive technology with its form's role. The toolkit
+      reaches a role by accident of construction, so a toolkit bool cell announces
+      as a COMBO BOX and a toolkit colour cell announces nothing at all.
+  (I) a float survives an untouched open-and-commit. The toolkit's default factory hands
+      a double spin box left at `decimals() == 2`, which silently rounds.
 
 ZERO-FLAKE: bounded `wait_snap` / `wait_until` polling, never a fixed sleep.
 >=30 assertions.
@@ -193,8 +193,9 @@ def body() -> None:
             "Qt's default factory has NO QColor creator, so a colour cell in a "
             "plain QTableView is not editable at all",
         )
-        # The behaviour that follows, which Qt keeps inside each delegate's
-        # qobject_cast: where the in-flight value lives, and what may be typed.
+        # The behaviour that follows, which the toolkit keeps inside each
+        # delegate's qobject_cast: where the in-flight value lives, and what
+        # may be typed.
         assert by_kind["bool"]["buffer_is_text"] is False
         assert by_kind["choice"]["buffer_is_text"] is False
         assert by_kind["color"]["buffer_is_text"] is True, "its hex half"
@@ -317,10 +318,10 @@ def body() -> None:
         assert_eq(
             form_of(snap), "stepper", "still the same open editor, not a reopen"
         )
-        # An arrow is a hit target of its own, so pressing it moved focus to the
-        # grid until R1555 handed it back. Qt cannot have this bug — its arrows
-        # are sub-controls of one focus widget — and without the hand-back the
-        # keystroke in section (E) below silently goes nowhere.
+        # An arrow is a hit target of its own, so pressing it moved focus to
+        # the grid until R1555 handed it back. The toolkit cannot have this bug
+        # — its arrows are sub-controls of one focus widget — and without the
+        # hand-back the keystroke in section (E) below silently goes nowhere.
         wait_until(
             lambda: tf.request("focus/get").result.get("focused") == EDIT_FIELD_TAG,
             desc="stepping leaves focus on the field it just wrote",
@@ -336,8 +337,8 @@ def body() -> None:
         assert "\u25b2" in "".join(cell_texts(snap, ROW, COUNT_COL)), (
             "and a reopened stepper paints its arrows again"
         )
-        # `malformed`: the buffer is not a value of the cell's kind, so the
-        # model is NEVER asked. Qt's validator makes this unreachable, at the
+        # `malformed`: the buffer is not a value of the cell's kind, so the model is
+        # NEVER asked. The toolkit's validator makes this unreachable, at the
         # price of committing a value the user did not type.
         for _ in range(6):
             tf.key(path=TABLE_TAG, name="Backspace")
@@ -590,7 +591,7 @@ def body() -> None:
 
         # The binding wires no editor painter and no column delegate, so every
         # editor above came from the factory. The selection axis is untouched
-        # throughout (Qt: current != selected).
+        # throughout (the toolkit: current != selected).
         wait_until(
             lambda: tf.query("/external/item_count") == 60,
             desc="the coordinator still holds the whole dataset",

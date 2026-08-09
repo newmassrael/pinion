@@ -2,7 +2,7 @@
 """R1446 §5.38 model-mapped chart — `hello-model-chart`.
 
 A `LineChart` fed by `pinion_chart::ModelMapper` from a live `CellValue` block
-(the QtCharts `Q*XYModelMapper` contract). WHICH field is plotted is picker
+(the toolkit charting module `Q*XYModelMapper` contract). WHICH field is plotted is picker
 state, not code: an `x_field` radio group picks the independent variable and a
 toggle per column picks the measures.
 
@@ -13,7 +13,7 @@ Proven as DATA through `scene/snapshot` (§2 #7, no pixels):
   - toggling a measure changes the series set without touching the data.
   - **the point of the round** — point an axis at the TEXT column and the chart
     plots NOTHING and the status names the reason (`Month: 8 text cells, not a
-    measure`). Qt's `QVariant::toReal()` would draw a flat line on zero here,
+    measure`). The toolkit's `toReal()` would draw a flat line on zero here,
     indistinguishable from measured data.
   - an unreadable X is reported ONCE, not once per mapped series (the
     `ModelMapper::map` de-duplication) — asserted with TWO measures mapped, the

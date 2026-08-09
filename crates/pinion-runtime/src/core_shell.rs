@@ -700,7 +700,7 @@ impl<V: WidgetCore> CoreShell<V> {
         // image, so there is nothing to seed.
         #[cfg(feature = "vello")]
         crate::image_cache::IMAGE_STORE.seed_root(&root_owner);
-        // (R55.D.5 §5.45) Compose the state-scene root.
+        // (R55.D.5 §5.45) another declarative toolkit the state-scene root.
         //
         // Default (single-External binding, the entire example
         // catalogue except `hello-listbox`): the scene stays

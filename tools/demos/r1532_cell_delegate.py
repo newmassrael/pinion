@@ -4,8 +4,8 @@
 `GridModel::cell` answers with a `String`, so until R1532 every column of
 every pinion grid was a label. A size column could not be a bar, a
 visibility column could not be a mark, a swatch column could not be a
-swatch. That is the extension point of every Model/View framework — Qt's
-`QStyledItemDelegate`, whose documented purpose is precisely "a column
+swatch. That is the extension point of every Model/View framework — the toolkit's
+styled item delegate, whose documented purpose is precisely "a column
 that is not text" — and a DCC / IDE grid is mostly made of such columns.
 
 The evidence that the gap was real and being paid for: `hello-property-grid`
@@ -15,7 +15,7 @@ That is what a missing extension point looks like from the consumer side.
 
 ## The shape, and why it is this shape
 
-`VirtualTableData::delegate` is Qt's `setItemDelegateForColumn`: a lookup
+`VirtualTableData::delegate` is the toolkit's `setItemDelegateForColumn`: a lookup
 from column to painter, resolved **once per painted column** (a column's
 delegate cannot vary by row, so resolving per cell would repeat one answer
 once per row — the per-section discipline R1530 gave the header axis). A

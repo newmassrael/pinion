@@ -27,7 +27,7 @@ because entering an instance and remembering inside one need the same address.
 What this script checks, and why each check discriminates:
 
 * **The register is a node with a type, and the graph is the same size however
-  long it runs.** Blender's Repeat Zone materialises one copy of the body per
+  long it runs.** the DCC's Repeat Zone materialises one copy of the body per
   iteration (`geometry_nodes_repeat_zone.cc`: *"the graph is built with as many
   body copies as there are iterations"*), so its count has to be known before
   the graph is built and a data-dependent exit is inexpressible there.
@@ -35,13 +35,13 @@ What this script checks, and why each check discriminates:
 * **A run READS the machine and a tick MOVES it.** Four runs leave the
   registers where they were; one tick does not. That split is what keeps a
   tick's outcome a function of the document and the registers rather than of
-  the walk — Unreal takes the other road, where state is a Blueprint *variable*
+  the walk — the engine takes the other road, where state is a Blueprint *variable*
   written by an execution wire, so which value a read sees depends on where
   control happened to go.
 * **The trace changes between ticks with no edit at all**, which is the whole
   point: the same graph terminates once the world has moved.
 * **Control descends into a group instance and comes back out**, and the steps
-  inside are attributed to the instance. Unreal has no equivalent because it
+  inside are attributed to the instance. The engine has no equivalent because it
   has no instance: `FKismetCompilerContext` expands a macro by calling
   `FEdGraphUtilities::CloneGraph`, so its N uses are N copies before anything
   runs.

@@ -20,9 +20,9 @@ the summit is the highest sample AND the flattest one, so a colour tracking y
 would peak exactly where this one goes neutral. Without that the second channel
 would be redundant and every assertion here vacuous.
 
-Qt reference: `QLineSeries` carries one pen — Qt Charts has no per-segment line
+the toolkit reference: line series carries one pen — the toolkit Charts has no per-segment line
 colour and no third-channel gradient fill, so a heat-line there is custom
-`QPainter` work. What is checked below goes past pixels: the segment colours and
+painter work. What is checked below goes past pixels: the segment colours and
 the gradient stops ride in the scene as data (§2 #7).
 
 Run from the workspace root:

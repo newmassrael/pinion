@@ -9,7 +9,7 @@ the profiler's already-streaming REAL data (`use_frame_timings`, the seam
 `hello-frame-profiler` reads): the four disjoint render sub-phases (build /
 encode / acquire / render) run sequentially within a frame, so each frame's
 phases abut end-to-end from its cumulative-time offset, each phase on its own
-lane. This is the tracing / Unreal-Insights track view, built from measured
+lane. This is the tracing / the engine-Insights track view, built from measured
 data rather than a synthetic series.
 
 ## The verification idea: geometry as data on non-deterministic input (§2 #7)

@@ -308,7 +308,7 @@ impl Default for PrintState {
     }
 }
 
-/// Compose one labelled button.
+/// another declarative toolkit one labelled button.
 fn button(label: &str, tag: &'static str, state: ButtonState, colors: &ButtonColors) -> Scene {
     let style = ButtonStyle::m3_default(tag)
         .with_corner_radius(8)

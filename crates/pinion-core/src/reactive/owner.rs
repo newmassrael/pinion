@@ -276,11 +276,11 @@ pub(crate) struct OwnerInner {
     /// `Computed<u32>` for derived state, a `Resource<...>` for an
     /// async fetch — all keyed by distinct string names).
     ///
-    /// Use case: per-binding caches (animations, resources, expensive
-    /// derived values, IO handles) that the view fn instantiates on
-    /// the first paint and reuses on subsequent paints. Cleared on
-    /// owner drop so cached values evaporate with the binding —
-    /// matches the Solid.js `createMemo` / React `useRef` lifecycle.
+    /// Use case: per-binding caches (animations, resources, expensive derived
+    /// values, IO handles) that the view fn instantiates on the first paint
+    /// and reuses on subsequent paints. Cleared on owner drop so cached values
+    /// evaporate with the binding — matches the Solid.js `createMemo` / the web UI
+    /// library `useRef` lifecycle.
     ///
     /// (R56.1.b.1 §5.22) Key shape is [`CacheKey`] (`(TypeId,
     /// &'static str)`) so the same user-facing string can address
@@ -1121,30 +1121,25 @@ impl Owner {
     ///
     /// ## Replaces the thread-local `OnceCell` workaround
     ///
-    /// Pre-R51.150 application code (R51.147 / R51.148 visual demos)
-    /// reached for `thread_local! { static X: OnceCell<Animation<f32>> }`
-    /// to materialise a per-binding animation in the view fn. The
-    /// workaround was a `[[textbook-long-term-correct]]` violation:
-    /// `thread_local` caches survive shell drops (stale animation
-    /// pinned to a dead owner), collide across multiple shells in
-    /// the same thread, and conflate the *substrate's* reactive
-    /// scope with the *thread's* memory. [`Owner::cache`] is the
-    /// canonical `SolidJS` / Leptos `useMemo` / React `useRef` shape
-    /// — value attached to the reactive owner, dropped with it,
-    /// independent across instances.
+    /// Pre-R51.150 application code (R51.147 / R51.148 visual demos) reached
+    /// for `thread_local! { static X: OnceCell<Animation<f32>> }` to materialise a per-binding animation in the view fn. The
+    /// workaround was a `[[textbook-long-term-correct]]` violation: `thread_local` caches survive shell drops (stale
+    /// animation pinned to a dead owner), collide across multiple shells in
+    /// the same thread, and conflate the *substrate's* reactive scope with the
+    /// *thread's* memory. [`Owner::cache`] is the canonical `SolidJS` / Leptos `useMemo` / the web UI
+    /// library `useRef` shape — value attached to the reactive owner, dropped with
+    /// it, independent across instances.
     ///
     /// ## Key shape
     ///
-    /// `key` is a `&'static str` for ergonomics (`"hover_anim"` literal
-    /// in the view fn). (R56.1.b.1 §5.22) The cache is keyed
-    /// internally by `(TypeId, key)`, so the same `key` string with a
-    /// *different* concrete `V` resolves to a distinct slot —
-    /// `use_text_edit_state(tag)` and `use_caret_blink(tag)` both
-    /// accept the same widget tag without colliding because their
-    /// value types differ. This mirrors React's per-hook slot model:
-    /// each typed hook has its own per-key slot independent of other
-    /// hooks. Same `key` + same `V` reuses the cached entry across
-    /// view-fn re-runs, which is the intended caching semantics.
+    /// `key` is a `&'static str` for ergonomics (`"hover_anim"` literal in the view fn). (R56.1.b.1
+    /// §5.22) The cache is keyed internally by `(TypeId, key)`, so the same `key` string
+    /// with a *different* concrete `V` resolves to a distinct slot — `use_text_edit_state(tag)` and
+    /// `use_caret_blink(tag)` both accept the same widget tag without colliding because their
+    /// value types differ. This mirrors the web UI library's per-hook slot
+    /// model: each typed hook has its own per-key slot independent of other
+    /// hooks. Same `key` + same `V` reuses the cached entry across view-fn
+    /// re-runs, which is the intended caching semantics.
     ///
     /// # Panics
     ///
@@ -2386,7 +2381,7 @@ mod tests {
             // (R56.1.b.1 §5.22) The typed-key cache routes
             // `(TypeId::of::<V>(), key)` so the same string `key` with
             // a *different* concrete `V` resolves to a distinct slot.
-            // React's per-hook slot model: `use_state(tag)` and
+            // the web UI library's per-hook slot model: `use_state(tag)` and
             // `use_ref(tag)` both accept the same widget tag — pinion's
             // `use_text_edit_state(tag)` + `use_caret_blink(tag)`
             // pattern is now load-bearing rather than aspirational.
@@ -2407,7 +2402,7 @@ mod tests {
             // (R56.1.b.1 §5.22) Same `(TypeId, key)` still aliases the
             // same Rc — the typed-key change preserves the per-(type,
             // key) caching semantics required for Solid.js `createMemo`
-            // / React `useRef` reuse.
+            // / the web UI library `useRef` reuse.
             let owner = Owner::new();
             let a: Rc<u32> = owner.cache("k", || 7_u32);
             let b: Rc<u32> = owner.cache("k", || 999_u32);

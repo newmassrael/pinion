@@ -296,7 +296,7 @@ impl WidgetTransition for Slider {
 pub struct SliderExternal {
     em: IntentEmitter<Slider>,
     /// R1533 §5.45 — sub-notch wheel carry (see [`Self::wheel`]). Per
-    /// instance, exactly as each the toolkit abstract slider owns its own
+    /// instance, exactly as a toolkit abstract slider owns its own
     /// `offset_accumulated`: two sliders on one screen must not spend each
     /// other's banked motion.
     wheel: WheelStepper,

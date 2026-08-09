@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1412 §5.49 §2 #2 #7 — a named dock-layout PRESET manager, over RPC.
 
-A professional editor (Unreal / Blender / an IDE) saves a window arrangement
+A professional editor (the engine / the DCC / an IDE) saves a window arrangement
 under a name and switches between saved layouts. pinion's dock topology is a
 serde-serializable `DockTopology` in a reactive Signal, so a preset is a stored
 topology and applying one is a `Signal::set`. `examples/hello-dock-presets` is

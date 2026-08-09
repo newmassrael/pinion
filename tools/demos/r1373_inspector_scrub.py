@@ -3,7 +3,7 @@
 
 Drives `hello-inspector` via JSON-RPC. The multi-object Details panel gains the
 iconic DCC interaction the property grid / data grid already have: press-and-drag
-a common `Int` / `Float` row to scrub its value (the Blender / Unreal "drag the
+a common `Int` / `Float` row to scrub its value (the DCC / the engine "drag the
 number" gesture). The inspector's twist — its distinguishing dimension — is that
 the scrub writes across the WHOLE selection RELATIVE to each object's own value,
 so a MIXED numeric stays mixed but shifts together (the continuous peer of the

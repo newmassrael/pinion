@@ -2,7 +2,7 @@
 """R960 §5.38 §5.40 — per-cell modified-from-default + reset on the data grid.
 
 Drives hello-data-grid over JSON-RPC. The editable grid (R837) gains the
-Unreal / Qt "reset property to default" affordance at 2-D cell granularity:
+the engine / the toolkit "reset property to default" affordance at 2-D cell granularity:
 
   (A) **modified indicator**: a cell that differs from its COLUMN DEFAULT
       (`col_default(col)` — the value a fresh row gets) paints a trailing-edge

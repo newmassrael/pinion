@@ -368,8 +368,9 @@ fn view(state: HeaderMenuState, _frame: &Frame) -> Scene {
     let mut children = vec![status_bar(&theme, sort, target), grid];
     if let Some(anchor) = state.open_at {
         // R988 — the labels name the right-clicked column ("Sort by Score
-        // ascending"), so the menu reflects what it acts on (Excel / DCC). R988.1
-        // — built from the `SORT_COMMANDS` SSOT, the same order the reducer reads.
+        // ascending"), so the menu reflects what it acts on (the spreadsheet /
+        // DCC). R988.1 — built from the `SORT_COMMANDS` SSOT, the same order the reducer
+        // reads.
         let col_name = target.map_or("column", |t| HEADERS[t.col]);
         let labels = SORT_COMMANDS.map(|cmd| cmd.label(col_name));
         let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();

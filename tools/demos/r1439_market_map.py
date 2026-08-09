@@ -25,8 +25,8 @@ The refutation channel is the point: `color_at` (the live encoding) sits beside
 the whole reason `map_diverging` exists — and agree at the domain ends, so the
 disagreement is not a trivial artefact.
 
-Qt reference: Qt ships no treemap at all (neither Qt Charts nor Qt Graphs has
-an area-encoded part-of-whole form), and a `QCPColorScale`-class legend is a
+the toolkit reference: the toolkit ships no treemap at all (neither the toolkit Charts nor the toolkit Graphs has
+an area-encoded part-of-whole form), and a CP color scale-class legend is a
 pixel widget. What is checked below goes past pixels: the ramp rides in the
 scene as gradient stops, so the encoding — including the mirror — is verifiable
 as data.

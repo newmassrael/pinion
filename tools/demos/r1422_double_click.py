@@ -3,7 +3,7 @@
 
 The R1416/R1418 raw multi-button sink (`External::wants_raw_pointer_buttons`)
 carried the button, both edges, the held modifiers, and the held set — but not
-the ONE verb a real `QMouseEvent` stream still has: the double-click. Qt marks
+the ONE verb a real mouse event stream still has: the double-click. The toolkit marks
 the second press of a fast in-place repeat as `MouseButtonDblClick`; the DOM
 carries the same count as `MouseEvent.detail`. R1422 gives the raw edge that
 count as `RawPointerButton::click_count`, synthesised by the router — so a sink
@@ -18,7 +18,7 @@ the send-wire `DoubleClick` path so the two double-click rules cannot drift.
 through `pointer_button_for_window`, so on a raw sink it delivers two down/up
 cycles in ONE drain batch — the second press lands microseconds after the first,
 inside the window, so it reads 2 every run (no wall-clock race). The router's
-per-button double-click mark persists across the sink's `clear` (exactly as Qt's
+per-button double-click mark persists across the sink's `clear` (exactly as the toolkit's
 cycle does), so each double-click phase is `arm_double`-d first: a FAR press
 plants a position-mismatched mark, guaranteeing the double_click's FIRST down is
 a fresh single (its SECOND down is then the true double). The negatives (a fresh
@@ -104,7 +104,7 @@ def body() -> None:
         assert_eq(tf.query(f"{EXT}/last_clicks"), None, "boot: no click count")
         assert "press any mouse button" in readout(snap), "boot: the idle prompt"
 
-        # --- a single click is click_count 1 on BOTH edges (Qt MouseButtonPress),
+        # --- a single click is click_count 1 on BOTH edges (the toolkit MouseButtonPress),
         #     and carries no double-click badge. The first press ever has no prior
         #     mark, so it is a clean single. ---
         tf.pointer_button("left", "down", at=CENTER)
@@ -125,7 +125,7 @@ def body() -> None:
         assert "×" not in readout(snap), "a single click carries no ×N badge"
 
         # --- THE DOUBLE-CLICK: two down/up cycles in one drain, so the second
-        #     press reads 2 — the Qt MouseButtonDblClick the raw stream never
+        #     press reads 2 — the toolkit MouseButtonDblClick the raw stream never
         #     expressed before R1422. The last edge (the second release) echoes
         #     the 2, which REQUIRES the second press to have been 2. ---
         arm_double(tf)

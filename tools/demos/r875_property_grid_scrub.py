@@ -3,7 +3,7 @@
 
 Drives `hello-property-grid` via JSON-RPC. The Details-panel inspector gains the
 iconic DCC interaction: press-and-drag a numeric (`Int` / `Float`) property row
-to scrub its value (the Blender / Unreal "drag the number field" gesture). It
+to scrub its value (the DCC / the engine "drag the number field" gesture). It
 reuses the R51.34 pointer-capture lock + the R786 stable-pixel-basis idiom:
 `capture_normalize` names the grid container (`property_grid`, a fixed-width
 rect), so the cursor-fraction delta recovers true pixel travel; `pointer_move`

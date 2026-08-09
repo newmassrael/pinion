@@ -1,4 +1,4 @@
-# Cross-desktop drag preview window — the Qt-ADS `CFloatingDragPreview` model
+# Cross-desktop drag preview window — the toolkit-ADS `CFloatingDragPreview` model
 
 > Design of record for R1147 (the dock-completion campaign, directive
 > [[dock-must-be-complete-before-any-pivot]]). Completes the R1146 release-only
@@ -22,11 +22,11 @@ window's surface.
 ## Why a preview window (and why not the alternatives)
 
 The audit (`[[app-driven-window-move-is-the-wrong-architecture]]`) converged on a
-**lightweight floating preview window** — exactly Qt Advanced Docking System's
+**lightweight floating preview window** — exactly the toolkit Advanced Docking System's
 `CFloatingDragPreview`. Rejected alternatives:
 
 - **OS-native drag-and-drop (XDND / `WM_DROPFILES`)** — an *inter-app data
-  transfer* mechanism. No native toolkit (Qt/GTK), nor Chrome/Firefox for tab
+  transfer* mechanism. No native toolkit (the toolkit/GTK), nor Chrome/Firefox for tab
   tear-off, uses it for *internal* panel drags; they use an internal preview
   window or a real window move. (VS Code "uses DnD" only because it is a browser:
   DOM DnD.) Misapplication + huge platform-specific cost. NOT the answer.
@@ -37,7 +37,7 @@ The audit (`[[app-driven-window-move-is-the-wrong-architecture]]`) converged on 
 **Principle correction (recorded in the memory):** "per-frame OS-window move is a
 smell" was an over-generalization. Per-frame move of the **heavy, churning panel
 window** is wrong (it caused the freeze + the R1119 oscillation). A **light,
-static preview window** moved per-frame is the native-toolkit STANDARD (Qt does
+static preview window** moved per-frame is the native-toolkit STANDARD (the toolkit does
 exactly this). So R1147 **completes** R1146, it does not contradict it.
 
 ## The design

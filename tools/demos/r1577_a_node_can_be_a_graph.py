@@ -19,8 +19,8 @@ What this script checks, and why each check discriminates:
   exactly the three values that crossed in and the one that crossed out, each
   named from its INTERNAL end — the end that survives inside the definition.
   Nobody typed those names.
-* **PAST BLENDER (1): a two-hop bypass is REFUSED, and the refusal names the
-  wires.** Blender's `node_group_make_test_selected` tests a one-hop
+* **PAST the DCC (1): a two-hop bypass is REFUSED, and the refusal names the
+  wires.** the DCC's `node_group_make_test_selected` tests a one-hop
   approximation — no unselected node may have both an input from the selection
   and an output to it — so `swatch -> mix -> fade -> output`, grouped as
   `{swatch, output}`, PASSES there and produces a cyclic tree; the cycle is
@@ -28,7 +28,7 @@ What this script checks, and why each check discriminates:
   could have refused. Measured at `8cf50599`: `space_node/node_group.cc` does
   not contain the substring `cycle` at all. Here it is a reachability test and
   the walk is reported.
-* **PAST BLENDER (2): recursion names the CHAIN.** `node_group_poll` reports
+* **PAST the DCC (2): recursion names the CHAIN.** `node_group_poll` reports
   one flat sentence — "Nesting a node group inside of itself is not allowed" —
   for a direct self-nest and for one four deep, so the definitions that
   actually carry the recursion are never named.
@@ -131,7 +131,7 @@ def body() -> None:
         )
         assert_eq(inv(tf, "node_value", str(MIX)), SEEDED, "A: and it evaluates")
 
-        # ── (B) PAST BLENDER: the two-hop bypass Blender's rule accepts ─────
+        # ── (B) PAST the DCC: the two-hop bypass the DCC's rule accepts ─────
         assert_eq(inv(tf, "select", f"{BASE},{OUT}"), "2", "B: select the ends")
         bypass = refused(tf, "group", "Bad")
         assert "cycle" in bypass, f"B: the refusal says what it is: {bypass!r}"
@@ -206,7 +206,7 @@ def body() -> None:
             "inside — the framework put them there",
         )
 
-        # ── (G) PAST BLENDER: recursion names the chain ─────────────────────
+        # ── (G) PAST the DCC: recursion names the chain ─────────────────────
         recursion = refused(tf, "instantiate", str(definition))
         assert "nest a group inside itself" in recursion, f"G: {recursion!r}"
         assert str(definition) in recursion, (

@@ -10,15 +10,15 @@ asserts against a real application, over the wire.
 
   * `scene/text_tables` publishes the structure: one row per table with its
     shape, its column tracks, the slots nobody filled, and every cell's address
-    and PAINTED box. Qt has no peer for any of it — a `QTextTable` exists only
-    inside a `QTextDocument`, `QTextTableCell::row()` is an in-process C++
+    and PAINTED box. The toolkit has no peer for any of it — a text table exists only
+    inside a text document, `row()` is an in-process C++
     call, there is no accessor that enumerates a document's tables, and a
     cell's rect has to be reconstructed from cursor positions;
   * the Toggle INSERTS a cell into the middle of the table, and every cell
     after it moves a whole row down while the cells before it do not. Nothing
     in the binding states an address, so this is the derivation and not an
     author;
-  * that inserted cell asks for NINE columns in a three-column table. Qt's
+  * that inserted cell asks for NINE columns in a three-column table. The toolkit's
     `mergeCells` returns `void` and silently does nothing when a merge does not
     fit, so the ask and the result are afterwards indistinguishable; here the
     span is clamped to the free run and both numbers are published, with
@@ -29,14 +29,14 @@ asserts against a real application, over the wire.
     the second room booking reaches into its row. That is the clamp against the
     free run rather than against the row's remainder — two different numbers,
     and the only pair that tells the two rules apart;
-  * the last row's topic slot has no cell. `QTextTable` cannot be in that
+  * the last row's topic slot has no cell. text table cannot be in that
     state: `insertRows` fills its grid;
   * header-ness is DERIVED from the address. One `header_rows` / `header_columns`
     declaration, and the corner, the column labels and the row labels are all
     headers because of where they landed — including after the insert;
   * `scene/access` carries WAI-ARIA `table` / `row` / `cell` with
     `aria-rowindex` / `aria-colindex` / `aria-rowspan` and the
-    `columnheader` / `rowheader` bands. A `QTextTable` reaches no accessibility
+    `columnheader` / `rowheader` bands. A text table reaches no accessibility
     interface at all;
   * `scene/snapshot` carries the same derivation on each paragraph, so the two
     introspection channels check each other rather than restating one;

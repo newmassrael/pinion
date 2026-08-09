@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1571 §5.27 §5.12 §5.40 — N editors open at once, over the wire.
 
-Qt's `QAbstractItemView::openPersistentEditor(index)` keeps any number of
+the toolkit's `openPersistentEditor(index)` keeps any number of
 editors open simultaneously. R1544 and R1555 both closed naming its absence as
 the DCC axis's remaining item, and R1555 also wrote down the prescription: widen
 `use_text_edit_state`'s `&'static str` key so a per-cell buffer can be cached at
@@ -11,30 +11,30 @@ retained for every cell ever edited, for the life of the window. An editor's
 buffer has to die with the editor, so the buffers live in the editor SET.
 
 What the set needs then follows from a fact about this framework rather than
-about Qt: there is exactly ONE keyboard focus, where Qt has one focusable
-`QWidget` per editor. So only the focused editor holds the shared inline field;
+about the toolkit: there is exactly ONE keyboard focus, where the toolkit has one focusable
+widget per editor. So only the focused editor holds the shared inline field;
 every other open editor's text is PARKED in the latch and swapped back when
 focus returns.
 
 This drives `hello-cell-editors` and proves each piece from the outside:
 
-  (A) the set is ENUMERABLE. `QAbstractItemViewPrivate::persistent` is a private
-      `QSet<QWidget *>`, and the only public question is
-      `isPersistentEditorOpen(index)` — one index at a time — so a Qt view
+  (A) the set is ENUMERABLE. `persistent` is a private
+      `set<widget *>`, and the only public question is
+      `isPersistentEditorOpen(index)` — one index at a time — so a toolkit view
       cannot be asked what it has open: you must already know in order to ask.
   (B) persistence is a property OF THE EDITOR, and an editor is not what a
       trigger on another cell replaces.
-  (C) FOCUS IS DATA. In Qt this is `QApplication::focusWidget()` reverse-mapped
+  (C) FOCUS IS DATA. In the toolkit this is `focusWidget()` reverse-mapped
       through a private hash — not answerable through the view's public API.
   (D) each editor's in-flight value is readable WITHOUT focusing it, and each
       one parks and restores its own text.
   (E) <kbd>Escape</kbd> REVERTS a persistent editor and keeps it open.
-      `QAbstractItemView::closeEditor` returns early for a persistent editor, so
+      `closeEditor` returns early for a persistent editor, so
       Escape there does nothing at all and the original is unrecoverable.
-  (F) `dirty` is per editor. `QAbstractItemView` keeps no record of what
+  (F) `dirty` is per editor. abstract item view keeps no record of what
       `setEditorData` seeded, so there is nothing there to compare against.
   (G) the COST IS WINDOWED: an editor on a row outside the painted window
-      contributes no scene node and keeps its value. Qt's
+      contributes no scene node and keeps its value. The toolkit's
       `updateEditorGeometries()` walks every persistent editor on every scroll.
   (H) every open editor reaches assistive technology with its form's role — not
       only the focused one.
@@ -42,7 +42,7 @@ This drives `hello-cell-editors` and proves each piece from the outside:
       dirty and open; a persistent editor SURVIVES its commit and is reseeded.
   (J) a malformed buffer carries a null value, named rather than absent.
   (K) `openPersistentEditor` on a cell the model will not edit is REFUSED.
-      Qt's `createEditor` never consults `flags() & Qt::ItemIsEditable`: it
+      the toolkit's `createEditor` never consults `flags() & ItemIsEditable`: it
       opens a live editor on a read-only cell and drops every write in silence.
   (L) a transient editor beside them is still replaced by the next one, and a
       transient editor is PROMOTED in place, keeping what was typed into it.
@@ -165,7 +165,7 @@ def body() -> None:
         assert_eq(boot["focused"], None, "nothing holds the keyboard")
         assert_eq(clause(snap, "editing"), "none")
         # A grid that does not exist is a different answer from one with no
-        # editors — Qt's `isPersistentEditorOpen` answers `false` to both.
+        # editors — the toolkit's `isPersistentEditorOpen` answers `false` to both.
         try:
             tf.request("scene/grid_editors", {"tag": "no_such_grid"})
             raise AssertionError("an unbound tag must be an error, not an empty set")
@@ -385,9 +385,10 @@ def body() -> None:
             lambda: entry(tf, 6, NAME_COL)["value"] == "half typed",
             desc="typing into the transient editor",
         )
-        # Ctrl+E rather than Ctrl+click, because the FOCUSED editor's live field
-        # covers its cell — a click at the cell's centre lands on the field, as
-        # it does on a Qt editor widget, so the keyboard is the way in.
+        # Ctrl+E rather than Ctrl+click, because the FOCUSED editor's live
+        # field covers its cell — a click at the cell's centre lands on the
+        # field, as it does on a toolkit editor widget, so the keyboard is the
+        # way in.
         tf.modifiers(ctrl=True)
         tf.key(path=EDIT_FIELD_TAG, name="e")
         tf.modifiers()

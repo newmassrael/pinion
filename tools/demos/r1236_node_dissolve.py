@@ -63,7 +63,7 @@ def body() -> None:
         assert_eq(q(tf, f"dissolvable.{rid}"), True, "the reroute reads as dissolvable")
         # ★R1596 — `dissolvable` widened from a SHAPE test ("exactly one wire
         # in and one out") to LOSSLESSNESS. `Document::dissolve` is the general
-        # form (Blender's NODE_OT_delete_reconnect), so what is worth asking is
+        # form (the DCC's NODE_OT_delete_reconnect), so what is worth asking is
         # no longer *can it* but *does it lose anything* -- and a Multiply
         # routes its output from input 0, so the wire past it is bridged and
         # nothing is cut.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1494 §5.27 §2#7 §2#2 — a resize is paid for by the sections after it.
 
-Qt reference: `QHeaderView::cascadingSectionResizes` — "whether interactive
+the toolkit reference: `cascadingSectionResizes` — "whether interactive
 resizing will be cascaded to the following sections", default `false`, and it
 governs *interactive* resizing only: `resizeSection()` never cascades.
 
@@ -20,7 +20,7 @@ past the viewport it was told to fill, and shrinking one below the floor simply
 stopped, with the travel the user asked for going nowhere. There was no rule
 saying which of those should happen, and therefore no way to ask for the other.
 
-The rule is per header, readable, writable, and carried by `saveState()` — Qt
+The rule is per header, readable, writable, and carried by `saveState()` — the toolkit
 carries it too. With it on, growing a section squeezes the ones AFTER it, in
 visual order, each down to the floor; shrinking it hands that space back,
 most-recently-squeezed first. What each follower held before it paid is
@@ -40,7 +40,7 @@ section) while writing like a programmatic one.
 
 What this asserts:
 
-  (A) THE RULE IS READABLE AND OFF — Qt's default, and the measurement above
+  (A) THE RULE IS READABLE AND OFF — the toolkit's default, and the measurement above
       replayed: with it off the row still grows past its viewport.
   (B) THE FOLLOWERS PAY — the same call, rule on, leaves `visible_total`
       exactly where it was.
@@ -52,7 +52,7 @@ What this asserts:
       `visible_total` reports the row that is actually painted, rather than
       refusing a resize with nothing to say why.
   (F) TWO METHODS, ON PURPOSE — `resize_section` does not cascade even with the
-      rule on, because in Qt the property governs interactive resizing only.
+      rule on, because in the toolkit the property governs interactive resizing only.
   (G) THE GESTURE ENDS — a different anchor, and a programmatic write, both
       drop the debt rather than repaying it out of unrelated travel.
   (H) THE PAINTED RULE — the readout names it, and the same keystroke visibly

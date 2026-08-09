@@ -9,33 +9,33 @@ screen-reader user *read* the arrangement and never change it. Both close here,
 and they close together, because they are the same derivation: move one edge of a
 card to a grid line and hold the opposite edge still.
 
-Qt's floor for this is `QMdiSubWindow`, which is a real floor — it has keyboard
-move *and* resize. Measured against `qtbase/src/widgets/widgets/` in Qt 6.11.1,
-what this proves over the wire that Qt cannot do or does not do:
+the toolkit's floor for this is MDI child window, which is a real floor — it has keyboard
+move *and* resize. Measured against `the toolkit's widget module/src/widgets/widgets/` in the toolkit 6.11.1,
+what this proves over the wire that the toolkit cannot do or does not do:
 
-* **No mode.** Qt's keyboard editing lives behind `isInInteractiveMode`, entered
+* **No mode.** the toolkit's keyboard editing lives behind `isInInteractiveMode`, entered
   only from the system menu (`_q_enterInteractiveMode` casts `q->sender()` to a
-  `QAction` and returns unless it is `MoveAction` or `ResizeAction`), so the same
+  action and returns unless it is `MoveAction` or `ResizeAction`), so the same
   arrow key means different things depending on state the user cannot see. Here
   the chord says which, and every chord is one flat vocabulary.
-* **Escape cancels, and it restores the whole board.** Qt saves `oldGeometry` on
+* **Escape cancels, and it restores the whole board.** the toolkit saves `oldGeometry` on
   entering interactive mode and never reads it back: `Key_Escape`, `Key_Return`
   and `Key_Enter` all fall to one `leaveInteractiveMode()`, so Escape *commits*.
   And even restoring the rectangle would not be enough, because a move displaces
   *other* cards — which this asserts.
 * **A session's reflow is a difference, not a sum.** Several chords that walk one
   card past another push that card once; the per-chord reflows over-count it.
-* **Arrow navigation is spatial and total.** `QMdiArea` offers
-  `activateNextSubWindow`, a walk down a `QList` in creation order, so it has no
+* **Arrow navigation is spatial and total.** MDI area offers
+  `activateNextSubWindow`, a walk down a list in creation order, so it has no
   notion of direction. Every arrow's destination is published here.
 * **The handle set is enumerable, with the cursor each derives.**
-  `QMdiSubWindowPrivate::Operation` is in a `_p.h` and its region/cursor map is
-  private, so no caller can ask a Qt subwindow what handles it has.
-* **The displacement is ANNOUNCED.** Qt 6.8 added
-  `QAccessibleAnnouncementEvent`, and no widget in `qtbase/src/widgets` fires
+  `Operation` is in a `_p.h` and its region/cursor map is
+  private, so no caller can ask a toolkit subwindow what handles it has.
+* **The displacement is ANNOUNCED.** the toolkit 6.8 added
+  accessible announcement event, and no widget in `the toolkit's widget module/src/widgets` fires
   one: `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp` contain no
-  accessibility notification of any kind, so a Qt MDI window that moves is silent
-  even though `QAccessibleMdiSubWindow::state()` advertises `movable` and
+  accessibility notification of any kind, so a toolkit MDI window that moves is silent
+  even though `state()` advertises `movable` and
   `sizeable`. Here the board carries an `aria-live` region, which is *readable*
   (§2 #7) precisely because it is declared rather than fired.
 * **The keyboard reaches it through the platform path**, not only the verb: a

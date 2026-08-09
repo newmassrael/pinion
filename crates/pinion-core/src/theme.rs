@@ -119,14 +119,13 @@
 //! (R51.151) — no muddy-grey artifact on a light↔dark swap.
 //!
 //! The accessor uses the spring's velocity-preserving
-//! [`Animation::set_target`](crate::animation::Animation::set_target)
-//! interrupt semantic (`SwiftUI` / `Compose` canonical), so a mid-fade
-//! mode flip transitions visually continuous from the in-flight value
-//! to the new target — no discontinuity, no double-snap. At rest the
-//! accessor short-circuits to the cached sRGB target so widget cascade
-//! tests asserting against palette fields keep an exact-equality
-//! contract: the linear-light round-trip is only on the wire during
-//! the fade.
+//! [`Animation::set_target`](crate::animation::Animation::set_target) interrupt semantic (`SwiftUI` /
+//! `another declarative toolkit` canonical), so a mid-fade mode flip transitions visually continuous
+//! from the in-flight value to the new target — no discontinuity, no
+//! double-snap. At rest the accessor short-circuits to the cached sRGB target
+//! so widget cascade tests asserting against palette fields keep an
+//! exact-equality contract: the linear-light round-trip is only on the wire
+//! during the fade.
 //!
 //! Callers retain the instant [`ThemeProvider::theme`] accessor for
 //! tests and snapshot reads. Opt-in keeps the substrate layered
@@ -1300,12 +1299,11 @@ impl ThemeProvider {
     ///
     /// ## Interrupt semantics
     ///
-    /// Mid-fade mode / palette / OS-scheme flips re-target the spring
-    /// via [`Animation::set_target`](crate::animation::Animation::set_target);
-    /// the existing velocity carries through so the displayed palette
-    /// stays visually continuous across the interruption — the canonical
-    /// `SwiftUI` `.animation(_)` / `Compose` `animateColorAsState`
-    /// continuity contract.
+    /// Mid-fade mode / palette / OS-scheme flips re-target the spring via
+    /// [`Animation::set_target`](crate::animation::Animation::set_target); the existing velocity
+    /// carries through so the displayed palette stays visually continuous
+    /// across the interruption — the canonical `SwiftUI` `.animation(_)` / `another declarative toolkit` `animateColorAsState` continuity
+    /// contract.
     ///
     /// ## Lazy initialisation + Owner-less fallback
     ///
@@ -1323,23 +1321,19 @@ impl ThemeProvider {
     /// ## At-rest exact snap
     ///
     /// Whenever the spring is settled
-    /// ([`Animation::is_at_rest`](crate::animation::Animation::is_at_rest)),
-    /// the accessor returns the cached sRGB [`Self::theme`] target
-    /// directly rather than re-encoding the spring's linear-light
-    /// state through `ThemeLinear::to_theme`. The
+    /// ([`Animation::is_at_rest`](crate::animation::Animation::is_at_rest)), the accessor returns
+    /// the cached sRGB [`Self::theme`] target directly rather than re-encoding the
+    /// spring's linear-light state through `ThemeLinear::to_theme`. The
     /// [`Color::to_linear`](crate::style::Color::to_linear) /
-    /// [`Color::from_linear`](crate::style::Color::from_linear)
-    /// round-trip can drift midrange-channel values by ±1 8-bit unit
-    /// (verified by `crate::style::tests::srgb_round_trip_midrange_close`),
-    /// which would silently break widget cascade tests asserting
-    /// exact equality against palette field values
-    /// (e.g. [`Theme::dark`]`.surface = #121212`). Snapping at rest
-    /// mirrors the canonical `SwiftUI` `.animation(_)` / `Compose`
-    /// `animateColorAsState` contract: while the animation is running
-    /// the returned value is the interpolated state; once settled
-    /// the value equals the target exactly. The intermediate
-    /// in-flight frames still go through the linear-light path so
-    /// the perceptual interpolation quality is preserved.
+    /// [`Color::from_linear`](crate::style::Color::from_linear) round-trip can drift
+    /// midrange-channel values by ±1 8-bit unit (verified by `crate::style::tests::srgb_round_trip_midrange_close`), which would
+    /// silently break widget cascade tests asserting exact equality against
+    /// palette field values (e.g. [`Theme::dark`]`.surface = #121212`). Snapping at rest mirrors the
+    /// canonical `SwiftUI` `.animation(_)` / `another declarative toolkit` `animateColorAsState` contract: while the animation is running
+    /// the returned value is the interpolated state; once settled the value
+    /// equals the target exactly. The intermediate in-flight frames still go
+    /// through the linear-light path so the perceptual interpolation quality
+    /// is preserved.
     #[must_use]
     pub fn theme_animated(&self) -> Theme {
         let target = self.theme();
@@ -2271,7 +2265,7 @@ mod tests {
     fn r57_0_use_theme_distinct_tags_resolve_distinct_providers() {
         // Two separate logical scopes ("app", "modal") get
         // independent providers — a mode flip on one MUST NOT
-        // propagate to the other. Mirrors React's `useContext`
+        // propagate to the other. Mirrors the web UI library's `useContext`
         // scoping.
         let owner = Owner::new();
         owner.run(|| {

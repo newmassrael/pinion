@@ -353,8 +353,8 @@ pub fn view_menu_bar(
     )
 }
 
-/// Compose one top-level title slot: a fixed-width centered label,
-/// background-filled when its menu is open.
+/// another declarative toolkit one top-level title slot: a fixed-width
+/// centered label, background-filled when its menu is open.
 fn build_title(
     bar_tag: &'static str,
     index: usize,
@@ -693,14 +693,13 @@ fn anchor_px(v: f32, max: u32) -> u32 {
     crate::coord::saturating_f32_to_u32(v).min(max)
 }
 
-/// Compose one dropdown row (R805). A [`MenuItemView::separator`] paints
-/// a thin divider; otherwise a left-aligned label, optionally preceded by
-/// a check-gutter (`reserve_gutter`) carrying the [`CHECK_GLYPH`] when the
-/// row is a checked checkbox, and (R985) followed by a trailing
-/// [`SUBMENU_CHEVRON`] when the row opens a submenu. The label is muted +
-/// state-layer-free when disabled; an enabled active descendant carries the
-/// M3 state-layer. `rel_path` is the descent within the open dropdown — the
-/// row's composite tag is [`composite_item_tag`]`(bar_tag, rel_path)`.
+/// another declarative toolkit one dropdown row (R805). A [`MenuItemView::separator`] paints a thin
+/// divider; otherwise a left-aligned label, optionally preceded by a
+/// check-gutter (`reserve_gutter`) carrying the [`CHECK_GLYPH`] when the row is a checked checkbox,
+/// and (R985) followed by a trailing [`SUBMENU_CHEVRON`] when the row opens a submenu. The
+/// label is muted + state-layer-free when disabled; an enabled active
+/// descendant carries the M3 state-layer. `rel_path` is the descent within the open
+/// dropdown — the row's composite tag is [`composite_item_tag`]`(bar_tag, rel_path)`.
 fn build_item(
     bar_tag: &str,
     rel_path: &[usize],

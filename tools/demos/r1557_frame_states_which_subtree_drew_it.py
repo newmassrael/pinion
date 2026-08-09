@@ -38,7 +38,7 @@ This demo asserts:
   (D) **Text is attributed to the leaf that drew it.** Every glyph in the frame
       belongs to a `Text` node's `own`, and no `Container` claims one. This is
       the term no node census can reach — a `Text` leaf is one node whether it
-      holds two glyphs or four thousand — and no Qt surface reports it per item.
+      holds two glyphs or four thousand — and a toolkit surface reports it per item.
 
   (E) **THE ROUND'S OWN CASE — where, not just how much.** Widening every row's
       label 24 -> 1,536 characters leaves the frame's node counts identical

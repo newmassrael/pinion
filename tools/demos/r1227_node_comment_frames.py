@@ -85,7 +85,7 @@ def body() -> None:
         # ── (B) frame the two left-column nodes (0,1) ────────────────
         select(tf, [0, 1])
         fid = add_frame(tf)
-        # R1596 — a frame IS a node (`NodeBody::Frame`, Blender's NODE_FRAME),
+        # R1596 — a frame IS a node (`NodeBody::Frame`, the DCC's NODE_FRAME),
         # so it mints from the NODE counter: the seed graph holds four, and the
         # frame is the fifth thing in the tree.
         assert_eq(fid, 4, "the frame mints the next NODE id")

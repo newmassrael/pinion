@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R833 §3 §5.53 §5.15 — own-rendered print dialog.
 
-pinion paints its own print dialog (no native GTK/Qt dialog) and submits
+pinion paints its own print dialog (no native GTK/the toolkit dialog) and submits
 through the pinion-core PrintBackend substrate. This box has no CUPS
 destination, so the dialog runs on InMemoryPrintBackend (3 sample
 printers); the real CupsPrintBackend (pinion-platform-print) is the

@@ -10,7 +10,7 @@ mutator uses (so a reorder re-anchors the cursor + cancels the edit latch, R930.
 
   * a leading drag-handle column (a grip glyph) arms a row drag-to-reorder ONLY in
     the plain source view (no sort / filter / group), where the visual order IS the
-    source order — so a manual position is unambiguous (Qt / Excel disable reorder
+    source order — so a manual position is unambiguous (the toolkit / the spreadsheet disable reorder
     under a sort proxy); the handle is then a blank spacer + `begin_drag` returns
     `None`;
   * the handle press and a numeric cell-scrub press arm mutually-exclusive

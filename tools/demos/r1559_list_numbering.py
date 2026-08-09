@@ -10,11 +10,11 @@ against a real application, over the wire.
 
   * `scene/text_lists` publishes the structure: one row per list, each with its
     items in order, the marker each was given, the counter it was numbered
-    with, and where that marker was PAINTED. Qt has no peer for any of it — a
-    `QTextList` exists only inside a `QTextDocument`, `itemNumber()` and
+    with, and where that marker was PAINTED. The toolkit has no peer for any of it — a
+    text list exists only inside a text document, `itemNumber()` and
     `itemText()` are in-process C++ calls, there is no accessor that enumerates
     a document's lists, and a marker's position is computed inside the private
-    `QTextDocumentLayout` and discarded;
+    text document layout and discarded;
   * the Toggle INSERTS a step into the middle of a procedure, and the markers
     of every later step move while the earlier ones do not. Nothing in the
     binding states a number, so this is the derivation and not an author;
@@ -22,15 +22,15 @@ against a real application, over the wire.
     list it is nested in — checked by the outer list's numbering resuming
     beneath it;
   * an upper-roman list crosses 3999, where Roman numerals stop having a
-    standard form. Qt's `itemText()` answers "?" there and the value is gone;
+    standard form. The toolkit's `itemText()` answers "?" there and the value is gone;
     CSS Counter Styles Level 3 renders through the fallback style, so the item
     reads `4000.` and the wire names `Decimal` as the notation that wrote it —
     the DECLARED style is still reported as `UpperRoman`, so the two are
     distinguishable;
-  * a bullet is real text with a tag and a box. In Qt it is a painted ellipse,
+  * a bullet is real text with a tag and a box. In the toolkit it is a painted ellipse,
     so there is nothing to read;
   * `scene/access` carries WAI-ARIA `list` / `listitem` with `aria-posinset` /
-    `aria-setsize` / `aria-level`. Qt's `QAccessibleTextInterface` has no method
+    `aria-setsize` / `aria-level`. The toolkit's accessible text interface has no method
     that reports block structure at all;
   * `scene/snapshot` carries the same derivation on each paragraph, so the two
     introspection channels check each other rather than restating one;

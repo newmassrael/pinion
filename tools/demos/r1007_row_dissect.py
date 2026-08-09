@@ -3,7 +3,7 @@
 
 Drives `hello-row-dissect` via JSON-RPC. A master list of structured request
 records up top; pick one and its payload explodes into a recursive field tree
-below (Wireshark packet-detail / dlt message-detail). The new substrate is
+below (the analyser packet-detail / dlt message-detail). The new substrate is
 `dissect_row`, which transduces a row's serde_json::Value into a DissectNode
 tree; the mature tree-nav + tree-paint machinery windows / collapses it.
 

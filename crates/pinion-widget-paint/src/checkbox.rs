@@ -134,7 +134,8 @@ pub fn checkbox_outline_for(theme: &Theme, state: CheckboxState) -> Color {
     crate::state_layer::state_layer(base, state, theme)
 }
 
-/// (R668 §5.50) Compose the M3 filled-`Checkbox` paint scene fragment.
+/// (R668 §5.50) another declarative toolkit the M3 filled-`Checkbox` paint scene
+/// fragment.
 ///
 /// # Arguments
 ///

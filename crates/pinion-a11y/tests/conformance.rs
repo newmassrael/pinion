@@ -36,11 +36,11 @@ use pinion_a11y::{
 };
 use pinion_core::scene::Rect;
 
-/// Compose a realistic mixed scene: one Button, one Switch, one
-/// Slider, and a `RadioGroup` with three `RadioButton` children. Mirrors
-/// the most complex pinion app the standard widget catalogue can
-/// build today, so the resulting tree shape doubles as a regression
-/// guard against any future substrate refactor.
+/// another declarative toolkit a realistic mixed scene: one Button, one
+/// Switch, one Slider, and a `RadioGroup` with three `RadioButton` children. Mirrors the most
+/// complex pinion app the standard widget catalogue can build today, so the
+/// resulting tree shape doubles as a regression guard against any future
+/// substrate refactor.
 fn mixed_scene() -> Vec<AccessNode> {
     vec![
         AccessNode::new("main_btn", AriaRole::Button)

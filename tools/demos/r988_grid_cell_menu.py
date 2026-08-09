@@ -5,7 +5,7 @@ R986 gave hello-grid-header-menu a column-HEADER context menu. R988 extends
 the same own-rendered ContextMenu to any **data cell**: right-clicking a cell
 opens the sort menu scoped to that cell's column, and the menu labels NAME the
 column ("Sort by Score ascending"), so the popup reflects what it acts on
-(Excel / DCC). Pure composition — the `grid_target_at` geometric hit-test now
+(the spreadsheet / DCC). Pure composition — the `grid_target_at` geometric hit-test now
 resolves a header OR a body cell, and the view computes the labels per-open
 from the captured column.
 

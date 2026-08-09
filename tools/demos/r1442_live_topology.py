@@ -30,7 +30,7 @@ records each column's SERVICE NAMES before a step and re-derives, on its own
 side, whether any remembered pair came out reversed. A metric that agreed with
 itself but not with the drawing would still be caught.
 
-Qt reference: Qt ships no graph layout — `QGraphicsScene` draws what you
+the toolkit reference: the toolkit ships no graph layout — canvas scene draws what you
 position, so a topology view there means Graphviz out of process (which has no
 incremental mode at all) or a hand-rolled solver. ELK has the interactive
 strategy; what is different here is that the ordering, its cost, and the wire's

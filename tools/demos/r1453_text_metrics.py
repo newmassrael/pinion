@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """R1453 §5.36 §5.27 §2#7 — a view function can ask how wide a string will be.
 
-Qt reference: `QFontMetrics::horizontalAdvance` / `boundingRect(text)`. Qt's
-item views lean on it — `QAbstractItemDelegate::sizeHint` measures the cell's
-text, which is how `QHeaderView::ResizeToContents` knows what "the content's
+the toolkit reference: `horizontalAdvance` / `boundingRect(text)`. The toolkit's
+item views lean on it — `sizeHint` measures the cell's
+text, which is how `ResizeToContents` knows what "the content's
 size" is.
 
 pinion could measure exactly ONE thing from a view fn: the cell of a MONOSPACE
@@ -28,8 +28,8 @@ What this asserts:
       through the wire and the hints stay put; squeezed to the floor, a cell
       still reports the width it NEEDS, and switching back to contents gives it
       exactly that again.
-  (D) R1454 — THE MEASUREMENT IS BOUNDED. Qt's
-      `QHeaderView::resizeContentsPrecision` says how many rows a content-fitted
+  (D) R1454 — THE MEASUREMENT IS BOUNDED. The toolkit's
+      `resizeContentsPrecision` says how many rows a content-fitted
       column samples, because measuring every row each frame is what makes the
       policy expensive: a shape miss costs 18.5 us against a 118 ns cache hit,
       and a working set past the 256-layout measurement cache re-shapes in FULL
@@ -115,9 +115,9 @@ def body() -> None:
         # R1504 CHANGED WHAT THIS CAN READ, and the change is a real cost of
         # that round rather than a detail. This block used to take the header
         # label's node rect as its glyph EXTENT — true while the label was a
-        # bare `Rect::default()` pinned 12px in. R1504 gave it a BOX spanning
-        # its section, because Qt's `defaultAlignment` needs somewhere to align
-        # within, and a box reports the box.
+        # bare `Rect::default()` pinned 12px in. R1504 gave it a BOX spanning its section,
+        # because the toolkit's `defaultAlignment` needs somewhere to align within, and a box
+        # reports the box.
         #
         # So the header's own string width is no longer readable from the tree.
         # What stays exact is the BODY, which still paints unsized labels, and

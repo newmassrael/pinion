@@ -1676,8 +1676,8 @@ impl PropertyGridExternal {
     /// re-indexed element), cancel it — committing would write a stale slot
     /// (the R930.1 reachable-panic class). (2) Re-anchor the roving cursor
     /// onto the element now occupying the freed slot (or the new last
-    /// element), Excel / the toolkit list behaviour, so the cursor never
-    /// strands on a vanished `elem.<k>`.
+    /// element), the spreadsheet / the toolkit list behaviour, so the cursor
+    /// never strands on a vanished `elem.<k>`.
     fn remove_elem(&self, index: usize) -> bool {
         if index >= self.array_len() {
             return false;

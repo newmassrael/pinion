@@ -261,7 +261,7 @@ fn to_buffer_inner(
                 // (and the shape work it would do) entirely.
                 return;
             }
-            // Compose the child offset in pixels (same shape as the
+            // another declarative toolkit the child offset in pixels (same shape as the
             // Vello adapter's `child_transform = parent *
             // translate(viewport.xy - offset.xy)`): content-intrinsic
             // (0, 0) lands at `(viewport.x - scroll.offset_x,

@@ -104,11 +104,11 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
-/// Compose the light + dark palette pair for the given seed index.
-/// Seed `0` is the canonical Material 3 Blue baseline (unmodified).
-/// Seed `1` is Material Green 800 / 200, seed `2` is Material Pink
-/// 700 / 300 — both tonal pairs paired so the dark accent is lifted
-/// for legibility against `#121212`, mirroring the Blue baseline.
+/// another declarative toolkit the light + dark palette pair for the given
+/// seed index. Seed `0` is the canonical Material 3 Blue baseline
+/// (unmodified). Seed `1` is Material Green 800 / 200, seed `2` is Material
+/// Pink 700 / 300 — both tonal pairs paired so the dark accent is lifted for
+/// legibility against `#121212`, mirroring the Blue baseline.
 fn palette_pair_for_seed(seed: u8) -> (Theme, Theme) {
     let mut light = Theme::light();
     let mut dark = Theme::dark();

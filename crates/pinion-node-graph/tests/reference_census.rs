@@ -32,8 +32,8 @@
 //! that would differ if the capability were missing. A proof that only calls a
 //! method and unwraps it proves the method compiles.
 //!
-//! Three verdicts are **not** here and are not missing: `NODE_OT_select_box`,
-//! `NODE_OT_select_circle` and `NODE_OT_select_lasso` are region tests over
+//! Three verdicts are **not** here and are not missing: `select_box`,
+//! `select_circle` and `select_lasso` are region tests over
 //! *drawn* geometry, which `select.rs` measured as belonging to the scene layer
 //! rather than to a node model. Their proofs live where the capability does, in
 //! `pinion-core`, and the pin says so — which is why a proof is addressed
@@ -144,7 +144,7 @@ impl NodeKind for Op {
 
     /// A **directed** relation, which is why it is here and not an equality: a
     /// number reads as text and text does not read back as a number. Both of
-    /// the reference hooks this answers — the engine's `CreateAutomaticConversionNodeAndConnections` and the DCC's `bNodeTreeType::validate_link` —
+    /// the reference hooks this answers — the engine's `CreateAutomaticConversionNodeAndConnections` and the DCC's `the tree type::validate_link` —
     /// need exactly this asymmetry, and it was R1593's subject.
     fn conversion(from: &Ty, to: &Ty) -> Conversion<Val> {
         match (from, to) {
@@ -307,219 +307,167 @@ fn proof<F: Fn() + 'static>(tree: &'static str, operator: &'static str, run: F) 
 /// Split by reference only because one list of sixty-one is past the length
 /// this project lets a function have; the two are one table.
 fn proofs() -> Vec<Proof> {
-    let mut all = blender_proofs();
-    all.extend(blender_hook_proofs());
-    all.extend(unreal_proofs());
-    all.extend(unreal_wire_proofs());
-    all.extend(unreal_editor_proofs());
-    all.extend(unreal_hook_proofs());
-    all.extend(unreal_schema_hook_proofs());
+    let mut all = dcc_proofs();
+    all.extend(dcc_hook_proofs());
+    all.extend(engine_proofs());
+    all.extend(engine_wire_proofs());
+    all.extend(engine_editor_proofs());
+    all.extend(engine_hook_proofs());
+    all.extend(engine_schema_hook_proofs());
     all
 }
 
-fn blender_proofs() -> Vec<Proof> {
+fn dcc_proofs() -> Vec<Proof> {
     vec![
+        proof("dcc", "add_empty_group", dcc_add_empty_group),
+        proof("dcc", "add_group", dcc_add_group),
+        proof("dcc", "add_group_input_node", dcc_add_group_input_node),
+        proof("dcc", "attach", dcc_attach),
+        proof("dcc", "clipboard_copy", dcc_clipboard_copy),
+        proof("dcc", "clipboard_paste", dcc_clipboard_paste),
         proof(
-            "blender",
-            "NODE_OT_add_empty_group",
-            blender_add_empty_group,
+            "dcc",
+            "collapse_hide_unused_toggle",
+            dcc_collapse_hide_unused_toggle,
         ),
-        proof("blender", "NODE_OT_add_group", blender_add_group),
+        proof("dcc", "delete", dcc_delete),
+        proof("dcc", "delete_reconnect", dcc_delete_reconnect),
+        proof("dcc", "detach", dcc_detach),
+        proof("dcc", "duplicate", dcc_duplicate),
+        proof("dcc", "group_edit", dcc_group_edit),
+        proof("dcc", "group_enter_exit", dcc_group_enter_exit),
+        proof("dcc", "group_insert", dcc_group_insert),
+        proof("dcc", "group_make", dcc_group_make),
+        proof("dcc", "group_separate", dcc_group_separate),
+        proof("dcc", "group_ungroup", dcc_group_ungroup),
+        proof("dcc", "hide_toggle", dcc_hide_toggle),
         proof(
-            "blender",
-            "NODE_OT_add_group_input_node",
-            blender_add_group_input_node,
+            "dcc",
+            "interface_item_duplicate",
+            dcc_interface_item_duplicate,
         ),
-        proof("blender", "NODE_OT_attach", blender_attach),
-        proof("blender", "NODE_OT_clipboard_copy", blender_clipboard_copy),
-        proof(
-            "blender",
-            "NODE_OT_clipboard_paste",
-            blender_clipboard_paste,
-        ),
-        proof(
-            "blender",
-            "NODE_OT_collapse_hide_unused_toggle",
-            blender_collapse_hide_unused_toggle,
-        ),
-        proof("blender", "NODE_OT_delete", blender_delete),
-        proof(
-            "blender",
-            "NODE_OT_delete_reconnect",
-            blender_delete_reconnect,
-        ),
-        proof("blender", "NODE_OT_detach", blender_detach),
-        proof("blender", "NODE_OT_duplicate", blender_duplicate),
-        proof("blender", "NODE_OT_group_edit", blender_group_edit),
-        proof(
-            "blender",
-            "NODE_OT_group_enter_exit",
-            blender_group_enter_exit,
-        ),
-        proof("blender", "NODE_OT_group_insert", blender_group_insert),
-        proof("blender", "NODE_OT_group_make", blender_group_make),
-        proof("blender", "NODE_OT_group_separate", blender_group_separate),
-        proof("blender", "NODE_OT_group_ungroup", blender_group_ungroup),
-        proof("blender", "NODE_OT_hide_toggle", blender_hide_toggle),
-        proof(
-            "blender",
-            "NODE_OT_interface_item_duplicate",
-            blender_interface_item_duplicate,
-        ),
-        proof(
-            "blender",
-            "NODE_OT_interface_item_new",
-            blender_interface_item_new,
-        ),
-        proof(
-            "blender",
-            "NODE_OT_interface_item_remove",
-            blender_interface_item_remove,
-        ),
-        proof("blender", "NODE_OT_join", blender_join),
-        proof("blender", "NODE_OT_join_nodes", blender_join_nodes),
-        proof("blender", "NODE_OT_link", blender_link),
-        proof("blender", "NODE_OT_link_make", blender_link_make),
-        proof("blender", "NODE_OT_links_cut", blender_links_cut),
-        proof("blender", "NODE_OT_links_detach", blender_links_detach),
-        proof("blender", "NODE_OT_links_mute", blender_links_mute),
-        proof("blender", "NODE_OT_mute_toggle", blender_mute_toggle),
-        proof("blender", "NODE_OT_new_node_tree", blender_new_node_tree),
-        proof("blender", "NODE_OT_options_toggle", blender_options_toggle),
-        proof("blender", "NODE_OT_parent_set", blender_parent_set),
-        proof("blender", "NODE_OT_preview_toggle", blender_preview_toggle),
-        proof("blender", "NODE_OT_resize", blender_resize),
-        proof("blender", "NODE_OT_select_grouped", blender_select_grouped),
-        proof(
-            "blender",
-            "NODE_OT_select_linked_from",
-            blender_select_linked_from,
-        ),
-        proof(
-            "blender",
-            "NODE_OT_select_linked_to",
-            blender_select_linked_to,
-        ),
-        proof(
-            "blender",
-            "NODE_OT_select_same_type_step",
-            blender_select_same_type_step,
-        ),
-        proof("blender", "NODE_OT_sockets_sync", blender_sockets_sync),
-        proof("blender", "NODE_OT_swap_node", blender_swap_node),
-        proof(
-            "blender",
-            "NODE_OT_tree_path_parent",
-            blender_tree_path_parent,
-        ),
+        proof("dcc", "interface_item_new", dcc_interface_item_new),
+        proof("dcc", "interface_item_remove", dcc_interface_item_remove),
+        proof("dcc", "join", dcc_join),
+        proof("dcc", "join_nodes", dcc_join_nodes),
+        proof("dcc", "link", dcc_link),
+        proof("dcc", "link_make", dcc_link_make),
+        proof("dcc", "links_cut", dcc_links_cut),
+        proof("dcc", "links_detach", dcc_links_detach),
+        proof("dcc", "links_mute", dcc_links_mute),
+        proof("dcc", "mute_toggle", dcc_mute_toggle),
+        proof("dcc", "new_node_tree", dcc_new_node_tree),
+        proof("dcc", "options_toggle", dcc_options_toggle),
+        proof("dcc", "parent_set", dcc_parent_set),
+        proof("dcc", "preview_toggle", dcc_preview_toggle),
+        proof("dcc", "resize", dcc_resize),
+        proof("dcc", "select_grouped", dcc_select_grouped),
+        proof("dcc", "select_linked_from", dcc_select_linked_from),
+        proof("dcc", "select_linked_to", dcc_select_linked_to),
+        proof("dcc", "select_same_type_step", dcc_select_same_type_step),
+        proof("dcc", "sockets_sync", dcc_sockets_sync),
+        proof("dcc", "swap_node", dcc_swap_node),
+        proof("dcc", "tree_path_parent", dcc_tree_path_parent),
     ]
 }
 
 /// The HOOK surface (R1603): what the DCC asks a node type, a tree type
 /// and a socket type to decide.
-fn blender_hook_proofs() -> Vec<Proof> {
+fn dcc_hook_proofs() -> Vec<Proof> {
     vec![
+        proof("dcc", "node::can_sync_sockets", dcc_node_can_sync_sockets),
+        proof("dcc", "node::copyfunc", dcc_node_copyfunc),
+        proof("dcc", "node::initfunc", dcc_node_initfunc),
+        proof("dcc", "node::labelfunc", dcc_node_labelfunc),
+        proof("dcc", "node::updatefunc", dcc_node_updatefunc),
+        proof("dcc", "node_tree::localize", dcc_node_tree_localize),
+        proof("dcc", "node_tree::update", dcc_node_tree_update),
         proof(
-            "blender",
-            "bNodeType::can_sync_sockets",
-            blender_node_can_sync_sockets,
-        ),
-        proof("blender", "bNodeType::copyfunc", blender_node_copyfunc),
-        proof("blender", "bNodeType::initfunc", blender_node_initfunc),
-        proof("blender", "bNodeType::labelfunc", blender_node_labelfunc),
-        proof("blender", "bNodeType::updatefunc", blender_node_updatefunc),
-        proof(
-            "blender",
-            "bNodeTreeType::localize",
-            blender_node_tree_localize,
-        ),
-        proof("blender", "bNodeTreeType::update", blender_node_tree_update),
-        proof(
-            "blender",
-            "bNodeTreeType::validate_link",
-            blender_node_tree_validate_link,
+            "dcc",
+            "node_tree::validate_link",
+            dcc_node_tree_validate_link,
         ),
         proof(
-            "blender",
-            "bNodeSocketType::interface_from_socket",
-            blender_node_socket_interface_from_socket,
+            "dcc",
+            "node_socket::interface_from_socket",
+            dcc_node_socket_interface_from_socket,
         ),
         proof(
-            "blender",
-            "bNodeSocketType::interface_init_socket",
-            blender_node_socket_interface_init_socket,
+            "dcc",
+            "node_socket::interface_init_socket",
+            dcc_node_socket_interface_init_socket,
         ),
     ]
 }
 
 /// The generic canvas's commands that act on **structure** — which nodes exist,
 /// which tree they are in, and whether they take part.
-fn unreal_proofs() -> Vec<Proof> {
+fn engine_proofs() -> Vec<Proof> {
     vec![
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::CollapseNodes",
-            unreal_graph_editor_collapse_nodes,
+            engine_graph_editor_collapse_nodes,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::CollapseSelectionToFunction",
-            unreal_graph_editor_collapse_selection_to_function,
+            engine_graph_editor_collapse_selection_to_function,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::CollapseSelectionToMacro",
-            unreal_graph_editor_collapse_selection_to_macro,
+            engine_graph_editor_collapse_selection_to_macro,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::CreateComment",
-            unreal_graph_editor_create_comment,
+            engine_graph_editor_create_comment,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::DeleteAndReconnectNodes",
-            unreal_graph_editor_delete_and_reconnect_nodes,
+            engine_graph_editor_delete_and_reconnect_nodes,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::DisableNodes",
-            unreal_graph_editor_disable_nodes,
+            engine_graph_editor_disable_nodes,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::EnableNodes",
-            unreal_graph_editor_enable_nodes,
+            engine_graph_editor_enable_nodes,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::ExpandNodes",
-            unreal_graph_editor_expand_nodes,
+            engine_graph_editor_expand_nodes,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::PromoteSelectionToFunction",
-            unreal_graph_editor_promote_selection_to_function,
+            engine_graph_editor_promote_selection_to_function,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::PromoteSelectionToMacro",
-            unreal_graph_editor_promote_selection_to_macro,
+            engine_graph_editor_promote_selection_to_macro,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::ReconstructNodes",
-            unreal_graph_editor_reconstruct_nodes,
+            engine_graph_editor_reconstruct_nodes,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::SelectAllInputNodes",
-            unreal_graph_editor_select_all_input_nodes,
+            engine_graph_editor_select_all_input_nodes,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::SelectAllOutputNodes",
-            unreal_graph_editor_select_all_output_nodes,
+            engine_graph_editor_select_all_output_nodes,
         ),
     ]
 }
@@ -530,42 +478,42 @@ fn unreal_proofs() -> Vec<Proof> {
 /// Split from the structural half because one list of twenty is past the length
 /// this project lets a function have, and this is the seam it already had: a
 /// wire is not a node.
-fn unreal_wire_proofs() -> Vec<Proof> {
+fn engine_wire_proofs() -> Vec<Proof> {
     vec![
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::BreakNodeLinks",
-            unreal_graph_editor_break_node_links,
+            engine_graph_editor_break_node_links,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::BreakPinLinks",
-            unreal_graph_editor_break_pin_links,
+            engine_graph_editor_break_pin_links,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::BreakThisLink",
-            unreal_graph_editor_break_this_link,
+            engine_graph_editor_break_this_link,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::HideNoConnectionNoDefaultPins",
-            unreal_graph_editor_hide_no_connection_no_default_pins,
+            engine_graph_editor_hide_no_connection_no_default_pins,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::HideNoConnectionPins",
-            unreal_graph_editor_hide_no_connection_pins,
+            engine_graph_editor_hide_no_connection_pins,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::ResetPinToDefaultValue",
-            unreal_graph_editor_reset_pin_to_default_value,
+            engine_graph_editor_reset_pin_to_default_value,
         ),
         proof(
-            "unreal",
+            "engine",
             "GraphEditor::ShowAllPins",
-            unreal_graph_editor_show_all_pins,
+            engine_graph_editor_show_all_pins,
         ),
     ]
 }
@@ -577,11 +525,11 @@ fn unreal_wire_proofs() -> Vec<Proof> {
 /// eight editor-specific lists, 152 commands, and every capability among them
 /// that this crate answers is answered by a mechanism the generic list already
 /// named — so 25 rows CITE and one owns.
-fn unreal_editor_proofs() -> Vec<Proof> {
+fn engine_editor_proofs() -> Vec<Proof> {
     vec![proof(
-        "unreal",
+        "engine",
         "MaterialEditor::MatertialPasteHere",
-        unreal_material_editor_matertial_paste_here,
+        engine_material_editor_matertial_paste_here,
     )]
 }
 
@@ -592,7 +540,7 @@ fn unreal_editor_proofs() -> Vec<Proof> {
 /// `Fragment` stores every node's position relative to the selection's centroid
 /// (`Fragment::origin`), so `insert(.., at, ..)` puts the *fragment* there and
 /// the relative layout is carried untouched. The distinction is invisible with
-/// one node — `blender_clipboard_paste` pastes one and cannot tell an anchor
+/// one node — `dcc_clipboard_paste` pastes one and cannot tell an anchor
 /// from a per-node override — so this one pastes three at once and asserts both
 /// halves: where the group landed, and that its shape survived.
 ///
@@ -602,7 +550,7 @@ fn unreal_editor_proofs() -> Vec<Proof> {
 /// and the averaging that turns it into a paste location lives inside `FBlueprintEditor::PasteNodesHere` — so
 /// nothing can ask the payload anything.
 #[test]
-fn unreal_material_editor_matertial_paste_here() {
+fn engine_material_editor_matertial_paste_here() {
     let mut document: Document<Op> = Document::new("root");
     let left = document
         .add_node(ROOT, NodeBody::Kind(Op::Num(2)), 100, 50)
@@ -668,140 +616,116 @@ fn unreal_material_editor_matertial_paste_here() {
     assert_eq!(fragment.origin(), (300, 63), "and the anchor is readable");
 }
 
-/// The HOOK surface (R1603): the virtuals of `UEdGraphNode` and
-/// `UEdGraphSchema`.
-fn unreal_hook_proofs() -> Vec<Proof> {
+/// The HOOK surface (R1603): the virtuals of `the graph node` and
+/// `the graph schema`.
+fn engine_hook_proofs() -> Vec<Proof> {
     vec![
         proof(
-            "unreal",
-            "UEdGraphNode::AllocateDefaultPins",
-            unreal_node_allocate_default_pins,
+            "engine",
+            "node::AllocateDefaultPins",
+            engine_node_allocate_default_pins,
+        ),
+        proof("engine", "node::DestroyNode", engine_node_destroy_node),
+        proof(
+            "engine",
+            "node::GetPassThroughPin",
+            engine_node_get_pass_through_pin,
         ),
         proof(
-            "unreal",
-            "UEdGraphNode::DestroyNode",
-            unreal_node_destroy_node,
+            "engine",
+            "node::GetPinDisplayName",
+            engine_node_get_pin_display_name,
+        ),
+        proof("engine", "node::GetSubGraphs", engine_node_get_sub_graphs),
+        proof(
+            "engine",
+            "node::NodeConnectionListChanged",
+            engine_node_node_connection_list_changed,
+        ),
+        proof("engine", "node::OnPinRemoved", engine_node_on_pin_removed),
+        proof("engine", "node::OnRenameNode", engine_node_on_rename_node),
+        proof(
+            "engine",
+            "node::OnUpdateCommentText",
+            engine_node_on_update_comment_text,
         ),
         proof(
-            "unreal",
-            "UEdGraphNode::GetPassThroughPin",
-            unreal_node_get_pass_through_pin,
+            "engine",
+            "node::PinConnectionListChanged",
+            engine_node_pin_connection_list_changed,
         ),
         proof(
-            "unreal",
-            "UEdGraphNode::GetPinDisplayName",
-            unreal_node_get_pin_display_name,
+            "engine",
+            "node::PinDefaultValueChanged",
+            engine_node_pin_default_value_changed,
+        ),
+        proof("engine", "node::PostPasteNode", engine_node_post_paste_node),
+        proof(
+            "engine",
+            "node::PostPlacedNewNode",
+            engine_node_post_placed_new_node,
         ),
         proof(
-            "unreal",
-            "UEdGraphNode::GetSubGraphs",
-            unreal_node_get_sub_graphs,
+            "engine",
+            "node::PrepareForCopying",
+            engine_node_prepare_for_copying,
         ),
-        proof(
-            "unreal",
-            "UEdGraphNode::NodeConnectionListChanged",
-            unreal_node_node_connection_list_changed,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::OnPinRemoved",
-            unreal_node_on_pin_removed,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::OnRenameNode",
-            unreal_node_on_rename_node,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::OnUpdateCommentText",
-            unreal_node_on_update_comment_text,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::PinConnectionListChanged",
-            unreal_node_pin_connection_list_changed,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::PinDefaultValueChanged",
-            unreal_node_pin_default_value_changed,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::PostPasteNode",
-            unreal_node_post_paste_node,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::PostPlacedNewNode",
-            unreal_node_post_placed_new_node,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::PrepareForCopying",
-            unreal_node_prepare_for_copying,
-        ),
-        proof(
-            "unreal",
-            "UEdGraphNode::ResizeNode",
-            unreal_node_resize_node,
-        ),
+        proof("engine", "node::ResizeNode", engine_node_resize_node),
     ]
 }
 
 /// And the schema's half of it — what the engine asks a GRAPH to decide.
-fn unreal_schema_hook_proofs() -> Vec<Proof> {
+fn engine_schema_hook_proofs() -> Vec<Proof> {
     vec![
         proof(
-            "unreal",
-            "UEdGraphSchema::ArePinTypesEquivalent",
-            unreal_schema_are_pin_types_equivalent,
+            "engine",
+            "schema::ArePinTypesEquivalent",
+            engine_schema_are_pin_types_equivalent,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::ArePinsCompatible",
-            unreal_schema_are_pins_compatible,
+            "engine",
+            "schema::ArePinsCompatible",
+            engine_schema_are_pins_compatible,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::CanCreateConnection",
-            unreal_schema_can_create_connection,
+            "engine",
+            "schema::CanCreateConnection",
+            engine_schema_can_create_connection,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::CanEncapuslateNode",
-            unreal_schema_can_encapuslate_node,
+            "engine",
+            "schema::CanEncapuslateNode",
+            engine_schema_can_encapuslate_node,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::CreateAutomaticConversionNodeAndConnections",
-            unreal_schema_create_automatic_conversion_node_and_connections,
+            "engine",
+            "schema::CreateAutomaticConversionNodeAndConnections",
+            engine_schema_create_automatic_conversion_node_and_connections,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::DoesDefaultValueMatch",
-            unreal_schema_does_default_value_match,
+            "engine",
+            "schema::DoesDefaultValueMatch",
+            engine_schema_does_default_value_match,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::GetGraphDisplayInformation",
-            unreal_schema_get_graph_display_information,
+            "engine",
+            "schema::GetGraphDisplayInformation",
+            engine_schema_get_graph_display_information,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::IsPinDefaultValid",
-            unreal_schema_is_pin_default_valid,
+            "engine",
+            "schema::IsPinDefaultValid",
+            engine_schema_is_pin_default_valid,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::SetNodePosition",
-            unreal_schema_set_node_position,
+            "engine",
+            "schema::SetNodePosition",
+            engine_schema_set_node_position,
         ),
         proof(
-            "unreal",
-            "UEdGraphSchema::TrySetDefaultValue",
-            unreal_schema_try_set_default_value,
+            "engine",
+            "schema::TrySetDefaultValue",
+            engine_schema_try_set_default_value,
         ),
     ]
 }
@@ -811,7 +735,7 @@ fn unreal_schema_hook_proofs() -> Vec<Proof> {
 /// bare identifier — snake case under a fixed prefix in the DCC, Pascal case
 /// in the engine. A **hook** is `Owner::member`, and its owner is stripped down to what
 /// distinguishes it: a leading `b` or `U`, a leading `EdGraph` and a trailing `Type`
-/// are all the reference's own naming furniture, so `bNodeTreeType` and `UEdGraphNode` become `node_tree` and
+/// are all the reference's own naming furniture, so `the tree type` and `the graph node` become `node_tree` and
 /// `node`.
 fn proof_name(tree: &str, operator: &str) -> String {
     if let Some((owner, member)) = operator.split_once("::") {
@@ -822,7 +746,7 @@ fn proof_name(tree: &str, operator: &str) -> String {
             .trim_end_matches("Type");
         return format!("{tree}_{}_{}", snake(tag), snake(member));
     }
-    let stem = if tree == "blender" {
+    let stem = if tree == "dcc" {
         operator.trim_start_matches("NODE_OT_").to_owned()
     } else {
         snake(operator)
@@ -851,7 +775,7 @@ fn snake(name: &str) -> String {
 ///
 /// ★ It is not a bijection any more, and the reason is a finding rather than a
 /// concession. One pinion mechanism often answers **several** reference rows —
-/// the DCC's `bNodeTreeType::localize` and the engine's `UEdGraphSchema::DuplicateGraph` are one `fork_definition`; `NODE_OT_delete` and `SafeDeleteNodeFromGraph` are one `remove_node` —
+/// the DCC's `the tree type::localize` and the engine's `the graph schema::DuplicateGraph` are one `fork_definition`; `delete` and `SafeDeleteNodeFromGraph` are one `remove_node` —
 /// and saying so is exactly the "the reference writes it three times and this
 /// derives it once" measurement R1589 recorded by hand. So a proof has one
 /// **owner** (the row its name derives from) and may be **cited** by any
@@ -942,7 +866,7 @@ fn every_proof_in_the_table_runs() {
 /// the instance's signature is **derived**, so an empty definition gives an
 /// instance with no ports at all rather than a node with unresolved sockets.
 #[test]
-fn blender_add_empty_group() {
+fn dcc_add_empty_group() {
     let mut document: Document<Op> = Document::new("root");
     let definition = document.add_definition("Empty");
     let instance = document.instantiate(ROOT, definition, 0, 0).unwrap();
@@ -959,7 +883,7 @@ fn blender_add_empty_group() {
 /// value: fed differently they answer differently, which is the memo being
 /// keyed by instance.
 #[test]
-fn blender_add_group() {
+fn dcc_add_group() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     assert_eq!(chain.document.instance_count(made.definition), 1);
@@ -988,7 +912,7 @@ fn blender_add_group() {
 /// is how the graph *inside* reaches it — so an `Input` interface node's ports
 /// are OUTPUTS, which is the part that is easy to get backwards.
 #[test]
-fn blender_add_group_input_node() {
+fn dcc_add_group_input_node() {
     let mut document: Document<Op> = Document::new("root");
     let definition = document.add_definition("Def");
     let index = document
@@ -1021,7 +945,7 @@ fn blender_add_group_input_node() {
 /// authored: it is derived from what crossed the boundary, and the graph goes
 /// on computing what it computed.
 #[test]
-fn blender_group_make() {
+fn dcc_group_make() {
     let mut chain = chain();
     let before = arrives(&chain.document, Socket::new(chain.sink, 0));
     assert_eq!(before, Some(Val::Number(5)));
@@ -1038,7 +962,7 @@ fn blender_group_make() {
 /// Inline a group back. The nodes come out, the definition is reported as
 /// having no instances left, and the value is unchanged.
 #[test]
-fn blender_group_ungroup() {
+fn dcc_group_ungroup() {
     let mut chain = chain();
     let before = arrives(&chain.document, Socket::new(chain.sink, 0));
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
@@ -1053,7 +977,7 @@ fn blender_group_ungroup() {
 /// leaves the interface alone; here it is re-derived, so the value that used
 /// to cross keeps crossing and nothing is left describing a link that is gone.
 #[test]
-fn blender_group_insert() {
+fn dcc_group_insert() {
     let mut chain = chain();
     let before = arrives(&chain.document, Socket::new(chain.sink, 0));
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
@@ -1086,7 +1010,7 @@ fn blender_group_insert() {
 /// value that used to cross the boundary is **reconnected**, which is where
 /// the DCC loses it.
 #[test]
-fn blender_group_separate() {
+fn dcc_group_separate() {
     let mut chain = chain();
     let before = arrives(&chain.document, Socket::new(chain.sink, 0));
     let made = chain
@@ -1119,7 +1043,7 @@ fn blender_group_separate() {
 /// A definition is a tree of its own, addable without any node being collapsed
 /// into it. The DCC's "New Node Tree".
 #[test]
-fn blender_new_node_tree() {
+fn dcc_new_node_tree() {
     let mut document: Document<Op> = Document::new("root");
     let before = document.tree_count();
     let definition = document.add_definition("Fresh");
@@ -1133,7 +1057,7 @@ fn blender_new_node_tree() {
 /// Descend into a definition and come back. The path is a value, so "where am
 /// I" is answerable without the editor keeping its own copy.
 #[test]
-fn blender_group_edit() {
+fn dcc_group_edit() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
 
@@ -1150,7 +1074,7 @@ fn blender_group_edit() {
 /// editor exactly where it was, which is the property a toggle needs and a
 /// remembered tree id cannot promise.
 #[test]
-fn blender_group_enter_exit() {
+fn dcc_group_enter_exit() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
 
@@ -1166,7 +1090,7 @@ fn blender_group_enter_exit() {
 /// The DCC's "go to parent tree" — the same exit, reached from a nesting two
 /// deep so that "parent" is not a synonym for "root".
 #[test]
-fn blender_tree_path_parent() {
+fn dcc_tree_path_parent() {
     let mut chain = chain();
     let inner = chain.document.group(ROOT, &[chain.add], "Inner").unwrap();
     let outer = chain.document.group(ROOT, &[inner.node], "Outer").unwrap();
@@ -1193,7 +1117,7 @@ fn blender_tree_path_parent() {
 /// Add a port to a definition's interface. Every instance gains the socket at
 /// once, because an instance's signature IS the interface.
 #[test]
-fn blender_interface_item_new() {
+fn dcc_interface_item_new() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let before = chain
@@ -1227,7 +1151,7 @@ fn blender_interface_item_new() {
 /// that had to go are **named with the tree they were in** — including the ones
 /// at instances, which live in another tree entirely.
 #[test]
-fn blender_interface_item_remove() {
+fn dcc_interface_item_remove() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let arity = chain
@@ -1262,7 +1186,7 @@ fn blender_interface_item_remove() {
 /// Running it is what shows the claim holds — the copy is a distinct port with
 /// its own index, the original's wiring is untouched, and every instance grows.
 #[test]
-fn blender_interface_item_duplicate() {
+fn dcc_interface_item_duplicate() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let original = chain
@@ -1317,7 +1241,7 @@ fn blender_interface_item_duplicate() {
 /// that does not exist, so the only honest proof is to change the interface and
 /// observe the instance follow with no call in between.
 #[test]
-fn blender_sockets_sync() {
+fn dcc_sockets_sync() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let inside = chain
@@ -1377,7 +1301,7 @@ fn blender_sockets_sync() {
 /// Wire two sockets. A link that could not carry a value is refused rather than
 /// drawn, and the refusal names why.
 #[test]
-fn blender_link() {
+fn dcc_link() {
     let mut document: Document<Op> = Document::new("root");
     let two = num(&mut document, 2);
     let double = node(&mut document, Op::Double);
@@ -1395,7 +1319,7 @@ fn blender_link() {
 /// one producer, so a second wire onto it **displaces** the first and says so,
 /// rather than leaving the node with two feeds.
 #[test]
-fn blender_link_make() {
+fn dcc_link_make() {
     let mut chain = chain();
     let ten = num(&mut chain.document, 10);
 
@@ -1417,7 +1341,7 @@ fn blender_link_make() {
 /// loop over `disconnect` and that each cut hands back the link it removed — which is
 /// what an undo needs and what the DCC's operator does not return.
 #[test]
-fn blender_links_cut() {
+fn dcc_links_cut() {
     let mut chain = chain();
     let crossed: Vec<_> = chain
         .document
@@ -1450,7 +1374,7 @@ fn blender_links_cut() {
 /// The DCC's "Detach Links": the node stays, its wires do not, and what the
 /// graph loses is reported rather than discovered.
 #[test]
-fn blender_links_detach() {
+fn dcc_links_detach() {
     let mut chain = chain();
     let rewired = chain.document.detach(ROOT, chain.add).unwrap();
 
@@ -1463,7 +1387,7 @@ fn blender_links_detach() {
 /// from a bypassed node because it is the opposite behaviour, and the DCC
 /// spells both "mute".
 #[test]
-fn blender_links_mute() {
+fn dcc_links_mute() {
     let mut chain = chain();
     let link = chain
         .document
@@ -1491,7 +1415,7 @@ fn blender_links_mute() {
 /// Delete. The links that had to go with the node are named, so an editor never
 /// has to scan for what it just broke.
 #[test]
-fn blender_delete() {
+fn dcc_delete() {
     let mut chain = chain();
     let removed = chain.document.remove_node(ROOT, chain.add).unwrap();
 
@@ -1504,7 +1428,7 @@ fn blender_delete() {
 /// reconnect nodes **as if deletion was muted**", so the reconnection is the
 /// bypass derivation applied to the structure — one rule, not two.
 #[test]
-fn blender_delete_reconnect() {
+fn dcc_delete_reconnect() {
     let mut document: Document<Op> = Document::new("root");
     let two = num(&mut document, 2);
     let double = node(&mut document, Op::Double);
@@ -1532,7 +1456,7 @@ fn blender_delete_reconnect() {
 /// which value leaves by which output — the property the DCC's
 /// wiring-sensitive scoring does not have.
 #[test]
-fn blender_mute_toggle() {
+fn dcc_mute_toggle() {
     let mut document: Document<Op> = Document::new("root");
     let two = num(&mut document, 2);
     let double = node(&mut document, Op::Double);
@@ -1558,7 +1482,7 @@ fn blender_mute_toggle() {
 /// id, the position and the frame membership all survive and what did not fit
 /// is reported.
 #[test]
-fn blender_swap_node() {
+fn dcc_swap_node() {
     let mut chain = chain();
     chain
         .document
@@ -1590,7 +1514,7 @@ fn blender_swap_node() {
 /// Hide the ports nothing is wired to. The answer is a *derivation* over the
 /// declaration and the wiring together, which only the document can make.
 #[test]
-fn blender_collapse_hide_unused_toggle() {
+fn dcc_collapse_hide_unused_toggle() {
     let mut chain = chain();
     let ports = chain.document.visible_ports(ROOT, chain.add).unwrap();
     assert_eq!(ports.hidden_count(), 0);
@@ -1627,7 +1551,7 @@ fn blender_collapse_hide_unused_toggle() {
 /// booleans rather than one state, so un-collapsing restores what the node was
 /// already saying instead of a default.
 #[test]
-fn blender_hide_toggle() {
+fn dcc_hide_toggle() {
     let mut chain = chain();
     let lonely = node(&mut chain.document, Op::Add);
     {
@@ -1671,7 +1595,7 @@ fn blender_hide_toggle() {
 /// the application; whether it is on screen travels with the node — and the
 /// evaluator may not read it.
 #[test]
-fn blender_options_toggle() {
+fn dcc_options_toggle() {
     let mut chain = chain();
     let before = chain.document.evaluate(ROOT, chain.add);
     assert!(
@@ -1716,7 +1640,7 @@ fn blender_options_toggle() {
 
 /// Whether the node's preview is drawn. Same axis, separate memory.
 #[test]
-fn blender_preview_toggle() {
+fn dcc_preview_toggle() {
     let mut chain = chain();
     assert!(
         !chain
@@ -1751,7 +1675,7 @@ fn blender_preview_toggle() {
 /// default; a **height** is `Option` for a different reason — an ordinary node's
 /// height is a function of its ports and a frame's is not.
 #[test]
-fn blender_resize() {
+fn dcc_resize() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -1795,7 +1719,7 @@ fn blender_resize() {
 /// saved and asked about like any other — and it has no ports, so nothing links
 /// to it and evaluation never reaches it.
 #[test]
-fn blender_join() {
+fn dcc_join() {
     let mut chain = chain();
     let enframed = chain
         .document
@@ -1821,7 +1745,7 @@ fn blender_join() {
 /// pipeline does not lift that part out of the pipeline — and the nodes that
 /// were not selected stay where they were.
 #[test]
-fn blender_join_nodes() {
+fn dcc_join_nodes() {
     let mut chain = chain();
     let outer = chain
         .document
@@ -1868,7 +1792,7 @@ fn blender_join_nodes() {
 
 /// Attach a node to a frame directly.
 #[test]
-fn blender_attach() {
+fn dcc_attach() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -1888,7 +1812,7 @@ fn blender_attach() {
 /// all-the-way form is reachable there; it is reachable here too, and the node
 /// lands on the canvas rather than in limbo.
 #[test]
-fn blender_detach() {
+fn dcc_detach() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -1922,7 +1846,7 @@ fn blender_detach() {
 /// assertions its shipped build compiles out, and its own operator detaches
 /// before it attaches so the cycle guard cannot fire even in a debug build.
 #[test]
-fn blender_parent_set() {
+fn dcc_parent_set() {
     let mut chain = chain();
     let outer = chain
         .document
@@ -1967,7 +1891,7 @@ fn blender_parent_set() {
 /// depend on and the boundary it was cut from, and it serializes — which is what
 /// a clipboard between two documents actually needs.
 #[test]
-fn blender_clipboard_copy() {
+fn dcc_clipboard_copy() {
     let chain = chain();
     let fragment = chain.document.extract(ROOT, &[chain.add]).unwrap();
 
@@ -1985,7 +1909,7 @@ fn blender_clipboard_copy() {
 /// Paste. The fragment goes anywhere, re-using the definitions that are already
 /// there rather than forking them.
 #[test]
-fn blender_clipboard_paste() {
+fn dcc_clipboard_paste() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let fragment = chain.document.extract(ROOT, &[made.node]).unwrap();
@@ -2018,7 +1942,7 @@ fn blender_clipboard_paste() {
 
 /// Duplicate — extract and insert in one call, offset from the original.
 #[test]
-fn blender_duplicate() {
+fn dcc_duplicate() {
     let mut chain = chain();
     let copy = chain
         .document
@@ -2051,7 +1975,7 @@ fn blender_duplicate() {
 /// you when the picture has stopped changing; the reach is a parameter here,
 /// and `added` is what says the transitive walk is done.
 #[test]
-fn blender_select_linked_from() {
+fn dcc_select_linked_from() {
     let chain = chain();
     let direct = chain
         .document
@@ -2077,7 +2001,7 @@ fn blender_select_linked_from() {
 /// What this feeds — the other direction of the same relation, read the same
 /// way.
 #[test]
-fn blender_select_linked_to() {
+fn dcc_select_linked_to() {
     let chain = chain();
     let all = chain
         .document
@@ -2099,7 +2023,7 @@ fn blender_select_linked_to() {
 /// than on an active node, because a selection belongs to the editor and this
 /// crate has no notion of which of them is active.
 #[test]
-fn blender_select_grouped() {
+fn dcc_select_grouped() {
     let chain = chain();
     let same = chain
         .document
@@ -2112,7 +2036,7 @@ fn blender_select_grouped() {
 /// The DCC steps the selection to the *next* node of the same kind. The run is
 /// the answer that step walks, produced once.
 #[test]
-fn blender_select_same_type_step() {
+fn dcc_select_same_type_step() {
     let mut chain = chain();
     let four = num(&mut chain.document, 4);
     let run = chain.document.same_kind_run(ROOT, chain.two).unwrap();
@@ -2133,7 +2057,7 @@ fn blender_select_same_type_step() {
 /// name the set and that the node survives — which is the whole difference from
 /// deleting it.
 #[test]
-fn unreal_graph_editor_break_node_links() {
+fn engine_graph_editor_break_node_links() {
     let mut chain = chain();
     let touching = links_touching(&chain.document, ROOT, chain.add);
     assert_eq!(touching.len(), 3);
@@ -2154,7 +2078,7 @@ fn unreal_graph_editor_break_node_links() {
 /// `Socket::new(add, 0)` names both — which is why a filter that ignores the
 /// end matches twice.
 #[test]
-fn unreal_graph_editor_break_pin_links() {
+fn engine_graph_editor_break_pin_links() {
     let mut chain = chain();
     let pin = Socket::new(chain.add, 0);
     let either_end = chain
@@ -2202,7 +2126,7 @@ fn unreal_graph_editor_break_pin_links() {
 
 /// Break one named link, and hand it back so it can be put back.
 #[test]
-fn unreal_graph_editor_break_this_link() {
+fn engine_graph_editor_break_this_link() {
     let mut chain = chain();
     let id = chain.document.tree(ROOT).unwrap().links()[0].id;
     let removed = chain.document.disconnect(ROOT, id).unwrap();
@@ -2218,7 +2142,7 @@ fn unreal_graph_editor_break_this_link() {
 
 /// Collapse a selection into a subgraph node.
 #[test]
-fn unreal_graph_editor_collapse_nodes() {
+fn engine_graph_editor_collapse_nodes() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2247,7 +2171,7 @@ fn unreal_graph_editor_collapse_nodes() {
 /// instantiates it a second time and checks the two occurrences do not share a
 /// value.
 #[test]
-fn unreal_graph_editor_collapse_selection_to_function() {
+fn engine_graph_editor_collapse_selection_to_function() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2276,7 +2200,7 @@ fn unreal_graph_editor_collapse_selection_to_function() {
 /// boundary that gets **expanded back into the caller**, so the proof is that
 /// the collapse is reversible into the host with the value unchanged.
 #[test]
-fn unreal_graph_editor_collapse_selection_to_macro() {
+fn engine_graph_editor_collapse_selection_to_macro() {
     let mut chain = chain();
     let before = chain.document.evaluate(ROOT, chain.sink);
     let made = chain.document.group(ROOT, &[chain.add], "Macro").unwrap();
@@ -2291,7 +2215,7 @@ fn unreal_graph_editor_collapse_selection_to_macro() {
 /// canvas, its members compute exactly as before, and the boundary means
 /// nothing to the evaluator.
 #[test]
-fn unreal_graph_editor_create_comment() {
+fn engine_graph_editor_create_comment() {
     let mut chain = chain();
     let before = arrives(&chain.document, Socket::new(chain.sink, 0));
     let comment = chain
@@ -2334,7 +2258,7 @@ fn unreal_graph_editor_create_comment() {
 /// The engine's delete-and-reconnect, over a selection rather than one node —
 /// the reading that shows the derivation composes.
 #[test]
-fn unreal_graph_editor_delete_and_reconnect_nodes() {
+fn engine_graph_editor_delete_and_reconnect_nodes() {
     let mut document: Document<Op> = Document::new("root");
     let two = num(&mut document, 2);
     let first = node(&mut document, Op::Double);
@@ -2362,7 +2286,7 @@ fn unreal_graph_editor_delete_and_reconnect_nodes() {
 /// crate derives, and the outputs no input can feed are **named** rather than
 /// being discovered as a missing wire.
 #[test]
-fn unreal_graph_editor_disable_nodes() {
+fn engine_graph_editor_disable_nodes() {
     let mut chain = chain();
     assert!(!chain.document.set_bypassed(ROOT, chain.add, true).unwrap());
     assert!(
@@ -2387,7 +2311,7 @@ fn unreal_graph_editor_disable_nodes() {
 /// And back on. The flag is the graph's *meaning* rather than its looks, so it
 /// is a field of the node and not of `Appearance`.
 #[test]
-fn unreal_graph_editor_enable_nodes() {
+fn engine_graph_editor_enable_nodes() {
     let mut chain = chain();
     chain.document.set_bypassed(ROOT, chain.add, true).unwrap();
     assert!(chain.document.set_bypassed(ROOT, chain.add, false).unwrap());
@@ -2420,7 +2344,7 @@ fn unreal_graph_editor_enable_nodes() {
 
 /// The engine's Expand Node — the inverse of a collapse, back into the caller.
 #[test]
-fn unreal_graph_editor_expand_nodes() {
+fn engine_graph_editor_expand_nodes() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2439,7 +2363,7 @@ fn unreal_graph_editor_expand_nodes() {
 
 /// The engine hides unconnected pins.
 #[test]
-fn unreal_graph_editor_hide_no_connection_pins() {
+fn engine_graph_editor_hide_no_connection_pins() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     wire(&mut chain.document, chain.two, 0, mul, 1);
@@ -2462,7 +2386,7 @@ fn unreal_graph_editor_hide_no_connection_pins() {
 /// signature says which ports have defaults, so the narrower rule is a filter
 /// an application writes — proven here by writing it.
 #[test]
-fn unreal_graph_editor_hide_no_connection_no_default_pins() {
+fn engine_graph_editor_hide_no_connection_no_default_pins() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     chain
@@ -2493,7 +2417,7 @@ fn unreal_graph_editor_hide_no_connection_no_default_pins() {
 /// The engine's Show All Pins, which is the same declaration read the other
 /// way.
 #[test]
-fn unreal_graph_editor_show_all_pins() {
+fn engine_graph_editor_show_all_pins() {
     let mut chain = chain();
     let lonely = node(&mut chain.document, Op::Add);
     chain
@@ -2530,7 +2454,7 @@ fn unreal_graph_editor_show_all_pins() {
 /// the proof deletes the original instance and instantiates the definition
 /// again.
 #[test]
-fn unreal_graph_editor_promote_selection_to_function() {
+fn engine_graph_editor_promote_selection_to_function() {
     let mut chain = chain();
     let made = chain
         .document
@@ -2555,7 +2479,7 @@ fn unreal_graph_editor_promote_selection_to_function() {
 /// And to a macro, whose reading is expansion — proven by round-tripping the
 /// boundary and asserting the graph means the same thing afterwards.
 #[test]
-fn unreal_graph_editor_promote_selection_to_macro() {
+fn engine_graph_editor_promote_selection_to_macro() {
     let mut chain = chain();
     let before = chain.document.evaluate(ROOT, chain.sink);
     let made = chain
@@ -2575,7 +2499,7 @@ fn unreal_graph_editor_promote_selection_to_macro() {
 /// proven by changing the interface and observing the instance follow with the
 /// links that no longer fit **named**.
 #[test]
-fn unreal_graph_editor_reconstruct_nodes() {
+fn engine_graph_editor_reconstruct_nodes() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let before = chain
@@ -2614,7 +2538,7 @@ fn unreal_graph_editor_reconstruct_nodes() {
 /// then arrives, because "removed" and "overwritten with the default" look
 /// identical if only the second is checked.
 #[test]
-fn unreal_graph_editor_reset_pin_to_default_value() {
+fn engine_graph_editor_reset_pin_to_default_value() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     wire(&mut chain.document, chain.two, 0, mul, 1);
@@ -2659,7 +2583,7 @@ fn unreal_graph_editor_reset_pin_to_default_value() {
 /// The engine selects everything feeding the selection — the transitive
 /// question, which is the one a person actually has.
 #[test]
-fn unreal_graph_editor_select_all_input_nodes() {
+fn engine_graph_editor_select_all_input_nodes() {
     let chain = chain();
     let grown = chain
         .document
@@ -2673,7 +2597,7 @@ fn unreal_graph_editor_select_all_input_nodes() {
 
 /// And everything the selection feeds.
 #[test]
-fn unreal_graph_editor_select_all_output_nodes() {
+fn engine_graph_editor_select_all_output_nodes() {
     let chain = chain();
     let grown = chain
         .document
@@ -2697,7 +2621,7 @@ fn unreal_graph_editor_select_all_output_nodes() {
 /// to date. Nothing here is ever told: every derived fact is recomputed on
 /// read, so a node cannot be stale.
 #[test]
-fn blender_node_updatefunc() {
+fn dcc_node_updatefunc() {
     let mut chain = chain();
     let lonely = node(&mut chain.document, Op::Add);
     chain
@@ -2732,7 +2656,7 @@ fn blender_node_updatefunc() {
 /// its declaration. There is nothing to synchronise: a node's signature IS its
 /// kind's, so changing the kind changes the signature in the same instant.
 #[test]
-fn blender_node_can_sync_sockets() {
+fn dcc_node_can_sync_sockets() {
     let mut chain = chain();
     let before = chain.document.signature(ROOT, chain.add).unwrap();
     assert_eq!(before.inputs[1].name, "Addend");
@@ -2752,7 +2676,7 @@ fn blender_node_can_sync_sockets() {
 /// someone says whether a copy carries it — where a hand-written copy silently
 /// drops it (the defect R1589 found in this crate's own `move_nodes`).
 #[test]
-fn blender_node_copyfunc() {
+fn dcc_node_copyfunc() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -2805,7 +2729,7 @@ fn blender_node_copyfunc() {
 /// its kind: `add_node` takes the body, and the ports and their declared
 /// defaults are there in the same call.
 #[test]
-fn blender_node_initfunc() {
+fn dcc_node_initfunc() {
     let mut document: Document<Op> = Document::new("root");
     let add = node(&mut document, Op::Add);
 
@@ -2824,7 +2748,7 @@ fn blender_node_initfunc() {
 /// answers and an authored label overrides it, which is one derivation
 /// (`display_name`) rather than a callback each type has to remember.
 #[test]
-fn blender_node_labelfunc() {
+fn dcc_node_labelfunc() {
     let mut chain = chain();
     assert_eq!(
         chain
@@ -2859,7 +2783,7 @@ fn blender_node_labelfunc() {
 /// declared once **as the conversion**, so "may this wire exist" and "what
 /// arrives along it" are one answer — the DCC keeps three.
 #[test]
-fn blender_node_tree_validate_link() {
+fn dcc_node_tree_validate_link() {
     let mut document: Document<Op> = Document::new("root");
     let two = num(&mut document, 2);
     let word = node(&mut document, Op::Word("hi".into()));
@@ -2886,7 +2810,7 @@ fn blender_node_tree_validate_link() {
 /// remember to run — and it answers about a document that arrived from a file
 /// just as well as about one this process built.
 #[test]
-fn blender_node_tree_update() {
+fn dcc_node_tree_update() {
     let mut chain = chain();
     assert!(chain.document.validate().is_empty());
     chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
@@ -2901,7 +2825,7 @@ fn blender_node_tree_update() {
 /// definition is forked, and the fork is independent: an edit through one
 /// instance does not reach the other.
 #[test]
-fn blender_node_tree_localize() {
+fn dcc_node_tree_localize() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let second = chain
@@ -2938,7 +2862,7 @@ fn blender_node_tree_localize() {
 /// takes the **port itself**, so an interface port is a port — name, type and
 /// declared default together — rather than a second description of one.
 #[test]
-fn blender_node_socket_interface_from_socket() {
+fn dcc_node_socket_interface_from_socket() {
     let mut document: Document<Op> = Document::new("root");
     let definition = document.add_definition("Def");
     let port = Port::new("Seed", Ty::Number).with_default(Val::Number(4));
@@ -2956,7 +2880,7 @@ fn blender_node_socket_interface_from_socket() {
 /// from an interface item. Here an instance's socket **is** the interface
 /// port, derived, so the two cannot describe different things.
 #[test]
-fn blender_node_socket_interface_init_socket() {
+fn dcc_node_socket_interface_init_socket() {
     let mut document: Document<Op> = Document::new("root");
     let definition = document.add_definition("Def");
     document
@@ -2981,7 +2905,7 @@ fn blender_node_socket_interface_init_socket() {
 /// ports, so a node's sockets are derived from the kind rather than built by a
 /// call the node has to make and could forget.
 #[test]
-fn unreal_node_allocate_default_pins() {
+fn engine_node_allocate_default_pins() {
     let mut document: Document<Op> = Document::new("root");
     let mul = node(&mut document, Op::Mul);
     let signature = document.signature(ROOT, mul).unwrap();
@@ -3006,7 +2930,7 @@ fn unreal_node_allocate_default_pins() {
 /// deleted frame handed to the frame above rather than stranding on the
 /// canvas.
 #[test]
-fn unreal_node_destroy_node() {
+fn engine_node_destroy_node() {
     let mut chain = chain();
     let inner = chain
         .document
@@ -3041,7 +2965,7 @@ fn unreal_node_destroy_node() {
 /// equivalent ranks against a static type table and breaks ties on what
 /// happens to be wired.
 #[test]
-fn unreal_node_get_pass_through_pin() {
+fn engine_node_get_pass_through_pin() {
     let mut chain = chain();
     let before = chain.document.passthrough(ROOT, chain.add).unwrap();
     assert_eq!(before.source_of(0), Some(0));
@@ -3068,7 +2992,7 @@ fn unreal_node_get_pass_through_pin() {
 /// The engine asks a node for a pin's displayed name. Here a port carries its
 /// name and the signature answers it, on an instance as well as on a kind.
 #[test]
-fn unreal_node_get_pin_display_name() {
+fn engine_node_get_pin_display_name() {
     let mut chain = chain();
     let signature = chain.document.signature(ROOT, chain.add).unwrap();
     assert_eq!(signature.inputs[0].name, "Augend");
@@ -3084,7 +3008,7 @@ fn unreal_node_get_pin_display_name() {
 /// document-level relation, so the nesting is readable in one call rather than
 /// one pointer at a time.
 #[test]
-fn unreal_node_get_sub_graphs() {
+fn engine_node_get_sub_graphs() {
     let mut chain = chain();
     let inner = chain.document.group(ROOT, &[chain.add], "Inner").unwrap();
     let outer = chain.document.group(ROOT, &[inner.node], "Outer").unwrap();
@@ -3107,7 +3031,7 @@ fn unreal_node_get_sub_graphs() {
 /// because nothing is stored: what the node computes is a function of the
 /// graph as it is when the question is asked.
 #[test]
-fn unreal_node_node_connection_list_changed() {
+fn engine_node_node_connection_list_changed() {
     let mut chain = chain();
     assert_eq!(
         chain.document.evaluate(ROOT, chain.add),
@@ -3128,7 +3052,7 @@ fn unreal_node_node_connection_list_changed() {
 /// — which is the point, since the ones that matter are at instances, in other
 /// trees.
 #[test]
-fn unreal_node_on_pin_removed() {
+fn engine_node_on_pin_removed() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let dropped = chain
@@ -3144,7 +3068,7 @@ fn unreal_node_on_pin_removed() {
 /// node, so a rename is an assignment — and it travels with a copy, which is
 /// what makes it a property of the node rather than of the editor.
 #[test]
-fn unreal_node_on_rename_node() {
+fn engine_node_on_rename_node() {
     let mut chain = chain();
     chain
         .document
@@ -3179,7 +3103,7 @@ fn unreal_node_on_rename_node() {
 /// The engine's comment node is told its text changed. A frame's label is the
 /// same field an ordinary node's is, so nothing here has a second text model.
 #[test]
-fn unreal_node_on_update_comment_text() {
+fn engine_node_on_update_comment_text() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -3219,7 +3143,7 @@ fn unreal_node_on_update_comment_text() {
 /// visibility is a derivation over the declaration and the wiring together,
 /// per port.
 #[test]
-fn unreal_node_pin_connection_list_changed() {
+fn engine_node_pin_connection_list_changed() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     chain
@@ -3253,7 +3177,7 @@ fn unreal_node_pin_connection_list_changed() {
 /// value is what the port carries when nothing else supplies one, so writing
 /// it changes what the node computes and nothing has to be notified.
 #[test]
-fn unreal_node_pin_default_value_changed() {
+fn engine_node_pin_default_value_changed() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     wire(&mut chain.document, chain.two, 0, mul, 1);
@@ -3277,7 +3201,7 @@ fn unreal_node_pin_default_value_changed() {
 /// did, so a caller never has to scan for what arrived attached and what did
 /// not.
 #[test]
-fn unreal_node_post_paste_node() {
+fn engine_node_post_paste_node() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -3323,7 +3247,7 @@ fn unreal_node_post_paste_node() {
 /// a placed node is complete by construction: it answers its signature, its
 /// declared defaults and its value in the same breath as its id.
 #[test]
-fn unreal_node_post_placed_new_node() {
+fn engine_node_post_placed_new_node() {
     let mut document: Document<Op> = Document::new("root");
     let add = document
         .add_node(ROOT, NodeBody::Kind(Op::Add), 40, 90)
@@ -3341,7 +3265,7 @@ fn unreal_node_post_placed_new_node() {
 /// carries the definitions it depends on, so it can be written to a file or
 /// sent to another process rather than living inside one editor's clipboard.
 #[test]
-fn unreal_node_prepare_for_copying() {
+fn engine_node_prepare_for_copying() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let fragment = chain.document.extract(ROOT, &[made.node]).unwrap();
@@ -3366,7 +3290,7 @@ fn unreal_node_prepare_for_copying() {
 /// authored only where nothing derives it, which is what tells a frame apart
 /// from a node whose height is a function of its ports.
 #[test]
-fn unreal_node_resize_node() {
+fn engine_node_resize_node() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -3422,7 +3346,7 @@ fn unreal_node_resize_node() {
 /// is `NodeKind::conversion` answering `Direct`, which is the same declaration that decides what
 /// arrives.
 #[test]
-fn unreal_schema_are_pin_types_equivalent() {
+fn engine_schema_are_pin_types_equivalent() {
     assert!(matches!(
         Op::conversion(&Ty::Number, &Ty::Number),
         Conversion::Direct
@@ -3442,7 +3366,7 @@ fn unreal_schema_are_pin_types_equivalent() {
 /// question from whether their types are: a port also has a side and a flow.
 /// `crossing` is the one question every derivation in this crate asks.
 #[test]
-fn unreal_schema_are_pins_compatible() {
+fn engine_schema_are_pins_compatible() {
     let number = Port::new("A", Ty::Number);
     let text = Port::new("B", Ty::Text);
     assert!(pinion_node_graph::crossing::<Op>(&number, &text).is_allowed());
@@ -3460,7 +3384,7 @@ fn unreal_schema_are_pins_compatible() {
 /// answers it and **names** whichever of the four things failed — including
 /// the path a refused wire would have closed.
 #[test]
-fn unreal_schema_can_create_connection() {
+fn engine_schema_can_create_connection() {
     let mut document: Document<Op> = Document::new("root");
     let first = node(&mut document, Op::Double);
     let second = node(&mut document, Op::Double);
@@ -3483,7 +3407,7 @@ fn unreal_schema_can_create_connection() {
 /// the refusal is by **reachability** and it names the walk, where the
 /// engine's own `CanEncapuslateNode` answers a bare bool.
 #[test]
-fn unreal_schema_can_encapuslate_node() {
+fn engine_schema_can_encapuslate_node() {
     let mut document: Document<Op> = Document::new("root");
     let source = num(&mut document, 2);
     let outside = node(&mut document, Op::Double);
@@ -3508,7 +3432,7 @@ fn unreal_schema_can_encapuslate_node() {
 /// they drew. Here the conversion is a property of the link and costs no node
 /// at all.
 #[test]
-fn unreal_schema_create_automatic_conversion_node_and_connections() {
+fn engine_schema_create_automatic_conversion_node_and_connections() {
     let mut document: Document<Op> = Document::new("root");
     let two = num(&mut document, 2);
     let shout = node(&mut document, Op::Shout);
@@ -3531,7 +3455,7 @@ fn unreal_schema_create_automatic_conversion_node_and_connections() {
 /// the authored value beside the declared one, and the two are separate
 /// questions with separate answers.
 #[test]
-fn unreal_schema_does_default_value_match() {
+fn engine_schema_does_default_value_match() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     let declared = chain.document.signature(ROOT, mul).unwrap().inputs[0]
@@ -3558,7 +3482,7 @@ fn unreal_schema_does_default_value_match() {
 /// name and the edit path reads the chain of them, so "where am I" is one
 /// call.
 #[test]
-fn unreal_schema_get_graph_display_information() {
+fn engine_schema_get_graph_display_information() {
     let mut chain = chain();
     let made = chain.document.group(ROOT, &[chain.add], "Sum").unwrap();
     let mut path = EditPath::root();
@@ -3577,7 +3501,7 @@ fn unreal_schema_get_graph_display_information() {
 /// The engine asks whether a pin's default value is valid. Here the write is
 /// **type-checked** through `NodeKind::value_type` and refused by name.
 #[test]
-fn unreal_schema_is_pin_default_valid() {
+fn engine_schema_is_pin_default_valid() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     let refused =
@@ -3604,7 +3528,7 @@ fn unreal_schema_is_pin_default_valid() {
 /// moving a frame carries what it contains — which is what the containment
 /// relation is for.
 #[test]
-fn unreal_schema_set_node_position() {
+fn engine_schema_set_node_position() {
     let mut chain = chain();
     let frame = chain
         .document
@@ -3648,7 +3572,7 @@ fn unreal_schema_set_node_position() {
 /// the **signature**, refusing a port the node does not have and naming the
 /// arity.
 #[test]
-fn unreal_schema_try_set_default_value() {
+fn engine_schema_try_set_default_value() {
     let mut chain = chain();
     let mul = node(&mut chain.document, Op::Mul);
     let refused = chain

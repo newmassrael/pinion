@@ -12,20 +12,20 @@ reports `2` for both.
 `scene/memory` is the memory axis: one row per arena per owner, in bytes,
 plus what the OS says the process is resident for.
 
-Four things this proves that Qt 6.11 cannot answer:
+Four things this proves that the toolkit 6.11 cannot answer:
 
-  1. USAGE, NOT JUST THE BUDGET. `QPixmapCache::setCacheLimit(int kb)` sets a
+  1. USAGE, NOT JUST THE BUDGET. `setCacheLimit(int kb)` sets a
      byte budget and `cacheLimit()` reads it back — and there is **no
-     accessor at all** for how much of it is in use. A Qt application cannot
+     accessor at all** for how much of it is in use. A toolkit application cannot
      tell whether its pixmap cache sits at 1% or 99% of its own ceiling.
-     `QFontCache`, the closer analogue of the shape cache, is private in its
+     font cache, the closer analogue of the shape cache, is private in its
      entirety. Here every arena answers with both.
 
   2. THE ACCOUNTING STATES ITS OWN BASIS. `basis: "partial"` on the shape
      cache is not hedging: the measured bytes are exact, and the row NAMES
      what it could not reach (`parley::Layout`, MOST of whose buffers are
      behind a `pub(crate)` field — the two it hands out as slices of public
-     types are counted, R1550.1) with a count. Qt's `QImage::sizeInBytes()`
+     types are counted, R1550.1) with a count. The toolkit's `sizeInBytes()`
      is a formula over two members with nothing tying it to the object's
      fields.
 
@@ -36,7 +36,7 @@ Four things this proves that Qt 6.11 cannot answer:
      per-window rows do not.
 
   4. THE PROCESS TOTAL SITS BESIDE THE ARENAS, so the unattributed remainder
-     is a subtraction rather than an implication. Qt publishes no
+     is a subtraction rather than an implication. The toolkit publishes no
      process-memory API of any kind.
 
 And the claim that makes it a PERFORMANCE fact rather than a readout: **held
@@ -201,8 +201,8 @@ def body() -> None:
         )
 
         # ── (D) the budget, and the usage against it ────────────────────────
-        # This is Qt's `QPixmapCache::cacheLimit()` — with the number Qt has
-        # no accessor for, beside it.
+        # This is the toolkit's `cacheLimit()` — with the number the toolkit has no
+        # accessor for, beside it.
         img = one(cen, IMAGES, "main")
         assert_eq(img["budget_bytes"], 10 * 1024 * 1024, "QPixmapCache's own default")
         assert img["bytes"] <= img["budget_bytes"], "and the arena is inside it"

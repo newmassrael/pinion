@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """R1451 §5.27 §5.40 §5.51 §2#7 §2#2 — a column carries its width where it goes.
 
-Qt reference: `QHeaderView` section state. Qt keys `sectionSize()` and
-`isSectionHidden()` by the **logical** section, which is why a Qt column you
+the toolkit reference: header view section state. The toolkit keys `sectionSize()` and
+`isSectionHidden()` by the **logical** section, which is why a toolkit column you
 resize stays that wide wherever you drag it. pinion had all the pieces and none
 of the composition: widths (R785) were indexed by SCREEN POSITION, visibility
 (R990) lived in a different binding, and order (R1450) knew about neither. So
 "move this column" left its width behind, and there was no way to say otherwise.
 
-R1451 gives that state one home (`ColumnLayout`) keyed as Qt keys it, and adds
+R1451 gives that state one home (`ColumnLayout`) keyed as the toolkit keys it, and adds
 `swapSections`, `logicalIndexAt`, `sectionPosition`, and the whole
 `saveState`/`restoreState` round-trip.
 
-And where Qt cannot follow: `QHeaderView::saveState()` is an opaque versioned
-`QByteArray`. An agent cannot read "which column is third and how wide is it"
+And where the toolkit cannot follow: `saveState()` is an opaque versioned
+byte array. An agent cannot read "which column is third and how wide is it"
 out of it, nor author one without a live widget. Here every field is typed data
 in both directions, and the painted geometry itself is published.
 
@@ -34,7 +34,7 @@ What this asserts:
   (F) TYPED REFUSALS — a wrong shape and an impossible value are different
       errors, and neither applies half of itself.
   (G) swapSections IS NOT moveSection — the same two indices produce different
-      orders, which is why Qt has both.
+      orders, which is why the toolkit has both.
   (H) §2 #2 — the keyboard (`]` resize, `h` hide) reaches the same model as the
       wire, and lands on the LOGICAL section rather than the screen slot.
 
@@ -82,18 +82,19 @@ LABEL_INSET = 12
 # The `[` / `]` keyboard step.
 STEP = 20
 
-# R1452 added the sizing policy to the saved state (Qt's saveState carries it
-# too), so the boot snapshot is this shape now — the assertions below still
-# check "saveState reads the WHOLE thing", which is why they moved with it.
+# R1452 added the sizing policy to the saved state (the toolkit's saveState
+# carries it too), so the boot snapshot is this shape now — the assertions
+# below still check "saveState reads the WHOLE thing", which is why they moved
+# with it.
 IDENTITY = {
     "order": [0, 1, 2, 3, 4],
     "sizes": BOOT_W,
     "hidden": [False] * NCOLS,
     "modes": ["interactive"] * NCOLS,
-    # R1491 — the snapshot grew the sort indicator, which Qt's `saveState()`
-    # has always carried. This assertion is a WHOLE-object equality on purpose:
-    # a field added to the peer of `saveState` must be visible here rather than
-    # slipping in unremarked, which is what a field-by-field check would allow.
+    # R1491 — the snapshot grew the sort indicator, which the toolkit's `saveState()` has
+    # always carried. This assertion is a WHOLE-object equality on purpose: a
+    # field added to the peer of `saveState` must be visible here rather than slipping
+    # in unremarked, which is what a field-by-field check would allow.
     "sort_indicator": "none",
     "sort_indicator_shown": True,
     # R1493 — and again, for the three scalar rules `saveState()` carries: the
@@ -104,50 +105,50 @@ IDENTITY = {
     "default_section_size": 100,
     "min_section_size": 40,
     "max_section_size": 2**32 - 1,
-    # R1494 — and again for Qt's `cascadingSectionResizes`, which `saveState()`
-    # carries. Three rounds running, this assertion has been the thing that
-    # made a field's arrival visible instead of letting it in unremarked; the
-    # cost of updating it is the price of that, and it is cheap.
+    # R1494 — and again for the toolkit's `cascadingSectionResizes`, which `saveState()` carries. Three rounds
+    # running, this assertion has been the thing that made a field's arrival
+    # visible instead of letting it in unremarked; the cost of updating it is
+    # the price of that, and it is cheap.
     "cascading_section_resizes": False,
-    # R1496 — a fourth time, and the largest addition yet: Qt's two interaction
-    # permissions (`movableSections` / `clickableSections`) and the sampling
-    # bound (`resizeContentsPrecision`), all three of which
-    # `QHeaderViewPrivate::write()` serialises. The bound is the interesting
-    # one: R1454 put it on the header and DECIDED to keep it out of the
-    # snapshot, so this equality had been agreeing with a stated decision rather
-    # than with Qt. `True` for both permissions is this app's declaration, not
-    # `ColumnLayout`'s default, which is Qt's `false`.
+    # R1496 — a fourth time, and the largest addition yet: the toolkit's two
+    # interaction permissions (`movableSections` / `clickableSections`) and the sampling bound (`resizeContentsPrecision`), all
+    # three of which `write()` serialises. The bound is the interesting one: R1454
+    # put it on the header and DECIDED to keep it out of the snapshot, so this
+    # equality had been agreeing with a stated decision rather than with the
+    # toolkit. `True` for both permissions is this app's declaration, not `ColumnLayout`'s
+    # default, which is the toolkit's `false`.
     "sections_movable": True,
     "sections_clickable": True,
     "resize_contents_precision": 1000,
-    # R1498 — a fifth time, for Qt's `stretchLastSection`. `False` is both Qt's
-    # default and this app's posture: the strip is 640 wide and the sections sum
-    # to 570, and until a consumer asks for the rule those 70 pixels stay
+    # R1498 — a fifth time, for the toolkit's `stretchLastSection`. `False` is both the toolkit's
+    # default and this app's posture: the strip is 640 wide and the sections
+    # sum to 570, and until a consumer asks for the rule those 70 pixels stay
     # unpainted. Five rounds running now, this equality has been the thing that
     # makes a field's arrival visible.
     "stretch_last_section": False,
-    # R1504 — a SIXTH time, for Qt's `defaultAlignment`. `"Center"` is Qt's
-    # horizontal-header default and what `ColumnLayout` constructs with; note it
-    # is NOT what an absent field decodes to (`"Start"`, what the pre-R1504
-    # header actually painted), so this fixture and the older-snapshot decode
-    # deliberately disagree — the R1496 split, one round later.
+    # R1504 — a SIXTH time, for the toolkit's `defaultAlignment`. `"Center"` is the toolkit's
+    # horizontal-header default and what `ColumnLayout` constructs with; note it is NOT
+    # what an absent field decodes to (`"Start"`, what the pre-R1504 header actually
+    # painted), so this fixture and the older-snapshot decode deliberately
+    # disagree — the R1496 split, one round later.
     #
-    # What is NOT here is the per-section exception. Qt keeps it in the model
-    # (`headerData(TextAlignmentRole)`) and its `saveState()` does not carry it,
-    # so this equality asserts an absence as much as a presence: a round that
-    # started saving the exceptions would fail here, which is the point.
+    # What is NOT here is the per-section exception. The toolkit keeps it in
+    # the model (`headerData(TextAlignmentRole)`) and its `saveState()` does not carry it, so this equality asserts
+    # an absence as much as a presence: a round that started saving the
+    # exceptions would fail here, which is the point.
     "default_alignment": "Center",
-    # R1510 — a SEVENTH time, for Qt's `highlightSections` (serialised as
-    # `highlightSelected`). `False` is Qt's default AND what an absent field
-    # decodes to, so unlike `default_alignment` above this fixture and the
-    # older-snapshot decode agree — the pre-R1510 header had no selection input
-    # at all, so "did not highlight" describes both.
+    # R1510 — a SEVENTH time, for the toolkit's `highlightSections` (serialised as `highlightSelected`). `False` is
+    # the toolkit's default AND what an absent field decodes to, so unlike `default_alignment`
+    # above this fixture and the older-snapshot decode agree — the pre-R1510
+    # header had no selection input at all, so "did not highlight" describes
+    # both.
     #
-    # What is NOT here is the SELECTION. Qt's header reads the view's selection
-    # model and `saveState()` cannot reach it, so this equality asserts that
-    # absence too: a round that started saving the published coverage would fail
-    # here. Seven rounds running, this whole-object form has been the thing that
-    # makes a field's arrival visible instead of letting it in unremarked.
+    # What is NOT here is the SELECTION. The toolkit's header reads the view's
+    # selection model and `saveState()` cannot reach it, so this equality asserts that
+    # absence too: a round that started saving the published coverage would
+    # fail here. Seven rounds running, this whole-object form has been the
+    # thing that makes a field's arrival visible instead of letting it in
+    # unremarked.
     "highlight_sections": False,
 }
 

@@ -43,7 +43,7 @@
 //! # Against the toolkit 6.11
 //!
 //! The toolkit has **no switch widget at all**. check box is the checkbox, and
-//! every the toolkit application that wants a switch either subclasses
+//! a toolkit application that wants a switch either subclasses
 //! abstract button and paints it (the recipe in the toolkit's own forums) or
 //! uses the toolkit's declarative language's `Switch`, which is a different
 //! toolkit. So this is not parity — it is the floor the toolkit does not have,

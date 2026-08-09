@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """R1498 §5.27 §2#7 §2#2 — the row fills the viewport it was given.
 
-Qt reference: `QHeaderView::stretchLastSection` — "whether the last visible
+the toolkit reference: `stretchLastSection` — "whether the last visible
 section in the header takes up all the available space", default `false`, and
 "if this value is set to true, this property will override the resize mode set
-on the last section in the header". `QHeaderViewPrivate::write()` serialises it,
+on the last section in the header". `write()` serialises it,
 so `saveState()` carries it.
 
 Measured on this very binding before the round, over the real wire:
@@ -31,20 +31,20 @@ becomes a `Stretch` section, and the division that already exists gives it what
 the others leave over. There is no second sizing algorithm — a header with one
 stretching section and this rule on has two of them, sharing as they always did.
 
-Nothing is written to any section. Qt has to remember a `lastSectionSize`
-because Qt writes the stretched width into the section; this module already
+Nothing is written to any section. The toolkit has to remember a `lastSectionSize`
+because the toolkit writes the stretched width into the section; this module already
 keeps the stored size and the painted size apart (R1493), and that split is what
 makes the memory unnecessary.
 
 What this asserts:
 
-  (A) THE RULE IS READABLE AND OFF — Qt's default, and the measurement above
+  (A) THE RULE IS READABLE AND OFF — the toolkit's default, and the measurement above
       replayed: the row falls short of the strip it was told to fill.
   (B) THE LAST SECTION FILLS — one flag, and the leftover has an owner.
   (C) KEYED BY POSITION, NOT BY COLUMN — hiding the filled section promotes the
       next one; dragging it to the front leaves the fill at the end. The
       `Stretch`-mode contrast is measured in the same run, on the same header.
-  (D) IT OVERRIDES THE MODE SET ON THE LAST SECTION — Qt's own words, and the
+  (D) IT OVERRIDES THE MODE SET ON THE LAST SECTION — the toolkit's own words, and the
       set mode is still reported beside the applied one.
   (E) IT SHARES — with the other `Stretch` sections, through the one division.
   (F) A FILLED SECTION DOES NOT PAY — R1494's cascade skips it, because
@@ -286,12 +286,13 @@ def body() -> None:
                   "and the restored header fills from the widths it was given")  # 41
         assert_eq(_h(tf, "state"), saved, "the whole snapshot came back")        # 42
 
-        # A snapshot taken before this round carries no such field. Here Qt's
-        # default and the older header AGREE — that header did not fill either —
-        # so unlike the R1496 permissions there is no divergence to encode, and
-        # an older layout restores into a header that leaves its strip alone.
-        # (A counterfactual put `true` here and every assertion above still
-        # passed: nothing was driving the absent-field path over the wire.)
+        # A snapshot taken before this round carries no such field. Here the
+        # toolkit's default and the older header AGREE — that header did not
+        # fill either — so unlike the R1496 permissions there is no divergence
+        # to encode, and an older layout restores into a header that leaves its
+        # strip alone. (A counterfactual put `true` here and every assertion above
+        # still passed: nothing was driving the absent-field path over the
+        # wire.)
         older = {k: v for k, v in saved.items() if k != "stretch_last_section"}
         assert "stretch_last_section" not in older, "the pre-R1498 shape"        # 43
         tf.intervene("/external/state", older)

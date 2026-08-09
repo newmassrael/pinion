@@ -9,7 +9,7 @@
 //!
 //! # Against the toolkit 6.11
 //!
-//! There is no the toolkit peer to be at parity with. The toolkit's
+//! There is a toolkit peer to be at parity with. The toolkit's
 //! accelerator state lives in shortcut map, reachable only through `qshortcutmap_p.h` — a
 //! private header — so a toolkit application cannot enumerate its own
 //! mnemonics, and an external driver certainly cannot. The nearest public

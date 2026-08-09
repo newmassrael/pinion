@@ -229,7 +229,7 @@
 //!   readings cannot disagree. One [`CategoryWindow`] narrows both.
 //! * **The derived readings exist.** Body, range, the two shadows, the
 //!   signed change and the percent change (`None` where it does not exist)
-//!   are on the datum; candlestick set exposes none, so every the toolkit consumer
+//!   are on the datum; candlestick set exposes none, so a toolkit consumer
 //!   recomputes them.
 //! * **A slot the axis cannot place is REPORTED**
 //!   ([`CandlestickChart::off_scale`]) rather than pinned to a domain floor —

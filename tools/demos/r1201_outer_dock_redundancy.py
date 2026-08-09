@@ -10,7 +10,7 @@ and, on release, REMOVED + re-split the panel to the thin OUTER_DOCK_NEW_FRAC
 band. That is a redundant no-op that silently resized the layout — the user's
 "두번째 창을 오른쪽 끝에 댄 경우, 전폭 preview가 보이면 안되고 동작하면 안된다".
 
-R1201 restores the VS Code / Qt ADS invariant: a drop indicator is offered only
+R1201 restores the VS Code / the toolkit ADS invariant: a drop indicator is offered only
 when the outcome DIFFERS from the current layout. `resolve_drop_checked` threads
 a redundancy predicate (`DockTopology::outer_dock_is_redundant`, a ratio/id-
 agnostic structural compare of the would-be tree vs the current one); when the

@@ -13,7 +13,7 @@ BOTH chrome modes are framework-supported (the point of the `decorations`
 toggle): a `decorations:true` floater is moved by the OS title bar (winit
 `WindowEvent::Moved` → `windows_signal`, R1088); a `decorations:false` floater is
 moved by this custom title-bar drag (R1116). The editor floats borderless (the
-DCC/Blender look); the main window stays decorated — both coexist here.
+DCC/the DCC look); the main window stays decorated — both coexist here.
 
 NOTE on the drive: `scene/drag` interpolates a window-LOCAL cursor in a FIXED
 frame, while the live winit path reports the cursor relative to the moving

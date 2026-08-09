@@ -13,7 +13,7 @@
 //! agent that opens a second window, tears off a panel, or restores a layout
 //! preset is placing pixels in a coordinate space it otherwise cannot see.
 //!
-//! Even *inside* the process, three of the questions here have no the toolkit
+//! Even *inside* the process, three of the questions here have a toolkit
 //! answer:
 //!
 //! * **Does the virtual desktop have holes?** `virtualGeometry()` is
@@ -22,7 +22,7 @@
 //!   that — which is why the toolkit code so often uses `virtualGeometry()` containment
 //!   as a visibility test and is wrong on every L-shaped desk. `gap_free` is
 //!   that fact, and `covered_px` is the evidence for it.
-//! * **Where would this rectangle be?** Every the toolkit screen query takes a *point*
+//! * **Where would this rectangle be?** A toolkit screen query takes a *point*
 //!   (`screenAt`, `virtualSiblingAt`). `placement` answers for a rectangle:
 //!   which display holds the largest share, every display it touches, how many
 //!   of its pixels are on a display at all, and the nearest origin that would

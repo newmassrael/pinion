@@ -2,9 +2,9 @@
 """R1423 §5.35 §5.15 — a raw pointer surface reacts to PRESSURE.
 
 The R1416/R1418/R1422 raw sink carried the button, both edges, modifiers, the
-held set, and the double-click — the full QMouseEvent. R1423 adds the ONE axis a
+held set, and the double-click — the full mouse event. R1423 adds the ONE axis a
 mouse does not have but a pen / touch does: FORCE. `External::pointer_pressure`
-forwards the W3C `PointerEvent.pressure` / Qt `QTabletEvent::pressure()`
+forwards the W3C `PointerEvent.pressure` / the toolkit `pressure()`
 (normalised 0.0..=1.0) alongside each `pointer_move` and on a standalone change,
 so a pressure-aware surface reads the live force.
 

@@ -22,26 +22,26 @@ What this script checks, and why each check discriminates:
   and the wicks are required to hang off the body edges on the body's own
   centre line — six copies of the slot arithmetic that happened to agree would
   pass a per-mark check and fail this one.
-* **PAST Qt 6.11 (1): a doji has a NAME.** Wednesday closed exactly where it
-  opened. Qt's documented rule paints `increasingColor` only when the close is
-  *higher* than the open, so a Qt doji silently takes the losing colour and
-  `QCandlestickSet` has no accessor to say otherwise. Here it is its own
+* **PAST the toolkit 6.11 (1): a doji has a NAME.** Wednesday closed exactly where it
+  opened. The toolkit's documented rule paints `increasingColor` only when the close is
+  *higher* than the open, so a toolkit doji silently takes the losing colour and
+  candlestick set has no accessor to say otherwise. Here it is its own
   direction, its body has zero height on the wire, and the caption says so.
-* **PAST Qt 6.11 (2): the direction is encoded TWICE.** A rising body is
+* **PAST the toolkit 6.11 (2): the direction is encoded TWICE.** A rising body is
   hollow (`fill.a == 0`) and a falling one solid (`fill.a == 255`) — the
   traditional Japanese form, which predates colour. The "no hue" chip collapses
   all three strokes to one ink and the fill alphas do not move, which is the
-  claim: a colour-blind reader keeps the direction. Qt encodes it in hue alone,
+  claim: a colour-blind reader keeps the direction. The toolkit encodes it in hue alone,
   and green-and-red is the worst pair for the commonest deficiency.
-* **PAST Qt 6.11 (3): one datum, two readings of the x-axis.** On the session
+* **PAST the toolkit 6.11 (3): one datum, two readings of the x-axis.** On the session
   axis the six bodies abut and the weekend takes no width; on the elapsed axis
-  the same six sit over real UTC time and the weekend is three days wide. Qt
+  the same six sit over real UTC time and the weekend is three days wide. The toolkit
   reaches those two pictures by attaching two axis objects and handing the
-  category one a `QStringList` unrelated to the sets' timestamps — two
+  category one a string list unrelated to the sets' timestamps — two
   descriptions of when the sessions were, with nothing checking they agree.
   Here the slot names are DERIVED from the instants, and the script reads them
   back off the axis to prove it.
-* **PAST Qt 6.11 (4): the label CARDINALITY follows the reading.** One node
+* **PAST the toolkit 6.11 (4): the label CARDINALITY follows the reading.** One node
   per session on the ordinal axis, one per time tick on the elapsed one, under
   two different tags — two questions, not one tag that lies about what it
   counts.
@@ -50,7 +50,7 @@ What this script checks, and why each check discriminates:
   of the choice would be caught.
 * **The direction reaches assistive technology.** The readings are a
   `radiogroup`, the options `button[aria-pressed]`, and the caption a live
-  region naming the doji and the measured contrast. Qt's charts implement no
+  region naming the doji and the measured contrast. The toolkit's charts implement no
   accessibility interface at all.
 
 Run from the workspace root:
@@ -94,7 +94,7 @@ SESSIONS = [
 
 #: The direction each session went, predicted from the numbers above rather
 #: than read back: `close > open` rises, `close < open` falls, and `close ==
-#: open` is a DOJI — the arm Qt has no name for.
+#: open` is a DOJI — the arm the toolkit has no name for.
 DIRECTIONS = ["rising", "falling", "rising", "doji", "falling", "rising"]
 
 #: The fill alpha each direction paints its body's interior at. Hollow is
@@ -218,7 +218,8 @@ def body() -> None:
         centres = [centre_x(rect(snap, f"chart.candle.{i}")) for i in range(n)]
         assert centres == sorted(centres), f"sessions ascend left to right: {centres}"
 
-        # ── (B) PAST QT: the doji has a name ─────────────────────────
+        # ── (B) PAST the toolkit: the doji has a name
+        # ─────────────────────────
         assert_eq(
             body_span(snap, DOJI),
             0.0,
@@ -240,7 +241,8 @@ def body() -> None:
         assert "a doji" in caption(snap), f"and it is NAMED: {caption(snap)}"
         assert "solid body" in caption(snap), caption(snap)
 
-        # ── (C) PAST QT: the direction is encoded twice ──────────────
+        # ── (C) PAST the toolkit: the direction is encoded twice
+        # ──────────────
         hued = [body_ink(snap, i) for i in range(n)]
         assert_eq(
             [a for a, _ in hued],
@@ -289,7 +291,8 @@ def body() -> None:
             f"why the shipped pair is separated in luminance: {caption(snap)}"
         )
 
-        # ── (D) PAST QT: one datum, two readings of the x-axis ───────
+        # ── (D) PAST the toolkit: one datum, two readings of the x-axis
+        # ───────
         assert_eq(
             [node(snap, f"chart.xlabel.{i}")["content"] for i in range(n)],
             SLOT_NAMES,
@@ -334,7 +337,8 @@ def body() -> None:
                 f"bodies {i} and {i + 1} do not overlap on the elapsed axis"
             )
 
-        # ── (E) PAST QT: the label cardinality follows the reading ───
+        # ── (E) PAST the toolkit: the label cardinality follows the reading
+        # ───
         assert_eq(
             count_prefix(snap, "chart.xlabel."),
             0,
@@ -367,7 +371,8 @@ def body() -> None:
         )
         pick_reading(tf, ORDINAL)
 
-        # ── (G) the caps are Qt's capsVisible, and they are marks ────
+        # ── (G) the caps are the toolkit's capsVisible, and they are marks
+        # ────
         toggle(tf, CAPS_TAG)
         snap = snapshot(tf)
         assert_eq(

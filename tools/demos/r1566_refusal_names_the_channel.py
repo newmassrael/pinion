@@ -24,11 +24,11 @@ one that cannot be called without the declaration.
     intervene on a declared ACTION  ->  PathIsAnAction   (was UnknownIntervenePath)
     invoke    on a declared SLOT    ->  PathIsAReadSlot  (was UnknownInvokePath)
 
-Past Qt 6.11 — Qt fuses every one of these into a value that carries no reason:
-`QObject::setProperty()` answers a bare `bool`, `QMetaObject::invokeMethod()`
-answers a bare `bool`, and `QObject::property()` answers an **invalid
-`QVariant`** — the same value it answers for a name that is in no meta-object at
-all. A Qt caller who addressed a method as a property learns only that it did
+Past the toolkit 6.11 — the toolkit fuses every one of these into a value that carries no reason:
+`setProperty()` answers a bare `bool`, `invokeMethod()`
+answers a bare `bool`, and `property()` answers an **invalid
+dynamic value** — the same value it answers for a name that is in no meta-object at
+all. A toolkit caller who addressed a method as a property learns only that it did
 not work, and has to go back to the meta-object and search it themselves. Here
 the surface answers with what the name IS.
 

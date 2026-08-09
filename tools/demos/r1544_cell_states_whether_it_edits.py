@@ -2,18 +2,18 @@
 """R1544 §5.27 §5.40 — the delegate's EDITING half, over the wire.
 
 R1532 gave the virtualized grid a per-column *paint* delegate; the other
-half of Qt's `QStyledItemDelegate` — `createEditor` / `setEditorData` /
+half of the toolkit's styled item delegate — `createEditor` / `setEditorData` /
 `setModelData` — did not exist, so the grid's cell path could not host an
 editor at all. This drives `hello-grid-nav`, now the editable Model/View
 grid at scale, and proves each piece from the outside:
 
-  (A) the model's `Qt::EditRole` decides editability — the identity column
+  (A) the model's `EditRole` decides editability — the identity column
       answers `None`, so no trigger opens an editor on it, and every one of
       its cells is `aria-readonly` in `scene/access` while its neighbours
-      are silent (WAI-ARIA's default-false). Qt says nothing here at all:
-      `QAccessibleTableCell` builds its state from the view's selection,
-      never from the model's `Qt::ItemIsEditable`.
-  (B) the trigger set (Qt `EditTriggers`) — <kbd>F2</kbd> (`EditKeyPressed`)
+      are silent (WAI-ARIA's default-false). The toolkit says nothing here at all:
+      accessible table cell builds its state from the view's selection,
+      never from the model's `ItemIsEditable`.
+  (B) the trigger set (the toolkit `EditTriggers`) — <kbd>F2</kbd> (`EditKeyPressed`)
       and a printable key (`AnyKeyPressed`) open an editor on the current
       CELL; a double-click (`DoubleClicked`) opens one on the clicked cell.
   (C) the editor replaces exactly one cell — the editing cell hosts the
@@ -22,15 +22,15 @@ grid at scale, and proves each piece from the outside:
   (D) the editor DELEGATE — the bounded column opens an editor that states
       its bound (`/100`), which the built-in editor does not paint.
   (E) commit writes through, and a **refused** write keeps the editor open
-      holding what was typed. This is the divergence from Qt: there,
+      holding what was typed. This is the divergence from the toolkit: there,
       `setModelData` returns `void`, so a rejected value closes the editor
       and the typing is discarded with no feedback.
   (F) <kbd>Escape</kbd> abandons the edit and the model is unchanged.
-  (G) <kbd>Tab</kbd> is Qt's `EditNextItem`: commit, then open an editor on
+  (G) <kbd>Tab</kbd> is the toolkit's `EditNextItem`: commit, then open an editor on
       the next EDITABLE cell — skipping the read-only column.
   (H) the editing state is DATA (§2 #7): the status line reports which cell
-      is open and what is in it. Qt has no public equivalent — a transient
-      editor's buffer lives inside an opaque `QWidget`.
+      is open and what is in it. The toolkit has no public equivalent — a transient
+      editor's buffer lives inside an opaque widget.
 
 ZERO-FLAKE: bounded `wait_snap` / `wait_until` polling, never a fixed
 sleep. >=30 assertions.
@@ -180,7 +180,7 @@ def body() -> None:
         )
         assert not has_editor(snap, 0, INDEX_COL), "and paints no field there"
 
-        # ── (B) Qt EditKeyPressed on an editable cell ───────────────
+        # ── (B) the toolkit EditKeyPressed on an editable cell ───────────────
         tf.key(path=TABLE_TAG, name="ArrowRight")
         tf.key(path=TABLE_TAG, name="F2")
         snap = wait_snap(
@@ -222,7 +222,7 @@ def body() -> None:
         assert_eq(editing_field(snap), "none", "the latch is clear")
         assert_eq(cell_texts(snap, 0, NAME_COL), before, "the model is unchanged")
 
-        # ── (B') Qt AnyKeyPressed — type-to-replace ─────────────────
+        # ── (B') the toolkit AnyKeyPressed — type-to-replace ─────────────────
         tf.key(path=TABLE_TAG, name="Z")
         snap = wait_snap(
             tf,
@@ -247,7 +247,7 @@ def body() -> None:
         )
         assert_eq(editing_field(snap), "none", "and the latch is clear")
 
-        # ── (B'') Qt DoubleClicked on the bounded column ────────────
+        # ── (B'') the toolkit DoubleClicked on the bounded column ────────────
         tf.double_click(path=cell_tag(2, SCORE_COL))
         snap = wait_snap(
             tf,
@@ -362,7 +362,7 @@ def body() -> None:
             "a letter is gated out of an int editor (CellKind::accepts_keystroke)",
         )
 
-        # ── (G) Tab is Qt's EditNextItem, and it skips read-only ────
+        # ── (G) Tab is the toolkit's EditNextItem, and it skips read-only ────
         tf.key(path=TABLE_TAG, name="Tab")
         snap = wait_snap(
             tf,
@@ -414,7 +414,8 @@ def body() -> None:
         assert (grid.get("state") or {}).get("read_only") is not True, (
             "editability is claimed per cell, not blanket on the container"
         )
-        # Selection stayed a separate axis throughout (Qt: current != selected).
+        # Selection stayed a separate axis throughout (the toolkit: current !=
+        # selected).
         assert tf.query("/external/item_count") == 10_000, (
             "the coordinator still holds the full dataset — editing is windowed"
         )

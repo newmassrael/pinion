@@ -3,7 +3,7 @@
 //! Mirrors the hello-button / ai-introspect-demo build.rs shape:
 //! compile `app.pinion.xml` → `$OUT_DIR/app.rs` which main.rs pulls
 //! in via `include!`. The Vello renderer struct name is the only
-//! customization — every the design tool-parity binding emits its own
+//! customization — a design tool-parity binding emits its own
 //! `<Name>Renderer` so the codegen template stays single-source.
 
 use std::path::Path;

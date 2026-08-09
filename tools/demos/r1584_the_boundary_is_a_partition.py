@@ -7,7 +7,7 @@ MOVE one, and moving one is what an editor does all day — this node belongs in
 the group after all, that one does not. `Document::group_insert` and
 `Document::group_separate` are the two directions, and `hello-node-groups`
 supplies only WHERE the boundary is: pointed at for the inward move, and the
-edit path's own last step for the outward one, which is where Blender reads it
+edit path's own last step for the outward one, which is where the DCC reads it
 from too.
 
 What this script checks, and why each check discriminates:
@@ -16,24 +16,24 @@ What this script checks, and why each check discriminates:
   group's output is asserted before and after, in both directions, and the
   round trip in and back out is byte-identical. That is the whole claim, and it
   is the one a structural assertion cannot make.
-* **PAST BLENDER (1): SEPARATE RECONNECTS.** Measured at `8cf50599`,
+* **PAST the DCC (1): SEPARATE RECONNECTS.** Measured at `8cf50599`,
   `node_group_separate_selected` copies the selected nodes into the parent tree
   and, for the Move arm, deletes them from the group. It touches the interface
   not at all — so the group is left holding sockets that reach nothing and the
   separated nodes arrive wired only to each other, and the value that used to
   flow through them is simply gone. Here the value survives, and the crate's
-  own tests hold Blender's rule as a helper and assert the divergence.
-* **PAST BLENDER (2): one value is still one port.** `build_node_set_interface`
+  own tests hold the DCC's rule as a helper and assert the divergence.
+* **PAST the DCC (2): one value is still one port.** `build_node_set_interface`
   walks only the sockets of the nodes being moved and never consults the
   group's existing interface, so a producer that already feeds this instance
   gets a SECOND socket for the same value. Here it re-uses the port.
-* **PAST BLENDER (3): a port that stops describing a crossing is REMOVED**, and
-  the removal is named. Blender's insert only ever appends.
-* **PAST BLENDER (4): the blast radius is REPORTED.** A definition is shared, so
+* **PAST the DCC (3): a port that stops describing a crossing is REMOVED**, and
+  the removal is named. The DCC's insert only ever appends.
+* **PAST the DCC (4): the blast radius is REPORTED.** A definition is shared, so
   an edit through one instance changes all of them; `node_group_insert_exec`
   does it silently. Here `others` counts them and `severed` names every link
   that died AND the tree it was in — a link id means nothing without one.
-* **PAST BLENDER (5): the fork is an ARM OF THE OPERATION.** Blender reaches it
+* **PAST the DCC (5): the fork is an ARM OF THE OPERATION.** the DCC reaches it
   in two steps and another vocabulary (a node group is an ID datablock, so you
   make it single-user first). Here `fork` is one word at the call, and the
   other instance is asserted unchanged to the byte.
@@ -342,7 +342,7 @@ def body() -> None:
 
         # A walk that leaves the group and comes back to the node moving in:
         # the group already feeds `fade`, so give `fade` a consumer and try to
-        # move THAT in. Blender's own test for this is one hop deep
+        # move THAT in. The DCC's own test for this is one hop deep
         # (`node_group_make_test_selected`), and this case is one where a
         # one-hop rule and a reachability rule agree; R1577 covers the two-hop
         # case where they do not.

@@ -4,7 +4,7 @@
 Drives hello-node-editor over JSON-RPC. R838-R850 made the node graph
 authorable (move / connect / delete / add) but every edit was irreversible —
 the table-stakes an editor cannot ship without. R851 sits the structural edits
-on the `UndoStack` substrate (the `QUndoStack` peer): adding a node, deleting a
+on the `UndoStack` substrate (the undo stack peer): adding a node, deleting a
 node together with its incident edges, connecting, and disconnecting each record
 a reversible `GraphEdit` delta. `Ctrl+Z` / `Ctrl+Shift+Z` (`Ctrl+Y`) drive it
 from the keyboard, and the `UndoStackExternal` at `/node_undo/external` surfaces

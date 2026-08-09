@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1435 §5.35 §5.15 — a native SMART-ZOOM gesture fits the block under the finger.
 
-`External::smart_zoom_gesture` forwards the Qt `QNativeGestureEvent`
+`External::smart_zoom_gesture` forwards the toolkit native gesture event
 `SmartZoomNativeGesture` / macOS `smartMagnifyWithEvent:` / winit
 `WindowEvent::DoubleTapGesture` peer — the family's PHASE-LESS member. Where
 pinch / rotation / pan each accumulate a delta across a begin..end arc and

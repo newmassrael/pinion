@@ -24,11 +24,11 @@ What this script checks, and why each check discriminates:
 
 * **The flow is declared per port**, and a node's shape is readable as such
   (`port_flows`), so "is this pin control?" is a fact rather than a convention.
-  Unreal 5.8.1 spells the same distinction as the *string* `"exec"` sitting in
+  the engine 5.8.1 spells the same distinction as the *string* `"exec"` sitting in
   the pin's type slot, compared literally in 40 places outside the `IsExecPin`
   helper that exists for it.
 * **The multiplicity INVERTS.** Wiring a second successor onto a control output
-  displaces the first, and the displaced link is *named*. Unreal displaces here
+  displaces the first, and the displaced link is *named*. The engine displaces here
   too (`CONNECT_RESPONSE_BREAK_OTHERS_A`) and `TryCreateConnection` answers a
   bare `bool`, so there what it broke is gone.
 * **A control input JOINS.** Two predecessors converge and both survive — a
@@ -36,7 +36,7 @@ What this script checks, and why each check discriminates:
 * **The planes never mix**, and the refusal says which end is control.
 * **A control cycle is a LOOP**: `valid` stays `ok`, `cycle_nodes` stays empty,
   and `control_loops` names the members — statically, before anything runs.
-  Nothing in Unreal answers this: an exec loop compiles (exec pins are excluded
+  Nothing in the engine answers this: an exec loop compiles (exec pins are excluded
   from the dependency sort by `PinIsImportantForDependancies`), and a runaway
   one is found at *run time* by counting to `GMaximumScriptLoopIterations`.
 * **The execution ORDER is derived**, and the run says why it stopped.
@@ -44,7 +44,7 @@ What this script checks, and why each check discriminates:
   evaluator cannot express, because there every node has a value. Change the
   *datum* and the trace changes, so the control choice reads the value plane.
 * **A pure node is never in the trace and its value is still there**, which is
-  Unreal's impure/pure split.
+  the engine's impure/pure split.
 * **A fork runs each arm to completion before the next**, which is a stack
   property, not an ordering convention.
 

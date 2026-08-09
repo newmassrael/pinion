@@ -28,7 +28,7 @@ the off-screen Count column uses the reset_col / reset_row RPC peer (R960's
 clip-gated-column pattern).
 
 Every seed cell starts away from the empty column defaults, so every column +
-row boots modified (Unreal's "a customized instance shows its overrides").
+row boots modified (the engine's "a customized instance shows its overrides").
 
 Run from the workspace root:
     cargo build -p hello-data-grid --release

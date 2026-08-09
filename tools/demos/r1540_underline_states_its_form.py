@@ -15,7 +15,7 @@ form to give it.
 
 R1540 moved `UnderlineStyle` to the general text-style home and gave
 `TextDecoration` both axes it was missing: the FORM, and the underline's own
-COLOUR (Qt `setUnderlineColor`, SGR 58). `hello-richtext` now carries the two
+COLOUR (the toolkit `setUnderlineColor`, SGR 58). `hello-richtext` now carries the two
 canonical diagnostic marks:
 
   * `"quick"` — purple bold text, under a **blue dotted** rule (a spelling hint)
@@ -177,7 +177,8 @@ def body() -> None:
             )
 
         # The strikethrough axis is untouched: it has one form in both SGR (9)
-        # and Qt, so it stayed a bool and must not have been dragged along.
+        # and the toolkit, so it stayed a bool and must not have been dragged
+        # along.
         for name, style in (("quick", quick), ("brown", brown), ("fox", fox)):
             assert style["decoration"]["strikethrough"] is False, (
                 f"B: {name}'s strikethrough must still be a bool, and false"

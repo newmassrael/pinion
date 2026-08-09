@@ -35,7 +35,7 @@
 //!   different file, possibly years later. Here the widget cannot be asked
 //!   too late, because the router asks before it dispatches.
 //! * the toolkit's override leaves **no record**. shortcut map is private and the
-//!   event is transient, so no the toolkit application can answer "what does
+//!   event is transient, so a toolkit application can answer "what does
 //!   <kbd>Alt</kbd>+<kbd>F</kbd> do right now". `scene/accelerators` answers
 //!   it, because the shadow is a function the router can evaluate against the
 //!   published map without anyone pressing anything.

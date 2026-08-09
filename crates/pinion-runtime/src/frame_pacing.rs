@@ -14,7 +14,7 @@
 //! 1. **Numerical instability** — the semi-implicit Euler integrator
 //!    inside `SpringState::step` is stable for `dt` near the frame
 //!    budget; large `dt` causes oscillation amplification. The
-//!    canonical guard in the game-engine and `SwiftUI` / Compose
+//!    canonical guard in the game-engine and `SwiftUI` / another declarative toolkit
 //!    literature is a single-frame-worth-of-time cap on `dt` before
 //!    it reaches the integrator.
 //! 2. **Visual jump on resume** — even if the math stayed stable, a

@@ -216,7 +216,7 @@ fn to_vello_inner<F>(
             // Content paints in content-intrinsic coordinates; the
             // scroll container shifts so that content-intrinsic
             // `(0, 0)` lands at viewport `(viewport.x - offset_x,
-            //  viewport.y - offset_y)` in the parent frame. Compose
+            //  viewport.y - offset_y)` in the parent frame. another declarative toolkit
             // with the inherited transform so nested scrolls
             // accumulate correctly.
             let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
@@ -1554,9 +1554,8 @@ fn paint_immediate_mode_node(
         // fill with a degenerate rect is a no-op anyway).
         return;
     }
-    // Compose `parent_transform * translate(viewport.{x,y})` so
-    // viewport-local `(0, 0)` lands at screen-space
-    // `(viewport.x, viewport.y)` in the parent frame.
+    // another declarative toolkit `parent_transform * translate(viewport.{x,y})` so viewport-local `(0, 0)` lands at
+    // screen-space `(viewport.x, viewport.y)` in the parent frame.
     let local_transform = node_local_transform(parent_transform, viewport);
     let mut painter = VelloImmediatePainter {
         out,
@@ -5010,7 +5009,7 @@ mod tests {
 
     #[test]
     fn r1557_text_is_attributed_to_the_leaf_that_drew_it() {
-        // The claim no the toolkit surface makes: which item the glyphs belong
+        // The claim a toolkit surface makes: which item the glyphs belong
         // to. A `Text` leaf is one node whether it holds two glyphs or four
         // thousand, so this is the term a node census cannot reach.
         let (root, _) = profile_once(&profile_scene());

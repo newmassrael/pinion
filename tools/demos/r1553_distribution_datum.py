@@ -20,27 +20,27 @@ What this script checks, and why each check discriminates:
   whiskers hanging off the box edges, the caps centred on the box, the
   outliers on the box's own centre line. Six copies of the slot arithmetic
   that happened to agree would pass a per-mark check and fail this one.
-* **PAST Qt 6.11 (1): the quantile definition is a runtime choice, and it
+* **PAST the toolkit 6.11 (1): the quantile definition is a runtime choice, and it
   DECIDES an outlier.** `/search` was hit six times; at `n = 6` Tukey's
   hinges, Hyndman & Fan type 7 and type 6 give three different upper
   quartiles, so the `41 ms` sample is inside one fence and outside another.
-  Switching the chip makes an outlier mark appear and disappear. QtCharts
+  Switching the chip makes an outlier mark appear and disappear. The toolkit's charting module
   computes none of the three — its own box-plot example ships a
-  `findMedian()` helper IN THE EXAMPLE — so a `QBoxSet` cannot record which
+  `findMedian()` helper IN THE EXAMPLE — so a box set cannot record which
   definition built it. The counterfactual is in the same section: the OTHER
   four endpoints' outlier counts do not move, so this is not "the method
   reshuffles everything".
-* **PAST Qt 6.11 (2): an outlier is drawn at all.** `QBoxSet` has exactly five
-  slots (`LowerExtreme`..`UpperExtreme`) and no per-outlier geometry, so a Qt
+* **PAST the toolkit 6.11 (2): an outlier is drawn at all.** box set has exactly five
+  slots (`LowerExtreme`..`UpperExtreme`) and no per-outlier geometry, so a toolkit
   box plot cannot show one. Here each is its own addressable node, and the
   whisker is required to STOP short of it — which is what makes it Tukey's
-  fence rather than the plain extremes Qt draws.
-* **PAST Qt 6.11 (3): the notch, because `n` survived the summary.** The waist
-  is `median +- 1.58 * IQR / sqrt(n)`; `QBoxSet` carries no sample count, so
-  Qt could not offer it even as a paint option. Read two ways over the wire:
+  fence rather than the plain extremes the toolkit draws.
+* **PAST the toolkit 6.11 (3): the notch, because `n` survived the summary.** The waist
+  is `median +- 1.58 * IQR / sqrt(n)`; box set carries no sample count, so
+  the toolkit could not offer it even as a paint option. Read two ways over the wire:
   the box's own command list grows from 5 to 11, and the median line narrows
   to the waist.
-* **PAST Qt 6.11 (4): a landmark the axis cannot place is REPORTED.**
+* **PAST the toolkit 6.11 (4): a landmark the axis cannot place is REPORTED.**
   `/health` answered two requests from cache and a millisecond-resolution
   timer recorded them as `0.0`. On a log axis they have no pixel: their marks
   vanish, the box still draws, and the caption is the report. On a linear axis
@@ -50,7 +50,7 @@ What this script checks, and why each check discriminates:
   of the choice would be caught.
 * **The summary and its provenance reach assistive technology.** The methods
   are a `radiogroup`, the options `button[aria-pressed]`, and the caption a
-  live region carrying the derived quartile and the off-scale report. Qt's
+  live region carrying the derived quartile and the off-scale report. The toolkit's
   charts implement no accessibility interface at all.
 
 Run from the workspace root:
@@ -210,12 +210,12 @@ def body() -> None:
         centres = [centre_x(rect(snap, f"chart.box.{i}")) for i in range(n)]
         assert centres == sorted(centres), f"boxes ascend with their slots: {centres}"
 
-        # ── (A2) PAST QT: the whisker STOPS at the fence ─────────────
-        # Read on /report, whose three far samples clear its whisker by
-        # hundreds of milliseconds, so the separation is pixels rather than
-        # rounding. Qt draws its whiskers to whatever `LowerExtreme` /
-        # `UpperExtreme` were set to, with no fence rule and nowhere to put
-        # what falls outside one.
+        # ── (A2) PAST the toolkit: the whisker STOPS at the fence
+        # ───────────── Read on /report, whose three far samples clear its
+        # whisker by hundreds of milliseconds, so the separation is pixels
+        # rather than rounding. The toolkit draws its whiskers to whatever `LowerExtreme`
+        # / `UpperExtreme` were set to, with no fence rule and nowhere to put what falls
+        # outside one.
         report = 3
         whisk_top = float(rect(snap, f"chart.whisker.{report}.hi")["y"])
         marks = sorted(
@@ -238,7 +238,8 @@ def body() -> None:
             "and the whisker itself still reaches past the box it hangs from"
         )
 
-        # ── (C) PAST QT: the definition decides an outlier ───────────
+        # ── (C) PAST the toolkit: the definition decides an outlier
+        # ───────────
         far_tag = f"chart.outlier.{SMALL_N}.0"
         assert_eq(
             find_by_tag(snap, far_tag),
@@ -308,7 +309,8 @@ def body() -> None:
             "keyboard and pointer reach ONE selection, not two copies of it",
         )
 
-        # ── (E) PAST QT: the notch, because n survived ───────────────
+        # ── (E) PAST the toolkit: the notch, because n survived
+        # ───────────────
         pick_method(tf, 0)
         snap = snapshot(tf)
         plain_box = node(snap, "chart.box.0")
@@ -346,7 +348,8 @@ def body() -> None:
         )
         toggle(tf, NOTCH_TAG)
 
-        # ── (F) PAST QT: what the axis cannot place is reported ──────
+        # ── (F) PAST the toolkit: what the axis cannot place is reported
+        # ──────
         snap = snapshot(tf)
         assert find_by_tag(snap, f"chart.outlier.{ZEROED}.0") is not None, (
             "on a linear axis the two zero-timed cache hits are ordinary marks"

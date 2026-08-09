@@ -22,7 +22,7 @@
 //!   `Computed::recompute`'s `source_cleanups` drain).
 //! - Cleanup on Owner drop — `cancelled` flag flips, source subscriptions are
 //!   drained, further `mark_dirty` is a no-op.
-//! - Conflating reactive scope with async (React `useEffect`) is the
+//! - Conflating reactive scope with async (the web UI library `useEffect`) is the
 //!   anti-pattern the §5.23 charter explicitly rejects — `Effect` here is
 //!   sync; async description belongs to `Command<Intent>` (carry to R51.138+).
 //! - `view-fn` no Effect access (read-only Signal context, §5.3 caller-side

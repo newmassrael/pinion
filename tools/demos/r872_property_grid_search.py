@@ -3,7 +3,7 @@
 
 The Details-panel search box: typing in the title-bar search field filters the
 visible property rows by name, live (every keystroke), over the R921 property
-**tree**. The recursive path-to-match filter (`flat_visible_filtered`, Qt
+**tree**. The recursive path-to-match filter (`flat_visible_filtered`, the toolkit
 `setRecursiveFilteringEnabled`) keeps any node on a path to a match and reveals
 it even inside a collapsed branch, so searching "pos" surfaces the Position
 struct's fields under their Transform > Position path. A branch with no match

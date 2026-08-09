@@ -202,9 +202,9 @@ def body() -> None:
         except RpcError:
             raised = True
         assert raised, "unknown introspect path must be rejected"
-        # R1450 — `order` is a writable slot now (the column-header consumer
-        # needed Qt's restoreState, and the model owns the permutation check),
-        # so a real permutation lands and a non-permutation is refused.
+        # R1450 — `order` is a writable slot now (the column-header consumer needed
+        # the toolkit's restoreState, and the model owns the permutation
+        # check), so a real permutation lands and a non-permutation is refused.
         before = tf.query("/external/order")
         tf.intervene("/external/order", [3, 2, 1, 0])
         wait_until(lambda: tf.query("/external/order") == [3, 2, 1, 0],

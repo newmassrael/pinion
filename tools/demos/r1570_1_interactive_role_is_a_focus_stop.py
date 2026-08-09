@@ -5,8 +5,8 @@
 an operable control to assistive technology. WAI-ARIA requires such a control to
 be focusable, and every floor this project measures against gives it for free:
 HTML's native `<button>` / `<input type=checkbox>` are focusable without a
-`tabindex`, and Qt's `QAbstractButton` / `QCheckBox` / `QRadioButton` are
-`Qt::StrongFocus` by default.
+`tabindex`, and the toolkit's abstract button / check box / radio button are
+`StrongFocus` by default.
 
 pinion's focus enumeration is scene-derived (R1020 §5.39): a node is a Tab stop
 because its `LayoutStyle` says `focusable`. That is the right source — R1020

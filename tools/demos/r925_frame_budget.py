@@ -14,7 +14,7 @@ declared `scene/set_fps` target:
   - `budget_us`            — the per-frame budget (`1e6 / target_fps`),
                              **omitted** when the window is unpaced.
   - `over_budget_frames`   — window samples with `total_us > budget_us`
-                             (the dropped-frame / jank count — Unreal
+                             (the dropped-frame / jank count — the engine
                              `stat unit` hitches, Chrome janky frames).
   - `worst_overrun_us`     — the worst single hitch's magnitude.
   - `jank_ratio`           — `over_budget_frames / window_len` in [0, 1].

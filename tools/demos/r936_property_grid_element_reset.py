@@ -2,7 +2,7 @@
 """R936 §5.38 §5.40 — property-grid array-element modified / reset.
 
 Drives `hello-property-grid` via JSON-RPC. R931 made the array (`TArray<f32>` —
-Unreal "Spawn Weights") editable but left its **modified / reset** axis deferred:
+the engine "Spawn Weights") editable but left its **modified / reset** axis deferred:
 an edited element showed no reset arrow, and the array branch had no roll-up. R936
 clears that carry by extending the SAME modified / reset machinery the scalar
 leaves + struct branches already use to the array sub-model — no new primitive,

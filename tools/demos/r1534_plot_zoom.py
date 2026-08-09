@@ -5,7 +5,7 @@ A window over the data has existed since the R1357 brush: a `Brush` resolves a
 `(low, high)` fraction pair onto the data extent and the consumer re-domains
 the chart with it. But a brush is an **overview strip** — a second widget below
 the plot, dragged by two thumbs. Nothing could zoom or pan **the plot itself**,
-which is where QtCharts puts it (`QChart::zoomIn` / `scroll` / `zoomReset`) and
+which is where the toolkit's charting module puts it (`zoomIn` / `scroll` / `zoomReset`) and
 where d3 puts it (`d3.zoom` on the plot area).
 
 The difference is not only which pixels take the gesture. A strip cannot zoom

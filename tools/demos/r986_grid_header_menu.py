@@ -10,7 +10,7 @@ WAI-ARIA keyboard model + R715 dismiss barrier come for free) + R887
 secondary-click wire + R778 `GridSortExternal` (the extra sort proxy the
 menu and a plain left-click both drive). No framework change.
 
-The captured-target pattern (Qt `QMenu::exec` / web `event.target`): the
+The captured-target pattern (the toolkit `exec` / web `event.target`): the
 binding records the right-clicked column in a reactive Signal at
 `apply_secondary_click` time (geometric header hit-test) and reads it back
 in the `update` reducer when the `"command"` intent fires. The status bar

@@ -5,36 +5,36 @@ question.
 The selection itself is deliberately NOT in the model: R1586 put it outside the
 document because two people looking at one graph have two selections and one
 document. What belongs to the graph is the other half — *given these nodes,
-which others are the ones you mean?* Blender spells that as six operators; four
+which others are the ones you mean?* the DCC spells that as six operators; four
 of them are questions about the graph and are now `Document::grow`, and the
 other two are questions about the CANVAS (see the last bullet).
 
 What this script checks, and why each check discriminates:
 
-* **Every one of them is a pure query.** Blender's set the `SELECT` bit on
+* **Every one of them is a pure query.** the DCC's set the `SELECT` bit on
   `bNode` and carry `OPTYPE_UNDO`, because the selection lives in its document —
   so "what would this select?" cannot be asked there without selecting it, and
   every answer costs an undo step. Here the document is untouched, which is what
   makes the question previewable (§2 #3); asserted by reading the whole graph
   back after every growth.
-* **PAST BLENDER (1): the reach is a parameter, not a keystroke count.**
+* **PAST the DCC (1): the reach is a parameter, not a keystroke count.**
   `NODE_OT_select_linked_to` walks `directly_linked_sockets()` — one hop — and
   so does `..._from`. The question a person has is *what depends on this*, which
-  is the closure, and Blender answers it by having you press the key until the
+  is the closure, and the DCC answers it by having you press the key until the
   picture stops changing with nothing telling you when that has happened. Here
-  it is one call, and `added` empty is the signal Blender's mutating form cannot
+  it is one call, and `added` empty is the signal the DCC's mutating form cannot
   give.
-* **PAST BLENDER (2): two instances of DIFFERENT definitions are not one kind.**
-  Every group node in Blender is `type_legacy == NODE_GROUP`, so grouping by
+* **PAST the DCC (2): two instances of DIFFERENT definitions are not one kind.**
+  Every group node in the DCC is `type_legacy == NODE_GROUP`, so grouping by
   type sweeps in instances of unrelated definitions. An instance's signature IS
   its definition's interface, so here they are alike in nothing the model sees.
-* **PAST BLENDER (3): an affix that is not there offers no criterion.**
+* **PAST the DCC (3): an affix that is not there offers no criterion.**
   `node_select_grouped_name` substitutes the WHOLE NAME for a missing suffix,
   conflating "no suffix" with "the suffix is the entire name".
-* **PAST BLENDER (4): the affix is read off the name that is PAINTED.** Blender
+* **PAST the DCC (4): the affix is read off the name that is PAINTED.** the DCC
   groups on `bNode::name`, the datablock id (`Mix.001`), which is not what its
   own node header draws — the header shows the label or the type's ui name.
-* **PAST BLENDER (5): the run is published.** `same_kind` answers "3 of 7" plus
+* **PAST the DCC (5): the run is published.** `same_kind` answers "3 of 7" plus
   the whole ordered run, so `NODE_OT_select_same_type_step` is one line over it.
   That operator reports by moving the active node and says only whether it
   moved.
@@ -137,7 +137,7 @@ def body() -> None:
         for _ in range(3):
             tf.tick(0.016)
 
-        # ── (A) one hop, which is all Blender has ───────────────────────────
+        # ── (A) one hop, which is all the DCC has ───────────────────────────
         before = shape(tf)
         select(tf, BASE)
         step = grow(tf, "downstream:direct")
@@ -153,7 +153,7 @@ def body() -> None:
             "question cannot be asked there without answering it (§2 #3)",
         )
 
-        # Keep pressing, which is Blender's only way to reach the far end.
+        # Keep pressing, which is the DCC's only way to reach the far end.
         assert_eq(grow(tf, "downstream:direct")["added"], str(FADE), "A: two")
         assert_eq(grow(tf, "downstream:direct")["added"], str(OUT), "A: three")
         assert_eq(grow(tf, "downstream:direct")["added"], "", "A: and now nothing")

@@ -2,10 +2,10 @@
 """R964 §5.38 §5.50 — bounded slider delegate for the property grid.
 
 Drives hello-property-grid over JSON-RPC. R875 gave numeric leaves a drag-to-
-scrub (the unbounded Blender / Unreal "drag the number" gesture). R964 adds the
+scrub (the unbounded the DCC / the engine "drag the number" gesture). R964 adds the
 *bounded* delegate: a ranged Float leaf (here `Opacity`, slot 8, normalised to
 `[0, 1]`) is clamped to its interval and renders a slider gauge in its value
-cell — the Unreal Details "factor" field. A thin track + active fill along the
+cell — the engine Details "factor" field. A thin track + active fill along the
 cell's bottom edge shows the value's position in range; editing is the existing
 (now clamped) scrub / inline-edit / RPC write.
 

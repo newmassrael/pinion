@@ -2,7 +2,7 @@
 """R931 §5.38 §5.40 §5.50 — property-grid array / Vec property editing.
 
 Drives `hello-property-grid` via JSON-RPC. The Details panel now edits a
-**dynamic array** property (a `TArray<f32>` — Unreal "Spawn Weights"): a
+**dynamic array** property (a `TArray<f32>` — the engine "Spawn Weights"): a
 collapsible `arr.weights` branch whose **element leaves** (`elem.<k>`) the editor
 can grow, shrink and reorder at runtime.
 

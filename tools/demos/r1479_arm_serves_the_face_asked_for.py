@@ -23,7 +23,7 @@ forcing consumer for the named half. This demo asserts over the wire:
   1. PREMISE — the arm is off by default and the binding reports the face it
      declared. The baseline really is one shaper.
   2. THE REPORT — with the arm on, `scene/snapshot` carries which face the arm
-     holds (§2 #7). Qt has no answer here at all: nothing in QFontDatabase says
+     holds (§2 #7). The toolkit has no answer here at all: nothing in font database says
      which of two live shapers drew a run.
   3. THE CLAIM — with the arm holding a DIFFERENT face from the one every row
      names, every row measures identically arm-on and arm-off. The arm declined;

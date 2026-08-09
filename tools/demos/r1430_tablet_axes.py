@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""R1430 §5.35 §5.15 — the remaining Qt QTabletEvent scalar axes on the raw surface.
+"""R1430 §5.35 §5.15 — the remaining the toolkit tablet event scalar axes on the raw surface.
 
-R1423 added pressure and R1429 tilt. R1430 completes the Qt `QTabletEvent` scalar
-axis set: TWIST (barrel rotation, W3C `PointerEvent.twist` / Qt `rotation()`),
-TANGENTIAL PRESSURE (airbrush finger wheel, W3C `tangentialPressure` / Qt
-`tangentialPressure()`), and HEIGHT (hover distance above the tablet, Qt `z()`).
+R1423 added pressure and R1429 tilt. R1430 completes the toolkit tablet event scalar
+axis set: TWIST (barrel rotation, W3C `PointerEvent.twist` / the toolkit `rotation()`),
+TANGENTIAL PRESSURE (airbrush finger wheel, W3C `tangentialPressure` / the toolkit
+`tangentialPressure()`), and HEIGHT (hover distance above the tablet, the toolkit `z()`).
 Each is a positionless out-of-band axis driven by its own `scene/pointer_*` RPC
 (§2 #2) — winit exposes none of them, so the RPC is the sole driver and every axis
 is exercisable headless with no tablet.
@@ -171,7 +171,7 @@ def body() -> None:
         tf.pointer_tangential_pressure(0.0)
         wait_query(tf, f"{EXT}/tangential", 0.0, desc="tangential released to rest")
 
-        # === HEIGHT (Qt z() hover distance) ===
+        # === HEIGHT (the toolkit z() hover distance) ===
         # a lifted pen paints a SMALLER tip than one in contact.
         tip_contact = rect_of(snap, TIP)["w"]
         tf.pointer_height(30.0)

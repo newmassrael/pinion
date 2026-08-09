@@ -3,7 +3,7 @@
 
 Drives `hello-data-grid` via JSON-RPC. The editable data grid gains the iconic
 DCC interaction the property grid already has: press-and-drag a numeric (`Int` /
-`Float`) cell to scrub its value (the Blender / Unreal "drag the number field"
+`Float`) cell to scrub its value (the DCC / the engine "drag the number field"
 gesture). It is the 3rd consumer of the lifted `pinion_core::DragCalibration`
 substrate (after the R786 column resize and the R875 property-grid scrub): the
 first captured `pointer_move` calibrates (snapshot the cell's value at press +

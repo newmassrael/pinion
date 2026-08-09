@@ -2,7 +2,7 @@
 """R1411 §5.51 §5.52 — drag a palette card onto the canvas to INSTANTIATE its
 node AT THE DROP POINT.
 
-The signature editor object-creation gesture (Unreal / Blender / any DCC): grab
+The signature editor object-creation gesture (the engine / the DCC / any DCC): grab
 a node TYPE from the palette/toolbox and drop it onto the graph, and a new node
 of that kind appears WHERE YOU DROPPED IT. Before R1411 the palette was
 click-only (R849): a click added the node at a fixed spawn point, never at a

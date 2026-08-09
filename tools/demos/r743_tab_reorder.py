@@ -11,7 +11,7 @@ binding embeds one (horizontal axis) and layers selection on top.
 
 Selection is stored by **stable tab id**, so a reorder is a pure
 permutation that never desyncs the selection — the active tab visually
-follows when it moves, and dragging a tab activates it (VSCode/Chrome
+follows when it moves, and dragging a tab activates it (the code editor/Chrome
 behaviour). A click is a zero-distance drag, so click-to-select runs the
 same `drag_release` path.
 
@@ -248,9 +248,9 @@ def body() -> None:
             raised = True
         assert raised, "unknown introspect path must be rejected"
         # R1450 — `order` became writable when the column-header consumer needed
-        # Qt's restoreState, and the tab strip inherited it: a saved session's
-        # tab order goes back over the wire. Selection is by id, so a restore
-        # moves the tabs and leaves the selection on the same tab.
+        # the toolkit's restoreState, and the tab strip inherited it: a saved
+        # session's tab order goes back over the wire. Selection is by id, so a
+        # restore moves the tabs and leaves the selection on the same tab.
         tf.intervene("/external/order", [3, 2, 1, 0])
         wait_until(lambda: tf.query("/external/order") == [3, 2, 1, 0],
                    desc="a saved tab order restores")

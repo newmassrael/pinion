@@ -3,7 +3,7 @@
 
 Drives the new `hello-number-input` binding via JSON-RPC. The editable
 WAI-ARIA spinbutton (HTML `<input type=number>` / GTK editable SpinButton /
-Qt QSpinBox form factor): a numeric TextField (`num_input`, primary) flanked
+the toolkit spin box form factor): a numeric TextField (`num_input`, primary) flanked
 by `−` / `+` stepper ButtonExternals (`num_dec` / `num_inc`). The user can
 type a value OR step it. 2nd consumer of the editable-field value-
 coordination pattern (after R717 hello-combobox-editable) — still pure

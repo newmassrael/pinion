@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R882 §5.35 §5.39 §5.49 — Space-hold left-drag pan (Figma / Photoshop hand tool).
+"""R882 §5.35 §5.39 §5.49 — Space-hold left-drag pan (the design tool / the raster editor hand tool).
 
 Drives `hello-node-editor` via JSON-RPC. `scene/key {state: "down"|"up"}`
 is the new winit `KeyboardInput` Pressed/Released RPC peer: the shell now
@@ -106,7 +106,7 @@ def body() -> None:
         # ── (D) Space+click on a node is inert ──────────────────────
         # Un-chorded, this click is the R879 single-select; chorded,
         # the press never reaches the node (release-in-place is the
-        # left chord's inert Click verdict — Figma: Space+click does
+        # left chord's inert Click verdict — the design tool: Space+click does
         # nothing).
         tf.click(path=f"{G}#node_0")
         assert_eq(ids(tf), "", "Space+click selects nothing")

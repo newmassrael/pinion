@@ -131,7 +131,8 @@ def body() -> None:
         wait_query(tf, f"{EXT}/report_count", 0, desc="log cleared for the modifier phase")
 
         # Every press is balanced by a release so the R1418 implicit grab lifts
-        # between probes (a held button would grab the pointer — Qt discipline).
+        # between probes (a held button would grab the pointer — the toolkit
+        # discipline).
         tf.modifiers(shift=True)
         tf.pointer_button("right", "down", at=CENTER)
         wait_query(tf, f"{EXT}/last", "right:down:s", desc="the right PRESS carries Shift")
@@ -206,7 +207,7 @@ def body() -> None:
         assert "middle:down:" in tf.query(f"{EXT}/log"), "the middle drag press edge is raw"
         assert "middle:up:" in tf.query(f"{EXT}/log"), "the middle drag release edge is raw"
 
-        # --- R1418 IMPLICIT GRAB (Qt grabMouse): a press over the pane grabs, so
+        # --- R1418 IMPLICIT GRAB (the toolkit grabMouse): a press over the pane grabs, so
         #     a release that lands OUTSIDE the pane still pairs on the sink — no
         #     stuck button, the failure PR-72 named. ---
         tf.invoke(f"{EXT}/clear", None)
@@ -218,7 +219,7 @@ def body() -> None:
         wait_query(tf, f"{EXT}/last", "left:up:", desc="the release paired on the sink off the pane")
         assert_eq(tf.query(f"{EXT}/report_count"), 2, "both edges recorded — no stuck button")
 
-        # --- R1418 HELD-BUTTON SET (Qt QMouseEvent::buttons()): a chord reports
+        # --- R1418 HELD-BUTTON SET (the toolkit buttons()): a chord reports
         #     which buttons are down, not only the one that changed. ---
         tf.invoke(f"{EXT}/clear", None)
         wait_query(tf, f"{EXT}/report_count", 0, desc="log cleared for the chord phase")

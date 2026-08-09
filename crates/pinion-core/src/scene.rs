@@ -2739,8 +2739,8 @@ impl TextNode {
     /// toolkit `setBuddy`).
     ///
     /// The form-row case: a standalone label above a field carries the mark,
-    /// but the key must move focus to the **field**, not to the text. Compose
-    /// it with [`Self::mnemonic_styled`]:
+    /// but the key must move focus to the **field**, not to the text. another
+    /// declarative toolkit it with [`Self::mnemonic_styled`]:
     ///
     /// ```
     /// use pinion_core::scene::{Rect, TextNode};
@@ -3399,20 +3399,19 @@ pub struct ScrollNode {
     /// **not** publish this node's measured viewport / max bounds back
     /// into the shared state. Only the primary owns that write.
     ///
-    /// This is the substrate behind the frozen-column data-grid (the
-    /// the toolkit table view / AG-Grid / Excel "linked scrollbar" pattern):
-    /// the frozen pane's body and the scrolling pane's body are two
-    /// *vertical* scroll nodes that both reference one vertical
-    /// [`ScrollState`] (so they scroll in vertical lockstep), but they
-    /// sit in side-by-side columns with different cross-axis viewport
-    /// *widths* (`frozen_w` vs the scrolling pane's width). If both
-    /// published, `set_measured_viewport` would flip-flop the shared
-    /// `measured_w` every frame and spin a perpetual scroll-dirty
-    /// re-pass. Marking the frozen pane's body a follower makes it a
-    /// passive slider: it still lays out its content unbounded along its
-    /// axis (so the overflow clips and the `offset_*` slide applies), it
-    /// just never feeds the bounds back. (The mechanism is axis-agnostic
-    /// — it suppresses the publish on whichever axis the node scrolls.)
+    /// This is the substrate behind the frozen-column data-grid (the the
+    /// toolkit table view / AG-Grid / the spreadsheet "linked scrollbar"
+    /// pattern): the frozen pane's body and the scrolling pane's body are two
+    /// *vertical* scroll nodes that both reference one vertical [`ScrollState`] (so they
+    /// scroll in vertical lockstep), but they sit in side-by-side columns with
+    /// different cross-axis viewport *widths* (`frozen_w` vs the scrolling pane's
+    /// width). If both published, `set_measured_viewport` would flip-flop the shared `measured_w` every
+    /// frame and spin a perpetual scroll-dirty re-pass. Marking the frozen
+    /// pane's body a follower makes it a passive slider: it still lays out its
+    /// content unbounded along its axis (so the overflow clips and the `offset_*`
+    /// slide applies), it just never feeds the bounds back. (The mechanism is
+    /// axis-agnostic — it suppresses the publish on whichever axis the node
+    /// scrolls.)
     ///
     /// Defaults to `false` (a primary, the only mode before R859), so
     /// every existing consumer is byte-unchanged. A follower must be

@@ -2,7 +2,7 @@
 """R748 §5.52 — undo / redo command stack E2E.
 
 Drives `hello-undo` via JSON-RPC. A counter editor sits on the `UndoStack`
-substrate (the `QUndoStack` peer): the `+` / `-` buttons record reversible
+substrate (the undo stack peer): the `+` / `-` buttons record reversible
 `SignalEdit` commands; `Undo` / `Redo` step the cursor; the
 `UndoStackExternal` at `undo_stack` surfaces the history as data.
 
@@ -17,7 +17,7 @@ The witness (§2 #7 scene-as-data):
     stack (the reducer routes the click intent through it).
   * (E) heterogeneous label — `-` records a distinct `Decrement` command.
   * (F) redo-branch truncation — an edit after an undo drops the redo branch
-    (the single-branch `QUndoStack` model).
+    (the single-branch undo stack model).
   * (G) boundaries + clear — undo at the bottom is a no-op; `invoke "clear"`
     empties the history.
 """

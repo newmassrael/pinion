@@ -7,14 +7,14 @@ font context there, and carried the rest honestly: *"the fontique `NoMatch`
 unwrap is upstream and unfixed — a font-less GUI host still dies."* This closes
 that carry.
 
-Qt reference (`QFontDatabase`), two behaviours pinion lacked:
+the toolkit reference (font database), two behaviours pinion lacked:
 
-  1. Qt does not abort when the platform font database is unusable. It reports
+  1. The toolkit does not abort when the platform font database is unusable. It reports
      the condition and keeps running.
-  2. `QFontDatabase::addApplicationFont(FromData)` lets an application ship a
+  2. `addApplicationFont(FromData)` lets an application ship a
      face and select it by name, with no system database involved.
 
-And one place Qt is weaker: it answers "are there fonts?" with a `qWarning` on
+And one place the toolkit is weaker: it answers "are there fonts?" with a `qWarning` on
 stderr, which no agent, test, or headless capture can read. Here the answer is
 a `FontSourceReport` the binding paints into its scene, so it arrives over
 `scene/snapshot` like any other node.
@@ -31,7 +31,7 @@ What this asserts, in both font environments:
      and `unavailable` without them. The same binary, the same code path: the
      row tracks the host, which is what makes it a report rather than a
      constant.
-  4. QT PARITY — the declared family is listed in the families row in both
+  4. The toolkit PARITY — the declared family is listed in the families row in both
      environments, because it came from the application and not the platform.
   5. IT ACTUALLY DREW — the sample row's measured width is positive with zero
      system fonts, and close to its width on the healthy host. A face that were
@@ -191,8 +191,8 @@ def body() -> None:
         )
         print(f"[demo] zero fonts:   {dark_system!r} / {dark_families!r}")
 
-        # Qt parity: the declared family is present in BOTH, because the
-        # application supplied it rather than the platform.
+        # The toolkit parity: the declared family is present in BOTH, because
+        # the application supplied it rather than the platform.
         assert "(none)" not in lit_families, (
             f"the declared face registered on the healthy host: {lit_families!r}"
         )

@@ -457,21 +457,22 @@ impl Table {
 
     /// R1222 §5.38 — the selected cell rectangle serialized as TSV
     /// (tab-separated columns, newline-separated rows) — the spreadsheet
-    /// clipboard form (an Excel / Sheets paste lands as a cell block). `None`
-    /// when no cell range is selected. Row-major over the data-ordered
-    /// [`cell_selection_bounds`](Self::cell_selection_bounds) reading each
-    /// [`cell`](Self::cell): the AI-first "copy the selection" read (§2 #2) AND
-    /// the payload a Ctrl+C writes to the platform clipboard.
+    /// clipboard form (an spreadsheet / Sheets paste lands as a cell block).
+    /// `None` when no cell range is selected. Row-major over the data-ordered
+    /// [`cell_selection_bounds`](Self::cell_selection_bounds) reading each [`cell`](Self::cell): the
+    /// AI-first "copy the selection" read (§2 #2) AND the payload a Ctrl+C
+    /// writes to the platform clipboard.
     ///
     /// R1223 — this is DATA-ORDERED (it does not re-map through a sort); it
     /// mirrors the data-indexed selection *rectangle*, which under an active
-    /// sort is NOT what the widget paints as selected (the paint suppresses the
-    /// cell-range overlay while sorted). Any embedded tab / newline in a cell is
-    /// replaced with a space (`tsv_sanitize`) so the TSV block's row/column
-    /// shape ALWAYS matches the selection rectangle — a general-purpose grid may
+    /// sort is NOT what the widget paints as selected (the paint suppresses
+    /// the cell-range overlay while sorted). Any embedded tab / newline in a
+    /// cell is replaced with a space (`tsv_sanitize`) so the TSV block's row/column shape
+    /// ALWAYS matches the selection rectangle — a general-purpose grid may
     /// hold free-text cells, and raw joining would silently split a row/column
-    /// (structure-preserving over content-faithful; full Excel-style quoting is
-    /// a later enhancement if a delimiter-bearing grid needs faithful content).
+    /// (structure-preserving over content-faithful; full spreadsheet-style
+    /// quoting is a later enhancement if a delimiter-bearing grid needs
+    /// faithful content).
     #[must_use]
     pub fn selected_tsv(&self) -> Option<String> {
         let (r0, c0, r1, c1) = self.cell_selection_bounds()?;

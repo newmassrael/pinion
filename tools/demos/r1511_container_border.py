@@ -239,13 +239,13 @@ def body() -> None:
 
         # ── (F) checking fills the SAME rect the outline occupied ──────
         # R1570.1 — the click now also FOCUSES the checkbox, because that round
-        # made a declared interactive role a focus stop (HTML's native
-        # `<input type=checkbox>` and Qt's `Qt::StrongFocus` both do). The focus
-        # ring is painted around the tagged Container, which spans `[box]
-        # [label]`, so it merges the two into one continuous ink band and
-        # `find_box`'s "leftmost band" walk returns the whole row. That is the
-        # ring being real, not the box moving — so the state is put back before
-        # the capture rather than the finder being taught to ignore ink.
+        # made a declared interactive role a focus stop (HTML's native `<input type=checkbox>` and
+        # the toolkit's `StrongFocus` both do). The focus ring is painted around the
+        # tagged Container, which spans `[box] [label]`, so it merges the two into one
+        # continuous ink band and `find_box`'s "leftmost band" walk returns the whole
+        # row. That is the ring being real, not the box moving — so the state
+        # is put back before the capture rather than the finder being taught to
+        # ignore ink.
         tf.click(path=TAG)
         tf.request("focus/set", {"tag": None})
         checked = capture(tf, "checked")

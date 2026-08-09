@@ -660,7 +660,7 @@ mod tests {
         let links = chain();
         let inside = vec![true, false, false, true];
         assert!(
-            blender_would_accept(&links, &inside),
+            dcc_would_accept(&links, &inside),
             "the fixture must be one Blender's one-hop rule ACCEPTS, \
              or it proves nothing about the difference"
         );
@@ -676,7 +676,7 @@ mod tests {
     /// test that only checked our own answer could not tell a stricter rule from
     /// an equal one. It earns its keep immediately: it caught this very
     /// assertion being written the wrong way round.
-    fn blender_would_accept(links: &[Link], inside: &[bool]) -> bool {
+    fn dcc_would_accept(links: &[Link], inside: &[bool]) -> bool {
         (0..inside.len()).all(|vertex| {
             if inside[vertex] {
                 return true;

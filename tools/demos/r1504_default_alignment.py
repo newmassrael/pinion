@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """R1504 §5.27 §2#7 §2#2 — the header says where its labels sit.
 
-Qt reference: `QHeaderView::defaultAlignment`, which `QHeaderViewPrivate::write()`
-serialises, and whose horizontal-header default is `Qt::AlignCenter`
-(`QHeaderViewPrivate::setDefaultValues`). Qt keeps the per-section exception
+the toolkit reference: `defaultAlignment`, which `write()`
+serialises, and whose horizontal-header default is `AlignCenter`
+(`setDefaultValues`). The toolkit keeps the per-section exception
 somewhere else entirely — the MODEL answers
-`headerData(section, orientation, Qt::TextAlignmentRole)` — and `saveState()`
+`headerData(section, orientation, TextAlignmentRole)` — and `saveState()`
 does not carry it. This round mirrors that split: the header's rule is state,
 the model's exceptions are not.
 
@@ -16,7 +16,7 @@ Measured on this very binding before the round, over the real wire:
     state  -> 14 keys, none of them about alignment
     paint  -> every label pinned 12px from its section's left edge
 
-So the header painted flush left while Qt's default is centred, and there was
+So the header painted flush left while the toolkit's default is centred, and there was
 no way to ask for either — the default was wrong AND unaskable.
 
 WHAT THE PAINT TREE CAN AND CANNOT SHOW, measured in this run's own probe:
@@ -25,12 +25,12 @@ produce byte-identical trees. That is not a defect to route around — alignment
 places glyphs inside a box at paint time, and §2#7 keeps pixels out of
 introspection. The rule is therefore asserted on the surface that OWNS it
 (`default_alignment` / `alignments` / `section_alignment.<logical>`), exactly
-as a Qt client asks `defaultAlignment()` rather than measuring the widget. What
+as a toolkit client asks `defaultAlignment()` rather than measuring the widget. What
 the tree does prove is the box, and the box is what this round changed.
 
 What this asserts:
 
-  (A) THE RULE IS READABLE, AND IT IS QT'S — centred, where the binding used to
+  (A) THE RULE IS READABLE, AND IT IS the toolkit'S — centred, where the binding used to
       paint flush left. All four paths that answered `UnknownIntrospectPath`
       before the round now answer.
   (B) THE BOX SPANS THE SECTION — the label used to be a bare extent pinned
@@ -47,7 +47,7 @@ What this asserts:
   (E) THE EXCEPTION TRAVELS WITH ITS COLUMN — keyed by logical section, so
       dragging the column carries its alignment, the same rule the sizes and
       the sort indicator follow.
-  (F) SAVED STATE CARRIES THE RULE AND NOT THE EXCEPTIONS — Qt's split, so a
+  (F) SAVED STATE CARRIES THE RULE AND NOT THE EXCEPTIONS — the toolkit's split, so a
       restore hands back a header whose sections all defer.
   (G) AN OLDER SNAPSHOT DECODES AS `Start` — what the pre-R1504 header actually
       painted, NOT the construction default. The same new-vs-old split R1496
@@ -134,7 +134,8 @@ def _state_without_alignment(tf) -> dict:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
-        # ── (A) the rule is readable, and it is Qt's ──────────────────
+        # ── (A) the rule is readable, and it is the toolkit's
+        # ──────────────────
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
         assert_eq(_h(tf, "default_alignment"), "Center",

@@ -7,7 +7,7 @@ and held the ~7 the viewport exposes. But the *contract* stayed per-row:
 `build_cells(row) -> Vec<String>` still produced every column's text, and the
 substrate sliced the window out of it. The tree had been relieved of the 40x;
 the consumer had not. R1524 replaces that with the Model/View contract every
-framework with a virtualized grid carries — Qt `data(QModelIndex)`, Flutter
+framework with a virtualized grid carries — the toolkit `data(model index)`, another retained-mode toolkit
 `cellBuilder(TableVicinity)` — one call per painted cell, addressed by
 `CellIndex { row, col }`.
 

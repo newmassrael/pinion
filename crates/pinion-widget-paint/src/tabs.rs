@@ -203,8 +203,8 @@ pub fn view_tabs(
     )
 }
 
-/// Compose one tab: a grow-to-fill centered label region above a
-/// fixed-height active-indicator bar.
+/// another declarative toolkit one tab: a grow-to-fill centered label region
+/// above a fixed-height active-indicator bar.
 fn build_tab(
     strip_tag: &str,
     index: usize,

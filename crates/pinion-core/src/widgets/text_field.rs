@@ -6025,8 +6025,8 @@ mod r56_1_g_tests {
 
     #[test]
     fn r56_1_g_apply_composition_start_drains_active_selection() {
-        // Compose-over-selection: selection (1,4) drained, then compose
-        // begins. Identical to TextEditState::preedit_start contract.
+        // declarative toolkit-over-selection: selection (1,4) drained, then
+        // compose begins. Identical to TextEditState::preedit_start contract.
         let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
         let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
         tfx.send(TextFieldEvent::Focus);

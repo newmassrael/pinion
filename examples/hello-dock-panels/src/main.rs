@@ -73,7 +73,7 @@
 //! ## Why this matters for the northern-star
 //!
 //! Phase B (Pro GUI) and Phase D (editor self-hosted in pinion) both ride this
-//! substrate: every the raster editor / the design tool / the engine Editor /
+//! substrate: a raster editor / the design tool / the engine Editor /
 //! `the code editor` pane system is a dock + tear-off lattice. R683.C is the smallest
 //! binding that exercises the full chain — dynamic window lifecycle through
 //! `windows_signal`, draggable Splitter handles, tear-off intent emission, multi-panel

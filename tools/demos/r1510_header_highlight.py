@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """R1510 §5.27 §2#2 §2#7 — the header dresses the sections the selection reaches.
 
-Qt reference: `QHeaderView::highlightSections`, whose default is `false` and which
-`QHeaderViewPrivate::write()` serialises as `highlightSelected`. Qt resolves a
+the toolkit reference: `highlightSections`, whose default is `false` and which
+`write()` serialises as `highlightSelected`. The toolkit resolves a
 selection into two INDEPENDENT style flags in `paintSection` — `State_On` when
 `sectionIntersectsSelection(logical)`, `State_Sunken` when
 `isSectionSelected(logical)` (the whole section) — and gates both on the rule.
 
 The division this round mirrors: THE HEADER OWNS THE RULE, THE SELECTION IS NOT
-THE HEADER'S. Qt's header holds a pointer to the view's selection model and only
+THE HEADER'S. The toolkit's header holds a pointer to the view's selection model and only
 ever reads it, so `saveState()` carries the permission to highlight and never the
 thing highlighted. `ColumnLayout` has neither a selection model nor a row count,
 so the consumer that owns the rows publishes the coverage — the peer of the
-content widths Qt's header gets from `sectionSizeFromContents()`.
+content widths the toolkit's header gets from `sectionSizeFromContents()`.
 
 Measured on this very binding before the round, over the real wire:
 
@@ -35,7 +35,7 @@ the pixel half is `pinion-shell`'s
 
 What this asserts:
 
-  (A) THE RULE IS READABLE, AND IT IS QT'S — `false`, where before the round
+  (A) THE RULE IS READABLE, AND IT IS the toolkit'S — `false`, where before the round
       there was no rule at all. Seven paths that answered `UnknownIntrospectPath`
       now answer or are declared.
   (B) THE SELECTION IS AN INPUT AND THE RULE IS A GATE — `selections` is what the
@@ -43,17 +43,17 @@ What this asserts:
       the header paints and is entirely the rule's to suppress. A client reading
       both can tell an unselected section from an un-permitted one, which is the
       §2 #7 distinction one row alone erases.
-  (C) THE PAINT FOLLOWS THE EFFECTIVE ROW — weight for Qt's `State_On`, label
+  (C) THE PAINT FOLLOWS THE EFFECTIVE ROW — weight for the toolkit's `State_On`, label
       colour for `State_Sunken`, and the section FILL untouched by either, so a
       highlighted section still shows the keyboard cursor.
   (D) THE COVERAGE TRAVELS WITH ITS COLUMN — keyed by logical section, the rule
       the sizes, the modes and the alignments all follow, so dragging a column
       carries its highlight.
-  (E) SAVED STATE CARRIES THE RULE AND NOT THE SELECTION — Qt's split. And the
+  (E) SAVED STATE CARRIES THE RULE AND NOT THE SELECTION — the toolkit's split. And the
       selection SURVIVES a restore, which is the opposite of what happens to
       R1504's alignment exceptions: those are header data, this belongs to the
       view's selection model, which a header restore cannot reach.
-  (F) AN OLDER SNAPSHOT DOES NOT HIGHLIGHT — and here Qt's default and the old
+  (F) AN OLDER SNAPSHOT DOES NOT HIGHLIGHT — and here the toolkit's default and the old
       header agree, unlike `sections_movable` (R1496) and `default_alignment`
       (R1504).
   (G) THE GESTURE PATH REACHES BOTH — `H` toggles the rule, `s` cycles the
@@ -163,7 +163,7 @@ def body() -> None:
 def _main(tf: RpcSubprocess) -> None:
     wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                desc="the strip paints")
-    # ── (A) the rule is readable, and it is Qt's ───────────────────
+    # ── (A) the rule is readable, and it is the toolkit's ───────────────────
     assert_eq(_h(tf, "highlight_sections"), False,
               "Qt's default, and what a header with no selection input did")   # 1
     assert_eq(_h(tf, "selections"), NONE_ROW,

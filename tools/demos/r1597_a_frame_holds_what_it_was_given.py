@@ -12,18 +12,18 @@ What this script checks, and why each check discriminates:
   in this frame" from geometry on every read, so widening the box silently
   adopted nodes and shrinking it abandoned them — what the frame *said* it held
   changed with nobody having edited membership. It is `Node::parent` now (R1589,
-  Blender's `bNode::parent`), so a resize changes the box and nothing else. The
+  the DCC's `bNode::parent`), so a resize changes the box and nothing else. The
   script widens a frame until it geometrically covers every node, ASSERTS that
   it does, and only then asserts `contains` did not move — the covering is
   checked first, so the claim cannot pass by accident.
-* **PAST BLENDER: `attach` / `detach` are answers, not just acts.** Both are
+* **PAST the DCC: `attach` / `detach` are answers, not just acts.** Both are
   census operators (`NODE_OT_attach` / `NODE_OT_detach`) whose model layer landed
   at R1589 with no gesture to reach it. Each answers the CSV of nodes whose frame
-  actually changed; Blender's operators report only whether the operator ran, so
+  actually changed; the DCC's operators report only whether the operator ran, so
   "it moved three nodes" and "it moved none" are the same answer there.
-* **PAST BLENDER: containment reads from both ends and at both depths.**
+* **PAST the DCC: containment reads from both ends and at both depths.**
   `frame.<id>.contains` (one level), `frame.<id>.contents` (transitively — what
-  a drag carries) and `node.<id>.parent`. Blender exposes `node.parent` to
+  a drag carries) and `node.<id>.parent`. The DCC exposes `node.parent` to
   Python and has **no** accessor for a frame's children at all, so its own UI
   walks every node in the tree comparing pointers.
 * **`detach` is ONE LEVEL, proven against a NEST.** A node in `Outer > Inner`
@@ -36,7 +36,7 @@ What this script checks, and why each check discriminates:
   the script runs the dissolve and asserts exactly those wires went, so the
   prediction is checked against the operation rather than trusted.
   `node_internal_relink` deletes those links and returns `void`, so nothing in
-  Blender can be asked this: the user finds out by doing it.
+  the DCC can be asked this: the user finds out by doing it.
 * **A cycle can no longer be AUTHORED.** The editor's own gate blocked only a
   direct self-loop, so two `add_edge` calls could build a 2-cycle. `connect`
   refuses any wire that would close one, visible here as `add_edge -> false`
@@ -115,7 +115,7 @@ def body() -> None:
         assert frame not in every, f"A: a frame is a fresh node: {frame}"
         assert_eq(csv(tf, f"frame.{frame}.contains"), every[:2], "A: it holds the selection")
         assert_eq(q(tf, "frame_count"), 1, "A: and there is one frame")
-        # Read it from the MEMBER's end too -- Blender has only this direction.
+        # Read it from the MEMBER's end too -- the DCC has only this direction.
         assert_eq(q(tf, f"node.{every[0]}.parent"), frame, "A: the member names its frame")
         assert q(tf, f"node.{every[2]}.parent") is None, "A: an outsider names none"
 

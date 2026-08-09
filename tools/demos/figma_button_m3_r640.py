@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""R640 §5.7 — figma-button-m3 reactive lift dogfood (§5.49 R59).
+"""R640 §5.7 — the design tool-button-m3 reactive lift dogfood (§5.49 R59).
 
-R635 landed the Figma → pinion binding as a static one-frame snapshot:
+R635 landed the design tool → pinion binding as a static one-frame snapshot:
 the SCXML `ButtonExternal` was wrapped, but `read_state` was clamped to
 `Idle` and the view fn ignored its `state` argument. R640 lifts the
 binding onto the same reactive substrate `hello-button` carries — this
@@ -11,7 +11,7 @@ demo is its AI-first self-verification harness per
 Verification arc, mirroring the pre-R640 baseline `hello-button` covers
 through the same RPC primitives:
 
-  1. spawn figma-button-m3
+  1. spawn the design tool-button-m3
   2. baseline `scene/query "/external/state"` → `"Idle"`
   3. synthesise full Idle → Hover → Pressed → Hover (activate) cycle
      via `scene/invoke "/external/send"`:
@@ -56,8 +56,8 @@ from rpc_verify import (
 )
 
 
-# Figma spec constants — duplicate of the Rust-side `const`s in
-# `examples/figma-button-m3/src/main.rs`. Kept here verbatim so the
+# The design tool spec constants — duplicate of the Rust-side `const`s in
+# `examples/the design tool-button-m3/src/main.rs`. Kept here verbatim so the
 # 9-point sampler indexes the same pixel positions the spec carries.
 WIN_W, WIN_H = 320, 160
 BTN_W, BTN_H = 109, 40

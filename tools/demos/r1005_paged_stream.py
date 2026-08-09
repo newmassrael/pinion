@@ -4,7 +4,7 @@
 Drives `hello-paged-stream` via JSON-RPC. The Model/View-at-scale slice 1b:
 a virtualized log whose row count GROWS at runtime AND whose rows are PAGED
 behind an LRU-bounded async cache — so memory stays flat while the stream is
-unbounded (a GB DLT log, a Wireshark capture, a `tail -f` too large for RAM).
+unbounded (a GB DLT log, a analyser capture, a `tail -f` too large for RAM).
 
 Proven as DATA through `scene/snapshot` (§2 #7) — no pixels needed:
 

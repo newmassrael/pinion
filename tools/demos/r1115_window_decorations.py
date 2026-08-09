@@ -11,7 +11,7 @@ AI can read whether each declared window is borderless, not merely where it sits
 `hello-dock-panels-editor` is the forcing consumer: its main window stays
 decorated (`decorations:true`) while every torn-off panel floats into a
 BORDERLESS window (`decorations:false`) via the single `floating_window_spec`
-construction site (the editor owns the panel's chrome — the Blender/Unreal
+construction site (the editor owns the panel's chrome — the DCC/the engine
 custom-chrome floating panel a self-hosted editor wants).
 
 The literal "is there an OS title-bar pixel" is HW-gated (needs a real-GPU

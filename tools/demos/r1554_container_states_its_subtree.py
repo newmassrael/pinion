@@ -4,9 +4,9 @@
 `LayoutStyle` carried four interaction declarations before this round —
 `pointer_transparent` (R705), `focusable` (R1020), `drop_target` (R1080),
 `cursor` (R1196) — and every one of them describes the node that carries it
-and nothing else. Qt's `QWidget::setEnabled` is the one that does not: a
+and nothing else. The toolkit's `setEnabled` is the one that does not: a
 disabled widget makes its whole subtree non-interactive, which is how
-`QGroupBox::setCheckable(true)` gates a panel of controls from one checkbox
+`setCheckable(true)` gates a panel of controls from one checkbox
 in its title, and how `<fieldset disabled>` gates a form.
 
 pinion could not say it. Consequently there was no group container at all:
@@ -19,33 +19,33 @@ assembler's stamp, and the ink. It runs in `settle_to_fixed_point`, the one
 loop every paint-scene producer in both backends passes through, so a window
 and a terminal cannot disagree about which controls are inert.
 
-Four things this proves that Qt 6.11 cannot answer:
+Four things this proves that the toolkit 6.11 cannot answer:
 
   1. THE CAUSE, BY NAME. `scene/disabled` reports `declared_by` for every
-     inert node. Qt's `isEnabled()` is a bool; `isEnabledTo(ancestor)`
+     inert node. The toolkit's `isEnabled()` is a bool; `isEnabledTo(ancestor)`
      answers about an ancestor the caller has ALREADY picked, so it can
      confirm a guess but never produce one; `WA_ForceDisabled` separates
      self from inherited and names nobody. Which ancestor greyed a control
-     is, in Qt, a `parentWidget()` walk in a debugger.
+     is, in the toolkit, a `parentWidget()` walk in a debugger.
 
-  2. THE SET, ENUMERATED. Qt has no way to ask a window "what is disabled
+  2. THE SET, ENUMERATED. The toolkit has no way to ask a window "what is disabled
      right now" — the fact exists only as a bool per widget, so a driver
      would have to already know every widget in order to poll them all.
 
   3. A REFUSAL WITH A NAME. `focus/set` on a gated control answers
      `tag_disabled` and hands back the region to act on.
-     `QWidget::setFocus()` on a disabled widget returns `void` and does
+     `setFocus()` on a disabled widget returns `void` and does
      nothing: the caller cannot distinguish "focused it" from "refused it",
      let alone learn why.
 
   4. WHETHER THE INK FOLLOWED. `ink` states it per node. A disabled
-     `QOpenGLWidget` keeps drawing whatever it draws and Qt says nothing
+     GL widget keeps drawing whatever it draws and the toolkit says nothing
      about that, so an agent comparing a screenshot against "this is
      disabled" has no way to know which regions will look unchanged.
 
 And the structural claim, asserted directly: the derived half is
 RECOMPUTED from the declarations every paint, never written into the
-descendants. Qt's `QWidgetPrivate::setEnabled_helper` recursively sets
+descendants. The toolkit's `setEnabled_helper` recursively sets
 `WA_Disabled` on every descendant and must walk them again to take it back,
 keeping N copies of one fact in step by procedure. Here the region is
 toggled twice and the tree comes back to exactly its original state.
@@ -239,7 +239,7 @@ def body() -> None:
         toggle_gate(tf)
         assert not gate_on(tf), "the gate is now clear"
 
-        # (1) THE CAUSE, BY NAME — the column Qt has no accessor for.
+        # (1) THE CAUSE, BY NAME — the column the toolkit has no accessor for.
         rows = disabled(tf)
         assert_eq(
             [r["tag"] for r in rows],
@@ -293,8 +293,8 @@ def body() -> None:
             assert_eq(exc.message, "tag_not_focusable", "a live non-stop reads differently")
 
         # The pointer refuses too, and the press lands on the REGION rather
-        # than on the control under the cursor (Qt hands such an event to the
-        # parent) — and never on a peer painted beneath it.
+        # than on the control under the cursor (the toolkit hands such an event
+        # to the parent) — and never on a peer painted beneath it.
         held = tf.query(f"/{MEMBERS[0]}/external/checked")
         tf.click(path=MEMBERS[0])
         assert_eq(
@@ -361,8 +361,9 @@ def body() -> None:
         assert (0, 0, 0, 0) in region_gated, "a transparent fill stays transparent"
 
         # ── the derivation is RECOMPUTED, never written into descendants ──
-        # Qt keeps N copies of this fact and re-walks them to undo it. Toggle
-        # the gate back and the whole tree returns to its original state.
+        # the toolkit keeps N copies of this fact and re-walks them to undo it.
+        # Toggle the gate back and the whole tree returns to its original
+        # state.
         toggle_gate(tf)
         assert gate_on(tf), "the gate is back on"
         assert_eq(disabled(tf), [], "and the region is live again")

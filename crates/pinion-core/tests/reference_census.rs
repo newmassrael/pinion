@@ -54,14 +54,14 @@ fn proof<F: Fn() + 'static>(tree: &'static str, operator: &'static str, run: F) 
 
 fn proofs() -> Vec<Proof> {
     vec![
-        proof("blender", "NODE_OT_select_box", blender_select_box),
-        proof("blender", "NODE_OT_select_circle", blender_select_circle),
-        proof("blender", "NODE_OT_select_lasso", blender_select_lasso),
+        proof("dcc", "select_box", dcc_select_box),
+        proof("dcc", "select_circle", dcc_select_circle),
+        proof("dcc", "select_lasso", dcc_select_lasso),
     ]
 }
 
 fn proof_name(tree: &str, operator: &str) -> String {
-    let stem = if tree == "blender" {
+    let stem = if tree == "dcc" {
         operator.trim_start_matches("NODE_OT_").to_owned()
     } else {
         let mut out = String::new();
@@ -173,7 +173,7 @@ fn selected(region: &Region, fit: RegionFit) -> Vec<&'static str> {
 /// DCC does not have: its box select takes whatever it touches, with no way to
 /// ask for the nodes fully inside.
 #[test]
-fn blender_select_box() {
+fn dcc_select_box() {
     let touching = Region::span(-320, -100, 0, 100);
     assert_eq!(
         selected(&touching, RegionFit::Intersects),
@@ -202,7 +202,7 @@ fn blender_select_box() {
 /// exact integer geometry, so the node whose corner is one unit outside the
 /// radius is not taken.
 #[test]
-fn blender_select_circle() {
+fn dcc_select_circle() {
     let brush = Region::circle(-10, -10, 80);
     assert_eq!(selected(&brush, RegionFit::Intersects), vec!["middle"]);
 
@@ -228,7 +228,7 @@ fn blender_select_circle() {
 /// empty selection — there, "your lasso bounded nothing" and "nothing was
 /// there" are one value.
 #[test]
-fn blender_select_lasso() {
+fn dcc_select_lasso() {
     let around_the_row = Region::lasso([(-320, -60), (320, -60), (320, 40), (-320, 40)]);
     assert_eq!(
         selected(&around_the_row, RegionFit::Intersects),

@@ -84,7 +84,7 @@ pub enum Grow {
     Downstream(Reach),
     /// Nodes that feed the selection. The DCC's `NODE_OT_select_linked_from`.
     Upstream(Reach),
-    /// What the selected frames contain (R1589). No the DCC analogue:
+    /// What the selected frames contain (R1589). A DCC analogue:
     /// selecting a frame there selects nothing inside it, though dragging one
     /// moves everything inside it.
     Contents(Reach),

@@ -13,7 +13,7 @@ shares, so the human + AI channels flip identically.
   invoke("toggle-format", "bold"|"italic"|"underline"|"strikethrough")
 
 R1540 — `decoration.underline` is a FORM token (`"none"` / `"single"` / …), not
-a bool. `toggle-format underline` still means Qt's `setFontUnderline(bool)`:
+a bool. `toggle-format underline` still means the toolkit's `setFontUnderline(bool)`:
 on selects `"single"`, off clears whatever form was there. The bool VERB is
 unchanged; only what the wire reports is finer.
 

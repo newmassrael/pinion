@@ -18,8 +18,8 @@ What this script checks, and why each check discriminates:
 * **The band is published, and everything derives from it.** A bar's rect and
   its label's box are compared against the axis's own band arithmetic, which is
   what says they come from ONE definition rather than three copies that agree
-  today. Qt has no such accessor at all: a `QBarSeries`' rect is computed
-  inside the private series painter, so a Qt application cannot ask where
+  today. The toolkit has no such accessor at all: a bar series' rect is computed
+  inside the private series painter, so a toolkit application cannot ask where
   category 3 is drawn.
 * **One window narrows BOTH charts.** The bars that survive and the x labels
   the LINE chart paints are read separately and required to name the same
@@ -28,22 +28,22 @@ What this script checks, and why each check discriminates:
 * **The window widens what it keeps.** Three of twelve categories in the same
   pixels must be more than twice as wide, which is the reason a window is worth
   having rather than a filter.
-* **PAST Qt 6.11 (1): an unresolvable name is REPORTED.** Qt's
-  `QBarCategoryAxis::setRange(QString, QString)` returns `void`; a name that is
+* **PAST the toolkit 6.11 (1): an unresolvable name is REPORTED.** the toolkit's
+  `setRange(string, string)` returns `void`; a name that is
   not a category leaves the axis silently unwindowed, indistinguishable from a
   range that happened to be full. Here the action channel answers the failure,
   `error` carries it, and the caption states it. The counterfactual is in the
   same section: a name that DOES resolve answers the empty string, so this is
   not a surface that always complains.
-* **PAST Qt 6.11 (2): the categories in view are readable.** `visible` answers
-  how many slots the live window shows. Qt reports `count()` — every category,
+* **PAST the toolkit 6.11 (2): the categories in view are readable.** `visible` answers
+  how many slots the live window shows. The toolkit reports `count()` — every category,
   whatever the range is — and the min/max NAMES it was set to, never what is on
   screen.
 * **Keyboard and RPC move ONE window.** The same three actions are driven both
   ways and the resulting state is compared, so a binding that grew a second
   copy of the range would be caught.
-* **The window reaches assistive technology.** QtCharts draws into a
-  `QGraphicsScene` whose axis labels carry no accessible relationship, so a Qt
+* **The window reaches assistive technology.** the toolkit's charting module draws into a
+  canvas scene whose axis labels carry no accessible relationship, so a toolkit
   screen-reader user cannot be told which categories are shown.
 
 Run from the workspace root:
@@ -260,7 +260,8 @@ def body() -> None:
             "and the caption reports the chart's OWN visible_categories()",
         )
 
-        # ── (E) PAST QT: an unresolvable name is reported ────────────
+        # ── (E) PAST the toolkit: an unresolvable name is reported
+        # ────────────
         answer = set_range(tf, "Smarch", "Jun")
         assert_eq(
             answer,

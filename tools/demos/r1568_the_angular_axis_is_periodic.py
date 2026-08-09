@@ -17,23 +17,23 @@ that ran past north (372 degrees), and a five-facet radar.
 
 What this script checks, and why each check discriminates:
 
-* **PAST Qt 6.11 (1): the trace closes BY DERIVATION.** The series path's own
-  command list is read: five samples and a `Close` on a full turn. A Qt radar
+* **PAST the toolkit 6.11 (1): the trace closes BY DERIVATION.** The series path's own
+  command list is read: five samples and a `Close` on a full turn. A toolkit radar
   gets that final segment by appending the first point a second time, which
   puts a duplicate in the data the model does not contain. The counterfactual
   is the sector chip, where the same samples do not close.
-* **PAST Qt 6.11 (2): an out-of-period bearing is PLACED, and reported.** 372
+* **PAST the toolkit 6.11 (2): an out-of-period bearing is PLACED, and reported.** 372
   degrees is a bearing of 12, so the mark is drawn — and it lands on the same
-  pixel a 12-degree reading would. Qt's angular axis is an ordinary
-  `QValueAxis`, so there it is simply out of range and nothing is drawn. The
+  pixel a 12-degree reading would. The toolkit's angular axis is an ordinary
+  value axis, so there it is simply out of range and nothing is drawn. The
   caption carries the report, which is a thing only an axis that placed the
   value can say.
-* **PAST Qt 6.11 (3): a SECTOR, which `QPolarChart` cannot draw at all.** Half
+* **PAST the toolkit 6.11 (3): a SECTOR, which polar chart cannot draw at all.** Half
   a turn opens the loop, drops the out-of-period sample to genuinely
   off-scale, and removes the rim — a full circle there would claim angles the
   axis does not carry. Wrapping is therefore a property of the SWEEP and not
   of the value.
-* **PAST Qt 6.11 (4): the winding is a declaration.** `QPolarChart` hard-codes
+* **PAST the toolkit 6.11 (4): the winding is a declaration.** polar chart hard-codes
   clockwise. The chip mirrors the plot, read as pixel positions rather than as
   a flag.
 * **The seam is labelled once.** The tick at the end of a closed period is the
@@ -45,7 +45,7 @@ What this script checks, and why each check discriminates:
 * **The report reaches assistive technology.** The forms are a `radiogroup`,
   the declarations `button[aria-pressed]`, and the caption a live region
   naming the sweep, the winding and what became of the out-of-period reading.
-  QtCharts implements no accessibility interface at all.
+  the toolkit's charting module implements no accessibility interface at all.
 
 Run from the workspace root:
     cargo build -p hello-polar --release
@@ -202,7 +202,8 @@ def body() -> None:
             "axis is a real value axis, not a decoration",
         )
 
-        # ── (B) PAST QT: the trace closes by derivation ──────────────
+        # ── (B) PAST the toolkit: the trace closes by derivation
+        # ──────────────
         assert closes(snap, "chart.series.0"), (
             "PAST QT: the segment from the last sample back to the first is "
             "the AXIS's doing. A Qt radar gets it by appending the first "
@@ -214,7 +215,8 @@ def body() -> None:
             "five samples and a Close, with nothing repeated",
         )
 
-        # ── (C) PAST QT: an out-of-period bearing is PLACED ──────────
+        # ── (C) PAST the toolkit: an out-of-period bearing is PLACED
+        # ──────────
         wrapped = rect(snap, f"chart.point.0.{WRAPPED_INDEX}")
         assert wrapped is not None, (
             f"PAST QT: {WRAPPED_BEARING:.0f} degrees is a bearing of 12, so "
@@ -247,7 +249,8 @@ def body() -> None:
             "so no two angular labels stack",
         )
 
-        # ── (E) PAST QT: a sector, which QPolarChart cannot draw ─────
+        # ── (E) PAST the toolkit: a sector, which polar chart cannot draw
+        # ─────
         toggle(tf, SECTOR_TAG)
         snap = snapshot(tf)
         assert not closes(snap, "chart.series.0"), (
@@ -271,7 +274,8 @@ def body() -> None:
         assert "0 wrapped, 1 off-scale" in text, text
         toggle(tf, SECTOR_TAG)
 
-        # ── (F) PAST QT: the winding is a declaration ────────────────
+        # ── (F) PAST the toolkit: the winding is a declaration
+        # ────────────────
         snap = snapshot(tf)
         east_cw = centre(rect(snap, "chart.point.0.1"))
         assert "increase clockwise" in caption(snap), caption(snap)

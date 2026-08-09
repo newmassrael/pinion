@@ -2,7 +2,7 @@
 """R998 §5.40 — per-row style rules at scale E2E.
 
 Drives `hello-grid-row-style` via JSON-RPC. A 10,000-row virtualized data-grid
-whose rows paint by declarative coloring rules (Wireshark "coloring rules" /
+whose rows paint by declarative coloring rules (the analyser "coloring rules" /
 dlt-viewer filter-colours). Each rule is a GridFilter predicate -> a tint;
 first match wins; the AI adds one with `invoke "add_rule"
 "<filter>;<bg>;<fg>"`. The match half REUSES the R997 GridFilter, so coloring

@@ -2,7 +2,7 @@
 """R1429 §5.35 §5.15 — a raw pointer surface reacts to TILT.
 
 R1423 added the pen FORCE axis; R1429 adds the pen LEAN. `External::pointer_tilt`
-forwards the W3C `PointerEvent.tiltX` / `tiltY` (Qt `QTabletEvent::xTilt/yTilt`),
+forwards the W3C `PointerEvent.tiltX` / `tiltY` (the toolkit `xTilt/yTilt`),
 in degrees, each axis -90..=90, alongside each `pointer_move` and on a standalone
 change, so a tilt-aware surface reads the live angle.
 

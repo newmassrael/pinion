@@ -71,22 +71,19 @@
 //!
 //! ## Column sort (R886 — the editable fold)
 //!
-//! A clicked column header cycles unsorted → asc → desc → unsorted through
-//! the [`cycle_col_sort`] / [`grid_order_by`] / `cell_cmp` SSOT every
-//! read-only grid sorts by; the wire speaks the cross-grid
-//! [`grid_sort_str`] vocabulary (`query "sort"` / `intervene "sort"` /
-//! `invoke "cycle_sort"` / `query "source_at.<pos>"`). The fold's one design
-//! decision: ALL grid state stays **source-keyed** (cursor, edit latch,
-//! cell tags, `value.<row>.<col>` addressing) and only the paint / a11y row
-//! sequence + arrow navigation consult the derived visual order — so a
-//! committed edit that changes the active sort key moves its row on the
-//! very next paint while the cursor and the in-flight editor follow the
-//! source row (the Excel / the toolkit sort filter proxy model behaviour). The
-//! `GridSortState` coordinator is deliberately NOT reused here: it owns a
-//! static materialized `String` dataset (right for its read-only 10k-row
-//! consumers), while this grid's typed `Signal` model is the SSOT — per the
-//! R778 family ruling the shared parts are exactly the free-fn SSOT +
-//! wire vocabulary, not the coordinator struct.
+//! A clicked column header cycles unsorted → asc → desc → unsorted through the
+//! [`cycle_col_sort`] / [`grid_order_by`] / `cell_cmp` SSOT every read-only grid sorts by; the wire speaks the
+//! cross-grid [`grid_sort_str`] vocabulary (`query "sort"` / `intervene "sort"` / `invoke "cycle_sort"` / `query "source_at.<pos>"`). The fold's one design
+//! decision: ALL grid state stays **source-keyed** (cursor, edit latch, cell
+//! tags, `value.<row>.<col>` addressing) and only the paint / a11y row sequence + arrow
+//! navigation consult the derived visual order — so a committed edit that
+//! changes the active sort key moves its row on the very next paint while the
+//! cursor and the in-flight editor follow the source row (the spreadsheet /
+//! the toolkit sort filter proxy model behaviour). The `GridSortState` coordinator is
+//! deliberately NOT reused here: it owns a static materialized `String` dataset
+//! (right for its read-only 10k-row consumers), while this grid's typed `Signal`
+//! model is the SSOT — per the R778 family ruling the shared parts are exactly
+//! the free-fn SSOT + wire vocabulary, not the coordinator struct.
 //!
 //! ## Column filter (R891 — the editable fold of the filter axis)
 //!
@@ -102,13 +99,13 @@
 //!
 //! Because the typed model is the SSOT, the match is by the cell's typed VALUE
 //! through [`CellValue::matches_filter`] (the value-not-label peer of `sort_cmp`), not its display string.
-//! **Edit-while-filtered** is the fold's payoff invariant (Excel / the toolkit
-//! sort filter proxy model): every grid state stays SOURCE-keyed, so
-//! committing an edit that flips a row out of the filter drops the row on the
-//! next paint AND re-anchors the now-hidden source-keyed cursor to the visible
-//! row that takes its screen slot (the one [`reanchor_cursor`] SSOT, shared by the `set_filter` / `intervene`
-//! writes and the keyboard commit) — never the silent navigation teleport the
-//! R886 sort fold left as a documented note.
+//! **Edit-while-filtered** is the fold's payoff invariant (the spreadsheet /
+//! the toolkit sort filter proxy model): every grid state stays SOURCE-keyed,
+//! so committing an edit that flips a row out of the filter drops the row on
+//! the next paint AND re-anchors the now-hidden source-keyed cursor to the
+//! visible row that takes its screen slot (the one [`reanchor_cursor`] SSOT, shared by the
+//! `set_filter` / `intervene` writes and the keyboard commit) — never the silent navigation
+//! teleport the R886 sort fold left as a documented note.
 //!
 //! ## Column grouping (R892 — the editable fold of the group axis)
 //!
@@ -617,11 +614,11 @@ fn nrows(model: &[CellValue]) -> usize {
 
 /// R937.1 — whether the grid is in the PLAIN source view (no sort / filter /
 /// group), where the visual order IS the source order, so a manual row reorder
-/// is 1:1 meaningful (the toolkit / Excel disable reorder under a sort proxy).
-/// The ONE predicate the coordinator's [`DataGridExternal::reorder_enabled`], the view (grip + drop line), and
-/// the a11y reorder actions all share, so the three can never disagree on when
-/// reorder is enabled — the R886.1 one-gate discipline (the R937
-/// session-review caught this triplicated inline).
+/// is 1:1 meaningful (the toolkit / the spreadsheet disable reorder under a
+/// sort proxy). The ONE predicate the coordinator's [`DataGridExternal::reorder_enabled`], the view (grip +
+/// drop line), and the a11y reorder actions all share, so the three can never
+/// disagree on when reorder is enabled — the R886.1 one-gate discipline (the
+/// R937 session-review caught this triplicated inline).
 fn plain_view(
     sort: Option<(usize, bool)>,
     filter: Option<&GridFilter>,
@@ -964,7 +961,7 @@ fn group_table(model: &[CellValue], col: usize) -> Vec<String> {
 }
 
 /// R892 — the STABLE group id of source `row` under group column `col`: its
-/// position in the [`group_table`]. Same display value ⇒ same group (Excel
+/// position in the [`group_table`]. Same display value ⇒ same group (the spreadsheet
 /// groups by the shown value; for a homogeneous typed column display equality
 /// is value equality, so no `sort_cmp`-style typed key is needed).
 ///
@@ -1068,10 +1065,10 @@ fn cursor_visual_pos(visible: &[usize], cursor: usize) -> usize {
 /// R886.1 note made good: an EXPLICIT re-anchor, never the silent `position().unwrap_or(0)` teleport
 /// navigation once relied on). A no-op when the cursor's row is still visible;
 /// else the cursor lands on the visible row now at its prior slot `prior_vis` (clamped
-/// — Excel / the toolkit keep the selection at its screen position); a no-op
-/// when no data row is visible (every group collapsed / filter excludes all —
-/// the grid shows no active cell until one reappears). The single SSOT the
-/// coordinator writes and `commit_edit` share.
+/// — the spreadsheet / the toolkit keep the selection at its screen position);
+/// a no-op when no data row is visible (every group collapsed / filter
+/// excludes all — the grid shows no active cell until one reappears). The
+/// single SSOT the coordinator writes and `commit_edit` share.
 fn reanchor_cursor(visible: &[usize], cursor: &Signal<usize>, prior_vis: usize) {
     if visible.contains(&cursor.get()) {
         return;
@@ -1544,9 +1541,9 @@ impl DataGridExternal {
     /// visual order IS the source order, so moving a row visually moves it in
     /// the source `Vec` 1:1. A sort / filter / group derives the visual order
     /// from the data, so a manual position would be ambiguous (the toolkit /
-    /// Excel disable reorder under a sort proxy) — the handle is then painted
-    /// blank + `begin_drag` returns `None`. Reads the three view-transform signals
-    /// (subscribes in the view).
+    /// the spreadsheet disable reorder under a sort proxy) — the handle is
+    /// then painted blank + `begin_drag` returns `None`. Reads the three view-transform
+    /// signals (subscribes in the view).
     fn reorder_enabled(&self) -> bool {
         plain_view(
             self.sort.get(),
@@ -2102,10 +2099,10 @@ impl DataGridExternal {
     /// either is out of range. The ONE funnel the drag release, the `move_row` RPC,
     /// and the keyboard Alt+Arrow all push through — a reorder is the same
     /// journaled mutation regardless of input (cf. [`push_cell_edit`]). The moved row
-    /// follows the cursor to `to` (the grabbed row stays focused — Excel / the
-    /// toolkit drag keeps the dragged row selected); since reorder is enabled
-    /// only in the plain view, `to` is always visible, and undo restores the
-    /// prior cursor through [`GridUndoCtx::restore`].
+    /// follows the cursor to `to` (the grabbed row stays focused — the
+    /// spreadsheet / the toolkit drag keeps the dragged row selected); since
+    /// reorder is enabled only in the plain view, `to` is always visible, and
+    /// undo restores the prior cursor through [`GridUndoCtx::restore`].
     fn move_row(&self, from: usize, to: usize) -> bool {
         let n = self.nrows();
         if from >= n || to >= n || from == to {
@@ -2258,10 +2255,10 @@ impl DataGridExternal {
     }
 
     /// R965 — reset every modified cell in `row` to its column default (the
-    /// bulk-reset behind the toolkit / Excel "reset this row" — exposed here
-    /// as the `reset_row` RPC verb; a header / context-menu control is a follow-up,
-    /// R965.1 honesty), returning the count cleared. A no-op (0) for an
-    /// out-of-range row. One batched pass via `reset_cells`.
+    /// bulk-reset behind the toolkit / the spreadsheet "reset this row" —
+    /// exposed here as the `reset_row` RPC verb; a header / context-menu control is a
+    /// follow-up, R965.1 honesty), returning the count cleared. A no-op (0)
+    /// for an out-of-range row. One batched pass via `reset_cells`.
     fn reset_row(&self, row: usize) -> usize {
         if row >= self.nrows() {
             return 0;
@@ -3599,8 +3596,8 @@ impl ExternalIntrospect for DataGridExternal {
             // count cleared (the inspector `reset_all` shape).
             "reset_all" => Ok(IntrospectValue::Int(int_of(self.reset_all()))),
             // R965 — reset a whole row / column to its column default(s);
-            // returns the count cleared (the toolkit / Excel "reset row" /
-            // "reset column").
+            // returns the count cleared (the toolkit / the spreadsheet "reset
+            // row" / "reset column").
             "reset_row" => match args {
                 IntrospectValue::Int(i) => {
                     let row = usize::try_from(i).map_err(|_| {
@@ -6720,9 +6717,9 @@ mod tests {
     #[test]
     fn r886_edit_while_sorted_reorders_and_cursor_follows_source() {
         // The fold's payoff invariant: with Count ascending, raising row 0's
-        // Count from 1 to 500 moves that row to the visual bottom on the
-        // SAME model write (the order derives from the live model), while
-        // the source-keyed cursor stays on row 0 — Excel's "the cell I
+        // Count from 1 to 500 moves that row to the visual bottom on the SAME
+        // model write (the order derives from the live model), while the
+        // source-keyed cursor stays on row 0 — the spreadsheet's "the cell I
         // edited is still my cell" behaviour.
         Owner::new().run(|| {
             let mut scene = boot_scene();
@@ -7039,11 +7036,11 @@ mod tests {
         // The fold's payoff invariant: with Type=mesh active (Tree, Boss),
         // editing Tree's Type to "sprite" drops Tree from the view on the same
         // commit, and the source-keyed cursor re-anchors to the row that takes
-        // its screen slot (Boss) — Excel / the toolkit sort filter proxy model
-        // behaviour. R940 — Type is now a Choice column, written by option
-        // index (sprite = 0) through the VALUE intervene (the AI-first typed
-        // write), not an inline text edit; the live filter / re-anchor
-        // behaviour is unchanged.
+        // its screen slot (Boss) — the spreadsheet / the toolkit sort filter
+        // proxy model behaviour. R940 — Type is now a Choice column, written
+        // by option index (sprite = 0) through the VALUE intervene (the
+        // AI-first typed write), not an inline text edit; the live filter /
+        // re-anchor behaviour is unchanged.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
@@ -10969,8 +10966,9 @@ mod tests {
     fn r1372_2_select_then_sort_follows_the_source_endpoints() {
         // Pin the deliberate model: the anchor + cursor are SOURCE-keyed, so a
         // sort AFTER a selection re-projects both endpoints and the band spans
-        // whatever is now visually between them (NOT Excel's fixed screen rect,
-        // NOT the Table widget's fixed data set). Documented, now tested.
+        // whatever is now visually between them (NOT the spreadsheet's fixed
+        // screen rect, NOT the Table widget's fixed data set). Documented, now
+        // tested.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");

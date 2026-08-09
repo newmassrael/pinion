@@ -28,7 +28,7 @@ What this script checks, and why each check discriminates:
   rather than more `.grid.y.{k}`, so every pre-R1528 gridline assertion in
   the tree still counts what it always counted.
 
-Qt reference: `QLogValueAxis`, attached to a series' value axis. What is
+the toolkit reference: log value axis, attached to a series' value axis. What is
 different here is that the resolved axis — its decades, its subdivisions,
 and the samples it could not carry — is all scene data over RPC (§2 #1,
 §2 #7), so an agent verifies the axis without sampling a pixel.

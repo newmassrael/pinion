@@ -79,12 +79,12 @@
 //!
 //! R744 lands the §5.27 *capability* now via view-fn composition over the
 //! existing [`ScrollNode`](crate::scene::ScrollNode): O(window) materialization per
-//! frame, AI-introspectable as scene-data, zero new IR. This is the
-//! React-school of virtualization (`react-window` / `TanStack`: the view layer windows against
+//! frame, AI-introspectable as scene-data, zero new IR. This is the web UI
+//! library-school of virtualization (`react-window` / `TanStack`: the view layer windows against
 //! scroll + a known viewport); the R32 IR design is the retained-mode
-//! toolkit/Compose school (the layout/measure phase drives lazy item
-//! creation). Both are textbook — this is a peer technique, not a lesser slice
-//! of the IR one.
+//! toolkit/another declarative toolkit school (the layout/measure phase drives
+//! lazy item creation). Both are textbook — this is a peer technique, not a
+//! lesser slice of the IR one.
 //!
 //! Why the IR variant stays deferred (R744.1 honest correction — the
 //! earlier "blocked on Scene-clone, a `Box<dyn Fn>` cannot derive `Clone`"

@@ -574,7 +574,7 @@ pub fn max_scroll_offset(content: u32, viewport: u32) -> i32 {
 /// [`ScrollNode::tag`](crate::scene::ScrollNode::tag) verbatim,
 /// since the tag is already the scroll container's symbolic
 /// identifier). Mirrors the `useScrollState`-style hook found in
-/// React / `SolidJS` scroll libraries.
+/// the web UI library / `SolidJS` scroll libraries.
 ///
 /// # Panics
 ///
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn r55_b_set_max_clamps_current_offset_when_bound_shrinks() {
         // R55.B — declaring a bound smaller than the current
-        // offset clamps the offset down. Mirrors the React /
+        // offset clamps the offset down. Mirrors the web UI library /
         // SolidJS "controlled input clamp on bound change" pattern.
         let s = ScrollState::new();
         s.set_max(200, 400);

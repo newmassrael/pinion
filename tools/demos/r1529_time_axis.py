@@ -33,7 +33,7 @@ What this script checks, and why each check discriminates:
   readout has none, so the two forms genuinely differ — and only on a time
   axis, which is why the distinction did not exist before this round.
 
-Qt reference: `QDateTimeAxis`, attached to a series' horizontal axis (d3's
+the toolkit reference: date time axis, attached to a series' horizontal axis (d3's
 `scaleUtc`). What is different here is that the resolved axis — its ticks,
 its labels, and the readout derived from it — is all scene data over RPC
 (§2 #1, §2 #7), so an agent verifies the axis without sampling a pixel.

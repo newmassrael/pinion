@@ -8,7 +8,7 @@
 //! can grab + drag: dropping it onto another panel **docks** it there (split /
 //! swap, via the shared [`DockReorganizer`]), and dragging it out of the dock **tears it
 //! off** into a new floating window — the canonical pro-tool authoring
-//! affordance every the raster editor / the design tool / the engine Editor /
+//! affordance a raster editor / the design tool / the engine Editor /
 //! `the code editor` panel system ships.
 //!
 //! The topology composition (recursive split tree, [`DockTopology`] +

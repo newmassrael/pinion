@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """R1473 §5.36 §2#7 — an application's declared face is what unset text uses.
 
-Qt gives an application two calls: `QFontDatabase::addApplicationFont` makes a
-shipped face selectable, and `QApplication::setFont` makes it the one every
+the toolkit gives an application two calls: `addApplicationFont` makes a
+shipped face selectable, and `setFont` makes it the one every
 unstyled widget gets. R1448 built the first half. Without the second, a face the
 application ships is reachable only from a `TextStyle` that spells its name, and
 `hello-vn-tide` — whose every row is Korean — named none. So its dialogue was
@@ -17,7 +17,7 @@ the CI runner's condition, not an empty container's — and asserts over the wir
      host has plenty, and the declared face exists. Both measured, so a broken
      fixture cannot read as a pass.
   2. THE REPORT — `scene/snapshot` carries the declared family, so an agent
-     reading the scene can tell what an unset `font_family` resolves to. Qt
+     reading the scene can tell what an unset `font_family` resolves to. The toolkit
      answers this with nothing at all.
   3. THE CLAIM — the Korean dialogue row FOLDS onto several measured lines under
      that config, and its width is the stage width rather than the collapse of an

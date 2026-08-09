@@ -2,10 +2,10 @@
 """R796 §5.52 — text-field undo / redo with word-level coalescing, over RPC.
 
 Every professional editor sits on a reversible-edit history; R748 built the
-`UndoStack` substrate (the `QUndoStack` peer) but no text widget journalled to
+`UndoStack` substrate (the undo stack peer) but no text widget journalled to
 it. R796 wires it into `TextEditState`: each content mutator records a
 whole-content `TextEditCommand`, consecutive typing **coalesces** into one
-undo step (a word, broken by whitespace — `QTextDocument`'s model), and
+undo step (a word, broken by whitespace — text document's model), and
 Ctrl+Z / Ctrl+Shift+Z (Ctrl+Y) undo / redo. The history is AI-first: an agent
 drives and reads the whole round-trip over the §5.12 RPC plane (§2 #2), the
 same keys a human presses.

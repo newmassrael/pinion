@@ -59,10 +59,10 @@
 //!    itself a rectangle it contains points that are on no screen, and the toolkit has
 //!    no accessor that says so. [`DisplayTopology::is_gap_free`] does, off the
 //!    same union computation that answers everything else here.
-//! 3. **Placement is answerable before it happens.** Every the toolkit screen query
+//! 3. **Placement is answerable before it happens.** A toolkit screen query
 //!    takes a *point* (`screenAt`,
 //!    `virtualSiblingAt`) — there is no rectangle-level question in
-//!    the API, so each the toolkit application that restores a window geometry
+//!    the API, so a toolkit application that restores a window geometry
 //!    hand-rolls its own clamp, which is precisely why so many of them come
 //!    back off-screen. [`DisplayTopology::resolve`] answers with the home
 //!    display, every display the rectangle touches, how many of its pixels are
@@ -79,7 +79,7 @@
 //!    `Option`, which is also what the substrate underneath reports.
 //! 6. **The desk reaches the wire.** `scene/displays` publishes all of it, so
 //!    an agent driving the application headlessly knows what it is driving on.
-//!    No the toolkit application can be asked about its screens from outside its
+//!    A toolkit application can be asked about its screens from outside its
 //!    process.
 //!
 //! # What this module deliberately does not model

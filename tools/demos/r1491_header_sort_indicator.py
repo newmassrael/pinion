@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """R1491 §5.27 §5.40 §2#7 §2#2 — a header says which section it is sorted by.
 
-Qt reference: `QHeaderView::setSortIndicator` / `sortIndicatorSection()` /
+the toolkit reference: `setSortIndicator` / `sortIndicatorSection()` /
 `sortIndicatorOrder()` / `setSortIndicatorShown()`, and the `saveState()` blob
-that carries all three. Qt's header is movable AND clickable at once
+that carries all three. The toolkit's header is movable AND clickable at once
 (`setSectionsMovable` + `setSectionsClickable`): you drag a section to move it
 and click it to sort, and the arrow travels with the column.
 
@@ -18,25 +18,25 @@ and clicked, and `ColumnLayoutState` — which calls itself the peer of
 The two tag shapes were never the obstacle. What separates a click from a drag
 is the RELEASE: `ColumnLayout::release_section` commits the drop and reports the
 clicked **logical** section only when the permutation came out unchanged, which
-is Qt's own rule. The indicator then joins the sizes and the hidden flags as
+is the toolkit's own rule. The indicator then joins the sizes and the hidden flags as
 logical-keyed header state, and moving a column re-aims its arrow without
 touching the rows.
 
-Where Qt cannot follow: `sortIndicatorSection()` is a C++ call whose result is
+Where the toolkit cannot follow: `sortIndicatorSection()` is a C++ call whose result is
 observable only by painting an arrow, and `saveState()` is an opaque versioned
-`QByteArray`. Here the indicator is typed data both ways — readable as a
-compound string AND as Qt's two separate getters, writable through the same
+byte array. Here the indicator is typed data both ways — readable as a
+compound string AND as the toolkit's two separate getters, writable through the same
 slot, invokable as `setSortIndicator` / a click's `cycle`, and carried inside
 the readable snapshot.
 
 What this asserts:
 
   (A) BOOT — the strip paints, the view has enabled sorting
-      (`QTableView::setSortingEnabled`), nothing is sorted yet, and no arrow is
+      (`setSortingEnabled`), nothing is sorted yet, and no arrow is
       painted anywhere.
   (B) A CLICK SORTS — a real `scene/drag` whose endpoints are the SAME section
       is a click: it sorts that section and moves nothing. Cycling it walks
-      Qt's three states and reports where it landed.
+      the toolkit's three states and reports where it landed.
   (C) A DRAG DOES NOT SORT — the same primitive aimed at a DIFFERENT section
       reorders and leaves the indicator alone. This is the half that makes (B)
       mean something: an implementation that always sorted would pass (B).
@@ -172,8 +172,9 @@ def body() -> None:
                   "and no section carries the indicator")                           # 2
         assert_eq(_h(tf, "sort_indicator_order"), "none",
                   "Qt's two getters agree with the compound string")                # 3
-        # The view enabled sorting; `ColumnLayout` itself boots this false, as
-        # Qt's QHeaderView does, so this asserts the binding made the call.
+        # The view enabled sorting; `ColumnLayout` itself boots this false, as the
+        # toolkit's header view does, so this asserts the binding made the
+        # call.
         assert_eq(_h(tf, "sort_indicator_shown"), True,
                   "the view turned the indicator on (setSortingEnabled)")           # 4
         assert_eq(_arrow_visuals(tf), [], "an unsorted header paints no arrow")     # 5
@@ -236,10 +237,10 @@ def body() -> None:
         tf.intervene("/external/sort_indicator", "2:ascending")
         wait_until(lambda: _column_text(tf, 2) != SIZES, desc="the body re-sorts")
         by_size = _column_text(tf, 2)
-        # The grid's shared comparator (`cell_cmp`) takes its numeric branch
-        # only when BOTH cells parse whole as a number; these carry units, so it
-        # falls to the documented string compare — the same answer Qt's default
-        # `QSortFilterProxyModel` gives a display-role string. Asserted as what
+        # The grid's shared comparator (`cell_cmp`) takes its numeric branch only when
+        # BOTH cells parse whole as a number; these carry units, so it falls to
+        # the documented string compare — the same answer the toolkit's default
+        # sort filter proxy model gives a display-role string. Asserted as what
         # it IS rather than as "numeric", which this column cannot show.
         assert_eq(by_size, sorted(SIZES),
                   "the painted rows ascend by the Size column")                     # 25

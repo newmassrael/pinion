@@ -33,7 +33,7 @@ Remove the per-frame move and that feedback loop cannot exist.
 
 ## The fix: preview during the drag, real window only on release
 
-Pro dockers (VS Code / Qt ADS / Blender / Unreal) show a **lightweight preview**
+Pro dockers (VS Code / the toolkit ADS / the DCC / the engine) show a **lightweight preview**
 that follows the cursor and touch the real window **once, on release**. pinion
 already has every preview piece, all driven purely from the router's live drag
 session (cursor, source window, cross-window drop) — confirmed independent of

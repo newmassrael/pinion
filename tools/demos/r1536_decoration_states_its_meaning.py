@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """R1536 §5.27 §5.40 §2 #7 — a decoration states what it means, and is addressable.
 
-R1535 gave the grid a `Qt::DecorationRole`. This round takes it past Qt, and
+R1535 gave the grid a `DecorationRole`. This round takes it past the toolkit, and
 fixes what looking closely found underneath.
 
-## What Qt cannot do, and why
+## What the toolkit cannot do, and why
 
-Qt's decoration role is **appearance**: a `QColor`, a `QPixmap`, a `QIcon`.
-What the mark *means* is a different role (`Qt::AccessibleTextRole`) that
-`QAbstractItemView` does not wire to the decoration, so
-`QAccessibleTableCell::text(Name)` returns the display string and the mark
-contributes nothing. A status column that is only a colour is, to a Qt
+the toolkit's decoration role is **appearance**: a color, a pixmap, a icon.
+What the mark *means* is a different role (`AccessibleTextRole`) that
+abstract item view does not wire to the decoration, so
+`text(Name)` returns the display string and the mark
+contributes nothing. A status column that is only a colour is, to a toolkit
 screen-reader user, a column of empty cells.
 
 Here the two travel in one answer, so they cannot drift and anything that can
@@ -46,7 +46,7 @@ Two stacked defects, both verified by probe, not by reading:
      write path and the read path disagreed and the AT tree took paint's
      answer, which was silence.
 
-After both: **75 of 75 named**. Qt names its cells; pinion did not. Qt is the
+After both: **75 of 75 named**. The toolkit names its cells; pinion did not. The toolkit is the
 floor.
 
 ## What this demo drives

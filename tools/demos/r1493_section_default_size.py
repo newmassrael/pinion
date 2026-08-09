@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """R1493 §5.27 §2#7 §2#2 — the size a section was given, and the size it has.
 
-Qt reference: `QHeaderView::defaultSectionSize` / `setDefaultSectionSize` /
+the toolkit reference: `defaultSectionSize` / `setDefaultSectionSize` /
 `resetDefaultSectionSize`, and `sectionSize()` — the effective size, which is
-what Qt's accessor means and what `saveState()` deliberately does not carry.
+what the toolkit's accessor means and what `saveState()` deliberately does not carry.
 
 Measured on this very binding before the round, over the real wire:
 
@@ -35,7 +35,7 @@ The two are one round because `setDefaultSectionSize` writes STORED widths in
 bulk. Landing it alone would have made `sizes` confidently report a number
 nothing on screen had, for every section at once.
 
-Qt keeps one number per section and re-derives it on relayout, so it needs no
+the toolkit keeps one number per section and re-derives it on relayout, so it needs no
 such pair. pinion keeps the size you asked for across a mode switch — a strictly
 larger capability — and having kept two numbers must say which one it is
 handing you. Hence `section_sizes` beside `sizes`, and a readout that shows the
@@ -51,7 +51,7 @@ What this asserts:
       painted rects agree with.
   (C) SINGULAR AND PLURAL CANNOT DISAGREE — the plural is where the singular
       reads from, asserted section by section.
-  (D) THE DEFAULT GOVERNS, AND SPARES THE HIDDEN — Qt's bulk rule, including
+  (D) THE DEFAULT GOVERNS, AND SPARES THE HIDDEN — the toolkit's bulk rule, including
       the section a user cannot see it happen to.
   (E) RESET WITHOUT NAMING THE CONSTANT — `resetDefaultSectionSize`, and it
       answers the row it produced rather than the number it wrote.
@@ -241,9 +241,9 @@ def body() -> None:
         wait_until(lambda: _h(tf, "default_section_size") == 300,
                    desc="the value asked for was kept, not overwritten")        # 23
 
-        # ── (F) the rules travel with the outcomes ────────────────────
-        # `ColumnLayoutState` calls itself the peer of Qt's `saveState()`, which
-        # carries these three.
+        # ── (F) the rules travel with the outcomes ──────────────────── `ColumnLayoutState`
+        # calls itself the peer of the toolkit's `saveState()`, which carries these
+        # three.
         _reset(tf)
         tf.intervene("/external/min_section_size", 60)
         tf.intervene("/external/max_section_size", 150)

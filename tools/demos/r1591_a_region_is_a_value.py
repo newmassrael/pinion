@@ -7,7 +7,7 @@ diagram editor's rubber band. The framework had exactly one of the shapes —
 `scene/locate_region` took a rectangle — and exactly one of the two things you
 can mean by "covered": *touches*.
 
-R1590 measured the absence from the other end, against Blender's
+R1590 measured the absence from the other end, against the DCC's
 `NODE_OT_select_circle` and `NODE_OT_select_lasso`, and recorded that those are
 NOT node-graph capabilities: they test a region against `node->runtime->draw_bounds`,
 the DRAWN rectangle, which is a question for the layer that knows what was
@@ -20,22 +20,22 @@ What this script checks, and why each check discriminates:
 * **The rectangle still means what it meant.** Every assertion the rect form
   made still holds; the general form is asked for the same rectangle and shown
   to answer identically.
-* **PAST BLENDER / QT (1): three shapes are one question.** Blender answers them
-  with three operators; Qt with three `items()` overloads. Here `shape` is a
+* **PAST the DCC / the toolkit (1): three shapes are one question.** the DCC answers them
+  with three operators; the toolkit with three `items()` overloads. Here `shape` is a
   parameter of one method, so a client learns one call.
-* **PAST QT (2): the fit is per query.** Qt takes it from
-  `QGraphicsView::rubberBandSelectionMode`, a VIEW property — so two selections
+* **PAST the toolkit (2): the fit is per query.** the toolkit takes it from
+  `rubberBandSelectionMode`, a VIEW property — so two selections
   in one view cannot mean different things, and nothing records which mode a
   given selection used. Here it is an argument AND it is repeated in the answer.
-* **PAST QT (3): the region can be asked from outside the process.** A
-  `QPainterPath` is an opaque mutable object that can only be built in-process,
-  so no Qt application can be asked "what is under this lasso" over a wire. This
+* **PAST the toolkit (3): the region can be asked from outside the process.** A
+  painter path is an opaque mutable object that can only be built in-process,
+  so a toolkit application can be asked "what is under this lasso" over a wire. This
   script has no pointer at all.
 * **A lasso is not its bounding box.** A triangular lasso is driven over a
   canvas whose nodes are on a diagonal; the bounding rectangle holds both and
   the lasso holds one. Without this the whole shape axis would be decorative.
 * **A degenerate shape is NAMED.** A two-point lasso is refused rather than
-  answered with an empty list — Qt's `items(QPolygonF, ..)` returns a `QList`,
+  answered with an empty list — the toolkit's `items(polygon F, ..)` returns a list,
   which is the same value it returns for an empty surface.
 * **The painted frame is what a canvas means.** `from: "paint"` asks the frame
   that is on screen; the STATE tree of a view-fn binding carries no geometry, so
@@ -150,7 +150,7 @@ def body() -> None:
         assert_eq(nodes_in(strict), [], "C: and does not contain it")
         assert_eq(strict["fit"], "contains", "C: which the answer states")
 
-        # ── (D) a circle, which Blender needs a second operator for ─────────
+        # ── (D) a circle, which the DCC needs a second operator for ─────────
         cx, cy = bx + bw // 2, by + bh // 2
         disc = tf.locate_region(
             shape="circle", cx=cx, cy=cy, r=6, source="paint", viewport=VIEW

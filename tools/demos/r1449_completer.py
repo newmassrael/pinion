@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1449 §5.27 §5.38 §5.40 §2#7 — a completer attached to a plain text input.
 
-Qt reference: `QCompleter`. It is not a widget — it hangs off any input and
+the toolkit reference: completer. It is not a widget — it hangs off any input and
 answers which candidates match what has been typed (`setFilterMode` x
 `setCaseSensitivity`), which one is current (`currentCompletion`), and how to
 present the answer (`setCompletionMode`: popup / unfiltered popup / inline).
@@ -10,8 +10,8 @@ pinion had none of that configurable: every typeahead in tree hard-codes
 case-sensitive one, or an inline completion was unwritable without editing each
 consumer.
 
-And one place Qt is weaker: `currentCompletion()` answers C++ and nobody else.
-The popup list lives inside a `QAbstractItemView`, the inline completion lives
+And one place the toolkit is weaker: `currentCompletion()` answers C++ and nobody else.
+The popup list lives inside a abstract item view, the inline completion lives
 in the widget's text selection, and the three knobs are setters with no wire
 form. Here the whole model is one External, so the completion a human sees is
 the one an agent reads and drives.
@@ -32,7 +32,7 @@ What this asserts:
   (F) INLINE COMPLETION — the readout answers the moment the mode changes while
       the field is NOT rewritten (a knob must never type for the user); then a
       keystroke completes the field in place with the appended part SELECTED,
-      and the next keystroke types over it (Qt's inline model, on pinion's
+      and the next keystroke types over it (the toolkit's inline model, on pinion's
       type-to-replace path).
   (G) THE WIRE CURSOR — next / jump over `scene/invoke`, then Enter commits.
   (H) DISCRIMINATORS — an unknown rule token is REFUSED with a typed reason and
@@ -210,7 +210,8 @@ def body() -> None:
         assert_eq(_m(tf, "prefix"), "s", "the prefix stays what was TYPED")              # 36
         assert_eq(_m(tf, "inline"), "ceneGraph", "the appended part")                    # 37
         assert '"ceneGraph"' in _text_of(tf, CURRENT), "the readout row shows it too"    # 38
-        # The next keystroke types over the selected suffix — Qt's inline model.
+        # The next keystroke types over the selected suffix — the toolkit's
+        # inline model.
         tf.text("c", path=INPUT)
         wait_query(tf, f"/{MODEL}/external/prefix", "sc",
                    desc="typing replaced the selection instead of appending")            # 39

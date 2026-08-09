@@ -4,8 +4,8 @@
 Drives `hello-tree-filter` via JSON-RPC. A 252-node scene-graph outliner
 (12 groups x 20 leaves) whose filter proxy is the hierarchical member of the
 Model/View proxy family (the tree peer of the 1-D list `view_order` and the
-data-grid `grid_sort` proxies). The recursion is Qt's
-`QSortFilterProxyModel` with recursive filtering: a node survives iff it
+data-grid `grid_sort` proxies). The recursion is the toolkit's
+sort filter proxy model with recursive filtering: a node survives iff it
 matches the query OR any descendant matches (path-to-match), so a match
 buried inside a *collapsed* group is revealed with its ancestors as path
 context, while non-match siblings are pruned.

@@ -8,7 +8,7 @@ vocabulary — the R874-class documented-future-axis landing (the R837
 docstring deferred the fold pending the proxy substrate rounds, which have
 since landed).
 
-The fold's payoff invariant (Excel / Qt QSortFilterProxyModel): every grid
+The fold's payoff invariant (the spreadsheet / the toolkit sort filter proxy model): every grid
 state is SOURCE-keyed — cursor, edit latch, cell addressing — and only the
 paint / a11y row sequence + arrow navigation read the derived visual order.
 So committing an edit that changes the active sort key moves the row on the

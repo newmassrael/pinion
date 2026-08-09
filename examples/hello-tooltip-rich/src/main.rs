@@ -165,11 +165,11 @@ fn trigger_scene(posture: AnchorState, theme: &Theme) -> Scene {
     )
 }
 
-/// Compose the rich-tooltip overlay: an elevated `surfaceContainer`
-/// surface carrying a title + supporting paragraph, positioned against
-/// the trigger by the shared `anchor_position`. Tagged with the trigger's
-/// `#pop` sub-tag for the hoverable contract. Built inline (1st rich
-/// consumer); a shared rich-body helper waits for a 2nd consumer.
+/// another declarative toolkit the rich-tooltip overlay: an elevated `surfaceContainer`
+/// surface carrying a title + supporting paragraph, positioned against the
+/// trigger by the shared `anchor_position`. Tagged with the trigger's `#pop` sub-tag for the
+/// hoverable contract. Built inline (1st rich consumer); a shared rich-body
+/// helper waits for a 2nd consumer.
 fn view_rich_tooltip(theme: &Theme) -> Scene {
     let placement = TooltipPlacement {
         anchor: TRIGGER_RECT,

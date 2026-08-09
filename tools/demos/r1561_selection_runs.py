@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """R1561 §5.27 §5.40 — a selection is a set of RUNS, not a set of rows.
 
-Drives the `hello-multi-select` binding (10 000-row virtualized list, Qt
-`QItemSelectionModel` `ExtendedSelection` analogue) over JSON-RPC.
+Drives the `hello-multi-select` binding (10 000-row virtualized list, the toolkit
+item selection model `ExtendedSelection` analogue) over JSON-RPC.
 
 A selection is not a set of rows. It is a set of *runs*: "rows 0 through
 9 999" is one fact, and holding it as ten thousand facts makes the cost of
@@ -36,12 +36,12 @@ measurement of the representation and not a constant.
   (J) the screen says it — the status bar reads `selected N rows in K runs`,
       the run count on the glass beside the row count.
 
-Against Qt 6.11: `QItemSelectionModel` has `hasSelection()` and no count
-accessor, so counting means `selectedRows().size()` — one `QModelIndex` per
+Against the toolkit 6.11: item selection model has `hasSelection()` and no count
+accessor, so counting means `selectedRows().size()` — one model index per
 selected row, built to read a length; `selectedIndexes()` is documented to
 return a list that "contains no duplicates, and is not sorted", so the first
 selected row costs a scan and equal selections need not compare equal; and
-only `QItemSelection::merge` promises non-overlapping ranges, so what
+only `merge` promises non-overlapping ranges, so what
 `selection()` holds is a function of the call history rather than of the
 selection. Phases (D), (E) and (F) are those three differences, read over the
 wire.
@@ -193,11 +193,11 @@ def body() -> None:
         assert_eq(tf.query("/external/selection_count"), 3,
                   "the same three rows — the count is rows, the runs are storage")
 
-        # ── (F) canonical however it was built ──────────────────────
-        # Out of order, overlapping, and abutting: every spelling of
-        # "rows 100 through 199" reaches the same value. Qt's `QItemSelection`
-        # keeps what it was given (only `merge` promises non-overlap), so the
-        # equivalent there depends on the order the calls arrived in.
+        # ── (F) canonical however it was built ────────────────────── Out of
+        # order, overlapping, and abutting: every spelling of "rows 100 through
+        # 199" reaches the same value. The toolkit's item selection keeps what
+        # it was given (only `merge` promises non-overlap), so the equivalent there
+        # depends on the order the calls arrived in.
         canonical = [[100, 199]]
         for spelling in (
             [[100, 199]],

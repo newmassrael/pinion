@@ -2,21 +2,21 @@
 """R1562 §5.27 §5.40 — a header section selects the line through it.
 
 Drives the `hello-grid-multi-select` binding (10 000-row virtualized data grid,
-Qt `QItemSelectionModel` `ExtendedSelection` analogue) over JSON-RPC.
+the toolkit item selection model `ExtendedSelection` analogue) over JSON-RPC.
 
 R1548 gave the grid its vertical header band and R1547 gave a section its roles,
 so a row could be asked what it was called and what mark it carried. Nothing
 could be **done** to it: pressing the band did nothing, and the only way to
 select a row was to land on one of its cells. That is the part of a row least
 likely to be on screen — the band is pinned against the horizontal scroll, the
-cells are not — and it is the whole of Qt's `QHeaderView` interaction.
+cells are not — and it is the whole of the toolkit's header view interaction.
 
 R1562 makes a section an address. `vtbl#r<row>` is the section's press, `vtbl#c`
 is the corner where the two bands meet, and the section press reaches the
 selection transition a *cell* press reaches: `GridSendKey::row()` answers with
 the section's row, so the chord vocabulary is one implementation instead of the
-two Qt keeps (`QHeaderView::mousePressEvent` -> `selectRow`, beside
-`QAbstractItemView::mousePressEvent` -> `selectionCommand`).
+two the toolkit keeps (`mousePressEvent` -> `selectRow`, beside
+`mousePressEvent` -> `selectionCommand`).
 
   (A) boot — the band is painted, and every windowed section is addressable.
   (B) a plain band press selects that row, and only that row.
@@ -35,20 +35,20 @@ two Qt keeps (`QHeaderView::mousePressEvent` -> `selectRow`, beside
   (J) `toggle_all` is a verb, not only a pixel: the same control from the RPC
       path (SS2 #2).
 
-Against Qt 6.11:
-  * `QHeaderView::sectionsClickable` is a per-**axis** bool and what a click
+Against the toolkit 6.11:
+  * `sectionsClickable` is a per-**axis** bool and what a click
     then means is decided by whoever connected `sectionClicked`; the two
     selection paths are separate implementations.  Phase (E) is that
     difference, read over the wire.
-  * `QTableView::setCornerButtonEnabled(true)` is documented as: clicking the
+  * `setCornerButtonEnabled(true)` is documented as: clicking the
     corner "selects all cells in the view".  There is no second press that
     takes it back, and the button carries no state.  Phase (G).
-  * `QTableCornerButton` is a private `QAbstractButton` with no text, and
-    `QTableView` exposes no accessor for it, so there is no supported way to
+  * table corner button is a private abstract button with no text, and
+    table view exposes no accessor for it, so there is no supported way to
     name it — a screen-reader user meets an unnamed button whose state is not
     reported because it has none.  Phase (H).
-  * `QHeaderView::highlightSections` — whether a section whose row is selected
-    is drawn as such — is a view flag that **defaults to false**, so a Qt band
+  * `highlightSections` — whether a section whose row is selected
+    is drawn as such — is a view flag that **defaults to false**, so a toolkit band
     is silent about the selection unless someone turns it on, and once on it is
     a second statement free to disagree with the rows.  Phase (F) reads the
     derivation instead.
@@ -184,7 +184,7 @@ def body() -> None:
 
         # ── (E) the band and the body are ONE derivation ─────────────
         # Chord for chord, the two addresses must leave the model in the same
-        # state. In Qt these are different code paths.
+        # state. In the toolkit these are different code paths.
         for chord in ({}, {"ctrl": True}, {"shift": True}):
             from_band, from_body = [], []
             for target, out in ((band(first + 2), from_band), (f"{TABLE_TAG}#{first + 2}_0", from_body)):

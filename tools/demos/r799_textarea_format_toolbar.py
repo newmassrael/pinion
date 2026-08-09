@@ -14,7 +14,7 @@ canonical behaviour with no new substrate:
 
   * routing (InputRouter, by composite tag) applies the format, and
   * focus (the `focusable_tags()` enumeration) — the strip is *not* a
-    member, so the W3C / Qt-`NoFocus` rule the shell encodes means clicking
+    member, so the W3C / the toolkit-`NoFocus` rule the shell encodes means clicking
     a control never steals the field's focus; the selection survives.
 
 The toggle "pressed" state is reflective: the B / I cell paints a tonal

@@ -35,7 +35,7 @@
 //!   text.
 //! * **A bullet is text.** the toolkit's text document layout draws `ListDisc` /
 //!   `ListCircle` / `ListSquare` as painted geometry — an ellipse or a
-//!   rectangle — so no the toolkit API answers what an unordered item's marker looks
+//!   rectangle — so a toolkit API answers what an unordered item's marker looks
 //!   like, it does not participate in text layout, and it cannot be copied,
 //!   searched or announced. Here every style renders to a string
 //!   ([`ListStyle::render`]), so one code path draws every marker, on both

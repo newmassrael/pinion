@@ -10,7 +10,7 @@ answer two questions a pro-tool profile actually asks:
     the whole budget without converging is, until now, visible only as a
     `tracing::warn!` no RPC client can read.
   - **how much shaping?** R1454 measured one shaper miss at 18.5us against a
-    118ns hit and bounded the worst offender with Qt's
+    118ns hit and bounded the worst offender with the toolkit's
     `resizeContentsPrecision` — but that bound is CONSUMER-honoured. A binding
     that ignores it re-shapes everything every frame and nothing noticed.
 

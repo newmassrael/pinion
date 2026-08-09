@@ -2,12 +2,11 @@
 //!
 //! ## Charter (§5.28 ratified at R33)
 //!
-//! Spring-physics first; tween/keyframe 은 special case of a critically
-//! damped spring. [`Animation<T>`] wraps a [`Signal<T>`](crate::reactive::Signal)
-//! with [`SpringConfig`] (stiffness / damping / mass); semi-implicit Euler
-//! solver; interruptible (a new target preserves velocity). Industry
-//! canonical: `SwiftUI` `Animation` / React Spring / `Compose`
-//! `animateXxxAsState`.
+//! Spring-physics first; tween/keyframe 은 special case of a critically damped
+//! spring. [`Animation<T>`] wraps a [`Signal<T>`](crate::reactive::Signal) with [`SpringConfig`] (stiffness
+//! / damping / mass); semi-implicit Euler solver; interruptible (a new target
+//! preserves velocity). Industry canonical: `SwiftUI` `Animation` / the web UI library
+//! Spring / `another declarative toolkit` `animateXxxAsState`.
 //!
 //! ## Scope (R51.133 substrate + R51.138 wrap)
 //!
@@ -27,7 +26,7 @@
 //!   separate quality decision).
 //! - [`SpringConfig`] with four presets ([`SpringConfig::DEFAULT`],
 //!   [`SpringConfig::GENTLE`], [`SpringConfig::STIFF`],
-//!   [`SpringConfig::WOBBLY`]) — numerics match `SwiftUI` / React Spring
+//!   [`SpringConfig::WOBBLY`]) — numerics match `SwiftUI` / the web UI library Spring
 //!   for cross-ecosystem familiarity.
 //! - [`SpringState`] generic over `T: Animatable`: current / velocity /
 //!   target triple, plus a pure [`SpringState::step`] (semi-implicit
@@ -47,10 +46,9 @@
 //!
 //! ## Interruptibility
 //!
-//! Re-targeting is a single field write: `state.target = new_target`.
-//! The next [`SpringState::step`] continues with the existing velocity,
-//! so the value evolves continuously through the change with no
-//! discontinuity — exactly the `SwiftUI` / `Compose` guarantee.
+//! Re-targeting is a single field write: `state.target = new_target`. The next [`SpringState::step`] continues with
+//! the existing velocity, so the value evolves continuously through the change
+//! with no discontinuity — exactly the `SwiftUI` / `another declarative toolkit` guarantee.
 
 /// Vector-arithmetic surface required by the spring solver.
 ///
@@ -315,10 +313,9 @@ impl Animatable for AnimRect {
 /// - `ζ < 1.0` → underdamped: overshoot then ring down
 /// - `ζ > 1.0` → overdamped: slow asymptotic approach
 ///
-/// The four presets ([`SpringConfig::DEFAULT`], [`SpringConfig::GENTLE`],
-/// [`SpringConfig::STIFF`], [`SpringConfig::WOBBLY`]) mirror the numbers
-/// used by `SwiftUI` `Animation` and React Spring so animations port
-/// directly across ecosystems.
+/// The four presets ([`SpringConfig::DEFAULT`], [`SpringConfig::GENTLE`], [`SpringConfig::STIFF`], [`SpringConfig::WOBBLY`]) mirror the numbers used by
+/// `SwiftUI` `Animation` and the web UI library Spring so animations port directly across
+/// ecosystems.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpringConfig {
@@ -346,7 +343,7 @@ impl SpringConfig {
         }
     }
 
-    /// Matches `SwiftUI` `Animation.default` and React Spring
+    /// Matches `SwiftUI` `Animation.default` and the web UI library Spring
     /// `config.default` — the everyday choice.
     pub const DEFAULT: Self = Self::new(170.0, 26.0, 1.0);
 
@@ -641,7 +638,7 @@ pub trait Tickable {
 /// for tick dispatch). Move the target with [`Animation::set_target`] —
 /// the existing velocity carries through, so the value evolves
 /// continuously through interruptions (the canonical `SwiftUI` /
-/// `Compose` interrupt semantics).
+/// `another declarative toolkit` interrupt semantics).
 ///
 /// Reads via [`Animation::value`] — or, more usefully, subscribe to the
 /// underlying [`Signal`] via [`Animation::signal`]
@@ -826,11 +823,10 @@ where
     ///   "stop AND jump" surface).
     /// - Test fixtures that need a deterministic starting state.
     ///
-    /// Writes the wrapper's [`Signal`] so
-    /// subscribers re-run on the next reactive tick (equality-skip
-    /// applies if `value` already matches the current `Signal::get`).
-    /// Industry analogues: Framer Motion's `set` (no-animation snap),
-    /// `React Spring`'s `set`, `SwiftUI`'s `.animation(nil) { ... }`.
+    /// Writes the wrapper's [`Signal`] so subscribers re-run on the next reactive
+    /// tick (equality-skip applies if `value` already matches the current `Signal::get`).
+    /// Industry analogues: Framer Motion's `set` (no-animation snap), `the web UI library Spring`'s `set`,
+    /// `SwiftUI`'s `.animation(nil) { ... }`.
     pub fn reset(&self, value: T) {
         *self.inner.state.borrow_mut() = SpringState::at_rest(value);
         self.inner.signal.set(value);
@@ -878,7 +874,7 @@ where
     /// `immediate: true`), Web Animations API
     /// `Animation.cancel()` (different semantics — that one resets
     /// to the start; pinion's matches the "stop where you are" form
-    /// from React Spring `.pause()`).
+    /// from the web UI library Spring `.pause()`).
     pub fn cancel(&self) {
         <AnimationInner<T> as Tickable>::cancel(&self.inner);
     }

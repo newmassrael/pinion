@@ -4667,8 +4667,8 @@ mod tests {
 
     #[test]
     fn r56_1_g_preedit_start_with_active_selection_drains_range() {
-        // Compose-over-selection: the selected text is removed first,
-        // composition begins at the selection start. Canonical macOS /
+        // declarative toolkit-over-selection: the selected text is removed
+        // first, composition begins at the selection start. Canonical macOS /
         // iOS / GTK / Web "compose replaces selection" behaviour.
         let s = TextEditState::with_initial("abcdef".to_string());
         s.set_selection(1, 4);
@@ -4795,7 +4795,7 @@ mod tests {
 
     #[test]
     fn r56_1_g_preedit_commit_into_middle_of_text() {
-        // Compose at caret position inside existing text.
+        // another declarative toolkit at caret position inside existing text.
         let s = TextEditState::with_initial("ad".to_string());
         s.set_caret(1);
         s.preedit_start();

@@ -8,7 +8,7 @@ checked only "does the port index exist", so a scalar could wire into anything.
 R898 makes the ports **typed sockets** (`PortType`): an edge connects an output
 to an input only when the output's type is *assignable* to the input's. This is
 the type lattice the self-hosted blueprint / material-graph editor needs to
-reject ill-typed wires the way Unreal / Blender do.
+reject ill-typed wires the way the engine / the DCC do.
 
   (A) boot — the seed material graph carries typed ports, AI-readable via
       `query node.<id>.{input_types,output_types}`; the pre-R898 arity
@@ -20,7 +20,7 @@ reject ill-typed wires the way Unreal / Blender do.
   (C) the typed-port lists are read-only (ports are the node kind's, edited
       only by add/remove edges).
   (D) color-coded pins — each port paints in its type's signature colour
-      (the Unreal/Blender convention), verified via scene-as-data fill (no
+      (the engine/the DCC convention), verified via scene-as-data fill (no
       pixels needed — the §2 #7 introspection axis).
 """
 

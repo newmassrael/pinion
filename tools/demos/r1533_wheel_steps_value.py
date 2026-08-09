@@ -9,8 +9,8 @@ Every widget in the catalog declined, so a wheel over a slider, a spin box
 or a number field did what a wheel over blank wallpaper does: it scrolled
 whatever was behind it.
 
-Qt implements `wheelEvent` on precisely these widgets
-(`QAbstractSlider::wheelEvent`, `QAbstractSpinBox::wheelEvent`), which is
+the toolkit implements `wheelEvent` on precisely these widgets
+(`wheelEvent`, `wheelEvent`), which is
 why every volume slider, zoom slider and DCC parameter field on a desktop
 answers a wheel without being clicked first. R1533 gives the two stepped
 value widgets that hook, under one rule: **one notch is one step**.
@@ -34,7 +34,7 @@ That type also states the three-way consume verdict both widgets follow:
   * saturated (pinned at a bound) — **decline**, so the wheel this widget
     cannot spend reaches the scroll container behind it.
 
-The third is a deliberate divergence from Qt's spin box, which always
+The third is a deliberate divergence from the toolkit's spin box, which always
 accepts and therefore eats the page scroll of any form containing a pinned
 field.
 

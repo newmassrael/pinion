@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1434 §5.35 §5.15 — a native PAN gesture slides a map.
 
-`External::pan_gesture` forwards the Qt `QNativeGestureEvent`
+`External::pan_gesture` forwards the toolkit native gesture event
 `PanNativeGesture` / winit `WindowEvent::PanGesture` peer, the pinch sibling
 with a TWO-dimensional payload: the INCREMENTAL pan of an N-finger trackpad
 gesture, in LOGICAL PIXELS on each axis, bracketed by a `GesturePhase` arc
@@ -212,7 +212,8 @@ def body() -> None:
             float(tf.query(f"{EXT}/anchor_y")), 0.5, "anchor y fraction is 0.5 (vertical centre)"
         )
 
-        # --- modifiers ride the out-of-band cache (Qt axis-lock parity). ---
+        # --- modifiers ride the out-of-band cache (the toolkit axis-lock
+        # parity). ---
         tf.modifiers(shift=True)
         tf.pan_gesture(5.0, 0.0, "update", at=CENTER)
         assert "s" in str(tf.query(f"{EXT}/last_mods")), "shift reached the pan hook"

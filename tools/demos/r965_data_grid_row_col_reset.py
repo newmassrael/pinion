@@ -2,8 +2,8 @@
 """R965 §5.38 §5.40 — per-row / per-column reset-to-default on the data grid.
 
 Drives hello-data-grid over JSON-RPC. R960 gave the editable grid a per-cell
-"reset to column default" (the Unreal / Qt affordance); R965 adds the row- and
-column-granular bulk variants (Qt / Excel "reset this row" / "reset this
+"reset to column default" (the engine / the toolkit affordance); R965 adds the row- and
+column-granular bulk variants (the toolkit / the spreadsheet "reset this row" / "reset this
 column"):
 
   (A) **reset_row <row>** — reset every modified cell in that row to its column

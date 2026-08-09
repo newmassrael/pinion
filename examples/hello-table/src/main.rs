@@ -455,7 +455,7 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
         },
         // Single-row selection only; the spreadsheet cell range selection is
         // the dedicated `hello-cell-select` grid's model (R953 — one selection model per
-        // example, Excel / the toolkit `SelectRows` vs `SelectItems`).
+        // example, the spreadsheet / the toolkit `SelectRows` vs `SelectItems`).
         TableSelection {
             rows: &row_selected,
             cells: None,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1348 §5.51 §2 #7 PR-57 — the outer-dock band stops CLAIMING a perimeter it will not use.
 
-SCOPE — read this before the assertions. R1201 declared the VS Code / Qt ADS rule
+SCOPE — read this before the assertions. R1201 declared the VS Code / the toolkit ADS rule
 that "a drop indicator is offered only when the outcome DIFFERS", but enforced it
 only at RESOLVE: `resolve_drop_checked` mapped a redundant perimeter drop to a
 stay-put SnapBack. The router's CLAIM (`InputRouter::resolve_own_outer_dock`) was

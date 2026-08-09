@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R881 §5.35 §5.49 — middle-button drag-to-pan (Blender / Unreal idiom).
+"""R881 §5.35 §5.49 — middle-button drag-to-pan (the DCC / the engine idiom).
 
 Drives `hello-node-editor` via JSON-RPC. `scene/drag {button: "middle"}` is
 the new §2 #2 peer of a physical middle-button drag: the router opens a
@@ -10,7 +10,7 @@ the SAME two-stage wheel routing R877 built (External offer first, scroll
 fallback second). Content follows the cursor — the grab convention. The
 canvas binding contributes ZERO pan code: plain deltas fall through to the
 world `ScrollNode`, and a held `Ctrl` reaches the canvas's existing
-`Ctrl`-wheel zoom arm (the Blender chord, free via vocabulary reuse). A
+`Ctrl`-wheel zoom arm (the DCC chord, free via vocabulary reuse). A
 press-release in place resolves to the middle-*click* (the X11 PRIMARY
 paste funnel — now fired at release, never after a pan).
 

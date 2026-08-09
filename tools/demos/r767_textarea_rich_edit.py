@@ -2,7 +2,7 @@
 """R767 §5.36 §5.22 — rich-text editing: styled runs over an editable field.
 
 R713 landed styled-run *display* (`RichText`). R767 makes styled runs
-**editable**: `TextEditState` carries a `style_runs` list (the Qt
+**editable**: `TextEditState` carries a `style_runs` list (the toolkit
 `FormatRange` model), the field paint threads it through the
 `field_shaping` SSOT so paint *and* caret / hit-test geometry shape one
 identical run-aware `Layout`, and every edit maintains the runs — insert

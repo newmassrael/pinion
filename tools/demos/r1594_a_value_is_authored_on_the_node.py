@@ -7,7 +7,7 @@ the number a user typed into an unwired input belongs to that input and to no
 other node's. `pinion-node-graph` had nowhere to put that, because `Port::default`
 is derived from the kind — so this example had to carry each source's constant
 as a payload inside its own taxonomy (`Swatch([i64; 3])`), where nothing could
-ever edit it. Blender keeps exactly what was missing, as
+ever edit it. The DCC keeps exactly what was missing, as
 `bNodeSocket::default_value`, per socket per node.
 
 `Node::values` is that, and the rule the evaluator applies is **one sentence
@@ -27,14 +27,14 @@ What this script checks, and why each check discriminates:
   the wire in that order, and back again.
 * **A link HIDES an authored value rather than discarding it.** Unwire and it is
   still there.
-* **PAST BLENDER (1): a source's constant is a rule, not per-node-type code.**
-  Blender's Value node reaches its own output socket's `default_value` in
+* **PAST the DCC (1): a source's constant is a rule, not per-node-type code.**
+  the DCC's Value node reaches its own output socket's `default_value` in
   `node_shader_value.cc`, and nothing generic does; a node type that forgets
   simply has no constant.
-* **PAST BLENDER (2): authoring is gated by the signature.** Blender writes a
+* **PAST the DCC (2): authoring is gated by the signature.** the DCC writes a
   socket's `default_value` through RNA with no such check. Here a port that does
   not exist is refused *by name*, with the arity.
-* **PAST BLENDER (3): the type is checked.** Blender gets this free because a
+* **PAST the DCC (3): the type is checked.** the DCC gets this free because a
   socket's authored value is a different C struct per socket type; here the
   taxonomy answers `value_type` and the crate refuses a colour on an amount
   port.

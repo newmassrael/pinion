@@ -8,7 +8,7 @@ the boundary is a signature — R1577 built that. A **frame** contains a region 
 *canvas*: its members stay exactly where they are, they compute exactly as
 before, and the boundary means nothing to the evaluator at all. Without it the
 commonest thing anyone does to a large graph — fence off eight nodes and call
-them "decode" — has nowhere to be recorded. A census of `~/blender-ref` at
+them "decode" — has nowhere to be recorded. A census of `~/the DCC-ref` at
 `8cf50599` names eight operators for it (`attach`, `detach`, `join`,
 `join_named`, `join_nodes`, `parent_set`, `translate_attach`,
 `translate_attach_remove_on_cancel`) and this crate had **no concept of it at
@@ -19,34 +19,34 @@ What this script checks, and why each check discriminates:
 * **The relation is one field and the invariant is a FOREST.** A container must
   be a frame, and nothing may contain itself. Both are asserted by driving the
   refusals over the wire and reading the graph back afterwards.
-* **PAST BLENDER (1): the cycle is REFUSED, and the refusal names the chain.**
-  Blender declares the same `bNode *parent` and states both rules as
+* **PAST the DCC (1): the cycle is REFUSED, and the refusal names the chain.**
+  the DCC declares the same `bNode *parent` and states both rules as
   `BLI_assert` inside `node_attach_node` — compiled out of the build it ships.
   Worse, its own `NODE_OT_parent_set` calls `node_detach_node` FIRST, so by the
   time the assert runs the chain it would have walked is already cleared: the
   guard cannot fire even in a debug build. Nothing there then terminates, since
   `node_is_parent_and_child` and `get_sorted_node_parents` both walk `parent` to
   `nullptr`.
-* **PAST BLENDER (2): deleting a frame hands its members to the frame ABOVE.**
-  Blender's `node_unlink_attached` clears every child's parent outright, so
+* **PAST the DCC (2): deleting a frame hands its members to the frame ABOVE.**
+  the DCC's `node_unlink_attached` clears every child's parent outright, so
   deleting the middle frame of `Outer > Inner > node` puts the node on the
   canvas even though `Outer` is still there and still contains where it was.
   Only the containment the deletion destroyed is destroyed here, and what moved
   is reported.
-* **PAST BLENDER (3): a duplicate lands back inside its frame.** Blender's copy
+* **PAST the DCC (3): a duplicate lands back inside its frame.** the DCC's copy
   path looks the parent up in the copy map, does not find it because the frame
   was not selected, and calls `node_detach_node` — recording nothing. Here the
   fragment NAMES what it was cut from and the insertion puts it back, reporting
   `reframed`.
-* **PAST BLENDER (4): a frame id is not a name, so a paste into another tree
+* **PAST the DCC (4): a frame id is not a name, so a paste into another tree
   cannot join a frame by number.** The same integer elsewhere is an unrelated
   node. This is the hazard `BKE_main_merge` walks into by matching datablocks on
   their NAME; the answer here is the same one R1578 gave for definitions.
-* **PAST BLENDER (5): the forest is ENUMERABLE.** `frames` answers what contains
-  what, in one read. Blender has one pointer per node and no accessor for the
+* **PAST the DCC (5): the forest is ENUMERABLE.** `frames` answers what contains
+  what, in one read. The DCC has one pointer per node and no accessor for the
   relation, so it exists only as something a caller reassembles.
 * **One derivation, not one per gesture.** Framing, unframing and dragging all
-  act on the selection's *outermost* members. Blender computes that three
+  act on the selection's *outermost* members. The DCC computes that three
   times — `node_join_attach_recursive` and `node_detach_recursive`, two
   recursive functions over two structs with identical fields, plus a third pass
   in the transform code.
@@ -220,7 +220,7 @@ def body() -> None:
             "E: so `base` gained a level without being touched",
         )
 
-        # ── (F) the cycle Blender's own guard cannot catch ──────────────────
+        # ── (F) the cycle the DCC's own guard cannot catch ──────────────────
         reason = refused(tf, "reparent", f"{frame}>{inner}")
         assert "inside itself" in reason, f"F: {reason!r}"
         assert f"{frame} contains" in reason, (

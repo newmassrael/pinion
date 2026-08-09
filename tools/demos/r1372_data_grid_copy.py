@@ -3,7 +3,7 @@
 
 R1237 gave the editable grid a block PASTE (write half). R1372 adds the COPY
 half so the copy/paste pair is symmetric: a rectangular cell-range selection
-(the spreadsheet / Qt SelectItems model the Table widget got in R952) plus a
+(the spreadsheet / the toolkit SelectItems model the Table widget got in R952) plus a
 `copy` that serializes the selection to the SAME TSV a `paste` consumes. The
 range endpoints are the SOURCE-keyed anchor + cursor; the selected rectangle is
 their bounding box over the VISIBLE order, so it is always one contiguous screen

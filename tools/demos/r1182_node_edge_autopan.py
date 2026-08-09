@@ -3,7 +3,7 @@
 
 Drives `hello-node-editor` via JSON-RPC. A node held against the canvas rim
 auto-scrolls the viewport toward that edge every animation frame (the DCC /
-Unreal "drag-past-the-edge" convention), and the dragged node stays pinned
+the engine "drag-past-the-edge" convention), and the dragged node stays pinned
 under the cursor as the world scrolls beneath it. The driver is a framework
 `Tickable` (`AutoPan`, registered via `use_autopan` on the owner's animation
 clock, exactly like the caret blink) — so the *logic* is headlessly

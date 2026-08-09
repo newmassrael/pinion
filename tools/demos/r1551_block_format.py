@@ -4,7 +4,7 @@
 Before this round pinion had the character half of rich text and none of the
 block half: a paragraph could say how its glyphs looked and nothing about how
 the paragraph itself sat. No indent, no space between paragraphs, no first-line
-indent, no way to mark one a heading — the whole of Qt's `QTextBlockFormat`.
+indent, no way to mark one a heading — the whole of the toolkit's text block format.
 
 R1551 makes the block format a first-class scene declaration, lowered to the
 ordinary layout box (so the flex pass indents a paragraph with no
@@ -17,9 +17,9 @@ What this demo asserts, over the wire, against a real application:
     `style.text_indent`, as scene data;
   * `scene/text_blocks` carries the CONSEQUENCE — where each shaped line
     landed, beside the declaration it came from. That pairing is the only form
-    in which "did my indent reach the layout" has an answer, and Qt has neither
-    half as data: `QTextBlockFormat` is a property bag reachable only through a
-    `QTextCursor`, and the geometry lives in a separate private layout object
+    in which "did my indent reach the layout" has an answer, and the toolkit has neither
+    half as data: text block format is a property bag reachable only through a
+    text cursor, and the geometry lives in a separate private layout object
     that has no per-line accessor at all;
   * the declared first-line indent IS where line 0 starts, and no other line
     moves — checked as a number, not as a pixel;
@@ -32,8 +32,8 @@ What this demo asserts, over the wire, against a real application:
   * a paragraph declaring nothing is not a block — the negative control that
     separates "the feature published a paragraph" from "the method lists text";
   * `scene/access` carries the heading OUTLINE with `aria-level`, which is the
-    half of `headingLevel` Qt does not have: `QAccessibleTextInterface` has no
-    method that reports block structure, so a Qt document's heading levels
+    half of `headingLevel` the toolkit does not have: accessible text interface has no
+    method that reports block structure, so a toolkit document's heading levels
     reach its layout and stop there;
   * `rpc/schema` describes the four new types, so the R1539 census covers this
     round's wire the day it lands.

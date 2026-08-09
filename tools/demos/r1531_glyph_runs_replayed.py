@@ -20,8 +20,8 @@ standalone measurement (709 us) suggests, because interleaving it with the
 encoder's work costs both of them cache locality — which is the case for
 hoisting it out entirely rather than merely making it cheaper.
 
-The shape is the canonical one. Skia caches an `SkTextBlob`, Qt a
-`QGlyphRun` (and the `QStaticText` that holds one): shaping produces a
+The shape is the canonical one. Skia caches an `SkTextBlob`, the toolkit a
+glyph run (and the static text that holds one): shaping produces a
 layout, a second cheap step produces a replayable positioned glyph list,
 and the list is drawn many times per build. Here it lives in the cache
 that already owns the layout — same key, same lifetime, same eviction,

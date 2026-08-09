@@ -3,7 +3,7 @@
 
 Drives hello-node-editor over JSON-RPC. R916 gave the node graph a Details
 panel that reflects the single selected node's properties; R918 makes every
-panel row click-to-edit (the Unreal Details affordance). A click on a
+panel row click-to-edit (the engine Details affordance). A click on a
 `node_graph#detail_<key>` row routes to the coordinator (the palette precedent:
 a view sibling carrying the primary's tag prefix) and opens the ONE shared
 inline field IN THE PANEL ROW (surface = Panel) — the same field, focus, keymap,

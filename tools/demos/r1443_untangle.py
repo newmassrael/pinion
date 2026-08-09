@@ -33,7 +33,7 @@ What this script checks, over real RPC and never on trust:
 * and untangling an untangled drawing is a no-op, which is what makes the
   policy safe to leave switched on.
 
-Qt reference: Qt ships no graph layout at all, so there is nothing to be at
+the toolkit reference: the toolkit ships no graph layout at all, so there is nothing to be at
 parity with; Graphviz `dot` has no incremental mode, and ELK's interactive
 strategy holds the order absolutely, as R1442's `stable` does. Publishing the
 trade as scene data for the same pass (§2 #2, §2 #7) is what lets an agent pick

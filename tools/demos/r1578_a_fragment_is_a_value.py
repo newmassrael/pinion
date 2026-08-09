@@ -15,27 +15,27 @@ What this script checks, and why each check discriminates:
 
 * **The clipboard is data.** How many nodes, how many definitions came with
   them, exactly which wires were severed, and how many bytes it serializes
-  to — all readable WITHOUT pasting. Blender's clipboard is a `.blend` file
+  to — all readable WITHOUT pasting. The DCC's clipboard is a `.blend` file
   written to the temp directory (`copybuffer_nodes.blend`, measured at
   `8cf50599`), so a paste is the only thing that can be done with it.
-* **PAST BLENDER (1): the cut is NAMED.** `node_copy_local` copies a link only
+* **PAST the DCC (1): the cut is NAMED.** `node_copy_local` copies a link only
   when both of its ends are selected and records the others in no form at all,
   so a user who copies the middle of a chain is told nothing about the wires
   that went. Here `clipboard_severed` names every one, producer first.
-* **PAST BLENDER (2): a paste can RESTORE the inputs.** Blender has that as
+* **PAST the DCC (2): a paste can RESTORE the inputs.** the DCC has that as
   `keep_inputs`, a boolean on `NODE_OT_duplicate` — and only there:
   `NODE_OT_clipboard_paste` declares one property, `offset`.
-* **The asymmetry is DERIVED, not a missing boolean.** Blender has
+* **The asymmetry is DERIVED, not a missing boolean.** the DCC has
   `keep_inputs` and no `keep_outputs` and says nowhere why: an output may feed
   any number of consumers, so an inbound crossing costs the original nothing,
   while an input takes at most one link, so an outbound one would STEAL the
   original's connection. The sink keeps reading the original.
-* **PAST BLENDER (3): a definition is matched by CONTENT.** `BKE_main_merge`
+* **PAST the DCC (3): a definition is matched by CONTENT.** `BKE_main_merge`
   keys candidates on the datablock name and, for two local IDs,
   `are_ids_from_different_mains_matching` returns true on the name alone. Here
   pasting twice leaves ONE definition and three instances, and a definition
   edited since the copy is added rather than silently reused.
-* **PAST BLENDER (4): a refused paste changes NOTHING.** `node_copy_local`
+* **PAST the DCC (4): a refused paste changes NOTHING.** `node_copy_local`
   reports the node it cannot place, skips it and its links, and finishes — so a
   paste can land a partial graph plus a message in a report list. Here the
   recursion is refused whole, and the chain is named.

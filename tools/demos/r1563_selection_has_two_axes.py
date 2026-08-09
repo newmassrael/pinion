@@ -2,7 +2,7 @@
 """R1563 §5.27 §5.40 — a selection has two axes.
 
 Drives the `hello-column-select` binding (10 000 rows x 8 columns, virtualized
-on both axes, Qt `SelectionBehavior::SelectItems`) over JSON-RPC, and reads the
+on both axes, the toolkit `SelectionBehavior::SelectItems`) over JSON-RPC, and reads the
 row-select `hello-grid-multi-select` beside it for the refusal.
 
 R1561 made a selection a set of runs over ROWS. R1562 made the vertical band's
@@ -14,7 +14,7 @@ at any price.
   (A) boot — the column axis is DECLARED, and both press policies are readable.
   (B) a column-header press selects the whole column: 10 000 cells, ONE band.
   (C) Shift widens the column span; Ctrl takes one column back out.
-  (D) a cell press selects ONE CELL, not its row (Qt `SelectItems`).
+  (D) a cell press selects ONE CELL, not its row (the toolkit `SelectItems`).
   (E) Shift on a cell is a RECTANGLE from the extension origin.
   (F) a partly selected row is a state the row axis could not hold: `cells`
       says so, and the two counts (cells vs bands) stop being one question.
@@ -22,32 +22,32 @@ at any price.
       the same cells reached in either order are the same VALUE.
   (G) `All` outlives its count — a row selected AS A RECORD and a row whose
       eight columns are named individually paint the same and are DIFFERENT
-      VALUES, which is the whole of what Qt cannot say.
+      VALUES, which is the whole of what the toolkit cannot say.
   (H) it reaches assistive technology: the cell, the column header, and NOT
       the row.
   (I) a grid with no column axis REFUSES by name rather than doing nothing.
   (J) the verbs are DECLARED — `$schema` says what can be called, not only
       what can be read.
 
-Against Qt 6.11:
-  * `QItemSelectionRange` spans rows and columns, so the CAPABILITY is Qt's
+Against the toolkit 6.11:
+  * item selection range spans rows and columns, so the CAPABILITY is the toolkit's
     floor.  What is past it is that a full row here is `"all"` — a statement
-    with no column count in it.  A Qt full row is
-    `QItemSelectionRange(index(r, 0), index(r, columnCount() - 1))`, bound to
+    with no column count in it.  A toolkit full row is
+    `item selection range(index(r, 0), index(r, columnCount() - 1))`, bound to
     the width at the moment of selection, so inserting a column silently
     demotes it and `selectedRows()` stops returning it.  Phase (G).
-  * `QItemSelection` is a `QList<QItemSelectionRange>` that permits overlap,
-    which is why `selectedIndexes()` must promise de-duplication — so two Qt
+  * item selection is a `list<item selection range>` that permits overlap,
+    which is why `selectedIndexes()` must promise de-duplication — so two the toolkit
     selections covering the same cells can differ as values by the order the
     `select()` calls arrived in.  Phases (B)/(C) read a canonical band set
     instead, and (F) reads the two counts a canonical form makes cheap.
-  * `QHeaderView` reaches column selection through `sectionPressed` while
+  * header view reaches column selection through `sectionPressed` while
     `sectionClicked` drives `sortByColumn`, with nothing declaring which a
     given header has.  Phase (A) reads the declaration.
-  * `QAbstractItemView::selectColumn` returns `void`; a call on a view that
+  * `selectColumn` returns `void`; a call on a view that
     cannot do it is lost.  Phase (I).
-  * `QAccessibleTableHeaderCell` has no selection state of any kind, so a
-    fully selected Qt column announces exactly as an unselected one.  Phase
+  * accessible table header cell has no selection state of any kind, so a
+    fully selected the toolkit column announces exactly as an unselected one.  Phase
     (H).
 """
 
@@ -225,15 +225,14 @@ def body() -> None:
         text = text_of_tag(tf, STATUS_TAG, viewport=WIN)
         assert "16 cells in 1 band" in text, f"the readout states both: {text!r}"
 
-        # ── (K) scattered cells MERGE into one band ──────────────────
-        # The canonical invariant, and the phase this demo did not have until
-        # a counterfactual walked straight through it: two rows reached by two
+        # ── (K) scattered cells MERGE into one band ────────────────── The
+        # canonical invariant, and the phase this demo did not have until a
+        # counterfactual walked straight through it: two rows reached by two
         # separate Ctrl-presses share one column set, so they are ONE band —
-        # and the same two cells reached in the other order are the same
-        # VALUE. `QItemSelection` is a `QList` that permits overlap, so two Qt
-        # selections covering the same cells differ by the order the `select()`
-        # calls arrived in, which is why `selectedIndexes()` has to promise
-        # de-duplication.
+        # and the same two cells reached in the other order are the same VALUE.
+        # item selection is a list that permits overlap, so two the toolkit
+        # selections covering the same cells differ by the order the `select()` calls
+        # arrived in, which is why `selectedIndexes()` has to promise de-duplication.
         chord_click(tf, cell(1, 0))
         chord_click(tf, cell(7, 0), ctrl=True)
         forward = cells(tf)
@@ -257,7 +256,7 @@ def body() -> None:
         # A row header press selects the RECORD, and the wire says `"all"` —
         # no column count in it. Naming the same eight columns explicitly
         # paints identically and is a DIFFERENT VALUE, which is exactly the
-        # distinction a Qt range cannot carry.
+        # distinction a toolkit range cannot carry.
         chord_click(tf, band_row(4))
         record = cells(tf)
         assert_eq(

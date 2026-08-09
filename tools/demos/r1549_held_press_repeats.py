@@ -4,21 +4,21 @@
 Before this round, holding a spin arrow stepped the value exactly ONCE, no
 matter how long the finger stayed down: the tree contained no repeat timer
 of any kind (censused — the single `auto_repeat` hit in the whole
-repository was *keyboard* auto-repeat SUPPRESSION, R1071). Qt has had
-`QAbstractButton::setAutoRepeat` since Qt 1, `QAbstractSpinBox` repeats its
+repository was *keyboard* auto-repeat SUPPRESSION, R1071). The toolkit has had
+`setAutoRepeat` since the toolkit 1, abstract spin box repeats its
 arrows by default, and every professional table, editor and DCC tool in
 existence keeps stepping while you hold. This closes it.
 
 The shape: a widget DECLARES a cadence
 (`External::auto_repeat -> Option<AutoRepeat>`) and the router supplies the
 clock. A fire re-dispatches the widget's own activation arc (`PointerUp`
-then `PointerDown` — Qt's `released(); clicked(); pressed();` in statechart
+then `PointerDown` — the toolkit's `released(); clicked(); pressed();` in statechart
 vocabulary), so a repeat is a click by the same derivation a finger's click
 is, and no widget needed a new SCXML transition to become repeatable.
 
-Three things this proves that Qt 6.11 cannot answer:
+Three things this proves that the toolkit 6.11 cannot answer:
 
-  1. THE HOLD IS DRIVABLE AS DATA. Qt's repeat is a `QBasicTimer` on the
+  1. THE HOLD IS DRIVABLE AS DATA. The toolkit's repeat is a basic timer on the
      event loop: a test sleeps, and there is no API by which a client can
      say "hold this for 900 ms". Here the hold rides the same clock
      `scene/tick` drives, so this demo asserts an EXACT fire count at each
@@ -26,14 +26,14 @@ Three things this proves that Qt 6.11 cannot answer:
 
   2. THE RUN IS PUBLISHED. `scene/auto_repeat` reports every in-flight
      press: its target, whether it is repeating, the declared cadence, the
-     fires so far, and how long until the next one. Qt keeps all of it in
-     a private `QBasicTimer` inside `QAbstractButtonPrivate`; the only
+     fires so far, and how long until the next one. The toolkit keeps all of it in
+     a private basic timer inside abstract button private; the only
      public fact is the static `autoRepeat()` property of a widget you
      already hold a pointer to. The census here is PREDICTIVE — this demo
      reads `next_fire_in_secs`, ticks exactly that, and asserts a repeat
      landed.
 
-  3. A HELD ARROW THAT CANNOT MOVE STOPS. `QAbstractSpinBox` keeps its
+  3. A HELD ARROW THAT CANNOT MOVE STOPS. abstract spin box keeps its
      10 Hz timer running against a value pinned at `maximum()` for as long
      as the user holds. Here the widget answers `None` — it reads its own
      bound — so the repeat goes quiet AND the frame loop is released.
@@ -41,7 +41,7 @@ Three things this proves that Qt 6.11 cannot answer:
 And the structural claim, asserted directly: a repeat cannot outlive its
 press. The run lives IN the router's press record, which is created by
 `pointer_down` and removed by `pointer_up`, so there is no separate armed
-flag to leave set. Qt's runaway-button bug class has nowhere to live.
+flag to leave set. The toolkit's runaway-button bug class has nowhere to live.
 
 Determinism note: `set_fps(0)` freezes the window's wall-clock contribution
 (the R829/R831 frame-step contract), so from that call on the hold advances
@@ -73,8 +73,8 @@ TAG = "spin"
 DEC = "spin#dec"
 INC = "spin#inc"
 
-# `SpinButtonExternal`'s default cadence == `AutoRepeat::desktop()` ==
-# Qt's `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL` (qabstractbutton.cpp).
+# `SpinButtonExternal`'s default cadence == `AutoRepeat::desktop()` == the toolkit's `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL`
+# (qabstractbutton.cpp).
 DELAY = 0.300
 INTERVAL = 0.100
 # Comfortably inside a float step, and never equal to a fire instant: the
@@ -199,10 +199,11 @@ def body() -> None:
         assert_eq(val(tf), 7.0, "five seconds after release: nothing fired")
         assert_eq(holds(tf), [], "and nothing came back")
 
-        # ── PAST Qt: a held arrow at its bound stops repeating ───────────
+        # ── PAST the toolkit: a held arrow at its bound stops repeating
+        # ───────────
         tf.pointer_leave()
         hold_down(tf, INC)
-        # One big tick would reach 10 and, in Qt, keep firing at 10 Hz
+        # One big tick would reach 10 and, in the toolkit, keep firing at 10 Hz
         # forever. Here it stops at the bound — the widget reads its own
         # range, and the router re-asks before every single fire, so the
         # catch-up inside ONE tick cannot overshoot either.
@@ -263,8 +264,8 @@ def body() -> None:
         release(tf, TAG)
         tf.pointer_leave()
 
-        # ── DETERMINISM: one big tick == many small frames ───────────────
-        # The property Qt's wall-clock `QBasicTimer` cannot offer, and the
+        # ── DETERMINISM: one big tick == many small frames ─────────────── The
+        # property the toolkit's wall-clock basic timer cannot offer, and the
         # reason the hold rides the same clock the paint does.
         tf.intervene("/external/value", 0.0)
         assert_eq(val(tf), 0.0, "reset to the floor")

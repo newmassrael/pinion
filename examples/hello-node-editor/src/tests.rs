@@ -4270,9 +4270,9 @@ fn r1191_graph_anchor_offset_is_the_forward_inverse() {
     // forward then the manual inverse affine = identity at the anchor px.
     assert!(approx((ox + cx) / zoom, gx), "x round-trips to gx");
     assert!(approx((oy + cy) / zoom, gy), "y round-trips to gy");
-    // Compose with the REAL inverse SSOT via a ScrollState (integer-clean
-    // offsets, so no scroll rounding) — the two projection SSOTs are
-    // provably inverse, not just the hand-written affine.
+    // another declarative toolkit with the REAL inverse SSOT via a ScrollState
+    // (integer-clean offsets, so no scroll rounding) — the two projection
+    // SSOTs are provably inverse, not just the hand-written affine.
     let scroll = ScrollState::new();
     scroll.set_max(10_000, 10_000);
     scroll.scroll_to(round_i32(ox), round_i32(oy));

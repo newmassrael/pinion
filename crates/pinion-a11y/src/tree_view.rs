@@ -49,18 +49,15 @@ use pinion_core::widgets::tree_nav::VisibleRow;
 use pinion_core::widgets::virtual_list::VisibleWindow;
 use std::collections::BTreeSet;
 
-/// Compose a row's composite `AccessNode` tag — the frozen R51.42
-/// `{row_prefix}#{id}` separator the paint substrate stamps
-/// (`pinion_widget_paint::tree_view::composite_row_tag`) and the hit-test
-/// router parses, so the AT `NodeId` hashes through the same key as the
-/// click target. Encode is the accepted trivial-join idiom per the R803
-/// composite-tag decision (only the decode side warrants a named parser),
-/// so it is inlined here rather than reaching across into
-/// `pinion-widget-paint`.
-/// The `treeitem` node tag for a row — `{row_prefix}#{id}`. Exported (R868)
-/// so a binding's `access_focus_target` override names the exact node the
-/// builder emits as the `aria-activedescendant` (the cursor row), one SSOT
-/// for the row tag instead of a hand-formatted composite that could drift.
+/// another declarative toolkit a row's composite `AccessNode` tag — the frozen R51.42
+/// `{row_prefix}#{id}` separator the paint substrate stamps (`pinion_widget_paint::tree_view::composite_row_tag`) and the hit-test router
+/// parses, so the AT `NodeId` hashes through the same key as the click target.
+/// Encode is the accepted trivial-join idiom per the R803 composite-tag
+/// decision (only the decode side warrants a named parser), so it is inlined
+/// here rather than reaching across into `pinion-widget-paint`. The `treeitem` node tag for a row —
+/// `{row_prefix}#{id}`. Exported (R868) so a binding's `access_focus_target` override names the exact node the
+/// builder emits as the `aria-activedescendant` (the cursor row), one SSOT for the row tag instead
+/// of a hand-formatted composite that could drift.
 #[must_use]
 pub fn tree_row_tag(row_prefix: &str, id: &str) -> String {
     format!("{row_prefix}#{id}")

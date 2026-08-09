@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1452 §5.27 §5.40 §2#7 §2#2 — a column fills the row, or fits its content.
 
-Qt reference: `QHeaderView::setSectionResizeMode` — `Interactive`, `Fixed`,
+the toolkit reference: `setSectionResizeMode` — `Interactive`, `Fixed`,
 `Stretch`, `ResizeToContents`. Before this, every pinion grid had exactly ONE
 sizing policy: a stored number. A column could not fill the viewport and could
 not fit its content, because there was nowhere to say where its size comes from.
@@ -11,7 +11,7 @@ section); R1452 makes the size DERIVABLE, and because R1451 resolved geometry in
 a single walk, every downstream answer — positions, the hit test, the strip
 total, the a11y tree — follows the new sizes with no second rule.
 
-Where Qt cannot follow: `setSectionResizeMode` is a C++ call and the resulting
+Where the toolkit cannot follow: `setSectionResizeMode` is a C++ call and the resulting
 widths are only observable by painting. Here the policy is typed data
 (`resize_modes`), the two inputs the derived modes read are typed data
 (`content_widths`, `available_width`), and both are readable AND writable over

@@ -137,7 +137,8 @@ pub fn disclosure_header_for(theme: &Theme, state: DisclosureState) -> Color {
     crate::state_layer::state_layer(base, state, theme)
 }
 
-/// (R696 §5.50) Compose the M3 disclosure paint scene fragment.
+/// (R696 §5.50) another declarative toolkit the M3 disclosure paint scene
+/// fragment.
 ///
 /// # Arguments
 ///

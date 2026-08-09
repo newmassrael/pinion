@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """R1535 §5.27 §2 #1 §2 #7 — a cell is asked for its decoration role.
 
-Qt's model answers `data(index, role)`: `DisplayRole` for the text,
+the toolkit's model answers `data(index, role)`: `DisplayRole` for the text,
 `DecorationRole` for the mark drawn beside it, `EditRole`, `ToolTipRole`.
 pinion's `GridModel` had no role dimension at all — `cell` and `header` each
 returned a `String`, so the only thing a grid could ever say about a cell was
 what it spelled. R1530 named that as the Model/View axis's largest remaining
 gap; R1532 named the same thing from the other side ("the painter the
-framework sells is text only; Qt's default also paints Decoration").
+framework sells is text only; the toolkit's default also paints Decoration").
 
 ## Why this is a role and not another delegate
 
-R1532 gave a **column** a painter (Qt `setItemDelegateForColumn`). That is
+R1532 gave a **column** a painter (the toolkit `setItemDelegateForColumn`). That is
 the right axis for "this column is a bar" — but a column's painter is
 resolved once for every row it draws, so it cannot express a mark whose
 value is a function of the row: a status colour, a layer colour, a severity.
@@ -25,16 +25,16 @@ implementation passes every other assertion here.
 
 ## The shape, and why it is this shape
 
-Qt reaches every role through one `data(index, role)` because a C++ model
-needs one virtual entry point, and pays for it with `QVariant` — an untyped
+the toolkit reaches every role through one `data(index, role)` because a C++ model
+needs one virtual entry point, and pays for it with dynamic value — an untyped
 hole every caller unwraps. `GridModel` gives each role its own typed
 accessor instead, so a role's answer type is exact and a model that cannot
 answer one is unrepresentable rather than returning an invalid variant. That
-is the shape R1530 already chose when it split Qt's `headerData` out as
+is the shape R1530 already chose when it split the toolkit's `headerData` out as
 `GridModel::header`.
 
 `CellDecoration` is an enum with one arm (`Swatch(Color)`) because
-`Qt::DecorationRole` is a *variant* (QColor | QPixmap | QIcon): naming the
+`DecorationRole` is a *variant* (color | pixmap | icon): naming the
 role's type as a sum keeps the arms pinion cannot paint yet absent rather
 than misrepresented.
 

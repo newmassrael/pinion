@@ -8,7 +8,7 @@ NO coordinator changes:
 
   * R780 `VirtualSelectExternal::new_multi` — the index-model selection set
     (anchor + cursor), the SAME coordinator the list uses; a grid cell click
-    selects its ROW (column irrelevant — WAI-ARIA / Qt `SelectRows`).
+    selects its ROW (column irrelevant — WAI-ARIA / the toolkit `SelectRows`).
   * R781 modifier-click wire — the held `Modifiers` ride the composite send
     wire's third segment, so `scene/modifiers` + `scene/click` toggles /
     extends exactly as a native modified click does.

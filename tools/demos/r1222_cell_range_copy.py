@@ -4,7 +4,7 @@
 R953 gave `hello-cell-select` a spreadsheet cell-range selection (anchor +
 extent rectangle) but explicitly deferred "range copy". R1222 adds it on the
 shared `Table` coordinator: `query cell_selection_tsv` serializes the selected
-rectangle as TSV (tab columns, newline rows) — the Excel / Sheets clipboard
+rectangle as TSV (tab columns, newline rows) — the spreadsheet / Sheets clipboard
 form. This is the AI-first "copy the selection" read (§2 #2): an AI copies a
 range by reading it, no pixels and no platform clipboard. The human peer is
 Ctrl+C, which writes the SAME TSV to the system clipboard — that write is

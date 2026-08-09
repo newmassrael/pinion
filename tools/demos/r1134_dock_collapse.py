@@ -2,7 +2,7 @@
 """R1134 §5.51.1 — editor torn-slot FloatPolicy: collapse vs placeholder.
 
 SCOPE — read this before the assertions. A live dock review asked for COLLAPSE
-(VS Code / Blender: tearing a panel off makes its slot VANISH so neighbours
+(VS Code / the DCC: tearing a panel off makes its slot VANISH so neighbours
 reclaim the space) alongside the existing PLACEHOLDER policy (the slot stays,
 painting a "(torn off)" placeholder, no reflow) — and BOTH selectable. R1134 adds
 `FloatPolicy{Placeholder,Collapse}` to the shared `DockReorganizer` (the R1112

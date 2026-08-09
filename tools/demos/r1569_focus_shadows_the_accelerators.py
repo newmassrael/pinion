@@ -7,8 +7,8 @@ what an accelerator is. pinion has two such layers: the §5.20 mnemonic map
 `WidgetCore::keybinding` character map. Both ran ahead of the focused widget,
 and before this round there was no way for a widget to say otherwise.
 
-Qt has the hatch: `QEvent::ShortcutOverride` is offered to the focus widget
-before shortcut processing, and `QLineEdit` accepts it for any unmodified
+the toolkit has the hatch: `ShortcutOverride` is offered to the focus widget
+before shortcut processing, and line edit accepts it for any unmodified
 printable key — "if it would be text, it is mine". pinion had NOTHING, and the
 consequence was shipped, not theoretical: in `hello-textfield`, which binds
 `d` -> Disable, typing `d` into the focused field DISABLED THE FIELD and the
@@ -16,7 +16,7 @@ character never arrived. Four bindings in the tree carried it.
 
 R1569 makes the hatch a QUESTION the router asks (`External::shadows_accelerator`)
 rather than an event a widget must remember to accept, and this demo drives its
-extreme consumer: `KeySequenceEdit` (Qt `QKeySequenceEdit`), the widget whose
+extreme consumer: `KeySequenceEdit` (the toolkit key-sequence editor), the widget whose
 entire job is to record a chord that already means something.
 
 The binding is built to be hostile to its own editor: a `&File` / `&Save`
@@ -30,27 +30,27 @@ What this asserts, over the wire:
     the negative control without which every later assertion could pass by the
     accelerators simply being broken;
   * RECORDING, the same two keystrokes are RECORDED instead, and
-    `scene/accelerators` names this widget as the one taking them. Qt's
+    `scene/accelerators` names this widget as the one taking them. The toolkit's
     override is anonymous — `accept()` leaves no record of who accepted;
-  * `scene/accelerators` EXISTS at all: Qt keeps its shortcut state in the
-    private `QShortcutMap`, so no Qt application can enumerate its own
+  * `scene/accelerators` EXISTS at all: the toolkit keeps its shortcut state in the
+    private shortcut map, so a toolkit application can enumerate its own
     accelerators, let alone say which are currently overridden;
-  * a bare modifier is a PUBLISHED PREFIX, where Qt's `keyPressEvent` returns
+  * a bare modifier is a PUBLISHED PREFIX, where the toolkit's `keyPressEvent` returns
     early on modifier keys and the fact is lost;
   * the sequence FILLS and commits itself, and the intent it emits is the one
     an explicit commit emits — one transition, not two paths;
   * CANCEL abandons the run and keeps the previously accepted one, an exit
-    `QKeySequenceEdit` does not have (its release timer commits whatever
+    key-sequence editor does not have (its release timer commits whatever
     arrived);
   * `scene/accelerators {"chord": ...}` answers what a chord would COLLIDE with
     before it is recorded — the question that makes a keymap editor usable, and
-    the one Qt answers only later, at dispatch, via
-    `QShortcutEvent::isAmbiguous()`;
+    the one the toolkit answers only later, at dispatch, via
+    `isAmbiguous()`;
   * a malformed chord spelling is a NAMED refusal, where
-    `QKeySequence::fromString` substitutes `Qt::Key_unknown` and reports
+    `fromString` substitutes `Key_unknown` and reports
     nothing;
   * a DISABLED editor claims nothing — a widget that will not act on the key
-    must not stop the accelerator that would have (Qt gates on `isReadOnly()`
+    must not stop the accelerator that would have (the toolkit gates on `isReadOnly()`
     for the same reason).
 
 ZERO-FLAKE: bounded `wait_until` polling (never a fixed sleep). >=30 assertions.
@@ -241,7 +241,8 @@ def body() -> None:
         assert_eq(ks(tf, "pending"), "", "and the prefix cleared with it")
 
         # ── (H) committed, the accelerators come BACK while focus stays ────
-        # Qt cannot do this: `QKeySequenceEdit` grabs until focus leaves.
+        # the toolkit cannot do this: key-sequence editor grabs until focus
+        # leaves.
         back = accelerators(tf)
         assert_eq(back["focused"], KS, "the editor still has focus")
         assert_eq(back["shadowing"], None, "and has stopped claiming anything")
@@ -319,9 +320,8 @@ def body() -> None:
         )
 
         # ── (M) a disabled editor claims nothing ───────────────────────────
-        # Qt gates `ShortcutOverride` on `isReadOnly()` for the same reason: a
-        # widget that will not act on the key must not stop the accelerator
-        # that would have.
+        # the toolkit gates `ShortcutOverride` on `isReadOnly()` for the same reason: a widget that will
+        # not act on the key must not stop the accelerator that would have.
         press(tf, "r")
         wait_until(
             lambda: ks(tf, "state") == "Recording",
@@ -353,11 +353,11 @@ def body() -> None:
 
     # ── (N) the SHIPPED defect, in the binding that shipped it ─────────────
     # The round's load-bearing assertion, and the one that has nothing to do
-    # with the new widget: `hello-textfield` binds `d` -> Disable / `e` ->
-    # Enable through `keybinding`, and before R1569 typing `d` into the FOCUSED
-    # field disabled the field — the character never arrived. Qt does not have
-    # that defect (`QLineEdit` accepts `ShortcutOverride` for any unmodified
-    # printable key), so this is the tree reaching Qt's floor, not passing it.
+    # with the new widget: `hello-textfield` binds `d` -> Disable / `e` -> Enable through
+    # `keybinding`, and before R1569 typing `d` into the FOCUSED field disabled the
+    # field — the character never arrived. The toolkit does not have that
+    # defect (line edit accepts `ShortcutOverride` for any unmodified printable key), so this
+    # is the tree reaching the toolkit's floor, not passing it.
     with RpcSubprocess("hello-textfield", boot_grace=1.5) as tf:
         field = "main_textfield"
 
@@ -403,10 +403,10 @@ def body() -> None:
         )
         assert_eq(read()[1], "Focused", "and the field was never disabled")
 
-        # Alt+char stays an ACCELERATOR even while typing — Qt's behaviour, and
-        # the reason the declaration is per CHORD rather than a bool on the
-        # widget. A field that claimed Alt+d would swallow every mnemonic in
-        # the window.
+        # Alt+char stays an ACCELERATOR even while typing — the toolkit's
+        # behaviour, and the reason the declaration is per CHORD rather than a
+        # bool on the widget. A field that claimed Alt+d would swallow every
+        # mnemonic in the window.
         tf.modifiers(alt=True)
         tf.key(path=field, name="d")
         tf.modifiers()

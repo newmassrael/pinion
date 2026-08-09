@@ -79,6 +79,14 @@ EXCLUDED: list[tuple[str, str]] = [
         "this file IS the term list; it cannot avoid holding the terms.",
     ),
     (
+        "tools/reference_census.py",
+        "the reader of the reference trees: it must know their directory "
+        "layout and their operator-id spellings to scan them at all, and it is "
+        "the only file that does. What it WRITES is a pushed artifact and is "
+        "clean -- see PUBLIC_TREE / public_id, and the four selftest cases that "
+        "hold the committed spelling to its rename.",
+    ),
+    (
         "tools/reference_names_migrate.py",
         "the substitution table: it must hold both the name it removes and the "
         "phrase it puts there. Its own tests build fixture names from pieces so "
@@ -122,9 +130,9 @@ PRODUCTS: list[str] = [
 # surely as the product does.
 #
 # The toolkit's classes are `Q` + CamelCase. The trailing `[a-z]` requirement is
-# what tells `QAbstractItemView` from `QUARTET`: a SCREAMING_CASE constant of
-# ours is not a class name, and making that a rule beats listing every constant
-# anyone will ever write.
+# what tells abstract item view from `QUARTET`: a SCREAMING_CASE constant of ours is
+# not a class name, and making that a rule beats listing every constant anyone
+# will ever write.
 SYMBOL_PATTERNS: list[tuple[str, str]] = [
     (r"\bQ[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*\b", "toolkit class"),
     (r"\bNODE_OT_[a-z_]+\b", "DCC node operator"),
@@ -141,6 +149,18 @@ ALLOW: dict[str, str] = {
     "QName": "quick_xml's XML qualified-name type -- a dependency's API, "
              "reached through our own parser",
 }
+
+
+# Products whose lowercase spelling is ordinary English -- "we compose a scene",
+# "widgets react to input", "excel at it". Counted only when capitalised, which
+# is what tells the product from the verb. Leaving them out entirely was the
+# first draft and it under-counted; matching them case-insensitively cries wolf
+# and gets the whole gate switched off.
+# "Sketch" is deliberately absent: it opens sentences as a verb often enough
+# that capitalisation stops telling the two apart.
+CASED_PRODUCTS: list[str] = ["Compose", "React", "Electron", "Excel"]
+
+CASED_RE = re.compile(r"\b(?:" + "|".join(CASED_PRODUCTS) + r")\b")
 
 
 def _product_re() -> re.Pattern[str]:
@@ -160,11 +180,12 @@ def mentions(line: str) -> list[str]:
     """
     found: list[str] = []
     found.extend(PRODUCT_RE.findall(line))
+    found.extend(CASED_RE.findall(line))
     for pattern, _label in SYMBOL_RES:
         for token in pattern.findall(line):
             if token in ALLOW:
                 continue
-            # A product hit already counted this span (e.g. `QtWidgets`).
+            # A product hit already counted this span (e.g. `the toolkit's widget module`).
             if PRODUCT_RE.fullmatch(token):
                 continue
             found.append(token)
@@ -287,6 +308,10 @@ CASES: list[tuple[str, int, str]] = [
     ("a bNodeSocket carries the default", 1, "the C struct counts"),
     ("UEdGraphPin holds the direction", 1, "the engine class counts"),
     ("we compose a scene and it reacts", 0, "ordinary English is not a product"),
+    ("a Compose-class toolkit", 1, "capitalised, so the product"),
+    ("paint composition and compose a scene", 0, "lowercase stays the verb"),
+    ("React and Electron", 2, "both counted"),
+    ("Sketch the layout first", 0, "too ambiguous to count, and it says so"),
     ("QtCharts is GPL", 1, "a product spelling wins over the class pattern"),
     ("ED_node_select_all", 1, "the editor function counts"),
     ("quotient, quantity, queue", 0, "lowercase q words are not classes"),

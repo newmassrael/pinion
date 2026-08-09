@@ -11,8 +11,9 @@
 //! **passive** (its only job is to catch the *outside* click that dismisses
 //! the popup; the rest of the UI keeps painting and reading normally behind
 //! it). This is the desktop "popup grab" layer: `Popup`'s mouse grab, another
-//! retained-mode toolkit's transparent route barrier, and Jetpack Compose's
-//! focusable `Popup` are all this same full-window catch-the-outside rectangle.
+//! retained-mode toolkit's transparent route barrier, and Jetpack another
+//! declarative toolkit's focusable `Popup` are all this same full-window
+//! catch-the-outside rectangle.
 //!
 //! ## Why this module exists (R715 SSOT lift)
 //!

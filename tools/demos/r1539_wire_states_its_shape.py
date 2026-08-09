@@ -14,11 +14,11 @@ an ordinary struct edit.
 dispatcher serializes: the key set, each key's JSON type, whether the key may
 be ABSENT, whether it may be `null`, and what type is nested at it.
 
-Qt 6.11's floor is `QMetaMethod` — `parameterNames()` / `parameterTypes()` /
+the toolkit 6.11's floor is meta-method — `parameterNames()` / `parameterTypes()` /
 `returnMetaType()` make a signature discoverable at runtime, and pinion sat
 below it with names alone. Two things here are past it: `returnMetaType()` on a
-`QVariantMap` yields `QVariantMap`, so the KEYS stay opaque and every Qt client
-falls back to out-of-band docs; and Qt's meta-object is generated from the
+variant map yields variant map, so the KEYS stay opaque and a toolkit client
+falls back to out-of-band docs; and the toolkit's meta-object is generated from the
 declaration, so nothing anywhere asserts a method actually puts the documented
 keys in its map. Section (D) below is that missing assertion, made by the agent,
 over the live wire.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """R1383 §5.38 §5.52 — node-graph layered auto-layout, over RPC.
 
-Every professional node editor (Unreal Blueprint, Blender, Substance Designer,
-Houdini) can *arrange* / *tidy* a tangled graph into a clean left-to-right
+Every professional node editor (the engine Blueprint, the DCC, Substance Designer,
+another procedural DCC) can *arrange* / *tidy* a tangled graph into a clean left-to-right
 layered layout with one command. R1383 adds the AI-first peer of that button:
 
     invoke auto_layout        (no args -> Bool: did anything move?)

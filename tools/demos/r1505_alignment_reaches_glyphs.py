@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1505 §5.27 §5.36 §2#7 — the declared alignment reaches the glyphs.
 
-R1504 gave `ColumnLayout` Qt's `QHeaderView::defaultAlignment` and closed
+R1504 gave `ColumnLayout` the toolkit's `defaultAlignment` and closed
 honestly: a label node's rect is its BOX, so the three alignments produce a
 byte-identical tree, and it asserted the rule at the surface that OWNS it.
 That left the rule proven at one end of a three-link chain:
@@ -198,8 +198,8 @@ def body() -> None:
                    desc="…and back to Qt's default")
         assert_eq(_node_aligns(tf), ["Center"] * NCOLS)                           # 16
 
-        # ── (D) the model's exception reaches exactly one node ───────
-        # Qt splits these: the header owns the rule, the model owns the
+        # ── (D) the model's exception reaches exactly one node ─────── the
+        # toolkit splits these: the header owns the rule, the model owns the
         # per-section exception. In the tree that split has to show up as one
         # node differing and four not.
         tf.invoke("/external/set_section_alignment", "2:End")

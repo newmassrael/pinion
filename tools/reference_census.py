@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """R1601 — the reference census, computed rather than remembered.
 
-The node-graph campaign's coverage claim rests on counting what Blender and
-Unreal can do and checking it off. That count has been a hand-written `grep`,
+The node-graph campaign's coverage claim rests on counting what the DCC and
+the engine can do and checking it off. That count has been a hand-written `grep`,
 re-typed each round, and it has been **wrong three times in recorded ways**
-([[debt-blender-census-by-field-name]]):
+([[debt-DCC-census-by-field-name]]):
 
 * R1587.1 — *one name, two spellings*: `no_mute_links` is read under that name
   and set through a builder called `no_muted_links`, so a field census reported
@@ -22,7 +22,7 @@ the rule was right and nobody had written the computation.
 
 ## What it computes
 
-**Blender registers node operators FIVE ways**, and the first census saw one:
+**the DCC registers node operators FIVE ways**, and the first census saw one:
 
 | mechanism                | how it is written                                 |
 |--------------------------|---------------------------------------------------|
@@ -36,8 +36,8 @@ the rule was right and nobody had written the computation.
 The distinction is not bookkeeping. A **macro** is a composition of other
 operators (`NODE_OT_translate_attach` is `TRANSFORM_OT_translate` then
 `NODE_OT_attach`), so counting one as a missing capability is a *false gap* —
-the error R1577 already recorded for Blender's 429 registered node types. An
-**addon** operator is not Blender's node system at all. And an **instance** is
+the error R1577 already recorded for the DCC's 429 registered node types. An
+**addon** operator is not the DCC's node system at all. And an **instance** is
 the mirror: 69 ids that are four behaviours, so counting them would put one
 capability in the denominator sixty-nine times.
 
@@ -49,7 +49,7 @@ than to find the ones it knew how to find:
 
 * `operator_type->idname = "…"` — the receiver is not always called `ot`, so a
   regex keyed on the variable name reported a real operator as unregistered.
-  That is [[debt-blender-census-by-field-name]] recurring inside the tool built
+  That is [[debt-DCC-census-by-field-name]] recurring inside the tool built
   to end it.
 * `ot->idname = __func__` — the id is not in the source at all. No text census
   can read that one without knowing what the compiler substitutes.
@@ -59,13 +59,13 @@ than to find the ones it knew how to find:
 So the answer to "is a text scan good enough" is **no on its own**, and what
 makes it sound anyway is that the classification is now exhaustive: every token
 is an id, a template constant, a registration function's own symbol, or a string
-naming a Python operator — and a token in none of those is a finding. The Unreal
+naming a Python operator — and a token in none of those is a finding. The engine
 side carries the same check as [`unreal_command_residue`]. Comments are removed
 before matching ([`read_cxx`]), so a documented-but-absent virtual cannot be
 counted.
 
-**Unreal's peer unit is not a node class.** `UK2Node_*` is content (113 of them,
-the analogue of Blender's registered node types); the surface that answers "what
+**the engine's peer unit is not a node class.** `UK2Node_*` is content (113 of them,
+the analogue of the DCC's registered node types); the surface that answers "what
 can this editor DO" is a `TCommands<T>` subclass — and there is **not one of
 them**. See R1605 below.
 
@@ -73,7 +73,7 @@ them**. See R1605 below.
 
 R1603 read `FGraphEditorCommandsImpl` and nothing else, so the census measured
 the *generic* node canvas and read every per-editor graph command as zero.
-Unreal ships at least nine graph-editor command classes: the generic one plus
+the engine ships at least nine graph-editor command classes: the generic one plus
 the Blueprint, material, animation, sound-cue, sound-class and behaviour-tree
 editors' own. `MaterialEditorActions.h` alone declares 68, and a material graph
 is half of what this axis is named for.
@@ -173,7 +173,7 @@ VERDICTS = {
 #:
 #: `composition` came from R1601: one macro registers under its own name and IS
 #: several operators, so counting it as a gap invents one. `instance` is the
-#: other direction: Blender's `socket_items` templates register **69** operator
+#: other direction: the DCC's `socket_items` templates register **69** operator
 #: ids that are four behaviours instantiated for twenty-three of its own node
 #: types, and counting those 69 would put one capability in the denominator
 #: sixty-nine times. Each `instance` row names the row that carries the verdict,
@@ -185,9 +185,9 @@ VERDICTS = {
 #:
 #: R1593 (a link may convert) and R1594 (a value is authored on a socket) each
 #: closed something a node substrate cannot host a material or Blueprint graph
-#: without. Both are `UEdGraphSchema` virtuals in Unreal
+#: without. Both are `UEdGraphSchema` virtuals in the engine
 #: (`CreateAutomaticConversionNodeAndConnections`, `TrySetDefaultValue`) and
-#: `bNodeType` / `bNodeTreeType` callbacks in Blender — and **neither is an
+#: `bNodeType` / `bNodeTreeType` callbacks in the DCC — and **neither is an
 #: operator**, so the R1601 census read both as zero and the coverage judged on
 #: top of it was overstated by exactly the amount nobody could see.
 #:
@@ -231,7 +231,7 @@ UNREAL_COMMAND_CLASSES = {
 #: `MaterialGraphSchema` lives — is exactly such a module.
 #:
 #: A class in neither table is a finding. That is the whole mechanism: this table
-#: has to grow when Unreal does, and forgetting is visible.
+#: has to grow when the engine does, and forgetting is visible.
 UNREAL_COMMANDS_OUT = {
     "the level editor, its viewport and its world — a scene, not a graph": [
         "FLevelEditorCommands",
@@ -432,13 +432,13 @@ def walk(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
     return found
 
 
-# ---------------------------------------------------------------- Blender
+# ---------------------------------------------------------------- the DCC
 
 #: R1605 — the receiver is NOT always called `ot`.
 #:
 #: `NODE_OT_new_compositor_sequencer_node_group` writes
 #: `operator_type->idname = "…"`, and a regex that hard-codes `ot->` reported it
-#: as unregistered. That is [[debt-blender-census-by-field-name]] exactly — a
+#: as unregistered. That is [[debt-DCC-census-by-field-name]] exactly — a
 #: census keyed on a *variable name* — recurring inside the tool built to end it.
 CPP_IDNAME = re.compile(r'\b[A-Za-z_][A-Za-z_0-9]*->idname\s*=\s*"(NODE_OT_[a-z_0-9]+)"')
 CPP_MACRO = re.compile(r'WM_operatortype_append_macro\(\s*"(NODE_OT_[a-z_0-9]+)"')
@@ -474,25 +474,25 @@ CPP_IDNAME_FUNC = re.compile(
 #: `absent`-side twin of the error R1601 corrected.
 CPP_OPERATOR_FUNCTION = re.compile(r"\bvoid\s+(NODE_OT_[a-z_0-9]+)\s*\(\s*wmOperatorType\s*\*")
 
-#: R1605 — the FIFTH way Blender registers a node operator, and the one that
-#: made this census overstate Blender coverage.
+#: R1605 — the FIFTH way the DCC registers a node operator, and the one that
+#: made this census overstate the DCC coverage.
 #:
 #: `NOD_socket_items_ops.hh` declares four `template<typename Accessor>` makers
 #: that call `WM_operatortype_append` with the idname taken from the accessor, so
 #: **no registration site anywhere writes `ot->idname = "NODE_OT_…"`**. The names
 #: live as `static constexpr StringRefNull` members of a per-accessor
-#: `struct operator_idnames`, in `source/blender/nodes/` rather than in
+#: `struct operator_idnames`, in `source/the DCC/nodes/` rather than in
 #: `editors/space_node/` — a different directory, a different spelling, and 69
 #: operators the census read as zero.
 #:
-#: Blender's own comment beside the maker says why the string is written out at
+#: the DCC's own comment beside the maker says why the string is written out at
 #: all: *"The idname is passed in explicitly, so that it is more searchable"* —
 #: the reference anticipated a text census and made itself findable, and this one
 #: still missed it, because it accepted exactly one spelling.
 #:
 #: The capability behind them is **variadic ports** — a node whose socket list is
 #: authored per node rather than fixed by its kind — which is the same thing
-#: Unreal spells `AddOptionPin` / `RemoveOptionPin`, already `absent`.
+#: the engine spells `AddOptionPin` / `RemoveOptionPin`, already `absent`.
 CPP_TEMPLATE_IDNAMES = re.compile(r"struct\s+operator_idnames\s*\{(.*?)\};", re.S)
 CPP_TEMPLATE_IDNAME = re.compile(
     r'static\s+constexpr\s+StringRefNull\s+[a-z_0-9]+\s*=\s*"(NODE_OT_[a-z_0-9]+)"'
@@ -587,10 +587,10 @@ def census_blender(root: Path) -> tuple[dict[str, Operator], list[str]]:
 
 #: A C function pointer field, `void (*insert_link)(..)`.
 HOOK_POINTER = re.compile(r"\(\*([a-zA-Z_0-9]+)\)\s*\(")
-#: The same slot written as a `std::function`, which Blender is migrating to.
+#: The same slot written as a `std::function`, which the DCC is migrating to.
 HOOK_FUNCTION = re.compile(r"^\s*std::function<.*>\s+([a-zA-Z_0-9]+)\s*;")
 
-#: Blender's node-system extension surface: what a node type, a tree type and a
+#: the DCC's node-system extension surface: what a node type, a tree type and a
 #: socket type may each answer.
 BLENDER_HOOK_STRUCTS = ("bNodeType", "bNodeTreeType", "bNodeSocketType")
 
@@ -643,7 +643,7 @@ def blender_hooks(root: Path) -> list[tuple[str, str, str]]:
     return found
 
 
-# ----------------------------------------------------------------- Unreal
+# ----------------------------------------------------------------- the engine
 
 UE_COMMAND = re.compile(r"TSharedPtr<\s*FUICommandInfo\s*>\s*([A-Za-z_0-9]+)")
 UE_VIRTUAL = re.compile(r"\bvirtual\s+[A-Za-z_0-9:<>&*,\s]+?\b([A-Za-z_0-9]+)\s*\(")
@@ -661,7 +661,7 @@ UE_COMMANDS_CLASS = re.compile(
 #: because the whole point is that nobody knows how many there are.
 UNREAL_EDITOR = "Engine/Source/Editor"
 
-#: Unreal's node-system extension surface, and the peer of Blender's three
+#: the engine's node-system extension surface, and the peer of the DCC's three
 #: structs: what a *graph* answers (the schema) and what a *node* answers.
 UNREAL_HOOK_HEADERS = {
     "UEdGraphSchema": "Engine/Source/Runtime/Engine/Classes/EdGraph/EdGraphSchema.h",
@@ -1112,26 +1112,75 @@ def report(census: Census, pin: dict, strict: bool) -> int:
     return 1 if (problems and strict) else 0
 
 
+# --- what the COMMITTED artifact is allowed to say (R1612) -----------------
+#
+# This file reads two other projects' source trees, so it cannot avoid naming
+# their layout; the pin it writes is a different matter, because that IS a
+# pushed artifact. The mapping below is what makes the census publishable, and
+# it is a rename rather than an encoding: an operator id is
+# `<vendor prefix>_<capability>` and the capability half is already the generic
+# name, so `NODE_OT_add_group` becomes `add_group` and nothing is lost. Hashing
+# the ids would have been the other option and it would have made the census
+# unreadable by the people who maintain it.
+PUBLIC_TREE = {"blender": "dcc", "unreal": "engine"}
+
+# An owner becomes exactly the stem `proof_name` already derived from it, so
+# every proof identifier in the crates keeps the name it has.
+PUBLIC_OWNER = {
+    "UEdGraphSchema": "schema",
+    "UEdGraphNode": "node",
+    "bNodeType": "node",
+    "bNodeSocketType": "node_socket",
+    "bNodeTreeType": "node_tree",
+}
+
+PUBLIC_MECHANISM = {
+    "UEdGraphSchema": "graph-schema",
+    "UEdGraphNode": "graph-node",
+    "bNodeType": "node-type",
+    "bNodeSocketType": "socket-type",
+    "bNodeTreeType": "tree-type",
+}
+
+
+def public_id(tree: str, name: str) -> str:
+    """The operator's id as the committed pin spells it."""
+    if tree == "blender":
+        return name.removeprefix("NODE_OT_")
+    if "::" in name:
+        owner, member = name.split("::", 1)
+        return f"{PUBLIC_OWNER.get(owner, owner)}::{member}"
+    return name
+
+
 def emit(census: Census, pin: dict) -> None:
     """A starter pin: every live operator, verdicts carried over where the pin
-    already has one and left blank where it does not."""
+    already has one and left blank where it does not.
+
+    Ids, tree names and mechanisms come out in their PUBLIC spelling, and
+    `where` -- a path inside a reference tree -- is left out entirely. It was
+    provenance for a local audit and is regenerable by whoever has the tree; in
+    the committed artifact it was 197 occurrences of a vendor's directory
+    layout.
+    """
     out = {}
     for tree, live in census.all().items():
+        public_tree = PUBLIC_TREE.get(tree, tree)
         if not live:
-            out[tree] = pin.get(tree, {})
+            out[public_tree] = pin.get(public_tree, {})
             continue
         rows = {}
         for name in sorted(live):
             op = live[name]
-            previous = pin.get(tree, {}).get(name, {})
-            rows[name] = {
-                "mechanism": op.mechanism,
+            key = public_id(tree, name)
+            previous = pin.get(public_tree, {}).get(key, {})
+            rows[key] = {
+                "mechanism": PUBLIC_MECHANISM.get(op.mechanism, op.mechanism),
                 "verdict": previous.get("verdict", ""),
                 "covered_by": previous.get("covered_by", ""),
                 "proven_by": previous.get("proven_by", ""),
-                "where": op.where,
             }
-        out[tree] = rows
+        out[public_tree] = rows
     print(json.dumps(out, indent=2, sort_keys=True))
 
 
@@ -1147,6 +1196,17 @@ def check(condition: bool, what: str) -> None:
 
 
 def selftest() -> int:
+    print("the committed spelling")
+    check(public_id("blender", "NODE_OT_add_group") == "add_group",
+          "an operator id keeps its capability half and loses the prefix")
+    check(public_id("unreal", "UEdGraphSchema::AddAction") == "schema::AddAction",
+          "an owner becomes the stem the proof name already derived")
+    check(public_id("unreal", "AnimGraph::AddBlendListPin")
+          == "AnimGraph::AddBlendListPin",
+          "an owner that names no vendor is left alone")
+    check(len({public_id("blender", name) for name in
+               ("NODE_OT_add_group", "NODE_OT_add_collection")}) == 2,
+          "the rename is injective on the ids it changes")
     print("mechanism precedence")
     live = {
         "NODE_OT_a": Operator("NODE_OT_a", "cpp"),

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """R1496 §5.27 §5.51 §2#7 §2#2 — a header says who may touch it.
 
-Qt reference: `QHeaderView::sectionsMovable` and `QHeaderView::sectionsClickable`
+the toolkit reference: `sectionsMovable` and `sectionsClickable`
 — both default `false`, both independent of each other, and both serialised by
-`QHeaderViewPrivate::write()` (as `movableSections` / `clickableSections`),
+`write()` (as `movableSections` / `clickableSections`),
 which is what `saveState()` hands out. `resizeContentsPrecision` is in that same
 stream.
 
@@ -19,7 +19,7 @@ Measured on this very binding before the round, over the real wire:
     save(1000), set 7, restore       -> 7
 
 The header could be dragged and it could be sorted, and it had no way to say no
-to either. Its snapshot — whose own doc calls itself "the peer of Qt's
+to either. Its snapshot — whose own doc calls itself "the peer of the toolkit's
 `saveState()`" — carried neither permission, nor the sampling bound the header
 already had, so a restore replayed every content-fitted width while dropping the
 rule that sized them.
@@ -29,7 +29,7 @@ drop commit: "the permutation came out unchanged, so it was a click". R794 §5.5
 is this workspace's click-vs-drag SSOT — it withholds the trailing `PointerUp`
 after a gesture that travelled past `DRAG_CLICK_THRESHOLD_PX`, and says in as
 many words that no drag source re-derives that per binding. R1491 re-derived it
-and got a different answer than Qt, which measures the same `startDragDistance`:
+and got a different answer than the toolkit, which measures the same `startDragDistance`:
 picking a column up, changing your mind, and putting it back left the
 permutation untouched, so it counted as a click and sorted the column the user
 had just decided not to move. That is (D) below.
@@ -40,7 +40,7 @@ cannot if its click is a by-product of a drag.
 
 What this asserts:
 
-  (A) THE RULES ARE READABLE — and this app declares both, the way a Qt app
+  (A) THE RULES ARE READABLE — and this app declares both, the way a toolkit app
       calls `setSectionsMovable` / `setSortingEnabled`. The strip paints them.
   (B) A DRAG MOVES A SECTION — the baseline the permissions gate.
   (C) A CLICK SORTS — a press-release in place, through the same drag primitive.
@@ -51,12 +51,12 @@ What this asserts:
   (F) AN INERT HEADER — `sections_clickable` off too: neither gesture acts, and
       the readout says so rather than looking broken.
   (G) THE PROGRAMMATIC MOVE IS NOT THE GESTURE — `move_section` reorders a
-      pinned header, exactly as Qt's `moveSection()` does (the R1494 split).
+      pinned header, exactly as the toolkit's `moveSection()` does (the R1494 split).
   (H) THE SNAPSHOT CARRIES THEM — save, revoke, restore, and the permissions and
       the sampling bound all come back.
   (I) AN OLDER SNAPSHOT STILL INTERACTS — a state with the three keys removed is
       the pre-R1496 shape, and decodes to the header that shape came from.
-  (J) PRESS HERE, RELEASE THERE — Qt's same-section rule: neither is activated.
+  (J) PRESS HERE, RELEASE THERE — the toolkit's same-section rule: neither is activated.
 
 R1497 CORRECTION. This file used to record two "pre-existing router defects"
 here — that `scene/click` reached this External not at all, and that a
@@ -247,8 +247,8 @@ def body() -> None:
         _send(tf, 1, "PointerDown")
         _send(tf, 1, "DoubleClick")
         # The binding answers the indicator its click produced — here the third
-        # state of Qt's cycle, the STRING "none", which is not the `None` an
-        # unclicked release answers.
+        # state of the toolkit's cycle, the STRING "none", which is not the `None`
+        # an unclicked release answers.
         assert_eq(_send(tf, 1, "PointerUp"), "none",
                   "a second notification about a live press does not end it: "
                   "the release still clicked, and the cycle reached unsorted") # 12
@@ -348,12 +348,12 @@ def body() -> None:
         assert_eq(_h(tf, "resize_contents_precision"), BOOT_PRECISION,
                   "the bound falls back to the constant, like the other scalars") # 40
 
-        # ── (J) press here, release there ─────────────────────────────
-        # Qt's `logicalIndexAt(pos) == d->pressed`. Driven at the seam because
-        # the arc cannot express it: a gesture that travels from one section to
-        # another travels past DRAG_CLICK_THRESHOLD_PX, and R794 then withholds
-        # the release entirely — so the router never asks this question, and a
-        # test that used the arc would pass with the rule deleted.
+        # ── (J) press here, release there ───────────────────────────── the
+        # toolkit's `logicalIndexAt(pos) == d->pressed`. Driven at the seam because the arc cannot express it:
+        # a gesture that travels from one section to another travels past
+        # DRAG_CLICK_THRESHOLD_PX, and R794 then withholds the release entirely
+        # — so the router never asks this question, and a test that used the
+        # arc would pass with the rule deleted.
         _reset(tf)
         _send(tf, 0, "PointerDown")
         assert_eq(_send(tf, 3, "PointerUp"), None,

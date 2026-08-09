@@ -3,7 +3,7 @@
 
 Drives hello-node-editor over JSON-RPC. R898 made the ports typed sockets;
 R899 gives each input port a typed literal **default value** — the value the
-port carries when nothing is wired into it (Unreal's "pin default value").
+port carries when nothing is wired into it (the engine's "pin default value").
 Typed by the port's PortType (a Float port -> a scalar, a Vector port -> a
 colour), reusing the data-grid CellValue value substrate. An unconnected port
 paints its default beside the pin; a wired port hides it (the wire supplies the
@@ -109,7 +109,8 @@ def body() -> None:
         )
         assert default_label(tf, f"idefault_{lerp}_0") is None, "a wired port hides its default label"
         assert default_label(tf, f"idefault_{lerp}_1") is not None, "the still-open ports keep their labels"
-        # The value is retained (wiring only hides the editor — the Unreal model).
+        # The value is retained (wiring only hides the editor — the engine
+        # model).
         d = tf.query(f"/external/node.{lerp}.input_default.0")
         assert_eq(d["r"], 0x33, "the wired port's default value is retained")
 

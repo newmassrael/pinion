@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1432 §5.35 §5.15 — a native PINCH (magnify) gesture zooms a viewport.
 
-`External::pinch_gesture` forwards the Qt `QNativeGestureEvent` `ZoomNativeGesture`
+`External::pinch_gesture` forwards the toolkit native gesture event `ZoomNativeGesture`
 / macOS `magnify:` peer: the INCREMENTAL magnification of a two-finger trackpad
 pinch, bracketed by a `GesturePhase` arc (begin / update / end / cancel). The
 viewport accumulates `scale *= 1.0 + magnification` across the arc, and — the
@@ -174,7 +174,8 @@ def body() -> None:
             float(tf.query(f"{EXT}/anchor_y")), 0.5, "anchor y fraction is 0.5 (vertical centre)"
         )
 
-        # --- modifiers ride the out-of-band cache (Qt Ctrl-fine-zoom parity). ---
+        # --- modifiers ride the out-of-band cache (the toolkit Ctrl-fine-zoom
+        # parity). ---
         tf.modifiers(ctrl=True)
         tf.pinch_gesture(0.1, "update", at=CENTER)
         assert "c" in str(tf.query(f"{EXT}/last_mods")), "ctrl reached the pinch hook"

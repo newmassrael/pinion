@@ -10,7 +10,7 @@
 
 ## The goal — and the explicit anti-goal
 
-The northern star is a self-hosted Unreal-class editor + AAA games, which
+The northern star is a self-hosted engine-class editor + AAA games, which
 must ship on Windows / Linux / macOS (desktop) and, longer term, embedded /
 console-class targets. So "abstracts well on every platform" is load-bearing,
 not optional.
@@ -80,7 +80,7 @@ introspection stay platform-uniform.
 ### Menu (formalised in §5.53, R771/R771.1)
 
 Decided: pinion's **own-renderer menu is 1st-class on ALL platforms** (the
-game-engine/editor north star — Unreal Slate / Unity IMGUI / Blender / Godot
+game-engine/editor north star — the engine Slate / Unity IMGUI / the DCC / another engine
 all draw their own menus). A native OS menu is an *optional* desktop-app
 backend of the *same* menu model; macOS's top-of-screen global bar is its only
 real win, and is an accepted trade-off to drop for editor/game apps.

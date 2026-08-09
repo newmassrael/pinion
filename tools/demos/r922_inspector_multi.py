@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R922 §5.38 §5.40 — multi-object inspector (the Unreal Details core).
+"""R922 §5.38 §5.40 — multi-object inspector (the engine Details core).
 
 R909/R910 built the single-object selection-driven Details panel. R922
 extends it to its multi-object core: select several objects at once and the

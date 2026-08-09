@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1433 §5.35 §5.15 — a native ROTATION gesture spins a gizmo.
 
-`External::rotation_gesture` forwards the Qt `QNativeGestureEvent`
+`External::rotation_gesture` forwards the toolkit native gesture event
 `RotateNativeGesture` / macOS `rotateWithEvent:` peer, the pinch sibling: the
 INCREMENTAL rotation of a two-finger trackpad twist, in DEGREES (positive =
 counter-clockwise, winit's convention), bracketed by a `GesturePhase` arc
@@ -180,7 +180,8 @@ def body() -> None:
             float(tf.query(f"{EXT}/anchor_y")), 0.5, "anchor y fraction is 0.5 (vertical centre)"
         )
 
-        # --- modifiers ride the out-of-band cache (Qt Shift-snap parity). ---
+        # --- modifiers ride the out-of-band cache (the toolkit Shift-snap
+        # parity). ---
         tf.modifiers(shift=True)
         tf.rotation_gesture(5.0, "update", at=CENTER)
         assert "s" in str(tf.query(f"{EXT}/last_mods")), "shift reached the rotation hook"

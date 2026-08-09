@@ -14,7 +14,8 @@
 //! button Container builder. The [[abstraction-needs-second-consumer]]
 //! Rule-of-Three was satisfied (3 paint consumers), and a canonical M3 button
 //! is a core Phase-B widget-catalog entry (the toolkit / another retained-mode
-//! toolkit / Compose / React all ship one), so the paint lifts here.
+//! toolkit / another declarative toolkit / the web UI library all ship one),
+//! so the paint lifts here.
 //!
 //! ## The genuine shared kernel vs the variance
 //!
@@ -323,7 +324,8 @@ impl ButtonStyle {
     }
 }
 
-/// (R686.B §5.16) Compose a Material 3 filled button [`Scene`].
+/// (R686.B §5.16) another declarative toolkit a Material 3 filled button
+/// [`Scene`].
 ///
 /// A single centered [`TextNode`] label inside a tagged
 /// [`Scene::Container`] whose fill is resolved by [`m3_button_fill`]

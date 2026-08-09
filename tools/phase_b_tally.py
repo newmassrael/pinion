@@ -10,7 +10,7 @@ progress figure that cannot go stale visibly is not a measurement, it is a
 slogan.
 
 **This tool does not compute the percentage.** "How complete is the DCC widget
-axis against Qt" is a judgment, and a script that emitted a number for it would
+axis against the toolkit" is a judgment, and a script that emitted a number for it would
 be inventing precision (the workspace's own rule against fake metrics). What a
 script CAN do is:
 
@@ -230,15 +230,15 @@ AXES = [
         # ~250 rounds.
         #
         # R1532 closes the PAINT half of the third: a column can now declare
-        # how its cells are drawn (Qt `setItemDelegateForColumn`), which is
-        # the extension point that decides whether a grid can have a bar
-        # column, a mark column or a swatch column at all. Before it, a
-        # binding wanting one had to stop using the grid's cell path — which
-        # is exactly what `hello-property-grid`'s `ranged_slider_cell` does.
+        # how its cells are drawn (the toolkit `setItemDelegateForColumn`), which is the extension
+        # point that decides whether a grid can have a bar column, a mark
+        # column or a swatch column at all. Before it, a binding wanting one
+        # had to stop using the grid's cell path — which is exactly what `hello-property-grid`'s
+        # `ranged_slider_cell` does.
         #
         # Only +3, and the remaining item is verified rather than assumed:
-        # the delegate covers paint and not EDITING. Qt's
-        # `QStyledItemDelegate` also owns `createEditor` / `setEditorData` /
+        # the delegate covers paint and not EDITING. The toolkit's
+        # styled item delegate also owns `createEditor` / `setEditorData` /
         # `setModelData`, and every editable grid here still hand-rolls its
         # own edit latch. The seam also has one consumer — six example
         # bindings still build cell subtrees outside the grid's cell path.
@@ -252,24 +252,24 @@ AXES = [
         # 1 -> 2. It closes the item R1532 itself named as the largest one
         # left, and closes it WHOLE rather than by half:
         #
-        #   * the MODEL's `Qt::EditRole`, fused with `flags() &
-        #     Qt::ItemIsEditable` into one `Option<CellEdit>` — so "an editor
+        #   * the MODEL's `EditRole`, fused with `flags() &
+        #     ItemIsEditable` into one `Option<CellEdit>` — so "an editor
         #     open on a cell the model will not edit" stopped being a check
         #     the view must remember and became a state the types reject;
         #   * the DELEGATE's editing half (`createEditor` + `setEditorData`
         #     collapse into one call in a view-fn world, `setModelData` stays
         #     separate because it is a distinct moment);
-        #   * the VIEW's half — the latch, Qt's `EditTriggers` gate, and the
+        #   * the VIEW's half — the latch, the toolkit's `EditTriggers` gate, and the
         #     `EndEditHint` cursor walk over the MODEL extent.
         #
-        # Two things past Qt 6.11, both verified over the wire: a **refused**
-        # write keeps the editor open holding the typed text (Qt's
-        # `setModelData` returns `void`, so a rejected value closes the editor
-        # and the typing is gone), and a cell's editability reaches assistive
-        # technology as `aria-readonly` (Qt's `QAccessibleTableCell` builds its
-        # state from the view's selection and never reads the model's
-        # `ItemIsEditable`, so a Qt screen-reader user cannot tell a fixed
-        # column from an editable one until they type into it).
+        # Two things past the toolkit 6.11, both verified over the wire: a
+        # **refused** write keeps the editor open holding the typed text (the
+        # toolkit's `setModelData` returns `void`, so a rejected value closes the editor and
+        # the typing is gone), and a cell's editability reaches assistive
+        # technology as `aria-readonly` (the toolkit's accessible table cell builds its
+        # state from the view's selection and never reads the model's `ItemIsEditable`, so a
+        # toolkit screen-reader user cannot tell a fixed column from an
+        # editable one until they type into it).
         #
         # +4 and not more, because what remains is real and audited at R1544:
         #   * ADOPTION is one binding. Six still hand-roll a cell edit latch
@@ -282,51 +282,50 @@ AXES = [
         #     absent: it needs N independent text-edit states, and
         #     `use_text_edit_state` is keyed by `&'static str`.
         #   * the built-in editor is a text field, so `CellKind::Choice` and
-        #     `CellKind::Color` reach an editor only through a delegate. Qt
-        #     has the same split (`QItemEditorFactory`); what is missing here
+        #     `CellKind::Color` reach an editor only through a delegate. The toolkit
+        #     has the same split (item editor factory); what is missing here
         #     is a *shipped* combo / palette editor.
         #
         # R1555 re-judgment, demanded by the tool: the round ledger took this
         # axis 2 -> 3, past the 25% band. It closes the third of the items
         # R1544 left, and closes it WIDER than that item was stated. R1544 read
-        # the gap as two missing widgets; it was a missing **axis**. Qt's
-        # editing decomposition has two halves — `setItemDelegateForColumn`
-        # (the per-column override, which R1532 and R1544 built) and
-        # `QItemEditorFactory` (a registry from the DATUM'S TYPE to an editor,
-        # which `QStyledItemDelegate` consults when nothing overrides it). The
-        # second did not exist, so `text_cell_editor` was the built-in for all
-        # six kinds, and for two of them it is an editor that CANNOT WORK:
-        # `Bool` and `Choice` refuse every keystroke (`accepts_keystroke`) and
-        # parse to nothing (`parse`), so the seam opened a field that could not
-        # be typed into and whose commit could never produce a value. Two more
-        # were simply below Qt: `Int` / `Float` got a bare field where Qt's
-        # factory ships a `QSpinBox` / `QDoubleSpinBox`.
+        # the gap as two missing widgets; it was a missing **axis**. The
+        # toolkit's editing decomposition has two halves — `setItemDelegateForColumn` (the per-column
+        # override, which R1532 and R1544 built) and item editor factory (a
+        # registry from the DATUM'S TYPE to an editor, which styled item
+        # delegate consults when nothing overrides it). The second did not
+        # exist, so `text_cell_editor` was the built-in for all six kinds, and for two of them
+        # it is an editor that CANNOT WORK: `Bool` and `Choice` refuse every keystroke
+        # (`accepts_keystroke`) and parse to nothing (`parse`), so the seam opened a field that
+        # could not be typed into and whose commit could never produce a value.
+        # Two more were simply below the toolkit: `Int` / `Float` got a bare field
+        # where the toolkit's factory ships a spin box / double spin box.
         #
-        # `CellKind::editor_form` is the registry and `EditorForm` its answer,
-        # a pure function — where `createEditor` *instantiates a QWidget*, so
-        # Qt cannot be asked what an `int` cell would get without building one,
-        # and `creatorMap` is private so the registry cannot be enumerated at
-        # all. Five forms ship (field / stepper / toggle / selector / swatch),
-        # `scene/cell_editors` publishes the whole mapping, and the a11y role
-        # is derived from the form rather than from whichever widget a factory
-        # happened to construct — which is how a Qt bool cell ends up
-        # announcing as a COMBO BOX and a Qt colour cell announcing nothing.
+        # `CellKind::editor_form` is the registry and `EditorForm` its answer, a pure function — where `createEditor`
+        # *instantiates a widget*, so the toolkit cannot be asked what an `int`
+        # cell would get without building one, and `creatorMap` is private so the
+        # registry cannot be enumerated at all. Five forms ship (field /
+        # stepper / toggle / selector / swatch), `scene/cell_editors` publishes the whole
+        # mapping, and the a11y role is derived from the form rather than from
+        # whichever widget a factory happened to construct — which is how a
+        # toolkit bool cell ends up announcing as a COMBO BOX and a toolkit
+        # colour cell announcing nothing.
         #
-        # Reaching for it forced the model half too: `CellEdit` now carries the
-        # DATUM (Qt's `EditRole` is a `QVariant`), because a `Choice`'s options
-        # are part of its value's identity and a `(kind, String)` pair cannot
-        # tell a selector what to select between. That also retired a
+        # Reaching for it forced the model half too: `CellEdit` now carries the DATUM
+        # (the toolkit's `EditRole` is a dynamic value), because a `Choice`'s options are
+        # part of its value's identity and a `(kind, String)` pair cannot tell a selector
+        # what to select between. That also retired a
         # representable-but-meaningless edit role, `(Int, "not a number")`.
         #
-        # Four things past Qt 6.11, all read over the wire: the factory is
-        # ENUMERABLE; a bool gets a checkbox rather than Qt's two-item combo;
-        # a colour cell is editable at all (Qt's factory has no `QColor`
-        # creator, so `createEditor` answers nullptr and
-        # `QAbstractItemView::edit` silently does nothing); and every commit
-        # outcome is NAMED — `malformed` (the model was never asked) apart from
-        # `refused` (it was), where Qt's `commitData` discards `setData`'s
-        # verdict and its validators make the malformed case unreachable at the
-        # price of committing a value the user did not type.
+        # Four things past the toolkit 6.11, all read over the wire: the
+        # factory is ENUMERABLE; a bool gets a checkbox rather than the
+        # toolkit's two-item combo; a colour cell is editable at all (the
+        # toolkit's factory has no color creator, so `createEditor` answers nullptr and
+        # `edit` silently does nothing); and every commit outcome is NAMED — `malformed`
+        # (the model was never asked) apart from `refused` (it was), where the
+        # toolkit's `commitData` discards `setData`'s verdict and its validators make the
+        # malformed case unreachable at the price of committing a value the
+        # user did not type.
         #
         # +3 and not more, and the remainder is audited at R1555 rather than
         # inherited:
@@ -341,16 +340,16 @@ AXES = [
         #     signature is `&'static str`. What the feature actually needs is
         #     that signature widened, the open latch becoming a map, and the
         #     binding threading a `TextFieldState` per open editor.
-        #   * two of Qt's factory creators have no form because they have no
-        #     KIND: `QDate` / `QTime` / `QDateTime` (there is no date arm on
-        #     `CellKind` at all) and `QMetaType::UInt`.
+        #   * two of the toolkit's factory creators have no form because they have no
+        #     KIND: date / time / date time (there is no date arm on
+        #     `CellKind` at all) and `UInt`.
         #   * the step arrows do not AUTO-REPEAT. R1549 made a cadence a
         #     per-widget declaration (`External::auto_repeat`, level-read from
         #     the widget's own state), and a grid's step arrow is a sub-region
         #     of one External that covers every cell — so repeating it needs a
         #     per-sub-region cadence, or the External tracking which sub-key is
         #     held, which duplicates the router press record R1549 put the run
-        #     inside on purpose. Qt's `setAccelerated` has it; the same shape
+        #     inside on purpose. The toolkit's `setAccelerated` has it; the same shape
         #     R1549 recorded for scrollbar arrows.
         #   * a selector's open list and a swatch's HSV picker are the
         #     binding's overlays; the factory ships the closed states.
@@ -360,38 +359,34 @@ AXES = [
         # R1555's list BOTH named, and the last of the three R1544 left.
         #
         # It also CORRECTS R1555's own prescription above, and the correction
-        # is the round's finding: widening `use_text_edit_state`'s key would
-        # have been wrong. `Owner::cache` has `cache`, `cache_contains` and
-        # `cache_get_by_str` and **no removal of any kind**, so a per-cell
+        # is the round's finding: widening `use_text_edit_state`'s key would have been wrong. `Owner::cache`
+        # has `cache`, `cache_contains` and `cache_get_by_str` and **no removal of any kind**, so a per-cell
         # buffer would be retained for every cell ever edited, for the life of
         # the window — unbounded growth on the models the Model/View axis is
-        # named for, the class R1550 built `scene/memory` to see. An editor's
-        # buffer has to die with the editor, so the buffers live in the editor
-        # SET (`OpenEditors`), and what that set needs follows from a fact
-        # about this framework rather than about Qt: there is exactly ONE
-        # keyboard focus, where Qt has one focusable `QWidget` per editor. Only
-        # the focused editor holds the shared inline field; every other open
+        # named for, the class R1550 built `scene/memory` to see. An editor's buffer has
+        # to die with the editor, so the buffers live in the editor SET (`OpenEditors`),
+        # and what that set needs follows from a fact about this framework
+        # rather than about the toolkit: there is exactly ONE keyboard focus,
+        # where the toolkit has one focusable widget per editor. Only the
+        # focused editor holds the shared inline field; every other open
         # editor's text is PARKED in the latch.
         #
         # Persistence is a property OF THE EDITOR rather than a second
         # collection, which is what makes "a cell has at most one editor" true
-        # by construction — Qt keeps an index->widget hash plus a separate
-        # `QSet<QWidget *>` and reconciles them by convention.
+        # by construction — the toolkit keeps an index->widget hash plus a
+        # separate `set<widget *>` and reconciles them by convention.
         #
-        # Five things past Qt 6.11, all read over the wire by
-        # `r1571_editor_persistence_is_a_property.py`: the set is ENUMERABLE
-        # (`scene/grid_editors`; Qt's only public question is
-        # `isPersistentEditorOpen(index)`, one index at a time, so you must
-        # already know the answer to ask); FOCUS IS DATA (in Qt,
-        # `QApplication::focusWidget()` reverse-mapped through a private hash);
-        # <kbd>Escape</kbd> REVERTS a persistent editor and keeps it open
-        # (`QAbstractItemView::closeEditor` returns early for one, so Escape
-        # there does nothing at all and the original is unrecoverable); each
-        # editor's in-flight value and DIRTY flag are readable WITHOUT focusing
-        # it (Qt keeps no record of what `setEditorData` seeded); and the COST
-        # IS WINDOWED (an editor outside the painted rows contributes no scene
-        # node and keeps its value, where `updateEditorGeometries()` walks
-        # every persistent editor on every scroll).
+        # Five things past the toolkit 6.11, all read over the wire by `r1571_editor_persistence_is_a_property.py`: the
+        # set is ENUMERABLE (`scene/grid_editors`; the toolkit's only public question is `isPersistentEditorOpen(index)`,
+        # one index at a time, so you must already know the answer to ask);
+        # FOCUS IS DATA (in the toolkit, `focusWidget()` reverse-mapped through a private
+        # hash); <kbd>Escape</kbd> REVERTS a persistent editor and keeps it
+        # open (`closeEditor` returns early for one, so Escape there does nothing at all
+        # and the original is unrecoverable); each editor's in-flight value and
+        # DIRTY flag are readable WITHOUT focusing it (the toolkit keeps no
+        # record of what `setEditorData` seeded); and the COST IS WINDOWED (an editor
+        # outside the painted rows contributes no scene node and keeps its
+        # value, where `updateEditorGeometries()` walks every persistent editor on every scroll).
         #
         # A counterfactual found a real defect and the fix is the design: the
         # set's fourth invariant was stated one-directionally ("at most one
@@ -405,13 +400,13 @@ AXES = [
         #     latch and none of them uses the grid's cell path; per-binding
         #     domain work, not seam work.
         #   * the two absences R1555 listed still stand: no date/time
-        #     `CellKind` (`QDate` / `QTime` / `QDateTime`, `QMetaType::UInt`),
+        #     `CellKind` (date / time / date time, `UInt`),
         #     and the step arrows do not auto-repeat.
         #   * `scene/grid_editors` is READ-ONLY. Closing and focusing need no
         #     model and could be framework verbs; opening cannot be one,
         #     because it needs a `CellEdit` only the model produces (R1544) —
         #     an honest split, and the write half is the named next slice.
-        #   * `setIndexWidget` / `indexWidget` — Qt's arbitrary widget in a
+        #   * `setIndexWidget` / `indexWidget` — the toolkit's arbitrary widget in a
         #     cell, distinct from an editor — has no analogue here.
         #   * an open editor is not its own keyboard focus stop, so
         #     <kbd>Tab</kbd> between N editors is a binding's vocabulary
@@ -439,7 +434,7 @@ AXES = [
         # that descends and keys its memo by instance), and R1575 gave the
         # graph its authored/observed layers. Both are real gains. They do not
         # cover the correction, because the same round ran the measurement the
-        # 97 never had: a census against `~/blender-ref` at `8cf50599` — 91
+        # 97 never had: a census against `~/DCC-ref` at `8cf50599` — 91
         # operators, 66 keymap entries — names ELEVEN gaps in editor
         # capability, and R1577 closes ONE. Copy/paste, duplicate,
         # collapse/mute/hide, the richer selection vocabulary (lasso, circle,
@@ -451,7 +446,7 @@ AXES = [
         #
         # Weighing the families rather than the round: property grid ~98 and
         # data grid ~98 (R1532 / R1544 / R1555 / R1571 took those deep), node
-        # graph ~90 after this round against a Blender-class reference. That
+        # graph ~90 after this round against a DCC-class reference. That
         # averages ~95, and 95 is what is recorded. The lesson is R1519's own,
         # one axis over: a completion nobody checked against a reference is
         # not a measurement, and the check is what moved this one DOWN.
@@ -462,15 +457,14 @@ AXES = [
         # counts rounds git HAS. The deferral was wrong and this corrects it.
         #
         # What moved: the node-graph family, the third of this axis's three and
-        # the one the R1577 census found weakest. R1584 makes the group boundary
-        # a PARTITION THAT MOVES — `group_insert` / `group_separate`, the two
-        # directions of one operation, with the interface RE-DERIVED from the
-        # partition that results and every value whose crossing disappeared
-        # RECONNECTED. That last part is where Blender stops:
-        # `node_group_separate_selected` copies the nodes out, deletes them from
-        # the group, touches the interface not at all, and the value that flowed
-        # through them is gone. Held as a test helper and asserted rather than
-        # described.
+        # the one the R1577 census found weakest. R1584 makes the group
+        # boundary a PARTITION THAT MOVES — `group_insert` / `group_separate`, the two directions of
+        # one operation, with the interface RE-DERIVED from the partition that
+        # results and every value whose crossing disappeared RECONNECTED. That
+        # last part is where the DCC stops: `node_group_separate_selected` copies the nodes out, deletes
+        # them from the group, touches the interface not at all, and the value
+        # that flowed through them is gone. Held as a test helper and asserted
+        # rather than described.
         #
         # Only +1, and the reason is the R1577 census this axis is now measured
         # against: eleven named gaps in editor capability, of which R1578 closed
@@ -490,40 +484,37 @@ AXES = [
         # any kind. R1586 — a node says HOW IT TAKES PART: bypass, with
         # dissolve and detach applying the same derivation to the structure, a
         # muted LINK named apart from a bypassed NODE because they are opposite
-        # behaviours Blender spells alike, and `Appearance` as a type the
-        # evaluator cannot read (census items 4 and 6, whole). R1587 — a PORT
-        # declares whether a value passes through it, the whole extension point,
-        # chosen by censusing what Blender's eleven per-node callbacks actually
-        # compute. R1589 — a node can BELONG TO A FRAME, which is census item 12
-        # and, by the 2026-08-07 re-measurement against the crate rather than
-        # the example, the heaviest of the five remaining clusters: eight
+        # behaviours the DCC spells alike, and `Appearance` as a type the evaluator
+        # cannot read (census items 4 and 6, whole). R1587 — a PORT declares
+        # whether a value passes through it, the whole extension point, chosen
+        # by censusing what the DCC's eleven per-node callbacks actually
+        # compute. R1589 — a node can BELONG TO A FRAME, which is census item
+        # 12 and, by the 2026-08-07 re-measurement against the crate rather
+        # than the example, the heaviest of the five remaining clusters: eight
         # operators over a concept the crate did not have at all.
         #
-        # Only +1, and the audit is at R1589 rather than inherited. What remains
-        # on this family is NINE operators and every one of them is an editor
-        # GESTURE over a model that now exists: census item 5 (the richer
-        # selection vocabulary, six of them), 7 (`insert_offset`), 8
-        # (`find_node`), 10 (`view_selected`), with 9 (`resize`) and 11
-        # (`swap_node` / `node_copy_color`) half-done at the model layer. Two
-        # things the census cannot see are larger than all of it: EXECUTION
-        # SEMANTICS are inexpressible in `evaluate(inputs) -> outputs` and
-        # Blender is pure dataflow too, so no comparison against it will ever
-        # surface that; and `hello-node-editor` still holds its own model, so
-        # the tree now carries two node models AND two frame implementations
-        # ([[debt-two-node-graph-models]]). Weighing the families: property grid
-        # ~98, data grid ~98, node graph ~95 after these three rounds, which
-        # averages ~97.
-        # R1594 re-judged and the number HELD at 97, which is the finding. The
-        # tool demanded the look (`round-axis` 11 -> 14 = +27%) and it absorbs
-        # R1590, R1593 and R1594. R1593 gave the crate a DIRECTED type relation
-        # (`NodeKind::conversion`) — its gate was `source.ty != sink.ty`, and
-        # `!=` is symmetric, so a lattice where a scalar broadcasts into a
+        # Only +1, and the audit is at R1589 rather than inherited. What
+        # remains on this family is NINE operators and every one of them is an
+        # editor GESTURE over a model that now exists: census item 5 (the
+        # richer selection vocabulary, six of them), 7 (`insert_offset`), 8 (`find_node`), 10
+        # (`view_selected`), with 9 (`resize`) and 11 (`swap_node` / `node_copy_color`) half-done at the model layer.
+        # Two things the census cannot see are larger than all of it: EXECUTION
+        # SEMANTICS are inexpressible in `evaluate(inputs) -> outputs` and the DCC is pure dataflow too,
+        # so no comparison against it will ever surface that; and `hello-node-editor` still
+        # holds its own model, so the tree now carries two node models AND two
+        # frame implementations ([[debt-two-node-graph-models]]). Weighing the
+        # families: property grid ~98, data grid ~98, node graph ~95 after
+        # these three rounds, which averages ~97. R1594 re-judged and the
+        # number HELD at 97, which is the finding. The tool demanded the look
+        # (`round-axis` 11 -> 14 = +27%) and it absorbs R1590, R1593 and R1594. R1593
+        # gave the crate a DIRECTED type relation (`NodeKind::conversion`) — its gate was `source.ty != sink.ty`,
+        # and `!=` is symmetric, so a lattice where a scalar broadcasts into a
         # vector without the vector narrowing back was INEXPRESSIBLE, and the
         # trait's own doc said to model it "by making the coercion part of
         # equality", which no equality relation can be. R1594 gave a NODE its
-        # own socket values (Blender's `bNodeSocket::default_value`); before it
-        # every node of a kind shared one value, so a source's constant had to
-        # live inside the taxonomy where nothing could edit it.
+        # own socket values (the DCC's `bNodeSocket::default_value`); before it every node of a kind
+        # shared one value, so a source's constant had to live inside the
+        # taxonomy where nothing could edit it.
         #
         # Both are PREREQUISITES rather than polish — a node-graph substrate
         # without either cannot host a material or a Blueprint graph at all — so
@@ -556,14 +547,13 @@ AXES = [
         # the nodes on it, and R1598 let a node change what it IS without
         # changing which node it is (`Document::set_kind`).
         #
-        # Re-run rather than inherited: the Blender operator census at
-        # `8cf59599` is 91, of which 32 are that application's own content. Of
-        # the 59 that are node-system mechanism, FOUR are absent — `find_node`,
-        # `insert_offset`, `node_copy_color` and `view_selected` — so coverage
-        # is 55/59 = 93%, up from 86% at R1590. The two the campaign file still
-        # lists as excluded, `select_circle` and `select_lasso`, are NOT
-        # excluded any more: R1591 made a region a value and R1592 gave the node
-        # editor both, so they are live consumers rather than a stated gap.
+        # Re-run rather than inherited: the DCC operator census at `8cf59599` is 91,
+        # of which 32 are that application's own content. Of the 59 that are
+        # node-system mechanism, FOUR are absent — `find_node`, `insert_offset`, `node_copy_color` and `view_selected` — so
+        # coverage is 55/59 = 93%, up from 86% at R1590. The two the campaign
+        # file still lists as excluded, `select_circle` and `select_lasso`, are NOT excluded any more:
+        # R1591 made a region a value and R1592 gave the node editor both, so
+        # they are live consumers rather than a stated gap.
         #
         # +1 and not more, and what caps it is this axis's own name. "Node-graph
         # editor substrate (visual scripting / material graph)" is two things,
@@ -599,14 +589,14 @@ AXES = [
         # test-backed figure for its node-graph third, and it is far below what
         # the 98 rested on. The 98 was set against a hand census claiming 93%.
         # R1601 made that census a tool and WITHDREW the number for a measured
-        # 78% (Blender, operator surface). R1602 made every `have` verdict name
+        # 78% (the DCC, operator surface). R1602 made every `have` verdict name
         # a TEST that exercises it through the public API, so a verdict can no
         # longer be a hand claim. R1603 then found the census was BLIND rather
         # than incomplete — R1593's implicit conversion and R1594's per-socket
         # default are `UEdGraphSchema` virtuals and `bNodeType` callbacks, not
         # operators, so an operator census read two PREREQUISITES as zero — and
         # censused the hook surface on both references. Measured, per surface:
-        # Blender 54/72 = 75% (operator 78, hook 62); Unreal 60/149 = 40%
+        # The DCC 54/72 = 75% (operator 78, hook 62); the engine 60/149 = 40%
         # (command 39, hook 40).
         #
         # R1604.1 — ADDENDUM, not a rewrite: those are the figures this judgment
@@ -616,20 +606,20 @@ AXES = [
         # from the paragraph above. R1605 widened both censuses and the two
         # halves moved differently, which is the part worth carrying:
         #
-        #   * Unreal did NOT move — 40% before and after, command 39% before and
+        #   * the engine did NOT move — 40% before and after, command 39% before and
         #     after (20/51 -> 45/113). Reading eight command lists instead of one
         #     found that the generic canvas was REPRESENTATIVE, which is a result
         #     rather than an absence of one.
-        #   * Blender DID — 75% -> 71% (operator 78 -> 73), because the census
+        #   * the DCC DID — 75% -> 71% (operator 78 -> 73), because the census
         #     had been reading C++ as text and a FIFTH registration mechanism
         #     was invisible to it: `NOD_socket_items_ops.hh` registers 69
         #     operator ids through four templates whose idnames live as
         #     `static constexpr StringRefNull` in a per-accessor struct, so no
         #     registration site writes `ot->idname` at all. Live 170 -> 246.
         #
-        # So the node-graph third's inputs are now Blender 71 / Unreal 40, not
-        # 75 / 40. The completion here is NOT changed on that account: the tool
-        # did not demand a re-judgment (`round-axis` 23 -> 24 = +4%, inside the
+        # So the node-graph third's inputs are now the DCC 71 / the engine 40,
+        # not 75 / 40. The completion here is NOT changed on that account: the
+        # tool did not demand a re-judgment (`round-axis` 23 -> 24 = +4%, inside the
         # band), and moving a number on evidence the staleness check has not
         # flagged would be exactly the hand-adjustment this table exists to
         # stop. It is recorded so the next demanded look starts from the truth.
@@ -639,14 +629,15 @@ AXES = [
         # Every widening so far has found more reference than it found pinion.
         #
         # The node-graph figure. This axis's own name is TWO references' worth
-        # of scope: Blender is the material-graph one at 75%, Unreal is the
+        # of scope: the DCC is the material-graph one at 75%, the engine is the
         # visual-scripting one at 40%, and equal weight gives 57.5. Two stated
-        # biases push that up and neither is a measurement, so they buy a little
-        # and not a lot: R1603's judging rule was "when unsure prefer `absent`",
-        # which biases the number LOW by construction, and the absences CLUSTER
-        # — Unreal's 89 are about eight distinct capabilities counted many times
-        # (alignment 11, variadic ports 6, struct pins 5, breakpoints 5, watches
-        # 2, relinking 3, per-node permissions 6, colour 5). Node graph: 62.
+        # biases push that up and neither is a measurement, so they buy a
+        # little and not a lot: R1603's judging rule was "when unsure prefer
+        # `absent`", which biases the number LOW by construction, and the absences
+        # CLUSTER — the engine's 89 are about eight distinct capabilities
+        # counted many times (alignment 11, variadic ports 6, struct pins 5,
+        # breakpoints 5, watches 2, relinking 3, per-node permissions 6, colour
+        # 5). Node graph: 62.
         #
         # The method is UNCHANGED on purpose — the three families averaged, as
         # every judgment in this series has done. Changing the method and the
@@ -684,83 +675,77 @@ AXES = [
             ]),
         ],
         # R1526 re-judgment, forced by this round's own change: introducing the
-        # `round-axis` kind takes this axis's declared rounds from a snapshot of
-        # 0 to 3, and R1522's rule is that changing the UNIT of evidence without
+        # `round-axis` kind takes this axis's declared rounds from a snapshot of 0 to 3,
+        # and R1522's rule is that changing the UNIT of evidence without
         # re-judging leaves the number and the evidence in different units.
         # R1519 said 75% on windowing (list/grid/tree) + three composable
         # proxies + data-indexed selection + async/lazy + an LRU million-row
-        # source. The three rounds now declared closed the core of Qt's
-        # QAbstractItemModel data path: R1523 windows the column axis as well as
-        # the row axis (200 -> 5 cells a row), R1524 makes the contract per-cell
-        # rather than per-row (`data(QModelIndex)`; 2400 -> 84 cells asked a
+        # source. The three rounds now declared closed the core of the
+        # toolkit's abstract item model data path: R1523 windows the column
+        # axis as well as the row axis (200 -> 5 cells a row), R1524 makes the
+        # contract per-cell rather than per-row (`data(model index)`; 2400 -> 84 cells asked a
         # frame), R1525 makes the painted string the one the ordering read.
         # R1530 re-judgment, demanded by the tool: the round ledger took this
         # axis 3 -> 4, past the 25% band. R1526 named exactly two remaining
         # gaps and R1530 closed the first of them — header data was per-slice
-        # (`headers: &[&str]` for all 200 columns where Qt's `headerData` is
-        # per-section) because `VirtualTableData` read its column count off
-        # that slice's length; `column_count` + `GridModel::header` split the
-        # two the way `columnCount()` / `headerData()` are split, and the a11y
-        # builder takes the window rather than the table.
+        # (`headers: &[&str]` for all 200 columns where the toolkit's `headerData` is per-section)
+        # because `VirtualTableData` read its column count off that slice's length; `column_count` + `GridModel::header`
+        # split the two the way `columnCount()` / `headerData()` are split, and the a11y builder takes
+        # the window rather than the table.
         #
         # +3 and not more, because the gap that is left is the LARGER of the
-        # two R1526 named: `cell` and `header` both return a String with no
-        # role dimension (Qt's Display/Edit/Decoration/ToolTip), which is a
+        # two R1526 named: `cell` and `header` both return a String with no role
+        # dimension (the toolkit's Display/Edit/Decoration/ToolTip), which is a
         # whole axis of the contract rather than one accessor's shape — it is
         # what a decorated cell, an edit-vs-display value and a tooltip all
-        # need. R1530 also surfaced three smaller ones: the eager `view_table`
-        # still takes a header slice (two header contracts in one tree), five
-        # of the six a11y grid builders still take every label, and a binding
-        # still states its column window twice (paint + a11y).
-        # Unified data layer stays out by the R780/R821 fourth-consumer gate,
-        # not by omission.
+        # need. R1530 also surfaced three smaller ones: the eager `view_table` still
+        # takes a header slice (two header contracts in one tree), five of the
+        # six a11y grid builders still take every label, and a binding still
+        # states its column window twice (paint + a11y). Unified data layer
+        # stays out by the R780/R821 fourth-consumer gate, not by omission.
         # R1536 re-judgment, demanded by the tool: the round ledger took this
         # axis 4 -> 6, past the 25% band. R1530's judgment named the role
         # dimension as the LARGER of the two gaps it left, and R1535 + R1536
-        # closed it on the CELL axis — not merely opened it. `GridModel` gained
-        # `decoration` as a third typed accessor (Qt `data(index,
-        # Qt::DecorationRole)`, asked per cell, which is the axis a per-column
-        # delegate cannot express); the answer carries a `meaning` beside its
-        # ink, which Qt does NOT (its decoration role is appearance and the
-        # accessible text is a separate role the item view never wires to it,
-        # so a colour-only status column is an empty cell to a Qt screen-reader
-        # user); the mark is addressable by `GridTag::cell_decoration`; it has
-        # both of Qt's arms (QColor, QIcon); and the EAGER `view_table` answers
+        # closed it on the CELL axis — not merely opened it. `GridModel` gained `decoration` as
+        # a third typed accessor (the toolkit `data(index, DecorationRole)`, asked per cell, which is the
+        # axis a per-column delegate cannot express); the answer carries a `meaning`
+        # beside its ink, which the toolkit does NOT (its decoration role is
+        # appearance and the accessible text is a separate role the item view
+        # never wires to it, so a colour-only status column is an empty cell to
+        # a toolkit screen-reader user); the mark is addressable by `GridTag::cell_decoration`; it has
+        # both of the toolkit's arms (color, icon); and the EAGER `view_table` answers
         # the same role, so the tree no longer holds two cell-paint contracts
         # that disagree about whether it exists.
         #
         # R1536 also fixed what reaching for that found underneath, which is
         # the larger part of this +4: the accessible-name derivation could not
-        # enter a `ScrollNode`, so NOTHING in any virtualized list, grid or
-        # tree was named to an AT — measured, `hello-virtual-table` 0 of 75
-        # gridcells, `hello-virtual-list` 1 of 16 — while the bounds walker
-        # descended fine and made the tree look correct. Qt names its cells;
-        # this axis did not.
+        # enter a `ScrollNode`, so NOTHING in any virtualized list, grid or tree was
+        # named to an AT — measured, `hello-virtual-table` 0 of 75 gridcells, `hello-virtual-list` 1 of 16 — while
+        # the bounds walker descended fine and made the tree look correct. The
+        # toolkit names its cells; this axis did not.
         #
-        # +4 and not more, because what is left is verified rather than
-        # assumed (checked at R1536, not carried from R1530): the HEADER axis
-        # has no role dimension at all — the largest item on this axis now —
-        # and two of Qt's four canonical roles stay unanswerable, `EditRole`
-        # behind the delegate's absent editing half and `ToolTipRole` behind a
-        # per-cell hover path. R1530's three smaller ones were re-checked and
-        # all three still hold: the eager `view_table` still takes a header
-        # slice, five of the six a11y grid builders still take every label, and
-        # a binding still states its column window twice (paint + a11y).
-        # R1547 did NOT force a re-judgment (round ledger 6 -> 7, +17%, inside
-        # the band) and the number stayed at 87 with the gap statement updated:
-        # it OPENED the header axis's role dimension on the horizontal axis
-        # (`header_decoration`, Qt `headerData(section, Qt::Horizontal,
-        # Qt::DecorationRole)`) and named the axis's own largest remainder —
-        # there was no VERTICAL section axis at all.
+        # +4 and not more, because what is left is verified rather than assumed
+        # (checked at R1536, not carried from R1530): the HEADER axis has no
+        # role dimension at all — the largest item on this axis now — and two
+        # of the toolkit's four canonical roles stay unanswerable, `EditRole` behind
+        # the delegate's absent editing half and `ToolTipRole` behind a per-cell hover
+        # path. R1530's three smaller ones were re-checked and all three still
+        # hold: the eager `view_table` still takes a header slice, five of the six a11y
+        # grid builders still take every label, and a binding still states its
+        # column window twice (paint + a11y). R1547 did NOT force a re-judgment
+        # (round ledger 6 -> 7, +17%, inside the band) and the number stayed at
+        # 87 with the gap statement updated: it OPENED the header axis's role
+        # dimension on the horizontal axis (`header_decoration`, the toolkit `headerData(section, Horizontal, DecorationRole)`) and named the
+        # axis's own largest remainder — there was no VERTICAL section axis at
+        # all.
         #
         # R1548 re-judgment, demanded by the tool: the round ledger took this
-        # axis 6 -> 8, past the 25% band. It closes that named item whole. Qt
-        # spells both axes with one virtual (`headerData(section, orientation,
-        # role)`) and a `QTableView` shows the vertical one by default; here a
-        # column could be asked what it was called and what mark it carried,
-        # and a ROW could be asked nothing — no row numbers, no pin, no lock,
-        # no breakpoint gutter, the whole left-hand band a professional table,
-        # editor or profiler has.
+        # axis 6 -> 8, past the 25% band. It closes that named item whole. The
+        # toolkit spells both axes with one virtual (`headerData(section, orientation, role)`) and a table view
+        # shows the vertical one by default; here a column could be asked what
+        # it was called and what mark it carried, and a ROW could be asked
+        # nothing — no row numbers, no pin, no lock, no breakpoint gutter, the
+        # whole left-hand band a professional table, editor or profiler has.
         #
         # It lands as a TYPE, not a second pair of accessors: `HeaderAxis<L,
         # D>` holds the two roles a section answers, `GridModel::columns` and
@@ -772,28 +757,26 @@ AXES = [
         # shape) rather than a seventh builder variant, so it lands on every
         # topology including the permuted one.
         #
-        # Two things past Qt 6.11, both read over the wire: an unanswered axis
-        # is a DECLARATION, not a blank strip (Qt's orientation is a runtime
-        # argument, so the commonest `QAbstractTableModel` bug there — handle
-        # `Qt::Horizontal`, fall through returning `QVariant()` — paints
+        # Two things past the toolkit 6.11, both read over the wire: an
+        # unanswered axis is a DECLARATION, not a blank strip (the toolkit's
+        # orientation is a runtime argument, so the commonest abstract table
+        # model bug there — handle `Horizontal`, fall through returning `dynamic value()` — paints
         # sections that still occupy their width and is reported by nothing;
-        # here `no_row_header()` is written down, the band is not painted, the
-        # model is asked ZERO times a frame, and painted-iff-answered is
-        # structural because there is no second "show the header" flag); and
-        # the mark's MEANING reaches assistive technology
-        # (`QAccessibleTableHeaderCell::text(Name)` answers from
-        # `Qt::DisplayRole` on both orientations, so a Qt row header whose
-        # distinguishing information is its glyph announces only the number).
+        # here `no_row_header()` is written down, the band is not painted, the model is asked
+        # ZERO times a frame, and painted-iff-answered is structural because
+        # there is no second "show the header" flag); and the mark's MEANING
+        # reaches assistive technology (`text(Name)` answers from `DisplayRole` on both
+        # orientations, so a toolkit row header whose distinguishing
+        # information is its glyph announces only the number).
         #
-        # +4 and not more, audited at R1548: a section axis answers 2 of Qt's
-        # roles (`ToolTipRole` / `TextAlignmentRole` / `InitialSortOrderRole` /
-        # `SizeHintRole` all absent on a header); the row axis has NO
-        # interaction (Qt's `QHeaderView` section click selects the row, and
-        # its sections resize — row height here is one grid-wide pitch the
-        # windowing arithmetic is built on); the band's width is stated rather
-        # than `ResizeToContents`; and R1530's last small one now holds on both
-        # axes — a binding states its row window twice (paint + a11y) as it
-        # already did its column window.
+        # +4 and not more, audited at R1548: a section axis answers 2 of the
+        # toolkit's roles (`ToolTipRole` / `TextAlignmentRole` / `InitialSortOrderRole` / `SizeHintRole` all absent on a header); the
+        # row axis has NO interaction (the toolkit's header view section click
+        # selects the row, and its sections resize — row height here is one
+        # grid-wide pitch the windowing arithmetic is built on); the band's
+        # width is stated rather than `ResizeToContents`; and R1530's last small one now holds
+        # on both axes — a binding states its row window twice (paint + a11y)
+        # as it already did its column window.
         #
         # R1563 re-judgment, DEMANDED by the tool: the round ledger takes this
         # axis 8 -> 11 (+37.5%), past the band, and it absorbs THREE rounds —
@@ -815,29 +798,25 @@ AXES = [
         # cells has no unique minimal decomposition into rectangles (a cross is
         # two rectangles two ways, both minimal), and this framework's
         # selection is CANONICAL because that is what lets it report whether an
-        # interaction changed anything. So `CellSelection` holds the function
-        # row -> column set GROUPED BY ITS VALUE — one band per distinct
-        # `ColumnSpan` — which is unique by construction. Past Qt: `ColumnSpan`
-        # carries no column count, so a record stays whole when the schema
-        # grows, where a Qt range built against `columnCount() - 1` is silently
-        # demoted and drops out of `selectedRows()`.
+        # interaction changed anything. So `CellSelection` holds the function row -> column
+        # set GROUPED BY ITS VALUE — one band per distinct `ColumnSpan` — which is
+        # unique by construction. Past the toolkit: `ColumnSpan` carries no column
+        # count, so a record stays whole when the schema grows, where a toolkit
+        # range built against `columnCount() - 1` is silently demoted and drops out of `selectedRows()`.
         #
         # +4 and not more, and the remainder is audited at R1563 rather than
-        # carried: the section axis still answers 2 of Qt's roles on both axes
-        # (`ToolTipRole` / `TextAlignmentRole` / `InitialSortOrderRole` /
-        # `SizeHintRole`); the band's width is stated rather than
-        # `ResizeToContents`; a binding still states its row window twice
-        # (paint + a11y) and `virtual_grid.rs` still has two row emitters;
-        # DRAG-select across sections is still blocked on a substrate absence
-        # the pointer wire has (it does not say whether a button is held —
-        # W3C `PointerEvent.buttons`); the KEYBOARD has no two-axis vocabulary
-        # (Qt's `Ctrl+Space` on a cell, `Ctrl+Shift+Arrow` growing a
-        # rectangle), which is this round's own new gap; the `SelectColumns`
-        # arm has no binding; and R1563 FOUND one this axis had never named —
-        # the eager `Table` holds its own single-rectangle cell selection
-        # (R952), so the tree now has two cell-selection models, one canonical
-        # and windowed, one a rectangle bounded by a model small enough to
-        # materialise.
+        # carried: the section axis still answers 2 of the toolkit's roles on
+        # both axes (`ToolTipRole` / `TextAlignmentRole` / `InitialSortOrderRole` / `SizeHintRole`); the band's width is stated rather
+        # than `ResizeToContents`; a binding still states its row window twice (paint + a11y)
+        # and `virtual_grid.rs` still has two row emitters; DRAG-select across sections is
+        # still blocked on a substrate absence the pointer wire has (it does
+        # not say whether a button is held — W3C `PointerEvent.buttons`); the KEYBOARD has no
+        # two-axis vocabulary (the toolkit's `Ctrl+Space` on a cell, `Ctrl+Shift+Arrow` growing a
+        # rectangle), which is this round's own new gap; the `SelectColumns` arm has no
+        # binding; and R1563 FOUND one this axis had never named — the eager
+        # `Table` holds its own single-rectangle cell selection (R952), so the
+        # tree now has two cell-selection models, one canonical and windowed,
+        # one a rectangle bounded by a model small enough to materialise.
         "judged_at": 1563,
         "completion": 95,
         "evidence_snapshot": {"example-name": 37, "round-axis": 11},
@@ -865,10 +844,11 @@ AXES = [
                 # so a member with no pattern is reported UNCLASSIFIED rather
                 # than counted somewhere convenient.
                 "group-box",
-                # R1569 — the key-sequence editor (Qt `QKeySequenceEdit`), the
-                # field a shortcut is recorded into. Added on the round that
-                # built it, because the census reported it UNCLASSIFIED at the
-                # push that shipped it — which is the census doing its job.
+                # R1569 — the key-sequence editor (the toolkit key-sequence
+                # editor), the field a shortcut is recorded into. Added on the
+                # round that built it, because the census reported it
+                # UNCLASSIFIED at the push that shipped it — which is the
+                # census doing its job.
                 "key-sequence",
             ]),
         ],
@@ -881,11 +861,10 @@ AXES = [
         # found a stated gap describing finished work; an axis with nothing
         # stated cannot even be caught that way.
         #
-        # R1533 gave the two stepped value widgets `External::wheel` (Qt
-        # `QAbstractSlider::wheelEvent` / `QAbstractSpinBox::wheelEvent`) plus
-        # the `WheelStepper` sub-notch carry they need. The hook had existed
-        # since R877 and a census found ONE implementor in the repo (the node
-        # canvas' zoom), so no widget in the catalog answered a wheel.
+        # R1533 gave the two stepped value widgets `External::wheel` (the toolkit `wheelEvent` / `wheelEvent`)
+        # plus the `WheelStepper` sub-notch carry they need. The hook had existed since
+        # R877 and a census found ONE implementor in the repo (the node canvas'
+        # zoom), so no widget in the catalog answered a wheel.
         #
         # Only +2, because the audit that produced the gap list below found
         # MORE absent surface than the round filled — the R1528 pattern, where
@@ -894,18 +873,18 @@ AXES = [
         #   * ~~Mnemonics / accelerators~~ — CLOSED R1543. It was the first
         #     item R1533 listed and the largest, because it is not one
         #     widget: it is an axis every labelled widget sits on. R1543
-        #     landed Qt's `&`/`&&` vocabulary as ONE declaration on the
+        #     landed the toolkit's `&`/`&&` vocabulary as ONE declaration on the
         #     painted label, from which the underline ink (a `StyleRun`, so
         #     both painters draw it with no per-backend code), the Alt+char
         #     binding (derived from the PAINT scene, so it cannot disagree
         #     with what the user sees underlined) and the AT `accesskey` are
-        #     all derived. Past Qt in four places: the map is published
-        #     (`scene/mnemonics`; Qt's lives in the private
+        #     all derived. Past the toolkit in four places: the map is published
+        #     (`scene/mnemonics`; the toolkit's lives in the private
         #     `qshortcutmap_p.h`), a conflict is a STATIC property of the
         #     scene rather than a bool on the event the user triggered, the
-        #     ink and the binding come from one parse instead of Qt's two,
+        #     ink and the binding come from one parse instead of the toolkit's two,
         #     and `accesskey` stays distinct from `keyboard_shortcut` where
-        #     `QAccessible::Accelerator` collapses them.
+        #     `Accelerator` collapses them.
         #   * ~~Press-and-hold auto-repeat~~ — CLOSED R1549. It was the
         #     item R1543 named FIRST and called the largest cross-cutting
         #     one left, and it was 100% absent: holding a spin arrow
@@ -916,23 +895,23 @@ AXES = [
         #     gave the router the clock; a fire re-dispatches the widget's
         #     own `PointerUp`+`PointerDown` arc, so a repeat is a click by
         #     the same derivation and no widget needed a new SCXML
-        #     transition. Past Qt in three places, all read over the wire:
-        #     the hold is DRIVABLE AS DATA (Qt's `QBasicTimer` cannot be
+        #     transition. Past the toolkit in three places, all read over the wire:
+        #     the hold is DRIVABLE AS DATA (the toolkit's basic timer cannot be
         #     told "hold for 900 ms"; this rides the `scene/tick` clock and
         #     the demo asserts exact fire counts with no tolerance), the RUN
         #     IS PUBLISHED and predictive (`scene/auto_repeat` gives target
-        #     / repeating / cadence / fires / seconds-to-next, where Qt's
+        #     / repeating / cadence / fires / seconds-to-next, where the toolkit's
         #     only public fact is a static per-widget property), and a held
-        #     arrow AT ITS BOUND stops (`QAbstractSpinBox` keeps its 10 Hz
+        #     arrow AT ITS BOUND stops (abstract spin box keeps its 10 Hz
         #     timer running against a value pinned at `maximum()`).
         #     Armed-ness is re-ASKED every frame instead of stored, and the
-        #     run lives IN the R876 press record, so Qt's runaway-timer bug
+        #     run lives IN the R876 press record, so the toolkit's runaway-timer bug
         #     class has nowhere to live. Adoption is COMPLETE for the widget
         #     classes that can express a hold — all three that own `Button`
-        #     sub-regions (`ButtonExternal` opt-in as `QPushButton` is,
+        #     sub-regions (`ButtonExternal` opt-in as push button is,
         #     `SpinButtonExternal` and `PaginationExternal` on by default as
-        #     Qt's spin arrows are).
-        #   * Qt also has `wheelEvent` on `QComboBox` and `QTabBar`; R1533
+        #     the toolkit's spin arrows are).
+        #   * the toolkit also has `wheelEvent` on combo box and tab bar; R1533
         #     covered value arithmetic, not index arithmetic. Re-checked at
         #     R1554: `External::wheel` still has exactly the two CATALOG
         #     implementors R1533 added (`slider`, `spin_button`; two more
@@ -948,59 +927,55 @@ AXES = [
         #     not done blind: a helper whose label ALSO feeds a hand-passed
         #     a11y name has to resolve the markup there too, which R1543 hit
         #     once (`menu_item_nodes`) and did not audit for across the tree.
-        #   * Absent widget kinds. `QGroupBox` — the one R1549 put FIRST
+        #   * Absent widget kinds. group box — the one R1549 put FIRST
         #     and called out as "especially checkable" — is CLOSED R1554;
-        #     re-censused there, the other five are still absent: `QDial`
+        #     re-censused there, the other five are still absent: dial
         #     (no dial or knob; the one `dial` hit is a rotate GESTURE
-        #     example), a paged container (`QStackedWidget` / `QWizard`),
-        #     `QKeySequenceEdit`, `QFontComboBox`, and the standard
-        #     `QMessageBox` / `QInputDialog` canned dialogs — each of the
+        #     example), a paged container (stacked widget / wizard),
+        #     key-sequence editor, font picker, and the standard
+        #     message box / input dialog canned dialogs — each of the
         #     five appears in this tree only inside a doc comment.
         #
-        # R1549 re-judgment, 87 -> 90, demanded by the tool (round ledger
-        # 2 -> 3). +3, the same calibration R1543 got for mnemonics and for
-        # the same reason: what closed is not one widget but an axis every
-        # pressable widget sits on, it was wholly absent, and it closed past
-        # Qt in three places. Unlike R1543 it also added NO gap of its own —
-        # adoption is complete for the widget classes that can express a
-        # hold. Not more than +3 because the audit that produced this list
-        # was RE-RUN at R1549 rather than inherited ([[r1532-column-declares
-        # -its-painter]]: a gap list is worth only what it is checked
-        # against), and every other item still stands, verified by census:
-        # `External::wheel` still has exactly two implementors, mnemonic
-        # adoption is still three sites, and all six absent widget kinds are
-        # still absent (no `group_box` / `fieldset`, no dial or knob, no
-        # stacked-page or wizard container, no `QKeySequenceEdit`, no font
-        # combo, no canned message / input dialog). Six absent kinds is a
-        # lot of surface for an axis whose name is "catalog".
-        # R1554 re-judgment, 90 -> 93, demanded by the tool (round ledger
-        # 3 -> 4). It closes the item R1549's list named FIRST among the
-        # absent widget kinds and flagged as the one a pro tool misses most —
-        # `QGroupBox`, "especially checkable" — and what made it absent was
-        # never the frame. It was that `setCheckable(true)`'s whole point,
-        # clearing the title checkbox to make the panel inert, was
-        # INEXPRESSIBLE: `LayoutStyle` carried four interaction declarations
-        # (`pointer_transparent`, `focusable`, `drop_target`, `cursor`) and
-        # every one described the node carrying it and nothing else. Qt's
-        # `QWidget::setEnabled` is the one that is INHERITED.
+        # R1549 re-judgment, 87 -> 90, demanded by the tool (round ledger 2 ->
+        # 3). +3, the same calibration R1543 got for mnemonics and for the same
+        # reason: what closed is not one widget but an axis every pressable
+        # widget sits on, it was wholly absent, and it closed past the toolkit
+        # in three places. Unlike R1543 it also added NO gap of its own —
+        # adoption is complete for the widget classes that can express a hold.
+        # Not more than +3 because the audit that produced this list was RE-RUN
+        # at R1549 rather than inherited ([[r1532-column-declares
+        # -its-painter]]: a gap list is worth only what it is checked against),
+        # and every other item still stands, verified by census: `External::wheel` still has
+        # exactly two implementors, mnemonic adoption is still three sites, and
+        # all six absent widget kinds are still absent (no `group_box` / `fieldset`, no dial
+        # or knob, no stacked-page or wizard container, no key-sequence editor,
+        # no font combo, no canned message / input dialog). Six absent kinds is
+        # a lot of surface for an axis whose name is "catalog". R1554
+        # re-judgment, 90 -> 93, demanded by the tool (round ledger 3 -> 4). It
+        # closes the item R1549's list named FIRST among the absent widget
+        # kinds and flagged as the one a pro tool misses most — group box,
+        # "especially checkable" — and what made it absent was never the frame.
+        # It was that `setCheckable(true)`'s whole point, clearing the title checkbox to make
+        # the panel inert, was INEXPRESSIBLE: `LayoutStyle` carried four interaction
+        # declarations (`pointer_transparent`, `focusable`, `drop_target`, `cursor`) and every one described the node
+        # carrying it and nothing else. The toolkit's `setEnabled` is the one that is
+        # INHERITED.
         #
-        # So the round is a scene declaration (`with_disabled`) plus four
-        # derivations, each resolved where that consequence is already
-        # decided — the §5.39 focus enumeration, `Scene::hit_test`, the a11y
-        # assembler's stamp, and the ink — and it rides
-        # `settle_to_fixed_point`, the one loop every paint-scene producer in
-        # both backends passes through, so a window and a terminal cannot
-        # disagree about which controls are inert. Past Qt 6.11 in four
-        # places, all read over the wire: the CAUSE is published by name
-        # (`scene/disabled`'s `declared_by`; Qt's `isEnabled()` is a bool and
-        # `isEnabledTo()` needs the caller to have already guessed the
-        # ancestor), the SET is enumerable at all (Qt has no such query), a
-        # refusal has a NAME (`focus/set` -> `tag_disabled` handing back the
-        # region, where `QWidget::setFocus()` is a silent no-op), and whether
-        # the INK followed is stated per node rather than left to be
-        # discovered from a screenshot. The derived half is recomputed every
-        # paint instead of written into descendants, which is what Qt's
-        # `setEnabled_helper` does and must walk back.
+        # So the round is a scene declaration (`with_disabled`) plus four derivations, each
+        # resolved where that consequence is already decided — the §5.39 focus
+        # enumeration, `Scene::hit_test`, the a11y assembler's stamp, and the ink — and it
+        # rides `settle_to_fixed_point`, the one loop every paint-scene producer in both backends
+        # passes through, so a window and a terminal cannot disagree about
+        # which controls are inert. Past the toolkit 6.11 in four places, all
+        # read over the wire: the CAUSE is published by name (`scene/disabled`'s `declared_by`; the
+        # toolkit's `isEnabled()` is a bool and `isEnabledTo()` needs the caller to have already
+        # guessed the ancestor), the SET is enumerable at all (the toolkit has
+        # no such query), a refusal has a NAME (`focus/set` -> `tag_disabled` handing back the
+        # region, where `setFocus()` is a silent no-op), and whether the INK followed is
+        # stated per node rather than left to be discovered from a screenshot.
+        # The derived half is recomputed every paint instead of written into
+        # descendants, which is what the toolkit's `setEnabled_helper` does and must walk
+        # back.
         #
         # +3 and not more. Five of the six absent widget kinds remain, the
         # wheel item is untouched and still the largest cross-cutting one,
@@ -1009,7 +984,7 @@ AXES = [
         # disabledness only through its own state enum, so a form cannot gate
         # a section without a group box), and four node kinds carry content
         # the fade cannot reach (`Image` / `External` / `ImmediateModeNode` /
-        # `TextGrid`) — Qt cannot grey a `QOpenGLWidget` either, so it is
+        # `TextGrid`) — the toolkit cannot grey a GL widget either, so it is
         # stated on the wire rather than fixed.
         # R1570 re-judge, 93 -> 95, demanded by the tool: the round ledger took
         # this axis 4 -> 6 and it absorbs TWO rounds, because R1569 landed at
@@ -1017,36 +992,34 @@ AXES = [
         # its look.
         #
         # R1569 made the FOCUSED widget able to shadow the window's accelerator
-        # layers (Qt `QEvent::ShortcutOverride`) — a place the tree sat BELOW
+        # layers (the toolkit `ShortcutOverride`) — a place the tree sat BELOW
         # the floor, and shipped: typing `d` into `hello-textfield`'s focused
         # field disabled the field. It also closes one of the five widget kinds
-        # this axis's own list called absent, `QKeySequenceEdit`, since the
+        # this axis's own list called absent, key-sequence editor, since the
         # editor is what forced the axis.
         #
         # R1570.1 closed something the gap list had never NAMED, which is why
         # it is worth more than its size: the catalog's atomic controls were
-        # not keyboard-operable at all. `#[widget(role = ...)]` announces an
-        # operable control, and in **17 of 23** such bindings `focus/set`
-        # refused the tag and `focus/next` answered `None` — no focus stop in
-        # the window. HTML gives it without a `tabindex` and Qt gives it as
-        # `Qt::StrongFocus`, so this was below both floors. The second-order
-        # cost is what makes it structural rather than cosmetic:
-        # `apply_aria_activate` gates on `focused == Some(my_tag)`, so 13 of
-        # the 25 byte-identical `apply_key` bodies in the tree were UNREACHABLE
-        # code under doc comments describing a Space/Enter behaviour that could
-        # not happen.
+        # not keyboard-operable at all. `#[widget(role = ...)]` announces an operable control, and
+        # in **17 of 23** such bindings `focus/set` refused the tag and `focus/next` answered
+        # `None` — no focus stop in the window. HTML gives it without a `tabindex` and
+        # the toolkit gives it as `StrongFocus`, so this was below both floors. The
+        # second-order cost is what makes it structural rather than cosmetic:
+        # `apply_aria_activate` gates on `focused == Some(my_tag)`, so 13 of the 25 byte-identical `apply_key` bodies in the
+        # tree were UNREACHABLE code under doc comments describing a
+        # Space/Enter behaviour that could not happen.
         #
         # Only +2, and the reason is that the axis's STATED gap list barely
-        # moved: the wheel item (`External::wheel` still has two implementors)
-        # is untouched and still the largest cross-cutting one, mnemonic
-        # adoption is still four sites, the disabled cascade still has one
-        # consumer, and four absent widget kinds remain (`QDial`, a paged
-        # container, `QFontComboBox`, the canned `QMessageBox` /
-        # `QInputDialog`). R1570.1 adds two of its own, audited: ten of the
-        # sixteen hand-painted controls repeat the focus declaration because
-        # there is no `switch` painter to own it, and a POINTER click paints
-        # the focus ring with no `:focus-visible` distinction — not below Qt,
-        # whose common styles do the same, but now visible on 17 more controls.
+        # moved: the wheel item (`External::wheel` still has two implementors) is untouched
+        # and still the largest cross-cutting one, mnemonic adoption is still
+        # four sites, the disabled cascade still has one consumer, and four
+        # absent widget kinds remain (dial, a paged container, font picker, the
+        # canned message box / input dialog). R1570.1 adds two of its own,
+        # audited: ten of the sixteen hand-painted controls repeat the focus
+        # declaration because there is no `switch` painter to own it, and a POINTER
+        # click paints the focus ring with no `:focus-visible` distinction — not below the
+        # toolkit, whose common styles do the same, but now visible on 17 more
+        # controls.
         "judged_at": 1570,
         "completion": 95,
         "evidence_snapshot": {"example-name": 76, "round-axis": 6},
@@ -1057,15 +1030,17 @@ AXES = [
         "weight": 10,
         "gated": False,
         # R1519 — this axis did not exist in the R931 tally, which is why the
-        # entire R1372-R1442 campaign (22 examples, 72 demos, `pinion-chart` +
-        # `pinion-graph`) could not move the Phase B number by a single point.
-        # Qt ships QtCharts, so under the qt-parity directive it is in scope.
+        # entire R1372-R1442 campaign (22 examples, 72 demos, `pinion-chart` + `pinion-graph`) could
+        # not move the Phase B number by a single point. The toolkit ships the
+        # toolkit's charting module, so under the toolkit-parity directive it
+        # is in scope.
         #
         # R1528 re-judge, 65 -> 68, and the tool demanded it: a round declared
         # this axis where the snapshot was 0, which `drift` reads as movement
         # whatever the count. Small on purpose. R1528 landed a logarithmic
-        # value axis (Qt `QLogValueAxis`) on both cartesian axes of the two
-        # numeric-x charts — one of QtCharts' FIVE axis types.
+        # value axis (the toolkit log value axis) on both cartesian axes of the
+        # two numeric-x charts — one of the toolkit's charting module' FIVE
+        # axis types.
         #
         # What the re-judgment mostly bought is a correction to the judgment
         # itself: R1519 named the remaining gap as series types (polar,
@@ -1079,23 +1054,23 @@ AXES = [
         # R1529 re-judge, 68 -> 72, demanded by the same mechanism (a second
         # declared round doubles a snapshot of 1). This closes the gap the
         # R1528 re-judgment had just named as the largest one: the datetime
-        # axis (Qt `QDateTimeAxis`, d3 `scaleUtc`) on both cartesian axes of
+        # axis (the toolkit date time axis, d3 `scaleUtc`) on both cartesian axes of
         # the two numeric-x charts plus the timeline ruler. Four points, one
-        # more than the log axis got, because a monitoring chart's x-channel
-        # is the commoner need — and only four, because it closes UTC and not
+        # more than the log axis got, because a monitoring chart's x-channel is
+        # the commoner need — and only four, because it closes UTC and not
         # local time.
         #
         # The dimension R1528 opened stays the useful one, and building the
-        # third kind sharpened what remains on it. Of QtCharts' axis classes
-        # the crate now has value, log and datetime as interchangeable
-        # `ValueScale` arms — but **category is not an axis kind here at
-        # all**: the bar chart's x is a `BarGeom` slot metric on a separate
-        # code path, so no chart can swap a category axis in the way it can
-        # now swap the other three. R1528 recorded that as "no category axis
-        # outside the bar chart's slots"; the shape of the gap is now
-        # structural rather than a missing variant. Untouched otherwise: no
-        # polar / candlestick / box-plot / spline / 3D-surface series, and no
-        # plot-level zoom or pan — which is the bulk of what is left.
+        # third kind sharpened what remains on it. Of the toolkit's charting
+        # module' axis classes the crate now has value, log and datetime as
+        # interchangeable `ValueScale` arms — but **category is not an axis kind here at
+        # all**: the bar chart's x is a `BarGeom` slot metric on a separate code
+        # path, so no chart can swap a category axis in the way it can now swap
+        # the other three. R1528 recorded that as "no category axis outside the
+        # bar chart's slots"; the shape of the gap is now structural rather
+        # than a missing variant. Untouched otherwise: no polar / candlestick /
+        # box-plot / spline / 3D-surface series, and no plot-level zoom or pan
+        # — which is the bulk of what is left.
         "evidence": [
             ("example-name", [
                 "chart", "scatter", "heatmap", "treemap", "donut", "histogram",
@@ -1140,12 +1115,12 @@ AXES = [
         #
         # HALF, and the audit that produced this list is what keeps it to +5:
         #
-        #   * No drag pan and no rubber-band zoom (QtCharts
-        #     `QChartView::setRubberBand`). An `External` has no pointer-down /
+        #   * No drag pan and no rubber-band zoom (the toolkit's charting module
+        #     `setRubberBand`). An `External` has no pointer-down /
         #     pointer-up hook, so a press-drag needs either the raw-pointer
         #     seam or a slider-style statechart — a design choice R1534 did not
         #     have to make and should not make by accident.
-        #   * The window is x-only. QtCharts zooms a RECT; there is no y-window
+        #   * The window is x-only. The toolkit's charting module zooms a RECT; there is no y-window
         #     and no diagonal drag-select. (`hello-autoscale-y` fits y TO the
         #     x-window, which is a different thing.)
         #   * The window is invisible to a screen reader — the status line is a
@@ -1164,27 +1139,25 @@ AXES = [
         # R1545 re-judgment, 77 -> 82, demanded by the tool (the round ledger
         # took this axis 3 -> 4). It closes the item the last TWO re-judgments
         # both named, and closes it whole: **category is an axis kind now**.
-        # `Categories` / `CategoryScale` are the fourth `AxisKind` arm (Qt
-        # `QBarCategoryAxis`, d3 `scaleBand`), the bar chart's private slot
-        # metric IS that axis, and `LineChart::x_category` /
-        # `ScatterChart::x_category` swap it into a numeric-x chart the way
-        # the log and time kinds already swapped. Of QtCharts' axis classes
-        # the crate now has four of five interchangeable.
+        # `Categories` / `CategoryScale` are the fourth `AxisKind` arm (the toolkit bar category axis, d3
+        # `scaleBand`), the bar chart's private slot metric IS that axis, and `LineChart::x_category` / `ScatterChart::x_category`
+        # swap it into a numeric-x chart the way the log and time kinds already
+        # swapped. Of the toolkit's charting module' axis classes the crate now
+        # has four of five interchangeable.
         #
-        # Two things past Qt 6.11, both read over the wire by the demo:
-        # `CategoryScale::band` publishes where a category is DRAWN (a Qt bar's
-        # rect is computed inside the private `QBarSeriesPrivate` painter, and
-        # the absence of that accessor is exactly why `bar.rs` carried three
-        # copies of `left + i * slot`), and a window is resolved from NAMES
-        # before it can reach a chart — `Categories::window` answers a
-        # `Result`, where `setRange(QString, QString)` returns `void` and
-        # silently ignores a name that is not a category.
+        # Two things past the toolkit 6.11, both read over the wire by the
+        # demo: `CategoryScale::band` publishes where a category is DRAWN (a toolkit bar's rect
+        # is computed inside the private bar series private painter, and the
+        # absence of that accessor is exactly why `bar.rs` carried three copies of
+        # `left + i * slot`), and a window is resolved from NAMES before it can reach a chart
+        # — `Categories::window` answers a `Result`, where `setRange(string, string)` returns `void` and silently ignores a
+        # name that is not a category.
         #
         # +5 and not more, the same size R1534 got for half of its item,
         # because the remaining list is long and mostly untouched. Audited at
         # R1545:
         #
-        #   * Qt's OTHER category axis, `QCategoryAxis` — labels attached to
+        #   * the toolkit's OTHER category axis, category axis — labels attached to
         #     arbitrary value RANGES rather than to discrete slots — is absent.
         #     It is a different kind, not a variant of this one.
         #   * Label thinning is absent: a windowless 60-category axis labels
@@ -1193,7 +1166,7 @@ AXES = [
         #     `axis_ticks` ignores its tick target on this kind.
         #   * A slot has no band-level a11y. R1545's consumer names the WINDOW
         #     to an AT; an individual category label is painted text with no
-        #     accessible relationship. Qt is the same, so a stated limit.
+        #     accessible relationship. The toolkit is the same, so a stated limit.
         #   * Still open from R1534, all four: no drag pan / rubber-band zoom
         #     (an `External` has no pointer-down hook), no y-window, the plot
         #     zoom is invisible to a screen reader, one consumer.
@@ -1204,7 +1177,7 @@ AXES = [
         # R1553 re-judgment, 82 -> 87, demanded by the tool (the round ledger
         # took this axis 4 -> 5). It opens the dimension the line above calls
         # untouched, and opens it at the member with the most statistics
-        # behind it: the BOX PLOT (Qt `QBoxPlotSeries`).
+        # behind it: the BOX PLOT (the toolkit box plot series).
         #
         # What earns +5 rather than the +2 a bare renderer would: this is the
         # crate's first datum that is NOT A POINT. Every value it could plot
@@ -1215,24 +1188,24 @@ AXES = [
         # a different reading of, so the dimension is now open rather than
         # one item shorter.
         #
-        # Three things past Qt 6.11, all read over the wire by the demo, and
-        # all consequences of one decision — the summary is DERIVED here
-        # rather than handed in. `QBoxSet` is five doubles and `QtCharts`
-        # computes none of them (its own box-plot example ships a
-        # `findMedian()` helper IN THE EXAMPLE):
+        # Three things past the toolkit 6.11, all read over the wire by the
+        # demo, and all consequences of one decision — the summary is DERIVED
+        # here rather than handed in. box set is five doubles and `the toolkit's charting module` computes
+        # none of them (its own box-plot example ships a `findMedian()` helper IN THE
+        # EXAMPLE):
         #
         #   * The quantile DEFINITION is part of the value. `QuantileMethod`
         #     carries three standard ones (Tukey's hinges, Hyndman & Fan
         #     types 7 and 6) that disagree at small n — and the demo shows the
         #     disagreement deciding whether a sample is an outlier at all. A
-        #     `QBoxSet` cannot record which definition built it.
+        #     box set cannot record which definition built it.
         #   * OUTLIERS exist. Tukey's `k * IQR` fence limits each whisker and
-        #     every sample beyond it is its own addressable mark. Qt's five
-        #     slots have no per-outlier geometry, so a Qt box plot cannot draw
+        #     every sample beyond it is its own addressable mark. The toolkit's five
+        #     slots have no per-outlier geometry, so a toolkit box plot cannot draw
         #     one at any setting — and that fence is the defining half of the
         #     form.
         #   * The NOTCH, because the sample count survived the summary
-        #     (McGill, Tukey & Larsen 1978). `QBoxSet` carries no n, so Qt
+        #     (McGill, Tukey & Larsen 1978). box set carries no n, so the toolkit
         #     could not offer it even as a paint option — and a distribution
         #     handed in pre-computed keeps its plain box in the same chart,
         #     which is the visible difference between a box a reader can apply
@@ -1246,15 +1219,15 @@ AXES = [
         #     same interval geometry over open / high / low / close) and is
         #     deliberately not built here, being the second consumer that
         #     would decide whether the interval mark lifts.
-        #   * The pre-computed path (`Distribution::from_summary`, Qt's own
+        #   * The pre-computed path (`Distribution::from_summary`, the toolkit's own
         #     contract) has no forcing consumer: `hello-boxplot` derives every
         #     one of its five, so the summary arm is exercised by unit tests
         #     only.
         #   * A box has no per-mark a11y. The scrub readout names the whole
-        #     summary and its provenance, which is past Qt (QtCharts
+        #     summary and its provenance, which is past the toolkit (the toolkit's charting module
         #     implements no accessibility interface at all), but an individual
         #     outlier is painted geometry with no accessible relationship.
-        #   * `QCategoryAxis`, label thinning, band-level a11y, drag pan /
+        #   * category axis, label thinning, band-level a11y, drag pan /
         #     rubber-band zoom, the y-window, the plot zoom's a11y, the second
         #     zoom consumer, local time — all eight still open, unchanged.
         # R1568 re-judged, 87 -> 92, DEMANDED by the tool (the round ledger
@@ -1287,12 +1260,12 @@ AXES = [
         #     bar, which is the Western reading of R1567's own datum and is
         #     now the cheapest thing on this axis. 3D-surface needs a 3D
         #     renderer and is Phase C's, not this axis's.
-        #   * `QCategoryAxis`, label thinning, local time, drag pan /
+        #   * category axis, label thinning, local time, drag pan /
         #     rubber-band zoom (blocked on the pointer wire not reporting a
         #     held button), the y-window, the plot zoom's a11y and its second
         #     consumer — all seven unchanged since R1545.
         #   * Neither new form has PER-MARK a11y: both scrub readouts name the
-        #     whole datum, which is past Qt (QtCharts implements no
+        #     whole datum, which is past the toolkit (the toolkit's charting module implements no
         #     accessibility interface), but an individual candle body or polar
         #     vertex is painted geometry.
         #   * The polar chart has no cross-filter leg and no legend
@@ -1323,27 +1296,27 @@ AXES = [
         # what it has been checked against (R1532).
         #
         # What R1540 added: the GUI text run adopted the SGR 4:x underline
-        # vocabulary the TERMINAL cell has spoken since R1399 — single /
-        # double / curly / dotted / dashed, plus the underline's own colour
-        # (Qt `setUnderlineColor`). The tree could draw an undercurl in a
-        # terminal and not on screen, with the painter that knew how sitting
-        # in the same file as the one that flattened every form to one rule.
-        # An LSP diagnostic mark is now drawable at all.
+        # vocabulary the TERMINAL cell has spoken since R1399 — single / double
+        # / curly / dotted / dashed, plus the underline's own colour (the
+        # toolkit `setUnderlineColor`). The tree could draw an undercurl in a terminal and not
+        # on screen, with the painter that knew how sitting in the same file as
+        # the one that flattened every form to one rule. An LSP diagnostic mark
+        # is now drawable at all.
         #
         # +4 and not more, because the CHARACTER-format axis is nearly done
         # while the DOCUMENT axis is barely started. Audited at R1540:
         #
-        #  - `QTextCharFormat::setBackground` — no per-run background exists.
+        #  - `setBackground` — no per-run background exists.
         #    The paint layer hand-rolls FOUR band kinds instead (selection,
         #    find-match, current-line, preedit), each with its own fill fn and
-        #    alpha knob. Qt has both this and `QTextEdit::ExtraSelection`; the
+        #    alpha knob. The toolkit has both this and `ExtraSelection`; the
         #    tree has neither as a contract.
         #  - no vertical alignment (super/subscript), and no overline.
-        #  - the DOCUMENT model is absent: `QTextList` (ordered / unordered),
-        #    `QTextTable`, `QTextBlockFormat`'s per-paragraph indent and
+        #  - the DOCUMENT model is absent: text list (ordered / unordered),
+        #    text table, text block format's per-paragraph indent and
         #    margins, and `setMarkdown` / `toHtml` import-export. A styled run
         #    is a span of characters; a document is more than a span list.
-        #  - a mark is invisible to assistive technology (Qt too, so parity,
+        #  - a mark is invisible to assistive technology (the toolkit too, so parity,
         #    but it is what a red squiggle most needs).
         #
         # R1542 re-judged 74 -> 75, demanded by the tool (`round-axis` 1 -> 2).
@@ -1387,18 +1360,17 @@ AXES = [
         # absolute-positioned box with its own fill fn, under a comment
         # conceding all four bodies were byte-identical.
         #
-        # `TextStyle::bg_color` (Qt `QTextCharFormat::setBackground`) is now a
-        # run-level declaration whose band is cut by BYTE and measured by
-        # `selection_rects_for_range` — the function the selection band already
-        # calls — so a highlight and a selection over the same bytes are one
-        # function called twice rather than two derivations that agree. Two
-        # things past Qt 6.11, both read over the wire: the PAINTED EXTENT is
-        # published (Qt computes the rect inside the private
-        # `QTextLayout::draw` and discards it, so a Qt application re-derives
-        # it from `cursorToX` — a second implementation free to disagree with
-        # the painter's), and the fg/bg pair publishes its WCAG contrast, so
-        # "no highlight in this application drops below 4.5:1" is one call
-        # where Qt will paint any brush behind any pen and say nothing.
+        # `TextStyle::bg_color` (the toolkit `setBackground`) is now a run-level declaration whose band is
+        # cut by BYTE and measured by `selection_rects_for_range` — the function the selection band
+        # already calls — so a highlight and a selection over the same bytes
+        # are one function called twice rather than two derivations that agree.
+        # Two things past the toolkit 6.11, both read over the wire: the
+        # PAINTED EXTENT is published (the toolkit computes the rect inside the
+        # private `draw` and discards it, so a toolkit application re-derives it
+        # from `cursorToX` — a second implementation free to disagree with the
+        # painter's), and the fg/bg pair publishes its WCAG contrast, so "no
+        # highlight in this application drops below 4.5:1" is one call where
+        # the toolkit will paint any brush behind any pen and say nothing.
         #
         # +5 and not more, and the remainder is audited at R1546 rather than
         # carried. The CHARACTER-format half is now nearly complete: what is
@@ -1407,14 +1379,14 @@ AXES = [
         # and **overline** (`TextDecoration` is underline-form + strikethrough
         # + underline-colour). Both small. What dominates the axis now is the
         # half that is untouched: **there is no document model at all** —
-        # `QTextList`, `QTextTable`, `QTextBlockFormat`'s per-paragraph indent
+        # text list, text table, text block format's per-paragraph indent
         # and margins, `setMarkdown` / `toHtml`. Not one of those has a scene
         # primitive. Also unchanged, and now for a RECORDED reason rather than
         # by omission: the four view-level bands stay separate, because a
         # `StyleRun` carries a fully-resolved style and layering a selection
         # run over a syntax run would clobber the syntax run's foreground —
-        # which is why Qt splits the same way (`QTextCharFormat` for the
-        # document, `QTextEdit::ExtraSelection` for the view).
+        # which is why the toolkit splits the same way (text char format for the
+        # document, `ExtraSelection` for the view).
         #
         # The R1542 name/evidence mismatch above still stands and is still
         # deliberately undecided here.
@@ -1422,34 +1394,34 @@ AXES = [
         # R1551 re-judged 80 -> 84, demanded by the tool (round count 3 -> 4).
         #
         # It closes the item R1546's audit named as DOMINATING the axis, on the
-        # one sub-item that audit named with specifics: `QTextBlockFormat`'s
-        # per-paragraph indent and margins. Before it, a paragraph could say how
-        # its glyphs looked and nothing about how the paragraph itself sat — no
-        # indent, no space between paragraphs, no first-line indent, no way to
-        # mark one a heading. `BlockFormat` is now a scene declaration that
-        # lowers to the node's ordinary layout margin, so the flex pass indents
-        # a paragraph with no document-specific layout code and the result
-        # composes with the rest of the tree; Qt's block margins are known only
-        # to the private `QTextDocumentLayout`, which is a second layout engine
-        # that meets the widget layout at a viewport and nowhere else.
+        # one sub-item that audit named with specifics: text block format's
+        # per-paragraph indent and margins. Before it, a paragraph could say
+        # how its glyphs looked and nothing about how the paragraph itself sat
+        # — no indent, no space between paragraphs, no first-line indent, no
+        # way to mark one a heading. `BlockFormat` is now a scene declaration that lowers
+        # to the node's ordinary layout margin, so the flex pass indents a
+        # paragraph with no document-specific layout code and the result
+        # composes with the rest of the tree; the toolkit's block margins are
+        # known only to the private text document layout, which is a second
+        # layout engine that meets the widget layout at a viewport and nowhere
+        # else.
         #
-        # Four things past Qt 6.11: the format is a **struct** where
-        # `QTextFormat` is a `QVariant` property bag whose unset properties
+        # Four things past the toolkit 6.11: the format is a **struct** where
+        # text format is a dynamic value property bag whose unset properties
         # silently return defaults, so a block's whole declaration can be
-        # enumerated; every length is **one unit** where Qt mixes `indent()`
-        # (indent-width multiples) with `leftMargin()` (pixels) in one class;
-        # `text-indent` carries CSS's **`hanging` and `each-line`** keywords,
-        # which Qt's bare `qreal textIndent` cannot express (a hanging indent
-        # in Qt needs a negative indent plus a compensating margin, i.e. two
-        # properties that must agree); and a **heading level reaches assistive
-        # technology** — `QTextBlockFormat::headingLevel()` has existed since
-        # Qt 5.15, but the interface a `QTextEdit` implements is
-        # `QAccessibleTextInterface`, whose vocabulary is character offsets,
+        # enumerated; every length is **one unit** where the toolkit mixes `indent()`
+        # (indent-width multiples) with `leftMargin()` (pixels) in one class; `text-indent` carries
+        # CSS's **`hanging` and `each-line`** keywords, which the toolkit's bare `qreal textIndent` cannot
+        # express (a hanging indent in the toolkit needs a negative indent plus
+        # a compensating margin, i.e. two properties that must agree); and a
+        # **heading level reaches assistive technology** — `headingLevel()` has existed
+        # since the toolkit 5.15, but the interface a text edit implements is
+        # accessible text interface, whose vocabulary is character offsets,
         # selections and text attributes with no method that reports block
-        # structure at all, so a Qt document's heading levels reach its layout
-        # and stop. `scene/text_blocks` then publishes the declaration BESIDE
-        # the shaped line boxes, which is the only form in which "did my indent
-        # reach the layout" is a question with an answer.
+        # structure at all, so a toolkit document's heading levels reach its
+        # layout and stop. `scene/text_blocks` then publishes the declaration BESIDE the shaped
+        # line boxes, which is the only form in which "did my indent reach the
+        # layout" is a question with an answer.
         #
         # It also closed a §2 #6 gap this axis had carried unnamed since R1344:
         # `TextStyle::text_align` never reached the cell backend at all. The
@@ -1460,17 +1432,15 @@ AXES = [
         #
         # +4 and not more, and the remainder is audited at R1551. The document
         # model is OPENED, not complete, and what is left of it is larger than
-        # what was closed: **`QTextList`** (ordered / unordered, with automatic
+        # what was closed: **text list** (ordered / unordered, with automatic
         # numbering across sibling blocks — the part that cannot be hand-
-        # composed), **`QTextTable`**, and **`setMarkdown` / `toHtml`**
-        # import-export. None has a scene primitive. `QTextBlockFormat` itself
-        # keeps four properties this round did not take: `marker`
-        # (Unchecked / Checked, which belongs with `QTextList`),
-        # `nonBreakableLines`, `pageBreakPolicy` (meaningful only against
-        # `pinion-pdf`'s paged output) and `tabPositions`. The CHARACTER half is
-        # unchanged from R1546: vertical alignment (super/subscript) and
-        # overline, both small.
-        # R1560 re-judged 84 -> 90, demanded by the tool (round count 4 -> 6).
+        # composed), **text table**, and **`setMarkdown` / `toHtml`** import-export. None has
+        # a scene primitive. text block format itself keeps four properties
+        # this round did not take: `marker` (Unchecked / Checked, which belongs with
+        # text list), `nonBreakableLines`, `pageBreakPolicy` (meaningful only against `pinion-pdf`'s paged output) and
+        # `tabPositions`. The CHARACTER half is unchanged from R1546: vertical alignment
+        # (super/subscript) and overline, both small. R1560 re-judged 84 -> 90,
+        # demanded by the tool (round count 4 -> 6).
         #
         # It absorbs TWO rounds, because R1559 landed at the band edge exactly
         # (+25%) and did not force a look — the sticky behaviour R1547/R1548
@@ -1478,36 +1448,34 @@ AXES = [
         # and between them they close TWO OF THE THREE things that audit listed
         # as the whole of what was left of the document model.
         #
-        # R1559 — `QTextList`. What a list cannot have written by hand is the
+        # R1559 — text list. What a list cannot have written by hand is the
         # NUMBER, because a number is not a property of the item: it is a
         # property of its place among its siblings, so inserting one renumbers
         # every item after it and nesting one restarts the inner sequence while
-        # the outer carries on underneath. `ListSpec` declares membership and
-        # never a number; `number_blocks` derives it. Past Qt: the counter
-        # styles have RANGES and fall back through CSS Counter Styles Level 3
-        # where `itemText()` answers "?" and loses the value; a BULLET IS TEXT
-        # (Qt draws `ListDisc` as an ellipse, so no accessor can say what an
-        # unordered marker looks like and it is not in the text at all); the
-        # structure is enumerable; it reaches assistive technology; and a
-        # suffix's default belongs to the style rather than hiding in a null
-        # `QString`.
+        # the outer carries on underneath. `ListSpec` declares membership and never a
+        # number; `number_blocks` derives it. Past the toolkit: the counter styles have
+        # RANGES and fall back through CSS Counter Styles Level 3 where `itemText()`
+        # answers "?" and loses the value; a BULLET IS TEXT (the toolkit draws
+        # `ListDisc` as an ellipse, so no accessor can say what an unordered marker
+        # looks like and it is not in the text at all); the structure is
+        # enumerable; it reaches assistive technology; and a suffix's default
+        # belongs to the style rather than hiding in a null string.
         #
-        # R1560 — `QTextTable`, and the same argument one dimension up. A
-        # cell's ADDRESS is not a property of the cell: it is where the cell
-        # lands once every earlier cell's spans have taken their slots.
-        # `place_cells` derives it by HTML's own slot allocation and
-        # `view_document` lowers it onto a REAL CSS GRID — the layout kind the
-        # framework did not have, added here with its forcing consumer, because
-        # a column of flex rows measures each row alone (so columns cannot
-        # agree without being told a width) and cannot express a rowspan at
-        # all. Past Qt: the address is derived rather than maintained; a span
-        # that does not fit is clamped to the FREE RUN and NAMED, where
-        # `mergeCells` returns `void` and a refused merge leaves no trace; a
-        # table may be RAGGED and its unfilled slots are published, a state
-        # `QTextTable` cannot be in; header COLUMNS exist and header-ness is
-        # derived FROM THE ADDRESS; the structure reaches assistive technology,
-        # where a `QTextTable` reaches no accessibility interface at all; and
-        # it is enumerable over the wire.
+        # R1560 — text table, and the same argument one dimension up. A cell's
+        # ADDRESS is not a property of the cell: it is where the cell lands
+        # once every earlier cell's spans have taken their slots. `place_cells` derives
+        # it by HTML's own slot allocation and `view_document` lowers it onto a REAL CSS
+        # GRID — the layout kind the framework did not have, added here with
+        # its forcing consumer, because a column of flex rows measures each row
+        # alone (so columns cannot agree without being told a width) and cannot
+        # express a rowspan at all. Past the toolkit: the address is derived
+        # rather than maintained; a span that does not fit is clamped to the
+        # FREE RUN and NAMED, where `mergeCells` returns `void` and a refused merge leaves
+        # no trace; a table may be RAGGED and its unfilled slots are published,
+        # a state text table cannot be in; header COLUMNS exist and header-ness
+        # is derived FROM THE ADDRESS; the structure reaches assistive
+        # technology, where a text table reaches no accessibility interface at
+        # all; and it is enumerable over the wire.
         #
         # +6 and not more. What remains is audited at R1560, and the largest
         # item is the third one R1551 named:
@@ -1515,11 +1483,11 @@ AXES = [
         #  - **`setMarkdown` / `toHtml`** — the import/export half of the
         #    document model. Untouched, and now the only one of R1551's three
         #    still open.
-        #  - **Nested tables.** Qt has them. The honest way in is the general
-        #    `QTextFrame` containment axis, not a second ad-hoc level counter
+        #  - **Nested tables.** the toolkit has them. The honest way in is the general
+        #    text frame containment axis, not a second ad-hoc level counter
         #    beside the list's — two nesting mechanisms that would have to
         #    agree.
-        #  - `QTextBlockFormat`'s four untaken properties are now three:
+        #  - text block format's four untaken properties are now three:
         #    R1559 landed the list `marker` belongs with, leaving
         #    `nonBreakableLines`, `pageBreakPolicy` and `tabPositions`.
         #  - the CHARACTER half is unchanged since R1546: vertical alignment
@@ -1616,8 +1584,8 @@ AXES = [
         # shaped layout's glyphs — 37% of a warm-cache frame, and the half of
         # it that is pinion's own code — now runs once per shaped layout
         # instead of once per paint, because the draw list is cached in the
-        # entry that already holds the layout (Skia's SkTextBlob, Qt's
-        # QGlyphRun). Measured before and after on the same box, same probe,
+        # entry that already holds the layout (Skia's SkTextBlob, the toolkit's
+        # glyph run). Measured before and after on the same box, same probe,
         # same steady state: 1,200 text leaves 1,489us -> 480us a frame, 3.1x.
         # It is the fourth measured optimisation on this axis and the first
         # whose saving lands on EVERY re-encoding frame rather than on a
@@ -1628,7 +1596,7 @@ AXES = [
         #
         #  - no GPU-timestamp render time. `render_us` is CPU submit cost
         #    with the vsync block split out (R1361.1); what the GPU actually
-        #    took is unmeasured, and a pro tool states it (Unreal `stat gpu`).
+        #    took is unmeasured, and a pro tool states it (the engine `stat gpu`).
         #  - no large-scene 60fps end-to-end measurement. Every number this
         #    axis holds is a component measured in isolation.
         #
@@ -1661,7 +1629,7 @@ AXES = [
         #  - NO MEMORY MEASUREMENT ANYWHERE. Census of the 70-method RPC
         #    surface: not one reports bytes. `cache_stats.entries` and
         #    `text_cache_stats.capacity` are counts of things, and a count is
-        #    not a footprint. A pro tool states its own (Unreal `stat memory`).
+        #    not a footprint. A pro tool states its own (the engine `stat memory`).
         #    This is also where R1531's leftover lives: MAX_CAPACITY's ~26 MB
         #    is an unmeasured claim, and nothing can measure it.
         #  - the census counts NODES, not their cost. A Container and a
@@ -1686,18 +1654,18 @@ AXES = [
         # defect survives: both were TRUE when written, and a consumer's
         # architecture changed underneath them.
         #
-        # R1550 re-judgment, demanded by the tool (the ledger took this axis
-        # 6 -> 8, past the 25% band). 78 -> 83, because the FIRST of the three
+        # R1550 re-judgment, demanded by the tool (the ledger took this axis 6
+        # -> 8, past the 25% band). 78 -> 83, because the FIRST of the three
         # gaps the 78% named is closed outright, and it was total: a census of
-        # the RPC surface found not one field in BYTES. `scene/memory` is now
-        # the memory axis — one row per arena per owner, with the process RSS
-        # beside it — and the accounting is a trait whose every impl
-        # destructures its type, so a field added to a cached struct cannot
-        # silently go unpriced. It also closes R1531's leftover (`MAX_CAPACITY`
-        # bounded memory by an entry count times a measured AVERAGE, and an
-        # average bounds nothing) and fixes an arena that sat BELOW Qt's floor:
-        # the decoded-image cache had no bound of any kind and is now
-        # byte-bounded at `QPixmapCache`'s own 10 MiB default.
+        # the RPC surface found not one field in BYTES. `scene/memory` is now the memory
+        # axis — one row per arena per owner, with the process RSS beside it —
+        # and the accounting is a trait whose every impl destructures its type,
+        # so a field added to a cached struct cannot silently go unpriced. It
+        # also closes R1531's leftover (`MAX_CAPACITY` bounded memory by an entry count
+        # times a measured AVERAGE, and an average bounds nothing) and fixes an
+        # arena that sat BELOW the toolkit's floor: the decoded-image cache had
+        # no bound of any kind and is now byte-bounded at pixmap cache's own 10
+        # MiB default.
         #
         # +5 and not more. Two of the three gaps stand — the node census counts
         # nodes rather than their cost, and present latency needs a wgpu
@@ -1790,7 +1758,7 @@ AXES = [
         # untouched. Worth recording that the gate does NOT cover what R1576
         # did: display enumeration is buildable and testable on Linux, and was
         # done here. Also still absent, audited at R1576: a display's USABLE
-        # region (Qt `QScreen::availableGeometry`) — winit exposes no work
+        # region (the toolkit `availableGeometry`) — winit exposes no work
         # area and EWMH's `_NET_WORKAREA` is one rectangle for the whole
         # desktop rather than one per monitor, so it needs a platform probe
         # rather than more geometry; no hot-plug EVENT (winit 0.30 emits none,
@@ -1820,13 +1788,13 @@ AXES = [
             ]),
         ],
         # R1539 re-judged 30 -> 42, demanded by the tool: this axis had never
-        # declared a round, so its first one moved `round-axis` past the band.
-        # The largest single move any axis has had here, and the reason is that
-        # the baseline was the lowest. R1519's 30% described a surface an agent
-        # could ENUMERATE but not READ: `rpc/methods` answered with names and an
-        # OCC class, and its own module doc deferred the rest as "added when a
-        # consumer needs it" — a defer [[qt-parity-over-yagni]] does not admit,
-        # and one R1538 then supplied a consumer for the hard way.
+        # declared a round, so its first one moved `round-axis` past the band. The
+        # largest single move any axis has had here, and the reason is that the
+        # baseline was the lowest. R1519's 30% described a surface an agent
+        # could ENUMERATE but not READ: `rpc/methods` answered with names and an OCC
+        # class, and its own module doc deferred the rest as "added when a
+        # consumer needs it" — a defer [[toolkit-parity-over-yagni]] does not
+        # admit, and one R1538 then supplied a consumer for the hard way.
         #
         # What R1539 added is the whole missing half of a describable API:
         #
@@ -1842,7 +1810,7 @@ AXES = [
         # describability half is what moved; every guarantee half is untouched.
         # Audited at R1539 rather than assumed:
         #
-        #  - NO METHOD -> TYPE BINDING, on either side. Qt's `QMetaMethod` has
+        #  - NO METHOD -> TYPE BINDING, on either side. The toolkit's meta-method has
         #    `returnMetaType()` AND `parameterTypes()`; pinion has neither, so
         #    the vocabulary is discoverable and its use is not. Withheld rather
         #    than shipped partial: 28 `*Outcome` types against 91 methods, so
@@ -1866,14 +1834,14 @@ AXES = [
         # property ("no server-push, streaming, or subscription") without
         # anyone reading it as an absence to close.
         #
-        # `RpcEgress` is the mirror of `RpcIngress`, and `scene/subscribe`
-        # is the framework's own consumer of it. Three things past Qt 6.11,
-        # all read over the wire: the stream is ENUMERABLE (`scene/subscriptions`
-        # answers who is listening to what — Qt binds no server write to a named
-        # stream, so `QLocalServer` cannot be asked); a stream cannot be named
-        # to a client before the answer that told it the name (armed after the
-        # reply, structural rather than remembered); and a client that VANISHES
-        # has exactly its own stream released, with no unsubscribe ever sent.
+        # `RpcEgress` is the mirror of `RpcIngress`, and `scene/subscribe` is the framework's own consumer of
+        # it. Three things past the toolkit 6.11, all read over the wire: the
+        # stream is ENUMERABLE (`scene/subscriptions` answers who is listening to what — the
+        # toolkit binds no server write to a named stream, so local server
+        # cannot be asked); a stream cannot be named to a client before the
+        # answer that told it the name (armed after the reply, structural
+        # rather than remembered); and a client that VANISHES has exactly its
+        # own stream released, with no unsubscribe ever sent.
         #
         # +8 and not more, because the axis is named for STABILISATION and this
         # made the surface BIGGER. Audited at R1552, all four of R1539's gaps
@@ -1886,7 +1854,7 @@ AXES = [
         #    / `SubscriptionsOutcome` to that census the day it landed, which is
         #    the R1539 gate working — but it moved none of the guarantees.
         #  - NEW, and this round's own: a subscriber is told the scene advanced,
-        #    not WHICH SUBTREE. There is no per-subscription filter. Qt has no
+        #    not WHICH SUBTREE. There is no per-subscription filter. The toolkit has no
         #    equivalent at all so it is an axis gap rather than round debt, but
         #    a large scene where an agent watches one panel will want it.
         # R1585 re-judgment, 62 -> 65, DEMANDED by the tool (round-axis 4 -> 6,

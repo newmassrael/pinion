@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R913 §5.38 §5.22 — editor status bar end-to-end RPC demo.
 
-R913 adds the bottom chrome of an editor shell (VS Code / JetBrains
+R913 adds the bottom chrome of an editor shell (VS Code / the IDE vendor
 status bar): a reactive cursor-position segment (Ln/Col), clickable
 language-mode + encoding segments that cycle on click, and a message
 area. It rounds out the self-hosted-editor shell next to the R912

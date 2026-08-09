@@ -3,7 +3,7 @@
 
 The first `BoxStyle.shadows` paint. `BoxStyle.shadows` carries a
 `Vec<BoxShadow>` (colour, offset, blur, spread — the CSS `box-shadow` /
-Flutter `List<BoxShadow>` model) that the Vello `paint_adapter` lowers to
+another retained-mode toolkit `List<BoxShadow>` model) that the Vello `paint_adapter` lowers to
 the native `Scene::draw_blurred_rounded_rect` primitive, painted behind
 the box.
 

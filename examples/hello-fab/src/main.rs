@@ -26,9 +26,9 @@
 //! So a FAB is `view_button` + `ButtonColors::accent` + a rounded-square
 //! [`ButtonStyle`] at elevation 3 — **zero new paint code here**.
 //!
-//! WAI-ARIA announces a FAB as a `button`; an icon-only FAB has no text to
-//! enrich a name from, so each node carries an **explicit accessible
-//! name** (the action: "Add" / "Edit" / "Create" / "Compose"), which
+//! WAI-ARIA announces a FAB as a `button`; an icon-only FAB has no text to enrich a
+//! name from, so each node carries an **explicit accessible name** (the
+//! action: "Add" / "Edit" / "Create" / "another declarative toolkit"), which
 //! `enrich_names_from_scene` leaves intact (it only fills *missing* names).
 //!
 //! ## Composition + keyboard (the hello-card mould)

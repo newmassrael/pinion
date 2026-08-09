@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1492 §5.27 §2#7 §2#2 — a section says what its size is allowed to be.
 
-Qt reference: `QHeaderView::setMinimumSectionSize` / `setMaximumSectionSize`,
+the toolkit reference: `setMinimumSectionSize` / `setMaximumSectionSize`,
 both runtime setters, both governing every way a section acquires a size.
 
 Measured on this very binding before the round, over the real wire:
@@ -22,7 +22,7 @@ derived — were byte-identical answers with unrelated causes.
 
 The fix is not a new disclosure channel. It is that the rule became legible: with
 `min_section_size`, `max_section_size` and the already-readable
-`resize_mode.<logical>`, a client names the cause itself. Qt has no such channel
+`resize_mode.<logical>`, a client names the cause itself. The toolkit has no such channel
 either, and does not need one.
 
 The bound is applied through ONE clamp (`ColumnWidths::clamp`) rather than

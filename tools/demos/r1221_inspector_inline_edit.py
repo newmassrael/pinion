@@ -83,9 +83,10 @@ def body() -> None:
         assert_eq(q(tf, "value.0"), True, "value.0 = the representative (Player) Visible")
         assert_eq(q(tf, "value.1"), 1, "value.1 = the representative (Player) Layer")
 
-        # ── (B) RPC toggle_property: resolve a mixed Bool to CHECKED ──
-        # R1223: a mixed Bool resolves to true (Qt/Unreal indeterminate-checkbox
-        # convention, order-independent), not !first_selected.
+        # ── (B) RPC toggle_property: resolve a mixed Bool to CHECKED ── R1223:
+        # a mixed Bool resolves to true (the toolkit/the engine
+        # indeterminate-checkbox convention, order-independent), not
+        # !first_selected.
         assert_eq(tf.invoke("/external/toggle_property", 0), True, "toggle Visible across all")
         assert_eq(q(tf, "mixed.0"), False, "the mix is resolved")
         assert_eq(q(tf, "value.0"), True, "mixed -> checked (all true)")

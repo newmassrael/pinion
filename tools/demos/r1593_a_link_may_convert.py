@@ -23,23 +23,23 @@ What this script checks, and why each check discriminates:
 * **The question is answerable before the wire exists.** `conversion` takes the
   same argument spelling `connect` does, so "may I?" and "do it" name the wire
   the same way, and it answers with both types as well as the verdict.
-* **PAST BLENDER (1): legality and the conversion are ONE declaration.** Blender
+* **PAST the DCC (1): legality and the conversion are ONE declaration.** the DCC
   keeps them apart in three places that can disagree — `validate_link` (a
   `bNodeTreeType` C function pointer that says whether a wire may exist),
   `DataTypeConversions` (a global `Map<(from, to), ConversionFunctions>` holding
   the actual conversion) and `get_internal_link_type_priority` (a static
   socket-type table used when a node is muted). Asserted here by driving the
   wire and reading the value that arrives: acceptance entails carriage.
-* **PAST BLENDER (2): the crossing is ASKABLE at all.** `validate_link` is a
-  function pointer reached through `ntree.typeinfo`; Blender exposes no accessor
+* **PAST the DCC (2): the crossing is ASKABLE at all.** `validate_link` is a
+  function pointer reached through `ntree.typeinfo`; the DCC exposes no accessor
   for "would this wire be legal, and would the value change". Here it is a
   method and a wire read.
-* **PAST BLENDER (3): showing an implicit conversion costs nothing.** Blender
+* **PAST the DCC (3): showing an implicit conversion costs nothing.** the DCC
   makes the fact visible by materialising a whole `implicit_conversion` node
   into the tree (`register_node_type_implicit_conversion`, `node_common.cc`), so
   seeing it changes the graph you are looking at. Here the node count is
   asserted unchanged and the wire is drawn dotted.
-* **PAST BLENDER (4): a bypassed node routes by the SAME relation.** Blender
+* **PAST the DCC (4): a bypassed node routes by the SAME relation.** the DCC
   answers that from its third table, unrelated to either of the other two, so
   what a muted node passes through there can disagree with what a wire in the
   same position would have carried.

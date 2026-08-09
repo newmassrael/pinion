@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """R953 §5.38 §5.40 — the dedicated cell-range-selection grid (anchor + extent).
 
-R952 added the spreadsheet / Qt `QTableView` `SelectItems` model to the `Table`
+R952 added the spreadsheet / the toolkit table view `SelectItems` model to the `Table`
 coordinator (a rectangle of cells selected by anchor + extent) but bolted it
 onto `hello-table`, which already drove the `SelectRows` model (one whole row
 washed). Two selection models in one grid is a no-mode smell — a real editor
-picks one (Excel selects cells, a list selects rows). R953 splits the cell-range
+picks one (the spreadsheet selects cells, a list selects rows). R953 splits the cell-range
 model into this dedicated `hello-cell-select` grid (a small numeric spreadsheet)
 and reverts `hello-table` to pure row selection.
 

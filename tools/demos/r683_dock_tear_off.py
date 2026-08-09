@@ -606,14 +606,14 @@ def body() -> None:
             "round-trip H2: property must re-install in main dock after dock-back",
         )
 
-        # Round 2: tear off viewport → dock back.
-        # (R1323) The release must land OFF the dragged panel. A panel released back
-        # over its OWN slot snaps back — the ratified desktop-dock rule (R1110/R1162:
-        # VS Code / Blender detach only once the drag leaves every dock zone), not a
-        # tear-off. The viewport IS the centre panel here (x 284..880), so the old
-        # "drag to the window centre" target landed inside the viewport itself; drop it
-        # over the INSPECTOR (0..280) instead, which for this coordinator-less binding
-        # is not a dock target either → float.
+        # Round 2: tear off viewport → dock back. (R1323) The release must land
+        # OFF the dragged panel. A panel released back over its OWN slot snaps
+        # back — the ratified desktop-dock rule (R1110/R1162: VS Code / the DCC
+        # detach only once the drag leaves every dock zone), not a tear-off.
+        # The viewport IS the centre panel here (x 284..880), so the old "drag
+        # to the window centre" target landed inside the viewport itself; drop
+        # it over the INSPECTOR (0..280) instead, which for this
+        # coordinator-less binding is not a dock target either → float.
         _drag_window(
             tf,
             "main",

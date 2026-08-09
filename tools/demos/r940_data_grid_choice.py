@@ -14,7 +14,7 @@ its 2nd consumer, adapted to the virtualized 2-D grid:
     free — the conversion preserves every prior Type-column assertion;
   * the dropdown floats in GRID-LOCAL coordinates (a sibling of the scroll
     viewport), scroll-aware (it tracks the cell as the body scrolls) and
-    flip-above near the bottom — the Qt combobox-delegate behaviour;
+    flip-above near the bottom — the toolkit combobox-delegate behaviour;
   * one path commits a pick — a pointer option click, the keyboard Enter/Space,
     and the RPC `choose` all journal ONE cell edit through `edit_cell` (so a
     dropdown pick re-anchors + undoes exactly like every other cell edit).

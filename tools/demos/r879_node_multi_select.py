@@ -4,7 +4,7 @@
 Drives `hello-node-editor` via JSON-RPC. The single-node selection
 generalises to a set (the marquee substrate): plain click replaces,
 `Ctrl`+click toggles membership, `Shift`+click adds (an unordered graph has
-no range — the Unreal convention). The set is a first-class group for every
+no range — the engine convention). The set is a first-class group for every
 verb: `Delete` removes the whole set + incident edges as ONE undo step,
 arrow nudges move the group as one coalescing step, and grabbing a selected
 node drags the whole selection rigidly. AI-first: `query selected_ids` /

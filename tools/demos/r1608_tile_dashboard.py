@@ -2,11 +2,11 @@
 """R1608 §5.21 — a tile dashboard is a value, and every gesture is a verb.
 
 R1607 built `TileGrid` and measured that the R1560 CSS Grid already holds a
-Grafana-class dashboard, then deliberately stopped without a consumer -- so it
+the dashboard tool-class dashboard, then deliberately stopped without a consumer -- so it
 could not answer whether the reflow's *locality* holds under a real pointer.
 This demo is that answer, over the wire.
 
-What it proves, none of which Grafana can be asked:
+What it proves, none of which the dashboard tool can be asked:
 
 * The whole arrangement is ONE read (`layout`, a JSON document), so an agent
   knows where every card is without a pixel.

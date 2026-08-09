@@ -210,12 +210,12 @@ def body() -> None:
         assert_eq(_status_label(tf), "OS focus: (blurred)",
                   "the view still tracks OS focus after rejected traffic")       # 38
 
-        # ── (K) R1420: the blur drive replays the FULL winit Focused arm ─
-        # A driven blur must do more than clear the gate/mirror: like a real OS
-        # blur (and Qt window deactivation) it settles held state, so a chord
-        # held across an alt-tab cannot strand. Arm a held key, drive a blur,
-        # and observe the held-key cache cleared (window_blurred, not just
-        # note_os_focus).
+        # ── (K) R1420: the blur drive replays the FULL winit Focused arm ─ A
+        # driven blur must do more than clear the gate/mirror: like a real OS
+        # blur (and the toolkit window deactivation) it settles held state, so
+        # a chord held across an alt-tab cannot strand. Arm a held key, drive a
+        # blur, and observe the held-key cache cleared (window_blurred, not
+        # just note_os_focus).
         _drive(tf, True)
         assert_eq(_os_focused(tf), MAIN, "re-focus for the full-edge check")     # 39
         tf.key(at=(10.0, 12.0), name="Space", state="down")

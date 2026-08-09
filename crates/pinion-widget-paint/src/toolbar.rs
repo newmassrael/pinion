@@ -219,12 +219,12 @@ pub fn view_toolbar(
     )
 }
 
-/// Compose one control: a centered label, tonal-filled when pressed,
-/// focus-ringed when it is the roving cursor under group focus. A
-/// `is_disabled` control greys its label ([`ColorRole::OnSurfaceMuted`])
-/// and shows no pressed fill — it stays focusable (the roving cursor may
-/// rest on it) but its activation is a no-op the binding's reducer gates
-/// (R989 focusable-but-not-operable model; see the `toolbar` module docs).
+/// another declarative toolkit one control: a centered label, tonal-filled
+/// when pressed, focus-ringed when it is the roving cursor under group focus.
+/// A `is_disabled` control greys its label ([`ColorRole::OnSurfaceMuted`]) and shows no pressed fill — it stays
+/// focusable (the roving cursor may rest on it) but its activation is a no-op
+/// the binding's reducer gates (R989 focusable-but-not-operable model; see the
+/// `toolbar` module docs).
 #[expect(
     clippy::too_many_arguments,
     reason = "control identity + the three reflective state bits + theme/style are distinct inputs"

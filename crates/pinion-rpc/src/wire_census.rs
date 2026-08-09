@@ -29,7 +29,7 @@
 //!
 //! - **Structure, not just a type name.** `returnMetaType()` on a
 //!   method answering with a variant map yields variant map — the keys are
-//!   opaque, and every the toolkit introspection client falls back to out-of-band
+//!   opaque, and a toolkit introspection client falls back to out-of-band
 //!   documentation for them. A [`WireType`] states the key set, each key's JSON
 //!   type, whether the key may be ABSENT, whether it may be `null`, and —
 //!   through [`WireField::of`] — the named type nested at it, recursively

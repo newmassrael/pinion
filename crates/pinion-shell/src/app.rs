@@ -6489,7 +6489,7 @@ impl ShellConfig {
     /// The toolkit's `setFont`, and the other half of [`Self::with_application_font`]. Declaring a face makes
     /// it selectable *by name*; this makes it what the binding gets without
     /// naming it, so a view fn does not have to spell the family on every
-    /// [`TextStyle`](pinion_core::style::TextStyle) it emits — which no the toolkit
+    /// [`TextStyle`](pinion_core::style::TextStyle) it emits — which a toolkit
     /// application does either, and which no binding reliably remembers.
     ///
     /// The two are separate calls for the reason the toolkit keeps them

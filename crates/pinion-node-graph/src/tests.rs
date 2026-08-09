@@ -956,7 +956,7 @@ where
 /// node, at whichever remaining node comes first in `nodes_by_id` — id order.
 /// So this takes the id-ordered walk the DCC takes and answers the links it
 /// would clear `NODE_LINK_VALID` on.
-fn blender_blamed_links(document: &Document<Op>) -> Vec<crate::LinkId> {
+fn dcc_blamed_links(document: &Document<Op>) -> Vec<crate::LinkId> {
     // `toposort_from_start_node`, depth-first over inputs, emitting a node once
     // everything it depends on has been emitted; a node already on the path is
     // skipped, which is what makes a cycle come out in *arrival* order.
@@ -1064,11 +1064,11 @@ fn a_cycle_is_localised_to_the_nodes_on_it_and_not_to_what_it_spoiled() {
 
     // The DCC's answer to the same document, by its own rule: a bool for the
     // tree, and a blamed LINK chosen by the order the nodes were created in.
-    let blamed = blender_blamed_links(&corrupt);
+    let blamed = dcc_blamed_links(&corrupt);
     assert_eq!(
         blamed.len(),
         1,
-        "Blender blames one wire of the two-wire loop: {blamed:?}"
+        "The DCC blames one wire of the two-wire loop: {blamed:?}"
     );
     let mirrored = force_link(
         &{
@@ -1090,7 +1090,7 @@ fn a_cycle_is_localised_to_the_nodes_on_it_and_not_to_what_it_spoiled() {
         Socket::new(NodeId(1), 0),
     );
     assert_ne!(
-        blender_blamed_links(&mirrored).first().map(|l| l.0),
+        dcc_blamed_links(&mirrored).first().map(|l| l.0),
         blamed.first().map(|l| l.0),
         "…and which wire that is moves when only the creation order does, \
          which is why the localisation here is over NODES and by reachability"
@@ -1576,8 +1576,8 @@ fn a_refused_insert_leaves_the_document_untouched() {
 
 #[test]
 fn keeping_the_inbound_crossings_refeeds_the_copies() {
-    // The DCC's `keep_inputs`, which exists on `NODE_OT_duplicate` only:
-    // `NODE_OT_clipboard_paste` declares one property, `offset`.
+    // The DCC's `keep_inputs`, which exists on `duplicate` only:
+    // `clipboard_paste` declares one property, `offset`.
     let f = fixture();
     let mut document = f.document.clone();
     let cut = document.extract(ROOT, &[f.add]).unwrap();
@@ -1901,7 +1901,7 @@ fn value_into(document: &Document<Op>, tree: TreeId, socket: Socket) -> Option<V
 /// not touch the interface and does not reconnect anything. Present so the
 /// divergence is *asserted* rather than described — a test that only checked
 /// our own answer could not tell a better rule from an equal one.
-fn blender_separate(
+fn dcc_separate(
     document: &mut Document<Op>,
     host: TreeId,
     definition: TreeId,
@@ -1943,7 +1943,7 @@ fn blender_separate(
 /// and appends one interface socket per value linked to a node outside them. It
 /// never consults the group's existing interface, so a value that already
 /// crosses at this instance gets a second port.
-fn blender_insert_port_count(document: &Document<Op>, tree: TreeId, moving: &[NodeId]) -> usize {
+fn dcc_insert_port_count(document: &Document<Op>, tree: TreeId, moving: &[NodeId]) -> usize {
     let host = document.tree(tree).unwrap();
     let moved: std::collections::BTreeSet<NodeId> = moving.iter().copied().collect();
     // Keyed by SIDE as well as socket: a `Socket` says which port, never which
@@ -2029,7 +2029,7 @@ fn a_value_that_already_crosses_does_not_get_a_second_port() {
 
     // The DCC would expose one socket per connected socket of the moved node:
     // three, two of them duplicating values that already cross here.
-    assert_eq!(blender_insert_port_count(&b.document, ROOT, &[twin]), 3);
+    assert_eq!(dcc_insert_port_count(&b.document, ROOT, &[twin]), 3);
 
     let out = b
         .document
@@ -2251,7 +2251,7 @@ fn a_node_moved_out_of_a_group_keeps_its_wiring_where_blender_loses_it() {
     // The DCC's rule, on the same fixture: the sink is fed by a group that
     // produces nothing, and the group keeps three sockets that reach nothing.
     let mut theirs = boundaried();
-    blender_separate(
+    dcc_separate(
         &mut theirs.document,
         ROOT,
         theirs.definition,
@@ -2528,7 +2528,7 @@ fn a_link_naming_a_missing_node_is_refused_rather_than_crashing() {
 /// and breaking ties by whether the input happens to be **wired**. Our taxonomy
 /// has no implicit conversions, so the table reduces to its diagonal; the
 /// tie-break is the part that carries meaning, and it is reproduced exactly.
-fn blender_internal_link(
+fn dcc_internal_link(
     document: &Document<Op>,
     tree: TreeId,
     node: NodeId,
@@ -2642,7 +2642,7 @@ fn the_route_is_a_function_of_the_signature_where_blenders_reads_the_wiring() {
         f.document.passthrough(ROOT, f.add).unwrap().source_of(0),
         Some(0)
     );
-    assert_eq!(blender_internal_link(&f.document, ROOT, f.add, 0), Some(0));
+    assert_eq!(dcc_internal_link(&f.document, ROOT, f.add, 0), Some(0));
 
     // Unwire the FIRST input and change nothing else about the node.
     let feed = f
@@ -2660,9 +2660,9 @@ fn the_route_is_a_function_of_the_signature_where_blenders_reads_the_wiring() {
         "unchanged: the routing is a property of the signature alone"
     );
     assert_eq!(
-        blender_internal_link(&f.document, ROOT, f.add, 0),
+        dcc_internal_link(&f.document, ROOT, f.add, 0),
         Some(1),
-        "Blender's linked-tie-break re-routes a DIFFERENT port's value \
+        "the DCC's linked-tie-break re-routes a DIFFERENT port's value \
          because this one was unplugged"
     );
 }
@@ -3346,7 +3346,7 @@ fn the_identity_rule_is_falsifiable_where_position_and_type_order_disagree() {
     // priority is equal for both and its tie-break is linked-ness, which both
     // satisfy. So a bypassed Swap there emits 10 twice and the right-hand
     // value vanishes.
-    assert_eq!(blender_internal_link(&document, ROOT, swap, 1), Some(0));
+    assert_eq!(dcc_internal_link(&document, ROOT, swap, 1), Some(0));
 }
 
 #[test]
@@ -3451,7 +3451,7 @@ fn dissolving_an_interface_node_severs_and_says_so() {
 /// Eleven rows and three shapes, so this table's strength is three distinct
 /// derivations rather than eleven — which is why the shape counts are asserted
 /// too, and why the pairing (not just output 0) is what each row checks.
-enum BlenderHook {
+enum DccHook {
     /// `input_by_identifier(output_socket.identifier())` — seven of the twelve,
     /// under the comment "Internal links should always map corresponding input
     /// and output sockets". The identity, matched by name.
@@ -3466,48 +3466,40 @@ enum BlenderHook {
 
 /// Every implementor, with the shape it computes and the port index its
 /// callback answers with for output 0.
-const BLENDER_HOOKS: &[(&str, BlenderHook, Option<u32>)] = &[
-    ("node_geo_switch", BlenderHook::FirstDataInput, Some(1)),
-    (
-        "node_geo_index_switch",
-        BlenderHook::FirstDataInput,
-        Some(1),
-    ),
-    ("node_geo_menu_switch", BlenderHook::FirstDataInput, Some(1)),
-    (
-        "node_geo_attribute_capture",
-        BlenderHook::SameIndex,
-        Some(0),
-    ),
-    ("node_geo_bake", BlenderHook::CorrespondingSocket, Some(0)),
+const DCC_HOOKS: &[(&str, DccHook, Option<u32>)] = &[
+    ("node_geo_switch", DccHook::FirstDataInput, Some(1)),
+    ("node_geo_index_switch", DccHook::FirstDataInput, Some(1)),
+    ("node_geo_menu_switch", DccHook::FirstDataInput, Some(1)),
+    ("node_geo_attribute_capture", DccHook::SameIndex, Some(0)),
+    ("node_geo_bake", DccHook::CorrespondingSocket, Some(0)),
     (
         "node_geo_closure_to_list",
-        BlenderHook::CorrespondingSocket,
+        DccHook::CorrespondingSocket,
         Some(0),
     ),
     (
         "node_geo_enable_output",
-        BlenderHook::CorrespondingSocket,
+        DccHook::CorrespondingSocket,
         Some(0),
     ),
     (
         "node_geo_evaluate_closure",
-        BlenderHook::CorrespondingSocket,
+        DccHook::CorrespondingSocket,
         Some(0),
     ),
     (
         "node_geo_field_to_grid",
-        BlenderHook::CorrespondingSocket,
+        DccHook::CorrespondingSocket,
         Some(0),
     ),
     (
         "node_geo_field_to_list",
-        BlenderHook::CorrespondingSocket,
+        DccHook::CorrespondingSocket,
         Some(0),
     ),
     (
         "node_geo_grid_advect",
-        BlenderHook::CorrespondingSocket,
+        DccHook::CorrespondingSocket,
         Some(0),
     ),
 ];
@@ -3588,12 +3580,12 @@ fn shaped(
 #[test]
 fn our_default_reproduces_every_blender_pass_through_hook() {
     // The three shapes, as signatures. `true` = the port takes part.
-    for &(name, ref shape, expected) in BLENDER_HOOKS {
+    for &(name, ref shape, expected) in DCC_HOOKS {
         let (ins, outs): (Vec<_>, Vec<_>) = match shape {
             // Switch(Switch: Amount, False: Colour, True: Colour) -> Colour.
             // The control input's TYPE differs from the data, which is the
             // ordinary case, and our rule skips it for free.
-            BlenderHook::FirstDataInput => (
+            DccHook::FirstDataInput => (
                 vec![
                     ("Switch", Ty::Number, true),
                     ("False", Ty::Text, true),
@@ -3603,17 +3595,17 @@ fn our_default_reproduces_every_blender_pass_through_hook() {
             ),
             // Capture(Geometry, Value) -> (Geometry, Attribute), paired by
             // index.
-            BlenderHook::SameIndex => (
+            DccHook::SameIndex => (
                 vec![("Geometry", Ty::Text, true), ("Value", Ty::Number, true)],
                 vec![
                     ("Geometry", Ty::Text, true),
                     ("Attribute", Ty::Number, true),
                 ],
             ),
-            // The same pairing reached by NAME in the DCC. Our rule reaches it
+            // The same pairing reached by NAME in dcc. Our rule reaches it
             // by index, and the two agree because a node that pairs its
             // sockets declares them in one order — which is free to do here.
-            BlenderHook::CorrespondingSocket => (
+            DccHook::CorrespondingSocket => (
                 vec![("Geometry", Ty::Text, true), ("Count", Ty::Number, true)],
                 vec![("Geometry", Ty::Text, true), ("Count", Ty::Number, true)],
             ),
@@ -3627,10 +3619,7 @@ fn our_default_reproduces_every_blender_pass_through_hook() {
         );
         // The PAIRING, not just output 0 — otherwise a rule that sent every
         // output to one input would satisfy two of the three shapes.
-        if matches!(
-            shape,
-            BlenderHook::SameIndex | BlenderHook::CorrespondingSocket
-        ) {
+        if matches!(shape, DccHook::SameIndex | DccHook::CorrespondingSocket) {
             assert_eq!(
                 through.source_of(1),
                 Some(1),
@@ -3649,12 +3638,11 @@ fn our_default_reproduces_every_blender_pass_through_hook() {
         NO_MUTED_LINKS.0,
         "the sides must account for every declaration"
     );
-    assert_eq!(BLENDER_HOOKS.len(), 11);
-    let count =
-        |want: fn(&BlenderHook) -> bool| BLENDER_HOOKS.iter().filter(|h| want(&h.1)).count();
-    assert_eq!(count(|s| matches!(s, BlenderHook::FirstDataInput)), 3);
-    assert_eq!(count(|s| matches!(s, BlenderHook::SameIndex)), 1);
-    assert_eq!(count(|s| matches!(s, BlenderHook::CorrespondingSocket)), 7);
+    assert_eq!(DCC_HOOKS.len(), 11);
+    let count = |want: fn(&DccHook) -> bool| DCC_HOOKS.iter().filter(|h| want(&h.1)).count();
+    assert_eq!(count(|s| matches!(s, DccHook::FirstDataInput)), 3);
+    assert_eq!(count(|s| matches!(s, DccHook::SameIndex)), 1);
+    assert_eq!(count(|s| matches!(s, DccHook::CorrespondingSocket)), 7);
 }
 
 #[test]
@@ -3820,9 +3808,9 @@ fn a_port_declaration_survives_serialization() {
 /// it.
 ///
 /// Present because the DCC states it as `BLI_assert` inside `node_attach_node`, which is compiled out
-/// of a release build — and because its own `NODE_OT_parent_set` calls `node_detach_node` first, so by the
+/// of a release build — and because its own `parent_set` calls `node_detach_node` first, so by the
 /// time the assert runs the chain it would have walked is already cleared.
-fn blender_is_parent_and_child(
+fn dcc_is_parent_and_child(
     document: &Document<Op>,
     tree: TreeId,
     parent: NodeId,
@@ -3974,7 +3962,7 @@ fn the_common_frame_of_a_frame_and_its_content_is_the_frames_own_container() {
 #[test]
 fn a_containment_cycle_is_refused_where_blenders_own_guard_passes_it() {
     let mut f = framed();
-    // The DCC's `NODE_OT_parent_set` with `outer` selected and `inner` active: it calls `node_detach_node(outer)` and THEN
+    // The DCC's `parent_set` with `outer` selected and `inner` active: it calls `node_detach_node(outer)` and THEN
     // asserts. Reproduce that exact order and ask its guard the question it
     // would ask.
     let mut mirror = f.document.clone();
@@ -3985,7 +3973,7 @@ fn a_containment_cycle_is_refused_where_blenders_own_guard_passes_it() {
         .unwrap()
         .parent = None;
     assert!(
-        !blender_is_parent_and_child(&mirror, ROOT, f.inner, f.outer),
+        !dcc_is_parent_and_child(&mirror, ROOT, f.inner, f.outer),
         "the detach cleared the chain the assert walks, so it fires on nothing"
     );
 
@@ -4014,7 +4002,7 @@ fn a_node_cannot_be_inside_itself_or_inside_something_that_is_not_a_frame() {
     assert_eq!(
         f.document.set_parent(ROOT, f.two, Some(f.add)),
         Err(ParentError::NotAFrame { node: f.add }),
-        "Blender states this one as an assertion too"
+        "The DCC states this one as an assertion too"
     );
     assert_eq!(
         f.document.set_parent(ROOT, f.two, Some(NodeId(99))),
@@ -4098,7 +4086,7 @@ fn unframing_leaves_one_level_where_blender_leaves_all_of_them() {
         vec![f.outer],
         "out of `inner`, still in `outer` — the containment the gesture did not touch"
     );
-    // The DCC's `NODE_OT_detach` sets parent to nullptr, which is reachable here too and is
+    // The DCC's `detach` sets parent to nullptr, which is reachable here too and is
     // a DIFFERENT request.
     f.document.set_parent(ROOT, f.three, None).unwrap();
     assert!(f.document.ancestry(ROOT, f.three).is_empty());
@@ -4152,18 +4140,17 @@ fn deleting_a_frame_hands_its_members_to_the_frame_above_it() {
     // The DCC's `node_unlink_attached` clears the child's parent outright, so
     // the same delete would put `three` on the canvas even though `outer` is
     // still there and still contains where it was.
-    let mut blender = framed();
-    for member in blender.document.members(ROOT, blender.inner) {
-        blender
-            .document
+    let mut dcc = framed();
+    for member in dcc.document.members(ROOT, dcc.inner) {
+        dcc.document
             .tree_mut(ROOT)
             .unwrap()
             .node_mut(member)
             .unwrap()
             .parent = None;
     }
-    blender.document.remove_node(ROOT, blender.inner).unwrap();
-    assert!(blender.document.ancestry(ROOT, blender.three).is_empty());
+    dcc.document.remove_node(ROOT, dcc.inner).unwrap();
+    assert!(dcc.document.ancestry(ROOT, dcc.three).is_empty());
     assert!(f.document.validate().is_empty());
 }
 
@@ -4378,12 +4365,12 @@ fn an_inline_keeps_the_definitions_own_frames_where_blender_flattens_them() {
     // The DCC assigns the group node's parent to EVERY copied node
     // (`node_group.cc`, the `if (group_node.parent)` loop), overwriting the
     // parent/child relationships its own copy step had just recreated.
-    let mut blender = f.document.clone();
+    let mut dcc = f.document.clone();
     for &id in &out.nodes {
-        blender.tree_mut(ROOT).unwrap().node_mut(id).unwrap().parent = Some(host_frame);
+        dcc.tree_mut(ROOT).unwrap().node_mut(id).unwrap().parent = Some(host_frame);
     }
     assert_eq!(
-        blender.ancestry(ROOT, adder),
+        dcc.ancestry(ROOT, adder),
         vec![host_frame],
         "one level, because the internal frame is no longer anyone's container"
     );
@@ -4454,14 +4441,9 @@ fn a_duplicate_lands_back_in_its_frame_where_blender_leaves_it_outside() {
     // The DCC's copy path looks the parent up in the copy map, does not find
     // it because the frame was not selected, and calls `node_detach_node` — with no record
     // anywhere that it happened.
-    let mut blender = f.document.clone();
-    blender
-        .tree_mut(ROOT)
-        .unwrap()
-        .node_mut(copy)
-        .unwrap()
-        .parent = None;
-    assert!(blender.ancestry(ROOT, copy).is_empty());
+    let mut dcc = f.document.clone();
+    dcc.tree_mut(ROOT).unwrap().node_mut(copy).unwrap().parent = None;
+    assert!(dcc.ancestry(ROOT, copy).is_empty());
     assert!(f.document.validate().is_empty());
 }
 
@@ -4620,7 +4602,7 @@ fn framing_nothing_is_refused_and_an_empty_frame_needs_no_derivation() {
 /// The DCC's `node_select_linked_to_exec` / `..._from_exec` at `8cf50599`: for each selected node, walk its sockets'
 /// **directly linked** sockets and select their owners. One hop, every time —
 /// the reach is the number of keypresses.
-fn blender_linked_one_hop(
+fn dcc_linked_one_hop(
     document: &Document<Op>,
     tree: TreeId,
     selection: &[NodeId],
@@ -4660,7 +4642,7 @@ fn growing_needs_no_mutable_document(document: &Document<Op>) -> Vec<NodeId> {
 
 /// The DCC's `node_select_grouped_name` for a suffix: the run after the last
 /// delimiter, or — its own special case — the WHOLE NAME when there is none.
-fn blender_suffix(name: &str) -> &str {
+fn dcc_suffix(name: &str) -> &str {
     name.rsplit_once(['.', '-', '_'])
         .map_or(name, |(_, tail)| tail)
 }
@@ -4722,8 +4704,8 @@ fn one_hop_is_blenders_answer_and_the_closure_is_the_question() {
             .iter()
             .copied()
             .collect::<std::collections::BTreeSet<_>>(),
-        blender_linked_one_hop(&c.document, ROOT, &[c.head], true),
-        "and it is exactly what Blender's rule answers"
+        dcc_linked_one_hop(&c.document, ROOT, &[c.head], true),
+        "and it is exactly what the DCC's rule answers"
     );
 
     let closure = c
@@ -4768,7 +4750,7 @@ fn growing_a_selection_changes_nothing_in_the_document() {
         c.document, before,
         "the document is the same value afterwards — a consistency check. The \
          GUARANTEE is the signature: see `growing_needs_no_mutable_document`, \
-         which compiles only because `grow` takes `&self`, where Blender's \
+         which compiles only because `grow` takes `&self`, where the DCC's \
          equivalents take the tree mutably and carry OPTYPE_UNDO"
     );
     assert!(growing_needs_no_mutable_document(&c.document).is_empty());
@@ -4794,7 +4776,7 @@ fn upstream_is_the_other_direction_of_the_same_relation() {
             .iter()
             .copied()
             .collect::<std::collections::BTreeSet<_>>(),
-        blender_linked_one_hop(&c.document, ROOT, &[c.tail], false),
+        dcc_linked_one_hop(&c.document, ROOT, &[c.tail], false),
     );
 }
 
@@ -5014,12 +4996,12 @@ fn an_affix_that_is_not_there_offers_no_criterion() {
     // The DCC's rule held as a helper, and the divergence asserted: under it
     // the twin WOULD join, because both nodes' whole names stand in as
     // suffixes.
-    assert_eq!(blender_suffix("plain"), blender_suffix("plain"));
+    assert_eq!(dcc_suffix("plain"), dcc_suffix("plain"));
     assert!(
         !from_plain.selection.contains(&twin),
-        "which is the node Blender's substitution would have swept in"
+        "which is the node the DCC's substitution would have swept in"
     );
-    assert_ne!(blender_suffix("decode.header"), "decode.header");
+    assert_ne!(dcc_suffix("decode.header"), "decode.header");
     // And a node that is not selected is never a criterion.
     assert!(
         !f.document
@@ -5083,7 +5065,7 @@ fn the_same_kind_run_is_in_evaluation_order_and_says_where_you_are() {
         run.iter().position(|&id| id == far),
         Some(1),
         "PAST BLENDER — the RUN is published, so an editor can say `2 of 2`. \
-         NODE_OT_select_same_type_step answers by moving the active node and \
+         select_same_type_step answers by moving the active node and \
          reports only whether it moved"
     );
     // The DCC's operator is one line over this.
@@ -5100,7 +5082,7 @@ fn the_same_kind_run_is_in_evaluation_order_and_says_where_you_are() {
     assert_eq!(
         step(far, true),
         None,
-        "it stops at the end, as Blender's does"
+        "it stops at the end, as the DCC's does"
     );
     assert_eq!(step(far, false), Some(f.add));
     assert_eq!(f.document.same_kind_run(ROOT, NodeId(99)), None);
@@ -5151,7 +5133,7 @@ fn a_stale_selection_is_refused_rather_than_quietly_narrowed() {
             tree: ROOT,
             node: NodeId(99)
         }),
-        "Blender's operators skip such a node, so the question silently becomes \
+        "the DCC's operators skip such a node, so the question silently becomes \
          a different question"
     );
     assert_eq!(
@@ -6888,7 +6870,7 @@ fn r1597_a_value_its_port_cannot_hold_is_named_on_a_document_that_arrived() {
 
 #[test]
 fn r1598_a_swap_keeps_the_node_and_everything_addressed_by_it() {
-    // ★ The whole divergence from the DCC, whose `NODE_OT_swap_node` creates a
+    // ★ The whole divergence from dcc, whose `swap_node` creates a
     // new node and deletes the old one -- so every reference to it dies: a
     // selection, a saved layout, an undo record, an agent holding the id.
     let mut f = fixture();
@@ -6952,7 +6934,7 @@ fn r1598_a_port_is_carried_by_name_first_then_by_position() {
     assert!(
         held.link_into(Socket::new(f.add, 0)).is_some()
             && held.link_into(Socket::new(f.add, 1)).is_some(),
-        "★ the wires the user drew survived a swap Blender would drop them on"
+        "★ the wires the user drew survived a swap The DCC would drop them on"
     );
 
     // And a name match wins over position. `Swap` -> `Swap` is the identity, so
@@ -7315,7 +7297,7 @@ impl NodeKind for Flo {
 /// ```
 ///
 /// Two independent booleans, each naming the *other* flow to exclude it.
-fn unreal_breaks_at(output_is_exec: bool, input_is_exec: bool) -> Option<Side> {
+fn engine_breaks_at(output_is_exec: bool, input_is_exec: bool) -> Option<Side> {
     if output_is_exec {
         Some(Side::Output)
     } else if !input_is_exec {
@@ -7353,7 +7335,7 @@ fn r1599_multiplicity_is_the_duality_and_unreal_derives_the_same_two_rules() {
 
     // And it agrees with the engine's on both cells that a link can actually
     // occupy. The mixed pairs are deliberately NOT compared, and the reason is
-    // a divergence rather than a gap: `unreal_breaks_at` answers for them, because there
+    // a divergence rather than a gap: `engine_breaks_at` answers for them, because there
     // those two booleans are evaluated for pairs that cannot connect — an exec
     // pin is kept away from a float pin somewhere else entirely, by `ArePinsCompatible`
     // comparing pin-category strings. Here the flow check is the FIRST thing
@@ -7379,8 +7361,8 @@ fn r1599_multiplicity_is_the_duality_and_unreal_derives_the_same_two_rules() {
         };
         assert_eq!(
             ours,
-            unreal_breaks_at(out_exec, in_exec),
-            "flow rule disagrees with Unreal for out_exec={out_exec} in_exec={in_exec}"
+            engine_breaks_at(out_exec, in_exec),
+            "flow rule disagrees with The engine for out_exec={out_exec} in_exec={in_exec}"
         );
     }
 }
@@ -7630,7 +7612,7 @@ fn r1599_a_control_cycle_is_a_loop_and_a_value_cycle_is_still_refused() {
 /// ```text
 /// return Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec;
 /// ```
-fn unreal_pin_forms_a_dependency(is_exec: bool) -> bool {
+fn engine_pin_forms_a_dependency(is_exec: bool) -> bool {
     !is_exec
 }
 
@@ -7650,8 +7632,8 @@ fn r1599_the_dependency_walk_excludes_control_exactly_as_unreal_does() {
         .unwrap();
 
     // `a` reaches `b` on the control plane and NOT on the dependency plane.
-    assert!(unreal_pin_forms_a_dependency(false), "a value pin does");
-    assert!(!unreal_pin_forms_a_dependency(true), "an exec pin does not");
+    assert!(engine_pin_forms_a_dependency(false), "a value pin does");
+    assert!(!engine_pin_forms_a_dependency(true), "an exec pin does not");
     assert_eq!(
         document.data_path_between(ROOT, start, b),
         None,
@@ -7851,7 +7833,7 @@ fn r1599_a_sequence_runs_each_branch_to_completion_and_needs_no_code() {
     assert_eq!(
         run.trace(),
         expected,
-        "each branch runs TO COMPLETION before the next begins — Unreal \
+        "each branch runs TO COMPLETION before the next begins — The engine \
          compiles exactly this as `push X1; goto A` (KCST_PushState)"
     );
 
@@ -8920,7 +8902,7 @@ fn r1600_a_run_reads_the_registers_so_the_trace_changes_between_ticks() {
 ///
 /// So the cost of iterating is paid in *nodes*, and the count has to be a
 /// number known before the graph is built — which is why this helper takes one.
-fn blender_repeat_zone_body_copies(body_nodes: usize, iterations: usize) -> usize {
+fn dcc_repeat_zone_body_copies(body_nodes: usize, iterations: usize) -> usize {
     body_nodes * iterations
 }
 
@@ -8947,7 +8929,7 @@ fn r1600_iterating_costs_one_register_where_blender_unrolls_the_body() {
     // ★ the DCC pays for the same fifty in nodes, every time, and cannot reuse
     // the built graph across a different count.
     assert_eq!(
-        blender_repeat_zone_body_copies(nodes_before, 50),
+        dcc_repeat_zone_body_copies(nodes_before, 50),
         nodes_before * 50,
         "★ the reference materialises one body per iteration"
     );
@@ -8967,7 +8949,7 @@ fn delay_of(document: &Document<Flo>) -> NodeId {
 /// continuing the loop:
 ///
 /// ```text
-/// for (const UEdGraphNode* ChildNode : MacroGraph->Nodes) {
+/// for (const the graph node* ChildNode : MacroGraph->Nodes) {
 ///   if (const UK2Node_MacroInstance* MacroInstanceNode = Cast<...>(ChildNode)) {
 ///     UEdGraph* InnerMacroGraph = MacroInstanceNode->GetMacroGraph();
 ///     if (VisitedMacroGraphs.Contains(InnerMacroGraph->GraphGuid)) { return true; }
@@ -8980,11 +8962,11 @@ fn delay_of(document: &Document<Flo>) -> NodeId {
 /// this is the whole of what stands between a Blueprint and that.
 #[expect(
     clippy::never_loop,
-    reason = "the lint is CORRECT and that is the point: Unreal returns on its \
+    reason = "the lint is CORRECT and that is the point: The engine returns on its \
               first macro-instance child instead of continuing, which is the \
               defect this helper exists to hold"
 )]
-fn unreal_find_macro_cycle(
+fn engine_find_macro_cycle(
     graphs: &std::collections::BTreeMap<usize, Vec<usize>>,
     root: usize,
     visited: &mut BTreeSet<usize>,
@@ -8994,7 +8976,7 @@ fn unreal_find_macro_cycle(
         if visited.contains(child) {
             return true;
         }
-        return unreal_find_macro_cycle(graphs, *child, visited);
+        return engine_find_macro_cycle(graphs, *child, visited);
     }
     false
 }
@@ -9044,7 +9026,7 @@ fn r1600_a_nesting_cycle_is_found_where_unreals_check_returns_on_its_first_child
     ]);
     let mut visited = BTreeSet::new();
     assert!(
-        !unreal_find_macro_cycle(&graphs, outer.0 as usize, &mut visited),
+        !engine_find_macro_cycle(&graphs, outer.0 as usize, &mut visited),
         "★ the reference misses it: `return` inside the loop, not `continue`"
     );
     // With the offending child FIRST it does find one, which is what makes the
@@ -9055,7 +9037,7 @@ fn r1600_a_nesting_cycle_is_found_where_unreals_check_returns_on_its_first_child
         (plain.0 as usize, Vec::new()),
     ]);
     let mut visited = BTreeSet::new();
-    assert!(unreal_find_macro_cycle(
+    assert!(engine_find_macro_cycle(
         &reordered,
         outer.0 as usize,
         &mut visited

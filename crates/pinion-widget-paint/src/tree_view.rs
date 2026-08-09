@@ -503,11 +503,11 @@ fn tree_cell_content(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> 
     row_children
 }
 
-/// Compose one row from its [`VisibleRow`] (the shared flattening): depth
-/// indent + expand glyph + label. R811.1 §5.50 — takes the flattened row
-/// rather than re-walking the `TreeItem` tree, so the glyph / indent /
-/// label / composite-tag all read the same `depth` / `has_children` /
-/// `expanded` the keyboard model and AT tree resolve against.
+/// another declarative toolkit one row from its [`VisibleRow`] (the shared flattening):
+/// depth indent + expand glyph + label. R811.1 §5.50 — takes the flattened row
+/// rather than re-walking the `TreeItem` tree, so the glyph / indent / label /
+/// composite-tag all read the same `depth` / `has_children` / `expanded` the keyboard model and AT
+/// tree resolve against.
 fn build_row(
     tree_tag: &'static str,
     row: &VisibleRow,
@@ -877,7 +877,7 @@ pub fn view_virtual_treegrid(
     )
 }
 
-/// Compose the row's composite tag — the
+/// another declarative toolkit the row's composite tag — the
 /// [[multi-external-substrate-extra-externals-pattern]] form
 /// `{tree_tag}#{id}`. Bindings parse this through
 /// `pinion_core::composite_tag::parse_send_payload` (6th consumer at

@@ -11,11 +11,11 @@ source in a memory note", and the census then found **7,999 occurrences across
 
 Almost every occurrence is one of two things:
 
-* the **product**, used as an actor -- "Qt keys sections by index";
-* a **class name**, used as a noun -- "`QHeaderView` persists an opaque blob".
+* the **product**, used as an actor -- "the toolkit keys sections by index";
+* a **class name**, used as a noun -- "header view persists an opaque blob".
 
 and a class name in that toolkit is its own generic noun with a letter in
-front. `QHeaderView` IS "the header view". So the substitution is *derived* from
+front. header view IS "the header view". So the substitution is *derived* from
 the token rather than invented per site: strip the prefix, split the camel case,
 lowercase it. The sentence keeps saying exactly what it said -- which capability
 the reference has, and how ours differs -- and stops naming the vendor.
@@ -84,18 +84,46 @@ PRODUCT_PHRASE: dict[str, tuple[str, str]] = {
 }
 
 # `(?<![\w-])` rather than `\b` so a hyphenated compound the sentence already
-# owns ("non-Qt") is left for a human instead of half-rewritten.
+# owns ("non-the toolkit") is left for a human instead of half-rewritten.
 PRODUCT_RE = re.compile(
-    r"(?P<article>\b(?:a|an|the|A|An|The)\s+)?"
+    # Any determiner, not just an article: "no DCC comparison" became "no the
+    # DCC comparison" because `no` was not in this set, and a reader sees that
+    # before they see anything else on the line.
+    r"(?P<article>\b(?:an?|the|no|any|every|each|another|some)\s+)?"
     r"(?P<name>\b(?:" + "|".join(sorted(PRODUCT_PHRASE, key=len, reverse=True))
     + r")\b)(?!::)",
     re.IGNORECASE,
 )
 
-# Toolkit class names: `QHeaderView` -> `header view`, backticks and all,
+# Products whose lowercase spelling is ordinary English, so only the capitalised
+# form is one. Kept apart from `PRODUCT_PHRASE` because that table is matched
+# case-insensitively, and matching these that way would rewrite the verb.
+CASED_PHRASE: dict[str, tuple[str, str]] = {
+    "Compose": ("another declarative toolkit", "declarative toolkit"),
+    "React": ("the web UI library", "web UI library"),
+    "Electron": ("a browser-shell runtime", "browser-shell runtime"),
+    "Excel": ("the spreadsheet", "spreadsheet"),
+}
+
+CASED_RE = re.compile(
+    r"(?P<article>\b(?:an?|the|no|any|every|each|another|some)\s+)?"
+    r"(?P<name>\b(?:" + "|".join(CASED_PHRASE) + r")\b)(?!::)"
+)
+
+
+def rewrite_cased(match: re.Match[str]) -> str:
+    phrase, bare = CASED_PHRASE[match.group("name")]
+    article = match.group("article")
+    compound = match.string[match.end():match.end() + 1] == "-"
+    if article:
+        return article + bare
+    return bare if compound else phrase
+
+
+# Toolkit class names: header view -> `header view`, backticks and all,
 # because a generic English noun in code font reads as a symbol that does not
 # exist. A name followed by `::` is a symbol PATH and is left alone -- there is
-# no derivation from `QHeaderView::saveState()` to prose, only a rewrite, and
+# no derivation from `saveState()` to prose, only a rewrite, and
 # that is a human's sentence to write.
 CLASS_RE = re.compile(
     r"(?P<tick>`?)(?<![:\w])Q(?P<rest>[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*)\b"
@@ -175,19 +203,23 @@ def rewrite_product(match: re.Match[str]) -> str:
     the article -- "a toolkit view", not "a the toolkit view"."""
     phrase, bare = PRODUCT_PHRASE[match.group("name").lower()]
     article = match.group("article")
-    return article + bare if article else phrase
+    # `dashboard tool-class dashboard` is a compound adjective, so the standalone phrase's article lands in
+    # the middle of it: "a dashboard tool-class".
+    compound = match.string[match.end():match.end() + 1] == "-"
+    if article:
+        return article + bare
+    return bare if compound else phrase
 
 
 # Only the phrases this tool introduces are ever re-capitalised. Capitalising
 # after any full stop would also capitalise the word after "e.g." and "i.e.".
 INTRODUCED = sorted({phrase for phrase, _ in PRODUCT_PHRASE.values()},
                     key=len, reverse=True)
-# The `(?<!\.[A-Za-z])` is what keeps "e.g. Qt does this" from becoming
-# "e.g. The toolkit does this" -- an abbreviation's full stop does not end a
-# sentence, and the selftest caught this on the first run.
-# `(?<!//)` because the inner-doc marker `//!` ends in an exclamation mark,
-# so every `//! Qt …` line read as a sentence boundary. Found by the
-# selftest, not by reading.
+# The `(?<!\.[A-Za-z])` is what keeps "e.g. the toolkit does this" from becoming "e.g. The
+# toolkit does this" -- an abbreviation's full stop does not end a sentence,
+# and the selftest caught this on the first run. `(?<!//)` because the inner-doc
+# marker `//!` ends in an exclamation mark, so every `//! the toolkit …` line read as a sentence
+# boundary. Found by the selftest, not by reading.
 SENTENCE_HEAD = r"((?<!\.[A-Za-z])(?<!//)[.!?]\s+)"
 
 
@@ -236,12 +268,12 @@ def fix_caps_across_lines(lines: list[str], index: int, suffix: str) -> None:
 
 
 def is_comment(line: str, suffix: str) -> bool:
-    """Whether `line` is prose rather than code.
+    """Whether `line` is prose rather than code, judged on the line alone.
 
-    Python, shell and TOML take the whole `#` line; Rust takes the `//` family
-    and the continuation lines of a block comment. A trailing `// note` on a
-    code line is deliberately NOT a comment here -- rewriting half a line risks
-    the code half, and the census keeps reporting it until a human looks.
+    Rust takes the `//` family and the continuation lines of a block comment; a
+    trailing `// note` on a code line is deliberately NOT prose, because
+    rewriting half a line risks the code half. Everything else needs the file
+    around it -- see [`prose_mask`], which is what `migrate` actually uses.
     """
     stripped = line.lstrip()
     if suffix in (".py", ".sh", ".toml", ".tsv"):
@@ -249,21 +281,89 @@ def is_comment(line: str, suffix: str) -> bool:
     return stripped.startswith(("//", "*", "/*"))
 
 
+DOUBLE_QUOTE = '"' * 3
+SINGLE_QUOTE = "'" * 3
+
+
+def prose_mask(lines: list[str], suffix: str) -> list[bool]:
+    """Which lines of a file are prose this tool may rewrite.
+
+    A line on its own is not enough for three of the four kinds here:
+
+    * **Python** -- the demos carry their explanation in the MODULE docstring
+      rather than in `#` comments, so most of that population is invisible to a
+      line-local rule. Only the module docstring counts: a triple-quoted string
+      further down may be a payload an assertion compares against, and
+      rewriting one would change what a test asserts rather than what it says.
+    * **Markdown** -- everything outside a fenced code block, because a fence
+      holds commands and identifiers.
+    * **TSV** -- the round ledger's third column is prose, on one very long
+      line. Whole rows are prose here and nothing is re-flowed, a row being a
+      line by definition.
+    """
+    if suffix == ".md":
+        mask: list[bool] = []
+        fenced = False
+        for line in lines:
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
+                mask.append(False)
+                continue
+            mask.append(not fenced)
+        return mask
+    if suffix == ".tsv":
+        return [not line.lstrip().startswith("#") for line in lines]
+    if suffix in (".py", ".sh", ".toml"):
+        # A shebang starts with `#` and is an interpreter directive, not prose.
+        mask = [
+            line.lstrip().startswith("#") and not (index == 0 and line.startswith("#!"))
+            for index, line in enumerate(lines)
+        ]
+        if suffix == ".py":
+            for index in module_docstring(lines):
+                mask[index] = True
+        return mask
+    return [is_comment(line, suffix) for line in lines]
+
+
+def module_docstring(lines: list[str]) -> list[int]:
+    """The line indices of the module docstring, or empty if there is none."""
+    start = None
+    quote = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        opener = stripped.lstrip("rfbu")
+        for candidate in (DOUBLE_QUOTE, SINGLE_QUOTE):
+            if opener.startswith(candidate):
+                start, quote = index, candidate
+        break  # the first real line decides; anything else means no docstring
+    if start is None or quote is None:
+        return []
+    opener = lines[start].strip().lstrip("rfbu")
+    if len(opener) > 6 and opener.endswith(quote):
+        return [start]  # a one-line docstring
+    out = [start]
+    for index in range(start + 1, len(lines)):
+        out.append(index)
+        if quote in lines[index]:
+            break
+    return out
+
+
 def skip_reason(body: str, suffix: str) -> str | None:
-    """Why `body` is not this tool's to rewrite, or None."""
-    if not is_comment(body, suffix):
-        return "not a comment"
+    """Why `body` is not this tool's to rewrite, beyond not being prose."""
     if LINK_RE.search(body):
         return "doc link"
     return None
 
 
-# `QHeaderView::saveState()` -> `saveState()`, `Qt::AlignVCenter` ->
-# `AlignVCenter`. The class half of a symbol path is what names the vendor, and
-# it is also redundant once the sentence around it says whose toolkit this is --
-# so the method or the enumerator stands alone and the claim is unchanged. There
-# is no derivation from the path to prose, which is why the first pass left
-# these alone; there IS one from the path to its own tail.
+# `saveState()` -> `saveState()`, `AlignVCenter` -> `AlignVCenter`. The class half of a symbol path is what names the
+# vendor, and it is also redundant once the sentence around it says whose
+# toolkit this is -- so the method or the enumerator stands alone and the claim
+# is unchanged. There is no derivation from the path to prose, which is why the
+# first pass left these alone; there IS one from the path to its own tail.
 SYMBOL_PATH_RE = re.compile(r"\bQ(?:t|[A-Z][A-Za-z0-9]*)::(?=[A-Za-z_])")
 
 
@@ -282,6 +382,7 @@ def rewrite_line(line: str) -> str:
     out = strip_symbol_path(line)
     out = CLASS_RE.sub(rewrite_class, out)
     out = PRODUCT_RE.sub(rewrite_product, out)
+    out = CASED_RE.sub(rewrite_cased, out)
     return fix_caps(out)
 
 
@@ -297,6 +398,15 @@ CASES: list[tuple[str, str]] = [
     ("# Grafana pushes panels", "# the dashboard tool pushes panels"),
     ("/// const QUARTET stays", "/// const QUARTET stays"),
     ("/// a `QList<qreal>` of lengths", "/// a `list<qreal>` of lengths"),
+    ("/// no Blender comparison surfaces it", "/// no DCC comparison surfaces it"),
+    ("/// a Grafana-class dashboard", "/// a dashboard tool-class dashboard"),
+    ("/// Unreal-class editor, self-hosted", "/// engine-class editor, self-hosted"),
+    ("/// every Qt view does", "/// every toolkit view does"),
+    ("/// things that Qt cannot answer", "/// things that the toolkit cannot answer"),
+    ("/// no Qt peer exists", "/// no toolkit peer exists"),
+    ("/// a Compose-class toolkit", "/// a declarative toolkit-class toolkit"),
+    ("/// we compose a scene", "/// we compose a scene"),
+    ("/// React-class rendering", "/// web UI library-class rendering"),
     ("/// the `QHeaderView` widget", "/// the header view widget"),
     ("/// `QHeaderView::saveState()` is opaque", "/// `saveState()` is opaque"),
     ("/// a `Qt::DecorationRole` mark", "/// a `DecorationRole` mark"),
@@ -347,10 +457,11 @@ FILE_CASES: list[tuple[list[str], list[str]]] = [
 def run_pipeline(lines: list[str], suffix: str) -> list[str]:
     """Substitute then capitalise, the way `migrate` does, minus the re-flow."""
     out = list(lines)
+    mask = prose_mask(out, suffix)
     dirty = []
     for index, line in enumerate(out):
         body = line.rstrip("\n")
-        if skip_reason(body, suffix):
+        if not mask[index] or skip_reason(body, suffix):
             continue
         new_body = rewrite_line(body)
         if new_body != body:
@@ -362,8 +473,53 @@ def run_pipeline(lines: list[str], suffix: str) -> list[str]:
     return out
 
 
-def selftest() -> int:
+
+# `prose_mask` decides what a whole FILE offers this tool, and each of its four
+# kinds has a way to be wrong that a line-local rule cannot see.
+MASK_CASES: list[tuple[str, list[str], list[bool]]] = [
+    (
+        ".py",
+        ['#!/usr/bin/env python3\n', 'Q3one line docstring.Q3\n',
+         'PAYLOAD = Q3\n', 'Qt appears here\n', 'Q3\n'],
+        [False, True, False, False, False],
+    ),
+    (
+        ".py",
+        ['Q3\n', 'the prose is here\n', 'Q3\n', 'x = 1\n',
+         'DATA = Q3\n', 'not prose\n', 'Q3\n'],
+        [True, True, True, False, False, False, False],
+    ),
+    (
+        ".py",
+        ['import sys\n', 'DATA = Q3\n', 'not a docstring\n', 'Q3\n'],
+        [False, False, False, False],
+    ),
+    (
+        ".md",
+        ['prose\n', '```sh\n', 'qt-config --version\n', '```\n', 'more\n'],
+        [True, False, False, False, True],
+    ),
+    (
+        ".tsv",
+        ['# a comment header\n', '1610\tosnative\tprose about it\n'],
+        [False, True],
+    ),
+]
+
+
+def selftest_masks() -> int:
     failures = 0
+    for suffix, given, want in MASK_CASES:
+        lines = [line.replace("Q3", DOUBLE_QUOTE) for line in given]
+        got = prose_mask(lines, suffix)
+        if got != want:
+            failures += 1
+            print(f"  FAIL mask {suffix}\n    got  {got}\n    want {want}")
+    return failures
+
+
+def selftest() -> int:
+    failures = selftest_masks()
     for given, want_lines in FILE_CASES:
         suffix = ".py" if given[0].lstrip().startswith("#") else ".rs"
         got_lines = run_pipeline(given, suffix)
@@ -381,7 +537,10 @@ def selftest() -> int:
     if failures:
         print(f"migrate selftest: {failures} failure(s)")
         return 1
-    print(f"migrate selftest: {len(CASES) + len(FILE_CASES) + 1} cases OK")
+    print(
+        f"migrate selftest: "
+        f"{len(CASES) + len(FILE_CASES) + len(MASK_CASES) + 1} cases OK"
+    )
     return 0
 
 
@@ -449,12 +608,23 @@ def rewrap(lines: list[str], first: int, last: int, suffix: str) -> list[str] | 
     return [prefix + w + "\n" for w in wrapped]
 
 
+# `that` and `this` are absent on purpose: they are relative pronouns as often as
+# determiners, and "three things that the toolkit cannot answer" needs "that
+# THE toolkit cannot answer". Dropping the article there breaks the sentence.
+ARTICLE_WORDS = (
+    "a", "an", "the", "no", "any", "every", "each", "another", "some",
+) + (
+    "A", "An", "The", "No", "Any", "Every", "Each", "Another", "Some",
+)
+
+
 # The article the sentence already had, followed by the one the introduced
 # phrase brought with it. Scoped to the phrases this tool introduces on purpose:
 # a general "a/an" repair would also turn "a UI" into "an UI", because the rule
 # is about the sound and not the letter.
 ARTICLE_FIXES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\b([Aa]n?|[Tt]he)\s+" + re.escape(phrase) + r"\b"), bare)
+    (re.compile(r"\b(" + "|".join(ARTICLE_WORDS) + r")\s+"
+                + re.escape(phrase) + r"\b"), bare)
     for phrase, bare in sorted(
         PRODUCT_PHRASE.values(), key=lambda pair: len(pair[0]), reverse=True
     )
@@ -482,9 +652,6 @@ def _article(had: str, noun: str) -> str:
         return had
     article = "an" if noun[0].lower() in "aeiou" else "a"
     return article.capitalize() if had[0].isupper() else article
-
-
-ARTICLE_WORDS = ("a", "an", "the", "A", "An", "The")
 
 
 def fix_articles_across_lines(lines: list[str], index: int, suffix: str) -> None:
@@ -545,6 +712,7 @@ def migrate(paths: list[Path], apply: bool) -> tuple[int, int, list[str]]:
             continue
         suffix = path.suffix
         lines = text.splitlines(keepends=True)
+        mask = prose_mask(lines, suffix)
         dirty: list[int] = []
         for index, line in enumerate(lines):
             body = line.rstrip("\n")
@@ -552,15 +720,16 @@ def migrate(paths: list[Path], apply: bool) -> tuple[int, int, list[str]]:
                 skipped.append(f"{path.relative_to(ROOT)}:{index + 1}: reference id")
             # `SYMBOL_PATH_RE` has to be in the trigger too: both of the
             # other two refuse a name followed by `::`, so a line holding
-            # ONLY `Qt::DecorationRole` matched neither and was skipped.
+            # ONLY `DecorationRole` matched neither and was skipped.
             if not (CLASS_RE.search(body) or PRODUCT_RE.search(body)
-                    or SYMBOL_PATH_RE.search(body)):
+                    or SYMBOL_PATH_RE.search(body) or CASED_RE.search(body)):
                 continue
             # A URL spells the vendor inside a host name, and a rustdoc link
             # label has to keep matching its definition line. Both are whole
             # constructs that come OUT rather than get reworded, and the first
-            # run turned `doc.qt.io` into `doc.the toolkit.io`.
-            reason = skip_reason(body, suffix)
+            # run turned `doc.the toolkit.io` into `doc.the toolkit.io`.
+            reason = None if mask[index] else "not prose"
+            reason = reason or skip_reason(body, suffix)
             if reason:
                 skipped.append(f"{path.relative_to(ROOT)}:{index + 1}: {reason}")
                 continue
@@ -590,16 +759,25 @@ def migrate(paths: list[Path], apply: bool) -> tuple[int, int, list[str]]:
             if flowed is not None:
                 lines[first : last + 1] = flowed
 
+        # A file whose names are already gone can still be carrying the double
+        # article an earlier pass left behind, so the repair counts as a change
+        # in its own right. Gating the write on `dirty` alone computed the fix
+        # and threw it away.
+        repaired = False
         for index, line in enumerate(lines):
-            prefix = comment_prefix(line, suffix)
-            if prefix is None:
+            if not mask[index]:
                 continue
+            # A docstring line has no comment marker, so keying the repair off
+            # one skipped exactly the population that needed it most.
+            prefix = comment_prefix(line, suffix) or ""
             body = line[len(prefix):]
             fixed = fix_articles(body)
             if fixed != body:
                 lines[index] = prefix + fixed
+                repaired = True
+                changed += 1
 
-        if dirty:
+        if dirty or repaired:
             touched += 1
             if apply:
                 path.write_text("".join(lines), encoding="utf-8")

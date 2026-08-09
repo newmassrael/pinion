@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R1543 §5.39 §5.40 §5.12 — a label declares its mnemonic (Qt `&File`).
+"""R1543 §5.39 §5.40 §5.12 — a label declares its mnemonic (the toolkit `&File`).
 
 Before this round pinion had no mnemonics at all. The `menu` module deferred
 "accelerator / mnemonic keys" as an axis awaiting a consumer, and what an
@@ -23,8 +23,8 @@ are derived and none of them is a second source:
 What this demo asserts, over the wire, against a real menubar application:
 
   * `scene/mnemonics` publishes the whole accelerator map — key, platform
-    spelling, target tag, display label, marked byte offset, conflicts. Qt
-    keeps this in `QShortcutMap`, a private header: a Qt application cannot
+    spelling, target tag, display label, marked byte offset, conflicts. The toolkit
+    keeps this in shortcut map, a private header: a toolkit application cannot
     enumerate its own accelerators, let alone an external driver.
   * the published label is the DISPLAY string — the `&` never reaches pixels
     or the AT — while the index still locates the marked character in it;
@@ -35,7 +35,7 @@ What this demo asserts, over the wire, against a real menubar application:
   * the map GROWS while a dropdown is open and shrinks when it closes, with
     no registration anywhere: an item's mnemonic exists exactly while its
     label is painted, which is AccessKit's stated semantics for menu access
-    keys and Qt's behaviour, and here it falls out of deriving from paint;
+    keys and the toolkit's behaviour, and here it falls out of deriving from paint;
   * Alt+S then activates Save, emitting the same `menu.command` intent a
     click emits — the mnemonic takes the widget's existing path, not a
     parallel one;

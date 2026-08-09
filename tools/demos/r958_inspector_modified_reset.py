@@ -3,7 +3,7 @@
 
 Drives hello-inspector over JSON-RPC. R922 made the inspector edit the properties
 COMMON to a multi-selection and report "Multiple Values" (`mixed.<i>`) where the
-selected objects disagree. R958 adds the other half of every Unreal/Qt inspector:
+selected objects disagree. R958 adds the other half of an engine/the toolkit inspector:
 a per-property **modified-from-default** indicator and **reset to default**.
 
 Each selected object compares its OWN current value to its OWN frozen class

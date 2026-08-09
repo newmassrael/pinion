@@ -28,9 +28,9 @@ What this demo asserts, over the wire, against a real application:
   * two connections get two independent streams, and closing one **without
     unsubscribing** — the crash case — releases exactly that one;
   * one connection cannot close another's stream;
-  * `scene/subscriptions` publishes the live streams as data (§2 #7), which Qt
-    has no equivalent of: nothing in Qt binds a server-initiated write to a
-    named stream, so `QLocalServer` cannot be asked who is listening;
+  * `scene/subscriptions` publishes the live streams as data (§2 #7), which the toolkit
+    has no equivalent of: nothing in the toolkit binds a server-initiated write to a
+    named stream, so local server cannot be asked who is listening;
   * `rpc/methods` and `rpc/schema` cover this round's wire the day it lands.
 
 ZERO-FLAKE: bounded `wait_until` / `await_notifications` polling (never a fixed

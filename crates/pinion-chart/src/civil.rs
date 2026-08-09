@@ -126,7 +126,8 @@ impl Civil {
         }
     }
 
-    /// Compose these fields back into epoch milliseconds (UTC).
+    /// another declarative toolkit these fields back into epoch milliseconds
+    /// (UTC).
     pub(crate) fn to_millis(self) -> f64 {
         let days = days_from_civil(self.year, i64::from(self.month), i64::from(self.day));
         let tod = i64::from(self.hour) * MS_PER_HOUR

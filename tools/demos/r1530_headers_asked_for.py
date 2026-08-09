@@ -10,8 +10,8 @@ could only learn how many columns it had by being handed every one of their
 names, so this 200-column binding built 200 strings a frame to paint five, and
 built them a second time for the a11y pass.
 
-R1530 splits the two the way Qt's `QAbstractItemModel` does — `columnCount()`
-is a number, `headerData(section, Qt::Horizontal, Qt::DisplayRole)` is an
+R1530 splits the two the way the toolkit's abstract item model does — `columnCount()`
+is a number, `headerData(section, Horizontal, DisplayRole)` is an
 accessor — and the grid asks the accessor once per painted header.
 
 Like its R1524 peer, that change is invisible in the painted scene: the same

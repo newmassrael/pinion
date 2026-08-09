@@ -5,10 +5,10 @@
 
 `GridModel` had four accessors. Three address a **cell** (`cell`,
 `decoration`, `edit`) and one addresses a **section** (`header`) — and the
-section could answer exactly one question: what the column is *called*. Qt
+section could answer exactly one question: what the column is *called*. The toolkit
 reaches both axes through one role enum (`data(index, role)` /
-`headerData(section, orientation, role)`) and `QHeaderView::paintSection`
-consumes `Qt::DecorationRole` into `QStyleOptionHeader::icon`, so a Qt grid can
+`headerData(section, orientation, role)`) and `paintSection`
+consumes `DecorationRole` into `icon`, so a toolkit grid can
 put a key glyph, a type glyph, a filter funnel or a lock in a column header.
 Nothing here could mark a column at all.
 
@@ -18,17 +18,17 @@ the **same** `Decoration` type and drawn by the **same** painter. (The type was
 `CellDecoration` until this round. A role is not axis-specific; two types would
 be two contracts that must agree about what a mark is.)
 
-## What Qt 6.11 cannot do, and why
+## What the toolkit 6.11 cannot do, and why
 
-  1. **The mark reaches assistive technology.** Qt's decoration is appearance;
-     `QAccessibleTableHeaderCell::text(Name)` answers from `headerData(...,
-     Qt::DisplayRole)` alone, so a Qt header whose distinguishing information
+  1. **The mark reaches assistive technology.** the toolkit's decoration is appearance;
+     `text(Name)` answers from `headerData(...,
+     DisplayRole)` alone, so a toolkit header whose distinguishing information
      IS its glyph announces only the column's name. Here the answer carries a
      `meaning` (R1536's rule, now on the section axis) and it joins the
      `columnheader`'s accessible name ahead of the label. Empty is the
      decorative answer — HTML `alt=""` — not a missing one.
 
-  2. **The `columnheader` is named by what is PAINTED.** Qt derives a header's
+  2. **The `columnheader` is named by what is PAINTED.** the toolkit derives a header's
      accessible name from the model on a path entirely independent of
      `paintSection`, so a view that elides, reformats or overrides the drawn
      label announces a string that is not on screen. Here the name comes from

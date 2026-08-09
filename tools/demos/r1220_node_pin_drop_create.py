@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1220 §5.52 §5.38 §5.49 — node-graph pin-drop node-creation menu (auto-wire).
 
-The signature Unreal / Blender blueprint authoring gesture: drag a wire off an
+The signature the engine / the DCC blueprint authoring gesture: drag a wire off an
 OUTPUT pin and release on empty canvas, and a TYPE-FILTERED menu of the node
 kinds that output can feed opens at the drop point; pick one and it is created
 there AND auto-wired from the source pin to its first compatible input — as ONE

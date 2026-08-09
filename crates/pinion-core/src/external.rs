@@ -1025,7 +1025,7 @@ impl InterveneError {
 ///
 /// The toolkit's floor here is the absence of a channel: `invokeMethod` answers `bool`, `trigger()`
 /// answers `void`, and a abstract button that declines a click reports nothing at
-/// all. There is no the toolkit API a refused action can put a sentence into,
+/// all. There is a toolkit API a refused action can put a sentence into,
 /// so nothing here is parity — the shape is chosen ([[the
 /// toolkit-is-the-floor-not-the-target]]).
 ///

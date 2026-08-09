@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1598 §5.38 §5.52 §2 #2 — a node changes what it IS, not which node it is.
 
-Blender's `NODE_OT_swap_node` (`scripts/startup/bl_operators/node.py`) creates a
+the DCC's `NODE_OT_swap_node` (`scripts/startup/bl_operators/node.py`) creates a
 NEW node and deletes the old one, so the swapped node's identity dies with it and
 every reference to it dies too: a selection, a saved layout, an undo record, an
 agent holding the id. `Document::set_kind` changes the body in place, so the id
@@ -9,14 +9,14 @@ survives -- which is what makes a swap an edit rather than a replace-and-hope.
 
 What this script checks, and why each check discriminates:
 
-* **PAST BLENDER: the id survives, and the script proves it by ADDRESSING the
+* **PAST the DCC: the id survives, and the script proves it by ADDRESSING the
   node by id across the swap.** It reads `node.<id>.op` before and after and
   asserts the id names the same node with a different body, then checks the
-  position and the label came through -- the fields Blender's new node would
+  position and the label came through -- the fields the DCC's new node would
   have started blank.
 * **What survives is one derivation, and it is reported.** The verb answers
   `"<carried>|<severed>|<discarded>"`: which ports moved where, which wires
-  died, which authored values died. Blender reports NONE of it -- it drops what
+  died, which authored values died. The DCC reports NONE of it -- it drops what
   does not fit inside three swallowed exceptions (`except IndexError: pass`,
   `except KeyError: pass`, `except (AttributeError, KeyError, TypeError): pass`)
   plus a silent `tree.links.remove` for a link that turned out invalid, so "the

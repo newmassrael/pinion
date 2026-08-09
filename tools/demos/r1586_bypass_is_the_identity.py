@@ -10,7 +10,7 @@ Taking a stage OUT of a pipeline is half of what an editor does. A node can be
 **bypassed** — it stops computing and the values at its inputs pass through it
 — or **dissolved**, which does the same to the structure and deletes it. Both
 read ONE derivation (`Document::passthrough`), so the preview and the edit
-cannot disagree; Blender unifies them too and says so in its own operator
+cannot disagree; the DCC unifies them too and says so in its own operator
 description ("Remove nodes and reconnect nodes as if deletion was muted"). What
 is chosen differently here is the rule underneath, and what is said when it
 cannot be applied.
@@ -20,41 +20,41 @@ What this script checks, and why each check discriminates:
 * **The rule is one sentence: a bypassed node is the identity as far as its
   signature allows.** Output `n` takes input `n` when their types agree, else
   the lowest-indexed input of the right type, else nothing.
-* **PAST BLENDER (1): the route does not read the wiring.** Blender scores every
+* **PAST the DCC (1): the route does not read the wiring.** the DCC scores every
   input against every output through a static socket-type table
   (`get_internal_link_type_priority`) and breaks ties by whether the input
   happens to be WIRED (`find_internally_linked_input`, `node_tree_update.cc`,
   `8cf50599`). Under that rule, unplugging one port changes which value comes
   out of a DIFFERENT port of the same bypassed node. Here the answer is asserted
   to be identical before and after a port is unwired.
-* **PAST BLENDER (2): an output no input can feed is NAMED.** Blender's
+* **PAST the DCC (2): an output no input can feed is NAMED.** the DCC's
   derivation simply produces no internal link for it and `node_internal_relink`
   then removes the downstream link with `node_remove_link`, returning `void`. A
   value disappearing is the thing an author most needs told.
-* **PAST BLENDER (3): the derivation is not stored.** Blender materialises it
+* **PAST the DCC (3): the derivation is not stored.** the DCC materialises it
   into `node->runtime->internal_links` and keeps a tree-update pass whose job is
   to notice when the stored answer has gone stale. Asserted here by editing the
   graph and reading the routing with nothing asked to refresh.
-* **PAST BLENDER (4): a bypassed NODE and a muted LINK are different words,
-  because they are opposite behaviours.** Blender spells both "mute"
+* **PAST the DCC (4): a bypassed NODE and a muted LINK are different words,
+  because they are opposite behaviours.** the DCC spells both "mute"
   (`NODE_MUTED`, `NODE_LINK_MUTED`): one passes a value through, the other stops
   one. Both are exercised on the same wire and the two results are asserted
   different.
-* **PAST BLENDER (5): what a node LOOKS like is a different type from what it
-  MEANS.** Blender keeps `NODE_COLLAPSED`, `NODE_PREVIEW`, `NODE_SELECT` and
+* **PAST the DCC (5): what a node LOOKS like is a different type from what it
+  MEANS.** the DCC keeps `NODE_COLLAPSED`, `NODE_PREVIEW`, `NODE_SELECT` and
   `NODE_MUTED` in one `flag` integer, so nothing in its model says which bits
   its evaluator may read. Here every appearance toggle is driven over the wire
   and the evaluated value is asserted unchanged.
 * **R1587: the extension point is a PORT declaration, not a per-node hook.**
-  Censused at `8cf50599`, eleven Blender node types register
+  Censused at `8cf50599`, eleven the DCC node types register
   `internally_linked_input` and their callbacks compute exactly three things —
   the identity by name (7), the identity by index (1), and "skip the leading
   control input" (3) — every one of which this crate's default already produces,
-  because that default *is* the identity where Blender's is a static
-  socket-type priority table. What is left over is exclusion, which Blender
+  because that default *is* the identity where the DCC's is a static
+  socket-type priority table. What is left over is exclusion, which the DCC
   spells `no_mute_links` and uses in 42 declarations across 17 node files, 28 on
   outputs and 14 on inputs. So the per-node callback has nothing left to say
-  here, and the per-port declaration — read from both ends, as Blender reads
+  here, and the per-port declaration — read from both ends, as the DCC reads
   its own — is the whole extension point.
 * **Where a bypass and a dissolve CANNOT agree, the difference is named.** A
   bypass passes an unwired port's declared default on; a dissolve has no link to
@@ -336,12 +336,12 @@ def body() -> None:
         )
 
         # ── (H2) a PORT says whether a value passes through it (R1587) ──────
-        # The one shape the identity rule gets wrong on its own: a control input
-        # that shares the data type it controls. Blender reaches the same answer
-        # with a per-node C callback (`node_geo_switch`); here it is a
-        # declaration on the port, which is the extension point ELEVEN of
-        # Blender's callbacks turn out not to need, because our default is the
-        # identity rather than a static socket-type priority table.
+        # The one shape the identity rule gets wrong on its own: a control
+        # input that shares the data type it controls. The DCC reaches the same
+        # answer with a per-node C callback (`node_geo_switch`); here it is a declaration on
+        # the port, which is the extension point ELEVEN of the DCC's callbacks
+        # turn out not to need, because our default is the identity rather than
+        # a static socket-type priority table.
         assert_eq(inv(tf, "reset", ""), "reset", "H2: back to the seed")
         assert_eq(inv(tf, "add", "cap"), "6", "H2: a Cap node")
         assert_eq(

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """R1450 §5.27 §5.40 §5.51 §2#7 — a column moves where its header is dragged.
 
-Qt reference: `QHeaderView` movable sections — `setSectionsMovable`,
+the toolkit reference: header view movable sections — `setSectionsMovable`,
 `moveSection(from, to)`, `visualIndex` <-> `logicalIndex`, and
 `saveState`/`restoreState`. Every other column axis was already in tree (width,
-visibility, sort, filter, frozen panes); section ORDER was the one Qt had and
+visibility, sort, filter, frozen panes); section ORDER was the one the toolkit had and
 pinion did not, and it is the mapping all the others have to compose with.
 
-And one place Qt is weaker: a header layout persists as `QHeaderView::saveState()`
-— an opaque versioned `QByteArray`. An agent cannot read "which column is third
-now" out of it, and cannot write one back without a live QHeaderView. Here the
+And one place the toolkit is weaker: a header layout persists as `saveState()`
+— an opaque versioned byte array. An agent cannot read "which column is third
+now" out of it, and cannot write one back without a live header view. Here the
 permutation is typed data in both directions.
 
 What this asserts:
@@ -24,13 +24,13 @@ What this asserts:
   (C) THE LIVE DROP TARGET — a drag HELD mid-gesture (`phase="begin"`) publishes
       its `preview` and paints the insertion line, so an agent can see where a
       drop would land before committing it.
-  (D) QT'S MAPPING — `visual_index.<logical>` and `logical_index.<visual>` invert
+  (D) the toolkit'S MAPPING — `visual_index.<logical>` and `logical_index.<visual>` invert
       each other for every column, which is what makes them a mapping rather
       than two readouts that happen to agree.
-  (E) moveSection OVER THE WIRE — the Qt-named operation, returning the resulting
+  (E) moveSection OVER THE WIRE — the toolkit-named operation, returning the resulting
       order in one round-trip.
   (F) RESTORE — a whole saved permutation goes back over `scene/intervene`
-      (Qt restoreState). The refusals are typed: a malformed value is a
+      (the toolkit restoreState). The refusals are typed: a malformed value is a
       TypeMismatch, a well-formed non-permutation is OutOfRange, and neither
       changes the layout.
   (G) THE KEYBOARD — APG pick-up: arrows rove, Space grabs, an arrow moves the
@@ -160,7 +160,8 @@ def body() -> None:
         assert_eq(_painted_row0(tf)[2], ROW0[0],
                   "the third visual column carries the dragged column's data")          # 17
 
-        # ── (D) Qt's mapping, both directions ────────────────────────
+        # ── (D) the toolkit's mapping, both directions
+        # ────────────────────────
         assert_eq(_h(tf, "visual_index.0"), 2, "Name's visual index is 2")              # 18
         assert_eq(_h(tf, "logical_index.2"), 0, "and position 2 holds Name")            # 19
         for logical in range(NCOLS):

@@ -69,8 +69,8 @@ impl Affine {
         }
     }
 
-    /// Compose `self ∘ inner` — `inner` (a child component's design-space affine)
-    /// applies first, then `self` (the accumulated parent→device map).
+    /// another declarative toolkit `self ∘ inner` — `inner` (a child component's design-space
+    /// affine) applies first, then `self` (the accumulated parent→device map).
     pub(super) fn concat(&self, inner: &Self) -> Self {
         Self {
             a: self.a * inner.a + self.c * inner.b,

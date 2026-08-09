@@ -138,7 +138,7 @@ pub struct ArenaFootprint {
     ///
     /// `cacheLimit()` is the toolkit equivalent and is the whole of what the toolkit
     /// publishes; the number beside it — how much of the budget is in use —
-    /// has no the toolkit accessor at all.
+    /// has a toolkit accessor at all.
     pub budget_bytes: Option<u64>,
 }
 

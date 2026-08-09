@@ -4,7 +4,7 @@
 R767 made styled runs *editable* (insert shifts / delete clips them).
 R768 adds the canonical "select text, click a format button" operation:
 `TextEditState::apply_style_run` overlays one colour run over a byte
-range (Qt `setCharFormat` — carve existing runs, lay in the new span,
+range (the toolkit `setCharFormat` — carve existing runs, lay in the new span,
 merge abutting identical spans), and `clear_style_runs` strips formatting
 back to the base. Both are reachable two ways that funnel to the *same*
 substrate method:

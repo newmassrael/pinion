@@ -4,7 +4,7 @@
 Drives `hello-property-grid` via JSON-RPC. The Details panel is now a **tree**:
 scalar properties nest under collapsible **category** branches (Identity /
 Appearance / Transform / …) and **struct** branches — a `Vector3` like Position
-expands into its X / Y / Z field rows (the Unreal / Qt Details core depth). The
+expands into its X / Y / Z field rows (the engine / the toolkit Details core depth). The
 row backbone migrated off the 2-level `GroupOrderState` group-by proxy onto the
 arbitrary-depth WAI-ARIA Tree substrate, so one visible-row sequence drives the
 paint, the id-keyed cursor, the collapse and the a11y `tree`.

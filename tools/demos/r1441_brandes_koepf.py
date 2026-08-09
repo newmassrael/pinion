@@ -25,7 +25,7 @@ middle of a card, and the cards here have different heights on purpose. The new
 `query node.<id>.h` read is what makes that checkable over the wire instead of
 recomputing a height from constants on this side.
 
-Qt reference: Qt has no graph-layout facility at all — `QGraphicsScene` draws
+the toolkit reference: the toolkit has no graph-layout facility at all — canvas scene draws
 what you position. Graphviz / ELK / dagre implement BK; what is different here is
 that the solved layout is readable as data (§2 #7) and drivable over RPC (§2 #2),
 so an agent tidies a graph and verifies the result without a screenshot.

@@ -2,8 +2,8 @@
 """R780 §5.40 — multi-select index model (Shift-range / Ctrl+A / Ctrl+Space).
 
 Drives the `hello-multi-select` binding via JSON-RPC. It extends the R746
-`VirtualSelectExternal` single-select coordinator into a Qt
-`QItemSelectionModel` `ExtendedSelection` analogue: a selection *set* of
+`VirtualSelectExternal` single-select coordinator into a toolkit
+item selection model `ExtendedSelection` analogue: a selection *set* of
 data indices with an `anchor` for range extension, over the unchanged R774
 `view_flex_virtual_list` AutoSizer windowing.
 

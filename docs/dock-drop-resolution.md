@@ -20,8 +20,8 @@ window**. Two structural failures fell out of this:
    nothing.
 
 This is not a small bug. The continuous-zone model is the **region-highlight**
-family (VS Code's editor groups). The north star is an **Unreal-class editor**;
-Unreal Slate / Visual Studio / Qt Advanced Docking all use the **discrete
+family (VS Code's editor groups). The north star is an **engine-class editor**;
+the engine Slate / Visual Studio / the toolkit Advanced Docking all use the **discrete
 drop-target + float-on-release-off-target** model, where float is a first-class
 in-window outcome.
 

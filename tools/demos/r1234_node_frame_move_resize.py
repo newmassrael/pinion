@@ -90,7 +90,7 @@ def body() -> None:
         # ── (B) frame the two left-column nodes (0,1) ────────────────
         select(tf, [0, 1])
         fid = tf.invoke("/external/add_frame", None)
-        # R1596 — a frame IS a node (`NodeBody::Frame`, Blender's NODE_FRAME),
+        # R1596 — a frame IS a node (`NodeBody::Frame`, the DCC's NODE_FRAME),
         # so it mints from the NODE counter: the seed graph holds four, and the
         # frame is the fifth thing in the tree.
         assert_eq(fid, 4, "the frame mints the next NODE id")
@@ -133,8 +133,8 @@ def body() -> None:
         # ★R1596 — MEMBERSHIP DOES NOT MOVE WITH THE BOX. The editor re-derived
         # it from the rectangle on every read, so widening the frame silently
         # adopted the other two nodes and undoing the resize abandoned them
-        # again -- what the frame SAID it held changed with nobody having edited
-        # membership. It is `Node::parent` now (R1589, Blender's model), and
+        # again -- what the frame SAID it held changed with nobody having
+        # edited membership. It is `Node::parent` now (R1589, the DCC's model), and
         # joining is the explicit act `attach` performs.
         assert_eq(
             q(tf, f"frame.{fid}.contains"), "0,1",

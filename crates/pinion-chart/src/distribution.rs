@@ -89,7 +89,7 @@ pub enum QuantileMethod {
     /// Linear interpolation at `(n - 1) * p` (Hyndman & Fan type 7) — the
     /// default of R's `quantile()`, `NumPy`, and Julia.
     Linear,
-    /// Linear interpolation at `(n + 1) * p` (Hyndman & Fan type 6) — Excel's
+    /// Linear interpolation at `(n + 1) * p` (Hyndman & Fan type 6) — the spreadsheet's
     /// `PERCENTILE.EXC`, SPSS, and Minitab.
     ///
     /// Spreads the quartiles further apart than [`Linear`](Self::Linear) at

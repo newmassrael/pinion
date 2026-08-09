@@ -3,9 +3,9 @@
 
 ## The gap
 
-Qt spells both section axes with one virtual —
-`headerData(int section, Qt::Orientation orientation, int role)` — and a
-`QTableView` shows the vertical one by default. pinion had **no vertical axis
+the toolkit spells both section axes with one virtual —
+`headerData(int section, Orientation orientation, int role)` — and a
+table view shows the vertical one by default. pinion had **no vertical axis
 at all**: `GridModel` could be asked what a *column* was called and what mark
 it carried, and a row could be asked nothing. A grid could not number its rows,
 could not pin one, could not put a lock or a breakpoint or a diff marker beside
@@ -17,12 +17,12 @@ a section answers; `GridModel::columns` and `GridModel::rows` are both one, so
 the two axes answer the same role set by construction and one painter
 (`section_content`) draws either.
 
-## What Qt 6.11 cannot do, and why
+## What the toolkit 6.11 cannot do, and why
 
-  1. **An unanswered axis is a declaration, not a blank strip.** Qt's
+  1. **An unanswered axis is a declaration, not a blank strip.** the toolkit's
      orientation is a *runtime argument*, so the commonest
-     `QAbstractTableModel` bug in existence — override `headerData`, handle
-     `Qt::Horizontal`, fall off the end returning `QVariant()` — paints a
+     abstract table model bug in existence — override `headerData`, handle
+     `Horizontal`, fall off the end returning `dynamic value()` — paints a
      vertical header of empty sections that still occupy their width, and
      nothing reports it: not the model, not the view, not the accessibility
      tree. A blank strip is indistinguishable from rows that genuinely have no
@@ -32,9 +32,9 @@ the two axes answer the same role set by construction and one painter
      answered, because there is no second "show the header" flag to disagree
      with the first.
 
-  2. **The mark's meaning reaches assistive technology.** Qt's
-     `QAccessibleTableHeaderCell::text(Name)` answers from `headerData(...,
-     Qt::DisplayRole)` on *both* orientations, so a Qt row header whose
+  2. **The mark's meaning reaches assistive technology.** the toolkit's
+     `text(Name)` answers from `headerData(...,
+     DisplayRole)` on *both* orientations, so a toolkit row header whose
      distinguishing information IS its glyph announces only the row's number.
      Here the answer carries a `meaning` and it joins the `rowheader`'s
      accessible name — and the name itself is derived from the **painted**
@@ -241,8 +241,8 @@ def both_roles() -> None:
             assert_eq(rect.get("w"), BAND_W, f"row {row}'s section is band-wide")
             assert_eq(rect.get("h"), ROW_H, f"and one row pitch tall")
 
-        # Every painted section states its row's number (Qt's own default
-        # `headerData` answer, here a written decision rather than a base-class
+        # Every painted section states its row's number (the toolkit's own
+        # default `headerData` answer, here a written decision rather than a base-class
         # default nobody overrode).
         for row in rows[:4]:
             drawn = texts_under(ns, row_header_tag(VT, row))

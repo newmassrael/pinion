@@ -24,19 +24,19 @@ What this script checks, and why each check discriminates:
   BOTH and requires that exactly the links the model calls missing are the
   paths carrying the dashed rhythm — two readings of one fact, which is the
   only way a drawing is checkable without pixels.
-* **PAST Qt 6.11 (1): the dash is readable at all.** `style.stroke.dash` is
-  `null` for a solid stroke and `{on, off, offset, period}` otherwise. A `QPen`
+* **PAST the toolkit 6.11 (1): the dash is readable at all.** `style.stroke.dash` is
+  `null` for a solid stroke and `{on, off, offset, period}` otherwise. A pen
   is an argument to a paint call and lives nowhere afterwards: nothing can ask
-  a `QGraphicsScene` which of its edges are dashed, so the same question in Qt
+  a canvas scene which of its edges are dashed, so the same question in the toolkit
   is answerable only by rasterizing and looking.
-* **PAST Qt 6.11 (2): the two unmatched kinds are told apart as DATA.** Missing
+* **PAST the toolkit 6.11 (2): the two unmatched kinds are told apart as DATA.** Missing
   and drift differ in rhythm AND in ink, and the script asserts the rhythms are
   different values rather than merely both non-null.
-* **PAST Qt 6.11 (3): the animation is drivable and canonical.** `flow` is
+* **PAST the toolkit 6.11 (3): the animation is drivable and canonical.** `flow` is
   stepped over the wire, read back off the model AND off every dashed path's
-  `offset`, and driven one full period to land back where it started. Qt's
-  `dashOffset` is a `qreal` on a pen driven by a `QTimer` that no external
-  client can address, and Qt keeps whatever number it was handed — 12 and 2
+  `offset`, and driven one full period to land back where it started. The toolkit's
+  `dashOffset` is a `qreal` on a pen driven by a timer that no external
+  client can address, and the toolkit keeps whatever number it was handed — 12 and 2
   over a period of 10 are different values there and one value here.
 * **The refusals name what they refused.** An unknown observation, a malformed
   link argument, a well-formed argument naming a link in neither layer, and a
@@ -44,7 +44,7 @@ What this script checks, and why each check discriminates:
   than a bare failure.
 * **The whole picture reaches assistive technology.** The accessible value
   names the missing and drifted links BY NAME — the reading a sighted user gets
-  from solid-versus-dashed. A Qt pen's dash reaches the screen and nothing
+  from solid-versus-dashed. A toolkit pen's dash reaches the screen and nothing
   else, so the same distinction there is invisible to a screen reader by
   construction.
 
@@ -161,7 +161,8 @@ def run(tf: RpcSubprocess) -> None:
         a, b = link.split(">")
         assert_eq(tf.invoke("/external/link_kind", f"{a},{b}"), "drift", f"{link} kind")
 
-    # ---- 2. PAST Qt: the paint publishes its dash, and it agrees ----
+    # ---- 2. PAST the toolkit: the paint publishes its dash, and it agrees
+    # ----
     painted = link_paths(tf)
     assert_eq(
         sorted(painted), sorted(AUTHORED | OBSERVED_PARTIAL), "every link in either layer is drawn"
@@ -188,7 +189,7 @@ def run(tf: RpcSubprocess) -> None:
         f"missing rhythm {missing_rhythm} vs drift {drift_rhythm}"
     )
 
-    # ---- 3. PAST Qt: the animation is data, and it is canonical ----
+    # ---- 3. PAST the toolkit: the animation is data, and it is canonical ----
     period = int(q(tf, "flow_period"))
     assert_eq(int(q(tf, "flow")), 0, "the flow starts unshifted")
     tf.intervene("/external/flow", 3)

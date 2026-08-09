@@ -99,7 +99,7 @@
 //!   cheap-but-frequent node can vanish between samples. Every number here is a
 //!   count read off the artifact, so the same scene profiles identically on
 //!   every host — which is also what lets a CI guard assert on it.
-//! - **Text is attributed.** No the toolkit surface reports a per-item glyph count
+//! - **Text is attributed.** A toolkit surface reports a per-item glyph count
 //!   anywhere. R1531 measured the glyph-run walk at 37% of a warm frame, so on
 //!   a professional 2D application this is the term that decides the answer.
 //!

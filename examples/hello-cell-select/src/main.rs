@@ -4,15 +4,14 @@
 //! `select-cell` / `extend-cell` / `clear-cell-selection` wire), painted by
 //! the §5.50 [`pinion_widget_paint::table`] data grid.
 //!
-//! A spreadsheet selects a **rectangle of cells** by anchor + extent (Excel,
-//! the toolkit `SelectItems`): a click / plain arrow starts a single-cell
-//! selection at the cursor, and a `Shift`-drag / `Shift`-arrow grows the
-//! rectangle from the pinned anchor. This is a *different selection model*
-//! from `hello-table`'s `SelectRows` (one whole row washed). R952 added the
-//! cell-range model to the `Table` coordinator while `hello-table` still
-//! drove `SelectRows`; running **both** models in one grid is a no-mode smell
-//! (a real editor picks one), so R953 splits the cell-range model into this
-//! dedicated grid and reverts `hello-table` to pure row selection.
+//! A spreadsheet selects a **rectangle of cells** by anchor + extent (the
+//! spreadsheet, the toolkit `SelectItems`): a click / plain arrow starts a single-cell
+//! selection at the cursor, and a `Shift`-drag / `Shift`-arrow grows the rectangle
+//! from the pinned anchor. This is a *different selection model* from `hello-table`'s
+//! `SelectRows` (one whole row washed). R952 added the cell-range model to the `Table`
+//! coordinator while `hello-table` still drove `SelectRows`; running **both** models in one grid
+//! is a no-mode smell (a real editor picks one), so R953 splits the cell-range
+//! model into this dedicated grid and reverts `hello-table` to pure row selection.
 //!
 //! ## Composition — one composite External
 //!
