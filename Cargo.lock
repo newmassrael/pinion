@@ -4048,6 +4048,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-svg-path"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-syntax-highlight"
 version = "0.0.1"
 dependencies = [

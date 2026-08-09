@@ -32880,6 +32880,70 @@
         "surface waits on Phase C's renderer and cannot advance here."
       ]
     },
+    "R1623": {
+      "decision_summary": "R1623 a path keeps the curve it was authored as: pinion_core::path_data adds PathCommand::QuadTo / ArcTo, the closed PathSegment render form, and an SVG `d` parser / writer, closing the analyzer-tool audit's SVG-path-vocabulary row",
+      "changes_bullets": [
+        "pinion_core::path_data: PathSegment (closed), for_each_segment, to_segments",
+        "PathCommand::QuadTo + ArcTo(EllipticalArc), SVG endpoint parameterisation",
+        "PathCommand::describe -> PathCommandDescription; kind() + PathCommandKind::ALL",
+        "path_data::parse / write / bounds / scale_translate / fit; PathDataError",
+        "paint_adapter and the RPC wire now read the derivations, not the enum",
+        "the wire's `Unknown` arm is DELETED; paint hash is derived from describe",
+        "test_fixtures::path_command_of_kind — one command per kind, exhaustive",
+        "examples/hello-svg-path + tools/demos/r1623_the_path_keeps_its_curve.py",
+        "tools/phase_b_tally.py: osnative re-judged 66 -> 69 (R1621 evidence)"
+      ],
+      "verification_bullets": [
+        "48 path_data tests; 8 hello-svg-path tests; full core/rpc/runtime suites green",
+        "r1623_every_argument_of_every_command_reaches_the_paint_hash (6 arc args)",
+        "r1623_every_path_command_reaches_the_wire_with_all_its_arguments (census)",
+        "12 counterfactuals, 12 caught, from a verified-green baseline",
+        "CF-2 PASSED first and was a finding: the sign rule was untested at 2 of 4",
+        "demo r1623_the_path_keeps_its_curve.py PASS; r721_path + 4 chart demos re-pass",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "impact_refs": [
+        "5.3",
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "a new PathCommand arm reusing an EXISTING kind is caught by nothing",
+        "no census can enumerate a non_exhaustive enum's arms from outside it",
+        "3D surface charting still waits on the Phase C renderer (external)"
+      ],
+      "publishable_decision_summary": "R1623 a path keeps the curve it was authored as: pinion_core::path_data adds PathCommand::QuadTo / ArcTo, the closed PathSegment render form, and an SVG `d` parser / writer, closing the analyzer-tool audit's SVG-path-vocabulary row",
+      "publishable_changes_bullets": [
+        "pinion_core::path_data: PathSegment (closed), for_each_segment, to_segments",
+        "PathCommand::QuadTo + ArcTo(EllipticalArc), SVG endpoint parameterisation",
+        "PathCommand::describe -> PathCommandDescription; kind() + PathCommandKind::ALL",
+        "path_data::parse / write / bounds / scale_translate / fit; PathDataError",
+        "paint_adapter and the RPC wire now read the derivations, not the enum",
+        "the wire's `Unknown` arm is DELETED; paint hash is derived from describe",
+        "test_fixtures::path_command_of_kind — one command per kind, exhaustive",
+        "examples/hello-svg-path + tools/demos/r1623_the_path_keeps_its_curve.py",
+        "tools/phase_b_tally.py: osnative re-judged 66 -> 69 (R1621 evidence)"
+      ],
+      "publishable_verification_bullets": [
+        "48 path_data tests; 8 hello-svg-path tests; full core/rpc/runtime suites green",
+        "r1623_every_argument_of_every_command_reaches_the_paint_hash (6 arc args)",
+        "r1623_every_path_command_reaches_the_wire_with_all_its_arguments (census)",
+        "12 counterfactuals, 12 caught, from a verified-green baseline",
+        "CF-2 PASSED first and was a finding: the sign rule was untested at 2 of 4",
+        "demo r1623_the_path_keeps_its_curve.py PASS; r721_path + 4 chart demos re-pass",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "publishable_impact_refs": [
+        "5.3",
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a new PathCommand arm reusing an EXISTING kind is caught by nothing",
+        "no census can enumerate a non_exhaustive enum's arms from outside it",
+        "3D surface charting still waits on the Phase C renderer (external)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

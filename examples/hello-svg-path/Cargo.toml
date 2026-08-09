@@ -1,0 +1,38 @@
+[package]
+name = "hello-svg-path"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1623 §5.3 SVG path-data consumer — icons imported from `d` strings and fitted into their rects by pinion_core::path_data, keeping the quadratics and elliptical arcs they were authored with all the way onto the wire; the Toggle swaps in malformed data so the binding can REPORT the byte offset where parsing failed instead of silently drawing nothing"
+publish = false
+
+[[bin]]
+name = "hello-svg-path"
+path = "src/main.rs"
+
+[dependencies]
+# §5.3 scene primitives + the R1623 `path_data` module this binding is
+# the forcing consumer of.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through
+# pinion-gpu (vello's RenderContext cannot carry TIMESTAMP_QUERY).
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+# R1623 §5.50: build-time codegen for the `HelloSvgPathRenderer` Vello
+# wrapper. Identical pattern to hello-path / hello-gradient.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

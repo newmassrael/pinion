@@ -423,6 +423,48 @@ pub fn marked_scene_of_kind(kind: SceneNodeKind, tag: &'static str) -> Option<Sc
     })
 }
 
+/// R1623 — one [`PathCommand`] of each
+/// [`PathCommandKind`](crate::path_data::PathCommandKind), with every
+/// argument set to a distinct value.
+///
+/// Exists so a consumer that must cover the whole path vocabulary — the
+/// RPC wire, a backend census — can iterate
+/// [`PathCommandKind::ALL`](crate::path_data::PathCommandKind::ALL)
+/// instead of hand-listing the commands it remembers. The match is
+/// exhaustive, so a new kind cannot reach those consumers untested: it
+/// fails to compile here first.
+///
+/// The values are deliberately all different, so a serializer that
+/// swaps two arguments is caught rather than reproducing a symmetric
+/// fixture.
+#[must_use]
+pub fn path_command_of_kind(kind: crate::path_data::PathCommandKind) -> PathCommand {
+    use crate::path_data::PathCommandKind;
+    use crate::scene::{EllipticalArc, PathPoint};
+    match kind {
+        PathCommandKind::MoveTo => PathCommand::MoveTo(PathPoint::new(1.0, 2.0)),
+        PathCommandKind::LineTo => PathCommand::LineTo(PathPoint::new(3.0, 4.0)),
+        PathCommandKind::QuadTo => PathCommand::QuadTo {
+            c: PathPoint::new(5.0, 6.0),
+            end: PathPoint::new(7.0, 8.0),
+        },
+        PathCommandKind::CurveTo => PathCommand::CurveTo {
+            c1: PathPoint::new(9.0, 10.0),
+            c2: PathPoint::new(11.0, 12.0),
+            end: PathPoint::new(13.0, 14.0),
+        },
+        PathCommandKind::ArcTo => PathCommand::ArcTo(EllipticalArc::new(
+            15.0,
+            16.0,
+            17.0,
+            true,
+            false,
+            PathPoint::new(18.0, 19.0),
+        )),
+        PathCommandKind::Close => PathCommand::Close,
+    }
+}
+
 /// R1615 — a node of `kind` holding `child`, or `None` when that kind has no
 /// child slot at all.
 ///

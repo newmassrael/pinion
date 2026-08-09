@@ -5595,14 +5595,24 @@ fn snapshot_tag_to_json(tag: Option<&str>) -> Value {
 }
 
 /// R51.198 carry §5.49 — wire serialization for `PathCommand`. Each
-/// command becomes a JSON object with a `type` discriminator plus the
-/// variant's payload (`point` for `MoveTo`/`LineTo`; `c1`/`c2`/`end`
-/// for `CurveTo`; no payload for `Close`). The wildcard arm collapses
-/// future `non_exhaustive` additions to `"Unknown"` so the wire stays
-/// forward-compatible.
+/// command becomes a JSON object with a `type` discriminator plus its
+/// named arguments (`point` for `MoveTo`/`LineTo`; `c1`/`c2`/`end` for
+/// `CurveTo`; `rx`/`ry`/`x_rotation`/`large_arc`/`sweep`/`end` for
+/// `ArcTo`; no payload for `Close`).
+///
+/// R1623 — driven by
+/// [`PathCommand::describe`](pinion_core::scene::PathCommand::describe)
+/// rather than by a match over the commands themselves, which is what
+/// removed the `"Unknown"` arm. That arm called itself
+/// forward-compatible, and it was the opposite: `PathCommand` is
+/// `non_exhaustive`, so the day the vocabulary grew, a §2 #7 client
+/// reading the scene would have been told a command existed and never
+/// what it was. Now the only match here is over `PathArgValue`, which
+/// is closed — three shapes an argument can take — so a new command
+/// reaches the wire complete, or `pinion-core` fails to compile.
 fn path_command_to_json(cmd: &pinion_core::scene::PathCommand) -> Value {
-    use pinion_core::scene::PathCommand;
-    let point_to_json = |p: &pinion_core::scene::PathPoint| -> Value {
+    use pinion_core::path_data::PathArgValue;
+    let point_to_json = |p: pinion_core::scene::PathPoint| -> Value {
         let mut obj = serde_json::Map::new();
         obj.insert(
             "x".to_string(),
@@ -5614,31 +5624,21 @@ fn path_command_to_json(cmd: &pinion_core::scene::PathCommand) -> Value {
         );
         Value::Object(obj)
     };
+    let desc = cmd.describe();
     let mut obj = serde_json::Map::new();
-    match cmd {
-        PathCommand::MoveTo(p) => {
-            obj.insert("type".to_string(), Value::String("MoveTo".to_string()));
-            obj.insert("point".to_string(), point_to_json(p));
-        }
-        PathCommand::LineTo(p) => {
-            obj.insert("type".to_string(), Value::String("LineTo".to_string()));
-            obj.insert("point".to_string(), point_to_json(p));
-        }
-        PathCommand::CurveTo { c1, c2, end } => {
-            obj.insert("type".to_string(), Value::String("CurveTo".to_string()));
-            obj.insert("c1".to_string(), point_to_json(c1));
-            obj.insert("c2".to_string(), point_to_json(c2));
-            obj.insert("end".to_string(), point_to_json(end));
-        }
-        PathCommand::Close => {
-            obj.insert("type".to_string(), Value::String("Close".to_string()));
-        }
-        // R51.198 carry §5.49 — `PathCommand` is `non_exhaustive`;
-        // surface future variants as `"Unknown"` markers so the wire
-        // stays forward-compatible.
-        _ => {
-            obj.insert("type".to_string(), Value::String("Unknown".to_string()));
-        }
+    obj.insert(
+        "type".to_string(),
+        Value::String(desc.kind().name().to_string()),
+    );
+    for arg in desc.args() {
+        let value = match arg.value {
+            PathArgValue::Point(p) => point_to_json(p),
+            PathArgValue::Scalar(v) => {
+                serde_json::Number::from_f64(f64::from(v)).map_or(Value::Null, Value::Number)
+            }
+            PathArgValue::Flag(f) => Value::Bool(f),
+        };
+        obj.insert(arg.name.to_string(), value);
     }
     Value::Object(obj)
 }

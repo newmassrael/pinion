@@ -2005,30 +2005,27 @@ pub const PAINT_HASH_UNCACHEABLE: u64 = 0xDEAD_CAFE_DEAD_CAFE;
 /// payloads stay deterministically distinct (a cache miss on a
 /// `NaN` path is the conservative response — `NaN` in geometry is
 /// a path-builder bug anyway).
+///
+/// R1623 — driven by [`PathCommand::describe`] rather than by a second
+/// hand-written match. The hand-written one was a third place a new
+/// command had to be remembered, and forgetting it is the worst of the
+/// three failure modes available: two paths differing only in the new
+/// command would hash **equal**, and the §5.16 fragment cache would
+/// serve one path's pixels for the other.
 fn hash_path_command_into<H: core::hash::Hasher>(cmd: &PathCommand, hasher: &mut H) {
+    use crate::path_data::PathArgValue;
     use core::hash::Hash;
-    match cmd {
-        PathCommand::MoveTo(p) => {
-            b"MoveTo".hash(hasher);
-            p.x.to_bits().hash(hasher);
-            p.y.to_bits().hash(hasher);
-        }
-        PathCommand::LineTo(p) => {
-            b"LineTo".hash(hasher);
-            p.x.to_bits().hash(hasher);
-            p.y.to_bits().hash(hasher);
-        }
-        PathCommand::CurveTo { c1, c2, end } => {
-            b"CurveTo".hash(hasher);
-            c1.x.to_bits().hash(hasher);
-            c1.y.to_bits().hash(hasher);
-            c2.x.to_bits().hash(hasher);
-            c2.y.to_bits().hash(hasher);
-            end.x.to_bits().hash(hasher);
-            end.y.to_bits().hash(hasher);
-        }
-        PathCommand::Close => {
-            b"Close".hash(hasher);
+    let desc = cmd.describe();
+    desc.kind().name().as_bytes().hash(hasher);
+    for arg in desc.args() {
+        arg.name.as_bytes().hash(hasher);
+        match arg.value {
+            PathArgValue::Point(p) => {
+                p.x.to_bits().hash(hasher);
+                p.y.to_bits().hash(hasher);
+            }
+            PathArgValue::Scalar(v) => v.to_bits().hash(hasher),
+            PathArgValue::Flag(f) => f.hash(hasher),
         }
     }
 }
@@ -3034,21 +3031,104 @@ impl PathPoint {
     }
 }
 
-/// Structured path command per §5.3 R20.
+/// R1623 §5.3 — an elliptical arc in SVG's **endpoint
+/// parameterisation**: the arc is named by where it ends plus the
+/// ellipse it rides, and the centre is derived (SVG 1.1 F.6.5).
+///
+/// That is the parameterisation path data uses, and keeping it means an
+/// imported `A` command survives into the scene as an arc. The
+/// reference toolkit offers only the centre form — its arc builder
+/// takes a bounding rect plus start and sweep angles — so importing SVG
+/// there means converting first and losing the arc anyway, since that
+/// builder appends Béziers into an element list with no arc kind.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EllipticalArc {
+    /// Radius along the ellipse's own x axis. Negative values are read
+    /// as their magnitude and a zero degrades the arc to a line, both
+    /// per F.6.2.
+    pub rx: f32,
+    /// Radius along the ellipse's own y axis.
+    pub ry: f32,
+    /// Rotation of the ellipse's x axis, in degrees, clockwise from the
+    /// scene's x axis.
+    pub x_rotation: f32,
+    /// Take the sweep greater than 180°.
+    pub large_arc: bool,
+    /// Sweep in the direction of increasing angle.
+    pub sweep: bool,
+    /// Where the arc ends, and the new current point.
+    pub end: PathPoint,
+}
+
+impl EllipticalArc {
+    /// Construct an arc from its endpoint parameterisation.
+    #[must_use]
+    pub const fn new(
+        rx: f32,
+        ry: f32,
+        x_rotation: f32,
+        large_arc: bool,
+        sweep: bool,
+        end: PathPoint,
+    ) -> Self {
+        Self {
+            rx,
+            ry,
+            x_rotation,
+            large_arc,
+            sweep,
+            end,
+        }
+    }
+}
+
+/// Structured path command per §5.3 R20 — the vocabulary a path is
+/// **authored** in.
 ///
 /// Replaces the previous R17 opaque `data: String` (SVG-d payload).
-/// Curve commands use a single cubic Bézier; quadratic / arc / etc.
-/// are carry-forward.
+/// R1623 added [`Self::QuadTo`] and [`Self::ArcTo`] so an imported
+/// icon keeps the curves it was drawn with; see
+/// [`crate::path_data`] for why the render form is a separate closed
+/// type ([`PathSegment`](crate::path_data::PathSegment)) and why the
+/// smooth and relative spellings are resolved at parse time instead of
+/// living here.
+///
+/// Growing this enum is a compile-time obligation, not a convention:
+/// [`PathCommand::describe`] and
+/// [`path_data::for_each_segment`](crate::path_data::for_each_segment)
+/// both match it exhaustively from inside this crate, and every
+/// out-of-crate consumer reads one of those two derivations.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PathCommand {
+    /// Start a new subpath.
     MoveTo(PathPoint),
+    /// Straight line from the current point.
     LineTo(PathPoint),
-    CurveTo {
-        c1: PathPoint,
-        c2: PathPoint,
+    /// Quadratic Bézier — SVG `Q`. Kept rather than elevated: the
+    /// degree is what the author drew, and the cubic form carries a
+    /// control point they never chose.
+    QuadTo {
+        /// The single control point.
+        c: PathPoint,
+        /// Endpoint, and the new current point.
         end: PathPoint,
     },
+    /// Cubic Bézier — SVG `C`.
+    CurveTo {
+        /// Control point leaving the current point.
+        c1: PathPoint,
+        /// Control point entering `end`.
+        c2: PathPoint,
+        /// Endpoint, and the new current point.
+        end: PathPoint,
+    },
+    /// Elliptical arc — SVG `A`. No cubic form is exact, so this is the
+    /// arm where keeping the vocabulary is the difference between the
+    /// scene describing a circle and describing four Béziers.
+    ArcTo(EllipticalArc),
+    /// Close the current subpath.
     Close,
 }
 
@@ -7805,6 +7885,73 @@ mod tests {
         let a = Scene::Path(path_a);
         let b = Scene::Path(path_b);
         assert_ne!(a.paint_hash(), b.paint_hash());
+    }
+
+    /// R1623 — the paint hash is derived from
+    /// [`PathCommand::describe`], and this is what that buys. Every
+    /// argument of every command must reach the hasher, including the
+    /// two the arc carries that are neither a coordinate nor a number:
+    /// a hand-written hasher that dropped `sweep` would give the two
+    /// halves of a circle **one** hash, and the §5.16 fragment cache
+    /// would then paint one of them with the other's pixels.
+    #[test]
+    fn r1623_every_argument_of_every_command_reaches_the_paint_hash() {
+        let path = |cmd: PathCommand| {
+            Scene::Path(PathNode::new(
+                rect_a(),
+                vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0)), cmd],
+                PathStyle::default(),
+            ))
+            .paint_hash()
+        };
+        let arc = |rx, ry, rot, large, sweep, end| {
+            path(PathCommand::ArcTo(EllipticalArc::new(
+                rx, ry, rot, large, sweep, end,
+            )))
+        };
+        let base = arc(10.0, 20.0, 30.0, false, false, PathPoint::new(5.0, 5.0));
+        for (what, other) in [
+            (
+                "rx",
+                arc(11.0, 20.0, 30.0, false, false, PathPoint::new(5.0, 5.0)),
+            ),
+            (
+                "ry",
+                arc(10.0, 21.0, 30.0, false, false, PathPoint::new(5.0, 5.0)),
+            ),
+            (
+                "x_rotation",
+                arc(10.0, 20.0, 31.0, false, false, PathPoint::new(5.0, 5.0)),
+            ),
+            (
+                "large_arc",
+                arc(10.0, 20.0, 30.0, true, false, PathPoint::new(5.0, 5.0)),
+            ),
+            (
+                "sweep",
+                arc(10.0, 20.0, 30.0, false, true, PathPoint::new(5.0, 5.0)),
+            ),
+            (
+                "end",
+                arc(10.0, 20.0, 30.0, false, false, PathPoint::new(6.0, 5.0)),
+            ),
+        ] {
+            assert_ne!(base, other, "the arc's `{what}` does not reach the hash");
+        }
+
+        // A quadratic and the cubic it elevates to draw the same curve
+        // but are different declarations, and the scene publishes the
+        // declaration — so they must not share a cache entry either.
+        let quad = path(PathCommand::QuadTo {
+            c: PathPoint::new(30.0, -40.0),
+            end: PathPoint::new(60.0, 0.0),
+        });
+        let cubic = path(PathCommand::CurveTo {
+            c1: PathPoint::new(20.0, -26.666_666),
+            c2: PathPoint::new(40.0, -26.666_666),
+            end: PathPoint::new(60.0, 0.0),
+        });
+        assert_ne!(quad, cubic);
     }
 
     /// R1516 — the census and the accessors are three separate statements

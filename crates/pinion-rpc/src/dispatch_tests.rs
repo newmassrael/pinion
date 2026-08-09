@@ -4054,6 +4054,85 @@ fn scene_snapshot_path_wire_carries_rect_tag_and_commands() {
 }
 
 #[test]
+fn r1623_every_path_command_reaches_the_wire_with_all_its_arguments() {
+    // Before R1623 this function ended in `_ => "Unknown"`, so the day
+    // the vocabulary grew a client would have been told a command
+    // existed and never what it was. The wire is now rendered from
+    // `PathCommand::describe`, and this walks the WHOLE census rather
+    // than the arms someone remembered: `PathCommandKind::ALL` with a
+    // fixture per kind, so a new command that the serializer cannot
+    // render fails here.
+    use pinion_core::path_data::PathCommandKind;
+    use pinion_core::scene::{PathNode, Rect};
+    use pinion_core::style::PathStyle;
+
+    let commands: Vec<_> = PathCommandKind::ALL
+        .iter()
+        .map(|k| pinion_core::test_fixtures::path_command_of_kind(*k))
+        .collect();
+    let node = PathNode::new(
+        Rect::new(0, 0, 64, 64),
+        commands.clone(),
+        PathStyle::default(),
+    )
+    .with_tag("census");
+    let mut scene = Scene::Path(node);
+    let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let result = resp.result.unwrap();
+    let wire = result.get("commands").unwrap().as_array().unwrap();
+    assert_eq!(wire.len(), PathCommandKind::ALL.len());
+
+    for (kind, (cmd, json)) in PathCommandKind::ALL
+        .iter()
+        .zip(commands.iter().zip(wire.iter()))
+    {
+        let obj = json.as_object().expect("a command is an object");
+        assert_eq!(
+            obj.get("type"),
+            Some(&Value::String(kind.name().to_string())),
+            "{kind:?} is mislabelled on the wire",
+        );
+        assert_ne!(
+            obj.get("type"),
+            Some(&Value::String("Unknown".to_string())),
+            "{kind:?} fell through to the arm R1623 removed",
+        );
+        // Every argument the description names, and nothing else.
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        let mut expected: Vec<&str> = cmd.describe().args().iter().map(|a| a.name).collect();
+        expected.push("type");
+        expected.sort_unstable();
+        assert_eq!(keys, expected, "{kind:?} arguments on the wire");
+    }
+
+    // And the arc concretely, because it is the command that carries
+    // argument shapes the wire had never had to render: two plain
+    // numbers that are not coordinates, and two booleans.
+    let arc = wire[4].as_object().expect("arc object");
+    assert_eq!(arc.get("type"), Some(&Value::String("ArcTo".into())));
+    assert_eq!(arc.get("rx").and_then(Value::as_f64), Some(15.0));
+    assert_eq!(arc.get("ry").and_then(Value::as_f64), Some(16.0));
+    assert_eq!(arc.get("x_rotation").and_then(Value::as_f64), Some(17.0));
+    assert_eq!(arc.get("large_arc"), Some(&Value::Bool(true)));
+    assert_eq!(arc.get("sweep"), Some(&Value::Bool(false)));
+    let end = arc.get("end").unwrap().as_object().unwrap();
+    assert_eq!(end.get("x").and_then(Value::as_f64), Some(18.0));
+    assert_eq!(end.get("y").and_then(Value::as_f64), Some(19.0));
+
+    // The quadratic keeps its single control point rather than
+    // arriving as the cubic a rasterizer would draw.
+    let quad = wire[2].as_object().expect("quad object");
+    assert_eq!(quad.get("type"), Some(&Value::String("QuadTo".into())));
+    assert!(quad.get("c").is_some());
+    assert!(
+        quad.get("c1").is_none(),
+        "a quadratic has no second control point"
+    );
+}
+
+#[test]
 fn scene_snapshot_image_wire_carries_rect_tag_and_source() {
     use pinion_core::scene::{ImageNode, Rect};
     let node = ImageNode::new("icon.png", Rect::new(8, 8, 16, 16)).with_tag("logo");

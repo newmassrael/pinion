@@ -45,9 +45,10 @@ use crate::image_cache::ImageCache;
 use crate::paint_cache_stats::FragmentCacheStats;
 use pinion_core::Scene;
 use pinion_core::cell_metric::CellMetric;
+use pinion_core::path_data::{PathSegment, for_each_segment};
 use pinion_core::scene::{
-    BoxNode, ImageNode, ImmediateModeNode, ImmediatePainter, PathCommand, PathNode, PathPoint,
-    Rect, TextGridNode, TextNode,
+    BoxNode, ImageNode, ImmediateModeNode, ImmediatePainter, PathNode, PathPoint, Rect,
+    TextGridNode, TextNode,
 };
 use pinion_core::style::{
     Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, GenericFontFamily,
@@ -3539,19 +3540,21 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
         return;
     }
     let mut path = BezPath::new();
-    for cmd in &node.commands {
-        match *cmd {
-            PathCommand::MoveTo(p) => path.move_to(path_point(p)),
-            PathCommand::LineTo(p) => path.line_to(path_point(p)),
-            PathCommand::CurveTo { c1, c2, end } => {
-                path.curve_to(path_point(c1), path_point(c2), path_point(end));
-            }
-            PathCommand::Close => path.close_path(),
-            // `PathCommand` is `#[non_exhaustive]`; an unrecognised
-            // future command is skipped rather than mis-rastered.
-            _ => {}
+    // R1623 — the authored vocabulary is normalised into the closed
+    // `PathSegment` form before it reaches the rasterizer. This match
+    // is exhaustive and `PathSegment` is not `non_exhaustive`, so the
+    // wildcard that used to sit here — silently skipping any command
+    // this adapter did not know — cannot come back: a new
+    // `PathCommand` breaks `pinion_core::path_data`'s normaliser at
+    // compile time instead of painting nothing at run time.
+    for_each_segment(&node.commands, |seg| match seg {
+        PathSegment::MoveTo(p) => path.move_to(path_point(p)),
+        PathSegment::LineTo(p) => path.line_to(path_point(p)),
+        PathSegment::CurveTo { c1, c2, end } => {
+            path.curve_to(path_point(c1), path_point(c2), path_point(end));
         }
-    }
+        PathSegment::Close => path.close_path(),
+    });
     // R1358 — compose `transform * translate(rect.{x,y})` so a
     // rect-local `(0, 0)` command lands at the node's resolved
     // top-left, exactly as `paint_immediate_mode_node` places its

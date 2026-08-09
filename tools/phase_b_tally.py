@@ -1800,9 +1800,42 @@ AXES = [
         # the gate, and no amount of Linux window-system depth moves it. Worth
         # restating each time: display and window work IS buildable and testable
         # here, and is what these three rounds did.
-        "judged_at": 1617,
-        "completion": 66,
-        "evidence_snapshot": {"example-name": 14, "round-axis": 3},
+        #
+        # R1621 re-judged 66 -> 69, and the tool demanded it: `round-axis` went
+        # 3 -> 4, past the band.
+        #
+        # ONLY +3 again, and the arithmetic is again the gap list the previous
+        # audit wrote down. R1617 named exactly TWO things still absent, both
+        # platform probes; R1621 closes exactly one of them, the display's
+        # USABLE REGION, and closes it past what the reference does rather than
+        # narrowly. `UsableRegion` is an answer WITH ITS PROVENANCE in four
+        # arms rather than a bare rectangle, `pinion-shell::work_area` is a
+        # real EWMH `_NET_WORKAREA` probe (measured on this desk:
+        # 2494x1568+66+32, `reported`), and `scene/displays.usable` publishes
+        # both halves. The reference's own X11 plugin writes at length that a
+        # per-monitor work area cannot be trusted and then CONCLUDES by handing
+        # back full bounds for every display on a multi-head desk with nothing
+        # in the answer saying so — so a caller there cannot tell a measured
+        # region from a fallback, which is the whole of what the fourth arm is
+        # for. It also reclaims what that conclusion throws away: a dock on the
+        # left monitor no longer costs the right monitor its measurement.
+        #
+        # The remaining named absence is a hot-plug EVENT, and it stays
+        # EXTERNAL: winit 0.30 emits none, so the desk is re-read at each
+        # window create and RPC dispatch. R1621 added two stated limits of its
+        # own, both honest and neither buildable from here: Wayland has no work
+        # area to publish at all (the arm says `Unpublished`; under XWayland
+        # that atom describes the X root rather than the compositor's panels,
+        # so the probe REFUSES rather than answering wrongly), and a WM that
+        # publishes a per-desktop list is read only at its first quadruple
+        # because the model has no notion of a virtual desktop.
+        #
+        # The gate is where it has been since R1576: Mac/Win native surfaces,
+        # untouched, needing those OSes' runners. Linux window-system depth
+        # does not move it, and three rounds of that depth is what 58 -> 69 is.
+        "judged_at": 1621,
+        "completion": 69,
+        "evidence_snapshot": {"example-name": 14, "round-axis": 4},
     },
     {
         "key": "api",

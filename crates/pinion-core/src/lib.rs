@@ -50,6 +50,7 @@ pub mod memory_census;
 pub mod mnemonic;
 pub mod modal_scope_request;
 pub mod model_index;
+pub mod path_data;
 pub mod print;
 pub mod reactive;
 pub mod region;

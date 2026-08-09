@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R1623 §5.3 SVG path-data consumer: pinion-forge renderer manifest for
+  hello-svg-path. Emits `HelloSvgPathRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper) — the same
+  single-source emit template every path-painting binding uses; only the
+  struct name diverges. `aa` omitted -> Area per R46.2.1.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloSvgPathRenderer"
+        backend="vello"/>

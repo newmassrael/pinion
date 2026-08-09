@@ -100,6 +100,7 @@ members = [
     "examples/hello-undo",
     "examples/hello-gradient",
     "examples/hello-path",
+    "examples/hello-svg-path",
     "examples/hello-chart",
     "examples/hello-chart-fill",
     "examples/hello-donut",
