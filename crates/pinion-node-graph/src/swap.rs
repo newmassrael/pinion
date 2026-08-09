@@ -1,22 +1,19 @@
 //! Changing what a node IS, without changing which node it is (R1598).
 //!
-//! Blender's `NODE_OT_swap_node`, and the shape is where this diverges: there
-//! the operator **creates a new node and deletes the old one**
-//! (`bl_operators/node.py`), so the swapped node's identity dies with it. Every
-//! reference to it dies too — a selection, a saved layout, an agent holding the
-//! id, an undo record. Here the node keeps its [`NodeId`] and only its body
-//! changes, which is what makes a swap an *edit* rather than a
-//! replace-and-hope.
+//! The DCC's `NODE_OT_swap_node`, and the shape is where this diverges: there the operator
+//! **creates a new node and deletes the old one** (`bl_operators/node.py`), so the swapped node's
+//! identity dies with it. Every reference to it dies too — a selection, a
+//! saved layout, an agent holding the id, an undo record. Here the node keeps
+//! its [`NodeId`] and only its body changes, which is what makes a swap an *edit*
+//! rather than a replace-and-hope.
 //!
-//! The hard part is not the body: it is that a kind DECLARES its ports (R1594),
-//! so changing the kind changes the signature, and every link and every authored
-//! value on the node has to be re-examined against the new one. What survives is
-//! decided by one derivation ([`Correspondence`]) and everything that does not
-//! is **named**. Blender drops all of it silently — three swallowed exceptions
-//! (`except IndexError: pass`, `except KeyError: pass`, `except (AttributeError,
-//! KeyError, TypeError): pass`) and a `tree.links.remove(new_link)` for a link
-//! that turned out invalid — so a swap there can quietly cost work the user
-//! cannot see they have lost.
+//! The hard part is not the body: it is that a kind DECLARES its ports
+//! (R1594), so changing the kind changes the signature, and every link and
+//! every authored value on the node has to be re-examined against the new one.
+//! What survives is decided by one derivation ([`Correspondence`]) and everything that does
+//! not is **named**. The DCC drops all of it silently — three swallowed
+//! exceptions (`except IndexError: pass`, `except KeyError: pass`, `except (AttributeError, KeyError, TypeError): pass`) and a `tree.links.remove(new_link)` for a link that turned out invalid —
+//! so a swap there can quietly cost work the user cannot see they have lost.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,7 +39,7 @@ pub struct Carried {
 
 /// What a [`set_kind`](Document::set_kind) did.
 ///
-/// Every field is something Blender's swap does not report: it drops what does
+/// Every field is something the DCC's swap does not report: it drops what does
 /// not fit inside swallowed exceptions, so "the swap worked" and "the swap
 /// worked and cost you two wires" are the same outcome there.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,10 +57,10 @@ pub struct Swapped<K: NodeKind> {
     /// dropped port and are gone, **with what they were**.
     ///
     /// The value and not just its address, because the address alone cannot
-    /// answer the question a report exists for — the swap has already happened,
-    /// so "port in1 lost something" leaves the caller nothing to show or to put
-    /// back, while "port in1 lost the number 7" does. Blender loses these inside
-    /// `except (AttributeError, KeyError, TypeError): pass`.
+    /// answer the question a report exists for — the swap has already
+    /// happened, so "port in1 lost something" leaves the caller nothing to
+    /// show or to put back, while "port in1 lost the number 7" does. The DCC
+    /// loses these inside `except (AttributeError, KeyError, TypeError): pass`.
     pub discarded: Vec<(PortRef, K::Value)>,
 }
 
@@ -88,13 +85,13 @@ impl<K: NodeKind> Swapped<K> {
 
 /// How the old signature's ports map onto the new one's, one side at a time.
 ///
-/// **By name, then by position, and never against the type relation.** Blender
-/// picks one of those two rules from a hard-coded pair of node-type sets
-/// (`transfer_by_index = both_math_nodes or both_switch_nodes`, two literal
-/// lists in a Python file), so a wire between two kinds nobody put in those
-/// lists is silently dropped even when the ports line up perfectly. Doing both,
-/// in that order, needs no table: a name match is the author saying "this is the
-/// same port", and position is the honest fallback when nobody said anything.
+/// **By name, then by position, and never against the type relation.** the DCC
+/// picks one of those two rules from a hard-coded pair of node-type sets (`transfer_by_index = both_math_nodes or both_switch_nodes`,
+/// two literal lists in a Python file), so a wire between two kinds nobody put
+/// in those lists is silently dropped even when the ports line up perfectly.
+/// Doing both, in that order, needs no table: a name match is the author
+/// saying "this is the same port", and position is the honest fallback when
+/// nobody said anything.
 ///
 /// The result is **injective** by construction — each new port is claimed at
 /// most once — which is what keeps a swap from over-feeding an input.
@@ -153,7 +150,7 @@ impl Correspondence {
         // A lone port has no position worth preserving and no name that means
         // anything beside a name it is the only one of — so "wherever it fits"
         // is the honest answer rather than a guess, which is why this is not
-        // done when there are several to tell apart. Blender reaches the same
+        // done when there are several to tell apart. The DCC reaches the same
         // behaviour by testing `old_node.bl_idname == "NodeReroute"`, so there
         // it is one node TYPE's privilege; here it falls out of the arity, and
         // every single-port kind gets it.
@@ -177,11 +174,11 @@ impl Correspondence {
 impl<K: NodeKind> Document<K> {
     /// Change what `node` IS, keeping which node it is.
     ///
-    /// Blender's `NODE_OT_swap_node`. The node's [`NodeId`], its position, its
-    /// label, its appearance and its place in the frame forest all survive,
-    /// because the node is not replaced — only its body is. That is the whole
-    /// difference from the reference, where the operator creates a new node and
-    /// deletes the old one, so every reference to it dies.
+    /// The DCC's `NODE_OT_swap_node`. The node's [`NodeId`], its position, its label, its
+    /// appearance and its place in the frame forest all survive, because the
+    /// node is not replaced — only its body is. That is the whole difference
+    /// from the reference, where the operator creates a new node and deletes
+    /// the old one, so every reference to it dies.
     ///
     /// A kind declares its ports, so the signature changes underneath the
     /// node's links and its authored values. Both are re-examined against the

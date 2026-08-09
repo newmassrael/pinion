@@ -14,8 +14,8 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TreeId(pub u32);
 
-/// A node, unique **within its tree** — the same numbering Blender's node names
-/// use, and what lets a group collapse move nodes between trees without
+/// A node, unique **within its tree** — the same numbering the DCC's node
+/// names use, and what lets a group collapse move nodes between trees without
 /// renumbering them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
@@ -77,24 +77,21 @@ impl Socket {
 ///
 /// # Against the references
 ///
-/// **Blender needs the same address and materialises it.** A geometry-nodes
-/// simulation zone's state is cached per node in `ModifierCache` as
-/// `Map<int, std::unique_ptr<SimulationNodeCache>> simulation_cache_by_id`, and
-/// that `int` is a *flattened* path: `bNestedNodeRef { int32_t id;
-/// bNestedNodePath path; }` where the path is `{ node_id, id_in_node }`, a
-/// side table stored on the root tree and written into the .blend file. So the
-/// address exists there as **persisted data that must be kept in step with the
-/// tree**, with a struct field (`id_in_node`) its own comment describes as
-/// "Unused if the node is the final nested node". Here it is derived by the
-/// walk that needs it and stored nowhere.
+/// **the DCC needs the same address and materialises it.** A geometry-nodes
+/// simulation zone's state is cached per node in `ModifierCache` as `Map<int, std::unique_ptr<SimulationNodeCache>> simulation_cache_by_id`, and that `int` is a
+/// *flattened* path: `bNestedNodeRef { int32_t id; bNestedNodePath path; }` where the path is `{ node_id, id_in_node }`, a side table stored on the
+/// root tree and written into the .blend file. So the address exists there as
+/// **persisted data that must be kept in step with the tree**, with a struct
+/// field (`id_in_node`) its own comment describes as "Unused if the node is the final
+/// nested node". Here it is derived by the walk that needs it and stored
+/// nowhere.
 ///
-/// **Unreal does not have this address at all**, because a macro instance is
-/// not an instance: `FKismetCompilerContext` expands one by calling
-/// `FEdGraphUtilities::CloneGraph(MacroGraph, ...)`, so N instances are N
+/// **the engine does not have this address at all**, because a macro instance
+/// is not an instance: `FKismetCompilerContext` expands one by calling `FEdGraphUtilities::CloneGraph(MacroGraph, ...)`, so N instances are N
 /// copies of the nodes and each copy is simply its own node. That is also why
-/// its recursion check has to exist (`FindMacroCycle`) — inlining cannot
-/// terminate on a cycle — where a group *instance* here is checked by
-/// [`Document::containment`] being acyclic and needs no expansion to run.
+/// its recursion check has to exist (`FindMacroCycle`) — inlining cannot terminate on a
+/// cycle — where a group *instance* here is checked by [`Document::containment`] being acyclic and
+/// needs no expansion to run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Instance(Vec<(TreeId, NodeId)>);
 
@@ -174,10 +171,9 @@ pub struct Link {
     /// while every structural derivation in this crate ignores it, because a
     /// muted link still occupies its input and still crosses a boundary.
     ///
-    /// Blender spells this `NODE_LINK_MUTED` and spells a bypassed **node**
-    /// `NODE_MUTED`, which are opposite behaviours under one word: a muted link
-    /// stops a value, a muted node passes one through. They are named apart
-    /// here — see [`Node::bypassed`].
+    /// The DCC spells this `NODE_LINK_MUTED` and spells a bypassed **node** `NODE_MUTED`, which are
+    /// opposite behaviours under one word: a muted link stops a value, a muted
+    /// node passes one through. They are named apart here — see [`Node::bypassed`].
     #[serde(default)]
     pub muted: bool,
 }
@@ -204,7 +200,7 @@ pub(crate) struct Sink {
 /// flag beside the type because control is *not a value* — so a control port has
 /// no type at all, and there is no slot left over to hold a meaningless one.
 ///
-/// **Unreal spells the same distinction as a string in the type slot.** An
+/// **the engine spells the same distinction as a string in the type slot.** An
 /// execution pin there is an ordinary `UEdGraphPin` whose
 /// `PinType.PinCategory` happens to equal the `FName` `"exec"`
 /// (`UEdGraphSchema_K2::PC_Exec`), so "is this pin control?" is a string
@@ -221,7 +217,7 @@ pub enum Flow<T, V> {
         /// The application's socket type.
         ty: T,
         /// The value this port carries when nothing else supplies one — the
-        /// "pin default" of Blender and Blueprint.
+        /// "pin default" of the DCC and Blueprint.
         ///
         /// On an **input** that means no link. On an **output** it means the
         /// kind computed nothing there, which is what lets a source node
@@ -280,9 +276,9 @@ impl<T, V> Flow<T, V> {
     /// `terminator`/`predecessors` — the same duality SSA draws, and the reason
     /// a control-flow graph has join points where a dataflow graph has fan-out.
     ///
-    /// Unreal derives the same two rules and writes them as two independent
-    /// booleans one line apart, each naming the *other* flow to exclude it
-    /// (`EdGraphSchema_K2.cpp`, 5.8.1):
+    /// The engine derives the same two rules and writes them as two
+    /// independent booleans one line apart, each naming the *other* flow to
+    /// exclude it (`EdGraphSchema_K2.cpp`, 5.8.1):
     ///
     /// ```text
     /// bBreakExistingDueToExecOutput = IsExecPin(*OutputPin) && OutputPin->LinkedTo.Num() > 0;
@@ -328,30 +324,30 @@ pub struct Port<T, V> {
     /// [`Passthrough::dropped_outputs`](crate::Passthrough::dropped_outputs).
     ///
     /// Needed for exactly two shapes, and both were found by *measuring* how
-    /// Blender uses its own equivalents rather than by guessing:
+    /// the DCC uses its own equivalents rather than by guessing:
     ///
     /// * A **control** input that happens to share the data type it selects
     ///   between — `Switch(Switch: Bool, False: Bool, True: Bool) -> Bool`.
     ///   The identity rule would pass the *switch* through; declaring the
     ///   control port `no_passthrough` leaves the first data input, which is
-    ///   what Blender's `node_geo_switch` hook returns.
+    ///   what the DCC's `node_geo_switch` hook returns.
     /// * An output whose value is only meaningful while the node computes — the
     ///   shape `node_geo_menu_switch` reaches by answering `nullptr` for every
     ///   output after its first.
     ///
-    /// Blender spells the same declaration `no_mute_links` (set through a
+    /// The DCC spells the same declaration `no_mute_links` (set through a
     /// builder named `no_muted_links`) and uses it widely: **42 declarations
     /// across 17 node files at `8cf50599`, 28 on outputs and 14 on inputs** —
     /// both ends, which is why one field read from both ends is the right
     /// shape here too.
     ///
     /// It also has a *second* mechanism this crate does not need: eleven node
-    /// types register a per-node C callback, `internally_linked_input`, and
-    /// between them those callbacks compute only the identity (by name or by
-    /// index) and "skip the leading control input". Blender needs a callback to
-    /// reach the identity because its default is a static socket-type priority
-    /// table; this crate's default *is* the identity, so the per-port
-    /// declaration is the whole extension point.
+    /// types register a per-node C callback, `internally_linked_input`, and between them those
+    /// callbacks compute only the identity (by name or by index) and "skip the
+    /// leading control input". The DCC needs a callback to reach the identity
+    /// because its default is a static socket-type priority table; this
+    /// crate's default *is* the identity, so the per-port declaration is the
+    /// whole extension point.
     #[serde(default = "yes")]
     pub passthrough: bool,
 }
@@ -374,7 +370,7 @@ impl<T, V> Port<T, V> {
     /// A **control** port with a name (R1599).
     ///
     /// No type and no default, because control is not a value. The name is
-    /// still the port's own — Unreal names them too (`Then`, `Else`, `Loop
+    /// still the port's own — the engine names them too (`Then`, `Else`, `Loop
     /// Body`, `Completed`), and a control port that could not be named would
     /// leave a two-way branch with two indistinguishable arms.
     pub fn control(name: impl Into<String>) -> Self {
@@ -441,20 +437,17 @@ impl<T, V> Port<T, V> {
 /// something equality can express — equality is symmetric — so it is a relation
 /// the taxonomy declares, and it is declared once, as *the conversion itself*.
 ///
-/// Legality and the conversion being one declaration is the point. Blender
-/// keeps them apart, in three places that can disagree: `validate_link` (a
-/// per-tree-type predicate that says whether a wire may exist),
-/// `DataTypeConversions` (a global `Map<(from, to), ConversionFunctions>` that
-/// holds the actual conversion), and `get_internal_link_type_priority` (a static
-/// socket-type table used when a node is muted). Here there is one answer, so a
-/// wire this crate accepts is a wire it can carry a value along, and a value
-/// passing through a bypassed node converts by the same rule it would have
-/// converted by along a link.
+/// Legality and the conversion being one declaration is the point. The DCC
+/// keeps them apart, in three places that can disagree: `validate_link` (a per-tree-type
+/// predicate that says whether a wire may exist), `DataTypeConversions` (a global `Map<(from, to), ConversionFunctions>` that holds
+/// the actual conversion), and `get_internal_link_type_priority` (a static socket-type table used when a
+/// node is muted). Here there is one answer, so a wire this crate accepts is a
+/// wire it can carry a value along, and a value passing through a bypassed
+/// node converts by the same rule it would have converted by along a link.
 ///
-/// [`Conversion::Converted`] carries a plain `fn` pointer rather than a boxed
-/// closure because a type-lattice conversion is a property of the pair of types
-/// and captures nothing — the same reason Blender's own conversion table stores
-/// `void (*convert_single_to_initialized)(const void *, void *)`.
+/// [`Conversion::Converted`] carries a plain `fn` pointer rather than a boxed closure because a
+/// type-lattice conversion is a property of the pair of types and captures
+/// nothing — the same reason the DCC's own conversion table stores `void (*convert_single_to_initialized)(const void *, void *)`.
 pub enum Conversion<V> {
     /// No value of the source type may enter this port.
     Refused,
@@ -500,7 +493,7 @@ impl<V> Conversion<V> {
     /// Whether a value that crosses is changed on the way.
     ///
     /// Published rather than hidden because it is a fact about the graph a
-    /// reader wants: Blender makes it visible by materialising a whole
+    /// reader wants: the DCC makes it visible by materialising a whole
     /// `implicit_conversion` node.
     #[must_use]
     pub const fn converts(&self) -> bool {
@@ -593,11 +586,11 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// Whether and how a value leaving an output of type `from` may enter an
     /// input of type `to` (R1593).
     ///
-    /// An **associated** function and not a method, because a wire's legality is
-    /// a property of the two types and of nothing else: an editor asks it while
-    /// a wire is being dragged, before there is a value and often before there
-    /// is a node at the far end. Blender hangs the same question off the *tree
-    /// type* (`bNodeTreeType::validate_link`) for that reason.
+    /// An **associated** function and not a method, because a wire's legality
+    /// is a property of the two types and of nothing else: an editor asks it
+    /// while a wire is being dragged, before there is a value and often before
+    /// there is a node at the far end. The DCC hangs the same question off the
+    /// *tree type* (`bNodeTreeType::validate_link`) for that reason.
     ///
     /// The default is the strictest relation there is — identical types cross
     /// unchanged and nothing else crosses at all — which is what this crate did
@@ -622,7 +615,7 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// that costs is that [`Document::set_port_value`] then accepts any value on
     /// any port, exactly as [`Port::with_default`] always has.
     ///
-    /// Blender does not need this because a socket's authored value is a
+    /// The DCC does not need this because a socket's authored value is a
     /// *different C struct per socket type* (`bNodeSocketValueFloat` and its
     /// siblings), so a mismatch there is a type error at the call site. One
     /// `Value` type across the taxonomy is the price of this trait being
@@ -661,16 +654,14 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// * a node with **several** is a *sequence* — run the first to completion,
     ///   then the next — and writes nothing either.
     ///
-    /// That second one is worth stating against the reference. Unreal's
-    /// `Sequence` node is a whole `UK2Node_ExecutionSequence` class plus an
-    /// `FKCHandler_ExecutionSequence` compile handler, which finds its own
-    /// output pins by testing whether each pin's name *starts with the string*
-    /// `"Then"` and carries the standing admission
-    /// `//@TODO: Sort the pins by the number appended to the pin!` — so there,
-    /// the order control leaves a Sequence by is the order its pins happen to
-    /// sit in the array, and the node's own author noted that this is not the
-    /// order the user is reading off the screen. Here the order **is** the port
-    /// order, because that is the only order a signature has.
+    /// That second one is worth stating against the reference. The engine's
+    /// `Sequence` node is a whole `UK2Node_ExecutionSequence` class plus an `FKCHandler_ExecutionSequence` compile handler, which finds
+    /// its own output pins by testing whether each pin's name *starts with the
+    /// string* `"Then"` and carries the standing admission `//@TODO: Sort the pins by the number appended to the pin!` — so there, the
+    /// order control leaves a Sequence by is the order its pins happen to sit
+    /// in the array, and the node's own author noted that this is not the
+    /// order the user is reading off the screen. Here the order **is** the
+    /// port order, because that is the only order a signature has.
     ///
     /// Only a *branch* overrides: it picks among its outputs by looking at what
     /// arrived.
@@ -727,13 +718,12 @@ pub type KindPort<K> = Port<<K as NodeKind>::Type, <K as NodeKind>::Value>;
 /// * **the two never mix**, which is what stops an execution wire from feeding
 ///   a number.
 ///
-/// Unreal reaches the last of those three through the type system it shares
-/// with data: an exec pin's `PinCategory` is the `FName` `"exec"`, so
-/// `ArePinsCompatible` refuses exec-to-float the same way it refuses
-/// float-to-object — by comparing category strings. It works, and it is why
-/// `PC_Exec` has to be excluded by name from promotion, from default values,
-/// from the type-tree the editor offers, and from the dependency sort, each in
-/// its own place.
+/// The engine reaches the last of those three through the type system it
+/// shares with data: an exec pin's `PinCategory` is the `FName` `"exec"`, so `ArePinsCompatible` refuses
+/// exec-to-float the same way it refuses float-to-object — by comparing
+/// category strings. It works, and it is why `PC_Exec` has to be excluded by name
+/// from promotion, from default values, from the type-tree the editor offers,
+/// and from the dependency sort, each in its own place.
 pub fn crossing<K: NodeKind>(from: &KindPort<K>, to: &KindPort<K>) -> Conversion<K::Value> {
     match (&from.flow, &to.flow) {
         (Flow::Control, Flow::Control) => Conversion::Direct,
@@ -775,7 +765,7 @@ pub enum NodeBody<K: NodeKind> {
     /// The inside end of this tree's own interface.
     Interface(InterfaceSide),
     /// A node whose whole content is what it contains: the only body a
-    /// [`Node::parent`] may name (R1589). Blender's `NODE_FRAME`.
+    /// [`Node::parent`] may name (R1589). The DCC's `NODE_FRAME`.
     ///
     /// Owned by this crate rather than left to the taxonomy for the reason the
     /// other two structural arms are: a frame is an *editor* affordance and not
@@ -784,7 +774,7 @@ pub enum NodeBody<K: NodeKind> {
     ///
     /// Its signature is empty, so nothing can be linked to it and evaluation
     /// never reaches it — containment is a fact about the canvas, and this is
-    /// the same separation [`Appearance`] draws. Blender's
+    /// the same separation [`Appearance`] draws. The DCC's
     /// frame is an ordinary node type with sockets it happens not to declare.
     Frame,
     /// **A value one step behind**: this node's output is what arrived at its
@@ -823,7 +813,7 @@ pub enum NodeBody<K: NodeKind> {
     ///
     /// # Against the references
     ///
-    /// **Blender cannot express this and unrolls instead.** Its Repeat Zone
+    /// **the DCC cannot express this and unrolls instead.** Its Repeat Zone
     /// builds the body graph once per iteration —
     /// `geometry_nodes_repeat_zone.cc`, "the graph is built with as many body
     /// copies as there are iterations. Since this graph depends on the number
@@ -833,15 +823,14 @@ pub enum NodeBody<K: NodeKind> {
     /// Simulation Zone), whose state does not live in the node tree at all but
     /// in the modifier's bake cache.
     ///
-    /// **Unreal has no unit delay.** State there is a Blueprint *variable*: a
-    /// `UK2Node_VariableSet` writing a property on the object, read back by a
-    /// `UK2Node_VariableGet` — arbitrary mutable state, so which value a read
-    /// sees depends on where the execution wire happens to have gone, and the
-    /// graph's meaning is not a function of the graph. (Its `UK2Node_Delay`
-    /// is a *latent time* delay, not this.) The tradeoff is deliberate here:
-    /// the only state is a delay, so a tick's result is a function of the
-    /// registers and the inputs, and that is what makes
-    /// [`Document::tick`] reproducible.
+    /// **the engine has no unit delay.** State there is a Blueprint
+    /// *variable*: a `UK2Node_VariableSet` writing a property on the object, read back by a `UK2Node_VariableGet`
+    /// — arbitrary mutable state, so which value a read sees depends on where
+    /// the execution wire happens to have gone, and the graph's meaning is not
+    /// a function of the graph. (Its `UK2Node_Delay` is a *latent time* delay, not this.)
+    /// The tradeoff is deliberate here: the only state is a delay, so a tick's
+    /// result is a function of the registers and the inputs, and that is what
+    /// makes [`Document::tick`] reproducible.
     Delay(K::Type),
 }
 
@@ -927,9 +916,9 @@ pub struct Node<K: NodeKind> {
     /// a bit in a word shared with the node's looks. Which input reaches which
     /// output is derived, not authored: see [`Document::passthrough`].
     ///
-    /// Blender spells this `NODE_MUTED` and keeps it in the same `flag` integer
-    /// as `NODE_COLLAPSED`, `NODE_PREVIEW` and even `NODE_SELECT`, so nothing in
-    /// its model says which of those bits its evaluator may read.
+    /// The DCC spells this `NODE_MUTED` and keeps it in the same `flag` integer as `NODE_COLLAPSED`,
+    /// `NODE_PREVIEW` and even `NODE_SELECT`, so nothing in its model says which of those bits its
+    /// evaluator may read.
     #[serde(default)]
     pub bypassed: bool,
     /// What the node looks like — never what it means.
@@ -947,12 +936,11 @@ pub struct Node<K: NodeKind> {
     /// [`NodeId`] is unique in its tree and nowhere else, which is why every
     /// operation that moves a node between trees has to say what happens to it.
     ///
-    /// Read on its own this is one edge; read across a tree it is a **forest**,
-    /// and that is the invariant [`Document::set_parent`] maintains and
-    /// [`Document::validate`] checks. Blender declares the same field as a bare
-    /// `bNode *parent` and enforces its two rules — parent is a frame, and no
-    /// node contains itself — with `BLI_assert`, which is compiled out of the
-    /// build it ships.
+    /// Read on its own this is one edge; read across a tree it is a
+    /// **forest**, and that is the invariant [`Document::set_parent`] maintains and [`Document::validate`] checks.
+    /// The DCC declares the same field as a bare `bNode *parent` and enforces its two
+    /// rules — parent is a frame, and no node contains itself — with `BLI_assert`,
+    /// which is compiled out of the build it ships.
     #[serde(default)]
     pub parent: Option<NodeId>,
     /// Values authored on **this node's** ports (R1594).
@@ -960,17 +948,17 @@ pub struct Node<K: NodeKind> {
     /// A port's type and its name come from the kind, so every node of a kind
     /// shares them. Its *value* does not: two `Swatch` nodes are two different
     /// colours, and the number a user typed into an unwired input belongs to
-    /// that input and to no other node's. Blender keeps exactly this, as
+    /// that input and to no other node's. The DCC keeps exactly this, as
     /// `bNodeSocket::default_value`, per socket per node.
     ///
-    /// The rule the evaluator applies is one sentence covering both sides: **an
-    /// authored value is what the port carries when nothing else supplies one.**
-    /// For an input that means no link; for an output it means the kind computed
-    /// nothing there, which is what makes a source node's constant this same
-    /// mechanism rather than a second one. Blender's Value node reaches its
-    /// constant through per-node C code that reads its own output socket
-    /// (`node_shader_value.cc`), so there the fact is a node type's private
-    /// arrangement; here it is a rule.
+    /// The rule the evaluator applies is one sentence covering both sides:
+    /// **an authored value is what the port carries when nothing else supplies
+    /// one.** For an input that means no link; for an output it means the kind
+    /// computed nothing there, which is what makes a source node's constant
+    /// this same mechanism rather than a second one. The DCC's Value node
+    /// reaches its constant through per-node C code that reads its own output
+    /// socket (`node_shader_value.cc`), so there the fact is a node type's private arrangement;
+    /// here it is a rule.
     ///
     /// Sparse, because most ports have nothing authored, and a map because two
     /// values for one port is a state worth not having: a document that arrives
@@ -1281,14 +1269,14 @@ impl<K: NodeKind> Document<K> {
     /// can collide with an id `other` had already handed out (R1597).
     ///
     /// **What it is for is an UNDO that restores a whole document.** Snapshot
-    /// undo is the honest shape for a node editor — Blender's `node_undosys`
-    /// copies the tree per step, and a delta has to enumerate every *kind* of
-    /// thing an edit can touch — but restoring a value restores its mint
-    /// counters with it, so the next `add_node` after an undo would re-issue an
-    /// id the undone state had already used. For an in-process model that is
-    /// harmless; for a surface where an agent, a saved selection or a scene tag
-    /// addresses a node BY id it is not, because the id would silently name a
-    /// different node.
+    /// undo is the honest shape for a node editor — the DCC's `node_undosys` copies the
+    /// tree per step, and a delta has to enumerate every *kind* of thing an
+    /// edit can touch — but restoring a value restores its mint counters with
+    /// it, so the next `add_node` after an undo would re-issue an id the undone state
+    /// had already used. For an in-process model that is harmless; for a
+    /// surface where an agent, a saved selection or a scene tag addresses a
+    /// node BY id it is not, because the id would silently name a different
+    /// node.
     ///
     /// So a stack that restores a document calls this with the state it is
     /// leaving. Monotonic per tree, and never lowers anything: a document that
@@ -1321,7 +1309,7 @@ impl<K: NodeKind> Document<K> {
     /// Copy a tree wholesale and answer the copy's id.
     ///
     /// The copy keeps the original's name: a name is not an identity here, so
-    /// two definitions may share one. Blender must rename a copied node group
+    /// two definitions may share one. The DCC must rename a copied node group
     /// (`Sum` becomes `Sum.001`) because an ID's name *is* its key.
     pub(crate) fn copy_tree(&mut self, source: TreeId) -> Option<TreeId> {
         let mut copy = self.trees.get(source.0 as usize)?.clone();
@@ -1535,7 +1523,7 @@ impl<K: NodeKind> Document<K> {
     /// [`Self::dissolve`](crate::Document::dissolve) and its detach twin —
     /// reaches the same answer.
     ///
-    /// **The grandparent, not the canvas.** Blender's `node_unlink_attached`
+    /// **The grandparent, not the canvas.** the DCC's `node_unlink_attached`
     /// clears every child's parent outright, so deleting the middle frame of
     /// `Outer > Inner > node` moves `node` to the root even though `Outer` is
     /// still there and still contains where the node was. Only the containment
@@ -1626,7 +1614,7 @@ impl<K: NodeKind> Document<K> {
     /// [`Conversion::Refused`], because "there is no
     /// such port" and "no value may go there" are different facts.
     ///
-    /// Blender has no equivalent accessor: `validate_link` is a C function
+    /// The DCC has no equivalent accessor: `validate_link` is a C function
     /// pointer on the tree type, so the only way to ask is to reach through
     /// `ntree.typeinfo` yourself, and whether the value would be *changed* on
     /// the way lives in a different table again.
@@ -1672,9 +1660,9 @@ impl<K: NodeKind> Document<K> {
     /// falls back to this and then to the kind's own [`Port::default_value`].
     ///
     /// The port must exist in the node's **signature**, so this refuses on a
-    /// group instance whose definition has no such port exactly as it does on an
-    /// application kind — Blender lets a socket's `default_value` be written
-    /// through RNA with no such gate, and a stale index simply writes nowhere.
+    /// group instance whose definition has no such port exactly as it does on
+    /// an application kind — the DCC lets a socket's `default_value` be written through
+    /// RNA with no such gate, and a stale index simply writes nowhere.
     ///
     /// # Errors
     ///
@@ -1764,7 +1752,7 @@ impl<K: NodeKind> Document<K> {
     /// An input that is already linked is **replaced**, and the displaced link
     /// is reported — that is what a node editor does when a wire is dropped on
     /// an occupied socket, and reporting it is what makes the replacement
-    /// undoable. Blender performs the same replacement and returns nothing.
+    /// undoable. The DCC performs the same replacement and returns nothing.
     ///
     /// # Errors
     ///
@@ -1835,7 +1823,7 @@ impl<K: NodeKind> Document<K> {
         // walks the data plane alone, and a control cycle is legal here and
         // reported by `Document::control_loops` rather than refused.
         //
-        // Unreal reaches the same split and states it in a comment on the
+        // The engine reaches the same split and states it in a comment on the
         // predicate that implements it — `FKismetCompilerContext::
         // PinIsImportantForDependancies` returns `PinCategory != PC_Exec`,
         // "the execution wires do not form data dependencies, they are only
@@ -1920,7 +1908,7 @@ impl<K: NodeKind> Document<K> {
     /// two share one derivation so they cannot disagree.
     ///
     /// This is the same field [`Tree::node_mut`] reaches, not a second copy of
-    /// it. Blender's `NODE_OT_mute_toggle`.
+    /// it. The DCC's `NODE_OT_mute_toggle`.
     ///
     /// # Errors
     ///
@@ -1967,7 +1955,7 @@ impl<K: NodeKind> Document<K> {
     /// Mute `link`, or unmute it, answering what it was before.
     ///
     /// A muted link keeps its place in the structure and carries no value, so
-    /// the port it feeds falls back to its own default. Blender's
+    /// the port it feeds falls back to its own default. The DCC's
     /// `NODE_OT_links_mute`.
     ///
     /// Narrower than a `link_mut` on purpose: mutedness is the only part of a
@@ -2168,15 +2156,15 @@ impl<K: NodeKind> Document<K> {
     /// close a cycle — and reachable through a document that arrived from a file
     /// or a peer, which is what [`Self::validate`] is for.
     ///
-    /// **Blender answers this with a bool and a guess.** `has_available_link_cycle`
-    /// is one flag for the whole tree, and the localisation it does offer is to
-    /// *links*: `update_link_validation` clears `NODE_LINK_VALID` on every link
-    /// whose endpoints came out of the toposort in the wrong order. Which link
-    /// that is is decided by where the toposort happened to start — for a tree
-    /// whose every node is inside the cycle, `update_toposort` restarts "at this
-    /// node which is somewhere in the middle of a loop" in `nodes_by_id` order —
-    /// so the wire Blender blames is a function of the order the nodes were
-    /// created in, not of the cycle. This answer is a property of the graph.
+    /// **the DCC answers this with a bool and a guess.** `has_available_link_cycle` is one flag for
+    /// the whole tree, and the localisation it does offer is to *links*: `update_link_validation`
+    /// clears `NODE_LINK_VALID` on every link whose endpoints came out of the toposort in
+    /// the wrong order. Which link that is is decided by where the toposort
+    /// happened to start — for a tree whose every node is inside the cycle,
+    /// `update_toposort` restarts "at this node which is somewhere in the middle of a loop"
+    /// in `nodes_by_id` order — so the wire the DCC blames is a function of the order
+    /// the nodes were created in, not of the cycle. This answer is a property
+    /// of the graph.
     ///
     /// Iterative Tarjan, so an adversarial document cannot overflow the stack of
     /// the process validating it: the components of size two or more are the
@@ -2202,12 +2190,10 @@ impl<K: NodeKind> Document<K> {
     /// express, so it is authorable, it is not a violation, and this is how you
     /// ask which nodes are in it.
     ///
-    /// **Nothing in Unreal answers this.** An execution loop there compiles —
-    /// exec pins are excluded from the dependency sort by
-    /// `PinIsImportantForDependancies`, so no `Dependency cycle detected` can
-    /// fire for one — and a loop with no exit is discovered at *run time*, by a
-    /// counter (`GMaximumScriptLoopIterations`) raising
-    /// `EBlueprintExceptionType::InfiniteLoop` after the fact, in a build that
+    /// **Nothing in the engine answers this.** An execution loop there
+    /// compiles — exec pins are excluded from the dependency sort by `PinIsImportantForDependancies`, so
+    /// no `Dependency cycle detected` can fire for one — and a loop with no exit is discovered at *run
+    /// time*, by a counter (`GMaximumScriptLoopIterations`) raising `EBlueprintExceptionType::InfiniteLoop` after the fact, in a build that
     /// may be shipping. The nodes are named here before it runs, statically.
     ///
     /// Empty for a tree with no control loop, so `control_loops(tree).is_empty()`
@@ -2584,11 +2570,11 @@ pub struct Connected {
     ///
     /// **Which end it was displaced from depends on what the ports carry**
     /// (R1599): a value input takes one producer, so wiring it again displaces
-    /// the link that was there; a control output takes one successor, so wiring
-    /// *it* again displaces instead. Reporting it is what makes either
-    /// replacement undoable — Unreal performs the same displacement from the
-    /// same two cases (`CONNECT_RESPONSE_BREAK_OTHERS_A`/`_B`) and
-    /// `TryCreateConnection` answers a bare `bool`, so what it broke is gone.
+    /// the link that was there; a control output takes one successor, so
+    /// wiring *it* again displaces instead. Reporting it is what makes either
+    /// replacement undoable — the engine performs the same displacement from
+    /// the same two cases (`CONNECT_RESPONSE_BREAK_OTHERS_A`/`_B`) and `TryCreateConnection` answers a bare `bool`, so what it
+    /// broke is gone.
     pub displaced: Option<Link>,
 }
 

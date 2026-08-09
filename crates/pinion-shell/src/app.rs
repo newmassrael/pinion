@@ -69,9 +69,9 @@ use pinion_core::window_level::{WindowLevel, WindowingBackend};
 /// A monitor farm is not a thing CI has, so keeping this seam to a move is what
 /// makes the rest of the axis provable.
 ///
-/// `refresh_rate_millihertz()` is already an `Option` in winit — the honesty Qt
-/// lacks (`QScreen::refreshRate()` returns `qreal`, so "unknown" arrives as a
-/// real-looking `0`) — and it is carried across as one.
+/// `refresh_rate_millihertz()` is already an `Option` in winit — the honesty the toolkit lacks (`refreshRate()` returns
+/// `qreal`, so "unknown" arrives as a real-looking `0`) — and it is carried across
+/// as one.
 fn display_info_from(monitor: &MonitorHandle, primary: bool) -> DisplayInfo {
     let position = monitor.position();
     let size = monitor.size();
@@ -262,10 +262,10 @@ fn cursor_icon_for_hint(hint: CursorHint) -> CursorIcon {
         // R1405 — the pointing hand over a clickable target (an OSC-8 link).
         CursorHint::Pointer => CursorIcon::Pointer,
         // R1609 — a corner handle moves two edges at once, so it asks for the
-        // diagonal cursor Qt spells `SizeFDiagCursor` / `SizeBDiagCursor`. The
-        // same two icons `resize_cursor_for_action` has commanded for a window
-        // corner since R1189: the icons were reachable and the node vocabulary
-        // was not, which is why these two arms are one line each.
+        // diagonal cursor the toolkit spells `SizeFDiagCursor` / `SizeBDiagCursor`. The same two icons `resize_cursor_for_action`
+        // has commanded for a window corner since R1189: the icons were
+        // reachable and the node vocabulary was not, which is why these two
+        // arms are one line each.
         CursorHint::NwseResize => CursorIcon::NwseResize,
         CursorHint::NeswResize => CursorIcon::NeswResize,
     }
@@ -479,12 +479,11 @@ impl<R: VelloRenderer> WindowSlot<R> {
     }
 }
 
-/// (R1147 §5.51 §5.16) The shell-private cross-desktop drag preview window — the
-/// Qt-ADS `CFloatingDragPreview` model. A small, opaque, borderless,
-/// always-on-top window that *is* the drag chip; it follows the desktop cursor
-/// during a dock drag so the chip can escape the source window (the R1113
-/// in-window overlay is clipped to its surface, the gap the user found after
-/// R1146).
+/// (R1147 §5.51 §5.16) The shell-private cross-desktop drag preview window —
+/// the toolkit-ADS `CFloatingDragPreview` model. A small, opaque, borderless, always-on-top
+/// window that *is* the drag chip; it follows the desktop cursor during a dock
+/// drag so the chip can escape the source window (the R1113 in-window overlay
+/// is clipped to its surface, the gap the user found after R1146).
 ///
 /// Created **once and reused** (hidden via `set_visible(false)` between drags —
 /// no per-gesture window creation, so no R1144-class surface-churn freeze),
@@ -669,8 +668,8 @@ impl<V: WidgetView> AppShell<V> {
     /// [`FontSourceReport`](pinion_core::reactive::FontSourceReport).
     ///
     /// R1472 §5.36 — `default_family` is the family unset text resolves to
-    /// ([`ShellConfig::with_default_font_family`], Qt's
-    /// `QApplication::setFont`); `None` keeps the platform stack.
+    /// ([`ShellConfig::with_default_font_family`], the toolkit's
+    /// `setFont`); `None` keeps the platform stack.
     #[must_use]
     pub fn new_with_fonts(
         proxy: EventLoopProxy<AppEvent>,
@@ -2587,10 +2586,10 @@ impl<V: WidgetView + 'static> AppShell<V> {
     ///   gesture pair ([`ShellCore::middle_pressed_for_window`] /
     ///   [`ShellCore::middle_released_for_window`]). The router's
     ///   `DragLatch` resolves the press: a drag past the dead zone pans
-    ///   the pinned scrollable / canvas (Blender / Unreal middle-drag),
+    ///   the pinned scrollable / canvas (the DCC / the engine middle-drag),
     ///   a release-in-place runs the R56.2.e `apply_middle_click` paste
     ///   funnel (X11 PRIMARY at the focused text widget — paste moved
-    ///   from press to release, the xterm / Qt convention).
+    ///   from press to release, the xterm / the toolkit convention).
     /// - **Right Pressed** — R772 §5.53 `apply_secondary_click`, the
     ///   own-renderer context-menu open path (R771.1: pinion draws its own
     ///   menu on every platform). `secondary_click_for_window` reads the
@@ -3887,13 +3886,12 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // Resumed event landing before the slot is inserted), which is the
         // pre-R1027 behaviour.
         let scale = self.windows.get(&window_id).map_or(1.0, |s| s.scale_factor);
-        // R1434 §5.35 §5.15 — the native trackpad gestures (Qt
-        // `QNativeGestureEvent`: pinch / rotation / pan) dispatch ahead of the
-        // main match through one sub-dispatcher, so this function stays under
-        // the line cap as the gesture set grows — the same shape the TUI drain's
-        // `try_drain_native_gesture` takes (§2 #6), and an extract rather than an
-        // `#[allow(too_many_lines)]`. `&event` ends its borrow before the match
-        // takes ownership below.
+        // R1434 §5.35 §5.15 — the native trackpad gestures (the toolkit native
+        // gesture event: pinch / rotation / pan) dispatch ahead of the main
+        // match through one sub-dispatcher, so this function stays under the
+        // line cap as the gesture set grows — the same shape the TUI drain's
+        // `try_drain_native_gesture` takes (§2 #6), and an extract rather than an `#[allow(too_many_lines)]`. `&event` ends its
+        // borrow before the match takes ownership below.
         if try_forward_native_gesture(&mut self.core, spec_id, &event, scale) {
             return;
         }
@@ -4707,14 +4705,13 @@ fn winit_gesture_phase_to_pinion(phase: winit::event::TouchPhase) -> pinion_core
     }
 }
 
-/// R1434 §5.35 §5.15 — dispatch the winit native trackpad gestures (Qt
-/// `QNativeGestureEvent`: pinch / rotation / pan) off `window_event`'s main
-/// match: `true` when `event` was one of them (the caller is done), `false`
-/// otherwise (the caller falls through to the general match). Mirrors the TUI
-/// drain's `try_drain_native_gesture` sub-dispatcher, so both backends group the
-/// gesture family the same way (§2 #6) and each backend's giant dispatcher stays
-/// under the line ceiling as the family grows — an extract, never an
-/// `#[allow(too_many_lines)]`.
+/// R1434 §5.35 §5.15 — dispatch the winit native trackpad gestures (the
+/// toolkit native gesture event: pinch / rotation / pan) off `window_event`'s main match:
+/// `true` when `event` was one of them (the caller is done), `false` otherwise (the
+/// caller falls through to the general match). Mirrors the TUI drain's `try_drain_native_gesture`
+/// sub-dispatcher, so both backends group the gesture family the same way (§2
+/// #6) and each backend's giant dispatcher stays under the line ceiling as the
+/// family grows — an extract, never an `#[allow(too_many_lines)]`.
 ///
 /// Every gesture's payload fields are `Copy`, so matching through the reference
 /// moves nothing out of `event` and the caller keeps ownership for its match.
@@ -6464,21 +6461,19 @@ impl ShellConfig {
 
     /// R1448 §5.36 — declare a font the application ships, from memory.
     ///
-    /// Qt's `QFontDatabase::addApplicationFont` / `…FromData`, called from
-    /// `main()` before any widget exists. Here the "before any widget" part is
-    /// structural rather than a rule to remember: the shell registers these
-    /// into its render cache while it is being built, so a family declared
-    /// this way is selectable by name — as
-    /// [`TextStyle::with_font_family`](pinion_core::style::TextStyle::with_font_family)
-    /// — from the binding's very first `view`.
+    /// The toolkit's `addApplicationFont` / `…FromData`, called from `main()` before any widget exists. Here
+    /// the "before any widget" part is structural rather than a rule to
+    /// remember: the shell registers these into its render cache while it is
+    /// being built, so a family declared this way is selectable by name — as
+    /// [`TextStyle::with_font_family`](pinion_core::style::TextStyle::with_font_family) — from the
+    /// binding's very first `view`.
     ///
     /// Call it once per face; declarations accumulate. The resulting families
     /// and the platform-scan verdict are published to the binding as
-    /// [`FontSourceReport`](pinion_core::reactive::FontSourceReport), readable
-    /// from a view fn via
-    /// [`font_sources()`](pinion_core::reactive::font_sources()) — so an
-    /// application can *render* its font state, and an agent can read it off
-    /// `scene/snapshot`, which is what Qt's stderr `qWarning` cannot offer.
+    /// [`FontSourceReport`](pinion_core::reactive::FontSourceReport), readable from a view fn
+    /// via [`font_sources()`](pinion_core::reactive::font_sources()) — so an application
+    /// can *render* its font state, and an agent can read it off `scene/snapshot`, which is
+    /// what the toolkit's stderr `qWarning` cannot offer.
     ///
     /// This is the only way an application supplies a face, and that is
     /// deliberate: fonts declared before boot cannot make the published report
@@ -6491,18 +6486,17 @@ impl ShellConfig {
 
     /// R1472 §5.36 — the family text that names none of its own resolves to.
     ///
-    /// Qt's `QApplication::setFont`, and the other half of
-    /// [`Self::with_application_font`]. Declaring a face makes it selectable
-    /// *by name*; this makes it what the binding gets without naming it, so a
-    /// view fn does not have to spell the family on every
-    /// [`TextStyle`](pinion_core::style::TextStyle) it emits — which no Qt
+    /// The toolkit's `setFont`, and the other half of [`Self::with_application_font`]. Declaring a face makes
+    /// it selectable *by name*; this makes it what the binding gets without
+    /// naming it, so a view fn does not have to spell the family on every
+    /// [`TextStyle`](pinion_core::style::TextStyle) it emits — which no the toolkit
     /// application does either, and which no binding reliably remembers.
     ///
-    /// The two are separate calls for the reason Qt keeps them separate: an
-    /// application may ship several faces and default to one of them, or ship
-    /// a face used only where it is named (an icon or code face) and leave the
-    /// default alone. Folding the choice into the declaration would make the
-    /// common case shorter and the other two unreachable.
+    /// The two are separate calls for the reason the toolkit keeps them
+    /// separate: an application may ship several faces and default to one of
+    /// them, or ship a face used only where it is named (an icon or code face)
+    /// and leave the default alone. Folding the choice into the declaration
+    /// would make the common case shorter and the other two unreachable.
     ///
     /// Without this, an application whose text is in a script the host has no
     /// face for renders nothing while holding the glyphs in memory — the state

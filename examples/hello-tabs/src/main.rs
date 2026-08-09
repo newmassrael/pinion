@@ -11,7 +11,7 @@
 //! Phase B widget-catalog entry. A horizontal Material 3 tab strip
 //! (the [`view_tabs`] substrate) over a per-tab content panel — the
 //! canonical DCC / IDE / settings-dialog tabbed layout that composes
-//! with the dock editor toward the northern-star "Unreal-class editor
+//! with the dock editor toward the northern-star "the engine-class editor
 //! self-hosted in pinion".
 //!
 //! ## Selection model is reused, not reinvented

@@ -152,7 +152,7 @@ pub trait Clipboard {
     /// Linux platform impls override this to read from the X11
     /// PRIMARY atom / Wayland `wl_data_device` PRIMARY channel, so
     /// middle-click paste reads selections published by other apps
-    /// (xterm, Firefox, GTK / Qt apps).
+    /// (xterm, Firefox, GTK / the toolkit apps).
     fn paste_from(&self, selection: ClipboardSelection) -> Option<String> {
         match selection {
             ClipboardSelection::Clipboard => self.paste(),

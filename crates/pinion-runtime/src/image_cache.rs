@@ -208,11 +208,11 @@ pub fn use_image_store() -> MemoryImageStore {
 pub struct ImageCache {
     /// Decoded images by source, most-recently-resolved first.
     ///
-    /// R1550 — an `LruCache` rather than the `HashMap` this held until then,
-    /// because the map had **no bound of any kind**: every image a session ever
-    /// painted stayed decoded for the life of the window, and one 4K frame is
-    /// 33 MB of RGBA8. Qt bounds the same arena — `QPixmapCache::setCacheLimit`
-    /// — so an unbounded one sits below the floor rather than beside it.
+    /// R1550 — an `LruCache` rather than the `HashMap` this held until then, because the
+    /// map had **no bound of any kind**: every image a session ever painted
+    /// stayed decoded for the life of the window, and one 4K frame is 33 MB of
+    /// RGBA8. The toolkit bounds the same arena — `setCacheLimit` — so an unbounded one
+    /// sits below the floor rather than beside it.
     ///
     /// The recency order is what makes the bound safe to apply: eviction takes
     /// the image painted longest ago, and a re-resolve re-decodes it.
@@ -221,7 +221,7 @@ pub struct ImageCache {
     ///
     /// See [`Self::DEFAULT_BUDGET_BYTES`]. One entry may exceed it — the entry
     /// just resolved is never evicted, which is a deliberate deviation from
-    /// `QPixmapCache::insert`, whose refusal to cache an over-limit pixmap
+    /// `insert`, whose refusal to cache an over-limit pixmap
     /// would put a re-decode of that image on every frame that paints it.
     budget_bytes: u64,
     /// The producer [`MemoryImageStore`] (R1404) this cache resolves
@@ -244,7 +244,7 @@ impl ImageCache {
     }
 
     /// R1550 — the default byte budget: 10 MiB of decoded pixels, which is
-    /// `QPixmapCache`'s own default (`cacheLimit()` reports 10240 KB) and about
+    /// pixmap cache's own default (`cacheLimit()` reports 10240 KB) and about
     /// three 1080p frames.
     ///
     /// A budget rather than an entry count for the reason R1550 exists: entries
@@ -264,7 +264,7 @@ impl ImageCache {
     }
 
     /// R1550 — set the byte budget, evicting immediately if the new one is
-    /// smaller than what is held. Qt's `QPixmapCache::setCacheLimit`.
+    /// smaller than what is held. The toolkit's `setCacheLimit`.
     pub fn set_budget_bytes(&mut self, budget_bytes: u64) {
         self.budget_bytes = budget_bytes;
         self.evict_to_budget(None);
@@ -678,7 +678,7 @@ mod r1550_tests {
         assert!(cache.resolve("second").is_none(), "'second' went instead");
     }
 
-    /// Qt's `QPixmapCache::insert` refuses a pixmap larger than the limit and
+    /// The toolkit's `insert` refuses a pixmap larger than the limit and
     /// returns false. Here the entry is kept, deliberately: `resolve` is on
     /// the paint path, so refusing to cache would re-read and re-decode that
     /// image on **every frame** that paints it.

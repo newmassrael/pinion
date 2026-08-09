@@ -406,8 +406,8 @@ impl LineChart {
         }
     }
 
-    /// Plot the **y**-axis logarithmically in base 10 (R1528) — Qt's
-    /// `QLogValueAxis` on the value axis.
+    /// Plot the **y**-axis logarithmically in base 10 (R1528) — the toolkit's
+    /// log value axis on the value axis.
     ///
     /// Use it when the interesting structure spans orders of magnitude: a
     /// latency series over `0.1 ms .. 1000 ms` puts every sub-millisecond
@@ -424,8 +424,8 @@ impl LineChart {
         self.y_log_base(crate::scale::DEFAULT_LOG_BASE)
     }
 
-    /// [`y_log`](Self::y_log) in an explicit `base` (Qt's
-    /// `QLogValueAxis::base`) — base 2 for a size or capacity axis, where a
+    /// [`y_log`](Self::y_log) in an explicit `base` (the toolkit's
+    /// `base`) — base 2 for a size or capacity axis, where a
     /// tick per doubling is what a reader counts in.
     #[must_use]
     pub fn y_log_base(mut self, base: f64) -> Self {
@@ -447,8 +447,8 @@ impl LineChart {
         self
     }
 
-    /// Plot the **x**-axis as UTC time (R1529) — Qt's `QDateTimeAxis`, d3's
-    /// `scaleUtc`. Sample `x` values are read as epoch **milliseconds**.
+    /// Plot the **x**-axis as UTC time (R1529) — the toolkit's date time axis,
+    /// d3's `scaleUtc`. Sample `x` values are read as epoch **milliseconds**.
     ///
     /// This is the axis a monitoring chart has. Without it a timestamp is a
     /// plain number, so the gridlines land on multiples of a decimal step
@@ -471,18 +471,17 @@ impl LineChart {
     }
 
     /// Plot the **y**-axis as UTC time (R1529) — the y-axis twin of
-    /// [`x_time`](Self::x_time); see it for the whole contract. Uncommon
-    /// but legal, exactly as Qt allows a `QDateTimeAxis` on either axis: a
-    /// chart of "when did this run finish" against a run index has time on
-    /// y.
+    /// [`x_time`](Self::x_time); see it for the whole contract. Uncommon but legal,
+    /// exactly as the toolkit allows a date time axis on either axis: a chart
+    /// of "when did this run finish" against a run index has time on y.
     #[must_use]
     pub fn y_time(mut self) -> Self {
         self.kinds.y = AxisKind::Time;
         self
     }
 
-    /// Plot the **x**-axis over named categories (R1545) — Qt's
-    /// `QBarCategoryAxis` attached to a line series, d3's `scalePoint`.
+    /// Plot the **x**-axis over named categories (R1545) — the toolkit's
+    /// bar category axis attached to a line series, d3's `scalePoint`.
     /// Sample `x` values are read as category **indices**: category `i` sits
     /// at `x = i`.
     ///
@@ -512,8 +511,8 @@ impl LineChart {
     /// Plot the **y**-axis over named categories (R1545) — the y-axis twin of
     /// [`x_category`](Self::x_category); see it for the whole contract. This
     /// is the axis a horizontal category chart puts its buckets on, exactly
-    /// as Qt attaches a `QBarCategoryAxis` to the y of a
-    /// `QHorizontalBarSeries`.
+    /// as the toolkit attaches a bar category axis to the y of a
+    /// horizontal bar series.
     #[must_use]
     pub fn y_category<I, S>(mut self, categories: I) -> Self
     where

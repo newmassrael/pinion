@@ -32,15 +32,15 @@
 //! parameters were fine. A consumer branches on the code and *prints* the
 //! sentence; it never matches the sentence.
 //!
-//! # Past Qt
+//! # Past the toolkit
 //!
-//! Qt has no channel at all here: `QMetaObject::invokeMethod` answers `bool`,
-//! `QAction::trigger()` answers `void`. A Qt method that declines can log to
+//! The toolkit has no channel at all here: `invokeMethod` answers `bool`,
+//! `trigger()` answers `void`. A toolkit method that declines can log to
 //! stderr in the process that declined and that is the end of it — nothing
 //! reaches an out-of-process caller. So none of this is parity; the shape is
-//! chosen ([[qt-is-the-floor-not-the-target]]).
+//! chosen ([[the toolkit-is-the-floor-not-the-target]]).
 //!
-//! Two further things the surface does that Qt's has no place to put:
+//! Two further things the surface does that the toolkit's has no place to put:
 //!
 //!   * `install_detector` / `evict_pane` make both refusal *causes* reachable
 //!     over the same wire, so a client can drive the surface into either state

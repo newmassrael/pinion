@@ -15,14 +15,14 @@
 //! **flame**.
 //!
 //! Each painted frame is bracketed into four disjoint sub-phases — **build**
-//! (`view` + layout), **encode** (scene → `vello`), **acquire** (the vsync
-//! block) and **render** (GPU submit). They run SEQUENTIALLY within a frame, so
-//! the honest layout is a flame: frame `k` starts at the cumulative sum of the
-//! prior frames' totals, and its four phases abut end-to-end from there, each on
-//! its own lane. At any instant exactly one phase of one frame is running, so a
-//! vertical playhead crosses one lane's span — which is precisely the reading a
-//! tracing tool (Chrome tracing / Unreal Insights) exists to give: "at t, the
-//! render loop was in frame N's acquire phase".
+//! (`view` + layout), **encode** (scene → `vello`), **acquire** (the vsync block) and
+//! **render** (GPU submit). They run SEQUENTIALLY within a frame, so the
+//! honest layout is a flame: frame `k` starts at the cumulative sum of the
+//! prior frames' totals, and its four phases abut end-to-end from there, each
+//! on its own lane. At any instant exactly one phase of one frame is running,
+//! so a vertical playhead crosses one lane's span — which is precisely the
+//! reading a tracing tool (Chrome tracing / the engine Insights) exists to
+//! give: "at t, the render loop was in frame N's acquire phase".
 //!
 //! ## Why a Slider, and pinned geometry
 //!

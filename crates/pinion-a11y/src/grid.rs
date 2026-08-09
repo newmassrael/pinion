@@ -37,14 +37,13 @@ use pinion_core::widgets::radio::RadioState;
 /// A column header within a [`grid_table_nodes`] grid.
 ///
 /// R1547 — it carries **no label**. It did until R1547, for one purpose:
-/// stamping the `columnheader`'s accessible name. That made the builder a
-/// second source for what a column is called and the paint the first, and an
-/// explicit name silently wins over the §5.40 derivation — so anything the
-/// painted header had to say beyond the bare label (a
-/// `Qt::DecorationRole` mark's meaning, since R1547) could not be heard. The
-/// name now comes from the painted header, as the `gridcell`'s has since R1536
-/// and the virtualized grid's since R1547, so the AT tree and the pixels cannot
-/// disagree about what a column is called.
+/// stamping the `columnheader`'s accessible name. That made the builder a second source
+/// for what a column is called and the paint the first, and an explicit name
+/// silently wins over the §5.40 derivation — so anything the painted header
+/// had to say beyond the bare label (a `DecorationRole` mark's meaning, since R1547) could
+/// not be heard. The name now comes from the painted header, as the `gridcell`'s has
+/// since R1536 and the virtualized grid's since R1547, so the AT tree and the
+/// pixels cannot disagree about what a column is called.
 #[derive(Clone, Debug)]
 pub struct GridColumn {
     /// The column header's tag.
@@ -255,10 +254,10 @@ mod tests {
         assert_eq!(by_tag(&n, "g#0_0").role, AriaRole::GridCell);
     }
 
-    /// R1547 §5.40 — **no builder names a `columnheader`.** The name is derived
-    /// from the painted header, and an explicit one silently wins over the
-    /// derivation, so a stamp here would hide whatever the header actually
-    /// draws — a `Qt::DecorationRole` mark's meaning, since R1547.
+    /// R1547 §5.40 — **no builder names a `columnheader`.** The name is derived from the
+    /// painted header, and an explicit one silently wins over the derivation,
+    /// so a stamp here would hide whatever the header actually draws — a `DecorationRole`
+    /// mark's meaning, since R1547.
     ///
     /// Asserted as a census over every emitted node rather than on one sample:
     /// the defect this closes was a stamp on *every* column, and a test that

@@ -415,10 +415,10 @@ const WIN_H: u32 = 460;
 /// second surface to keep in sync.
 ///
 /// It matters here specifically. Every row this binding paints is Korean, so
-/// "which face drew this" decides whether the window is readable at all — and a
-/// scene node reports its family as unset, because the resolution is a process
-/// fact. Qt answers the same question with a `qWarning` on stderr that nothing
-/// downstream can read.
+/// "which face drew this" decides whether the window is readable at all — and
+/// a scene node reports its family as unset, because the resolution is a
+/// process fact. The toolkit answers the same question with a `qWarning` on stderr
+/// that nothing downstream can read.
 fn with_font_state_row(scene: Scene) -> Scene {
     let report = pinion_core::reactive::font_sources();
     let declared = report
@@ -469,11 +469,11 @@ const VN_FONT_FAMILY: &str = "NanumGothic";
 
 fn main() {
     // R1472 §5.36 — every row this binding paints is Korean, so the face that
-    // renders Hangul is part of the application, not a host it hopes for. Qt's
-    // pair: declare the face (`addApplicationFont`) and make it what unset text
-    // uses (`QApplication::setFont`). Without the second call the glyphs sit in
-    // memory while the window draws tofu — which is exactly what a CI runner
-    // (fonts installed, no CJK face among them) showed in R1471.
+    // renders Hangul is part of the application, not a host it hopes for. The
+    // toolkit's pair: declare the face (`addApplicationFont`) and make it what unset text uses
+    // (`setFont`). Without the second call the glyphs sit in memory while the window
+    // draws tofu — which is exactly what a CI runner (fonts installed, no CJK
+    // face among them) showed in R1471.
     let path = std::env::var("PINION_VN_FONT").unwrap_or_else(|_| VN_FONT.to_owned());
     let config = match std::fs::read(&path) {
         Ok(data) => pinion_shell::ShellConfig::new()

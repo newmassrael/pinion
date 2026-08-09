@@ -70,13 +70,13 @@ pub struct SpinButtonExternal {
     /// Increment stepper interaction state machine.
     inc: Button,
     /// R1533 §5.45 — sub-notch wheel carry (see the `External::wheel` impl).
-    /// Per instance, like Qt's per-spinbox `wheelDeltaRemainder`.
+    /// Per instance, like the toolkit's per-spinbox `wheelDeltaRemainder`.
     wheel: WheelStepper,
-    /// R1549 §5.35 — cadence a held stepper repeats at. Qt's spin box
-    /// always auto-repeats its arrows (there is no property to turn it
-    /// off), so this is a value rather than an `Option`; the binding
-    /// re-declares it with [`Self::with_auto_repeat`] — including Qt's
-    /// `setAccelerated` axis, which is a curve here rather than a bool.
+    /// R1549 §5.35 — cadence a held stepper repeats at. The toolkit's spin box
+    /// always auto-repeats its arrows (there is no property to turn it off),
+    /// so this is a value rather than an `Option`; the binding re-declares it with
+    /// [`Self::with_auto_repeat`] — including the toolkit's `setAccelerated` axis, which is a curve here rather
+    /// than a bool.
     repeat: AutoRepeat,
 }
 
@@ -110,9 +110,9 @@ impl SpinButtonExternal {
     }
 
     /// R1549 §5.35 — override the held-stepper repeat cadence (defaults to
-    /// [`AutoRepeat::desktop`], Qt's 300 ms / 100 ms). Pass an
-    /// [`AutoRepeat::accelerating`] cadence for the peer of Qt's
-    /// `QAbstractSpinBox::setAccelerated(true)`.
+    /// [`AutoRepeat::desktop`], the toolkit's 300 ms / 100 ms). Pass an
+    /// [`AutoRepeat::accelerating`] cadence for the peer of the toolkit's
+    /// `setAccelerated(true)`.
     #[must_use]
     pub fn with_auto_repeat(mut self, repeat: AutoRepeat) -> Self {
         self.repeat = repeat;
@@ -264,20 +264,20 @@ impl External for SpinButtonExternal {
         Some(self)
     }
 
-    /// R1549 §5.35 §5.38 — a held stepper keeps stepping: Qt's spin box
-    /// auto-repeats its arrows, and before this the arrow stepped exactly
+    /// R1549 §5.35 §5.38 — a held stepper keeps stepping: the toolkit's spin
+    /// box auto-repeats its arrows, and before this the arrow stepped exactly
     /// once however long it was held.
     ///
     /// Armed-ness is **read off the two stepper statecharts**, never
     /// stored: a press that slid off the arrow already left `Pressed` via
     /// `PointerLeave`, so it answers `None` with no un-arming code.
     ///
-    /// Past Qt: a held arrow that can no longer move the value stops
-    /// repeating. Qt's `QAbstractSpinBox` keeps its 10 Hz timer running
-    /// against a value pinned at `maximum()` for as long as the user
-    /// holds; here the answer goes `None`, which also lets the frame loop
-    /// idle (the router requests frames only while some hold is live), so
-    /// a forgotten finger on a maxed-out arrow costs nothing.
+    /// Past the toolkit: a held arrow that can no longer move the value stops
+    /// repeating. The toolkit's abstract spin box keeps its 10 Hz timer
+    /// running against a value pinned at `maximum()` for as long as the user holds;
+    /// here the answer goes `None`, which also lets the frame loop idle (the
+    /// router requests frames only while some hold is live), so a forgotten
+    /// finger on a maxed-out arrow costs nothing.
     fn auto_repeat(&self) -> Option<AutoRepeat> {
         let can_move = if matches!(self.dec.state(), ButtonState::Pressed) {
             self.value > self.min
@@ -289,8 +289,8 @@ impl External for SpinButtonExternal {
         can_move.then_some(self.repeat)
     }
 
-    /// R1533 §5.45 §5.38 — the wheel steps the value: Qt
-    /// `QAbstractSpinBox::wheelEvent`, the same input every native number
+    /// R1533 §5.45 §5.38 — the wheel steps the value: the toolkit
+    /// `wheelEvent`, the same input every native number
     /// field answers, and the [`SliderExternal`](crate::widgets::slider)
     /// wheel's sibling — one rule for both stepped value widgets, so a notch
     /// means "one step" wherever the cursor is.
@@ -300,13 +300,13 @@ impl External for SpinButtonExternal {
     /// the verdict is that type's: consume while banking or stepping, decline
     /// once saturated.
     ///
-    /// Two deliberate divergences from Qt's spin box, both toward the
+    /// Two deliberate divergences from the toolkit's spin box, both toward the
     /// slider's rule:
     ///
-    /// * Qt **always** accepts the wheel, which is why scrolling a Qt form
+    /// * the toolkit **always** accepts the wheel, which is why scrolling a toolkit form
     ///   past a spin box pinned at its maximum eats the page scroll. A wheel
     ///   this widget cannot spend belongs to the scroll container behind it.
-    /// * Qt's `Ctrl` multiplies the step by ten. The honest peer of that here
+    /// * the toolkit's `Ctrl` multiplies the step by ten. The honest peer of that here
     ///   is the page step [`Self::page_up`] / [`Self::page_down`] already
     ///   drive, and the modifier arm is wired on neither widget yet — a
     ///   slider has no page step to answer with, and one rule on both beats a
@@ -532,8 +532,8 @@ mod tests {
         assert_eq!(s.auto_repeat(), None);
     }
 
-    /// PAST Qt: a held arrow that can no longer move the value stops
-    /// declaring a cadence. `QAbstractSpinBox` keeps its 10 Hz timer
+    /// PAST the toolkit: a held arrow that can no longer move the value stops
+    /// declaring a cadence. abstract spin box keeps its 10 Hz timer
     /// running against a value pinned at `maximum()` for as long as the
     /// user holds — here the hold goes quiet, which is also what lets the
     /// frame loop idle.
@@ -570,8 +570,8 @@ mod tests {
         assert!((s.value() - 10.0).abs() < f32::EPSILON);
     }
 
-    /// Qt's `setAccelerated` axis is a declaration here, and it survives
-    /// onto the widget rather than being a router-side default.
+    /// The toolkit's `setAccelerated` axis is a declaration here, and it survives onto the
+    /// widget rather than being a router-side default.
     #[test]
     fn accelerating_cadence_is_declarable_per_widget() {
         let fast = AutoRepeat::desktop().accelerating(0.5, 0.02);
@@ -794,8 +794,8 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // R1533 §5.45 §5.38 — the wheel steps the value (Qt
-    // `QAbstractSpinBox::wheelEvent`), one rule with the slider.
+    // R1533 §5.45 §5.38 — the wheel steps the value (the toolkit
+    // `wheelEvent`), one rule with the slider.
     // ─────────────────────────────────────────────────────────────────
 
     const NOTCH_UP: f32 = -crate::event::LINE_HEIGHT_PX;
@@ -843,8 +843,8 @@ mod tests {
 
     #[test]
     fn r1533_saturated_wheel_is_declined_so_the_page_can_scroll() {
-        // The divergence from Qt, which always accepts and so eats the page
-        // scroll of any form containing a pinned spin box.
+        // The divergence from the toolkit, which always accepts and so eats
+        // the page scroll of any form containing a pinned spin box.
         let mut s = SpinButtonExternal::new(10.0, 0.0, 10.0, 1.0);
         assert!(!wheel(&mut s, NOTCH_UP), "at max, a raise is declined");
         assert!(wheel(&mut s, NOTCH_DOWN), "the other direction still works");

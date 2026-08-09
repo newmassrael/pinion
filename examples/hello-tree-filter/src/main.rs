@@ -7,8 +7,8 @@
 //! the data-grid column sort/filter proxy (`hello-grid-sort` /
 //! `hello-grid-filter`); this demo lands the **tree** proxy a scene-graph /
 //! asset outliner needs — exactly the editor-tree search the Phase-D
-//! self-hosted editor's outliner will use. The recursion is Qt's
-//! `QSortFilterProxyModel` with `setRecursiveFilteringEnabled(true)`: a node
+//! self-hosted editor's outliner will use. The recursion is the toolkit's
+//! sort filter proxy model with `setRecursiveFilteringEnabled(true)`: a node
 //! is kept iff it matches the query **or any descendant matches**, so a
 //! match buried inside a collapsed group is *revealed* — its ancestors shown
 //! as path context, auto-expanded — while every non-match sibling is pruned.

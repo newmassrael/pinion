@@ -61,8 +61,8 @@ pub struct LocateRegionOutcome {
     /// `"lasso"` (R1591).
     ///
     /// Repeated back because a selection's answer is only interpretable
-    /// alongside what was asked, and because Qt's rubber band takes its mode
-    /// from a **view property** that nothing records per selection.
+    /// alongside what was asked, and because the toolkit's rubber band takes
+    /// its mode from a **view property** that nothing records per selection.
     pub shape: String,
     /// Which fit was applied — `"intersects"` or `"contains"` (R1591).
     pub fit: String,
@@ -157,20 +157,18 @@ pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
 /// R1591 §5.32 §2 #7 — resolve any [`Region`] against `scene` under a
 /// [`RegionFit`].
 ///
-/// The one region question: a rectangle, a disc and a lasso are
-/// one question, asked from outside the process by something that has no
-/// pointer. Blender answers the same three with three operators, and Qt's
-/// equivalent lives behind a `QPainterPath` that cannot leave the process at
-/// all.
+/// The one region question: a rectangle, a disc and a lasso are one question,
+/// asked from outside the process by something that has no pointer. The DCC
+/// answers the same three with three operators, and the toolkit's equivalent
+/// lives behind a painter path that cannot leave the process at all.
 ///
 /// The outcome **repeats what was asked** — see [`LocateRegionOutcome::shape`]
 /// and [`LocateRegionOutcome::fit`].
 ///
 /// # Errors
 ///
-/// [`RegionError`] for a shape that bounds no area, so a two-point lasso is told
-/// apart from an empty surface. Qt's `items(QPolygonF, ..)` answers both with an
-/// empty `QList`.
+/// [`RegionError`] for a shape that bounds no area, so a two-point lasso is told apart
+/// from an empty surface. The toolkit's `items(polygon F, ..)` answers both with an empty list.
 pub fn locate_shape(
     scene: &Scene,
     region: &Region,
@@ -450,9 +448,10 @@ mod tests {
     #[test]
     fn locate_region_zero_area_query_is_now_named_rather_than_answered_empty() {
         // R1591 changed this contract deliberately, and it is the round's own
-        // argument: "your rectangle had no area" and "nothing is there" were the
-        // same answer, so a caller could not tell a bad gesture from an empty
-        // canvas. Qt cannot tell them apart either — `items()` returns a QList.
+        // argument: "your rectangle had no area" and "nothing is there" were
+        // the same answer, so a caller could not tell a bad gesture from an
+        // empty canvas. The toolkit cannot tell them apart either — `items()`
+        // returns a list.
         let s = box_at(0, 0, 100, 100);
         assert_eq!(
             locate_shape(&s, &Region::rect(50, 50, 0, 0), RegionFit::Intersects),

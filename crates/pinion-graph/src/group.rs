@@ -2,14 +2,15 @@
 //!
 //! # Why this module exists
 //!
-//! "Wrap this selection in a re-usable node" is the single largest capability a
-//! node editor has — Blender's node groups, Unreal Blueprint's collapse-to-
-//! function, a compositor's macro. It looks like an editor gesture and is not:
-//! the gesture is a keystroke, and everything that decides whether the gesture
-//! is *legal*, and what the resulting node's sockets *are*, is arithmetic over
-//! a vertex set. Putting it here keeps that arithmetic testable on hand-written
-//! graphs — which is where its adversarial fixtures live — and out of the
-//! editor, where it would only ever be exercised through a pointer.
+//! "Wrap this selection in a re-usable node" is the single largest capability
+//! a node editor has — the DCC's node groups, the engine Blueprint's
+//! collapse-to- function, a compositor's macro. It looks like an editor
+//! gesture and is not: the gesture is a keystroke, and everything that decides
+//! whether the gesture is *legal*, and what the resulting node's sockets
+//! *are*, is arithmetic over a vertex set. Putting it here keeps that
+//! arithmetic testable on hand-written graphs — which is where its adversarial
+//! fixtures live — and out of the editor, where it would only ever be
+//! exercised through a pointer.
 //!
 //! # What an interface socket is
 //!
@@ -26,16 +27,16 @@
 //! directions key on the producer end, because "a value" is what the socket
 //! carries.
 //!
-//! Blender reaches the same two behaviours through two independent booleans on
-//! its interface builder (`use_unique_input`, `use_unique_output`) whose struct
-//! defaults — measured against `8cf50599` — are the *opposite* of what its own
-//! group-make operator passes, so the shared-value rule is a call-site
-//! convention there rather than a property of what an interface socket is.
+//! The DCC reaches the same two behaviours through two independent booleans on
+//! its interface builder (`use_unique_input`, `use_unique_output`) whose struct defaults — measured against
+//! `8cf50599` — are the *opposite* of what its own group-make operator passes, so the
+//! shared-value rule is a call-site convention there rather than a property of
+//! what an interface socket is.
 //!
 //! An unconnected socket on a selected vertex is therefore **not** part of the
-//! interface: nothing crosses. Blender special-cases a single-node selection to
-//! expose the whole signature, and its own source marks that inconsistency with
-//! a `TODO`; the rule above is kept whole instead.
+//! interface: nothing crosses. The DCC special-cases a single-node selection
+//! to expose the whole signature, and its own source marks that inconsistency
+//! with a `TODO`; the rule above is kept whole instead.
 //!
 //! # Why a collapse can be refused
 //!
@@ -44,13 +45,12 @@
 //! every interior vertex outside `S`. That is a **reachability** property, and
 //! [`Boundary::derive`] tests it as one, reporting the offending path.
 //!
-//! Blender tests a *one-hop* approximation of it: no unselected node may have
+//! The DCC tests a *one-hop* approximation of it: no unselected node may have
 //! both an input from the selection and an output to it. A two-hop bypass
-//! (`s → u → v → s`) passes that test, and the group is created — the resulting
-//! tree is cyclic, and the cycle is discovered later by a separate tree-update
-//! pass that flags the links rather than by anything that could have refused.
-//! Measured at `8cf50599`: `space_node/node_group.cc` does not contain the
-//! substring `cycle` at all.
+//! (`s → u → v → s`) passes that test, and the group is created — the resulting tree is
+//! cyclic, and the cycle is discovered later by a separate tree-update pass
+//! that flags the links rather than by anything that could have refused.
+//! Measured at `8cf50599`: `space_node/node_group.cc` does not contain the substring `cycle` at all.
 //!
 //! ```
 //! use pinion_graph::group::{Boundary, Link, Socket};
@@ -470,11 +470,11 @@ impl Nesting {
     /// is the edge that would join its ends. Placing a definition in itself
     /// yields the one-element chain `[definition]`.
     ///
-    /// Naming the chain is what a user needs and what Blender does not give:
-    /// measured at `8cf50599`, `node_group_poll` reports the same flat sentence
-    /// — "Nesting a node group inside of itself is not allowed" — for a direct
-    /// self-nest and for one four groups deep, so the intermediate definitions
-    /// that actually carry the recursion are never named.
+    /// Naming the chain is what a user needs and what the DCC does not give:
+    /// measured at `8cf50599`, `node_group_poll` reports the same flat sentence — "Nesting a node
+    /// group inside of itself is not allowed" — for a direct self-nest and for
+    /// one four groups deep, so the intermediate definitions that actually
+    /// carry the recursion are never named.
     #[must_use]
     pub fn cycle(
         contains: &[(usize, usize)],
@@ -643,8 +643,9 @@ mod tests {
 
     #[test]
     fn a_one_hop_bypass_is_refused_and_named() {
-        // 0 → 1 → 2 and 0 → ... the classic: unselected 1 has both an input from
-        // the selection and an output to it. This is the case Blender catches.
+        // 0 → 1 → 2 and 0 → ... the classic: unselected 1 has both an input
+        // from the selection and an output to it. This is the case the DCC
+        // catches.
         let links = vec![link(s(0), s(1)), link(s(1), s(2))];
         let refusal = Boundary::derive(3, &links, &[0, 2]).unwrap_err();
         assert_eq!(refusal.bypass(), Some(&[0, 1, 2][..]));
@@ -653,9 +654,9 @@ mod tests {
     #[test]
     fn a_two_hop_bypass_is_refused_where_blenders_local_test_would_pass() {
         // 0 → 1 → 2 → 3, group {0, 3}. NO unselected vertex has both an input
-        // from and an output to the selection: 1 has only the input, 2 only the
-        // output. Blender's `node_group_make_test_selected` therefore accepts
-        // this and creates a group that reaches itself; reachability refuses it.
+        // from and an output to the selection: 1 has only the input, 2 only
+        // the output. The DCC's `node_group_make_test_selected` therefore accepts this and creates a group
+        // that reaches itself; reachability refuses it.
         let links = chain();
         let inside = vec![true, false, false, true];
         assert!(
@@ -667,7 +668,7 @@ mod tests {
         assert_eq!(refusal.bypass(), Some(&[0, 1, 2, 3][..]));
     }
 
-    /// Blender's rule at `8cf50599`, re-expressed over this module's types, and
+    /// The DCC's rule at `8cf50599`, re-expressed over this module's types, and
     /// answering `true` when it would ALLOW the collapse: no unselected vertex
     /// may have both an input from the selection and an output to it.
     ///

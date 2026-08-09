@@ -314,26 +314,24 @@ pub enum GridSendKey {
         /// Zero-based column index.
         col: usize,
     },
-    /// R1562 — a **row**-header click (`"r<row>"`): the vertical section axis's
-    /// press address, Qt `QHeaderView::sectionPressed` on a
-    /// `Qt::Vertical` header.
+    /// R1562 — a **row**-header click (`"r<row>"`): the vertical section axis's press
+    /// address, the toolkit `sectionPressed` on a `Vertical` header.
     ///
     /// The peer of [`Header`](Self::Header) on the other axis, and the one that
-    /// carries a row — which is the whole point. Qt reaches the same behaviour
-    /// through a *second implementation*: a header press runs
-    /// `QHeaderView::mousePressEvent` -> `QAbstractItemView::selectRow`, while a
-    /// cell press runs `QAbstractItemView::mousePressEvent` ->
-    /// `selectionCommand(index, event)`. Here a row header **is** an address of
-    /// its row ([`row`](Self::row) answers with it), so the press reaches the
-    /// selection transition a cell press reaches, by the same call, and the band
-    /// cannot disagree with the body about what a chorded click means.
+    /// carries a row — which is the whole point. The toolkit reaches the same
+    /// behaviour through a *second implementation*: a header press runs `mousePressEvent` ->
+    /// `selectRow`, while a cell press runs `mousePressEvent` -> `selectionCommand(index, event)`. Here a row header **is** an
+    /// address of its row ([`row`](Self::row) answers with it), so the press
+    /// reaches the selection transition a cell press reaches, by the same
+    /// call, and the band cannot disagree with the body about what a chorded
+    /// click means.
     RowHeader {
         /// Zero-based **data**-row index (the R778 sort permutation already
         /// applied, exactly as a [`Cell`](Self::Cell)'s row is).
         row: usize,
     },
-    /// R1562 — the cell where the two section axes meet (`"c"`): Qt's
-    /// `QTableCornerButton`, the control `QTableView::setCornerButtonEnabled`
+    /// R1562 — the cell where the two section axes meet (`"c"`): the toolkit's
+    /// table corner button, the control `setCornerButtonEnabled`
     /// enables.
     ///
     /// Addresses no row and no column — it addresses the **whole model**, which
@@ -356,9 +354,8 @@ pub enum GridSendKey {
         group: usize,
     },
     /// R1555 — a step affordance of an open
-    /// [`EditorForm::Stepper`](crate::cell_value::EditorForm::Stepper) editor
-    /// (`"su<row>_<col>"` up / `"sd<row>_<col>"` down): Qt `QSpinBox`'s two
-    /// arrow sub-controls.
+    /// [`EditorForm::Stepper`](crate::cell_value::EditorForm::Stepper) editor (`"su<row>_<col>"` up / `"sd<row>_<col>"`
+    /// down): the toolkit spin box's two arrow sub-controls.
     ///
     /// The **only** editor form that needs its own address. A toggle's checkbox,
     /// a selector's chevron and a swatch's colour chip each fill their cell, so
@@ -424,11 +421,10 @@ impl GridSendKey {
         })
     }
 
-    /// The data row this key addresses, or `None` for a header key — the
-    /// row-only view a single-row selection coordinator
-    /// ([`VirtualSelectExternal`](crate::widgets::virtual_select)) needs
-    /// (WAI-ARIA / Qt `QItemSelectionModel` `SelectRows`: the column is
-    /// irrelevant to a row selection).
+    /// The data row this key addresses, or `None` for a header key — the row-only
+    /// view a single-row selection coordinator
+    /// ([`VirtualSelectExternal`](crate::widgets::virtual_select)) needs (WAI-ARIA / the toolkit
+    /// item selection model `SelectRows`: the column is irrelevant to a row selection).
     #[must_use]
     /// R1555 — an [`EditorStep`](Self::EditorStep) answers with its row for the
     /// same reason a [`Cell`](Self::Cell) does: the affordance is *inside* a
@@ -496,8 +492,8 @@ impl GridSendKey {
         }
     }
 }
-/// (R1554 §5.39 §5.40) The composite-tag SSOT for a **group box** — Qt
-/// `QGroupBox`, HTML `<fieldset>`/`<legend>`.
+/// (R1554 §5.39 §5.40) The composite-tag SSOT for a **group box** — the
+/// toolkit group box, HTML `<fieldset>`/`<legend>`.
 ///
 /// Three addresses, because a group box is three things an agent addresses
 /// separately: the group itself (`tag`, the `role=group` frame), its title
@@ -508,9 +504,9 @@ impl GridSendKey {
 ///
 /// The content region has its own tag rather than reusing the group's for a
 /// concrete reason: the frame and the title must stay live while the contents
-/// are inert, which is Qt's checkable-group behaviour, and a region cannot be
-/// disabled without being addressable — `focus/set`'s `tag_disabled` answer
-/// hands this tag back as the thing to act on.
+/// are inert, which is the toolkit's checkable-group behaviour, and a region
+/// cannot be disabled without being addressable — `focus/set`'s `tag_disabled` answer hands this
+/// tag back as the thing to act on.
 pub struct GroupBoxTag;
 
 impl GroupBoxTag {
@@ -613,7 +609,7 @@ impl GridTag {
     }
 
     /// (R1536) One cell's **decoration** mark — `"{tag}_deco{row}_{col}"`, the
-    /// `Qt::DecorationRole` answer painted inside cell `(row, col)`.
+    /// `DecorationRole` answer painted inside cell `(row, col)`.
     ///
     /// Stays in the `'_'` presentational family (no `'#'`) so it never enters
     /// the composite click-router namespace: the addressable *target* of a
@@ -632,9 +628,9 @@ impl GridTag {
     }
 
     /// (R1547) One column header's **decoration** mark —
-    /// `"{tag}_hdeco{col}"`, the `Qt::DecorationRole` answer painted inside the
-    /// header of column `col` (Qt `headerData(section, Qt::Horizontal,
-    /// Qt::DecorationRole)`).
+    /// `"{tag}_hdeco{col}"`, the `DecorationRole` answer painted inside the
+    /// header of column `col` (the toolkit `headerData(section, Horizontal,
+    /// DecorationRole)`).
     ///
     /// The section-axis peer of [`Self::cell_decoration`] and addressable for
     /// the same reason: a painted thing with no tag can only be reached by
@@ -651,13 +647,12 @@ impl GridTag {
         format!("{tag}_hdeco{col}")
     }
 
-    /// (R1548) One **row** header's cell — `"{tag}_rh{row}"`: the vertical
-    /// section axis's peer of [`Self::col_header`] (Qt `headerData(section,
-    /// Qt::Vertical, …)`, painted by `QTableView::verticalHeader()`).
+    /// (R1548) One **row** header's cell — `"{tag}_rh{row}"`: the vertical section axis's
+    /// peer of [`Self::col_header`] (the toolkit `headerData(section, Vertical, …)`, painted by `verticalHeader()`).
     ///
     /// `row` is a `usize` where [`Self::data_row`] takes any
     /// [`Display`](core::fmt::Display), and the narrowing is deliberate: the
-    /// string id space belongs to the tree-grid, and a `QTreeView` has no
+    /// string id space belongs to the tree-grid, and a tree view has no
     /// vertical header at all. Typing it out also keeps this address
     /// unambiguous against [`Self::row_header_decoration`] — with a free-form
     /// id, `"t_rhdeco3"` would be a legal reading of both.
@@ -671,7 +666,7 @@ impl GridTag {
     }
 
     /// (R1548) One row header's **decoration** mark — `"{tag}_rhdeco{row}"`,
-    /// the `Qt::DecorationRole` answer painted ahead of row `row`'s label.
+    /// the `DecorationRole` answer painted ahead of row `row`'s label.
     ///
     /// The vertical-axis peer of [`Self::header_decoration`], and it needs its
     /// own prefix for the reason that one did: a mark's address must not be
@@ -681,13 +676,13 @@ impl GridTag {
         format!("{tag}_rhdeco{row}")
     }
 
-    /// (R1548) The corner above the row-header band — `"{tag}_hcorner"`, the
-    /// cell where the two section axes meet (Qt's `QTableCornerButton`).
+    /// (R1548) The corner above the row-header band — `"{tag}_hcorner"`, the cell where the
+    /// two section axes meet (the toolkit's table corner button).
     ///
     /// Painted so the two bands align, and tagged so its extent can be read;
-    /// it names neither axis, so it carries no a11y node — Qt exposes it as an
-    /// unlabelled "select all" button, and without that behaviour such a node
-    /// would be noise in the tree rather than information.
+    /// it names neither axis, so it carries no a11y node — the toolkit exposes
+    /// it as an unlabelled "select all" button, and without that behaviour
+    /// such a node would be noise in the tree rather than information.
     #[must_use]
     pub fn header_corner(tag: &str) -> String {
         format!("{tag}_hcorner")
@@ -736,11 +731,11 @@ impl DocumentTag {
     /// R1559 — the `k`-th **list** the document's numbering derived, in
     /// document order — `"{tag}_lst{k}"`.
     ///
-    /// A list is an object in its own right (Qt's `QTextList`), so it is
-    /// addressable in its own right: it is the node whose box encloses its
-    /// items, the WAI-ARIA `list` the items are `listitem`s of, and the row
-    /// `scene/text_lists` reports. `k` counts lists, not blocks — a document
-    /// whose first list starts at block 4 still names it `_lst0`.
+    /// A list is an object in its own right (the toolkit's text list), so it
+    /// is addressable in its own right: it is the node whose box encloses its
+    /// items, the WAI-ARIA `list` the items are `listitem`s of, and the row `scene/text_lists` reports.
+    /// `k` counts lists, not blocks — a document whose first list starts at
+    /// block 4 still names it `_lst0`.
     #[must_use]
     pub fn list(tag: &str, k: usize) -> String {
         format!("{tag}_lst{k}")
@@ -759,10 +754,10 @@ impl DocumentTag {
 
     /// R1559 — the `i`-th paragraph's painted **marker** — `"{tag}_mrk{i}"`.
     ///
-    /// Addressable because it is real text: Qt draws its unordered markers as
-    /// geometry with no accessor at all, so "where is this item's bullet, and
-    /// what does it say" is a question only one of the two toolkits can
-    /// answer.
+    /// Addressable because it is real text: the toolkit draws its unordered
+    /// markers as geometry with no accessor at all, so "where is this item's
+    /// bullet, and what does it say" is a question only one of the two
+    /// toolkits can answer.
     #[must_use]
     pub fn marker(tag: &str, i: usize) -> String {
         format!("{tag}_mrk{i}")
@@ -771,8 +766,8 @@ impl DocumentTag {
     /// R1560 — the `k`-th **table** the document's addressing derived, in
     /// document order — `"{tag}_tbl{k}"`.
     ///
-    /// A table is an object in its own right (Qt's `QTextTable`): the node
-    /// whose box encloses its cells, the WAI-ARIA `table` its rows belong to,
+    /// A table is an object in its own right (the toolkit's text table): the
+    /// node whose box encloses its cells, the WAI-ARIA `table` its rows belong to,
     /// and the row `scene/text_tables` reports. `k` counts tables, not blocks.
     #[must_use]
     pub fn table(tag: &str, k: usize) -> String {

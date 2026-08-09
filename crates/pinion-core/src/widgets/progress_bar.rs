@@ -24,14 +24,13 @@
 //! the same numeric lowering a `Slider` uses, but on a passive role (no
 //! AT actions).
 //!
-//! **Determinate only (first slice).** An *indeterminate* progress bar
-//! (the "busy, completion unknown" form: WAI-ARIA omits `aria-valuenow`,
-//! Material/Flutter model it as a `null` value + a looping animation)
-//! needs a *repeating* animation driver — the existing §5.28 spring
-//! substrate settles to a target and stops, so a sawtooth/looping
-//! indeterminate sweep is a separate animation axis. It lands additively
-//! (a `value: Option<f32>` widening + a looping driver) once that
-//! substrate exists; today the value is always present.
+//! **Determinate only (first slice).** An *indeterminate* progress bar (the
+//! "busy, completion unknown" form: WAI-ARIA omits `aria-valuenow`, Material/another
+//! retained-mode toolkit model it as a `null` value + a looping animation) needs
+//! a *repeating* animation driver — the existing §5.28 spring substrate
+//! settles to a target and stops, so a sawtooth/looping indeterminate sweep is
+//! a separate animation axis. It lands additively (a `value: Option<f32>` widening + a looping
+//! driver) once that substrate exists; today the value is always present.
 
 use std::cell::Cell;
 use std::rc::Rc;

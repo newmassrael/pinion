@@ -1,12 +1,12 @@
 //! R1448 §5.36 — where a [`LayoutCache`]'s faces come from, and what happens
 //! when the platform has none.
 //!
-//! ## Qt reference: `QFontDatabase`
+//! ## the toolkit reference: font database
 //!
-//! Two things Qt does here that pinion did not:
+//! Two things the toolkit does here that pinion did not:
 //!
-//! - **It does not die when the platform font database is unusable.** Qt
-//!   reports the condition and keeps running; a Qt app on a font-less host
+//! - **It does not die when the platform font database is unusable.** the toolkit
+//!   reports the condition and keeps running; a toolkit app on a font-less host
 //!   draws no glyphs but stays up. pinion aborted, because fontique unwraps
 //!   an `Err(NoMatch)` while it populates its generic-family map
 //!   (`fontique-0.9.0/src/backend/fontconfig.rs:685`). R1447 measured the
@@ -14,23 +14,22 @@
 //!   nothing, and R1447 removed it only for the TUI, by never building the
 //!   context there. This module removes it for **every** backend, by making
 //!   the platform scan a probe whose failure is a *state* rather than an exit.
-//! - **`QFontDatabase::addApplicationFontFromData`** — an application ships a
+//! - **`addApplicationFontFromData`** — an application ships a
 //!   face and registers it from memory, no system database involved.
 //!   [`LayoutCache::register_font_data`] is that call.
 //!
 //! ## Where pinion is better
 //!
-//! Qt answers "are there fonts?" by writing a `qWarning` to stderr. A warning
-//! on a stream is not a fact anyone can *query*: an agent driving the app over
-//! §2 #2 cannot read it, a screen-QA tool cannot assert on it, and a headless
-//! capture silently produces blank text with the explanation in a log nobody
-//! parsed. Here the same condition is typed data — [`SystemFontStatus`] and
-//! [`LayoutCache::application_font_families`] — so §2 #7 holds: whatever a
-//! human could conclude about this cache's faces, an agent reads from the same
-//! surface. A binding publishes it into its scene and the answer travels over
-//! the wire like any other node.
+//! The toolkit answers "are there fonts?" by writing a `qWarning` to stderr. A
+//! warning on a stream is not a fact anyone can *query*: an agent driving the
+//! app over §2 #2 cannot read it, a screen-QA tool cannot assert on it, and a
+//! headless capture silently produces blank text with the explanation in a log
+//! nobody parsed. Here the same condition is typed data — [`SystemFontStatus`] and [`LayoutCache::application_font_families`] — so
+//! §2 #7 holds: whatever a human could conclude about this cache's faces, an
+//! agent reads from the same surface. A binding publishes it into its scene
+//! and the answer travels over the wire like any other node.
 //!
-//! Qt's registration call is also lossier than it needs to be:
+//! The toolkit's registration call is also lossier than it needs to be:
 //! `addApplicationFontFromData` returns an opaque `int` id, and the caller
 //! makes a second call (`applicationFontFamilies(id)`) to learn what it just
 //! added. [`LayoutCache::register_font_data`] returns the family names

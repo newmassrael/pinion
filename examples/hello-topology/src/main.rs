@@ -65,13 +65,13 @@
 //! a real producer calls the same `add_service` / `connect` from a
 //! `RepaintSink`, which `hello-live-chart` (R1398) already proves.
 //!
-//! ## Qt reference
+//! ## the toolkit reference
 //!
-//! Qt has no graph layout at all — `QGraphicsScene` draws what you position, so
-//! a topology view there is Graphviz-out-of-process or a hand-rolled solver, and
-//! neither gives the application a stability contract. Graphviz `dot` has no
-//! incremental mode; ELK does (`INTERACTIVE` crossing minimisation), and this is
-//! that strategy with the numbers on the wire.
+//! The toolkit has no graph layout at all — canvas scene draws what you
+//! position, so a topology view there is Graphviz-out-of-process or a
+//! hand-rolled solver, and neither gives the application a stability contract.
+//! Graphviz `dot` has no incremental mode; ELK does (`INTERACTIVE` crossing minimisation),
+//! and this is that strategy with the numbers on the wire.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;

@@ -731,8 +731,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// R1448 §5.36 — [`Self::new_with_seed`] plus the application's own fonts.
     ///
     /// `app_fonts` is the bytes of each face the application ships, in the
-    /// order `ShellConfig::with_application_font` declared them. Qt's
-    /// equivalent is `QFontDatabase::addApplicationFont` called from `main()`
+    /// order `ShellConfig::with_application_font` declared them. The toolkit's
+    /// equivalent is `addApplicationFont` called from `main()`
     /// before any widget exists; the ordering constraint is the same and here
     /// it is structural rather than advisory.
     ///
@@ -759,8 +759,8 @@ impl<V: WidgetView> ShellCore<V> {
             application_families.extend(text_cache.register_font_data(data));
         }
         // R1472 §5.36 — declaring the faces and choosing which one unset text
-        // uses are the two halves of Qt's `addApplicationFont` +
-        // `QApplication::setFont`, and they land here together because the
+        // uses are the two halves of the toolkit's `addApplicationFont` +
+        // `setFont`, and they land here together because the
         // second is meaningless before the first: a default naming a family
         // nobody registered resolves to the tofu fallback. Setting it on the
         // same `text_cache` the layout and paint passes borrow is what makes
@@ -2609,7 +2609,7 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// * [`PanRelease::Click`] — press-release in place: run the
     ///   R56.2.e paste funnel ([`Self::middle_click`]). Release-paste is
-    ///   the xterm / Qt convention and keeps a paste off every pan.
+    ///   the xterm / the toolkit convention and keeps a paste off every pan.
     /// * [`PanRelease::Pan`] — the drag already panned move-by-move;
     ///   nothing fires on release.
     /// * [`PanRelease::NoPress`] — spurious release, or the gesture
@@ -2780,20 +2780,20 @@ impl<V: WidgetView> ShellCore<V> {
     pub(crate) fn handle_character_key_inner(&mut self, c: &str, repeat: bool) {
         // R1543 §5.39 — a character held with Alt is an ACCELERATOR, not text,
         // so the mnemonic arc runs ahead of both the typed-event channel and
-        // the focused widget. This is Qt's own precedence (`QShortcutMap` runs
-        // before key delivery).
+        // the focused widget. This is the toolkit's own precedence (shortcut
+        // map runs before key delivery).
         //
-        // R1569 §5.39 CORRECTION — R1543 wrote here that Qt's opt-out event
-        // (`QEvent::ShortcutOverride`) was, in pinion, "the absence of a
-        // declaration — a widget that wants Alt+F for itself simply does not
-        // publish a mnemonic on it". That escape is available only to a widget
-        // that OWNS the colliding declaration, and the two widgets that need
-        // the hatch own nothing of the sort: a text field does not declare the
-        // binding's `keybinding("d")`, and a key-sequence editor does not
-        // declare the File menu's Alt+F. The consequence shipped — typing `d`
-        // into `hello-textfield`'s focused field disabled the field, because
-        // `V::keybinding` below runs ahead of the focused widget too. Both
-        // accelerator layers are now gated on the same question.
+        // R1569 §5.39 CORRECTION — R1543 wrote here that the toolkit's opt-out
+        // event (`ShortcutOverride`) was, in pinion, "the absence of a declaration — a widget
+        // that wants Alt+F for itself simply does not publish a mnemonic on
+        // it". That escape is available only to a widget that OWNS the
+        // colliding declaration, and the two widgets that need the hatch own
+        // nothing of the sort: a text field does not declare the binding's
+        // `keybinding("d")`, and a key-sequence editor does not declare the File menu's
+        // Alt+F. The consequence shipped — typing `d` into `hello-textfield`'s focused field
+        // disabled the field, because `V::keybinding` below runs ahead of the focused
+        // widget too. Both accelerator layers are now gated on the same
+        // question.
         let chord = Chord::new(c, self.modifiers);
         if self
             .core
@@ -3205,17 +3205,14 @@ impl<V: WidgetView> ShellCore<V> {
     /// the *binding-wide* hover target (whichever window the cursor
     /// last hovered).
     pub fn mouse_pressed_for_window(&mut self, window_id: &str, pid: PointerId) {
-        // R882 / R882.1 §5.35 §5.39 — the press routes through the
-        // substrate's LEFT front door
-        // ([`CoreShell::left_press_for_window`]): the Space-hold pan
-        // chord (Figma / Photoshop hand tool) and the live-pan
-        // swallow are substrate policy, owned ONCE in `CoreShell`
-        // (the R882 first cut kept the branch per shell — the §2 #6
-        // divergence class). `None` = the pan channel consumed the
-        // press: no widget `PointerDown` and none of the press
-        // follow-ups below run — no click-to-focus (a pan must not
-        // steal focus), no caret positioning, no immediate-mode
-        // forward.
+        // R882 / R882.1 §5.35 §5.39 — the press routes through the substrate's
+        // LEFT front door ([`CoreShell::left_press_for_window`]): the Space-hold pan chord (the design tool /
+        // the raster editor hand tool) and the live-pan swallow are substrate
+        // policy, owned ONCE in `CoreShell` (the R882 first cut kept the branch per
+        // shell — the §2 #6 divergence class). `None` = the pan channel consumed
+        // the press: no widget `PointerDown` and none of the press follow-ups below run
+        // — no click-to-focus (a pan must not steal focus), no caret
+        // positioning, no immediate-mode forward.
         let Some(tail) = self.core.left_press_for_window(window_id, pid) else {
             return;
         };
@@ -3600,14 +3597,12 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
-    /// R1435 §5.35 §5.15 — native SMART-ZOOM gesture into the addressed window,
-    /// the family's phase-less member (Qt `SmartZoomNativeGesture` / winit
-    /// `DoubleTapGesture`): carry the held `self.modifiers` into the runtime
-    /// `ShellCore::smart_zoom_gesture_with_modifiers_for_window` and request a
-    /// repaint when the hovered widget consumed it. The one place both the
-    /// native winit `DoubleTapGesture` arm and the `scene/smart_zoom_gesture` RPC
-    /// replay funnel through, so the modifier read + repaint gate are stated
-    /// once.
+    /// R1435 §5.35 §5.15 — native SMART-ZOOM gesture into the addressed
+    /// window, the family's phase-less member (the toolkit `SmartZoomNativeGesture` / winit `DoubleTapGesture`):
+    /// carry the held `self.modifiers` into the runtime `ShellCore::smart_zoom_gesture_with_modifiers_for_window` and request a repaint when the
+    /// hovered widget consumed it. The one place both the native winit `DoubleTapGesture` arm
+    /// and the `scene/smart_zoom_gesture` RPC replay funnel through, so the modifier read + repaint
+    /// gate are stated once.
     pub fn smart_zoom_gesture_for_window(&mut self, window_id: &str, pid: PointerId) {
         let (tail, consumed) =
             self.core
@@ -3751,13 +3746,14 @@ impl<V: WidgetView> ShellCore<V> {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.pointer_button_for_window(window_id, button, edge);
                 }
-                // R1423 / R1429 / R1430 §5.35 §5.15 — the Qt `QTabletEvent` scalar
-                // axes (pressure / tilt / twist / tangential / height): set the
-                // axis on the addressed window's router, then bump + repaint via
-                // the shared `after_pointer_axis_change`. Each is positionless
-                // (out-of-band) — the router delivers it to the surface under the
-                // pointer at once and it rides subsequent moves. The AI-first
-                // source for a tablet-reactive surface, no device required (§2 #2).
+                // R1423 / R1429 / R1430 §5.35 §5.15 — the toolkit tablet event
+                // scalar axes (pressure / tilt / twist / tangential / height):
+                // set the axis on the addressed window's router, then bump +
+                // repaint via the shared `after_pointer_axis_change`. Each is positionless
+                // (out-of-band) — the router delivers it to the surface under
+                // the pointer at once and it rides subsequent moves. The
+                // AI-first source for a tablet-reactive surface, no device
+                // required (§2 #2).
                 DeferredInput::PointerPressure { value } => {
                     self.core
                         .set_pointer_pressure_for_window(window_id, PointerId::MOUSE, value);
@@ -3940,8 +3936,8 @@ impl<V: WidgetView> ShellCore<V> {
                     // the injected clock beside the animation clock, through
                     // the same substep splitter. Without it a held button is
                     // the one time-driven behaviour an agent cannot
-                    // reproduce — precisely the untestability of Qt's
-                    // `QBasicTimer` repeat. Tails are collected and applied
+                    // reproduce — precisely the untestability of the toolkit's
+                    // basic timer repeat. Tails are collected and applied
                     // after the walk so one `scene/tick`'s repeats reach
                     // `V::update` in a single batch.
                     let mut tails = Vec::new();
@@ -6463,21 +6459,19 @@ impl<V: WidgetView> ShellCore<V> {
             (resp, deferred_inputs)
         };
         let (resp, deferred_inputs) = resp;
-        // R1419 §5.39 §5.16 / R1420 — apply the `scene/window_focus` edge the
-        // closure recorded, now that `&mut self` is restored. This replays the
-        // shell's OWN winit `WindowEvent::Focused` arm BYTE-FOR-BYTE
-        // (`AppShell::window_event`): `note_os_focus` (gate + the R1419 paint-path
-        // mirror through the one `set_os_focused_window` funnel), then
-        // `window_focused` / `window_blurred` — so the drive is a FULL
+        // R1419 §5.39 §5.16 / R1420 — apply the `scene/window_focus` edge the closure recorded,
+        // now that `&mut self` is restored. This replays the shell's OWN winit `WindowEvent::Focused` arm
+        // BYTE-FOR-BYTE (`AppShell::window_event`): `note_os_focus` (gate + the R1419 paint-path mirror through
+        // the one `set_os_focused_window` funnel), then `window_focused` / `window_blurred` — so the drive is a FULL
         // OS-focus-edge simulation, not a gate-only stub: a blur snapshots the
         // focused widget for restore AND clears the held-key chord cache (the
         // browser missed-keyup convention, so a chord held across an alt-tab
-        // cannot strand), and a refocus restores the saved widget. R1420 removed
-        // the earlier deferral of this half — Qt's window deactivation likewise
-        // remembers focus and settles held state, so parity demands it. The edge
-        // stays `None` unless the closure actually ran (method matched, params
-        // valid, window known), so every other dispatch — and a rejected
-        // `scene/window_focus` — applies nothing.
+        // cannot strand), and a refocus restores the saved widget. R1420
+        // removed the earlier deferral of this half — the toolkit's window
+        // deactivation likewise remembers focus and settles held state, so
+        // parity demands it. The edge stays `None` unless the closure actually
+        // ran (method matched, params valid, window known), so every other
+        // dispatch — and a rejected `scene/window_focus` — applies nothing.
         if is_window_focus {
             if let Some(focused) = window_focus_edge.get() {
                 self.note_os_focus(&os_focus_target, focused);
@@ -6841,17 +6835,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// - [`pinion_core::focus_request`] carries **explicit intent** — a
     ///   binding naming the tag focus must end up on.
     ///
-    /// So the modal batch is applied FIRST and the request LAST: the
-    /// default lands, then a binding that knows better replaces it.
-    /// Draining them the other way round (pre-R1462) made the automatic
-    /// restore beat every explicit request issued in the same frame, so the
-    /// toolkit-standard command palette — close the palette, run the row,
-    /// focus what the row produced — always lost, landing either on the
-    /// stale invoker or, when the command had removed that node, on nothing
-    /// at all ([`FocusManager::pop_modal_scope`] commits its restore
-    /// unconditionally, and `None` is a commit). Qt reaches this order by
-    /// construction rather than by policy: a slot running `dialog.accept()`
-    /// then `widget->setFocus()` wins with the later call.
+    /// So the modal batch is applied FIRST and the request LAST: the default
+    /// lands, then a binding that knows better replaces it. Draining them the
+    /// other way round (pre-R1462) made the automatic restore beat every
+    /// explicit request issued in the same frame, so the toolkit-standard
+    /// command palette — close the palette, run the row, focus what the row
+    /// produced — always lost, landing either on the stale invoker or, when
+    /// the command had removed that node, on nothing at all ([`FocusManager::pop_modal_scope`] commits its
+    /// restore unconditionally, and `None` is a commit). The toolkit reaches this
+    /// order by construction rather than by policy: a slot running `dialog.accept()` then
+    /// `widget->setFocus()` wins with the later call.
     ///
     /// The order also makes "open a dialog focused on a *specific* control"
     /// expressible (a destructive prompt whose default is Cancel — or

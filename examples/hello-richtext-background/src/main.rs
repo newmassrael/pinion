@@ -1,5 +1,5 @@
 //! `hello-richtext-background` — R1546 §5.36 consumer of the run-background
-//! substrate ([`TextStyle::bg_color`], Qt `QTextCharFormat::setBackground`).
+//! substrate ([`TextStyle::bg_color`], the toolkit `setBackground`).
 //!
 //! ## What this demonstrates
 //!
@@ -35,9 +35,9 @@
 //! * `scene/snapshot` exposes each run's `bg_color` — the DECLARATION, as
 //!   scene data (§2 #7).
 //! * `scene/text_backgrounds` exposes where each band was PAINTED, plus the
-//!   WCAG contrast of the run's ink against it. That is the half Qt has no
-//!   accessor for: `QTextCharFormat` knows the brush and nothing about the
-//!   rect, which `QTextLayout::draw` computes privately and discards.
+//!   WCAG contrast of the run's ink against it. That is the half the toolkit has no
+//!   accessor for: text char format knows the brush and nothing about the
+//!   rect, which `draw` computes privately and discards.
 //! * `tools/demos/r1546_run_background.py` reads both, drives the Toggle
 //!   across the readability boundary, and checks the painted band against the
 //!   node it belongs to.
@@ -107,7 +107,7 @@ const HOLE_END: u32 = 13;
 const HIGHLIGHT_READABLE: Color = Color::rgb(0xFF, 0xF1, 0x76);
 /// A saturated indigo somebody might reach for because it "looks like a
 /// selection". Against the same black ink it is around 1.3:1 — text on it is
-/// effectively invisible, and NOTHING in Qt would tell you so.
+/// effectively invisible, and NOTHING in the toolkit would tell you so.
 const HIGHLIGHT_UNREADABLE: Color = Color::rgb(0x2A, 0x1E, 0x6E);
 /// The ink the highlighted run draws in. Held fixed across the Toggle so the
 /// published ratio moves for exactly one reason.

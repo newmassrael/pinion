@@ -1,9 +1,8 @@
 //! R1435 §5.35 §5.15 — a native SMART-ZOOM gesture fits the block under the finger.
 //!
-//! A `PageView` [`External`] overrides [`External::smart_zoom_gesture`] — the Qt
-//! `QNativeGestureEvent` `SmartZoomNativeGesture` / macOS `smartMagnifyWithEvent:`
-//! / winit `WindowEvent::DoubleTapGesture` peer — and toggles a three-block
-//! document page between **fit-to-page** and **zoom-to-block**.
+//! A `PageView` [`External`] overrides [`External::smart_zoom_gesture`] — the toolkit native gesture event `SmartZoomNativeGesture` / macOS
+//! `smartMagnifyWithEvent:` / winit `WindowEvent::DoubleTapGesture` peer — and toggles a three-block document page between
+//! **fit-to-page** and **zoom-to-block**.
 //!
 //! This is the family's PHASE-LESS member, and the demo is built around what
 //! that changes. The pinch / rotation / pan demos each accumulate a value across

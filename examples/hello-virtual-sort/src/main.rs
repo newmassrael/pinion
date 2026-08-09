@@ -10,7 +10,7 @@
 //! a selected row's visual position while keeping the *same data item*
 //! selected — selection ⊥ ordering, both data-indexed.
 //!
-//! ## The three coordinators (Qt `QSortFilterProxyModel` shape)
+//! ## The three coordinators (the toolkit sort filter proxy model shape)
 //!
 //! - **Primary** `VirtualSelectExternal` at [`LIST_TAG`] (R746 reuse) — the
 //!   windowed `vlist#<source>` rows route clicks here; selection is the

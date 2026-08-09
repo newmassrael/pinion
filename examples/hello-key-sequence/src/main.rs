@@ -1,6 +1,6 @@
 //! `hello-key-sequence` — R1569 §5.39 §5.20 a keymap-preferences pane, and the
-//! forcing consumer of the **accelerator-shadow** axis (Qt
-//! `QKeySequenceEdit` + `QEvent::ShortcutOverride`).
+//! forcing consumer of the **accelerator-shadow** axis (the toolkit
+//! key-sequence editor + `ShortcutOverride`).
 //!
 //! The window is deliberately built to be hostile to its own editor: it paints
 //! a `&File` / `&Save` menubar (so <kbd>Alt</kbd>+<kbd>F</kbd> and
@@ -22,7 +22,7 @@
 //!   explicit commit emits;
 //! * `scene/accelerators {"chord": …}` answers what a chord would collide with
 //!   BEFORE it is recorded — the question that makes a keymap editor usable and
-//!   the one `QKeySequenceEdit` cannot ask.
+//!   the one key-sequence editor cannot ask.
 //!
 //! Visual contract: a menubar strip, the editor's recorded / in-flight
 //! spelling, and a status line naming the statechart state.
@@ -56,7 +56,7 @@ const KS_TAG: &str = "key_sequence";
 /// free tag here would make the field unfocusable BY CLICK while still being
 /// in the tab order — reachable by Tab and dead to the mouse.
 const KS_VALUE_TAG: &str = "key_sequence#value";
-/// The two menubar titles, in Qt's `&`-marked source spelling.
+/// The two menubar titles, in the toolkit's `&`-marked source spelling.
 const MENU_TITLES: [(&str, &str); 2] = [("menu#file", "&File"), ("menu#save", "&Save")];
 
 /// view-fn (§6.3): pure sync mapping `KeySequenceState -> Scene`.
@@ -198,10 +198,10 @@ impl WidgetCore for KeySequenceView {
     }
 
     fn create_external() -> Box<dyn External> {
-        // Two chords, not Qt's four: a two-chord bound is what makes the
-        // fill-commit reachable in a demo without four keystrokes of setup,
-        // and `maximumSequenceLength` is a per-widget declaration precisely so
-        // a binding can say so.
+        // Two chords, not the toolkit's four: a two-chord bound is what makes
+        // the fill-commit reachable in a demo without four keystrokes of
+        // setup, and `maximumSequenceLength` is a per-widget declaration precisely so a binding
+        // can say so.
         Box::new(
             KeySequenceEditExternal::new()
                 .with_max_len(2)
@@ -255,9 +255,9 @@ impl WidgetCore for KeySequenceView {
         if focused != Some(KS_TAG) {
             return false;
         }
-        // Escape leaves a recording without accepting it — the exit Qt's
-        // `QKeySequenceEdit` does not have, and the reason `cancel` is an
-        // event in the statechart rather than a timer.
+        // Escape leaves a recording without accepting it — the exit the
+        // toolkit's key-sequence editor does not have, and the reason `cancel` is
+        // an event in the statechart rather than a timer.
         let payload = if key == "Escape" {
             IntrospectValue::Text("Cancel".to_string())
         } else {
@@ -284,10 +284,11 @@ impl WidgetCore for KeySequenceView {
 }
 
 impl pinion_a11y::WidgetA11y for KeySequenceView {
-    /// The editor announces as a `textbox` whose value is the chord spelling —
-    /// which is also what a `QKeySequenceEdit` reaches an AT as, since it wraps
-    /// a `QLineEdit`. What is not Qt's: the announced value is the string the
-    /// paint shows, read from the same snapshot, so the two cannot diverge.
+    /// The editor announces as a `textbox` whose value is the chord spelling — which
+    /// is also what a key-sequence editor reaches an AT as, since it wraps a
+    /// line edit. What is not the toolkit's: the announced value is the string
+    /// the paint shows, read from the same snapshot, so the two cannot
+    /// diverge.
     fn access_node(state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
         let accepted = use_key_sequence_display(KS_TAG).accepted();
         let mut node = AccessNode::new(KS_TAG, AriaRole::TextInput);

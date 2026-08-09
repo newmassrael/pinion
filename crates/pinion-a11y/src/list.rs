@@ -7,17 +7,17 @@
 //! node holding the run. That is how a screen-reader user learns "item 3 of 5,
 //! level 2" — the information a sighted reader takes from the marker column.
 //!
-//! ## Qt has none of it
+//! ## the toolkit has none of it
 //!
-//! Not a smaller amount: none. The accessibility interface a `QTextEdit`
-//! implements is `QAccessibleTextInterface`, whose vocabulary is character
+//! Not a smaller amount: none. The accessibility interface a text edit
+//! implements is accessible text interface, whose vocabulary is character
 //! offsets, selections, ranges and text attributes, and which has **no method
 //! that reports block structure at all** — the same wall R1551 hit for heading
-//! levels. So a Qt document's lists reach `QTextDocumentLayout`, which draws
-//! their markers, and stop. Worse for the unordered case: Qt draws `ListDisc`
-//! and friends as painted geometry rather than characters, so a Qt bullet is
-//! not even in the text a screen reader reads out — the item simply begins
-//! without any indication that it is one.
+//! levels. So a toolkit document's lists reach text document layout, which
+//! draws their markers, and stop. Worse for the unordered case: the toolkit
+//! draws `ListDisc` and friends as painted geometry rather than characters, so a
+//! toolkit bullet is not even in the text a screen reader reads out — the item
+//! simply begins without any indication that it is one.
 //!
 //! ## Why a pass over the painted tree
 //!

@@ -6,28 +6,29 @@
 //!
 //! ## Why this method exists at all
 //!
-//! Qt has no peer at any price. `QGuiApplication::screens()` is in-process C++:
-//! nothing outside a running Qt application can ask it what it is displaying
+//! The toolkit has no peer at any price. `screens()` is in-process C++: nothing
+//! outside a running the toolkit application can ask it what it is displaying
 //! on. For pinion that is not a nicety — §2 #2 makes the RPC plane the agent's
 //! primary path and §2 #7 says the scene is queryable as data — and a headless
 //! agent that opens a second window, tears off a panel, or restores a layout
 //! preset is placing pixels in a coordinate space it otherwise cannot see.
 //!
-//! Even *inside* the process, three of the questions here have no Qt answer:
+//! Even *inside* the process, three of the questions here have no the toolkit
+//! answer:
 //!
-//! * **Does the virtual desktop have holes?** `QScreen::virtualGeometry()` is
+//! * **Does the virtual desktop have holes?** `virtualGeometry()` is
 //!   the bounding rectangle. On any arrangement that is not itself a rectangle
-//!   it contains points that are on no screen, and Qt exposes no way to learn
-//!   that — which is why Qt code so often uses `virtualGeometry()` containment
+//!   it contains points that are on no screen, and the toolkit exposes no way to learn
+//!   that — which is why the toolkit code so often uses `virtualGeometry()` containment
 //!   as a visibility test and is wrong on every L-shaped desk. `gap_free` is
 //!   that fact, and `covered_px` is the evidence for it.
-//! * **Where would this rectangle be?** Every Qt screen query takes a *point*
+//! * **Where would this rectangle be?** Every the toolkit screen query takes a *point*
 //!   (`screenAt`, `virtualSiblingAt`). `placement` answers for a rectangle:
 //!   which display holds the largest share, every display it touches, how many
 //!   of its pixels are on a display at all, and the nearest origin that would
 //!   make it wholly visible.
-//! * **What happened to my saved layout?** `QWidget::saveGeometry()` is an
-//!   opaque `QByteArray` of absolute geometry, and `restoreGeometry` has
+//! * **What happened to my saved layout?** `saveGeometry()` is an
+//!   opaque byte array of absolute geometry, and `restoreGeometry` has
 //!   nowhere to report that it put the window somewhere else. `anchored`
 //!   resolves a display-relative anchor and **names** the substitution when the
 //!   display it asks for is gone.
@@ -53,16 +54,16 @@
 //! }
 //! ```
 //!
-//! An **empty** `displays` list is a real state — a headless or surfaceless
-//! session — not an error, so this method has no `*Unavailable` token. Qt
-//! models the same state as `primaryScreen()` answering `nullptr`, which is the
-//! shape that produces the crash rather than the answer.
+//! An **empty** `displays` list is a real state — a headless or surfaceless session —
+//! not an error, so this method has no `*Unavailable` token. The toolkit models the same
+//! state as `primaryScreen()` answering `nullptr`, which is the shape that produces the crash
+//! rather than the answer.
 //!
 //! Three optional parameters add a derived answer each, and each is **absent**
 //! from the response unless it was asked for:
 //!
 //! * `at: {x, y}` — physical point → `at`, the display containing it, or
-//!   `null`. Qt `QGuiApplication::screenAt`.
+//!   `null`. The toolkit `screenAt`.
 //! * `probe: {x, y, w, h}` — physical rectangle → `placement`.
 //! * `anchor: {display, offset: [x, y]}` — a preset's place → `anchored`.
 //!
@@ -119,21 +120,21 @@ pub struct LogicalSizeOutcome {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DisplayOutcome {
     /// The address a layout preset names — unique within this response by
-    /// construction. Qt has no accessor for this at all: `QScreen::name()` is
-    /// platform text with no uniqueness guarantee, so the only handle Qt offers
-    /// is a `QScreen *` that dies on `screenRemoved`.
+    /// construction. The toolkit has no accessor for this at all: `name()` is
+    /// platform text with no uniqueness guarantee, so the only handle the
+    /// toolkit offers is a `screen *` that dies on `screenRemoved`.
     pub id: String,
     /// The platform's own name, verbatim. May be empty, and may repeat across
     /// displays — which is precisely why it is not the id.
     pub label: String,
     /// Physical bounds in the virtual desktop.
     pub bounds: DisplayRectOutcome,
-    /// Physical pixels per logical pixel. Qt `QScreen::devicePixelRatio`.
+    /// Physical pixels per logical pixel. The toolkit `devicePixelRatio`.
     pub scale: f64,
     /// This display's logical extent, derived from `bounds` and `scale`.
     pub logical_size: LogicalSizeOutcome,
     /// Refresh rate in millihertz, or `null` when the platform did not report
-    /// one. `QScreen::refreshRate()` answers `qreal`, so an unknown rate
+    /// one. `refreshRate()` answers `qreal`, so an unknown rate
     /// arrives there as a real-looking `0`.
     pub refresh_mhz: Option<u32>,
     /// Is this the primary display? At most one display in a response is.
@@ -258,8 +259,8 @@ impl From<(&Anchor, Anchored)> for AnchoredOutcome {
 /// its own forgotten parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DisplayAtOutcome {
-    /// The display containing the point, or `null` when it is on none. Qt
-    /// `QGuiApplication::screenAt` answers `nullptr` for the same case.
+    /// The display containing the point, or `null` when it is on none. The
+    /// toolkit `screenAt` answers `nullptr` for the same case.
     pub display: Option<String>,
 }
 
@@ -277,12 +278,12 @@ pub struct DisplaysOutcome {
     /// homeless window go".
     pub fallback: Option<String>,
     /// The smallest rectangle containing every display, or `null` when there
-    /// are none. Qt `QScreen::virtualGeometry`.
+    /// are none. The toolkit `virtualGeometry`.
     pub bounding_box: Option<DisplayRectOutcome>,
     /// Pixels on at least one display, counting an overlap once.
     pub covered_px: u64,
     /// Does the arrangement fill its own bounding box? `false` means there are
-    /// points inside `bounding_box` that are on no display — the fact Qt has no
+    /// points inside `bounding_box` that are on no display — the fact the toolkit has no
     /// accessor for.
     pub gap_free: bool,
     /// The display containing the requested `at` point. Absent unless `at` was

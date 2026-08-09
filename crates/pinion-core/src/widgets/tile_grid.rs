@@ -1,12 +1,13 @@
 //! R1607 §5.21 — **a dashboard's tiles are a value**, and the layout it needs
 //! already existed.
 //!
-//! The analyzer-tool audit's plane-C gap was a Grafana-class tile dashboard:
-//! independent cards on a fixed column grid, dragged, snapped and resized, with
-//! the arrangement saved under a name. pinion's docking is Qt's `QDockWidget`
-//! model — a splitter tree with tabs and tear-off — and that is a **different
-//! thing**: a splitter tree is nested bisection, so its freedom is bounded by the
-//! tree's shape, and widening one card re-divides its neighbours.
+//! The analyzer-tool audit's plane-C gap was a dashboard tool-class tile
+//! dashboard: independent cards on a fixed column grid, dragged, snapped and
+//! resized, with the arrangement saved under a name. pinion's docking is the
+//! toolkit's dock widget model — a splitter tree with tabs and tear-off — and
+//! that is a **different thing**: a splitter tree is nested bisection, so its
+//! freedom is bounded by the tree's shape, and widening one card re-divides
+//! its neighbours.
 //!
 //! ## What this round did NOT build, and why that is the finding
 //!
@@ -30,15 +31,15 @@
 //! interesting part is not rejection but a reflow that terminates, is
 //! deterministic, and can be told to a person.
 //!
-//! ## Past Grafana
+//! ## Past the dashboard tool
 //!
-//! Grafana pushes displaced panels down and **says nothing**; its layout runs
-//! as a side effect of the drag. Two choices here differ:
+//! The dashboard tool pushes displaced panels down and **says nothing**; its
+//! layout runs as a side effect of the drag. Two choices here differ:
 //!
 //! * **A move reports what it displaced.** [`Reflow`] names every tile that
 //!   moved and where it came from, which is what an undo record, a "your layout
 //!   changed" notice, and an agent driving the dashboard over the wire all need.
-//! * **Compaction is a verb, not a consequence.** Grafana floats tiles up to
+//! * **Compaction is a verb, not a consequence.** the dashboard tool floats tiles up to
 //!   close gaps automatically, so a drag has a non-local effect nobody asked
 //!   for and its inverse is not a drag. [`TileGrid::compact`] is a separate
 //!   call, so an editor decides whether "tidy up" is part of the gesture.
@@ -56,25 +57,24 @@
 //! > a [`TileNudge`] moves one by a single cell. One private `set_edge`, four
 //! > public entry points.
 //!
-//! Qt's floor for all of this is `QMdiSubWindow`, and it is a real floor —
-//! keyboard move *and* resize exist there. Measured against
-//! `qtbase/src/widgets/widgets/qmdisubwindow.cpp` in Qt 6.11.1, five things
-//! here are different on purpose:
+//! The toolkit's floor for all of this is MDI child window, and it is a real
+//! floor — keyboard move *and* resize exist there. Measured against `the toolkit's widget module/src/widgets/widgets/qmdisubwindow.cpp` in the
+//! toolkit 6.11.1, five things here are different on purpose:
 //!
-//! * **No mode.** Qt's keyboard editing lives behind `isInInteractiveMode`,
+//! * **No mode.** the toolkit's keyboard editing lives behind `isInInteractiveMode`,
 //!   entered only from the *system menu* — `_q_enterInteractiveMode` starts by
-//!   casting `q->sender()` to a `QAction` and returns if it is not one of
+//!   casting `q->sender()` to a action and returns if it is not one of
 //!   `actions[MoveAction]` / `actions[ResizeAction]`. So switching from moving
 //!   to resizing costs a menu round trip. Here the chord says which, and
 //!   [`TileNudge`] is one flat vocabulary of twelve.
-//! * **Nothing warps the pointer.** Qt implements each arrow key as
+//! * **Nothing warps the pointer.** the toolkit implements each arrow key as
 //!   `parentWidget()->mapFromGlobal(cursor().pos() + delta)` and then
 //!   `cursor().setPos(...)` to catch the mouse up, with the *whole*
 //!   `keyPressEvent` body inside `#ifndef QT_NO_CURSOR` — so on a cursor-less
-//!   build Qt has no keyboard layout editing at all, and on every other build a
+//!   build the toolkit has no keyboard layout editing at all, and on every other build a
 //!   keyboard user's physical pointer jumps across the screen. A nudge here is
 //!   arithmetic on cells.
-//! * **A keyboard edit can be taken back.** Qt saves `oldGeometry` on entering
+//! * **A keyboard edit can be taken back.** the toolkit saves `oldGeometry` on entering
 //!   interactive mode and **never restores it**: `Key_Escape`, `Key_Return` and
 //!   `Key_Enter` all fall to the same `leaveInteractiveMode()`, so Escape
 //!   *commits*. [`TileEdit`] is the undo point, and it must be one rather than
@@ -87,16 +87,15 @@
 //!   not overlap are separated on at least one axis — that is literally the
 //!   negation of [`Tile::overlaps`] — so every other tile lies beyond one of
 //!   the four edges ([`Tile::lies_beyond`]) and [`TileGrid::neighbour`] can
-//!   reach all of them. `QMdiArea` cannot have this property, because MDI
+//!   reach all of them. MDI area cannot have this property, because MDI
 //!   windows *may* overlap; its navigation is `activateNextSubWindow`, a walk
-//!   down a `QList` in creation order.
+//!   down a list in creation order.
 //!
-//! One more, on the pointer side: Qt's `initOperationMap` hand-writes nine rows
-//! pairing each of its private `Operation` values with a `ChangeFlag` bitmask
-//! (`HMove | HResize | HResizeReverse` …) **and** a cursor, and the enum, the
-//! map and the regions are all private, so no caller can enumerate the handles
-//! a subwindow has. [`TileHandle::ALL`] is the enumeration, and both the edges
-//! it moves and the [`TileHandle::cursor`] it asks for are *derived* from which
+//! One more, on the pointer side: the toolkit's `initOperationMap` hand-writes nine rows
+//! pairing each of its private `Operation` values with a `ChangeFlag` bitmask (`HMove | HResize | HResizeReverse` …) **and** a
+//! cursor, and the enum, the map and the regions are all private, so no caller
+//! can enumerate the handles a subwindow has. [`TileHandle::ALL`] is the enumeration, and
+//! both the edges it moves and the [`TileHandle::cursor`] it asks for are *derived* from which
 //! axes it touches.
 
 use serde::{Deserialize, Serialize};
@@ -132,10 +131,9 @@ impl std::fmt::Display for TileId {
 
 /// One card's slot: a rectangle of grid cells.
 ///
-/// **Zero-based**, like Grafana's `gridPos`, because a model that counts from
-/// zero and a CSS grid that counts from one is one conversion — and it happens
-/// in exactly one place ([`TileGrid::placement`]) rather than at every call
-/// site.
+/// **Zero-based**, like the dashboard tool's `gridPos`, because a model that counts
+/// from zero and a CSS grid that counts from one is one conversion — and it
+/// happens in exactly one place ([`TileGrid::placement`]) rather than at every call site.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tile {
     /// Whose tile.
@@ -199,9 +197,9 @@ impl Tile {
     /// least one direction, and no card can be stranded where no arrow key
     /// reaches it.
     ///
-    /// `QMdiArea` cannot make this claim, because its subwindows may overlap and
+    /// MDI area cannot make this claim, because its subwindows may overlap and
     /// the negation therefore does not hold; `activateNextSubWindow` walks a
-    /// `QList` in creation order instead, so its "next" window bears no relation
+    /// list in creation order instead, so its "next" window bears no relation
     /// to where the user is looking.
     #[must_use]
     pub const fn lies_beyond(&self, from: &Self, dir: TileDirection) -> bool {
@@ -285,12 +283,12 @@ impl TileEdge {
 /// (R1609) Where a resize gesture grabbed a tile: one edge, or the two that
 /// meet at a corner.
 ///
-/// Qt's peer is the private `QMdiSubWindowPrivate::Operation`, which has the
-/// same eight resize values plus `Move` and `None`. Two differences, and both
-/// come from *deriving* rather than tabulating: the set is
-/// [enumerable](Self::ALL) where Qt's enum is in a `_p.h` and its region map is
-/// private, and the [cursor](Self::cursor) follows from which axes the handle
-/// moves where `initOperationMap` writes one per row by hand.
+/// The toolkit's peer is the private `Operation`, which has the same eight resize
+/// values plus `Move` and `None`. Two differences, and both come from *deriving*
+/// rather than tabulating: the set is [enumerable](Self::ALL) where the
+/// toolkit's enum is in a `_p.h` and its region map is private, and the
+/// [cursor](Self::cursor) follows from which axes the handle moves where `initOperationMap`
+/// writes one per row by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TileHandle {
     /// The left side alone.
@@ -307,16 +305,16 @@ pub enum TileHandle {
     TopRight,
     /// The bottom-left corner.
     BottomLeft,
-    /// The bottom-right corner — the only one `QSizeGrip` can be.
+    /// The bottom-right corner — the only one size grip can be.
     BottomRight,
 }
 
 impl TileHandle {
     /// Every handle, in a stable order.
     ///
-    /// What lets a card paint its whole handle ring in a loop — and what
-    /// `QMdiSubWindow` cannot answer at all, since `isPersistent`-style
-    /// per-thing queries are the only public surface and `Operation` is private.
+    /// What lets a card paint its whole handle ring in a loop — and what MDI
+    /// child window cannot answer at all, since `isPersistent`-style per-thing queries
+    /// are the only public surface and `Operation` is private.
     pub const ALL: [Self; 8] = [
         Self::Left,
         Self::Right,
@@ -361,12 +359,11 @@ impl TileHandle {
     ///
     /// **Derived, including the diagonal's slope.** A handle on one axis wants
     /// that axis's double arrow. A corner wants a diagonal, and *which*
-    /// diagonal follows from [`TileEdge::is_start`]: two start edges (top-left)
-    /// or two end edges (bottom-right) lie on the `⤡` diagonal, one of each on
-    /// `⤢`. Qt writes the same four cursors as literal values in nine
-    /// `operationMap.insert` rows beside a hand-written `ChangeFlag` mask, so a
-    /// row whose flags and cursor disagree is a state that exists there and
-    /// cannot exist here.
+    /// diagonal follows from [`TileEdge::is_start`]: two start edges (top-left) or two end
+    /// edges (bottom-right) lie on the `⤡` diagonal, one of each on `⤢`. The
+    /// toolkit writes the same four cursors as literal values in nine `operationMap.insert` rows
+    /// beside a hand-written `ChangeFlag` mask, so a row whose flags and cursor
+    /// disagree is a state that exists there and cannot exist here.
     #[must_use]
     pub const fn cursor(self) -> CursorHint {
         match (self.horizontal(), self.vertical()) {
@@ -388,13 +385,13 @@ impl TileHandle {
     /// fractions; `band` is how much of each side counts as a handle, clamped
     /// to at most half so the left and right bands cannot both claim a point.
     ///
-    /// Qt's `getOperation` walks nine cached `QRegion`s that
-    /// `updateDirtyRegions` has to rebuild whenever the widget's geometry
-    /// changes — a second copy of the geometry, kept in step by a callback. This
-    /// is a pure function of the point, so there is nothing to keep in step and
-    /// nothing to invalidate. A non-finite coordinate compares false against
-    /// both bounds and so reads as the interior, which is the safe answer: a
-    /// bad pointer sample moves a card rather than resizing it.
+    /// The toolkit's `getOperation` walks nine cached regions that `updateDirtyRegions` has to rebuild
+    /// whenever the widget's geometry changes — a second copy of the geometry,
+    /// kept in step by a callback. This is a pure function of the point, so
+    /// there is nothing to keep in step and nothing to invalidate. A
+    /// non-finite coordinate compares false against both bounds and so reads
+    /// as the interior, which is the safe answer: a bad pointer sample moves a
+    /// card rather than resizing it.
     #[must_use]
     pub fn at(u: f32, v: f32, band: f32) -> Option<Self> {
         let band = band.clamp(f32::EPSILON, 0.5);
@@ -468,10 +465,10 @@ impl TileDirection {
 
 /// (R1609) A one-cell keyboard edit — the whole vocabulary, twelve values.
 ///
-/// Flat on purpose. Qt reaches the same behaviours through a *mode*
-/// (`currentOperation`, set from a system-menu action) plus a delta, which means
-/// the same arrow key means different things depending on state the user cannot
-/// see and a screen reader is not told about.
+/// Flat on purpose. The toolkit reaches the same behaviours through a *mode*
+/// (`currentOperation`, set from a system-menu action) plus a delta, which means the same
+/// arrow key means different things depending on state the user cannot see and
+/// a screen reader is not told about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TileNudge {
     /// Slide the whole card one cell.
@@ -515,8 +512,8 @@ impl TileNudge {
 
 /// What a move or a resize did to the tiles it landed on.
 ///
-/// Grafana reflows silently; this is the record of it. Empty means the gesture
-/// fit where it was put.
+/// The dashboard tool reflows silently; this is the record of it. Empty means
+/// the gesture fit where it was put.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Reflow {
     displaced: Vec<Displaced>,
@@ -575,21 +572,20 @@ impl Reflow {
 ///
 /// **The undo point has to be the whole board, not the card's rectangle.** A
 /// move displaces other cards, so restoring only the one being dragged would
-/// leave the board rearranged around a card that had returned home. Qt makes
-/// exactly this mistake in miniature: `_q_enterInteractiveMode` stores
-/// `oldGeometry = q->geometry()` and then no path ever reads it back —
-/// `Key_Escape`, `Key_Return` and `Key_Enter` share one `leaveInteractiveMode()`
-/// arm, so a keyboard move in Qt cannot be abandoned at all.
+/// leave the board rearranged around a card that had returned home. The
+/// toolkit makes exactly this mistake in miniature: `_q_enterInteractiveMode` stores `oldGeometry = q->geometry()` and then no
+/// path ever reads it back — `Key_Escape`, `Key_Return` and `Key_Enter` share one `leaveInteractiveMode()` arm, so a keyboard
+/// move in the toolkit cannot be abandoned at all.
 ///
 /// The session deliberately does **not** hold the live arrangement. R1608's
-/// design point was that the painter, the wire and the assistive-technology tree
-/// read *one* `TileGrid`; a session carrying its own copy would make two that
-/// could disagree about what is on screen. So the caller keeps editing its grid
-/// and this holds only what to restore, plus the derivations that need both.
-/// Serializable for the same reason [`TileGrid`] is, and the framework asks for
-/// it directly: a session held in a `Signal` must round-trip, so an in-flight
-/// edit survives a persisted session and <kbd>Escape</kbd> still knows what to
-/// restore. Qt's `oldGeometry` is a private `QRect` member that dies with the
+/// design point was that the painter, the wire and the assistive-technology
+/// tree read *one* `TileGrid`; a session carrying its own copy would make two that
+/// could disagree about what is on screen. So the caller keeps editing its
+/// grid and this holds only what to restore, plus the derivations that need
+/// both. Serializable for the same reason [`TileGrid`] is, and the framework asks for
+/// it directly: a session held in a `Signal` must round-trip, so an in-flight edit
+/// survives a persisted session and <kbd>Escape</kbd> still knows what to
+/// restore. The toolkit's `oldGeometry` is a private rect member that dies with the
 /// widget.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TileEdit {
@@ -636,11 +632,11 @@ impl TileEdit {
     /// Whether anything at all has changed since the session opened.
     ///
     /// The question a bound makes necessary: a held arrow key at column zero
-    /// leaves the arrangement **equal**, and an announcement or an undo entry for
-    /// an edit that did nothing is noise. Qt asks the same question the same way
-    /// and only about the one widget — `keyPressEvent` compares
-    /// `currentGeometry == oldGeometry` and returns early — which is cheap here
-    /// because the arrangement is a value.
+    /// leaves the arrangement **equal**, and an announcement or an undo entry
+    /// for an edit that did nothing is noise. The toolkit asks the same
+    /// question the same way and only about the one widget — `keyPressEvent` compares `currentGeometry == oldGeometry`
+    /// and returns early — which is cheap here because the arrangement is a
+    /// value.
     #[must_use]
     pub fn changed(&self, now: &TileGrid) -> bool {
         &self.before != now
@@ -893,13 +889,13 @@ impl TileGrid {
 
     /// (R1609) Apply a one-cell keyboard edit.
     ///
-    /// The whole keyboard channel: twelve values, no mode, and every one of them
-    /// either the existing [`Self::move_to`] or the same `set_edge` a handle drag
-    /// runs. A nudge that has nowhere to go leaves the arrangement **equal** —
-    /// `TileGrid` is `PartialEq`, so "did that do anything" is one comparison
-    /// ([`TileEdit::changed`]) rather than a second return channel, and a held
-    /// arrow key at a bound stops instead of erroring (R1549's rule, where
-    /// `QAbstractSpinBox` keeps its repeat timer running against a pinned value).
+    /// The whole keyboard channel: twelve values, no mode, and every one of
+    /// them either the existing [`Self::move_to`] or the same `set_edge` a handle drag runs. A
+    /// nudge that has nowhere to go leaves the arrangement **equal** — `TileGrid` is
+    /// `PartialEq`, so "did that do anything" is one comparison ([`TileEdit::changed`]) rather than a
+    /// second return channel, and a held arrow key at a bound stops instead of
+    /// erroring (R1549's rule, where abstract spin box keeps its repeat timer
+    /// running against a pinned value).
     ///
     /// # Errors
     ///
@@ -952,8 +948,8 @@ impl TileGrid {
     /// band is what keeps navigation **total** — see [`Tile::lies_beyond`] for why
     /// the non-overlap invariant guarantees every card is reachable.
     ///
-    /// `QMdiArea` offers `activateNextSubWindow` / `activatePreviousSubWindow`
-    /// over a `QList`, so it has no notion of *direction* at all.
+    /// MDI area offers `activateNextSubWindow` / `activatePreviousSubWindow`
+    /// over a list, so it has no notion of *direction* at all.
     #[must_use]
     pub fn neighbour(&self, id: &TileId, dir: TileDirection) -> Option<&Tile> {
         let from = self.tile(id)?;
@@ -994,10 +990,10 @@ impl TileGrid {
 
     /// Float every tile as far up as it will go, closing gaps.
     ///
-    /// **A verb rather than a consequence.** Grafana does this after every drag,
-    /// so a gesture moves tiles the user did not touch and its inverse is not a
-    /// gesture; here an editor chooses whether tidying is part of the drag, and
-    /// the tiles that moved are named either way.
+    /// **A verb rather than a consequence.** the dashboard tool does this
+    /// after every drag, so a gesture moves tiles the user did not touch and
+    /// its inverse is not a gesture; here an editor chooses whether tidying is
+    /// part of the drag, and the tiles that moved are named either way.
     pub fn compact(&mut self) -> Reflow {
         let mut order: Vec<usize> = (0..self.tiles.len()).collect();
         order.sort_by_key(|&i| (self.tiles[i].row, self.tiles[i].col));
@@ -1123,12 +1119,11 @@ impl TileGrid {
 /// (R1609) **The one derivation under every resize**: put one edge of a tile on
 /// a grid line, holding the opposite edge still.
 ///
-/// Both public entry points funnel through here — [`TileGrid::drag_handle`] calls
-/// it once per edge in the handle, [`TileGrid::nudge`] once with a one-cell
-/// step — so a corner drag and a `Grow` chord cannot disagree about what moving a
-/// side means. Qt spreads the equivalent across `setNewGeometry`, a per-operation
-/// `ChangeFlag` mask (`HResizeReverse` marks the two edges that also move the
-/// origin) and `QWidget`'s own min/max clamping.
+/// Both public entry points funnel through here — [`TileGrid::drag_handle`] calls it once per edge
+/// in the handle, [`TileGrid::nudge`] once with a one-cell step — so a corner drag and a `Grow`
+/// chord cannot disagree about what moving a side means. The toolkit spreads
+/// the equivalent across `setNewGeometry`, a per-operation `ChangeFlag` mask (`HResizeReverse` marks the two
+/// edges that also move the origin) and widget's own min/max clamping.
 ///
 /// Clamping, stated once here rather than at each call site:
 ///
@@ -1415,8 +1410,9 @@ mod tests {
 
     #[test]
     fn r1609_a_handle_derives_its_edges_and_its_cursor() {
-        // The enumeration Qt keeps in a private header: eight handles, and each
-        // one's edges and cursor FOLLOW from which axes it moves.
+        // The enumeration the toolkit keeps in a private header: eight
+        // handles, and each one's edges and cursor FOLLOW from which axes it
+        // moves.
         assert_eq!(TileHandle::ALL.len(), 8);
         for handle in TileHandle::ALL {
             let axes = usize::from(handle.horizontal().is_some())
@@ -1444,9 +1440,9 @@ mod tests {
 
     #[test]
     fn r1609_the_handle_hit_test_is_a_pure_function_of_the_point() {
-        // Qt caches nine QRegions and rebuilds them from `updateDirtyRegions`
-        // whenever the geometry moves; this needs no cache, so there is nothing
-        // to invalidate.
+        // The toolkit caches nine regions and rebuilds them from `updateDirtyRegions` whenever
+        // the geometry moves; this needs no cache, so there is nothing to
+        // invalidate.
         assert_eq!(TileHandle::at(0.5, 0.5, 0.25), None, "the interior moves");
         assert_eq!(TileHandle::at(0.02, 0.5, 0.25), Some(TileHandle::Left));
         assert_eq!(TileHandle::at(0.98, 0.5, 0.25), Some(TileHandle::Right));
@@ -1710,9 +1706,10 @@ mod tests {
     #[test]
     fn r1609_a_nudge_with_nowhere_to_go_leaves_the_arrangement_equal() {
         // R1549's rule: a held arrow key at a bound STOPS. It does not error
-        // (that would make a repeat a failure) and it does not silently pretend
-        // to have worked — the arrangement is a value, so "nothing happened" is
-        // one comparison, which is how Qt's own keyPressEvent detects it too.
+        // (that would make a repeat a failure) and it does not silently
+        // pretend to have worked — the arrangement is a value, so "nothing
+        // happened" is one comparison, which is how the toolkit's own
+        // keyPressEvent detects it too.
         let mut grid = TileGrid::new(4);
         grid.place(Tile::new("one", 0, 0, 1, 1)).unwrap();
         let id = TileId::new("one");
@@ -1741,7 +1738,7 @@ mod tests {
 
     #[test]
     fn r1609_a_session_can_be_taken_back_and_it_restores_the_whole_board() {
-        // ★ Qt saves `oldGeometry` on entering interactive mode and never reads
+        // ★ the toolkit saves `oldGeometry` on entering interactive mode and never reads
         // it: Escape, Return and Enter share one arm. And even restoring the
         // rectangle would not be enough — a move displaces OTHER cards.
         let mut grid = dashboard();

@@ -44,14 +44,14 @@
 //! `intervene` on `encoding` cycles diverging -> sequential -> off, and the
 //! tiles re-pack as the bar's gutter appears and vanishes.
 //!
-//! ## Qt reference
+//! ## the toolkit reference
 //!
-//! Qt ships no treemap at all — neither Qt Charts nor Qt Graphs has an
-//! area-encoded part-of-whole form, so a two-variable market map is custom
-//! `QGraphicsScene` work there, and a `QCPColorScale`-style legend is a pixel
-//! widget. Here the bar's gradient stops and tick values ride in the scene as
-//! data, so an AI verifies the encoding — including the mirror — without
-//! sampling a pixel (§2 #7). See `tools/demos/r1439_market_map.py`.
+//! The toolkit ships no treemap at all — neither the toolkit Charts nor the
+//! toolkit Graphs has an area-encoded part-of-whole form, so a two-variable
+//! market map is custom canvas scene work there, and a CP color scale-style
+//! legend is a pixel widget. Here the bar's gradient stops and tick values
+//! ride in the scene as data, so an AI verifies the encoding — including the
+//! mirror — without sampling a pixel (§2 #7). See `tools/demos/r1439_market_map.py`.
 
 use std::rc::Rc;
 

@@ -81,7 +81,7 @@
 //! sequence + arrow navigation consult the derived visual order — so a
 //! committed edit that changes the active sort key moves its row on the
 //! very next paint while the cursor and the in-flight editor follow the
-//! source row (the Excel / Qt `QSortFilterProxyModel` behaviour). The
+//! source row (the Excel / the toolkit sort filter proxy model behaviour). The
 //! `GridSortState` coordinator is deliberately NOT reused here: it owns a
 //! static materialized `String` dataset (right for its read-only 10k-row
 //! consumers), while this grid's typed `Signal` model is the SSOT — per the
@@ -100,16 +100,15 @@
 //! / `query "view_len"`), so an AI client reads and restores the whole filter
 //! in one round-trip — read/write symmetric with the read-only proxies.
 //!
-//! Because the typed model is the SSOT, the match is by the cell's typed
-//! VALUE through [`CellValue::matches_filter`] (the value-not-label peer of
-//! `sort_cmp`), not its display string. **Edit-while-filtered** is the
-//! fold's payoff invariant (Excel / Qt `QSortFilterProxyModel`): every grid
-//! state stays SOURCE-keyed, so committing an edit that flips a row out of
-//! the filter drops the row on the next paint AND re-anchors the now-hidden
-//! source-keyed cursor to the visible row that takes its screen slot (the one
-//! [`reanchor_cursor`] SSOT, shared by the `set_filter` / `intervene` writes
-//! and the keyboard commit) — never the silent navigation teleport the R886
-//! sort fold left as a documented note.
+//! Because the typed model is the SSOT, the match is by the cell's typed VALUE
+//! through [`CellValue::matches_filter`] (the value-not-label peer of `sort_cmp`), not its display string.
+//! **Edit-while-filtered** is the fold's payoff invariant (Excel / the toolkit
+//! sort filter proxy model): every grid state stays SOURCE-keyed, so
+//! committing an edit that flips a row out of the filter drops the row on the
+//! next paint AND re-anchors the now-hidden source-keyed cursor to the visible
+//! row that takes its screen slot (the one [`reanchor_cursor`] SSOT, shared by the `set_filter` / `intervene`
+//! writes and the keyboard commit) — never the silent navigation teleport the
+//! R886 sort fold left as a documented note.
 //!
 //! ## Column grouping (R892 — the editable fold of the group axis)
 //!
@@ -294,11 +293,12 @@ const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("data_grid_edit",
 /// `hello-dnd` `"dnd-row"` peer): names what a drag session over this grid carries.
 const REORDER_KIND: &str = "data-grid-row";
 
-// ─── choice-popup tags + dimensions (R940) ────────────────────────
-// The floating dropdown a `Choice` cell opens (the property-grid popup pattern,
+// ─── choice-popup tags + dimensions (R940) ──────────────────────── The
+// floating dropdown a `Choice` cell opens (the property-grid popup pattern,
 // data-grid's 2nd consumer). The panel is anchored in GRID-LOCAL coordinates
-// (a sibling of the scroll viewport inside the grid container), scroll-aware so
-// it tracks the cell as the body scrolls (the Qt combobox-delegate behaviour).
+// (a sibling of the scroll viewport inside the grid container), scroll-aware
+// so it tracks the cell as the body scrolls (the toolkit combobox-delegate
+// behaviour).
 
 /// The open dropdown's container tag (a standalone overlay tag, like the
 /// inline editor's; not a composite send target).
@@ -398,9 +398,9 @@ const GRID_VIEWPORT_W: u32 = 370;
 const GRID_VIEWPORT_H: u32 = 268;
 
 /// R914 — float cell-scrub sensitivity: value units per pixel of horizontal
-/// drag (100 px ⇒ +1.0), the Blender / Unreal "drag the number field" gesture.
-/// Per-widget feel (the scrub *mechanism* is the shared [`DragCalibration`]; the
-/// sensitivity is the caller's tuning, like the property grid's own constant).
+/// drag (100 px ⇒ +1.0), the DCC / the engine "drag the number field" gesture.
+/// Per-widget feel (the scrub *mechanism* is the shared [`DragCalibration`]; the sensitivity
+/// is the caller's tuning, like the property grid's own constant).
 const SCRUB_FLOAT_PER_PX: f64 = 0.01;
 /// R914 — int cell-scrub sensitivity: pixels of horizontal drag per integer
 /// step (8 px ⇒ +1), so an int scrubs in whole units without runaway.
@@ -616,12 +616,12 @@ fn nrows(model: &[CellValue]) -> usize {
 }
 
 /// R937.1 — whether the grid is in the PLAIN source view (no sort / filter /
-/// group), where the visual order IS the source order, so a manual row reorder is
-/// 1:1 meaningful (Qt / Excel disable reorder under a sort proxy). The ONE
-/// predicate the coordinator's [`DataGridExternal::reorder_enabled`], the view
-/// (grip + drop line), and the a11y reorder actions all share, so the three can
-/// never disagree on when reorder is enabled — the R886.1 one-gate discipline
-/// (the R937 session-review caught this triplicated inline).
+/// group), where the visual order IS the source order, so a manual row reorder
+/// is 1:1 meaningful (the toolkit / Excel disable reorder under a sort proxy).
+/// The ONE predicate the coordinator's [`DataGridExternal::reorder_enabled`], the view (grip + drop line), and
+/// the a11y reorder actions all share, so the three can never disagree on when
+/// reorder is enabled — the R886.1 one-gate discipline (the R937
+/// session-review caught this triplicated inline).
 fn plain_view(
     sort: Option<(usize, bool)>,
     filter: Option<&GridFilter>,
@@ -679,16 +679,17 @@ fn default_row() -> Vec<CellValue> {
 /// the value a reset restores — so the indicator and the reset agree by
 /// construction (the SSOT [`default_row`] maps over).
 ///
-/// R961.1 honesty note: this is a **per-column** default (Unreal "reset to the
-/// column's default value"), NOT a frozen per-row boot snapshot. It deliberately
-/// differs from `hello-inspector` / `hello-property-grid`, which freeze the boot
-/// SEED as the baseline (so those boot with zero modified cells). A per-column
-/// default is the right fit for a **dynamic-length** grid — a runtime-added row
-/// has no boot-snapshot entry, so a frozen per-row baseline would need threading
-/// through every structural mutator (add / remove / move). The trade-off: a seed
-/// whose values differ from the empty column defaults boots with those cells
-/// marked modified (which is the same way Unreal shows a customized instance's
-/// overridden properties), and a reset clears such a cell to the column default.
+/// R961.1 honesty note: this is a **per-column** default (the engine "reset to
+/// the column's default value"), NOT a frozen per-row boot snapshot. It
+/// deliberately differs from `hello-inspector` / `hello-property-grid`, which freeze the boot SEED as the
+/// baseline (so those boot with zero modified cells). A per-column default is
+/// the right fit for a **dynamic-length** grid — a runtime-added row has no
+/// boot-snapshot entry, so a frozen per-row baseline would need threading
+/// through every structural mutator (add / remove / move). The trade-off: a
+/// seed whose values differ from the empty column defaults boots with those
+/// cells marked modified (which is the same way the engine shows a customized
+/// instance's overridden properties), and a reset clears such a cell to the
+/// column default.
 fn col_default(col: usize) -> CellValue {
     match COL_KINDS[col] {
         CellKind::Text => CellValue::Text(String::new()),
@@ -806,18 +807,18 @@ fn use_focused_col() -> Rc<Signal<usize>> {
     owner.cache("data_grid.focused_col", || Signal::new(0_usize))
 }
 
-/// R1372 §5.38 — the cell-range selection anchor `Some((source_row, col))`, the
-/// pinned corner the roving cursor extends a rectangle from (the spreadsheet /
-/// Qt `SelectItems` model R952 gave the Table widget; here the bespoke grid gets
-/// its own anchor Signal, the SOURCE-keyed peer of the [`use_focused_row`] /
-/// [`use_focused_col`] cursor). `None` = no range (a plain arrow collapses to a
-/// single cell). The selected RECTANGLE is derived at paint / copy time as the
-/// bbox of the anchor's and cursor's CURRENT visible positions (the source-keyed
-/// discipline every axis here follows — only paint / nav consult the visible
-/// order), so the highlight is a contiguous run of DATA positions under any sort
-/// / filter / group (a literal screen rectangle when ungrouped; a grouped view
-/// may interpose a group header — see [`cell_selection_bounds`]); an anchor
-/// hidden by a filter / collapse collapses the selection to the cursor.
+/// R1372 §5.38 — the cell-range selection anchor `Some((source_row, col))`, the pinned corner the
+/// roving cursor extends a rectangle from (the spreadsheet / the toolkit `SelectItems`
+/// model R952 gave the Table widget; here the bespoke grid gets its own anchor
+/// Signal, the SOURCE-keyed peer of the [`use_focused_row`] / [`use_focused_col`] cursor). `None` = no range
+/// (a plain arrow collapses to a single cell). The selected RECTANGLE is
+/// derived at paint / copy time as the bbox of the anchor's and cursor's
+/// CURRENT visible positions (the source-keyed discipline every axis here
+/// follows — only paint / nav consult the visible order), so the highlight is
+/// a contiguous run of DATA positions under any sort / filter / group (a
+/// literal screen rectangle when ungrouped; a grouped view may interpose a
+/// group header — see [`cell_selection_bounds`]); an anchor hidden by a filter / collapse
+/// collapses the selection to the cursor.
 #[must_use]
 fn use_cell_anchor() -> Rc<Signal<Option<(usize, usize)>>> {
     let owner = Owner::current().expect("use_cell_anchor requires an active Owner scope");
@@ -1064,13 +1065,13 @@ fn cursor_visual_pos(visible: &[usize], cursor: usize) -> usize {
 
 /// R891/R892 — re-anchor the SOURCE-keyed cursor into the visible DATA rows
 /// after a filter / group-by / collapse change or an edit hid its row (the
-/// R886.1 note made good: an EXPLICIT re-anchor, never the silent
-/// `position().unwrap_or(0)` teleport navigation once relied on). A no-op when
-/// the cursor's row is still visible; else the cursor lands on the visible row
-/// now at its prior slot `prior_vis` (clamped — Excel / Qt keep the selection
-/// at its screen position); a no-op when no data row is visible (every group
-/// collapsed / filter excludes all — the grid shows no active cell until one
-/// reappears). The single SSOT the coordinator writes and `commit_edit` share.
+/// R886.1 note made good: an EXPLICIT re-anchor, never the silent `position().unwrap_or(0)` teleport
+/// navigation once relied on). A no-op when the cursor's row is still visible;
+/// else the cursor lands on the visible row now at its prior slot `prior_vis` (clamped
+/// — Excel / the toolkit keep the selection at its screen position); a no-op
+/// when no data row is visible (every group collapsed / filter excludes all —
+/// the grid shows no active cell until one reappears). The single SSOT the
+/// coordinator writes and `commit_edit` share.
 fn reanchor_cursor(visible: &[usize], cursor: &Signal<usize>, prior_vis: usize) {
     if visible.contains(&cursor.get()) {
         return;
@@ -1232,12 +1233,12 @@ impl GridUndoCtx {
     }
 }
 
-/// R932 §5.52 — a reversible single-cell value edit (the `QUndoCommand` peer at
+/// R932 §5.52 — a reversible single-cell value edit (the undo command peer at
 /// the data-grid's cell granularity). Captures the cell's before / after value
-/// and the cursor's before / after source row; undo / redo restore the value and
-/// cursor, then re-anchor through [`GridUndoCtx::restore`] (so unlike a node
-/// editor's always-valid selection set, the single source-row cursor can never
-/// be left on a now-hidden row).
+/// and the cursor's before / after source row; undo / redo restore the value
+/// and cursor, then re-anchor through [`GridUndoCtx::restore`] (so unlike a node editor's
+/// always-valid selection set, the single source-row cursor can never be left
+/// on a now-hidden row).
 struct SetCellEdit {
     ctx: Rc<GridUndoCtx>,
     index: usize,
@@ -1538,13 +1539,14 @@ impl DataGridExternal {
         }
     }
 
-    /// R937 — whether a manual row drag-to-reorder is meaningful right now: only
-    /// in the **plain source view** (no sort / filter / group), where the visual
-    /// order IS the source order, so moving a row visually moves it in the source
-    /// `Vec` 1:1. A sort / filter / group derives the visual order from the data,
-    /// so a manual position would be ambiguous (Qt / Excel disable reorder under a
-    /// sort proxy) — the handle is then painted blank + `begin_drag` returns
-    /// `None`. Reads the three view-transform signals (subscribes in the view).
+    /// R937 — whether a manual row drag-to-reorder is meaningful right now:
+    /// only in the **plain source view** (no sort / filter / group), where the
+    /// visual order IS the source order, so moving a row visually moves it in
+    /// the source `Vec` 1:1. A sort / filter / group derives the visual order
+    /// from the data, so a manual position would be ambiguous (the toolkit /
+    /// Excel disable reorder under a sort proxy) — the handle is then painted
+    /// blank + `begin_drag` returns `None`. Reads the three view-transform signals
+    /// (subscribes in the view).
     fn reorder_enabled(&self) -> bool {
         plain_view(
             self.sort.get(),
@@ -2096,14 +2098,14 @@ impl DataGridExternal {
     }
 
     /// R937 — apply + journal a row move from source row `from` to resting index
-    /// `to` (both validated), recording ONE [`MoveRowEdit`]. A no-op `false` when
-    /// `from == to` or either is out of range. The ONE funnel the drag release,
-    /// the `move_row` RPC, and the keyboard Alt+Arrow all push through — a reorder
-    /// is the same journaled mutation regardless of input (cf. [`push_cell_edit`]).
-    /// The moved row follows the cursor to `to` (the grabbed row stays focused —
-    /// Excel / Qt drag keeps the dragged row selected); since reorder is enabled
-    /// only in the plain view, `to` is always visible, and undo restores the prior
-    /// cursor through [`GridUndoCtx::restore`].
+    /// `to` (both validated), recording ONE [`MoveRowEdit`]. A no-op `false` when `from == to` or
+    /// either is out of range. The ONE funnel the drag release, the `move_row` RPC,
+    /// and the keyboard Alt+Arrow all push through — a reorder is the same
+    /// journaled mutation regardless of input (cf. [`push_cell_edit`]). The moved row
+    /// follows the cursor to `to` (the grabbed row stays focused — Excel / the
+    /// toolkit drag keeps the dragged row selected); since reorder is enabled
+    /// only in the plain view, `to` is always visible, and undo restores the
+    /// prior cursor through [`GridUndoCtx::restore`].
     fn move_row(&self, from: usize, to: usize) -> bool {
         let n = self.nrows();
         if from >= n || to >= n || from == to {
@@ -2256,8 +2258,8 @@ impl DataGridExternal {
     }
 
     /// R965 — reset every modified cell in `row` to its column default (the
-    /// bulk-reset behind the Qt / Excel "reset this row" — exposed here as the
-    /// `reset_row` RPC verb; a header / context-menu control is a follow-up,
+    /// bulk-reset behind the toolkit / Excel "reset this row" — exposed here
+    /// as the `reset_row` RPC verb; a header / context-menu control is a follow-up,
     /// R965.1 honesty), returning the count cleared. A no-op (0) for an
     /// out-of-range row. One batched pass via `reset_cells`.
     fn reset_row(&self, row: usize) -> usize {
@@ -2595,7 +2597,7 @@ impl DataGridExternal {
             // bindings that do not use the cell path"), so it has none.
             //
             // R1562 — the vertical section axis. This grid's model answers no
-            // `headerData(section, Qt::Vertical, …)`, so it paints no row-header
+            // `headerData(section, Vertical, …)`, so it paints no row-header
             // band and no corner.
             GridSendKey::EditorStep { .. } => Err(InvokeError::rejected(
                 "data_grid.send: this grid hand-rolls its cell editing, \
@@ -3053,8 +3055,8 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
     // an arbitrary colour is `intervene value` with a `#RRGGBB` hex).
     SchemaField::action("open_color", "json"),
     SchemaField::action("pick_color", "int"),
-    // R960 — per-cell modified-from-default + reset-to-default (the
-    // editable grid's Unreal / Qt "reset property to default" affordance).
+    // R960 — per-cell modified-from-default + reset-to-default (the editable
+    // grid's the engine / the toolkit "reset property to default" affordance).
     SchemaField::parametric(
         "modified.<row>.<col>",
         "bool",
@@ -3596,8 +3598,9 @@ impl ExternalIntrospect for DataGridExternal {
             // R960 — reset every modified cell to its column default; returns the
             // count cleared (the inspector `reset_all` shape).
             "reset_all" => Ok(IntrospectValue::Int(int_of(self.reset_all()))),
-            // R965 — reset a whole row / column to its column default(s); returns
-            // the count cleared (the Qt / Excel "reset row" / "reset column").
+            // R965 — reset a whole row / column to its column default(s);
+            // returns the count cleared (the toolkit / Excel "reset row" /
+            // "reset column").
             "reset_row" => match args {
                 IntrospectValue::Int(i) => {
                     let row = usize::try_from(i).map_err(|_| {
@@ -7036,10 +7039,11 @@ mod tests {
         // The fold's payoff invariant: with Type=mesh active (Tree, Boss),
         // editing Tree's Type to "sprite" drops Tree from the view on the same
         // commit, and the source-keyed cursor re-anchors to the row that takes
-        // its screen slot (Boss) — Excel / Qt QSortFilterProxyModel behaviour.
-        // R940 — Type is now a Choice column, written by option index (sprite =
-        // 0) through the VALUE intervene (the AI-first typed write), not an inline
-        // text edit; the live filter / re-anchor behaviour is unchanged.
+        // its screen slot (Boss) — Excel / the toolkit sort filter proxy model
+        // behaviour. R940 — Type is now a Choice column, written by option
+        // index (sprite = 0) through the VALUE intervene (the AI-first typed
+        // write), not an inline text edit; the live filter / re-anchor
+        // behaviour is unchanged.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
@@ -9016,8 +9020,8 @@ mod tests {
     #[test]
     fn r932_view_state_changes_are_not_journaled() {
         // Honest scope: undo journals DATA edits (cells + row structure), not
-        // VIEW state (sort / filter / group / collapse) — the Qt / Unreal
-        // convention. Each of the four view ops adds no undo step.
+        // VIEW state (sort / filter / group / collapse) — the toolkit / the
+        // engine convention. Each of the four view ops adds no undo step.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {

@@ -72,13 +72,10 @@ pub struct CheckboxStyle {
     /// enumeration collects it as a Tab stop.
     ///
     /// Default `true`, and the default is the point: this field did not exist
-    /// until R1570, so `hello-checkbox` shipped a `role = CheckBox` that
-    /// `focus/set` refused and `focus/next` could not reach — which also made
-    /// its `apply_aria_activate` unreachable, since that gates on
-    /// `focused == Some(tag)`. HTML's native `<input type=checkbox>` and Qt's
-    /// `QCheckBox` (`Qt::StrongFocus`) are both focusable without asking, so
-    /// the fail-safe direction is the same one [`crate::button::ButtonStyle::focusable`]
-    /// took
+    /// until R1570, so `hello-checkbox` shipped a `role = CheckBox` that `focus/set` refused and `focus/next` could not
+    /// reach — which also made its `apply_aria_activate` unreachable, since that gates on `focused == Some(tag)`.
+    /// HTML's native `<input type=checkbox>` and the toolkit's check box (`StrongFocus`) are both focusable
+    /// without asking, so the fail-safe direction is the same one [`crate::button::ButtonStyle::focusable`] took
     /// at R1030 for the same reason.
     pub focusable: bool,
 }

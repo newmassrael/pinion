@@ -7,11 +7,11 @@
 //!
 //! ## What this demonstrates
 //!
-//! A professional editor (Unreal / Blender / an IDE) lets a user save a window
-//! arrangement under a name and switch between saved "workspaces" / "layouts" /
-//! "perspectives". pinion's dock topology is a serde-serializable
-//! [`DockTopology`] held in a reactive `Signal`, so a *preset* is just a stored
-//! topology and *applying* one is a `Signal::set`. This demo is that manager:
+//! A professional editor (the engine / the DCC / an IDE) lets a user save a
+//! window arrangement under a name and switch between saved "workspaces" /
+//! "layouts" / "perspectives". pinion's dock topology is a serde-serializable
+//! [`DockTopology`] held in a reactive `Signal`, so a *preset* is just a stored topology and
+//! *applying* one is a `Signal::set`. This demo is that manager:
 //!
 //!   * **apply** a named preset — deserialize its stored blob and swap the live
 //!     topology; the dock surface relayouts reactively.

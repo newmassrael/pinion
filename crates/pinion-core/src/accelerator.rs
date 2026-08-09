@@ -10,32 +10,32 @@
 //! Every toolkit needs the escape hatch, because the extreme case is real: a
 //! text field must keep the letter `d` even in a window where `d` is a
 //! shortcut, and a *key-sequence editor* must be able to record
-//! <kbd>Alt</kbd>+<kbd>F</kbd> in a window whose File menu claims it. Qt
+//! <kbd>Alt</kbd>+<kbd>F</kbd> in a window whose File menu claims it. The toolkit
 //! spells the hatch [`QEvent::ShortcutOverride`] — an event delivered to the
 //! focus widget before shortcut processing, which the widget `accept()`s to
 //! claim the key.
 //!
 //! Before R1569 pinion had **none of it**, and the consequence shipped: in
-//! `hello-textfield`, which binds `d` → `Disable`, typing `d` into the focused
-//! field disabled the field and the character never arrived. Four bindings in
-//! the tree carried that defect. Qt does not have it — `QLineEdit` accepts
-//! `ShortcutOverride` for any unmodified printable key — so this was one of
-//! the places the tree sat *below* the floor rather than above it.
+//! `hello-textfield`, which binds `d` → `Disable`, typing `d` into the focused field disabled the
+//! field and the character never arrived. Four bindings in the tree carried
+//! that defect. The toolkit does not have it — line edit accepts `ShortcutOverride` for any
+//! unmodified printable key — so this was one of the places the tree sat
+//! *below* the floor rather than above it.
 //!
-//! ## The shape, and why it is not Qt's
+//! ## The shape, and why it is not the toolkit's
 //!
 //! [`External::shadows_accelerator`](crate::external::External::shadows_accelerator)
 //! is a **question the router asks**, not an event a widget must remember to
 //! accept. The difference is not stylistic:
 //!
-//! * Qt's override must be accepted on *every* press. A widget that handles a
+//! * the toolkit's override must be accepted on *every* press. A widget that handles a
 //!   key in `keyPressEvent` but forgets the `ShortcutOverride` arm in
 //!   `event()` loses exactly the presses that collide with a shortcut — a
 //!   defect that is invisible until someone adds the colliding shortcut, in a
 //!   different file, possibly years later. Here the widget cannot be asked
 //!   too late, because the router asks before it dispatches.
-//! * Qt's override leaves **no record**. `QShortcutMap` is private and the
-//!   event is transient, so no Qt application can answer "what does
+//! * the toolkit's override leaves **no record**. shortcut map is private and the
+//!   event is transient, so no the toolkit application can answer "what does
 //!   <kbd>Alt</kbd>+<kbd>F</kbd> do right now". `scene/accelerators` answers
 //!   it, because the shadow is a function the router can evaluate against the
 //!   published map without anyone pressing anything.
@@ -45,34 +45,33 @@
 //!
 //! | Widget | shadows a bare `d` | shadows <kbd>Alt</kbd>+<kbd>F</kbd> |
 //! |---|---|---|
-//! | [`TextFieldExternal`](crate::widgets::text_field::TextFieldExternal) | yes — it is text | **no** — a mnemonic still works while typing, as in Qt |
+//! | [`TextFieldExternal`](crate::widgets::text_field::TextFieldExternal) | yes — it is text | **no** — a mnemonic still works while typing, as in the toolkit |
 //! | [`KeySequenceEditExternal`](crate::widgets::key_sequence::KeySequenceEditExternal) | yes | **yes** — recording a chord means recording *that* chord |
 //!
 //! ## Spelling
 //!
 //! [`Chord::portable`] renders Qt's [`QKeySequence::PortableText`] vocabulary
 //! (`Ctrl` / `Alt` / `Shift` / `Meta`) in a fixed order, and [`Chord::parse`]
-//! reads it back. The round trip is a **guarantee** here and is not one in Qt:
-//! `QKeySequence::fromString` maps an unrecognised name to `Qt::Key_unknown`
-//! and reports nothing, so `QKeySequence("Ctrl+Frobnicate")` is a silently
+//! reads it back. The round trip is a **guarantee** here and is not one in the toolkit:
+//! `fromString` maps an unrecognised name to `Key_unknown`
+//! and reports nothing, so `key sequence("Ctrl+Frobnicate")` is a silently
 //! wrong shortcut. [`ChordParseError`] names which part failed instead.
 //!
-//! The modifier *order* is fixed here rather than borrowed: Qt's lives in a
-//! private table in `qkeysequence.cpp`, so there is nothing to be compatible
-//! with — only something to be canonical about, and canonical is what makes
-//! the round trip a property rather than a coincidence.
+//! The modifier *order* is fixed here rather than borrowed: the toolkit's
+//! lives in a private table in `qkeysequence.cpp`, so there is nothing to be compatible with
+//! — only something to be canonical about, and canonical is what makes the
+//! round trip a property rather than a coincidence.
 //!
 //! ## Stated limit: a chord's identity is the W3C `key`, not the physical key
 //!
-//! `QKeySequence` stores a **key code** plus modifier bits, so `Ctrl+K` and
-//! `Ctrl+Shift+K` share one `Qt::Key_K`. A [`Chord`] stores the W3C
-//! `KeyboardEvent.key`, which is the *interpreted* value — `"k"` unmodified and
-//! `"K"` with <kbd>Shift</kbd> — so those are two distinct chords with two
-//! distinct spellings. Both round-trip, and both describe what the user
-//! actually pressed; what they cannot do is identify the physical key across
-//! layouts, which needs W3C's `KeyboardEvent.code` (`"KeyK"`). This
-//! framework's key wire carries `key` and not `code`, so that axis is absent
-//! upstream of this type rather than declined by it.
+//! key sequence stores a **key code** plus modifier bits, so `Ctrl+K` and `Ctrl+Shift+K` share
+//! one `Key_K`. A [`Chord`] stores the W3C `KeyboardEvent.key`, which is the *interpreted* value — `"k"`
+//! unmodified and `"K"` with <kbd>Shift</kbd> — so those are two distinct chords
+//! with two distinct spellings. Both round-trip, and both describe what the
+//! user actually pressed; what they cannot do is identify the physical key
+//! across layouts, which needs W3C's `KeyboardEvent.code` (`"KeyK"`). This framework's key wire
+//! carries `key` and not `code`, so that axis is absent upstream of this type
+//! rather than declined by it.
 //!
 //! [`QEvent::ShortcutOverride`]: https://doc.qt.io/qt-6/qevent.html
 //! [`QKeySequence::PortableText`]: https://doc.qt.io/qt-6/qkeysequence.html
@@ -142,11 +141,11 @@ impl Chord {
 
     /// Whether `key` names a modifier rather than a key pressed *with* one.
     ///
-    /// Qt's `QKeySequenceEdit::keyPressEvent` returns early on exactly this
-    /// set and records nothing, so a held <kbd>Ctrl</kbd> is invisible to a Qt
-    /// keymap editor. [`KeySequenceEdit`](crate::widgets::key_sequence::KeySequenceEdit)
-    /// publishes it as a pending prefix instead — the same fact, kept rather
-    /// than dropped.
+    /// The toolkit's `keyPressEvent` returns early on exactly this set and records
+    /// nothing, so a held <kbd>Ctrl</kbd> is invisible to a toolkit keymap
+    /// editor. [`KeySequenceEdit`](crate::widgets::key_sequence::KeySequenceEdit) publishes
+    /// it as a pending prefix instead — the same fact, kept rather than
+    /// dropped.
     #[must_use]
     pub fn is_modifier_only(&self) -> bool {
         matches!(
@@ -157,18 +156,17 @@ impl Chord {
 
     /// Whether this chord would produce **text** in an editable field.
     ///
-    /// This is Qt's own rule, from
-    /// `QWidgetLineControl::processShortcutOverrideEvent`:
-    /// an unmodified (or <kbd>Shift</kbd>-only) printable key is text, and text
-    /// belongs to the field rather than to a shortcut. A single-codepoint W3C
-    /// `key` string *is* the printable test — the R666 auto-discriminator
-    /// routes multi-codepoint names (`"Enter"`, `"F5"`) down the named-key arc,
-    /// which never reaches an accelerator layer at all.
+    /// This is the toolkit's own rule, from `processShortcutOverrideEvent`: an unmodified (or
+    /// <kbd>Shift</kbd>-only) printable key is text, and text belongs to the
+    /// field rather than to a shortcut. A single-codepoint W3C `key` string *is*
+    /// the printable test — the R666 auto-discriminator routes multi-codepoint
+    /// names (`"Enter"`, `"F5"`) down the named-key arc, which never reaches an
+    /// accelerator layer at all.
     ///
     /// <kbd>Alt</kbd> is excluded deliberately: <kbd>Alt</kbd>+char is the
     /// mnemonic vocabulary (R1543), so treating it as text would make a text
-    /// field swallow every accelerator in the window — which is neither Qt's
-    /// behaviour nor any toolkit's.
+    /// field swallow every accelerator in the window — which is neither the
+    /// toolkit's behaviour nor any toolkit's.
     ///
     /// **Stated limit**: on layouts where `AltGr` composes a character, W3C sets
     /// `ctrlKey` *and* `altKey` alongside the composed `key`, so such a
@@ -199,7 +197,7 @@ impl Chord {
     /// Qt's [`QKeySequence::PortableText`] spelling — `"Ctrl+Shift+P"`.
     ///
     /// Round-trips through [`Chord::parse`] for every chord this type can
-    /// hold, which is the property Qt does not have.
+    /// hold, which is the property the toolkit does not have.
     ///
     /// [`QKeySequence::PortableText`]: https://doc.qt.io/qt-6/qkeysequence.html
     #[must_use]
@@ -220,9 +218,9 @@ impl Chord {
     ///
     /// # Errors
     ///
-    /// Returns the [`ChordParseError`] naming which part failed. Qt's
-    /// `QKeySequence::fromString` has no error channel at all — an
-    /// unrecognised key name becomes `Qt::Key_unknown` and the caller is told
+    /// Returns the [`ChordParseError`] naming which part failed. The toolkit's
+    /// `fromString` has no error channel at all — an
+    /// unrecognised key name becomes `Key_unknown` and the caller is told
     /// nothing, so a typo in a config file becomes a shortcut that silently
     /// never fires.
     pub fn parse(source: &str) -> Result<Self, ChordParseError> {
@@ -264,8 +262,8 @@ impl fmt::Display for Chord {
 
 /// R1569 §5.39 — why a [`Chord::portable`] spelling could not be read back.
 ///
-/// Qt's `QKeySequence::fromString` answers a `QKeySequence` in every case,
-/// substituting `Qt::Key_unknown` for anything it did not recognise, so a
+/// The toolkit's `fromString` answers a key sequence in every case,
+/// substituting `Key_unknown` for anything it did not recognise, so a
 /// caller cannot tell a valid chord from a typo without comparing the
 /// round trip itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,10 +298,10 @@ impl std::error::Error for ChordParseError {}
 /// A property of the **window**, not of any widget: whether `Ctrl+S` is already
 /// spoken for is decided by what the window paints and what its binding maps,
 /// so a keymap editor asking "would this collide" is asking about the window.
-/// Qt cannot answer it at all — `QShortcutMap` is private, so a Qt application
-/// cannot enumerate its own accelerators, and `QKeySequenceEdit` will record a
-/// chord that is already a `QShortcut` with the collision surfacing later, at
-/// dispatch, as `QShortcutEvent::isAmbiguous()`.
+/// The toolkit cannot answer it at all — shortcut map is private, so a toolkit
+/// application cannot enumerate its own accelerators, and key-sequence editor
+/// will record a chord that is already a shortcut with the collision surfacing
+/// later, at dispatch, as `isAmbiguous()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcceleratorLayer {
     /// The §5.20 mnemonic map — some painted label declares this
@@ -329,19 +327,19 @@ impl AcceleratorLayer {
     }
 }
 
-/// R1569 §5.39 — an ordered run of [`Chord`]s, Qt's `QKeySequence`.
+/// R1569 §5.39 — an ordered run of [`Chord`]s, the toolkit's key sequence.
 ///
-/// Qt fixes the capacity at four (`QKeySequencePrivate::MaxKeyCount`) and
-/// `QKeySequenceEdit` exposes it as `maximumSequenceLength`. Here the bound is
-/// carried by the value rather than by the type, because a keymap editor and a
-/// chord *display* want different ones and Qt's constant is the reason
-/// `QKeySequence` silently truncates a longer sequence rather than reporting it.
+/// The toolkit fixes the capacity at four (`MaxKeyCount`) and key-sequence editor
+/// exposes it as `maximumSequenceLength`. Here the bound is carried by the value rather than by
+/// the type, because a keymap editor and a chord *display* want different ones
+/// and the toolkit's constant is the reason key sequence silently truncates a
+/// longer sequence rather than reporting it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KeySequence {
     chords: Vec<Chord>,
 }
 
-/// Qt's `QKeySequencePrivate::MaxKeyCount`, which `QKeySequenceEdit` also
+/// The toolkit's `MaxKeyCount`, which key-sequence editor also
 /// takes as its default `maximumSequenceLength`.
 pub const QT_MAX_SEQUENCE_LENGTH: usize = 4;
 
@@ -374,11 +372,10 @@ impl KeySequence {
     ///
     /// # Errors
     ///
-    /// [`SequenceFull`] when the sequence already holds `max` chords. Qt's
-    /// `QKeySequence::operator=` / `QKeySequenceEdit::setKeySequence` **truncate**
-    /// silently — the documented behaviour is "if the sequence is longer than
-    /// `maximumSequenceLength()`, it is truncated" — so a Qt caller cannot tell
-    /// a sequence that fit from one that was cut down to fit.
+    /// [`SequenceFull`] when the sequence already holds `max` chords. The toolkit's `operator=` /
+    /// `setKeySequence` **truncate** silently — the documented behaviour is "if the
+    /// sequence is longer than `maximumSequenceLength()`, it is truncated" — so a toolkit caller
+    /// cannot tell a sequence that fit from one that was cut down to fit.
     pub fn push(&mut self, chord: Chord, max: usize) -> Result<usize, SequenceFull> {
         if self.chords.len() >= max {
             return Err(SequenceFull {
@@ -395,8 +392,8 @@ impl KeySequence {
         self.chords.clear();
     }
 
-    /// Qt's `QKeySequence::PortableText` spelling — chords joined by `", "`,
-    /// which is Qt's own separator for a multi-chord sequence.
+    /// The toolkit's `PortableText` spelling — chords joined by `", "`,
+    /// which is the toolkit's own separator for a multi-chord sequence.
     ///
     /// Round-trips through [`KeySequence::parse`].
     #[must_use]
@@ -427,9 +424,10 @@ impl KeySequence {
 
 /// R1569 §5.39 — a chord could not be appended because the sequence was full.
 ///
-/// Carries the chord that was **dropped**, so the refusal names the fact rather
-/// than merely reporting that one happened — the R1564 / R1565 shape. Qt has no
-/// channel here at all: the sequence is truncated and nothing is returned.
+/// Carries the chord that was **dropped**, so the refusal names the fact
+/// rather than merely reporting that one happened — the R1564 / R1565 shape.
+/// The toolkit has no channel here at all: the sequence is truncated and
+/// nothing is returned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequenceFull {
     /// The declared maximum the sequence had already reached.
@@ -489,7 +487,7 @@ mod tests {
 
     #[test]
     fn every_representable_chord_round_trips() {
-        // The property Qt does not have. Exhaustive over the modifier
+        // The property the toolkit does not have. Exhaustive over the modifier
         // lattice rather than sampled, because the failure this guards is a
         // single arm of the table disagreeing with its parser.
         for bits in 0..16u8 {
@@ -509,7 +507,7 @@ mod tests {
 
     #[test]
     fn an_unknown_modifier_is_named_not_swallowed() {
-        // Qt answers `Qt::Key_unknown` here and reports nothing.
+        // The toolkit answers `Key_unknown` here and reports nothing.
         assert_eq!(
             Chord::parse("Ctrl+Frobnicate+P"),
             Err(ChordParseError::UnknownModifier("Frobnicate".to_owned())),
@@ -540,8 +538,8 @@ mod tests {
 
     #[test]
     fn a_full_sequence_refuses_and_names_the_dropped_chord() {
-        // Qt truncates here and returns nothing, so a caller cannot tell a
-        // sequence that fit from one that was cut down to fit.
+        // The toolkit truncates here and returns nothing, so a caller cannot
+        // tell a sequence that fit from one that was cut down to fit.
         let mut seq = KeySequence::new();
         for i in 0..QT_MAX_SEQUENCE_LENGTH {
             assert_eq!(
@@ -575,12 +573,11 @@ mod tests {
         assert_eq!(KeySequence::parse(""), Ok(KeySequence::new()));
     }
 
-    /// The spelling carries the W3C `key` VERBATIM. Pinned because the
-    /// tempting alternative — upper-casing a letter the way Qt's keycode model
-    /// renders it — would break the round trip that is this type's whole
-    /// claim over `QKeySequence::fromString`, and would do so only for
-    /// letters, which is the shape of a defect nobody notices until a config
-    /// file stops loading.
+    /// The spelling carries the W3C `key` VERBATIM. Pinned because the tempting
+    /// alternative — upper-casing a letter the way the toolkit's keycode model
+    /// renders it — would break the round trip that is this type's whole claim
+    /// over `fromString`, and would do so only for letters, which is the shape of a
+    /// defect nobody notices until a config file stops loading.
     #[test]
     fn case_is_the_wires_own_and_shift_is_not_folded_into_it() {
         let plain = Chord::new("k", mods(&["Ctrl"]));

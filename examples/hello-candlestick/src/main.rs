@@ -2,7 +2,7 @@
 //! **unordered**, and an axis that is a reading rather than a second source.
 //!
 //! The forcing consumer for [`pinion_chart::Candle`] and
-//! [`pinion_chart::CandlestickChart`] (Qt's `QCandlestickSeries`).
+//! [`pinion_chart::CandlestickChart`] (the toolkit's candlestick series).
 //!
 //! ## Why this is not the box plot again
 //!
@@ -12,27 +12,27 @@
 //! candle's `open` and `close` are ordered against the extremes and **not
 //! against each other**, and that absence is the datum. Wednesday here
 //! opened at 106 and closed at 106 — a *doji*, the session the whole form is
-//! read for — and Qt has no name for it: its documented rule paints
+//! read for — and the toolkit has no name for it: its documented rule paints
 //! `increasingColor` only when the close is *higher* than the open, so a doji
 //! takes the losing colour and no accessor can say otherwise.
 //!
 //! ## The direction is drawn twice, on purpose
 //!
 //! A rising body is **hollow**, a falling one **solid** — the traditional
-//! Japanese form, which predates colour. Qt encodes the direction in hue
-//! alone, and green-and-red is the worst possible pair for the commonest
+//! Japanese form, which predates colour. The toolkit encodes the direction in
+//! hue alone, and green-and-red is the worst possible pair for the commonest
 //! colour-vision deficiency. The "mono" chip here strips the hue to a single
 //! ink: the chart stays readable, because the fill carried it all along.
 //!
 //! ## The axis chips are two readings of ONE dataset
 //!
 //! The six sessions are Monday to Friday and then the *next* Monday. On the
-//! ordinal reading they abut and the weekend is invisible — which is right
-//! for reading price action. On the elapsed reading the last gap is three
-//! days wide, because three days passed. Qt reaches those two pictures by
-//! attaching two different axis objects and handing the category axis a
-//! `QStringList` unrelated to the sets' timestamps; here the slot names are
-//! derived from the instants, so the two cannot disagree.
+//! ordinal reading they abut and the weekend is invisible — which is right for
+//! reading price action. On the elapsed reading the last gap is three days
+//! wide, because three days passed. The toolkit reaches those two pictures by
+//! attaching two different axis objects and handing the category axis a string
+//! list unrelated to the sets' timestamps; here the slot names are derived
+//! from the instants, so the two cannot disagree.
 //!
 //! ## Verification (substrate-first)
 //!
@@ -90,8 +90,8 @@ const CAPTION_TAG: &str = "caption";
 /// The two x-axis readings, in the order their chips appear.
 const READINGS: [SessionAxis; 2] = [SessionAxis::Ordinal, SessionAxis::Elapsed];
 
-/// Chip labels — Qt's axis class names in parentheses, so a reader can look
-/// the equivalent up.
+/// Chip labels — the toolkit's axis class names in parentheses, so a reader
+/// can look the equivalent up.
 const READING_LABELS: [&str; 2] = ["Sessions (category)", "Elapsed (datetime)"];
 
 /// Boot: the ordinal reading (what a price chart is read on), no caps, hue
@@ -117,9 +117,9 @@ const DOJI: usize = 3;
 
 /// Six daily sessions: Monday to Friday, then the NEXT Monday.
 ///
-/// `(day offset, open, high, low, close)`. Day 5 and 6 are absent because the
-/// market was shut, which is the whole reason the two x-axis readings exist —
-/// and day 3 closes where it opened, which is the *doji* Qt cannot name.
+/// `(day offset, open, high, low, close)`. Day 5 and 6 are absent because the market was shut, which is the whole
+/// reason the two x-axis readings exist — and day 3 closes where it opened,
+/// which is the *doji* the toolkit cannot name.
 const SESSIONS: [(f64, f64, f64, f64, f64); 6] = [
     (0.0, 100.0, 104.0, 99.0, 103.0),
     (1.0, 103.0, 105.0, 101.0, 102.0),
@@ -494,10 +494,10 @@ fn resolve_reading_target(
 }
 
 impl WidgetA11y for CandlestickView {
-    /// The reading group as a WAI-ARIA `radiogroup`, the options as a `group`
-    /// of `button[aria-pressed]`, and the caption as a live region — so the
-    /// doji and the contrast ratio are HEARD, not only seen. Qt's charts
-    /// implement no accessibility interface at all.
+    /// The reading group as a WAI-ARIA `radiogroup`, the options as a `group` of `button[aria-pressed]`, and
+    /// the caption as a live region — so the doji and the contrast ratio are
+    /// HEARD, not only seen. The toolkit's charts implement no accessibility
+    /// interface at all.
     fn access_node(state: &Options, focused: Option<&str>) -> Vec<AccessNode> {
         let group_focused = focused == Some(READING_TAG);
         let active = rc::active_index(&state.reading_rows, state.reading_focused);
@@ -630,9 +630,9 @@ mod tests {
     }
 
     /// ★ The round, read off the data: Wednesday closed exactly where it
-    /// opened. Qt's documented rule paints `increasingColor` only when the
-    /// close is HIGHER than the open, so this session takes the losing colour
-    /// there and no accessor can say otherwise.
+    /// opened. The toolkit's documented rule paints `increasingColor` only when the close is
+    /// HIGHER than the open, so this session takes the losing colour there and
+    /// no accessor can say otherwise.
     #[test]
     fn r1567_the_doji_is_its_own_direction() {
         let c = &sessions()[DOJI];
@@ -713,7 +713,7 @@ mod tests {
     }
 
     /// ★ Every session draws a body and two wicks; the caps are opt-in, as
-    /// Qt's `capsVisible` is.
+    /// the toolkit's `capsVisible` is.
     #[test]
     fn r1567_the_caps_chip_adds_two_marks_per_session() {
         let plain = render(0, false, false);

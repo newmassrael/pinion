@@ -1,9 +1,9 @@
-//! R635 §5.7 pinion-forge codegen entrypoint for figma-button-m3.
+//! R635 §5.7 pinion-forge codegen entrypoint for the design tool-button-m3.
 //!
 //! Mirrors the hello-button / ai-introspect-demo build.rs shape:
 //! compile `app.pinion.xml` → `$OUT_DIR/app.rs` which main.rs pulls
 //! in via `include!`. The Vello renderer struct name is the only
-//! customization — every Figma-parity binding emits its own
+//! customization — every the design tool-parity binding emits its own
 //! `<Name>Renderer` so the codegen template stays single-source.
 
 use std::path::Path;

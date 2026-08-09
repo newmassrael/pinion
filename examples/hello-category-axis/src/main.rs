@@ -1,8 +1,7 @@
 //! `hello-category-axis` — R1545 §5.38 a **category** is an axis kind.
 //!
-//! The forcing consumer for [`pinion_chart::Categories`] /
-//! [`pinion_chart::CategoryScale`], the crate's fourth axis kind (Qt's
-//! `QBarCategoryAxis`, d3's `scaleBand`).
+//! The forcing consumer for [`pinion_chart::Categories`] / [`pinion_chart::CategoryScale`], the crate's fourth axis kind (the
+//! toolkit's bar category axis, d3's `scaleBand`).
 //!
 //! ## What was missing, given that bar charts already had categories
 //!
@@ -22,14 +21,14 @@
 //!
 //! ## The window is set by name, and the name is resolved
 //!
-//! Qt windows a category axis with `setRange(QString, QString)`, which returns
-//! `void`. A name that is not a category leaves the axis silently unwindowed,
-//! and a name carried by two categories resolves to the first with nothing
-//! said. Here [`Categories::window`](pinion_chart::Categories::window) answers
-//! a `Result`, so the failure has to be handled before it can reach a chart —
-//! the caption under the plots is that report, and preset <kbd>3</kbd> asks
-//! for a renamed month on purpose, the shape a saved dashboard view takes
-//! after a category is renamed upstream.
+//! The toolkit windows a category axis with `setRange(string, string)`, which returns `void`. A name
+//! that is not a category leaves the axis silently unwindowed, and a name
+//! carried by two categories resolves to the first with nothing said. Here
+//! [`Categories::window`](pinion_chart::Categories::window) answers a `Result`, so the failure has
+//! to be handled before it can reach a chart — the caption under the plots is
+//! that report, and preset <kbd>3</kbd> asks for a renamed month on purpose,
+//! the shape a saved dashboard view takes after a category is renamed
+//! upstream.
 //!
 //! ## Driving it
 //!
@@ -107,9 +106,9 @@ type Preset = (
 
 /// The three window presets.
 ///
-/// The third names a month the axis does not carry. It is the round's Qt
-/// comparison made reachable: with `setRange(QString, QString)` this request
-/// is a no-op the caller cannot detect.
+/// The third names a month the axis does not carry. It is the round's the
+/// toolkit comparison made reachable: with `setRange(string, string)` this request is a no-op the
+/// caller cannot detect.
 const PRESETS: [Preset; 3] = [
     ("1", "all months", None),
     ("2", "Apr-Jun", Some(("Apr", "Jun"))),
@@ -127,13 +126,13 @@ fn months() -> Categories {
     Categories::new(MONTHS)
 }
 
-/// The categorical x-axis window, requested by category NAME (Qt's
-/// `QBarCategoryAxis::setRange`) and resolved before it reaches a chart.
+/// The categorical x-axis window, requested by category NAME (the toolkit's
+/// `setRange`) and resolved before it reaches a chart.
 ///
 /// Holding the *request* rather than the resolved indices is deliberate: it is
-/// what Qt's API takes, and it is the form in which a saved view or a URL
-/// carries a window. The resolution then happens once, here, so the charts and
-/// the caption cannot disagree about whether it succeeded.
+/// what the toolkit's API takes, and it is the form in which a saved view or a
+/// URL carries a window. The resolution then happens once, here, so the charts
+/// and the caption cannot disagree about whether it succeeded.
 #[derive(Debug, Clone, Default)]
 struct CategoryWindowExternal {
     /// The requested `(from, to)` names. `None` = every category in view.
@@ -270,8 +269,9 @@ impl ExternalIntrospect for CategoryWindowExternal {
             "to" => Some(IntrospectValue::Text(to.to_string())),
             "lo" => Some(IntrospectValue::Int(lo)),
             "hi" => Some(IntrospectValue::Int(hi)),
-            // The count actually in view. Qt's `count()` answers every
-            // category whatever the range is, so this number has no Qt peer.
+            // The count actually in view. The toolkit's `count()` answers every
+            // category whatever the range is, so this number has no the
+            // toolkit peer.
             "visible" => Some(IntrospectValue::Int(match self.resolve() {
                 Ok(Some(w)) => index_i64(w.len()),
                 _ => index_i64(MONTHS.len()),
@@ -292,7 +292,7 @@ impl ExternalIntrospect for CategoryWindowExternal {
 
     /// `range` takes `{"from": name, "to": name}` and answers the lookup
     /// failure as text (empty when it resolved), so the write channel reports
-    /// what Qt's `void setRange` cannot.
+    /// what the toolkit's `void setRange` cannot.
     fn invoke(
         &mut self,
         path: &str,
@@ -645,8 +645,8 @@ impl WidgetCore for CategoryAxisView {
 
 impl WidgetA11y for CategoryAxisView {
     /// The toolbar is one group naming the window it controls, so a screen
-    /// reader is told which categories are in view — a thing Qt's category
-    /// axis cannot report to anyone, sighted or not.
+    /// reader is told which categories are in view — a thing the toolkit's
+    /// category axis cannot report to anyone, sighted or not.
     fn access_node(state: &WindowState, _focused: Option<&str>) -> Vec<AccessNode> {
         let name = match (state.unresolved, state.window) {
             (true, _) => "category window: not applied, all 12 months shown".to_string(),
@@ -744,9 +744,10 @@ mod tests {
         assert!(find(&windowed, "trend.label.x.3").is_none());
     }
 
-    /// ★ Past Qt: an unresolvable name is REPORTED and the charts stay whole,
-    /// where `setRange` would have returned `void` and left the axis silently
-    /// unwindowed — indistinguishable from a range that happened to be full.
+    /// ★ Past the toolkit: an unresolvable name is REPORTED and the charts
+    /// stay whole, where `setRange` would have returned `void` and left the axis
+    /// silently unwindowed — indistinguishable from a range that happened to
+    /// be full.
     #[test]
     fn r1545_an_unresolvable_name_is_reported_not_swallowed() {
         let scene = render(None, true);
@@ -767,8 +768,8 @@ mod tests {
         assert!(good.contains("3 of 12"), "got {good}");
     }
 
-    /// ★ The window external resolves the Qt-shaped by-name call and hands
-    /// back the failure the Qt call cannot.
+    /// ★ The window external resolves the toolkit-shaped by-name call and
+    /// hands back the failure the toolkit call cannot.
     #[test]
     fn r1545_the_window_external_answers_the_resolution() {
         let mut ext = CategoryWindowExternal::default();
@@ -859,9 +860,9 @@ mod tests {
         );
     }
 
-    /// ★ The window reaches assistive technology as a named group. Qt's
-    /// category axis reports its range to nobody: `QtCharts` draws into a
-    /// `QGraphicsScene` whose axis labels carry no accessible relationship.
+    /// ★ The window reaches assistive technology as a named group. The
+    /// toolkit's category axis reports its range to nobody: `the toolkit's charting module` draws into a
+    /// canvas scene whose axis labels carry no accessible relationship.
     #[test]
     fn r1545_a11y_names_the_categories_in_view() {
         let nodes =

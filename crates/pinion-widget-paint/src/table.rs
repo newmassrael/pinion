@@ -99,11 +99,11 @@ pub struct TableStyle {
     /// modal-scoped table opts out with `.with_focusable(false)`. Mirrors
     /// [`ButtonStyle::focusable`](crate::button::ButtonStyle::focusable).
     pub focusable: bool,
-    /// R1535 §5.27 — side length, in logical pixels, of the square a
-    /// [`Decoration::Swatch`] paints (default 10). Qt's default delegate
-    /// sizes a decoration from the view's `iconSize`; this is the grid-wide
-    /// equivalent, held here with the other cell dimensions so a decorated
-    /// column cannot pick a size the rest of the grid does not know about.
+    /// R1535 §5.27 — side length, in logical pixels, of the square a [`Decoration::Swatch`]
+    /// paints (default 10). The toolkit's default delegate sizes a decoration
+    /// from the view's `iconSize`; this is the grid-wide equivalent, held here with
+    /// the other cell dimensions so a decorated column cannot pick a size the
+    /// rest of the grid does not know about.
     pub decoration_px: u32,
     /// R1535 §5.27 — gap, in logical pixels, between a cell's decoration and
     /// its display text (default 8). Only spent when the cell **has** a
@@ -118,11 +118,11 @@ pub struct TableStyle {
     /// statement of it beside this number could only ever contradict the first.
     /// Unread by a grid whose model answers no vertical axis.
     ///
-    /// Stated rather than derived from the widest painted label. Qt derives it
-    /// (`QHeaderView::ResizeToContents`) and pays with a header whose width
-    /// changes as you scroll into longer labels; deriving it here would
-    /// additionally need the measured text extent, which is known one frame
-    /// late. 56px is Qt's own ballpark for a numeric vertical header.
+    /// Stated rather than derived from the widest painted label. The toolkit
+    /// derives it (`ResizeToContents`) and pays with a header whose width changes as you
+    /// scroll into longer labels; deriving it here would additionally need the
+    /// measured text extent, which is known one frame late. 56px is the
+    /// toolkit's own ballpark for a numeric vertical header.
     pub row_header_width: u32,
 }
 
@@ -133,7 +133,7 @@ pub struct TableStyle {
 const RESIZE_DIVIDER_W: u32 = 1;
 
 /// R1548 §5.27 — gap between the parts of one header section (its
-/// `Qt::DecorationRole` mark, its `Qt::DisplayRole` label, and — on the column
+/// `DecorationRole` mark, its `DisplayRole` label, and — on the column
 /// axis — its sort glyph), in logical pixels.
 ///
 /// One constant for **both** section axes: a row header lettered or spaced
@@ -143,11 +143,11 @@ const RESIZE_DIVIDER_W: u32 = 1;
 /// axis's — a cell's mark sits in body type beside body text.
 const SECTION_GAP_PX: u32 = 4;
 
-/// R1535 §5.27 — corner radius of a [`Decoration::Swatch`], in logical
-/// pixels. A softened **square**, not a disc: Qt paints a `QColor` decoration
-/// as a filled rectangle, and a square reads as a sample of the colour where a
-/// disc reads as a status light — this role carries whichever the model means,
-/// so the shape must not editorialise.
+/// R1535 §5.27 — corner radius of a [`Decoration::Swatch`], in logical pixels. A softened
+/// **square**, not a disc: the toolkit paints a color decoration as a filled
+/// rectangle, and a square reads as a sample of the colour where a disc reads
+/// as a status light — this role carries whichever the model means, so the
+/// shape must not editorialise.
 const SWATCH_RADIUS: u32 = 2;
 
 impl TableStyle {
@@ -209,7 +209,7 @@ pub struct TableData<'a> {
     /// too-short one) falls back to identity (`row_ids[v] == v`) — the
     /// unsorted R707 behaviour.
     pub row_ids: &'a [usize],
-    /// R1536 §5.27 — the `Qt::DecorationRole` accessor, the eager surface's
+    /// R1536 §5.27 — the `DecorationRole` accessor, the eager surface's
     /// peer of [`GridModel::decoration`]: `decoration(index)` returns the mark
     /// beside that cell's text, or `None`.
     ///
@@ -223,7 +223,7 @@ pub struct TableData<'a> {
     /// left two cell-paint contracts in one tree — the shape R1530 left on the
     /// header axis and R1532 on the delegate axis.
     pub decoration: Option<&'a dyn Fn(CellIndex) -> Option<Decoration>>,
-    /// R1547 §5.27 — the **column** section axis's `Qt::DecorationRole`
+    /// R1547 §5.27 — the **column** section axis's `DecorationRole`
     /// accessor, the eager surface's peer of [`HeaderAxis::decoration`]:
     /// `header_decoration(section)` returns the mark ahead of that column's
     /// label, or `None`.
@@ -240,9 +240,9 @@ pub struct TableData<'a> {
     /// is the open Model/View item R1530 named, and doing it here would be a
     /// second axis's work paid for on the first axis's round.
     pub header_decoration: Option<&'a dyn Fn(usize) -> Option<Decoration>>,
-    /// R1548 §5.27 — the **vertical** section axis, the eager surface's peer of
-    /// [`GridModel::rows`]: `Some` for a table that paints row headers (Qt
-    /// `headerData(section, Qt::Vertical, …)`), `None` for one that does not.
+    /// R1548 §5.27 — the **vertical** section axis, the eager surface's peer
+    /// of [`GridModel::rows`]: `Some` for a table that paints row headers (the toolkit `headerData(section, Vertical, …)`),
+    /// `None` for one that does not.
     ///
     /// Present here by the rule R1547.1 paid for: a role one grid surface
     /// answers and the other does not is two contracts in one tree, and the
@@ -347,12 +347,12 @@ fn icon_node(source: &str, side: u32, tag: &str) -> Scene {
 /// [`Decoration`] arm produced it.
 ///
 /// One function because the three rules are the contract, not per-arm taste:
-/// the declared square; **`flex-shrink: 0`**, so a decoration keeps its size in
-/// a tight cell and the *text* is what gives way (Qt draws at `iconSize` and
-/// elides the label — measured before this: a 10px swatch painted 6px in a 75px
+/// the declared square; **`flex-shrink: 0`**, so a decoration keeps its size in a tight
+/// cell and the *text* is what gives way (the toolkit draws at `iconSize` and elides
+/// the label — measured before this: a 10px swatch painted 6px in a 75px
 /// column); and **pointer-transparency**, so the click target stays the cell
-/// even though the mark carries a tag (independent axes — `pinion_overlay`'s
-/// focus ring is both).
+/// even though the mark carries a tag (independent axes — `pinion_overlay`'s focus ring is
+/// both).
 fn decoration_layout(side: u32) -> LayoutStyle {
     LayoutStyle::new()
         .with_size(Size::px(side, side))
@@ -360,7 +360,7 @@ fn decoration_layout(side: u32) -> LayoutStyle {
         .with_pointer_transparent(true)
 }
 
-/// R1547 §5.27 — the painted node for a `Qt::DecorationRole` answer, whichever
+/// R1547 §5.27 — the painted node for a `DecorationRole` answer, whichever
 /// arm it is: a [`Decoration::Swatch`]'s filled square or a
 /// [`Decoration::Icon`]'s image, both at `side` and both addressed by `tag`.
 ///
@@ -552,10 +552,10 @@ fn header_cell(
     } else {
         width
     };
-    // R1547 — the section's `Qt::DecorationRole` mark, ahead of its label and
-    // INSIDE the clickable inner container: a mark on a sortable column must
-    // not carve a dead zone out of the sort target. `decoration_layout` keeps it
-    // pointer-transparent, so the press lands on the header either way.
+    // R1547 — the section's `DecorationRole` mark, ahead of its label and INSIDE the
+    // clickable inner container: a mark on a sortable column must not carve a
+    // dead zone out of the sort target. `decoration_layout` keeps it pointer-transparent, so
+    // the press lands on the header either way.
     let (mut inner_children, aria_name) = section_content(
         section,
         &GridTag::header_decoration(tag, col),
@@ -642,7 +642,7 @@ fn section_label_style(style: &TableStyle, fg: Color) -> TextStyle {
 }
 
 /// R1548 §5.27 §5.40 — one section's painted content — its
-/// `Qt::DecorationRole` mark, then its `Qt::DisplayRole` label — plus the
+/// `DecorationRole` mark, then its `DisplayRole` label — plus the
 /// accessible name that content implies, on **either** axis.
 ///
 /// The single painter [`HeaderAxis`]'s doc promises. Before R1548 this was
@@ -755,12 +755,12 @@ impl ColumnPad {
 ///
 /// R1535 added the decoration role, and it is asked **here**, beside the
 /// display role, rather than through a second function of the same shape. The
-/// two roles' answers are indexed into positionally by [`data_row`], so
-/// fetching them separately would let a pane ask for the display role over one
-/// column span and the decoration role over another and paint a cell with its
-/// neighbour's mark. Asking both against one `span` in one pass makes that
-/// misalignment unrepresentable instead of merely unlikely — and it is the
-/// call shape Qt's `data(index, role)` has anyway: one index, every role.
+/// two roles' answers are indexed into positionally by [`data_row`], so fetching them
+/// separately would let a pane ask for the display role over one column span
+/// and the decoration role over another and paint a cell with its neighbour's
+/// mark. Asking both against one `span` in one pass makes that misalignment
+/// unrepresentable instead of merely unlikely — and it is the call shape the
+/// toolkit's `data(index, role)` has anyway: one index, every role.
 ///
 /// This replaces R1523's `clamped`, which existed to tolerate a row builder
 /// that returned fewer cells than the grid had columns. A per-cell contract
@@ -795,9 +795,9 @@ fn pane_cells(
 /// painted appearance. It is also no longer column-specific: since R1548 the
 /// row axis answers the same two roles into the same struct.
 struct SectionRoles {
-    /// `Qt::DisplayRole` — the label.
+    /// `DisplayRole` — the label.
     label: String,
-    /// `Qt::DecorationRole` — the mark ahead of the label, or `None`.
+    /// `DecorationRole` — the mark ahead of the label, or `None`.
     decoration: Option<Decoration>,
 }
 
@@ -812,13 +812,12 @@ impl SectionRoles {
     /// R1548 — ask **one** section, at one address, for every role the axis
     /// answers.
     ///
-    /// The single statement of "one address, every role" — the call shape Qt's
-    /// `headerData(section, orientation, role)` has anyway. Both bands go
-    /// through it: the column band over a contiguous span
-    /// ([`ask_sections`]), the row band over the windowed rows in *sort* order,
-    /// which is not a range and so cannot share the span form. What they must
-    /// share is this — that a section's two answers come from one index — and
-    /// they now do.
+    /// The single statement of "one address, every role" — the call shape the
+    /// toolkit's `headerData(section, orientation, role)` has anyway. Both bands go through it: the column band
+    /// over a contiguous span ([`ask_sections`]), the row band over the windowed rows in
+    /// *sort* order, which is not a range and so cannot share the span form.
+    /// What they must share is this — that a section's two answers come from
+    /// one index — and they now do.
     fn ask<L, D>(axis: &mut HeaderAxis<L, D>, section: usize) -> Self
     where
         L: FnMut(usize) -> String,
@@ -842,8 +841,8 @@ impl SectionRoles {
 /// one address, every role — the call shape `data(index, role)` has anyway.
 ///
 /// R1548 — `axis` replaced the two loose accessors, so this function is now
-/// axis-agnostic: the column band and the row band call it with `Qt::Horizontal`
-/// and `Qt::Vertical` respectively and there is no third shape either could
+/// axis-agnostic: the column band and the row band call it with `Horizontal`
+/// and `Vertical` respectively and there is no third shape either could
 /// drift into.
 fn ask_sections<L, D>(axis: &mut HeaderAxis<L, D>, span: Range<usize>) -> Vec<SectionRoles>
 where
@@ -914,7 +913,7 @@ struct RowPane<'a> {
     /// Resolved once per pane by `GridRender::painters`, because a column's
     /// delegate cannot vary by row.
     painters: &'a [Option<CellPainter<'a>>],
-    /// R1535 — this **row**'s per-column `Qt::DecorationRole` answers, aligned
+    /// R1535 — this **row**'s per-column `DecorationRole` answers, aligned
     /// with [`Self::widths`] (so index `j` is absolute column `col_base + j`).
     /// Unlike [`Self::painters`] this varies by row, which is the whole reason
     /// a decoration is a model role and not a delegate; it rides here because
@@ -1014,10 +1013,10 @@ fn header_row(
 /// Differs from the column cell in exactly what the axes differ in, and in
 /// nothing else — the shared [`section_content`] draws the mark and the label:
 ///
-/// - no sort glyph. Qt's vertical header can carry a sort indicator only
-///   because `QHeaderView` is orientation-generic; a *row* is not a sort key in
+/// - no sort glyph. The toolkit's vertical header can carry a sort indicator only
+///   because header view is orientation-generic; a *row* is not a sort key in
 ///   any item view, so the glyph would be an indicator of nothing.
-/// - no resize grabber. Qt resizes rows through the vertical header, but a row
+/// - no resize grabber. The toolkit resizes rows through the vertical header, but a row
 ///   here is `TableStyle::row_height` — one pitch for the whole grid, which the
 ///   windowing arithmetic (`uniform_slots`, `content_height`) is built on. A
 ///   per-row height is the variable-pitch axis, not this one.
@@ -1027,13 +1026,13 @@ fn header_row(
 /// R1562 / R1563 §5.27 — a header section's fill, **derived** from how much of
 /// the line through it is selected.
 ///
-/// Shared by both bands, so the vertical and the horizontal one cannot show the
-/// same fact two ways — and derived from the selection rather than set by a
-/// flag, so the band cannot say one thing while the body says another. Qt makes
-/// this a view flag (`QHeaderView::highlightSections`) that **defaults to
-/// false**: a Qt header is silent about the selection unless someone turns it
-/// on, and once on it is a second statement that can be turned back off while
-/// the rows stay washed.
+/// Shared by both bands, so the vertical and the horizontal one cannot show
+/// the same fact two ways — and derived from the selection rather than set by
+/// a flag, so the band cannot say one thing while the body says another. The
+/// toolkit makes this a view flag (`highlightSections`) that **defaults to false**: a toolkit
+/// header is silent about the selection unless someone turns it on, and once
+/// on it is a second statement that can be turned back off while the rows stay
+/// washed.
 ///
 /// [`SelectionExtent::Partial`] — R1563, unreachable before the column axis
 /// existed — takes the highest surface tone rather than the accent: the line is
@@ -1098,14 +1097,13 @@ fn row_header_cell(
         section_label_style(style, fg),
         style,
     );
-    // R1562 — the pressable region, by [`header_cell`]'s outer/inner split: the
-    // outer keeps the presentational `"<tag>_rh<row>"` tag the a11y walker
-    // resolves the `rowheader`'s bounds from, the inner carries the composite
-    // `"<click_tag>#r<row>"` so the press routes through the R51.42 funnel.
-    // Unconditional — a band is pressable wherever a coordinator owns the tag,
-    // and where none does the send reaches nothing, which is the same nothing
-    // Qt's `sectionsClickable(false)` produces without a second flag to keep in
-    // agreement with the first.
+    // R1562 — the pressable region, by [`header_cell`]'s outer/inner split: the outer
+    // keeps the presentational `"<tag>_rh<row>"` tag the a11y walker resolves the `rowheader`'s
+    // bounds from, the inner carries the composite `"<click_tag>#r<row>"` so the press routes
+    // through the R51.42 funnel. Unconditional — a band is pressable wherever
+    // a coordinator owns the tag, and where none does the send reaches
+    // nothing, which is the same nothing the toolkit's `sectionsClickable(false)` produces without a
+    // second flag to keep in agreement with the first.
     let inner = Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!(
@@ -1123,12 +1121,12 @@ fn row_header_cell(
             ),
     );
     // R1562 — the section's fill is DERIVED from whether its row is selected,
-    // through the same `row_fill` the body strip beside it uses, so the band
-    // cannot say one thing while the row says another. Qt makes this a view
-    // flag, `QHeaderView::highlightSections`, which **defaults to false** — so a
-    // Qt row header is silent about the selection unless someone turns it on,
-    // and once on it is a second statement that can be turned back off while the
-    // rows stay washed.
+    // through the same `row_fill` the body strip beside it uses, so the band cannot
+    // say one thing while the row says another. The toolkit makes this a view
+    // flag, `highlightSections`, which **defaults to false** — so a toolkit row header is
+    // silent about the selection unless someone turns it on, and once on it is
+    // a second statement that can be turned back off while the rows stay
+    // washed.
     let fill = section_fill(theme, selected, row);
     let mut cell = ContainerNode::new(vec![inner])
         .with_tag(GridTag::row_header(tag, row))
@@ -1138,10 +1136,9 @@ fn row_header_cell(
                 .flex(FlexDirection::Row)
                 .with_size(Size::px(width, style.row_height)),
         );
-    // §5.40 — a mark that carries meaning joins the `rowheader`'s accessible
-    // name, by the same rule `header_cell` applies on the other axis. Qt's
-    // `QAccessibleTableHeaderCell::text(Name)` answers from the
-    // `Qt::DisplayRole` alone on both orientations, so a Qt row header whose
+    // §5.40 — a mark that carries meaning joins the `rowheader`'s accessible name, by
+    // the same rule `header_cell` applies on the other axis. The toolkit's `text(Name)` answers
+    // from the `DisplayRole` alone on both orientations, so a toolkit row header whose
     // distinguishing information IS its glyph announces only the row's number.
     if let Some(name) = aria_name {
         cell = cell.with_aria_label(name);
@@ -1151,7 +1148,7 @@ fn row_header_cell(
 
 /// R1548 §5.27 §5.45 — the **vertical header band**: the corner cell, then one
 /// [`row_header_cell`] per windowed row, as a pane pinned to the grid's left
-/// edge (Qt `QTableView::verticalHeader()`).
+/// edge (the toolkit `verticalHeader()`).
 ///
 /// # Why this is a wrapper and not a fourth pane inside the split
 ///
@@ -1226,14 +1223,14 @@ fn row_header_pane(
 /// [`ColCell`] precedent on the other axis).
 #[derive(Clone, Copy)]
 struct RowSection<'a> {
-    /// The `Qt::DisplayRole` / `Qt::DecorationRole` answers for this section.
+    /// The `DisplayRole` / `DecorationRole` answers for this section.
     roles: &'a SectionRoles,
     /// R1563 — **how much** of this section's row is selected, from the same
     /// [`GridSelection`] question the body strip beside it is filled from.
     ///
     /// A tri-state rather than R1562's bool, because with a column axis a row
     /// can be partly selected and a bool has to round that to one of its
-    /// neighbours. Qt cannot show it at all: `highlightSections` is a bool per
+    /// neighbours. The toolkit cannot show it at all: `highlightSections` is a bool per
     /// section, so a row with two of two hundred columns selected paints
     /// identically to a fully selected one.
     selected: SelectionExtent,
@@ -1290,9 +1287,9 @@ struct BandCorner<'a> {
     click_tag: &'a str,
 }
 
-/// R1548 / R1562 §5.27 §5.40 — the cell where the two section axes meet (Qt's
-/// `QTableCornerButton`): `header_height` tall so the two bands' first rows
-/// line up.
+/// R1548 / R1562 §5.27 §5.40 — the cell where the two section axes meet (the
+/// toolkit's table corner button): `header_height` tall so the two bands' first rows line
+/// up.
 ///
 /// [`CornerAction::Inert`] paints the pre-R1562 blank block — tagged, because a
 /// painted thing with no tag cannot be asked about and the corner's extent is
@@ -1433,10 +1430,11 @@ fn data_row(
                 tag: &format!("{tag}#{}", GridSendKey::Cell { row: data_id, col }.encode()),
             };
             // R1544 — an open editor **replaces** this cell's display subtree,
-            // which is what an editor is: Qt's view hides the item and puts
-            // the editor widget in its rect. The column's editor delegate is
-            // consulted only here, so a grid that is not editing never asks
-            // for one (Qt calls `createEditor` at open time, not per paint).
+            // which is what an editor is: the toolkit's view hides the item
+            // and puts the editor widget in its rect. The column's editor
+            // delegate is consulted only here, so a grid that is not editing
+            // never asks for one (the toolkit calls `createEditor` at open time, not per
+            // paint).
             let painted = if let Some(slot) = pane.editing.iter().find(|e| e.col == col) {
                 let edit_render = CellEditRender {
                     cell: &render,
@@ -1458,8 +1456,8 @@ fn data_row(
             };
             // R1563 — the selection ink for a cell the row strip does not
             // cover. It wraps whatever the column's delegate produced rather
-            // than being that painter's job, which is both Qt's order
-            // (`QStyledItemDelegate::paint` draws `PE_PanelItemViewItem`
+            // than being that painter's job, which is both the toolkit's order
+            // (`paint` draws `PE_PanelItemViewItem`
             // first, then the content) and the only shape that works for a
             // delegate this framework did not write.
             if pane.selected_cells.get(j).copied().unwrap_or(false) {
@@ -1764,9 +1762,8 @@ fn eager_frame(
 // `&dyn Fn`, which is `Copy` but not `Debug`.
 #[derive(Clone, Copy)]
 pub struct VirtualTableData<'a> {
-    /// R1530 — total column count (Qt `QAbstractItemModel::columnCount`),
-    /// decoupled from the rendered window count exactly as [`Self::item_count`]
-    /// is on the row axis.
+    /// R1530 — total column count (the toolkit `columnCount`), decoupled from the
+    /// rendered window count exactly as [`Self::item_count`] is on the row axis.
     ///
     /// Until R1530 this was `headers: &[&str]`, and the count was that slice's
     /// length. That welded the extent to the labels: a grid could only learn
@@ -1832,29 +1829,28 @@ pub struct VirtualTableData<'a> {
     /// least one column must remain scrollable for the freeze to mean
     /// anything).
     pub frozen_cols: usize,
-    /// R998 §5.40 — an optional per-row coloring resolver: `row_style(source)`
-    /// returns `Some((bg, fg))` to paint that **source** data row with a
-    /// declarative style rule's tint (Wireshark / dlt-class row coloring), or
-    /// `None` to keep the default zebra fill. The binding wires it from a
-    /// [`RowStyleState`](pinion_core::widgets::row_style::RowStyleState):
-    /// `Some(&|src| rules.resolve(|c| cells(src)[c]).map(|t| (t.bg, t.fg)))`.
-    /// Resolved **per source row**, so a coloured row stays coloured across a
-    /// re-sort; selection still wins the highlight (precedence: selection >
-    /// rule > zebra). `None` (every pre-R998 caller) renders byte-identically.
+    /// R998 §5.40 — an optional per-row coloring resolver: `row_style(source)` returns `Some((bg, fg))` to
+    /// paint that **source** data row with a declarative style rule's tint
+    /// (the analyser / dlt-class row coloring), or `None` to keep the default
+    /// zebra fill. The binding wires it from a
+    /// [`RowStyleState`](pinion_core::widgets::row_style::RowStyleState): `Some(&|src| rules.resolve(|c| cells(src)[c]).map(|t| (t.bg, t.fg)))`. Resolved
+    /// **per source row**, so a coloured row stays coloured across a re-sort;
+    /// selection still wins the highlight (precedence: selection > rule >
+    /// zebra). `None` (every pre-R998 caller) renders byte-identically.
     pub row_style: Option<&'a dyn Fn(usize) -> Option<(Color, Color)>>,
-    /// R1532 §5.27 — per-**column** paint delegates (Qt
-    /// `QAbstractItemView::setItemDelegateForColumn`): `delegate(col)` returns
+    /// R1532 §5.27 — per-**column** paint delegates (the toolkit
+    /// `setItemDelegateForColumn`): `delegate(col)` returns
     /// the [`CellPainter`] that draws that column's cells, or `None` for the
     /// built-in text painter.
     ///
-    /// The column axis's answer to what [`Self::row_style`] is on the row
-    /// axis, and the reason it exists is that the grid could paint exactly one
-    /// thing. [`GridModel::cell`] answers with a `String`, so every column was
-    /// a label: a size column could not be a bar, a visibility column could not
-    /// be a mark, a swatch column could not be a swatch. That is the extension
-    /// point of every Model/View framework — Qt's `QStyledItemDelegate`, whose
-    /// documented purpose is precisely "a column that is not text" — and a
-    /// DCC/IDE grid is mostly made of such columns.
+    /// The column axis's answer to what [`Self::row_style`] is on the row axis, and the
+    /// reason it exists is that the grid could paint exactly one thing. [`GridModel::cell`]
+    /// answers with a `String`, so every column was a label: a size column could
+    /// not be a bar, a visibility column could not be a mark, a swatch column
+    /// could not be a swatch. That is the extension point of every Model/View
+    /// framework — the toolkit's styled item delegate, whose documented
+    /// purpose is precisely "a column that is not text" — and a DCC/IDE grid
+    /// is mostly made of such columns.
     ///
     /// **Asked once per painted column, not per cell.** The delegate for a
     /// column is a property of the column, so resolving it per cell would ask
@@ -1880,25 +1876,24 @@ pub struct VirtualTableData<'a> {
 /// R1532 §5.27 — what a [`CellPainter`] is given: everything about the one
 /// cell it draws.
 ///
-/// Qt hands its delegate `(painter, styleOption, index)`; this carries the
-/// same three things in the shape a structured-scene framework can use. There
-/// is no painter — §2 #1 forbids an opaque paint callback — so a delegate
-/// *returns* a [`Scene`] instead of drawing into one, which is what keeps a
-/// custom column as introspectable through `scene/snapshot` as a text one.
+/// The toolkit hands its delegate `(painter, styleOption, index)`; this carries the same three things in
+/// the shape a structured-scene framework can use. There is no painter — §2 #1
+/// forbids an opaque paint callback — so a delegate *returns* a [`Scene`] instead
+/// of drawing into one, which is what keeps a custom column as introspectable
+/// through `scene/snapshot` as a text one.
 ///
-/// [`Self::text`] is the model's answer for this cell, already fetched. A
-/// delegate that wants the raw datum parses it, or closes over its own model —
-/// the same choice Qt's delegate has between `index.data()` and reaching past
-/// it. Handing it over rather than making the delegate re-ask keeps
-/// [`GridModel::cell`] invoked exactly once per painted cell, which is the
-/// R1524 guarantee.
+/// [`Self::text`] is the model's answer for this cell, already fetched. A delegate that
+/// wants the raw datum parses it, or closes over its own model — the same
+/// choice the toolkit's delegate has between `index.data()` and reaching past it. Handing
+/// it over rather than making the delegate re-ask keeps [`GridModel::cell`] invoked exactly
+/// once per painted cell, which is the R1524 guarantee.
 pub struct CellRender<'a> {
-    /// Which cell (Qt's `QModelIndex`), with the **absolute** column.
+    /// Which cell (the toolkit's model index), with the **absolute** column.
     pub index: CellIndex,
-    /// The model's text for this cell (Qt `Qt::DisplayRole`).
+    /// The model's text for this cell (the toolkit `DisplayRole`).
     pub text: &'a str,
-    /// R1535 — the model's decoration for this cell (Qt
-    /// `Qt::DecorationRole`), or `None` when it has none.
+    /// R1535 — the model's decoration for this cell (the toolkit
+    /// `DecorationRole`), or `None` when it has none.
     ///
     /// Fetched by the same rule [`Self::text`] is — [`GridModel::decoration`]
     /// asked once per painted cell — so a delegate that wants to place the mark
@@ -1936,22 +1931,22 @@ pub struct CellRender<'a> {
     pub root: &'a str,
 }
 
-/// R1532 §5.27 — how one column's cells are painted (Qt
-/// `QStyledItemDelegate::paint`), wired per column through
+/// R1532 §5.27 — how one column's cells are painted (the toolkit
+/// `paint`), wired per column through
 /// [`VirtualTableData::delegate`].
 pub type CellPainter<'a> = &'a dyn Fn(&CellRender<'_>) -> Scene;
 
-/// R1544 §5.27 — how one column's **editor** is painted (Qt
-/// `QStyledItemDelegate::createEditor` + `setEditorData`), wired per column
+/// R1544 §5.27 — how one column's **editor** is painted (the toolkit
+/// `createEditor` + `setEditorData`), wired per column
 /// through [`GridEditing::editor`].
 ///
-/// Qt needs two calls because it hands back a live `QWidget` that must then be
-/// populated: `createEditor` constructs, `setEditorData` seeds. A view function
-/// rebuilds the editor's subtree from state on every frame, so "construct" and
-/// "seed with the current value" are not two moments — there is one, and it
-/// takes the seed ([`CellEditRender::edit`]) as an argument. That is not a
-/// shortcut around Qt's pair; it is what those two calls collapse to once the
-/// editor is a value rather than an object with a lifetime.
+/// The toolkit needs two calls because it hands back a live widget that must
+/// then be populated: `createEditor` constructs, `setEditorData` seeds. A view function rebuilds the
+/// editor's subtree from state on every frame, so "construct" and "seed with
+/// the current value" are not two moments — there is one, and it takes the
+/// seed ([`CellEditRender::edit`]) as an argument. That is not a shortcut around the toolkit's
+/// pair; it is what those two calls collapse to once the editor is a value
+/// rather than an object with a lifetime.
 pub type CellEditorPainter<'a> = &'a dyn Fn(&CellEditRender<'_>) -> Scene;
 
 /// R1544 §5.27 — what a [`CellEditorPainter`] is given: the display context
@@ -1966,7 +1961,7 @@ pub struct CellEditRender<'a> {
     /// An editor that wants to show the original beside the in-flight value
     /// has both.
     pub cell: &'a CellRender<'a>,
-    /// The model's `Qt::EditRole` answer for this cell: the seed the editor
+    /// The model's `EditRole` answer for this cell: the seed the editor
     /// opened with, and the [`CellKind`](pinion_core::CellKind) that selects
     /// the keystroke gate and
     /// the commit parser.
@@ -1999,11 +1994,11 @@ pub struct CellEditRender<'a> {
     /// R1571 — whether this editor holds the keyboard, and so the shared inline
     /// field named by [`Self::field_tag`].
     ///
-    /// The framework has one keyboard focus where Qt has one focusable
-    /// `QWidget` per editor, so with N editors open only one of them can be
-    /// typed into. A painter must branch on this: the focused editor paints the
-    /// live field (caret, selection, IME preedit), and the rest paint
-    /// [`Self::parked`].
+    /// The framework has one keyboard focus where the toolkit has one
+    /// focusable widget per editor, so with N editors open only one of them
+    /// can be typed into. A painter must branch on this: the focused editor
+    /// paints the live field (caret, selection, IME preedit), and the rest
+    /// paint [`Self::parked`].
     pub focused: bool,
     /// R1571 — the in-flight text of a **text-buffered** editor that does not
     /// hold the field ([`OpenEditor::parked_text`](pinion_core::widgets::grid_edit::OpenEditor::parked_text)).
@@ -2030,19 +2025,18 @@ impl CellEditRender<'_> {
 
 /// R1544 §5.27 — the open editors, and everything needed to paint them.
 ///
-/// One bundle on [`VirtualTableData`] rather than parallel fields, because they
-/// are only meaningful together: `None` **is** "this grid hosts no editors at
-/// all", which also means the per-column editor delegate is consulted only
-/// while editing — matching Qt, where `createEditor` is called when an edit
-/// starts and never during an ordinary paint.
+/// One bundle on [`VirtualTableData`] rather than parallel fields, because they are only
+/// meaningful together: `None` **is** "this grid hosts no editors at all", which
+/// also means the per-column editor delegate is consulted only while editing —
+/// matching the toolkit, where `createEditor` is called when an edit starts and never
+/// during an ordinary paint.
 ///
-/// R1571 — [`Self::open`] became a **slice**, because Qt's
-/// `openPersistentEditor` keeps N editors open at once. The binding narrows it
-/// to the painted rows through
-/// [`GridEditState::open_cells`](pinion_core::widgets::grid_edit::GridEditState::open_cells),
-/// so an editor outside the window costs this pass nothing — where Qt's
-/// `updateEditorGeometries()` repositions every persistent editor on every
-/// scroll whether or not its row is on screen.
+/// R1571 — [`Self::open`] became a **slice**, because the toolkit's `openPersistentEditor` keeps N editors
+/// open at once. The binding narrows it to the painted rows through
+/// [`GridEditState::open_cells`](pinion_core::widgets::grid_edit::GridEditState::open_cells), so an
+/// editor outside the window costs this pass nothing — where the toolkit's `updateEditorGeometries()`
+/// repositions every persistent editor on every scroll whether or not its row
+/// is on screen.
 #[derive(Clone, Copy)]
 pub struct GridEditing<'a> {
     /// R1571 — every open editor whose cell may be painted, with the model's
@@ -2056,8 +2050,8 @@ pub struct GridEditing<'a> {
     pub field_tag: &'static str,
     /// The inline field widget's statechart snapshot and caret byte.
     pub field: (TextFieldState, u32),
-    /// Per-**column** editor delegates (Qt
-    /// `QAbstractItemView::setItemDelegateForColumn`, editing half):
+    /// Per-**column** editor delegates (the toolkit
+    /// `setItemDelegateForColumn`, editing half):
     /// `editor(col)` returns the [`CellEditorPainter`] for that column, or
     /// `None` for the built-in [`text_cell_editor`].
     ///
@@ -2081,8 +2075,8 @@ impl core::fmt::Debug for GridEditing<'_> {
 }
 
 /// R1544 §5.27 — the built-in cell editor: the inline
-/// [`TextField`](pinion_core::widgets::text_field::TextField) Qt's
-/// `QItemEditorFactory` produces for every text / numeric `QVariant::Type`.
+/// [`TextField`](pinion_core::widgets::text_field::TextField) the toolkit's
+/// item editor factory produces for every text / numeric `Type`.
 ///
 /// Sized to the cell it replaces, so opening an editor does not reflow the
 /// row, and tagged with [`CellRender::tag`] on its container by the same rule
@@ -2134,9 +2128,8 @@ pub fn text_cell_editor(c: &CellEditRender<'_>) -> Scene {
 /// replacing it.
 const EDITOR_INSET_PX: u32 = 3;
 
-/// Width of a [`EditorForm::Stepper`]'s arrow column, in logical px — both
-/// arrows stack inside it, Qt `QSpinBox`'s `SC_SpinBoxUp` / `SC_SpinBoxDown`
-/// sub-controls.
+/// Width of a [`EditorForm::Stepper`]'s arrow column, in logical px — both arrows stack inside
+/// it, the toolkit spin box's `SC_SpinBoxUp` / `SC_SpinBoxDown` sub-controls.
 const STEP_COLUMN_W: u32 = 16;
 
 /// Side of a [`EditorForm::Swatch`]'s colour chip, in logical px.
@@ -2159,12 +2152,12 @@ const STEP_UP_GLYPH: &str = "\u{25B2}";
 const STEP_DOWN_GLYPH: &str = "\u{25BC}";
 
 /// R1555 §5.27 — **the built-in editor factory**: which editor a cell opens,
-/// chosen by its datum's kind. Qt `QItemEditorFactory`.
+/// chosen by its datum's kind. The toolkit item editor factory.
 ///
-/// The other half of Qt's editing decomposition from R1544's per-column
-/// delegate. A column delegate ([`GridEditing::editor`]) *overrides* this, which
-/// is exactly how `setItemDelegateForColumn` relates to the factory in Qt; with
-/// no delegate the cell's own datum decides, through
+/// The other half of the toolkit's editing decomposition from R1544's
+/// per-column delegate. A column delegate ([`GridEditing::editor`]) *overrides* this, which is
+/// exactly how `setItemDelegateForColumn` relates to the factory in the toolkit; with no delegate the
+/// cell's own datum decides, through
 /// [`CellKind::editor_form`](pinion_core::CellKind::editor_form).
 ///
 /// # What it replaces
@@ -2174,12 +2167,12 @@ const STEP_DOWN_GLYPH: &str = "\u{25BC}";
 /// keystroke and parse to nothing, so the seam opened a text field that could
 /// not be typed into and whose commit could never produce a value.
 ///
-/// # Where the forms are past Qt's default factory
+/// # Where the forms are past the toolkit's default factory
 ///
-/// See [`EditorForm`] — Qt's bool creator is a
+/// See [`EditorForm`] — the toolkit's bool creator is a
 /// two-item combo box, its double creator silently rounds to two decimals, its
 /// factory cannot produce a populated combo for an enumerated cell at all, and
-/// it has no colour creator, so a colour cell in a plain `QTableView` is not
+/// it has no colour creator, so a colour cell in a plain table view is not
 /// editable.
 ///
 /// Each form is public on its own so a delegate that only *extends* one
@@ -2222,18 +2215,19 @@ fn editor_shell(cell: &CellRender<'_>, children: Vec<Scene>) -> Scene {
 /// this editor holds the keyboard, and a static box holding its parked text
 /// when it does not.
 ///
-/// This framework has one keyboard focus where Qt has one focusable `QWidget`
-/// per editor, so with N editors open exactly one of them owns the field's
-/// buffer, its caret, its selection and its IME preedit. Painting
-/// [`view_field`](crate::text_field::view_field) for an unfocused editor would
-/// draw the *focused* editor's text under this cell's tag — one buffer read
-/// through two addresses — which is the defect
-/// [`EditBuffer::Parked`](pinion_core::widgets::grid_edit::EditBuffer::Parked)
-/// exists to make unrepresentable.
+/// This framework has one keyboard focus where the toolkit has one focusable
+/// widget per editor, so with N editors open exactly one of them owns the
+/// field's buffer, its caret, its selection and its IME preedit. Painting
+/// [`view_field`](crate::text_field::view_field) for an unfocused editor would draw the
+/// *focused* editor's text under this cell's tag — one buffer read through two
+/// addresses — which is the defect
+/// [`EditBuffer::Parked`](pinion_core::widgets::grid_edit::EditBuffer::Parked) exists to make
+/// unrepresentable.
 ///
-/// The picture matches Qt's: an unfocused `QLineEdit` shows its own text with
-/// no caret. What differs is the cost, and that is the point — an editor here
-/// is state, so an unfocused one is a text node rather than a live widget.
+/// The picture matches the toolkit's: an unfocused line edit shows its own
+/// text with no caret. What differs is the cost, and that is the point — an
+/// editor here is state, so an unfocused one is a text node rather than a live
+/// widget.
 ///
 /// The three text-buffered forms share it ([`text_cell_editor`],
 /// [`stepper_cell_editor`], [`swatch_cell_editor`]) so none of them can be the
@@ -2291,10 +2285,9 @@ fn editor_content_w(cell: &CellRender<'_>, reserved: u32) -> u32 {
 /// R1555 §5.27 — the [`EditorForm::Swatch`] editor: a colour chip beside a hex
 /// field.
 ///
-/// Qt's default factory has **no** `QColor` creator, so `createEditor` answers
-/// `nullptr`, `QStyledItemDelegate` passes it through, and
-/// `QAbstractItemView::edit` then silently does nothing — a colour cell in a
-/// plain `QTableView` is simply not editable.
+/// The toolkit's default factory has **no** color creator, so `createEditor` answers `nullptr`,
+/// styled item delegate passes it through, and `edit` then silently does nothing
+/// — a colour cell in a plain table view is simply not editable.
 ///
 /// The hex half is the in-flight buffer ([`EditorForm::buffer_is_text`] is true
 /// for this form), so the commit path is the same
@@ -2346,7 +2339,7 @@ pub fn swatch_cell_editor(c: &CellEditRender<'_>) -> Scene {
 }
 
 /// R1555 §5.27 — the [`EditorForm::Stepper`] editor: the inline field with two
-/// step affordances beside it. Qt `QSpinBox` / `QDoubleSpinBox`.
+/// step affordances beside it. The toolkit spin box / double spin box.
 ///
 /// The arrows are the **only** editor sub-parts with their own addresses
 /// ([`GridSendKey::EditorStep`]) — see that variant's doc for why the other
@@ -2413,11 +2406,11 @@ const STEP_GLYPH_PX: u32 = 9;
 
 /// R1555 §5.27 — the [`EditorForm::Toggle`] editor: an inline checkbox.
 ///
-/// Qt's default factory hands a two-item `QComboBox` reading "False" / "True"
-/// for a bool, which is why a Qt application that wants a checkbox writes a
-/// delegate. The box is the cell's own hit target (it fills the cell through
-/// the shared editor shell), so a click or <kbd>Space</kbd> reaching the cell is the
-/// toggle gesture and needs no sub-address.
+/// The toolkit's default factory hands a two-item combo box reading "False" /
+/// "True" for a bool, which is why a toolkit application that wants a checkbox
+/// writes a delegate. The box is the cell's own hit target (it fills the cell
+/// through the shared editor shell), so a click or <kbd>Space</kbd> reaching
+/// the cell is the toggle gesture and needs no sub-address.
 #[must_use]
 pub fn toggle_cell_editor(c: &CellEditRender<'_>) -> Scene {
     let cell = c.cell;
@@ -2449,13 +2442,12 @@ pub fn toggle_cell_editor(c: &CellEditRender<'_>) -> Scene {
     )
 }
 
-/// R1555 §5.27 — the [`EditorForm::Selector`] editor: the closed selector, Qt
-/// `QComboBox`.
+/// R1555 §5.27 — the [`EditorForm::Selector`] editor: the closed selector, the toolkit combo box.
 ///
-/// Qt's factory is keyed by `QVariant` type and an enumerated value **is an
-/// int** to `QVariant`, so no registration there can produce a combo populated
-/// with this cell's options. [`CellValue::Choice`] carries its own domain, so
-/// the shipped form can.
+/// The toolkit's factory is keyed by dynamic value type and an enumerated
+/// value **is an int** to dynamic value, so no registration there can produce
+/// a combo populated with this cell's options. [`CellValue::Choice`] carries its own domain,
+/// so the shipped form can.
 ///
 /// The list itself is a popup, which is an overlay the binding owns — the same
 /// division every popup in this tree has. What the factory ships is the closed
@@ -2523,8 +2515,8 @@ pub fn selector_cell_editor(c: &CellEditRender<'_>) -> Scene {
 struct CellEditorSlot<'a> {
     /// The absolute column whose cell is being edited.
     col: usize,
-    /// R1571 — the open editor and the model's `Qt::EditRole` answer for its
-    /// cell, as [`GridEditState::open_cells`](pinion_core::widgets::grid_edit::GridEditState::open_cells)
+    /// R1571 — the open editor and the model's `EditRole` answer for its cell, as
+    /// [`GridEditState::open_cells`](pinion_core::widgets::grid_edit::GridEditState::open_cells)
     /// resolved them.
     cell: &'a OpenCell,
     /// The inline field's `use_text_edit_state` key.
@@ -2535,64 +2527,63 @@ struct CellEditorSlot<'a> {
     paint: Option<CellEditorPainter<'a>>,
 }
 
-/// R1535 §5.27 — what a `Qt::DecorationRole` answer can be: the mark the
+/// R1535 §5.27 — what a `DecorationRole` answer can be: the mark the
 /// built-in painter draws **beside** the display text.
 ///
 /// # Why it is not named for the cell (R1547)
 ///
-/// It was `CellDecoration` while the cell axis was the only axis with a role
-/// dimension. A role is not axis-specific: Qt reaches a cell's mark with
-/// `data(index, Qt::DecorationRole)` and a column header's with
-/// `headerData(section, Qt::Horizontal, Qt::DecorationRole)` — one role, one
-/// `QVariant`, two addresses. Two types here would be two contracts that must
-/// agree about what a mark *is*, and the pair R1536 established (ink **and**
-/// what the ink means) is exactly the kind of agreement that decays when it is
-/// stated twice. So [`GridModel::decoration`] and
+/// It was `CellDecoration` while the cell axis was the only axis with a role dimension. A
+/// role is not axis-specific: the toolkit reaches a cell's mark with `data(index, DecorationRole)` and a
+/// column header's with `headerData(section, Horizontal, DecorationRole)` — one role, one dynamic value, two addresses. Two
+/// types here would be two contracts that must agree about what a mark *is*,
+/// and the pair R1536 established (ink **and** what the ink means) is exactly
+/// the kind of agreement that decays when it is stated twice. So [`GridModel::decoration`] and
 /// [`HeaderAxis::decoration`] answer with this, and one painter draws it.
 ///
 /// The grid's second data role, and the reason it is one is that R1532's
-/// delegate could not express it. A delegate belongs to a **column** — Qt's
-/// `setItemDelegateForColumn`, and a column's painter cannot vary by row — so a
-/// column whose mark differs per row (a status colour, a layer colour, a
-/// severity) had to be delegated wholesale and then re-derive the text the
-/// model had already answered with. A role is asked per **cell**, which is the
-/// axis the datum actually varies on.
+/// delegate could not express it. A delegate belongs to a **column** — the
+/// toolkit's `setItemDelegateForColumn`, and a column's painter cannot vary by row — so a column
+/// whose mark differs per row (a status colour, a layer colour, a severity)
+/// had to be delegated wholesale and then re-derive the text the model had
+/// already answered with. A role is asked per **cell**, which is the axis the
+/// datum actually varies on.
 ///
 /// # Why an enum with one arm
 ///
-/// `Qt::DecorationRole` is a *variant*: a `QColor`, a `QPixmap`, or a `QIcon`.
-/// Naming the role's type as a sum keeps the arms pinion cannot paint yet
-/// **absent** rather than misrepresented — a `Color` newtype would assert that
-/// a decoration is a colour, which is not what the role means. The icon arm is
-/// reachable (`Scene::Image` exists and the shell caches image sources), and it
-/// is deliberately not added here: it would ship an arm no consumer paints, and
-/// the round that adds it should be the round that has one.
+/// `DecorationRole` is a *variant*: a color, a pixmap, or a icon. Naming the role's type as
+/// a sum keeps the arms pinion cannot paint yet **absent** rather than
+/// misrepresented — a `Color` newtype would assert that a decoration is a colour,
+/// which is not what the role means. The icon arm is reachable (`Scene::Image` exists and
+/// the shell caches image sources), and it is deliberately not added here: it
+/// would ship an arm no consumer paints, and the round that adds it should be
+/// the round that has one.
 ///
 /// # Why the answer carries a meaning (R1536)
 ///
-/// Qt's decoration role is **appearance only** — a colour or an icon. What the
-/// mark *means* is a different role (`Qt::AccessibleTextRole`), which the item
-/// view does not wire to the decoration, so a rendered Qt cell cannot be asked
-/// what its mark stands for: `QAccessibleTableCell::text(Name)` returns the
-/// display string and the decoration contributes nothing. A status column that
-/// is only a colour is, to a Qt screen-reader user, an empty cell.
+/// The toolkit's decoration role is **appearance only** — a colour or an icon.
+/// What the mark *means* is a different role (`AccessibleTextRole`), which the item view does
+/// not wire to the decoration, so a rendered the toolkit cell cannot be asked
+/// what its mark stands for: `text(Name)` returns the display string and the decoration
+/// contributes nothing. A status column that is only a colour is, to a toolkit
+/// screen-reader user, an empty cell.
 ///
-/// Here the two travel together, so they cannot drift and a client that can see
-/// the mark can also read it. That is not Qt parity; Qt is the floor.
+/// Here the two travel together, so they cannot drift and a client that can
+/// see the mark can also read it. That is not the toolkit parity; the toolkit
+/// is the floor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoration {
-    /// Qt's `QColor` decoration — a filled square in the cell's leading edge,
+    /// The toolkit's color decoration — a filled square in the cell's leading edge,
     /// [`TableStyle::decoration_px`] a side.
-    /// Qt's `QIcon` / `QPixmap` decoration — an image drawn at the same square,
+    /// The toolkit's icon / pixmap decoration — an image drawn at the same square,
     /// resolved through the shell's image cache
     /// like any other [`Scene::Image`] source (a filesystem path, or the R1404
     /// `memory://<key>` scheme for a producer-registered RGBA buffer).
     ///
-    /// The peer arm, not a replacement: Qt's decoration role accepts a colour
-    /// **or** an icon, and a grid wants both — a layer colour is a swatch, a
-    /// file type is an icon. `meaning` is read by exactly the same rule as
-    /// [`Self::Swatch::meaning`]; an icon that restates its cell's text is as
-    /// decorative as a colour that does.
+    /// The peer arm, not a replacement: the toolkit's decoration role accepts
+    /// a colour **or** an icon, and a grid wants both — a layer colour is a
+    /// swatch, a file type is an icon. `meaning` is read by exactly the same rule as
+    /// [`Self::Swatch::meaning`]; an icon that restates its cell's text is as decorative as a
+    /// colour that does.
     Icon {
         /// The image source, e.g. `"memory://type-folder"`.
         source: String,
@@ -2640,7 +2631,7 @@ impl Decoration {
 /// R1532 §5.27 — the built-in painter: a left-aligned label in the row's
 /// foreground colour, preceded (R1535) by the cell's
 /// [`Qt::DecorationRole`](Decoration) mark when it has one. Qt's
-/// `QStyledItemDelegate`, which paints exactly these two roles.
+/// styled item delegate, which paints exactly these two roles.
 ///
 /// The tag is the composite hit-test tag (`"<root>#<row>_<col>"`); the
 /// keyboard-focus ring is the shell's job (R694 `paint_focus_ring` over the
@@ -2759,7 +2750,7 @@ pub struct GridScroll<'a> {
 }
 
 /// R1524 §5.27 — the address of **one cell**: the unit
-/// [`view_virtual_table`] asks its consumer for. Qt's `QModelIndex`.
+/// [`view_virtual_table`] asks its consumer for. The toolkit's model index.
 ///
 /// R1544 moved the definition to
 /// [`pinion_core::model_index`] — the editing latch
@@ -2772,16 +2763,15 @@ pub use pinion_core::CellIndex;
 /// R1548 §5.27 — **one section axis** of a grid's model: the roles that are
 /// asked of a *section* rather than of a cell.
 ///
-/// Qt spells both axes with one virtual, `headerData(int section,
-/// Qt::Orientation orientation, int role)`, and pays for it the way it pays for
-/// `QVariant`: the orientation is a **runtime argument**, so which roles a
-/// model answers may silently differ per axis. The failure has a shape everyone
-/// who has written a `QAbstractTableModel` has seen — override `headerData`,
-/// handle `Qt::Horizontal`, fall off the end returning `QVariant()`, and
-/// `QTableView` paints a vertical header of blank sections that still occupy
-/// their width. Nothing reports it: not the model, not the view, not the
-/// accessibility tree. The blank strip is indistinguishable from a table whose
-/// rows genuinely have no names.
+/// The toolkit spells both axes with one virtual, `headerData(int section, Orientation orientation, int role)`, and pays for it the way
+/// it pays for dynamic value: the orientation is a **runtime argument**, so
+/// which roles a model answers may silently differ per axis. The failure has a
+/// shape everyone who has written a abstract table model has seen — override
+/// `headerData`, handle `Horizontal`, fall off the end returning `dynamic value()`, and table view paints a
+/// vertical header of blank sections that still occupy their width. Nothing
+/// reports it: not the model, not the view, not the accessibility tree. The
+/// blank strip is indistinguishable from a table whose rows genuinely have no
+/// names.
 ///
 /// Here the orientation is promoted from an argument to **the type of the field
 /// the axis is stored in** ([`GridModel::columns`] / [`GridModel::rows`]), so:
@@ -2789,7 +2779,7 @@ pub use pinion_core::CellIndex;
 /// - a grid states which axes it answers, and [`no_row_header`] is a written
 ///   decision rather than a fallthrough;
 /// - the two axes answer the **same role set** by construction — a role added
-///   here is added to both or to neither, where Qt's orientation branch lets
+///   here is added to both or to neither, where the toolkit's orientation branch lets
 ///   one axis grow a role the other never learns about;
 /// - one painter draws either axis's answer, which is the property R1547
 ///   established for the mark's *type* now holding for the section as a whole.
@@ -2803,14 +2793,14 @@ pub use pinion_core::CellIndex;
 // grid's captured closures stay move-only.
 #[derive(Clone, Copy)]
 pub struct HeaderAxis<L, D> {
-    /// `Qt::DisplayRole` — invoked once per **painted section** with that
+    /// `DisplayRole` — invoked once per **painted section** with that
     /// section's absolute index, returning its label. A section with no label
     /// returns an empty `String`.
     ///
     /// Windowed: a section outside the painted band is never asked, so the cost
     /// of a header scales with the window rather than with the extent.
     pub label: L,
-    /// `Qt::DecorationRole` — invoked once per **painted section**, returning
+    /// `DecorationRole` — invoked once per **painted section**, returning
     /// the mark drawn ahead of that section's label, or `None`.
     ///
     /// Asked per section rather than per cell because that is the axis the
@@ -2822,22 +2812,21 @@ pub struct HeaderAxis<L, D> {
 }
 
 /// R1562 §5.27 §5.40 — what a press on the **corner** — the cell where the two
-/// section axes meet — does. Qt's `QTableView::setCornerButtonEnabled`.
+/// section axes meet — does. The toolkit's `setCornerButtonEnabled`.
 ///
-/// Qt's is a `bool` over a private `QTableCornerButton`, and its documented
-/// behaviour is one-way: pressing it "selects all cells in the view", with no
-/// state to show and no second press that takes the selection back. Here the
-/// two arms are the two decisions, and the acting one **carries what it will
-/// show** — the tri-state of an HTML header checkbox, which is the shape every
-/// modern table's select-all has and which Qt's button cannot express because it
-/// has no value at all.
-/// R1562 — re-exported where the corner names it, by the rule
-/// [`CellIndex`] is re-exported here: this is where every consumer of the band
-/// declaration meets the type, and the grid's own contract is stated in terms
-/// of it. Defined in `pinion-core` beside
-/// [`VirtualSelect`](pinion_core::widgets::virtual_select::VirtualSelect),
-/// because the extent is a fact about a **selection model** that a control
-/// happens to show.
+/// The toolkit's is a `bool` over a private table corner button, and its
+/// documented behaviour is one-way: pressing it "selects all cells in the
+/// view", with no state to show and no second press that takes the selection
+/// back. Here the two arms are the two decisions, and the acting one **carries
+/// what it will show** — the tri-state of an HTML header checkbox, which is
+/// the shape every modern table's select-all has and which the toolkit's
+/// button cannot express because it has no value at all. R1562 — re-exported
+/// where the corner names it, by the rule [`CellIndex`] is re-exported here: this is
+/// where every consumer of the band declaration meets the type, and the grid's
+/// own contract is stated in terms of it. Defined in `pinion-core` beside
+/// [`VirtualSelect`](pinion_core::widgets::virtual_select::VirtualSelect), because the
+/// extent is a fact about a **selection model** that a control happens to
+/// show.
 pub use pinion_core::widgets::virtual_select::SelectionExtent as CornerExtent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2855,28 +2844,27 @@ pub enum CornerAction {
 /// R1562 §5.27 — the **vertical header band**: its section axis, plus the
 /// corner where that band meets the horizontal one.
 ///
-/// A type rather than a third field on [`HeaderAxis`], because a corner is not
-/// a role: the horizontal axis has no corner of its own, and a field that means
-/// nothing on one of the two axes is exactly the drift [`HeaderAxis`] exists to
-/// prevent one level up. It is also where Qt puts it — `cornerButtonEnabled` is
-/// a `QTableView` property that can only matter when the vertical header is
-/// there to make a corner.
+/// A type rather than a third field on [`HeaderAxis`], because a corner is not a role:
+/// the horizontal axis has no corner of its own, and a field that means
+/// nothing on one of the two axes is exactly the drift [`HeaderAxis`] exists to prevent
+/// one level up. It is also where the toolkit puts it — `cornerButtonEnabled` is a table view
+/// property that can only matter when the vertical header is there to make a
+/// corner.
 ///
 /// Naming the band as a whole is what lets the corner reach both paint surfaces
 /// (the virtualized [`view_virtual_table`] and the eager [`view_table`]) from
 /// the one place they already share, `row_header_column`.
 #[derive(Clone, Copy)]
 pub struct RowHeaderAxis<L, D> {
-    /// The roles each **section** of the band answers (Qt `headerData(section,
-    /// Qt::Vertical, role)`).
+    /// The roles each **section** of the band answers (the toolkit `headerData(section, Vertical, role)`).
     pub sections: HeaderAxis<L, D>,
     /// What a press on the corner does.
     pub corner: CornerAction,
 }
 
 impl<L, D> RowHeaderAxis<L, D> {
-    /// A band whose corner does nothing — Qt's `setCornerButtonEnabled(false)`,
-    /// and every band painted before R1562.
+    /// A band whose corner does nothing — the toolkit's `setCornerButtonEnabled(false)`, and every band
+    /// painted before R1562.
     pub fn inert(sections: HeaderAxis<L, D>) -> Self {
         Self {
             sections,
@@ -2895,28 +2883,28 @@ impl<L, D> RowHeaderAxis<L, D> {
 }
 
 /// The type [`HeaderAxis::labelled`] and [`no_row_header`] name for "this
-/// axis answers no `Qt::DecorationRole`" — a plain `fn` pointer so the
+/// axis answers no `DecorationRole`" — a plain `fn` pointer so the
 /// constructors have a nameable return type and monomorphize to a constant
 /// `None`.
 type NoSectionDecoration = fn(usize) -> Option<Decoration>;
 
 /// The type [`no_row_header`] names for "this axis answers no
-/// `Qt::DisplayRole`".
+/// `DisplayRole`".
 type NoSectionLabel = fn(usize) -> String;
 
 impl HeaderAxis<NoSectionLabel, NoSectionDecoration> {
-    /// R1548 — Qt's own default `headerData` for a section that has no name of
+    /// R1548 — the toolkit's own default `headerData` for a section that has no name of
     /// its own: the 1-based section number.
     ///
-    /// `QAbstractItemModel::headerData` returns `section + 1` for an
-    /// un-overridden model, which is why an untouched `QTableView` shows
+    /// `headerData` returns `section + 1` for an
+    /// un-overridden model, which is why an untouched table view shows
     /// `1, 2, 3…` down its left edge. Provided as a **named** adapter, so a
     /// grid that wants row numbers says so, rather than inheriting them from a
     /// base class it forgot to override.
     ///
     /// The number is the section's absolute index, so under a sort permutation
     /// it numbers the *model's* rows and follows them as they move — the same
-    /// answer `QSortFilterProxyModel` produces by mapping the section back to
+    /// answer sort filter proxy model produces by mapping the section back to
     /// the source model before asking.
     #[must_use]
     pub fn row_numbers() -> Self {
@@ -2928,7 +2916,7 @@ impl HeaderAxis<NoSectionLabel, NoSectionDecoration> {
 }
 
 impl<L: FnMut(usize) -> String> HeaderAxis<L, NoSectionDecoration> {
-    /// R1548 — an axis that answers `Qt::DisplayRole` and nothing else, which
+    /// R1548 — an axis that answers `DisplayRole` and nothing else, which
     /// is every header this framework painted before R1547.
     pub fn labelled(label: L) -> Self {
         Self {
@@ -2938,24 +2926,22 @@ impl<L: FnMut(usize) -> String> HeaderAxis<L, NoSectionDecoration> {
     }
 }
 
-/// R1548 §5.27 — the [`GridModel::rows`] of a grid with **no vertical header**:
-/// a `QTableView` whose `verticalHeader()` is hidden, or a `QListView`, which
-/// has no such axis at all.
+/// R1548 §5.27 — the [`GridModel::rows`] of a grid with **no vertical header**: a table view
+/// whose `verticalHeader()` is hidden, or a list view, which has no such axis at all.
 ///
-/// A named function rather than a bare `None` because `None` does not typecheck
-/// here — the axis's two accessor types would be unconstrained — and because
-/// naming it is the point. This is the statement Qt cannot make: a Qt model that
-/// does not answer an orientation is byte-identical, at every observation point,
-/// to one that answers it with blanks, and the resulting strip of empty sections
-/// is reported by nothing. Here it is a written decision, greppable, and the
-/// view asks the axis **zero** times a frame.
+/// A named function rather than a bare `None` because `None` does not typecheck here
+/// — the axis's two accessor types would be unconstrained — and because naming
+/// it is the point. This is the statement the toolkit cannot make: a toolkit
+/// model that does not answer an orientation is byte-identical, at every
+/// observation point, to one that answers it with blanks, and the resulting
+/// strip of empty sections is reported by nothing. Here it is a written
+/// decision, greppable, and the view asks the axis **zero** times a frame.
 #[must_use]
 pub fn no_row_header() -> Option<RowHeaderAxis<NoSectionLabel, NoSectionDecoration>> {
     None
 }
 
-/// The [`HeaderAxis::label`] accessor of [`HeaderAxis::row_numbers`]: Qt's
-/// default `headerData`, `section + 1`.
+/// The [`HeaderAxis::label`] accessor of [`HeaderAxis::row_numbers`]: the toolkit's default `headerData`, `section + 1`.
 fn section_number(section: usize) -> String {
     (section + 1).to_string()
 }
@@ -2963,32 +2949,30 @@ fn section_number(section: usize) -> String {
 /// R1530 §5.27 — the two questions a virtualized grid asks its model, bundled
 /// as one parameter.
 ///
-/// Qt answers both from a single `QAbstractItemModel` — `data(index)` for a
-/// cell and `headerData(section, orientation)` for a column label — and they
-/// travel together here for the same reason: they are the same kind of thing
-/// (an accessor the grid invokes once per painted unit), so a grid that
-/// windows one and not the other is asking its consumer to do work it will
-/// throw away. Before R1530 only `cell` was an accessor; the headers arrived as
-/// a slice of **every** column, because [`VirtualTableData`] read the column
-/// count off its length.
+/// The toolkit answers both from a single abstract item model — `data(index)` for a cell
+/// and `headerData(section, orientation)` for a column label — and they travel together here for the same
+/// reason: they are the same kind of thing (an accessor the grid invokes once
+/// per painted unit), so a grid that windows one and not the other is asking
+/// its consumer to do work it will throw away. Before R1530 only `cell` was an
+/// accessor; the headers arrived as a slice of **every** column, because [`VirtualTableData`]
+/// read the column count off its length.
 ///
-/// The counts stay in [`VirtualTableData`] (`column_count` beside
-/// `item_count`), where the extents of the two axes are stated together; this
-/// holds the *accessors*. Selection is deliberately not here — Qt keeps it
-/// in a separate `QItemSelectionModel`, and so does `view_virtual_table`'s
-/// `is_selected`.
+/// The counts stay in [`VirtualTableData`] (`column_count` beside `item_count`), where the extents of the two
+/// axes are stated together; this holds the *accessors*. Selection is
+/// deliberately not here — the toolkit keeps it in a separate item selection
+/// model, and so does `view_virtual_table`'s `is_selected`.
 ///
 /// # Roles (R1535)
 ///
-/// Qt reaches every one of these through a single `data(index, role)` because a
-/// C++ model needs one virtual entry point, and pays for it with `QVariant` —
+/// The toolkit reaches every one of these through a single `data(index, role)` because a C++
+/// model needs one virtual entry point, and pays for it with dynamic value —
 /// an untyped hole every caller must unwrap. Here each role is its **own typed
 /// accessor**, so a role's answer type is exact and a model that cannot answer
-/// one is unrepresentable rather than returning an invalid variant. That is the
-/// shape R1530 already chose when it split Qt's `headerData` out as
-/// [`HeaderAxis::label`] instead of folding it into `cell`.
+/// one is unrepresentable rather than returning an invalid variant. That is
+/// the shape R1530 already chose when it split the toolkit's `headerData` out as [`HeaderAxis::label`]
+/// instead of folding it into `cell`.
 ///
-/// Five of Qt's roles are answered — `DisplayRole` ([`Self::cell`]),
+/// Five of the toolkit's roles are answered — `DisplayRole` ([`Self::cell`]),
 /// `DisplayRole` on a section axis ([`HeaderAxis::label`]), `DecorationRole`
 /// ([`Self::decoration`]), `DecorationRole` on a section axis (R1547,
 /// [`HeaderAxis::decoration`]) and, since R1544, `EditRole` ([`Self::edit`]).
@@ -2996,14 +2980,14 @@ fn section_number(section: usize) -> String {
 ///
 /// # The two axes (R1547, R1548)
 ///
-/// Qt's role enum is shared by `data(index, role)` and `headerData(section,
-/// orientation, role)`, so a role is a question that can be asked of a cell or
-/// of a section. Until R1547 only the cell axis here could be asked anything
-/// but its name: a column could say what it was **called** and nothing else.
-/// R1548 then gave the *section* question its second axis — Qt's
-/// `Qt::Vertical`, the row headers — and did it by making an axis a **type**
-/// ([`HeaderAxis`]) rather than a second pair of loose accessors, so the two
-/// axes answer one role set instead of two that must be kept in agreement.
+/// The toolkit's role enum is shared by `data(index, role)` and `headerData(section, orientation, role)`, so a role is a question
+/// that can be asked of a cell or of a section. Until R1547 only the cell axis
+/// here could be asked anything but its name: a column could say what it was
+/// **called** and nothing else. R1548 then gave the *section* question its
+/// second axis — the toolkit's `Vertical`, the row headers — and did it by making an
+/// axis a **type** ([`HeaderAxis`]) rather than a second pair of loose accessors, so
+/// the two axes answer one role set instead of two that must be kept in
+/// agreement.
 ///
 /// The cell axis and a section axis are not obliged to answer the same set — a
 /// section has no `EditRole`, because a header is not edited in place — but a
@@ -3011,15 +2995,15 @@ fn section_number(section: usize) -> String {
 /// drawn by the same painter, so they cannot drift into disagreeing about what
 /// a mark is.
 pub struct GridModel<C, CL, CD, RL, RD, D, E> {
-    /// Invoked once per **painted cell** with that cell's [`CellIndex`],
-    /// returning its text (Qt `data(QModelIndex)`, Flutter `cellBuilder`).
+    /// Invoked once per **painted cell** with that cell's [`CellIndex`], returning its
+    /// text (the toolkit `data(model index)`, another retained-mode toolkit `cellBuilder`).
     pub cell: C,
-    /// R1530 / R1548 — the **horizontal** section axis: the column headers (Qt
-    /// `headerData(section, Qt::Horizontal, …)`).
+    /// R1530 / R1548 — the **horizontal** section axis: the column headers
+    /// (the toolkit `headerData(section, Horizontal, …)`).
     pub columns: HeaderAxis<CL, CD>,
-    /// R1548 — the **vertical** section axis: the row headers (Qt
-    /// `headerData(section, Qt::Vertical, …)`, painted by
-    /// `QTableView::verticalHeader()`).
+    /// R1548 — the **vertical** section axis: the row headers (the toolkit
+    /// `headerData(section, Vertical, …)`, painted by
+    /// `verticalHeader()`).
     ///
     /// Asked once per **painted row**, with the row's absolute *data* index —
     /// not its position on screen — so a mark stays with its row across a sort
@@ -3031,16 +3015,16 @@ pub struct GridModel<C, CL, CD, RL, RD, D, E> {
     /// zero times a frame.
     ///
     /// The presence of the axis is stated **here**, on the model, and nowhere
-    /// else — its width is a [`TableStyle::row_header_width`] dimension, beside
-    /// every other pixel. The pair could have been split the way Qt splits it
-    /// (`headerData` answers; `verticalHeader()->hide()` decides), but a
-    /// separately-stated "paint a band" flag would make a band of blank sections
-    /// over an unanswered axis representable — which is the exact Qt failure
-    /// this type exists to remove. Painted if and only if answered.
+    /// else — its width is a [`TableStyle::row_header_width`] dimension, beside every other pixel. The
+    /// pair could have been split the way the toolkit splits it (`headerData` answers;
+    /// `verticalHeader()->hide()` decides), but a separately-stated "paint a band" flag would make a
+    /// band of blank sections over an unanswered axis representable — which is
+    /// the exact the toolkit failure this type exists to remove. Painted if
+    /// and only if answered.
     pub rows: Option<RowHeaderAxis<RL, RD>>,
     /// R1535 — invoked once per **painted cell** with that cell's
-    /// [`CellIndex`], returning the mark drawn beside its text (Qt
-    /// `data(index, Qt::DecorationRole)`), or `None` for an undecorated cell.
+    /// [`CellIndex`], returning the mark drawn beside its text (the toolkit
+    /// `data(index, DecorationRole)`), or `None` for an undecorated cell.
     ///
     /// Asked per cell rather than per column because that is the axis the
     /// answer varies on: a status colour differs row by row, which is precisely
@@ -3050,25 +3034,24 @@ pub struct GridModel<C, CL, CD, RL, RD, D, E> {
     /// emits the pre-R1535 node.
     pub decoration: D,
     /// R1544 — invoked with a [`CellIndex`], returning that cell's
-    /// `Qt::EditRole` answer, or `None` when the cell **cannot be edited**
-    /// (Qt: `flags(index)` without `Qt::ItemIsEditable`).
+    /// `EditRole` answer, or `None` when the cell **cannot be edited**
+    /// (the toolkit: `flags(index)` without `ItemIsEditable`).
     ///
-    /// The one role that is not asked once per painted cell. Qt does ask it
-    /// per paint — `QStyledItemDelegate::initStyleOption` reads `EditRole` as
-    /// a fallback for a missing `DisplayRole` — but here the display role is
-    /// mandatory, so the only things that need this answer are the *four*
-    /// moments editing has: opening an editor on a cell, seeding it,
-    /// advancing to the next editable cell, and telling assistive technology
-    /// whether a cell is read-only. The first three are events; the fourth is
-    /// per cell but on the a11y walk, not the paint walk.
+    /// The one role that is not asked once per painted cell. The toolkit does
+    /// ask it per paint — `initStyleOption` reads `EditRole` as a fallback for a missing `DisplayRole` — but
+    /// here the display role is mandatory, so the only things that need this
+    /// answer are the *four* moments editing has: opening an editor on a cell,
+    /// seeding it, advancing to the next editable cell, and telling assistive
+    /// technology whether a cell is read-only. The first three are events; the
+    /// fourth is per cell but on the a11y walk, not the paint walk.
     ///
     /// A read-only grid passes [`no_edit`] and pays nothing.
     pub edit: E,
 }
 
 /// R1535 §5.27 — the [`GridModel::decoration`] accessor for a grid where no
-/// cell carries a mark: the `Qt::DecorationRole` every un-decorated model
-/// answers with an invalid `QVariant`.
+/// cell carries a mark: the `DecorationRole` every un-decorated model
+/// answers with an invalid dynamic value.
 ///
 /// A named function rather than `|_| None` at nineteen call sites so the "this
 /// grid answers no decoration role" statement is greppable, and so the
@@ -3081,11 +3064,11 @@ pub fn no_decoration(_: CellIndex) -> Option<Decoration> {
 
 /// R1547 §5.27 — the [`HeaderAxis::decoration`] accessor for an axis where no
 /// **section** carries a mark: `headerData(section, orientation,
-/// Qt::DecorationRole)` answered with an invalid `QVariant` on every section.
+/// DecorationRole)` answered with an invalid dynamic value on every section.
 ///
-/// The section-axis peer of [`no_decoration`], and separate from it because the
-/// two accessors take different addresses — a [`CellIndex`] and a section index
-/// — which is the distinction Qt draws with two entry points and pinion draws
+/// The section-axis peer of [`no_decoration`], and separate from it because the two
+/// accessors take different addresses — a [`CellIndex`] and a section index — which is
+/// the distinction the toolkit draws with two entry points and pinion draws
 /// with two types. A single `|_| None` would unify them only by erasing that.
 ///
 /// R1548 renamed it from `no_header_decoration`: one function now serves both
@@ -3098,7 +3081,7 @@ pub fn no_section_decoration(_: usize) -> Option<Decoration> {
 }
 
 /// R1544 §5.27 — the [`GridModel::edit`] accessor for a **read-only** grid:
-/// Qt's `flags()` without `Qt::ItemIsEditable` on every index.
+/// The toolkit's `flags()` without `ItemIsEditable` on every index.
 ///
 /// The peer of [`no_decoration`], and a named function for the same two
 /// reasons: "this grid is read-only" becomes greppable, and the read-only case
@@ -3220,8 +3203,8 @@ pub fn materialize_cells(
 ///   once per painted row header — [`no_row_header`] for a grid with no
 ///   vertical header) and `decoration` (R1535, once per painted cell —
 ///   [`no_decoration`] when no column carries a mark). This is the Model/View
-///   contract of a two-axis virtualized grid (Qt `data(index)` /
-///   `headerData(section)`, Flutter `cellBuilder`): the grid asks for exactly
+///   contract of a two-axis virtualized grid (the toolkit `data(index)` /
+///   `headerData(section)`, another retained-mode toolkit `cellBuilder`): the grid asks for exactly
 ///   what it paints, so a 200-column grid showing five columns asks for five
 ///   cells per row and five labels rather than building 200 of each and
 ///   keeping five. Until R1524 `cell` was a per-*row* builder returning every
@@ -3662,7 +3645,7 @@ impl<'d> GridRender<'_, 'd> {
                 cell,
                 field_tag: editing.field_tag,
                 field: editing.field,
-                // Qt calls `createEditor` when the edit opens, not on every
+                // The toolkit calls `createEditor` when the edit opens, not on every
                 // paint; resolving here means the column's editor delegate is
                 // asked once per painted row of an editing row — which is
                 // once, because a row is painted once.
@@ -4987,7 +4970,7 @@ mod tests {
         );
     }
 
-    /// R1536 — the `QIcon` arm paints an image at the decoration square, with
+    /// R1536 — the icon arm paints an image at the decoration square, with
     /// the same address, meaning and layout rules the colour arm has.
     ///
     /// Both halves matter: an icon that lost the shared rules would be a second
@@ -5148,8 +5131,8 @@ mod tests {
     /// R1536 — the mark keeps its declared size when the cell is tight.
     ///
     /// Found by the demo, not by a unit test: at a 75px column the flex pass
-    /// shrank a 10px swatch to 6px against its sibling label. Qt draws the
-    /// decoration at `iconSize` and elides the *text*; a mark that silently
+    /// shrank a 10px swatch to 6px against its sibling label. The toolkit
+    /// draws the decoration at `iconSize` and elides the *text*; a mark that silently
     /// resizes is a mark whose colour area — the only thing it encodes — is a
     /// function of the column width.
     #[test]
@@ -5189,7 +5172,7 @@ mod tests {
     /// accessible name**, ahead of the label — what a browser does for
     /// `<td><img alt="Overdue"> 3 days</td>`.
     ///
-    /// This is the arm Qt has no answer for: `QAccessibleTableCell::text(Name)`
+    /// This is the arm the toolkit has no answer for: `text(Name)`
     /// returns the display role, and the decoration contributes nothing, so a
     /// colour-only status column is an empty cell to a screen-reader user.
     #[test]
@@ -5380,10 +5363,10 @@ mod tests {
     /// §5.40 — a **meaningful** section mark joins the `columnheader`'s
     /// accessible name, ahead of the label.
     ///
-    /// This is the Qt divergence the round is for: `QAccessibleTableHeaderCell`
-    /// names a section from `headerData(..., Qt::DisplayRole)` alone, so a Qt
-    /// header whose distinguishing information is its glyph announces only the
-    /// column's name.
+    /// This is the toolkit divergence the round is for: accessible table
+    /// header cell names a section from `headerData(..., DisplayRole)` alone, so a toolkit header whose
+    /// distinguishing information is its glyph announces only the column's
+    /// name.
     #[test]
     fn r1547_a_meaningful_section_mark_is_announced() {
         let asks = Cell::new(0);
@@ -5587,9 +5570,9 @@ mod tests {
     }
 
     /// R1562 — the section's fill is DERIVED from the row predicate: the same
-    /// answer the strip beside it is filled from. Qt makes this a view flag
-    /// (`QHeaderView::highlightSections`) that defaults to **false** and can
-    /// therefore disagree with the rows.
+    /// answer the strip beside it is filled from. The toolkit makes this a
+    /// view flag (`highlightSections`) that defaults to **false** and can therefore disagree
+    /// with the rows.
     #[test]
     fn r1562_a_selected_rows_section_is_washed_with_it() {
         let window = vt_row_window();
@@ -5700,13 +5683,13 @@ mod tests {
         );
     }
 
-    /// **The statement Qt cannot make.** An axis the model does not answer is
-    /// not painted blank — it is not painted, and not asked.
+    /// **The statement the toolkit cannot make.** An axis the model does not
+    /// answer is not painted blank — it is not painted, and not asked.
     ///
-    /// In Qt the two cases are indistinguishable at every observation point: a
-    /// model that falls through its `orientation` switch returns an invalid
-    /// `QVariant`, `QHeaderView` paints sections that still occupy their width,
-    /// and nothing reports it.
+    /// In the toolkit the two cases are indistinguishable at every observation
+    /// point: a model that falls through its `orientation` switch returns an invalid
+    /// dynamic value, header view paints sections that still occupy their
+    /// width, and nothing reports it.
     #[test]
     fn r1548_an_unanswered_axis_paints_no_band_at_all() {
         let scene = run_vtable(VT_MEASURED_H, 0);

@@ -8,12 +8,12 @@
 //! single `Option<usize>` selected index, decoupled from which rows are
 //! materialized.
 //!
-//! Why not reuse the R735.1 [`selection`](pinion_core::widgets::selection)
-//! substrate? That model is *leaf-based*: it operates on a `&mut [L]` slice
-//! of materialized leaves, each carrying its own bit. A virtualized list
-//! has no such slice — the 9 995 off-window leaves do not exist. Selection
-//! by index is the canonical virtualized model (Qt `QItemSelectionModel`,
-//! a Flutter selection controller over `ListView`).
+//! Why not reuse the R735.1 [`selection`](pinion_core::widgets::selection) substrate?
+//! That model is *leaf-based*: it operates on a `&mut [L]` slice of materialized
+//! leaves, each carrying its own bit. A virtualized list has no such slice —
+//! the 9 995 off-window leaves do not exist. Selection by index is the
+//! canonical virtualized model (the toolkit item selection model, a
+//! retained-mode toolkit selection controller over `ListView`).
 //!
 //! ## The witness (§2 #7 scene-as-data, selection ⊥ virtualization)
 //!

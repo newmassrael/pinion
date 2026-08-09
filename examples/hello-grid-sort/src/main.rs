@@ -9,8 +9,8 @@
 //! pure composition of three coordinators:
 //!
 //! * **sort proxy** — the R778 [`GridSortExternal`] over a shared
-//!   [`GridSortState`], a multi-column numeric-aware sort proxy (Qt's
-//!   `QSortFilterProxyModel`). A clicked column header (`vsort#h<col>`)
+//!   [`GridSortState`], a multi-column numeric-aware sort proxy (the toolkit's
+//!   sort filter proxy model). A clicked column header (`vsort#h<col>`)
 //!   cycles that column unsorted → asc → desc → unsorted; a different column
 //!   jumps to it ascending. The `order` permutation it derives drives the
 //!   view's windowing.
@@ -235,17 +235,16 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             // R1525 — the view asks the MODEL, not the formula. See `cell_text`.
             cell: |c: CellIndex| grid_sort.cell(c.row, c.col).to_string(),
             columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),
-            // R1548 — Qt `headerData(section, Qt::Vertical, Qt::DisplayRole)`,
-            // answered with Qt's own default: the 1-based row NUMBER. It is
-            // asked with the row's data index, not its position on screen, so
-            // a re-sort carries each number with its row instead of renumbering
-            // the viewport — the same answer `QSortFilterProxyModel` produces
-            // by mapping the section back to the source model before asking.
-            // R1562 — the band's sections are pressable (a press selects the
-            // row, through the same transition a cell press drives), but the
-            // corner is `setCornerButtonEnabled(false)`: this grid's
-            // coordinator is SINGLE-select, where select-all is the no-op
-            // `QAbstractItemView::selectAll` is under `SingleSelection`.
+            // R1548 — the toolkit `headerData(section, Vertical, DisplayRole)`, answered with the toolkit's own
+            // default: the 1-based row NUMBER. It is asked with the row's data
+            // index, not its position on screen, so a re-sort carries each
+            // number with its row instead of renumbering the viewport — the
+            // same answer sort filter proxy model produces by mapping the
+            // section back to the source model before asking. R1562 — the
+            // band's sections are pressable (a press selects the row, through
+            // the same transition a cell press drives), but the corner is `setCornerButtonEnabled(false)`:
+            // this grid's coordinator is SINGLE-select, where select-all is
+            // the no-op `selectAll` is under `SingleSelection`.
             rows: Some(RowHeaderAxis::inert(HeaderAxis::row_numbers())),
             decoration: no_decoration,
             edit: no_edit,

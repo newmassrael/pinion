@@ -2,8 +2,8 @@
 //! filter → sort → group**.
 //!
 //! R747 lands the sort/filter view-order proxy; R843 the group-by proxy over a
-//! *source* order. R844 stacks them into the canonical Qt
-//! `QSortFilterProxyModel`-plus-grouping chain: an upstream
+//! *source* order. R844 stacks them into the canonical the toolkit
+//! sort filter proxy model-plus-grouping chain: an upstream
 //! [`ViewSortFilterExternal`] sorts + filters 10,000 rows into a live `order`
 //! permutation, and a [`GroupOrderExternal`] groups **that order** into
 //! collapsible asset-type groups. Sorting reorders the groups and the members

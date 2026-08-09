@@ -269,7 +269,7 @@ pub struct TextEditState {
     goal_column: Cell<Option<f32>>,
     /// R767 §5.36 §5.22 — **styled runs** for rich-text editing: an
     /// ordered, non-overlapping list of [`StyleRun`] spans over the
-    /// current `text` byte buffer (the Qt `FormatRange`
+    /// current `text` byte buffer (the toolkit `FormatRange`
     /// model — each run is a fully-resolved [`TextStyle`] over a UTF-8
     /// byte range). Empty (the default) is the single-style fast path;
     /// the field's paint threads the runs into the
@@ -373,16 +373,15 @@ pub struct TextEditState {
     /// simply stops matching a derived region and is pruned on the next
     /// [`fold_regions`](Self::fold_regions) read.
     ///
-    /// A reactive [`Signal`] — a content peer of [`style_runs`](Self::style_runs)
-    /// / [`find_query`](Self::find_query): paint reads it to hide the
-    /// collapsed lines and the `scene/<tag>/external/fold_regions` RPC
-    /// exposes it, so a toggle must re-run the field paint. Reactive does
-    /// **not** mean journalled: like the find session and the sort / filter
-    /// / group view-state of the data widgets, folding is *view* config,
-    /// not document content, so it is deliberately **outside** the
-    /// [`undo`](Self::undo) journal (the Qt / Unreal convention — Ctrl+Z
-    /// reverses edits, never a fold toggle). The journalled content is
-    /// exactly `{text, caret, anchor, runs}` ([`TextEditCommand`]).
+    /// A reactive [`Signal`] — a content peer of [`style_runs`](Self::style_runs) /
+    /// [`find_query`](Self::find_query): paint reads it to hide the collapsed lines and
+    /// the `scene/<tag>/external/fold_regions` RPC exposes it, so a toggle must re-run the field paint.
+    /// Reactive does **not** mean journalled: like the find session and the
+    /// sort / filter / group view-state of the data widgets, folding is *view*
+    /// config, not document content, so it is deliberately **outside** the
+    /// [`undo`](Self::undo) journal (the toolkit / the engine convention — Ctrl+Z
+    /// reverses edits, never a fold toggle). The journalled content is exactly
+    /// `{text, caret, anchor, runs}` ([`TextEditCommand`]).
     folds: Signal<BTreeSet<usize>>,
     /// R938 §5.22 — opt-in: `Tab` / `Shift+Tab` **indent / dedent** the
     /// selected lines (the multi-line code-editor affordance) instead of
@@ -497,7 +496,7 @@ impl core::fmt::Debug for Highlighter {
 /// step only when they share a non-[`Boundary`](CoalesceGroup::Boundary)
 /// group and are contiguous, so an insertion run, a Backspace run, and a
 /// Delete-forward run each collapse to one step while a wholesale replace or
-/// a selection-delete stands alone (`QTextDocument` typing-coalesce model).
+/// a selection-delete stands alone (text document typing-coalesce model).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CoalesceGroup {
     /// Never coalesces (`set_text`, or any selection-replacing edit).
@@ -516,7 +515,7 @@ enum CoalesceGroup {
 /// coverage that splice destroyed, so it reverses **without snapshotting the
 /// whole document**. Memory is `O(edit size + runs in the edited span)`, not
 /// `O(document)`: a keystroke in plain text costs one byte, not a full copy
-/// of the buffer (the `QTextDocument` / xi-editor delta-undo model). `redo`
+/// of the buffer (the text document / xi-editor delta-undo model). `redo`
 /// re-derives the run shift deterministically (the same clip+shift the
 /// mutators apply); `undo` reverses the splice and restores the destroyed
 /// run coverage from `removed_runs`, re-normalising. Consecutive same-group
@@ -1788,7 +1787,7 @@ impl TextEditState {
 
     /// R768 §5.36 §5.22 — apply `style` to the byte range `[start, end)`
     /// as one styled run: the rich-text "apply formatting to the
-    /// selection" primitive (Qt `QTextCursor::setCharFormat` semantics).
+    /// selection" primitive (the toolkit `setCharFormat` semantics).
     /// Existing runs are carved around the range and a run carrying
     /// `style` is laid in; adjacent runs that end up with an identical
     /// style coalesce, so re-applying the same format across a former
@@ -3724,8 +3723,8 @@ fn merge_adjacent_runs(runs: &mut Vec<StyleRun>) {
     }
 }
 
-/// R768 §5.36 §5.22 — overlay one [`StyleRun`] onto the list (Qt
-/// `QTextCursor::setCharFormat` semantics): the bytes in `new`'s range
+/// R768 §5.36 §5.22 — overlay one [`StyleRun`] onto the list (the toolkit
+/// `setCharFormat` semantics): the bytes in `new`'s range
 /// take `new`'s style wholesale, every previously-styled byte outside it
 /// is preserved. Implemented as [`subtract_style_range`] (carve a hole
 /// for `new`) + insert + sort-by-start + [`merge_adjacent_runs`], so the

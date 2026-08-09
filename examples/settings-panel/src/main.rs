@@ -857,7 +857,7 @@ fn view_appearance_section(theme: &Theme, state: SliderState, value: f32) -> Sce
 }
 
 fn view_profile_section(theme: &Theme, field_state: TextFieldState, caret_byte: u32) -> Scene {
-    // R1543 §5.39 — the `QLabel::setBuddy` case: the mnemonic is marked on the
+    // R1543 §5.39 — the `setBuddy` case: the mnemonic is marked on the
     // section LABEL, but Alt+D must move focus to the FIELD. The buddy is the
     // only place a mnemonic target is stated by hand — every self-labelling
     // widget (button, menu title, checkbox) resolves to itself structurally.

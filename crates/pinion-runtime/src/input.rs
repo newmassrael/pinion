@@ -110,20 +110,19 @@ const DOUBLE_CLICK_TIME_MS: u128 = 300;
 ///   `Material 3` + Cocoa convention.
 const DOUBLE_CLICK_DIST_PX: f64 = 5.0;
 
-/// R794 §5.51 — drag-vs-click distance (logical pixels). A pressed drag
-/// source whose cursor moves more than this from the press point before
-/// release is a **drag**, not a click: the router commits the drop via
-/// [`External::drag_release`](pinion_core::external::External::drag_release)
-/// and does *not* synthesize the trailing `PointerUp` (a drag and a click
-/// are mutually exclusive — Qt `startDragDistance`, the DOM "no `click`
-/// after a drag" rule). A press-release under this threshold is a click:
-/// the drop resolves to the source (a no-op) and the `PointerUp` fires so
-/// press-to-activate stays reachable. Owning this once makes click-vs-drag
-/// a framework SSOT, so no click-activatable drag surface (file tree,
-/// asset browser, kanban) re-derives it per binding. R879 relocated the
-/// constant itself to `pinion-core::input` (the contract crate): a
-/// capture-path External judging its own click-vs-drag (the node graph)
-/// measures against the same value ([[helper-crate-home-ssot-axis]]).
+/// R794 §5.51 — drag-vs-click distance (logical pixels). A pressed drag source
+/// whose cursor moves more than this from the press point before release is a
+/// **drag**, not a click: the router commits the drop via
+/// [`External::drag_release`](pinion_core::external::External::drag_release) and does *not*
+/// synthesize the trailing `PointerUp` (a drag and a click are mutually exclusive —
+/// the toolkit `startDragDistance`, the DOM "no `click` after a drag" rule). A press-release under
+/// this threshold is a click: the drop resolves to the source (a no-op) and
+/// the `PointerUp` fires so press-to-activate stays reachable. Owning this once makes
+/// click-vs-drag a framework SSOT, so no click-activatable drag surface (file
+/// tree, asset browser, kanban) re-derives it per binding. R879 relocated the
+/// constant itself to `pinion-core::input` (the contract crate): a capture-path External
+/// judging its own click-vs-drag (the node graph) measures against the same
+/// value ([[helper-crate-home-ssot-axis]]).
 use pinion_core::{AutoRepeat, DragLatch};
 
 /// R51.38 §5.35 — pointer identity used by every [`InputRouter`]
@@ -222,12 +221,11 @@ pub struct Touch {
     pub y: f64,
     /// Phase of the touch lifecycle.
     pub phase: TouchPhase,
-    /// R1423 §5.35 — the contact FORCE, normalised `0.0..=1.0`, the W3C
-    /// `PointerEvent.pressure` / Qt `QTabletEvent::pressure()` source (winit
-    /// `Touch::force`, already normalised at the shell boundary). `None` when the
-    /// platform reports no force (a plain touchscreen without pressure, or a
-    /// synthesised touch); the router then leaves the pointer's pressure
-    /// unchanged rather than forcing it to zero.
+    /// R1423 §5.35 — the contact FORCE, normalised `0.0..=1.0`, the W3C `PointerEvent.pressure` / the
+    /// toolkit `pressure()` source (winit `Touch::force`, already normalised at the shell
+    /// boundary). `None` when the platform reports no force (a plain touchscreen
+    /// without pressure, or a synthesised touch); the router then leaves the
+    /// pointer's pressure unchanged rather than forcing it to zero.
     pub force: Option<f32>,
 }
 
@@ -257,33 +255,32 @@ pub use pinion_core::input::Modifiers;
 /// and an AI agent both reach the SCXML through the same
 /// `invoke("send", ...)` path.
 ///
-/// Widget catalog R47+ (`Slider` / `Toggle` / `TextField`) plugs in by
-/// attaching a tag on its paint Container and a matching tag on its
-/// state [`ExternalNode`]. No application-level hit-test code is
-/// needed — adding a new widget cannot reintroduce the R47-class bug
-/// because the routing primitive is framework-owned.
-/// R1430 §5.35 — the non-positional pointer axis bundle: the Qt `QTabletEvent` /
-/// W3C `PointerEvent` scalar axes a surface reads alongside the cursor position.
-/// One value struct so the router stores one map, forwards one bundle, and adds
-/// a new axis as a field — not a parallel `HashMap` + a fifth copy of the
-/// note/set/forward plumbing (the R1423 pressure + R1429 tilt duplication this
-/// lift resolves). All-zero default is a plain mouse: no force, no lean, no
-/// barrel, wheel at rest, in contact.
+/// Widget catalog R47+ (`Slider` / `Toggle` / `TextField`) plugs in by attaching a tag on its
+/// paint Container and a matching tag on its state [`ExternalNode`]. No application-level
+/// hit-test code is needed — adding a new widget cannot reintroduce the
+/// R47-class bug because the routing primitive is framework-owned. R1430 §5.35
+/// — the non-positional pointer axis bundle: the toolkit tablet event / W3C
+/// `PointerEvent` scalar axes a surface reads alongside the cursor position. One value
+/// struct so the router stores one map, forwards one bundle, and adds a new
+/// axis as a field — not a parallel `HashMap` + a fifth copy of the note/set/forward
+/// plumbing (the R1423 pressure + R1429 tilt duplication this lift resolves).
+/// All-zero default is a plain mouse: no force, no lean, no barrel, wheel at
+/// rest, in contact.
 #[derive(Debug, Clone, Copy, Default)]
 struct PointerAxisValues {
-    /// W3C `pressure` / Qt `pressure()`, `0.0..=1.0`.
+    /// W3C `pressure` / the toolkit `pressure()`, `0.0..=1.0`.
     pressure: f32,
-    /// W3C `tiltX` / Qt `xTilt()`, degrees `-90.0..=90.0`.
+    /// W3C `tiltX` / the toolkit `xTilt()`, degrees `-90.0..=90.0`.
     tilt_x: f32,
-    /// W3C `tiltY` / Qt `yTilt()`, degrees `-90.0..=90.0`.
+    /// W3C `tiltY` / the toolkit `yTilt()`, degrees `-90.0..=90.0`.
     tilt_y: f32,
-    /// W3C `twist` / Qt `rotation()`, degrees `0.0..=360.0` (wrapped).
+    /// W3C `twist` / the toolkit `rotation()`, degrees `0.0..=360.0` (wrapped).
     twist: f32,
-    /// W3C `tangentialPressure` / Qt `tangentialPressure()`, `-1.0..=1.0`.
+    /// W3C `tangentialPressure` / the toolkit `tangentialPressure()`, `-1.0..=1.0`.
     tangential: f32,
-    /// Qt `z()` — hover height above the surface, `>= 0.0` (no W3C peer).
+    /// The toolkit `z()` — hover height above the surface, `>= 0.0` (no W3C peer).
     height: f32,
-    /// W3C `pointerType` / Qt `pointerType()` — the producing device
+    /// W3C `pointerType` / the toolkit `pointerType()` — the producing device
     /// (`Mouse` default / `Pen` / `Eraser` / `Touch`).
     kind: pinion_core::PointerKind,
 }
@@ -416,32 +413,30 @@ pub struct InputRouter {
     /// two statements that already opened and closed this entry, so a
     /// repeat cannot outlive its press.
     press_gestures: HashMap<PointerId, PressRecord>,
-    /// R881 §5.35 §5.49 — per-pointer in-flight pan-class gesture.
-    /// Opened by [`middle_down`](Self::middle_down) (the middle-button
-    /// chord) or [`left_pan_down`](Self::left_pan_down) (R882 — the
-    /// shell's Space-hold chord routing a left press into the pan
-    /// channel), advanced by [`cursor_moved`](Self::cursor_moved) (the
-    /// pan arm), consumed by the matching-button release
-    /// ([`middle_up`](Self::middle_up) / [`left_pan_up`](Self::left_pan_up)),
-    /// revoked by [`pointer_cancel`](Self::pointer_cancel). A pan press
-    /// is a *gesture chord*, not a routed widget event: a latched move
-    /// is drag-to-pan (Blender / Unreal / Figma hand-tool family); a
-    /// release-in-place is button policy — the middle chord's X11
-    /// PRIMARY paste (deferred to release — xterm / Qt convention), the
-    /// left chord's no-op (Figma: Space+click is inert). One map for
-    /// every opening button so gesture exclusivity (one pan-class
-    /// gesture per pointer, first press wins) needs no cross-map
-    /// bookkeeping. See [`DragPan`].
+    /// R881 §5.35 §5.49 — per-pointer in-flight pan-class gesture. Opened by
+    /// [`middle_down`](Self::middle_down) (the middle-button chord) or
+    /// [`left_pan_down`](Self::left_pan_down) (R882 — the shell's Space-hold chord routing
+    /// a left press into the pan channel), advanced by
+    /// [`cursor_moved`](Self::cursor_moved) (the pan arm), consumed by the
+    /// matching-button release ([`middle_up`](Self::middle_up) /
+    /// [`left_pan_up`](Self::left_pan_up)), revoked by [`pointer_cancel`](Self::pointer_cancel). A
+    /// pan press is a *gesture chord*, not a routed widget event: a latched
+    /// move is drag-to-pan (the DCC / the engine / the design tool hand-tool
+    /// family); a release-in-place is button policy — the middle chord's X11
+    /// PRIMARY paste (deferred to release — xterm / the toolkit convention),
+    /// the left chord's no-op (the design tool: Space+click is inert). One map
+    /// for every opening button so gesture exclusivity (one pan-class gesture
+    /// per pointer, first press wins) needs no cross-map bookkeeping. See
+    /// [`DragPan`].
     drag_pans: HashMap<PointerId, DragPan>,
-    /// R881.1 §5.35 — per-pointer wheel-side sub-pixel remainder (the
-    /// stage-2 carry of [`dispatch_wheel_two_stage`]). Keyed to the
-    /// scroll container it accumulated against via a [`Weak`](std::rc::Weak) handle:
-    /// the carry resets when the pointer's resolved scroll target
-    /// changes (a remainder must never leak across containers — Qt's
-    /// accumulator discipline) and drops with the cursor on
-    /// [`cursor_left`](Self::cursor_left). The middle pan keeps its
-    /// remainder in its own gesture state instead — one carry per
-    /// contiguous delta stream, whichever producer owns the stream.
+    /// R881.1 §5.35 — per-pointer wheel-side sub-pixel remainder (the stage-2
+    /// carry of [`dispatch_wheel_two_stage`]). Keyed to the scroll container it accumulated against
+    /// via a [`Weak`](std::rc::Weak) handle: the carry resets when the pointer's
+    /// resolved scroll target changes (a remainder must never leak across
+    /// containers — the toolkit's accumulator discipline) and drops with the
+    /// cursor on [`cursor_left`](Self::cursor_left). The middle pan keeps its remainder
+    /// in its own gesture state instead — one carry per contiguous delta
+    /// stream, whichever producer owns the stream.
     wheel_remainders: HashMap<PointerId, WheelRemainder>,
     /// (R1107 §5.16 §5.41 §5.51) This router's own window spec id — the
     /// window it dispatches for. `None` until the shell stamps it via
@@ -458,52 +453,49 @@ pub struct InputRouter {
     /// sink (a widget that opts into
     /// [`External::wants_raw_pointer_buttons`](pinion_core::external::External::wants_raw_pointer_buttons)).
     ///
-    /// A raw sink bypasses [`pointer_down`](Self::pointer_down) — the shell
-    /// routes its button edges straight through
-    /// [`deliver_raw_pointer_button`](Self::deliver_raw_pointer_button) — so it
-    /// never populates `captured_targets` and would otherwise lose the release
-    /// of a press-drag that strays off its rect (the raw edges would resolve to
-    /// whatever widget the cursor left onto, and the sink would see a DOWN with
-    /// no matching UP — a "stuck button" for an SGR mouse consumer). This is
-    /// the framework's implicit mouse grab (Qt `grabMouse` / Win32 `SetCapture`
-    /// / DOM implicit pointer capture): on a raw sink's first button press the
+    /// A raw sink bypasses [`pointer_down`](Self::pointer_down) — the shell routes its
+    /// button edges straight through [`deliver_raw_pointer_button`](Self::deliver_raw_pointer_button) —
+    /// so it never populates `captured_targets` and would otherwise lose the release of a
+    /// press-drag that strays off its rect (the raw edges would resolve to
+    /// whatever widget the cursor left onto, and the sink would see a DOWN
+    /// with no matching UP — a "stuck button" for an SGR mouse consumer). This
+    /// is the framework's implicit mouse grab (the toolkit `grabMouse` / Win32 `SetCapture` /
+    /// DOM implicit pointer capture): on a raw sink's first button press the
     /// router pins that tag, routing EVERY later button edge AND
-    /// [`cursor_moved`](Self::cursor_moved) position to it regardless of the
-    /// cursor location, and releases only when the LAST held button lifts
-    /// (`held` reaches 0). Keyed by [`PointerId`] so two touch streams stay
-    /// independent, mirroring `captured_targets`.
+    /// [`cursor_moved`](Self::cursor_moved) position to it regardless of the cursor
+    /// location, and releases only when the LAST held button lifts (`held`
+    /// reaches 0). Keyed by [`PointerId`] so two touch streams stay independent,
+    /// mirroring `captured_targets`.
     raw_grabs: HashMap<PointerId, RawGrab>,
-    /// R1422 §5.35 — per-(pointer, button) last-press mark for the RAW stream's
-    /// double-click synthesis ([`RawPointerButton::click_count`](pinion_core::input::RawPointerButton::click_count),
-    /// the Qt `MouseButtonDblClick` peer). Distinct from `last_press` (the
-    /// send-wire, target-tag-keyed W3C `dblclick` path) because a raw sink owns
-    /// the whole stream — there is no per-target equality to gate on — but it
-    /// SHARES the [`DOUBLE_CLICK_TIME_MS`] + [`DOUBLE_CLICK_DIST_PX`] thresholds
-    /// so the two double-click rules cannot drift (the `r47`-class one-vocabulary
+    /// R1422 §5.35 — per-(pointer, button) last-press mark for the RAW
+    /// stream's double-click synthesis
+    /// ([`RawPointerButton::click_count`](pinion_core::input::RawPointerButton::click_count), the toolkit
+    /// `MouseButtonDblClick` peer). Distinct from `last_press` (the send-wire, target-tag-keyed W3C `dblclick`
+    /// path) because a raw sink owns the whole stream — there is no per-target
+    /// equality to gate on — but it SHARES the [`DOUBLE_CLICK_TIME_MS`] + [`DOUBLE_CLICK_DIST_PX`] thresholds so the
+    /// two double-click rules cannot drift (the `r47`-class one-vocabulary
     /// discipline). Keyed by the button too so a left double-click and a right
-    /// double-click count independently, the Qt per-button rule.
+    /// double-click count independently, the toolkit per-button rule.
     raw_click_marks: HashMap<(PointerId, PointerButton), RawClickMark>,
-    /// R1430 §5.35 — the current non-positional pointer AXES per pointer (the Qt
-    /// `QTabletEvent` / W3C `PointerEvent` scalar axis set: pressure, tilt,
-    /// twist, tangential pressure, hover height). Set from the `scene/pointer_*`
-    /// RPCs (and, for pressure, the platform `Touch::force`), and forwarded WHOLE
-    /// to a surface alongside each `pointer_move` (every axis travels WITH
-    /// position, the W3C `pointermove` model). Absent → [`PointerAxisValues`]
-    /// default (all zero), so a plain mouse forwards a neutral bundle. One map,
-    /// not one-per-axis, so a new axis is a struct field, not a new `HashMap`
-    /// (R1423 pressure + R1429 tilt were the first two consumers; R1430 lifts the
-    /// storage + forward + target-resolution the copies shared).
+    /// R1430 §5.35 — the current non-positional pointer AXES per pointer (the
+    /// toolkit tablet event / W3C `PointerEvent` scalar axis set: pressure, tilt, twist,
+    /// tangential pressure, hover height). Set from the `scene/pointer_*` RPCs (and, for
+    /// pressure, the platform `Touch::force`), and forwarded WHOLE to a surface alongside
+    /// each `pointer_move` (every axis travels WITH position, the W3C `pointermove` model). Absent
+    /// → [`PointerAxisValues`] default (all zero), so a plain mouse forwards a neutral bundle.
+    /// One map, not one-per-axis, so a new axis is a struct field, not a new
+    /// `HashMap` (R1423 pressure + R1429 tilt were the first two consumers; R1430
+    /// lifts the storage + forward + target-resolution the copies shared).
     axes: HashMap<PointerId, PointerAxisValues>,
 }
 
 /// R1418 §5.35 — one pointer's implicit grab on a raw multi-button sink: the
-/// grabbed tag plus the SET of buttons currently held on it (the Qt
-/// `QMouseEvent::buttons()` state, tracked here so it doubles as the grab's
-/// lifetime). The grab lives from the first button press (the set goes empty →
-/// non-empty) until the last release (the set empties again), so a multi-button
-/// chord (press left, press right, release left, release right) keeps the grab
-/// through the whole span — the Qt implicit-grab discipline (grab holds until
-/// every button is up).
+/// grabbed tag plus the SET of buttons currently held on it (the toolkit `buttons()`
+/// state, tracked here so it doubles as the grab's lifetime). The grab lives
+/// from the first button press (the set goes empty → non-empty) until the last
+/// release (the set empties again), so a multi-button chord (press left, press
+/// right, release left, release right) keeps the grab through the whole span —
+/// the toolkit implicit-grab discipline (grab holds until every button is up).
 #[derive(Debug)]
 struct RawGrab {
     tag: String,
@@ -517,7 +509,7 @@ struct RawGrab {
 /// # Why the hold lives *in* the press record
 ///
 /// A repeat that outlives its press is the classic runaway-button bug —
-/// Qt's `QAbstractButton` keeps a `QBasicTimer` beside `isDown`, so a
+/// the toolkit's abstract button keeps a basic timer beside `isDown`, so a
 /// missed release / hide / disable path leaves it firing. Here there is
 /// no separate place for a run to live: the record is created by
 /// [`InputRouter::pointer_down`] and removed by
@@ -525,10 +517,9 @@ struct RawGrab {
 /// existed, so "repeating while nothing is pressed" is not a state the
 /// router can represent.
 ///
-/// The *cadence* is not stored at all — it is re-asked of the widget
-/// every frame through
-/// [`External::auto_repeat`](pinion_core::external::External::auto_repeat).
-/// So the two facts Qt has to keep in agreement (armed, and down) are one
+/// The *cadence* is not stored at all — it is re-asked of the widget every
+/// frame through [`External::auto_repeat`](pinion_core::external::External::auto_repeat). So the
+/// two facts the toolkit has to keep in agreement (armed, and down) are one
 /// fact here, and it is the widget's own statechart.
 #[derive(Debug)]
 struct PressRecord {
@@ -561,10 +552,10 @@ impl PressRecord {
         }
     }
 
-    /// The widget answered "not repeating" — rewind the ramp so a press
-    /// that strays off its target and comes back restarts from the delay
-    /// instead of resuming at speed (Qt's `mouseMoveEvent` does the same).
-    /// The press itself is untouched: this is not a release.
+    /// The widget answered "not repeating" — rewind the ramp so a press that
+    /// strays off its target and comes back restarts from the delay instead of
+    /// resuming at speed (the toolkit's `mouseMoveEvent` does the same). The press itself
+    /// is untouched: this is not a release.
     fn disarm(&mut self) {
         self.held_secs = 0.0;
         self.since_last_fire = 0.0;
@@ -586,10 +577,10 @@ impl PressRecord {
 /// R1549 §5.35 §5.12 — one in-flight press as published data: what a
 /// `scene/auto_repeat` reader sees.
 ///
-/// Qt has no peer. `QAbstractButton::autoRepeat()` answers a *static*
+/// The toolkit has no peer. `autoRepeat()` answers a *static*
 /// property of one widget you already have a pointer to; the in-flight
 /// run — is it repeating right now, how many times has it fired, when
-/// does the next one land — lives in a private `QBasicTimer` and is
+/// does the next one land — lives in a private basic timer and is
 /// observable only through its side effects. An agent driving a pinion
 /// app reads the run itself.
 #[derive(Debug, Clone, PartialEq)]
@@ -646,7 +637,7 @@ struct WheelRemainder {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PanButton {
     /// The primary button routed into the pan channel by the shell's
-    /// R882 Space-hold chord (the Figma / Photoshop hand tool).
+    /// R882 Space-hold chord (the design tool / the raster editor hand tool).
     Left,
     /// The middle (W3C auxiliary) button — the chord-free R881 pan.
     Middle,
@@ -658,13 +649,13 @@ enum PanButton {
 /// origin to latch against — and release degrades to the click
 /// path, the pre-R881 behaviour).
 ///
-/// R1434 rename (was `PanGesture`): a held-button DRAG that pans is not a
-/// *gesture* in the native-gesture vocabulary. The name now belongs to
-/// [`External::pan_gesture`](pinion_core::external::External::pan_gesture) —
-/// the trackpad `QNativeGestureEvent` / winit `PanGesture` axis, which carries
-/// its own `GesturePhase` and never touches this drag latch. Qt draws the same
-/// line (`QPanGesture` recogniser vs `Qt::PanNativeGesture`); pinion states it
-/// in the type names so the two can never be read as one family.
+/// R1434 rename (was `PanGesture`): a held-button DRAG that pans is not a *gesture* in
+/// the native-gesture vocabulary. The name now belongs to
+/// [`External::pan_gesture`](pinion_core::external::External::pan_gesture) — the trackpad native
+/// gesture event / winit `PanGesture` axis, which carries its own `GesturePhase` and never touches
+/// this drag latch. The toolkit draws the same line (pan gesture recogniser vs
+/// `PanNativeGesture`); pinion states it in the type names so the two can never be read as
+/// one family.
 #[derive(Debug)]
 struct DragPan {
     /// The button that opened this gesture — release / in-flight
@@ -705,7 +696,7 @@ struct PanState {
     /// convention every canvas pan implements).
     last: (f64, f64),
     /// Sub-pixel remainder carried between moves on the integer
-    /// [`ScrollState::scroll_by`] branch (the Qt wheel-remainder
+    /// [`ScrollState::scroll_by`] branch (the toolkit wheel-remainder
     /// accumulator) so a slow high-DPI pan whose per-event delta
     /// rounds to zero still accumulates motion.
     frac: (f32, f32),
@@ -718,14 +709,13 @@ struct PanState {
     scroll: Option<Rc<ScrollState>>,
 }
 
-/// R881 §5.35 — what a pan-channel release resolved to (renamed from
-/// `MiddleRelease` in R882, when the left button gained the Space-hold
-/// chord entry into the same channel). The router owns the
-/// click-vs-pan determination (the [`DragLatch`] SSOT); the *action*
-/// on `Click` is per-button shell policy — the middle chord pastes
-/// (`ShellCore::middle_click`, the X11 PRIMARY funnel), the left
-/// Space-chord is inert (Figma: Space+click does nothing) — substrate
-/// decides the gesture, backend decides the action.
+/// R881 §5.35 — what a pan-channel release resolved to (renamed from `MiddleRelease` in
+/// R882, when the left button gained the Space-hold chord entry into the same
+/// channel). The router owns the click-vs-pan determination (the [`DragLatch`] SSOT);
+/// the *action* on `Click` is per-button shell policy — the middle chord pastes
+/// (`ShellCore::middle_click`, the X11 PRIMARY funnel), the left Space-chord is inert (the design
+/// tool: Space+click does nothing) — substrate decides the gesture, backend
+/// decides the action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanRelease {
     /// The press latched into a drag-to-pan; the pan deltas were
@@ -1106,7 +1096,7 @@ impl InputRouter {
     /// `ModifiersChanged` cache here, the R781 / R877 pattern). The
     /// modifiers feed the middle-button pan arm's wheel-vocabulary
     /// dispatch so a `Ctrl`+middle-drag reaches a canvas's `Ctrl`-zoom
-    /// wheel arm exactly as a held `Ctrl`+wheel would (the Blender
+    /// wheel arm exactly as a held `Ctrl`+wheel would (the DCC
     /// chord set, for free, because pan rides the wheel vocabulary).
     ///
     /// Returns `true` when an in-flight middle pan dispatched a delta
@@ -1182,7 +1172,7 @@ impl InputRouter {
     /// the [`DragLatch`] resolves it, so the X11 PRIMARY paste that
     /// pre-R881 fired here is deferred to a release-in-place
     /// ([`middle_up`](Self::middle_up) → [`PanRelease::Click`]) —
-    /// the xterm / Qt release-paste convention.
+    /// the xterm / the toolkit release-paste convention.
     ///
     /// Pan targets are pinned now, against the press point: the hover
     /// target tag (the stage-1 wheel-offer recipient) and the deepest
@@ -1195,14 +1185,13 @@ impl InputRouter {
         self.pan_down(id, PanButton::Middle);
     }
 
-    /// R882 §5.35 §5.39 — open the pan channel for a **left** press: the
-    /// shell routes a `MouseInput { Left, Pressed }` here instead of
-    /// [`pointer_down`](Self::pointer_down) while its Space chord is held
-    /// (the Figma / Photoshop / Krita hand tool). The press dispatches
-    /// nothing to widgets — no `PointerDown`, no focus steal, no caret
-    /// move — and pan targets pin exactly as a middle press would. The
-    /// chord policy (which key arms the channel) is the shell's; the
-    /// router only knows a left press entered the pan channel.
+    /// R882 §5.35 §5.39 — open the pan channel for a **left** press: the shell
+    /// routes a `MouseInput { Left, Pressed }` here instead of [`pointer_down`](Self::pointer_down) while its Space
+    /// chord is held (the design tool / the raster editor / Krita hand tool).
+    /// The press dispatches nothing to widgets — no `PointerDown`, no focus steal, no
+    /// caret move — and pan targets pin exactly as a middle press would. The
+    /// chord policy (which key arms the channel) is the shell's; the router
+    /// only knows a left press entered the pan channel.
     pub fn left_pan_down(&mut self, id: PointerId) {
         self.pan_down(id, PanButton::Left);
     }
@@ -1291,7 +1280,7 @@ impl InputRouter {
     /// gesture in flight, NOT the current chord state, so releasing
     /// Space mid-pan never strands the gesture (gesture-capture, the
     /// same pinning the targets get). The verdict's `Click`
-    /// (release-in-place) is inert for the left chord (Figma:
+    /// (release-in-place) is inert for the left chord (the design tool:
     /// Space+click does nothing).
     pub fn left_pan_up(&mut self, id: PointerId) -> PanRelease {
         self.pan_up(id, PanButton::Left)
@@ -1419,7 +1408,7 @@ impl InputRouter {
         // axis REMAP for one-dimensional notch devices; a pan delta is
         // already two-dimensional, so remapping it scrambles the grab
         // semantics (vertical drag panning horizontally). Masking makes
-        // Shift+middle-drag a plain pan — exactly Blender's chord set.
+        // Shift+middle-drag a plain pan — exactly the DCC's chord set.
         // Ctrl / Cmd (zoom-class chords) pass through untouched.
         let modifiers = Modifiers {
             shift: false,
@@ -1513,23 +1502,21 @@ impl InputRouter {
     /// at the framework tier per [[r47-class-incident-prevention]].
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
         // R881.1 §5.35 — gesture exclusivity: while a pan-class gesture
-        // (middle drag or R882 Space-chord left drag) owns the pointer,
-        // a routed press is swallowed. R882.1 widened the guard from
-        // latched-only (`pan_live`) to ANY in-flight pan gesture: a
-        // dead-zone pan press is already a gesture candidate, and
-        // letting a routed press open a capture / press tracker beside
-        // it would feed both gestures the same motion once the pan
-        // latches — the exact coexistence `pan_down`'s own guard
-        // refuses in the mirror direction (the guards must be
-        // symmetric or the exclusivity is one-way). The hover snapshot
-        // a press would route by is also stale the moment content
-        // slides under the cursor (Qt ignores secondary-button presses
-        // during an active gesture); the matching release is swallowed
-        // in `pointer_up_with_modifiers` so no widget sees an Up
-        // without its Down. A swallowed press on a LEFT-owned gesture
-        // is counted so its release pairs with the refusal instead of
-        // consuming the gesture (see [`DragPan::swallowed_presses`];
-        // this arc IS the left-button channel — middle has its own).
+        // (middle drag or R882 Space-chord left drag) owns the pointer, a
+        // routed press is swallowed. R882.1 widened the guard from
+        // latched-only (`pan_live`) to ANY in-flight pan gesture: a dead-zone pan
+        // press is already a gesture candidate, and letting a routed press
+        // open a capture / press tracker beside it would feed both gestures
+        // the same motion once the pan latches — the exact coexistence `pan_down`'s
+        // own guard refuses in the mirror direction (the guards must be
+        // symmetric or the exclusivity is one-way). The hover snapshot a press
+        // would route by is also stale the moment content slides under the
+        // cursor (the toolkit ignores secondary-button presses during an
+        // active gesture); the matching release is swallowed in `pointer_up_with_modifiers` so no
+        // widget sees an Up without its Down. A swallowed press on a
+        // LEFT-owned gesture is counted so its release pairs with the refusal
+        // instead of consuming the gesture (see [`DragPan::swallowed_presses`]; this arc IS the
+        // left-button channel — middle has its own).
         if let Some(gesture) = self.drag_pans.get_mut(&id) {
             if gesture.button == PanButton::Left {
                 gesture.swallowed_presses += 1;
@@ -1567,7 +1554,7 @@ impl InputRouter {
                 // R51.35 §5.35 — click-to-position: forward the
                 // press-time cursor as the initial `pointer_move` so
                 // a click-without-drag still seeds the widget's
-                // value at the click point (Material / `SwiftUI` / Qt
+                // value at the click point (Material / `SwiftUI` / the toolkit
                 // Slider click-jumps-to-position UX). Without this
                 // forward the value would not update unless the user
                 // also dragged the cursor at least one pixel.
@@ -1639,13 +1626,12 @@ impl InputRouter {
     ///
     /// # The clock is the frame, not a wall-clock timer
     ///
-    /// Qt's auto-repeat is a `QBasicTimer` on the event loop: a test has
-    /// to sleep, and there is no way to *express* "hold this for 900 ms"
-    /// to a running application. This rides the same `dt` the paint cycle
-    /// and the `scene/tick` RPC already supply, so a hold is reproducible
-    /// to the fire — which is also what keeps the §2 #3 `dry_run`
-    /// determinism invariant intact (a wall-clock timer inside input
-    /// routing would have broken it).
+    /// The toolkit's auto-repeat is a basic timer on the event loop: a test
+    /// has to sleep, and there is no way to *express* "hold this for 900 ms"
+    /// to a running application. This rides the same `dt` the paint cycle and
+    /// the `scene/tick` RPC already supply, so a hold is reproducible to the fire —
+    /// which is also what keeps the §2 #3 `dry_run` determinism invariant intact (a
+    /// wall-clock timer inside input routing would have broken it).
     ///
     /// # Boundaries
     ///
@@ -1653,7 +1639,7 @@ impl InputRouter {
     /// `f32`. A `dt` landing exactly ON a fire instant may or may not
     /// include that fire, because the running remainder is a float
     /// subtraction — the same latitude every float clock has, and orders
-    /// of magnitude tighter than Qt's millisecond `QBasicTimer` under
+    /// of magnitude tighter than the toolkit's millisecond basic timer under
     /// event-loop jitter. Callers who need an exact count should tick past
     /// the instant, not onto it; `AutoRepeatHold::next_fire_in_secs`
     /// publishes exactly how far that is.
@@ -1669,7 +1655,7 @@ impl InputRouter {
     ///
     /// # A fire is the widget's own activation
     ///
-    /// `PointerUp` then `PointerDown` — Qt's `released(); clicked();
+    /// `PointerUp` then `PointerDown` — the toolkit's `released(); clicked();
     /// pressed();` in statechart vocabulary. No repeat-specific event
     /// exists, so a repeat cannot come to mean something a click does
     /// not, and no widget needs an SCXML transition to become repeatable.
@@ -1919,14 +1905,14 @@ impl InputRouter {
             }
             // R794 §5.51 — a drag and a click are mutually exclusive. Only a
             // press-release *in place* (the cursor never left the press point
-            // by DRAG_CLICK_THRESHOLD_PX) synthesizes the trailing `PointerUp`
-            // click; a real moved drag committed via `drag_release` above and
-            // must NOT also activate the source (the row a file move relocated,
-            // the tab a reorder shifted). This is the framework SSOT for
-            // click-vs-drag — Qt `startDragDistance`, the DOM no-`click`-after-
-            // drag rule — so no drag source re-derives it per binding. R876:
-            // `became_drag` is the unified press-to-drag determination
-            // (`track_press_drag`), shared with the double-click detector.
+            // by DRAG_CLICK_THRESHOLD_PX) synthesizes the trailing `PointerUp` click;
+            // a real moved drag committed via `drag_release` above and must NOT also
+            // activate the source (the row a file move relocated, the tab a
+            // reorder shifted). This is the framework SSOT for click-vs-drag —
+            // the toolkit `startDragDistance`, the DOM no-`click`-after- drag rule — so no drag
+            // source re-derives it per binding. R876: `became_drag` is the unified
+            // press-to-drag determination (`track_press_drag`), shared with the double-click
+            // detector.
             if !became_drag {
                 dispatch_send_mods(
                     state_scene,
@@ -1988,10 +1974,10 @@ impl InputRouter {
     /// per-button arc (left = focus, middle = paste, right = context menu)
     /// unchanged — the non-capture invariant.
     ///
-    /// R1418 §5.35 — IMPLICIT GRAB (Qt `grabMouse` / DOM implicit pointer
-    /// capture). A raw sink bypasses [`pointer_down`](Self::pointer_down), so it
-    /// never engages `captured_targets`; this method supplies the equivalent
-    /// press-to-release grab itself:
+    /// R1418 §5.35 — IMPLICIT GRAB (the toolkit `grabMouse` / DOM implicit pointer
+    /// capture). A raw sink bypasses [`pointer_down`](Self::pointer_down), so it never
+    /// engages `captured_targets`; this method supplies the equivalent press-to-release grab
+    /// itself:
     ///
     /// * **While a grab is held** (`raw_grabs[id]`), the edge goes to the
     ///   GRABBED tag regardless of the cursor location, and the held-button
@@ -2021,15 +2007,15 @@ impl InputRouter {
         modifiers: Modifiers,
         state_scene: &mut Scene,
     ) -> bool {
-        // R1422 — synthesise the click-count (Qt `MouseButtonDblClick`) for this
-        // edge. On a press it is derived from the prior mark; `pending_mark` is
-        // COMMITTED only once the edge is actually delivered (below), so a press
-        // that resolves to no raw sink cannot poison the next real press's
+        // R1422 — synthesise the click-count (the toolkit `MouseButtonDblClick`) for this edge.
+        // On a press it is derived from the prior mark; `pending_mark` is COMMITTED only
+        // once the edge is actually delivered (below), so a press that
+        // resolves to no raw sink cannot poison the next real press's
         // double-click window.
         let (click_count, pending_mark) = self.raw_click_for(id, button, edge);
-        // The held-button SET after this edge (Qt `buttons()` semantics: a press
-        // adds, a release removes) — the grab holds the running set, so it is
-        // computed relative to whatever was held before.
+        // The held-button SET after this edge (the toolkit `buttons()` semantics: a
+        // press adds, a release removes) — the grab holds the running set, so
+        // it is computed relative to whatever was held before.
         let apply = |held: PointerButtons| match edge {
             PointerEdge::Down => held.with(button),
             PointerEdge::Up => held.without(button),
@@ -2106,7 +2092,7 @@ impl InputRouter {
     ///
     /// * A **press** ([`PointerEdge::Down`]) reports `2` when it repeats the same
     ///   button as the prior press within [`DOUBLE_CLICK_TIME_MS`] and under
-    ///   [`DOUBLE_CLICK_DIST_PX`] per axis of the prior press (the Qt
+    ///   [`DOUBLE_CLICK_DIST_PX`] per axis of the prior press (the toolkit
     ///   `MouseButtonDblClick`), else `1`. It caps there — a press that already
     ///   reported `2` starts the next cycle fresh (`prev.count == 1` guard), the
     ///   send-wire `DoubleClick`'s "no rolling triple-click" rule. The returned
@@ -2278,12 +2264,12 @@ impl InputRouter {
         // producers — divergence there would be a routing bug).
         let target_tag = self.hover_targets.get(&id).cloned();
         let scroll = paint.scroll_state_at(floor_clamp_u32(x), floor_clamp_u32(y));
-        // R881.1 — the wheel-side sub-pixel remainder (the same carry
-        // the pan gesture holds in its state): a slow high-DPI
-        // `PixelDelta` stream (0.4 px/event) must accumulate instead of
-        // rounding to zero forever. Per Qt's accumulator discipline the
-        // carry resets when the resolved scroll target changes — a
-        // remainder must never leak across containers.
+        // R881.1 — the wheel-side sub-pixel remainder (the same carry the pan
+        // gesture holds in its state): a slow high-DPI `PixelDelta` stream (0.4
+        // px/event) must accumulate instead of rounding to zero forever. Per
+        // the toolkit's accumulator discipline the carry resets when the
+        // resolved scroll target changes — a remainder must never leak across
+        // containers.
         let frac = match (self.wheel_remainders.get(&id), scroll.as_ref()) {
             (Some(rem), Some(s)) if rem.target.upgrade().is_some_and(|t| Rc::ptr_eq(&t, s)) => {
                 rem.frac
@@ -2320,14 +2306,13 @@ impl InputRouter {
     }
 
     /// R1432 §5.35 §5.15 — offer a native PINCH (magnify) gesture to the
-    /// [`External`](pinion_core::external::External) under this pointer's
-    /// cursor. Mirrors the External-offer leg of
-    /// [`wheel_with_modifiers`](Self::wheel_with_modifiers): resolve the hover
-    /// target under the stored cursor, normalise the cursor over the widget's
-    /// capture rect (the SAME basis a `wheel` / `pointer_move` reads), and
-    /// forward the incremental `magnification` + `phase`. There is deliberately
-    /// NO `Scene::Scroll` fallback — a native gesture has no default scroll
-    /// action, so Qt delivers `QNativeGestureEvent` only to the widget under the
+    /// [`External`](pinion_core::external::External) under this pointer's cursor.
+    /// Mirrors the External-offer leg of [`wheel_with_modifiers`](Self::wheel_with_modifiers):
+    /// resolve the hover target under the stored cursor, normalise the cursor
+    /// over the widget's capture rect (the SAME basis a `wheel` / `pointer_move` reads), and
+    /// forward the incremental `magnification` + `phase`. There is deliberately NO `Scene::Scroll`
+    /// fallback — a native gesture has no default scroll action, so the
+    /// toolkit delivers native gesture event only to the widget under the
     /// cursor. Returns `true` if that widget consumed it.
     ///
     /// No-op (`false`) under the same router-state guards
@@ -2377,11 +2362,10 @@ impl InputRouter {
     }
 
     /// R1433 §5.35 §5.15 — offer a native ROTATION gesture to the widget under
-    /// pointer `id`'s cursor, the [`pinch_gesture`](Self::pinch_gesture) sibling
-    /// with `rotation` (degrees) in place of `magnification`. Same
-    /// offer-to-hovered-only delivery — NO `Scene::Scroll` fallback, a native
-    /// gesture reaches only the widget under the cursor (Qt's contract). Returns
-    /// `true` if that widget consumed it.
+    /// pointer `id`'s cursor, the [`pinch_gesture`](Self::pinch_gesture) sibling with `rotation`
+    /// (degrees) in place of `magnification`. Same offer-to-hovered-only delivery — NO `Scene::Scroll`
+    /// fallback, a native gesture reaches only the widget under the cursor
+    /// (the toolkit's contract). Returns `true` if that widget consumed it.
     ///
     /// No-op (`false`) under the same router-state guards
     /// [`pinch_gesture`](Self::pinch_gesture) checks: no stored cursor for `id`,
@@ -2410,13 +2394,12 @@ impl InputRouter {
 
     /// R1434 §5.35 §5.15 — offer a native PAN gesture to the widget under
     /// pointer `id`'s cursor, the [`pinch_gesture`](Self::pinch_gesture) /
-    /// [`rotation_gesture`](Self::rotation_gesture) sibling with a
-    /// two-dimensional `(delta_x, delta_y)` in logical pixels in place of a
-    /// single scalar. Same offer-to-hovered-only delivery — NO `Scene::Scroll`
-    /// fallback: a native gesture reaches only the widget under the cursor (Qt's
-    /// contract), and unlike a wheel it is direct manipulation, so the delta is
-    /// forwarded with the platform's own sign, never flipped. Returns `true` if
-    /// that widget consumed it.
+    /// [`rotation_gesture`](Self::rotation_gesture) sibling with a two-dimensional `(delta_x, delta_y)` in
+    /// logical pixels in place of a single scalar. Same offer-to-hovered-only
+    /// delivery — NO `Scene::Scroll` fallback: a native gesture reaches only the widget
+    /// under the cursor (the toolkit's contract), and unlike a wheel it is
+    /// direct manipulation, so the delta is forwarded with the platform's own
+    /// sign, never flipped. Returns `true` if that widget consumed it.
     ///
     /// This is the NATIVE trackpad axis, unrelated to the held-button drag latch
     /// [`drag_pan_in_flight`](Self::drag_pan_in_flight) reports on: the two
@@ -2449,13 +2432,12 @@ impl InputRouter {
         )
     }
 
-    /// R1435 §5.35 §5.15 — offer a native SMART-ZOOM gesture to the widget under
-    /// pointer `id`'s cursor: the Qt `SmartZoomNativeGesture` / winit
-    /// `DoubleTapGesture` peer. The family's phase-less member — one completed
-    /// toggle, no arc to bracket and no delta to accumulate — so the cursor
-    /// anchor and the modifiers are the whole offer. Same offer-to-hovered-only
-    /// delivery as its siblings (no `Scene::Scroll` fallback). Returns `true` if
-    /// the widget consumed it.
+    /// R1435 §5.35 §5.15 — offer a native SMART-ZOOM gesture to the widget
+    /// under pointer `id`'s cursor: the toolkit `SmartZoomNativeGesture` / winit `DoubleTapGesture` peer. The
+    /// family's phase-less member — one completed toggle, no arc to bracket
+    /// and no delta to accumulate — so the cursor anchor and the modifiers are
+    /// the whole offer. Same offer-to-hovered-only delivery as its siblings
+    /// (no `Scene::Scroll` fallback). Returns `true` if the widget consumed it.
     ///
     /// Distinct from the pointer double-click path (two press/release cycles
     /// through the router's pointer-button arms): that is a button event with a
@@ -2709,11 +2691,10 @@ impl InputRouter {
         }
     }
 
-    /// R1423 §5.35 — store `id`'s PRESSURE (W3C `PointerEvent.pressure` / Qt
-    /// `QTabletEvent::pressure()`), clamped to `0.0..=1.0`, WITHOUT delivering it.
-    /// The pen / touch bridge calls this before the accompanying
-    /// [`cursor_moved`](Self::cursor_moved), whose forwarded `pointer_move`
-    /// carries the new pressure to the surface (pressure travels with position).
+    /// R1423 §5.35 — store `id`'s PRESSURE (W3C `PointerEvent.pressure` / the toolkit `pressure()`), clamped
+    /// to `0.0..=1.0`, WITHOUT delivering it. The pen / touch bridge calls this before
+    /// the accompanying [`cursor_moved`](Self::cursor_moved), whose forwarded `pointer_move` carries
+    /// the new pressure to the surface (pressure travels with position).
     pub fn note_pointer_pressure(&mut self, id: PointerId, pressure: f32) {
         self.axes.entry(id).or_default().pressure = pressure.clamp(0.0, 1.0);
     }
@@ -2728,9 +2709,8 @@ impl InputRouter {
         self.deliver_axes(id, state_scene);
     }
 
-    /// R1429 §5.35 — store `id`'s TILT (W3C `PointerEvent.tiltX/tiltY` / Qt
-    /// `QTabletEvent::xTilt/yTilt`), each axis clamped to `-90.0..=90.0` degrees,
-    /// WITHOUT delivering it. Mirrors
+    /// R1429 §5.35 — store `id`'s TILT (W3C `PointerEvent.tiltX/tiltY` / the toolkit `xTilt/yTilt`), each axis
+    /// clamped to `-90.0..=90.0` degrees, WITHOUT delivering it. Mirrors
     /// [`note_pointer_pressure`](Self::note_pointer_pressure).
     pub fn note_pointer_tilt(&mut self, id: PointerId, tilt_x: f32, tilt_y: f32) {
         let axes = self.axes.entry(id).or_default();
@@ -2751,9 +2731,9 @@ impl InputRouter {
         self.deliver_axes(id, state_scene);
     }
 
-    /// R1430 §5.35 — store `id`'s TWIST (W3C `PointerEvent.twist` / Qt
-    /// `QTabletEvent::rotation()`), the barrel rotation in degrees, WRAPPED to
-    /// `0.0..=360.0` (an angle folds rather than clamps), WITHOUT delivering it.
+    /// R1430 §5.35 — store `id`'s TWIST (W3C `PointerEvent.twist` / the toolkit `rotation()`), the barrel
+    /// rotation in degrees, WRAPPED to `0.0..=360.0` (an angle folds rather than
+    /// clamps), WITHOUT delivering it.
     pub fn note_pointer_twist(&mut self, id: PointerId, twist: f32) {
         self.axes.entry(id).or_default().twist = twist.rem_euclid(360.0);
     }
@@ -2765,9 +2745,8 @@ impl InputRouter {
         self.deliver_axes(id, state_scene);
     }
 
-    /// R1430 §5.35 — store `id`'s TANGENTIAL PRESSURE (W3C
-    /// `PointerEvent.tangentialPressure` / Qt `QTabletEvent::tangentialPressure()`),
-    /// the airbrush finger-wheel position clamped to `-1.0..=1.0`, WITHOUT
+    /// R1430 §5.35 — store `id`'s TANGENTIAL PRESSURE (W3C `PointerEvent.tangentialPressure` / the toolkit
+    /// `tangentialPressure()`), the airbrush finger-wheel position clamped to `-1.0..=1.0`, WITHOUT
     /// delivering it.
     pub fn note_pointer_tangential_pressure(&mut self, id: PointerId, tangential: f32) {
         self.axes.entry(id).or_default().tangential = tangential.clamp(-1.0, 1.0);
@@ -2785,9 +2764,9 @@ impl InputRouter {
         self.deliver_axes(id, state_scene);
     }
 
-    /// R1430 §5.35 — store `id`'s HEIGHT (Qt `QTabletEvent::z()`), the hover
-    /// distance above the surface floored at `0.0` (a distance is non-negative;
-    /// no W3C peer), WITHOUT delivering it.
+    /// R1430 §5.35 — store `id`'s HEIGHT (the toolkit `z()`), the hover distance
+    /// above the surface floored at `0.0` (a distance is non-negative; no W3C
+    /// peer), WITHOUT delivering it.
     pub fn note_pointer_height(&mut self, id: PointerId, height: f32) {
         self.axes.entry(id).or_default().height = height.max(0.0);
     }
@@ -2799,8 +2778,8 @@ impl InputRouter {
         self.deliver_axes(id, state_scene);
     }
 
-    /// R1431 §5.35 — store `id`'s device KIND (W3C `PointerEvent.pointerType` /
-    /// Qt `QTabletEvent::pointerType()`) WITHOUT delivering it.
+    /// R1431 §5.35 — store `id`'s device KIND (W3C `PointerEvent.pointerType` / the toolkit `pointerType()`)
+    /// WITHOUT delivering it.
     pub fn note_pointer_kind(&mut self, id: PointerId, kind: pinion_core::PointerKind) {
         self.axes.entry(id).or_default().kind = kind;
     }
@@ -3172,10 +3151,10 @@ impl InputRouter {
 /// click point the one that cannot work.
 ///
 /// The cure is the declaration the decoration itself carries:
-/// [`LayoutStyle::pointer_transparent`](pinion_core::style::LayoutStyle::pointer_transparent)
-/// (R705), Qt's `WA_TransparentForMouseEvents` and CSS's `pointer-events: none`.
-/// [`Scene::hit_test`] already skips such a node, so it never reaches this walk
-/// and the widget beneath it — sibling or ancestor — is hit exactly as CSS says.
+/// [`LayoutStyle::pointer_transparent`](pinion_core::style::LayoutStyle::pointer_transparent) (R705), the
+/// toolkit's `WA_TransparentForMouseEvents` and CSS's `pointer-events: none`. [`Scene::hit_test`] already skips such a node, so it never
+/// reaches this walk and the widget beneath it — sibling or ancestor — is hit
+/// exactly as CSS says.
 ///
 /// **R1499 — this must not be inferred instead.** R1497 tried to derive it here,
 /// answering the deepest tag whose primary resolves to an `External` and falling
@@ -3190,11 +3169,11 @@ impl InputRouter {
 /// become CHILDREN of a tagged, `External`-backed node, as does a dock header's
 /// own close control. Three `pinion-shell` window-chrome tests went red.
 ///
-/// The two cases are structurally identical — `colhdr_label#3` inside `colhdr`
-/// (the ancestor should win) and `window-resize#north` inside `r1121-content`
-/// (the descendant should win) — so no rule reading the tree can tell them apart.
-/// Which one is decoration is a fact only the paint site knows, which is why Qt
-/// and CSS both make it a declaration and why this walk asks for none.
+/// The two cases are structurally identical — `colhdr_label#3` inside `colhdr` (the ancestor
+/// should win) and `window-resize#north` inside `r1121-content` (the descendant should win) — so no rule
+/// reading the tree can tell them apart. Which one is decoration is a fact
+/// only the paint site knows, which is why the toolkit and CSS both make it a
+/// declaration and why this walk asks for none.
 fn resolve_pointer_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
     let xu = floor_clamp_u32(x);
     let yu = floor_clamp_u32(y);
@@ -3433,12 +3412,13 @@ where
     // Collected so the EXACT pass and the R1155 edge-snap fallback can both walk
     // the host set (the snap must first confirm NO window contained the cursor).
     let windows: Vec<(&str, &Scene, (f64, f64))> = windows.into_iter().collect();
-    // Pass 0 (R1156) — OUTER perimeter: a cursor in the outermost OUTER_DOCK_MARGIN
-    // band of a host window's content edge is a FULL-SPAN outer dock (a row/column
-    // across EVERY pane), not an inner panel split. Checked FIRST so the perimeter
-    // band wins over the inner panel at the very edge — the Qt ADS / VS outer-guide
-    // model. Interior panel boundaries are untouched (they are not near the window
-    // perimeter, so they keep their per-panel inner zones).
+    // Pass 0 (R1156) — OUTER perimeter: a cursor in the outermost
+    // OUTER_DOCK_MARGIN band of a host window's content edge is a FULL-SPAN
+    // outer dock (a row/column across EVERY pane), not an inner panel split.
+    // Checked FIRST so the perimeter band wins over the inner panel at the
+    // very edge — the toolkit ADS / VS outer-guide model. Interior panel
+    // boundaries are untouched (they are not near the window perimeter, so
+    // they keep their per-panel inner zones).
     if let Some(outer) = resolve_outer_dock_zone(&windows, abs_cursor) {
         return Some(outer);
     }
@@ -3723,7 +3703,7 @@ struct WheelDispatchArgs<'a> {
 /// the W3C listener-before-default model), else apply the delta to the
 /// scroll container through the sub-pixel remainder accumulator
 /// (integer scroll offsets round per event; the carry keeps a slow
-/// high-DPI stream moving — Qt's wheel-remainder discipline). Both
+/// high-DPI stream moving — the toolkit's wheel-remainder discipline). Both
 /// producers — [`InputRouter::wheel_with_modifiers`] (per-event
 /// targets, remainder keyed per pointer with target-change reset) and
 /// the middle-pan arm (pinned targets, remainder in the gesture state)
@@ -4222,10 +4202,10 @@ mod tests {
             true
         }
         fn raw_pointer_button(&mut self, event: RawPointerButton) {
-            // `button:edge:mods:buttons:clicks` — the 4th segment is the R1418
-            // held set (Qt `buttons()`), the 5th is the R1422 click-count (Qt
-            // `MouseButtonDblClick` = `2`), so a chord test reads the set
-            // progression and a double-click test reads the synthesised count.
+            // `button:edge:mods:buttons:clicks` — the 4th segment is the R1418 held set (the toolkit `buttons()`),
+            // the 5th is the R1422 click-count (the toolkit `MouseButtonDblClick` = `2`), so a
+            // chord test reads the set progression and a double-click test
+            // reads the synthesised count.
             self.log.lock().expect("mutex poisoned").push(format!(
                 "{}:{}:{}:{}:{}",
                 event.button.as_wire_name(),
@@ -4412,7 +4392,8 @@ mod tests {
     fn r1418_grab_holds_across_a_multi_button_chord() {
         // The grab releases only when the LAST held button lifts — a press
         // left, press right, release left, release right chord keeps the grab
-        // (and its target) through the whole span, the Qt implicit-grab rule.
+        // (and its target) through the whole span, the toolkit implicit-grab
+        // rule.
         let mut router = InputRouter::new();
         let (mut state, log, _moves) = state_with_raw_sink();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
@@ -4448,10 +4429,10 @@ mod tests {
             PointerEdge::Up,
             &mut state
         ));
-        // The 4th segment is the R1418 held set (Qt `buttons()`): it grows to
-        // `{left, right}` = "lr" at the right press, then shrinks as each lifts —
-        // the state a single changed `button` cannot express. The 5th is the
-        // R1422 click-count: every edge here is a distinct-button single, so 1.
+        // The 4th segment is the R1418 held set (the toolkit `buttons()`): it grows to
+        // `{left, right}` = "lr" at the right press, then shrinks as each lifts — the
+        // state a single changed `button` cannot express. The 5th is the R1422
+        // click-count: every edge here is a distinct-button single, so 1.
         assert_eq!(
             read(&log),
             vec![
@@ -4523,10 +4504,9 @@ mod tests {
     #[test]
     fn r1422_a_second_press_on_the_same_spot_synthesises_a_double_click() {
         // Two presses of the same button, at the same spot, back-to-back (well
-        // inside DOUBLE_CLICK_TIME_MS) → the router synthesises click_count = 2
-        // on the SECOND press (the Qt `MouseButtonDblClick`), and the matching
-        // release echoes that 2 (the DOM `detail` model). The first press/release
-        // stay 1.
+        // inside DOUBLE_CLICK_TIME_MS) → the router synthesises click_count =
+        // 2 on the SECOND press (the toolkit `MouseButtonDblClick`), and the matching release
+        // echoes that 2 (the DOM `detail` model). The first press/release stay 1.
         let mut router = InputRouter::new();
         let (mut state, log, _moves) = state_with_raw_sink();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
@@ -4611,7 +4591,8 @@ mod tests {
     #[test]
     fn r1422_a_double_click_is_independent_per_button() {
         // A left double-click must not make a following RIGHT press read as a
-        // double — the tracker keys on the button, the Qt per-button rule.
+        // double — the tracker keys on the button, the toolkit per-button
+        // rule.
         let mut router = InputRouter::new();
         let (mut state, log, _moves) = state_with_raw_sink();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
@@ -5191,9 +5172,9 @@ mod tests {
         assert_eq!(drain_clicks(&mut state), 8, "1 delay + 7 intervals");
     }
 
-    /// Sixty small frames and one big tick over the same span fire the
-    /// same number of times — the property that makes a hold reproducible
-    /// without a wall clock, and the one Qt's `QBasicTimer` cannot offer.
+    /// Sixty small frames and one big tick over the same span fire the same
+    /// number of times — the property that makes a hold reproducible without a
+    /// wall clock, and the one the toolkit's basic timer cannot offer.
     #[test]
     fn r1549_many_small_frames_equal_one_large_tick() {
         let policy = pinion_core::AutoRepeat::new(0.30, 0.10);
@@ -5241,11 +5222,11 @@ mod tests {
         );
     }
 
-    /// A widget that stops declaring mid-hold rewinds the ramp: coming
-    /// back does not resume at speed, it restarts from the delay (Qt's
-    /// `mouseMoveEvent` behaves the same). Driven by DISABLING the button
-    /// mid-hold — a `Disabled` button is not `Pressed`, so it answers
-    /// `None` through the statechart rather than any repeat-specific hook.
+    /// A widget that stops declaring mid-hold rewinds the ramp: coming back
+    /// does not resume at speed, it restarts from the delay (the toolkit's `mouseMoveEvent`
+    /// behaves the same). Driven by DISABLING the button mid-hold — a `Disabled`
+    /// button is not `Pressed`, so it answers `None` through the statechart rather than
+    /// any repeat-specific hook.
     #[test]
     fn r1549_a_quiet_answer_rewinds_the_ramp_rather_than_pausing_it() {
         let mut router = InputRouter::new();
@@ -5271,9 +5252,9 @@ mod tests {
         assert_eq!(drain_clicks(&mut state), 1, "and it fires 0.30 in");
     }
 
-    /// The published census: an agent can see the run it is driving —
-    /// which press, on what, at what cadence, how far in, and when the
-    /// next one lands. Qt keeps every one of these in a private timer.
+    /// The published census: an agent can see the run it is driving — which
+    /// press, on what, at what cadence, how far in, and when the next one
+    /// lands. The toolkit keeps every one of these in a private timer.
     #[test]
     fn r1549_the_wire_states_the_run_it_is_driving() {
         let mut router = InputRouter::new();
@@ -8165,7 +8146,7 @@ mod tests {
         // 30 px up from the origin: latched. Dead-zone wobble never
         // advanced `last`, so the FULL displacement from the grab
         // origin (90 → 60 = 30) dispatches — total tracking, the
-        // Blender grab semantic (no motion is lost to the dead zone).
+        // DCC grab semantic (no motion is lost to the dead zone).
         assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene));
         assert_eq!(scroll.offset(), (0, 30), "content follows the cursor");
         // Further horizontal move pans x too.
@@ -8345,7 +8326,7 @@ mod tests {
 
     #[test]
     fn r881_middle_pan_accumulates_sub_pixel_remainders() {
-        // Integer scroll offsets round per move; the Qt-style
+        // Integer scroll offsets round per move; the toolkit-style
         // remainder carry keeps a slow high-DPI pan moving instead of
         // rounding every 0.4 px step to zero forever.
         let scroll = Rc::new(ScrollState::new());
@@ -8549,7 +8530,7 @@ mod tests {
     fn r881_1_shift_is_masked_from_the_pan_wheel_dialect() {
         // Shift+wheel is an axis REMAP for 1-D notch devices; a pan
         // delta is already 2-D, so the pan dispatch masks Shift
-        // (Shift+middle-drag = plain pan, the Blender chord) while
+        // (Shift+middle-drag = plain pan, the DCC chord) while
         // zoom-class chords (Ctrl) pass through.
         let scroll = Rc::new(ScrollState::new());
         scroll.set_max(500, 500);
@@ -8658,9 +8639,9 @@ mod tests {
 
     #[test]
     fn r882_left_pan_release_in_place_is_click_then_no_press() {
-        // Release-in-place reports Click — which the shell treats as
-        // inert for the left chord (Figma: Space+click does nothing).
-        // The gesture is consumed: a second release is NoPress.
+        // Release-in-place reports Click — which the shell treats as inert for
+        // the left chord (the design tool: Space+click does nothing). The
+        // gesture is consumed: a second release is NoPress.
         let scroll = Rc::new(ScrollState::new());
         scroll.set_max(500, 500);
         let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
@@ -10106,8 +10087,9 @@ mod tests {
         );
         // R794 — a real (moved) drag is NOT also a click: the drop committed
         // via drag_release, so the router does not synthesize the trailing
-        // PointerUp (Qt startDragDistance / DOM no-click-after-drag). This is
-        // what lets a file move / tab reorder not also activate the source.
+        // PointerUp (the toolkit startDragDistance / DOM no-click-after-drag).
+        // This is what lets a file move / tab reorder not also activate the
+        // source.
         assert!(
             !log.contains(&"0:PointerUp".to_string()),
             "a moved drag must not synthesize a click: {log:?}"
@@ -10181,7 +10163,7 @@ mod tests {
     /// would answer `main_btn` and lose the sub-region the widget acts on.
     fn paint_with_labelled_cells(primary: &str) -> Scene {
         let cell = |i: u32, x: u32| {
-            // R1499 — the label declares itself decoration, as Qt's
+            // R1499 — the label declares itself decoration, as the toolkit's
             // `WA_TransparentForMouseEvents` and CSS's `pointer-events: none`
             // do and as the real consumer's paint site now does. Drop the
             // declaration and the press lands on a tag no `External` backs.

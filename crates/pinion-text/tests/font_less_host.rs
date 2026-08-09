@@ -18,10 +18,10 @@
 //!
 //! ## What is asserted
 //!
-//! Qt parity: a font-less host does not take the process down, and text still
-//! shapes. Beyond Qt: the condition is readable as typed data, and an
-//! application-supplied face makes real glyphs appear where the platform
-//! offered none.
+//! The toolkit parity: a font-less host does not take the process down, and
+//! text still shapes. Beyond the toolkit: the condition is readable as typed
+//! data, and an application-supplied face makes real glyphs appear where the
+//! platform offered none.
 
 use pinion_core::reactive::SystemFontStatus;
 use pinion_core::style::TextStyle;
@@ -108,7 +108,7 @@ fn font_less_host_shapes_and_reports() {
         return;
     }
 
-    // --- Qt parity 1: constructing and shaping does not abort. ---
+    // --- the toolkit parity 1: constructing and shaping does not abort. ---
     // Pre-R1448 the first line that shaped panicked inside fontique and took
     // the process with it; reaching the assertion below at all is the claim.
     let mut cache = LayoutCache::new();
@@ -125,7 +125,7 @@ fn font_less_host_shapes_and_reports() {
         "text shapes on a font-less host and yields a line box, as in Qt",
     );
 
-    // --- Beyond Qt: the condition is data, not a stderr warning. ---
+    // --- Beyond the toolkit: the condition is data, not a stderr warning. ---
     assert_eq!(
         cache.system_font_status(),
         SystemFontStatus::Unavailable,
@@ -143,11 +143,12 @@ fn font_less_host_shapes_and_reports() {
     );
 
     // Whatever the platform offered, it offered no glyphs — the width of a
-    // shaped run is the measurable form of that. This is the state Qt leaves
-    // an application in silently.
+    // shaped run is the measurable form of that. This is the state the toolkit
+    // leaves an application in silently.
     let bare_width = cache.layout("AB", &plain, None).width();
 
-    // --- Qt parity 2: addApplicationFontFromData, and then real glyphs. ---
+    // --- the toolkit parity 2: addApplicationFontFromData, and then real
+    // glyphs. ---
     let data = std::fs::read(FIXTURE_FONT).unwrap_or_else(|e| {
         panic!("fixture font {FIXTURE_FONT} must be readable from the crate root: {e}")
     });
@@ -355,13 +356,12 @@ fn hangul_less_fixture_drives_a_host_that_cannot_shape_korean() {
 
 /// R1472 §5.36 — **an application's declared face becomes what unset means.**
 ///
-/// Qt applications call `QFontDatabase::addApplicationFont` and then
-/// `QApplication::setFont`; pinion had only the first half, so a face the
-/// application shipped was reachable *only* from a `TextStyle` that spelled its
-/// name. R1471 measured the consequence and could not fix it from the test
-/// side: a Hangul assertion about a production view passed on a developer box
-/// and failed on CI, because what an unset family means was a property of the
-/// **host**.
+/// The toolkit applications call `addApplicationFont` and then `setFont`; pinion had only the first
+/// half, so a face the application shipped was reachable *only* from a `TextStyle`
+/// that spelled its name. R1471 measured the consequence and could not fix it
+/// from the test side: a Hangul assertion about a production view passed on a
+/// developer box and failed on CI, because what an unset family means was a
+/// property of the **host**.
 ///
 /// The three steps are one claim each, and the middle one is the one that makes
 /// the last one mean something:

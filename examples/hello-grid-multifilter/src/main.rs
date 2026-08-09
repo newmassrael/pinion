@@ -1,14 +1,12 @@
 //! `hello-grid-multifilter` — R997 §5.40 **multi-facet predicate filter at scale**.
 //!
-//! R783 (`hello-grid-filter`) lands a **single** exact-match column filter over
-//! a 10 000-row virtualized data-grid (`set_filter "2=Active"`). A
-//! Wireshark / dlt-class viewer needs more: a **conjunction** of column
-//! predicates with comparison operators — *Name contains "Alpha" AND Score ≥
-//! 500 AND Status = Active*. This binding closes that Model/View-at-scale
-//! campaign slice: the R783 `GridFilter` is now a list of
-//! `ColumnFacet`s (col + `FilterOp` + value) combined with logical AND, and the
-//! AI-first wire carries the whole conjunction in one string —
-//! `set_filter "0~Alpha&1>=500&2=Active"`:
+//! R783 (`hello-grid-filter`) lands a **single** exact-match column filter over a 10 000-row
+//! virtualized data-grid (`set_filter "2=Active"`). An analyser / dlt-class viewer needs more: a
+//! **conjunction** of column predicates with comparison operators — *Name
+//! contains "Alpha" AND Score ≥ 500 AND Status = Active*. This binding closes
+//! that Model/View-at-scale campaign slice: the R783 `GridFilter` is now a list of `ColumnFacet`s
+//! (col + `FilterOp` + value) combined with logical AND, and the AI-first wire
+//! carries the whole conjunction in one string — `set_filter "0~Alpha&1>=500&2=Active"`:
 //!
 //! * **filter** — the R997 [`GridSortState`] filter axis, now multi-facet. A
 //!   row passes iff it satisfies *every* facet; the ordered ops (`<`..`>=`) are

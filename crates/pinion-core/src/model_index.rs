@@ -1,5 +1,5 @@
-//! R1524 §5.27 — the address of **one cell** in a Model/View grid: Qt's
-//! `QModelIndex`.
+//! R1524 §5.27 — the address of **one cell** in a Model/View grid: the
+//! toolkit's model index.
 //!
 //! # Why it lives here (R1544)
 //!
@@ -12,9 +12,9 @@
 //!
 //! The move is not merely mechanical bookkeeping: it corrects a layering
 //! inversion this crate already avoided on the other half of the vocabulary.
-//! [`CellValue`](crate::cell_value::CellValue) — the model's *datum* — has
-//! always been here; the model's *address* was above the paint layer. Qt keeps
-//! `QModelIndex` and `QVariant` in the same module (`QtCore`) for exactly this
+//! [`CellValue`](crate::cell_value::CellValue) — the model's *datum* — has always been
+//! here; the model's *address* was above the paint layer. The toolkit keeps
+//! model index and dynamic value in the same module (`QtCore`) for exactly this
 //! reason: they are the two halves of one contract, and the view is what sits
 //! above them, not what defines them.
 //!
@@ -25,8 +25,8 @@
 /// `view_virtual_table` asks its consumer for.
 ///
 /// This is the Model/View address every framework with a virtualized grid
-/// carries — Qt's `QModelIndex` (the argument to
-/// `QAbstractItemModel::data`), Flutter's `TableVicinity` (the argument to
+/// carries — the toolkit's model index (the argument to
+/// `data`), another retained-mode toolkit's `TableVicinity` (the argument to
 /// `TableView.builder`'s `cellBuilder`) — and it is a *struct* for the same
 /// reason both of those are: the two coordinates are the same type, so a
 /// positional `(row, col)` pair silently accepts them swapped. Naming them
@@ -65,7 +65,7 @@ impl CellIndex {
     }
 }
 
-/// R1544 §5.27 — how large the model is on both axes: Qt's
+/// R1544 §5.27 — how large the model is on both axes: the toolkit's
 /// `rowCount()` / `columnCount()` pair.
 ///
 /// A struct for the reason [`CellIndex`] is one — the two extents are the same
@@ -74,14 +74,14 @@ impl CellIndex {
 /// that walks a plausible-looking wrong rectangle.
 ///
 /// It exists because the editing cursor walks the model, not the painted
-/// window: Qt's `EditNextItem` moves to the next index in the *model*, whether
+/// window: the toolkit's `EditNextItem` moves to the next index in the *model*, whether
 /// or not that index is currently rendered. A grid that windowed 5 of 200
 /// columns and advanced within the window would stop at the window edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GridExtent {
-    /// Total data-row count (Qt `rowCount()`).
+    /// Total data-row count (the toolkit `rowCount()`).
     pub rows: usize,
-    /// Total column count (Qt `columnCount()`).
+    /// Total column count (the toolkit `columnCount()`).
     pub cols: usize,
 }
 

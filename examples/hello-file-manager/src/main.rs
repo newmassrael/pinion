@@ -9,7 +9,7 @@
 //! toolbar of **New Folder**, **New File**, **Rename**, and **Delete**
 //! mutates the listing in place — the editor-essential filesystem-management
 //! gesture every pro DCC / IDE / CAD tool ships, a direct step toward the
-//! northern-star "Unreal-class editor self-hosted in pinion".
+//! northern-star "the engine-class editor self-hosted in pinion".
 //!
 //! ## Inline rename (R791)
 //!

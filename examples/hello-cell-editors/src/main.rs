@@ -1,58 +1,56 @@
-//! `hello-cell-editors` — R1555 §5.27 **the cell-editor factory**: Qt
-//! `QItemEditorFactory`, as one column per [`CellKind`].
+//! `hello-cell-editors` — R1555 §5.27 **the cell-editor factory**: the toolkit
+//! item editor factory, as one column per [`CellKind`].
 //!
 //! R1532 gave the virtualized grid a per-**column** paint delegate and R1544
-//! gave it the editing seam. Both are the *override* half of Qt's editing
-//! decomposition (`setItemDelegateForColumn`). The other half — a registry from
-//! the datum's **type** to an editor, which `QStyledItemDelegate` consults when
-//! no delegate overrides it — did not exist, so
-//! [`text_cell_editor`](pinion_widget_paint::table::text_cell_editor) was the
-//! built-in editor for every kind. For two of the six that editor cannot work at
-//! all: [`CellKind::Bool`] and [`CellKind::Choice`] refuse every keystroke
-//! ([`CellKind::accepts_keystroke`]) and parse to nothing
-//! ([`CellKind::parse`]), so the seam opened a field that could not be typed
-//! into and whose commit could never produce a value.
+//! gave it the editing seam. Both are the *override* half of the toolkit's
+//! editing decomposition (`setItemDelegateForColumn`). The other half — a registry from the datum's
+//! **type** to an editor, which styled item delegate consults when no delegate
+//! overrides it — did not exist, so
+//! [`text_cell_editor`](pinion_widget_paint::table::text_cell_editor) was the built-in editor
+//! for every kind. For two of the six that editor cannot work at all: [`CellKind::Bool`]
+//! and [`CellKind::Choice`] refuse every keystroke ([`CellKind::accepts_keystroke`]) and parse to nothing ([`CellKind::parse`]), so
+//! the seam opened a field that could not be typed into and whose commit could
+//! never produce a value.
 //!
 //! This binding is that registry's forcing consumer. It writes **no editor
 //! paint of its own**: one column per kind, every editor reached through
 //! [`cell_editor`](pinion_widget_paint::table::cell_editor), which dispatches on
 //! [`CellKind::editor_form`].
 //!
-//! | column | kind | form | Qt's default factory |
+//! | column | kind | form | the toolkit's default factory |
 //! |---|---|---|---|
 //! | `Asset` | — | none | not editable (no `ItemIsEditable`) |
-//! | `Name` | `Text` | `Field` | `QExpandingLineEdit` — parity |
-//! | `Count` | `Int` | `Stepper` | `QSpinBox` — parity |
-//! | `Ratio` | `Float` | `Stepper` | `QDoubleSpinBox` at `decimals() == 2`, which **rounds** |
-//! | `Active` | `Bool` | `Toggle` | a two-item `QComboBox` reading "False"/"True" |
-//! | `Tier` | `Choice` | `Selector` | **impossible** — an enum is an `int` to `QVariant` |
+//! | `Name` | `Text` | `Field` | expanding line edit — parity |
+//! | `Count` | `Int` | `Stepper` | spin box — parity |
+//! | `Ratio` | `Float` | `Stepper` | double spin box at `decimals() == 2`, which **rounds** |
+//! | `Active` | `Bool` | `Toggle` | a two-item combo box reading "False"/"True" |
+//! | `Tier` | `Choice` | `Selector` | **impossible** — an enum is an `int` to dynamic value |
 //! | `Tint` | `Color` | `Swatch` | **nothing** — `createEditor` answers `nullptr` |
 //!
 //! ## What the model is
 //!
-//! A typed one. `Qt::EditRole` answers with a `QVariant` and R1555's
-//! [`CellEdit`] answers with a [`CellValue`], because a `Choice`'s **options are
-//! part of the value's identity** — a `(kind, String)` pair cannot tell a
-//! selector what to select between, or even which index a label is when two
-//! options share one. So the overlay here holds `CellValue`s, which is also what
-//! makes the four non-text columns expressible at all.
+//! A typed one. `EditRole` answers with a dynamic value and R1555's [`CellEdit`] answers
+//! with a [`CellValue`], because a `Choice`'s **options are part of the value's identity**
+//! — a `(kind, String)` pair cannot tell a selector what to select between, or even which
+//! index a label is when two options share one. So the overlay here holds
+//! `CellValue`s, which is also what makes the four non-text columns expressible at
+//! all.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
-//! `scene/cell_editors` publishes the whole factory — the census Qt has no
-//! accessor for, since `createEditor` *constructs a `QWidget`* and `creatorMap`
-//! is private. The binding's own `editing` / `commit` slots then report which
-//! cell is open, in which form, holding what, and what the last commit did
-//! ([`CommitOutcome`], which names the difference between "that is not a number"
-//! and "the model will not take it" — one event Qt reports as neither). See
-//! `tools/demos/r1555_editor_follows_the_datum.py`.
+//! `scene/cell_editors` publishes the whole factory — the census the toolkit has no accessor
+//! for, since `createEditor` *constructs a widget* and `creatorMap` is private. The binding's own
+//! `editing` / `commit` slots then report which cell is open, in which form, holding
+//! what, and what the last commit did ([`CommitOutcome`], which names the difference
+//! between "that is not a number" and "the model will not take it" — one event
+//! the toolkit reports as neither). See `tools/demos/r1555_editor_follows_the_datum.py`.
 //!
 //! ## a11y
 //!
-//! The open editor is announced under its `gridcell` with the role its form
-//! has ([`attach_cell_editor`]). Qt reaches a role by accident of construction,
-//! so a Qt bool cell announces as a **combo box** and a Qt colour cell announces
-//! nothing at all.
+//! The open editor is announced under its `gridcell` with the role its form has
+//! ([`attach_cell_editor`]). The toolkit reaches a role by accident of construction, so a
+//! toolkit bool cell announces as a **combo box** and a toolkit colour cell
+//! announces nothing at all.
 
 use pinion_a11y::{
     AccessNode, WidgetA11y, attach_cell_editor, mark_grid_editability, windowed_grid_nodes_selected,
@@ -115,8 +113,8 @@ const HEADERS: [&str; NCOLS] = ["Asset", "Name", "Count", "Ratio", "Active", "Ti
 /// factory derives the form from the kind, so this table is the only place the
 /// grid says anything about which editor a column opens.
 ///
-/// `None` is the read-only identity column (Qt: `flags()` without
-/// `Qt::ItemIsEditable`), so no trigger can open an editor there.
+/// `None` is the read-only identity column (the toolkit: `flags()` without
+/// `ItemIsEditable`), so no trigger can open an editor there.
 const COL_KINDS: [Option<CellKind>; NCOLS] = [
     None,
     Some(CellKind::Text),
@@ -127,9 +125,9 @@ const COL_KINDS: [Option<CellKind>; NCOLS] = [
     Some(CellKind::Color),
 ];
 
-/// The `Tier` column's option domain — a `Choice`'s options are part of its
-/// **value**, not of its kind, which is exactly why an edit role has to carry a
-/// datum and why Qt's type-keyed factory cannot produce a populated combo box.
+/// The `Tier` column's option domain — a `Choice`'s options are part of its **value**,
+/// not of its kind, which is exactly why an edit role has to carry a datum and
+/// why the toolkit's type-keyed factory cannot produce a populated combo box.
 const TIERS: [&str; 3] = ["Draft", "Review", "Final"];
 
 /// The `Tint` column's seed palette, cycled per row so the swatches differ.
@@ -182,7 +180,7 @@ fn use_overlay() -> Rc<Signal<BTreeMap<usize, CellValue>>> {
         .cache(OVERLAY_KEY, || Signal::new(BTreeMap::new()))
 }
 
-/// The **current cell**, Qt's `currentIndex()` — a separate axis from the row
+/// The **current cell**, the toolkit's `currentIndex()` — a separate axis from the row
 /// selection, because an edit trigger acts on a cell and a row-only cursor
 /// cannot name one.
 fn use_current() -> Rc<Signal<Option<CellIndex>>> {
@@ -211,8 +209,8 @@ fn generated_value(c: CellIndex) -> Option<CellValue> {
     Some(match COL_KINDS[c.col]? {
         CellKind::Text => CellValue::Text(format!("asset_{id:03}")),
         CellKind::Int => CellValue::Int(i64::try_from((id * 17) % 400).unwrap_or(0)),
-        // Two decimal places of real information, which is the precision Qt's
-        // default `QDoubleSpinBox` editor silently discards.
+        // Two decimal places of real information, which is the precision the
+        // toolkit's default double spin box editor silently discards.
         CellKind::Float => CellValue::Float(f64::from(u32::try_from(id).unwrap_or(0)) / 8.0),
         CellKind::Bool => CellValue::Bool(id % 3 == 0),
         CellKind::Choice => CellValue::Choice {
@@ -234,7 +232,7 @@ fn cell_value(c: CellIndex, overlay: &BTreeMap<usize, CellValue>) -> Option<Cell
         .or_else(|| generated_value(c))
 }
 
-/// The model's `Qt::DisplayRole`.
+/// The model's `DisplayRole`.
 fn cell_text(c: CellIndex, overlay: &BTreeMap<usize, CellValue>) -> String {
     match cell_value(c, overlay) {
         Some(value) => value.display(),
@@ -243,14 +241,14 @@ fn cell_text(c: CellIndex, overlay: &BTreeMap<usize, CellValue>) -> String {
     }
 }
 
-/// The model's `Qt::EditRole` fused with `flags() & Qt::ItemIsEditable`: `None`
-/// **is** "not editable", and a `Some` carries the datum — which is what makes
-/// "an editor open on a cell the model will not edit" a state the types reject.
+/// The model's `EditRole` fused with `flags() & ItemIsEditable`: `None` **is** "not editable", and a `Some`
+/// carries the datum — which is what makes "an editor open on a cell the model
+/// will not edit" a state the types reject.
 fn edit_role(c: CellIndex, overlay: &BTreeMap<usize, CellValue>) -> Option<CellEdit> {
     cell_value(c, overlay).map(CellEdit::from)
 }
 
-/// The model's `setData(index, value, Qt::EditRole)`.
+/// The model's `setData(index, value, EditRole)`.
 ///
 /// The framework has already parsed the buffer through the cell's own kind, so a
 /// malformed value never arrives (that is [`CommitOutcome::Malformed`]). What is
@@ -354,12 +352,12 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let overlay = use_overlay().get();
     let edit_state = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
     // R1571 — every open editor, paired with the model's edit role for its
-    // cell, re-asked from this frame's overlay. `0..N` is the whole model
-    // rather than the painted window because the cost is the SET's size, not
-    // the model's: `open_cells` walks the open editors and filters them, so a
-    // grid with none allocates an empty vector and a grid with three walks
-    // three — where Qt's `updateEditorGeometries()` walks every persistent
-    // editor on every scroll whether or not its row is on screen.
+    // cell, re-asked from this frame's overlay. `0..N` is the whole model rather
+    // than the painted window because the cost is the SET's size, not the
+    // model's: `open_cells` walks the open editors and filters them, so a grid with
+    // none allocates an empty vector and a grid with three walks three — where
+    // the toolkit's `updateEditorGeometries()` walks every persistent editor on every scroll whether
+    // or not its row is on screen.
     let open_cells = edit_state.open_cells(0..N, |i| edit_role(i, &overlay));
     let editing = (!open_cells.is_empty()).then(|| GridEditing {
         open: &open_cells,
@@ -409,7 +407,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     )
 }
 
-/// Whether `key` is a single printable character — the class Qt's
+/// Whether `key` is a single printable character — the class the toolkit's
 /// `AnyKeyPressed` trigger fires on.
 fn is_printable(key: &str) -> bool {
     let mut chars = key.chars();
@@ -464,22 +462,21 @@ fn begin_at_current(trigger: EditTrigger, forward: Option<(&mut Scene, &str, Mod
     true
 }
 
-/// R1571 — toggle a **persistent** editor on `at`: Qt's
+/// R1571 — toggle a **persistent** editor on `at`: the toolkit's
 /// `openPersistentEditor` / `closePersistentEditor` pair, reached from a real
 /// gesture.
 ///
 /// Opening is the one editor verb the framework cannot offer over the wire on
 /// its own, and the reason is R1544's: it needs a [`CellEdit`], which only the
 /// **model** produces and which it produces `None` for on a cell it will not
-/// edit. Closing and focusing need no model, so `scene/grid_editors` publishes
-/// the set and this binding owns the opening — the same division Qt has, where
-/// `openPersistentEditor` is a method on the view that reaches the delegate.
+/// edit. Closing and focusing need no model, so `scene/grid_editors` publishes the set and this
+/// binding owns the opening — the same division the toolkit has, where `openPersistentEditor` is
+/// a method on the view that reaches the delegate.
 ///
-/// The outcome is recorded so a driver can tell an open from a promotion from a
-/// no-op, which `void openPersistentEditor(const QModelIndex &)` cannot.
-/// The overlay and the outcome readout are **passed in**, not resolved here:
-/// this runs on the `External`'s send arc as well as from `apply_key`, and that
-/// arc has no ambient [`Owner`] — the hazard [`GridEditState::new`]'s own doc
+/// The outcome is recorded so a driver can tell an open from a promotion from
+/// a no-op, which `void openPersistentEditor(const model index &)` cannot. The overlay and the outcome readout are **passed
+/// in**, not resolved here: this runs on the `External`'s send arc as well as from
+/// `apply_key`, and that arc has no ambient [`Owner`] — the hazard [`GridEditState::new`]'s own doc
 /// records, and which cost this round one panicking demo run.
 fn toggle_persistent(
     edit: &Rc<GridEditState>,
@@ -494,9 +491,8 @@ fn toggle_persistent(
         return closed;
     }
     let Some(role) = edit_role(at, &overlay.get()) else {
-        // Qt opens a live editor here, the user types into it, and the write is
-        // dropped in silence: `createEditor` never consults
-        // `flags() & Qt::ItemIsEditable`.
+        // The toolkit opens a live editor here, the user types into it, and
+        // the write is dropped in silence: `createEditor` never consults `flags() & ItemIsEditable`.
         outcome.set("not_editable".to_string());
         return false;
     };
@@ -513,9 +509,9 @@ fn toggle_persistent(
 /// R1571 — commit **every** open editor, in cell order, and report how many
 /// landed: the "save the sheet" verb a grid full of persistent editors needs.
 ///
-/// In Qt this is a walk over `QAbstractItemViewPrivate::indexEditorHash`, which
-/// is private — so an application that opens N persistent editors has no way to
-/// ask its own view what to commit.
+/// In the toolkit this is a walk over `indexEditorHash`, which is private — so an
+/// application that opens N persistent editors has no way to ask its own view
+/// what to commit.
 fn commit_every_open_editor(edit: &Rc<GridEditState>) -> usize {
     let cells: Vec<CellIndex> = edit.editors().iter().map(|e| e.index).collect();
     let landed = cells
@@ -541,7 +537,7 @@ fn finish_commit(edit: &Rc<GridEditState>) -> CommitOutcome {
 ///
 /// <kbd>Space</kbd> toggles, the arrows move a selector's option, and
 /// <kbd>Enter</kbd> / <kbd>Escape</kbd> commit and revert — the same arc every
-/// text-buffered form has. Qt's check-state click calls `setModelData`
+/// text-buffered form has. The toolkit's check-state click calls `setModelData`
 /// immediately, so there is nothing to escape there.
 fn gesture_key(edit: &Rc<GridEditState>, key: &str, form: EditorForm) -> bool {
     match (form, key) {
@@ -608,7 +604,8 @@ fn editing_key(
         return true;
     }
     // R1555 — the arrows are the stepper's keyboard half, the peer of its
-    // painted affordances (Qt `QAbstractSpinBox` steps on Up / Down too).
+    // painted affordances (the toolkit abstract spin box steps on Up / Down
+    // too).
     if edit.form() == Some(EditorForm::Stepper) {
         match key {
             "ArrowUp" => return edit.step(1),
@@ -665,10 +662,10 @@ impl WidgetCore for CellEditorsView {
                     | GridSendKey::Corner => return,
                 };
                 {
-                    // R1571 — the persistent-editor gesture. Qt drives
-                    // `openPersistentEditor` from application code with no
-                    // gesture of its own; a DCC grid needs one, and a modified
-                    // activation is the ordinary place for "and keep it open".
+                    // R1571 — the persistent-editor gesture. The toolkit
+                    // drives `openPersistentEditor` from application code with no gesture of its
+                    // own; a DCC grid needs one, and a modified activation is
+                    // the ordinary place for "and keep it open".
                     if is_activation_event(event) && modifiers.command_key() {
                         current.set(Some(index));
                         let _toggled = toggle_persistent(&edit, &overlay, &outcome, index);
@@ -676,10 +673,11 @@ impl WidgetCore for CellEditorsView {
                     }
                     // R1571 — a plain click on a cell that already has an
                     // editor gives that editor the keyboard rather than
-                    // starting a new edit. Qt gets this for free, because a
-                    // persistent editor is a focusable `QWidget` sitting in the
-                    // cell's rect and the click never reaches the view at all.
-                    // Here the editors are state, so the view routes it.
+                    // starting a new edit. The toolkit gets this for free,
+                    // because a persistent editor is a focusable widget
+                    // sitting in the cell's rect and the click never reaches
+                    // the view at all. Here the editors are state, so the view
+                    // routes it.
                     if is_activation_event(event) && edit.is_editing(index) {
                         current.set(Some(index));
                         if edit.focus_editor(index)
@@ -752,7 +750,7 @@ impl WidgetCore for CellEditorsView {
         let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
         // R1571 — the persistent-editor chords, ahead of every other gate
         // because they must reach the grid whichever editor holds the field
-        // (Qt's `openPersistentEditor` is likewise callable at any time).
+        // (the toolkit's `openPersistentEditor` is likewise callable at any time).
         if modifiers.command_key() {
             match key {
                 "e" | "E" => {
@@ -858,8 +856,8 @@ fn step_gesture(edit: &Rc<GridEditState>, at: CellIndex, up: bool, event: &str) 
         return false;
     }
     // The arrow is a hit target of its own, so pressing it moved focus to the
-    // grid and the next keystroke would have gone nowhere. Qt cannot have this
-    // bug — `SC_SpinBoxUp` is a sub-control of one focus widget — so the
+    // grid and the next keystroke would have gone nowhere. The toolkit cannot
+    // have this bug — `SC_SpinBoxUp` is a sub-control of one focus widget — so the
     // equivalent here is to hand focus back to the field the step just wrote.
     pinion_core::focus_request::request(EDIT_FIELD_TAG);
     true
@@ -1082,8 +1080,8 @@ mod tests {
             let at = open_at(4);
             let before = cell_value(at, &use_overlay().get()).expect("a datum");
             assert_eq!(edit().form(), Some(EditorForm::Toggle));
-            // Qt's check-state click writes through immediately; here it edits
-            // the latch, so Escape can revert it.
+            // The toolkit's check-state click writes through immediately; here
+            // it edits the latch, so Escape can revert it.
             assert!(gesture_key(&edit(), " ", EditorForm::Toggle));
             assert!(edit().is_dirty());
             // The PAINT shows the flip. Asserting only the latch leaves the
@@ -1258,7 +1256,7 @@ mod tests {
     #[test]
     fn r1555_a_float_survives_an_open_and_commit_untouched() {
         with_owner(|| {
-            // Qt's default factory hands a `QDoubleSpinBox` at
+            // The toolkit's default factory hands a double spin box at
             // `decimals() == 2`, so this round trip loses precision there.
             let at = CellIndex::new(11, 3);
             let before = cell_value(at, &use_overlay().get()).expect("a datum");

@@ -25,7 +25,7 @@
 //!   ([`WidgetCore::apply_secondary_click`]); a human right-click and
 //!   `scene/click {button: "right"}` reach the same override (§2 invariant
 //!   #2). The override maps the press point to a column via the header
-//!   geometry ([`grid_target_at`] — Qt's `QHeaderView::logicalIndexAt`), records
+//!   geometry ([`grid_target_at`] — the toolkit's `logicalIndexAt`), records
 //!   the target column, and anchors the popup.
 //! * **the sort** — the R778 [`GridSortExternal`] over a shared
 //!   [`GridSortState`] (an *extra* external): a left-click on a header still
@@ -37,13 +37,12 @@
 //! ## The captured-target pattern
 //!
 //! A real header menu acts on the column the cursor landed on, captured at
-//! open time (Qt's `QMenu::exec` / the web `contextmenu` `event.target`). So
-//! the popup itself stays target-agnostic; the binding stores the right-clicked
-//! column in a reactive [`Signal`] ([`use_menu_target`]) at
-//! `apply_secondary_click` time and reads it back in [`update`](GridHeaderMenuView)
-//! when the `"command"` intent fires. The status bar surfaces the captured
-//! column as scene-as-data (§2 invariant #7) so an AI client sees the menu's
-//! target before activating an item.
+//! open time (the toolkit's `exec` / the web `contextmenu` `event.target`). So the popup itself stays
+//! target-agnostic; the binding stores the right-clicked column in a reactive
+//! [`Signal`] ([`use_menu_target`]) at `apply_secondary_click` time and reads it back in [`update`](GridHeaderMenuView)
+//! when the `"command"` intent fires. The status bar surfaces the captured column as
+//! scene-as-data (§2 invariant #7) so an AI client sees the menu's target
+//! before activating an item.
 //!
 //! ## AI clients
 //!
@@ -248,19 +247,18 @@ impl SortCommand {
 /// grid column it landed on (a header cell OR a data cell), or `None` when the
 /// click is outside the grid's columns/rows.
 ///
-/// The geometric hit-test (Qt's `QHeaderView::logicalIndexAt`, extended to the
-/// body). `view_virtual_table` insets its content by `block_pad` (the
-/// `TableStyle` SSOT the paint reads), so in window coords the columns start at
-/// `x = block_pad` and the frozen header band at `y = STATUS_H + block_pad`,
-/// with the `N` data rows (`ROW_H` each) below it. **R988.1** fixes the original
-/// hit-test, which omitted `block_pad` and mis-resolved the column within 8 px
-/// of every boundary; it now reads the same `block_pad` the paint uses. The
-/// uniform `COL_W` columns and the fixed `N`-row body fit the window
-/// (`NCOLS * COL_W < WIN_W`, grid height < `WIN_H`), so both `ScrollState`s
-/// clamp to offset 0 and the hit-test needs no scroll term — a scrolling grid
-/// would subtract the offsets (the editable-grid follow-up). A header click
-/// resolves only its column (`row = None`); a body click also resolves its row.
-/// The RPC demo validates the boundaries (not just centers) against the rects.
+/// The geometric hit-test (the toolkit's `logicalIndexAt`, extended to the body). `view_virtual_table`
+/// insets its content by `block_pad` (the `TableStyle` SSOT the paint reads), so in window
+/// coords the columns start at `x = block_pad` and the frozen header band at `y = STATUS_H + block_pad`, with the
+/// `N` data rows (`ROW_H` each) below it. **R988.1** fixes the original hit-test,
+/// which omitted `block_pad` and mis-resolved the column within 8 px of every
+/// boundary; it now reads the same `block_pad` the paint uses. The uniform `COL_W`
+/// columns and the fixed `N`-row body fit the window (`NCOLS * COL_W < WIN_W`, grid height <
+/// `WIN_H`), so both `ScrollState`s clamp to offset 0 and the hit-test needs no scroll
+/// term — a scrolling grid would subtract the offsets (the editable-grid
+/// follow-up). A header click resolves only its column (`row = None`); a body click
+/// also resolves its row. The RPC demo validates the boundaries (not just
+/// centers) against the rects.
 fn grid_target_at(x: f32, y: f32) -> Option<MenuTarget> {
     let xi = saturating_f32_to_u32(x);
     let yi = saturating_f32_to_u32(y);

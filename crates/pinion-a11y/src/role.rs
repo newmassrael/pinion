@@ -472,14 +472,14 @@ pub enum AriaRole {
     /// declaration that indents and spaces the paragraph — one authority, not a
     /// heading marked twice.
     ///
-    /// **Qt has the declaration and not the announcement.**
-    /// `QTextBlockFormat::headingLevel()` exists (Qt 5.15+), but a
-    /// `QTextEdit`'s accessibility surface is `QAccessibleTextInterface`, whose
-    /// whole vocabulary is character offsets, selections and text attributes —
-    /// it has no method that reports block structure, so a Qt document's
-    /// heading levels reach its layout and stop there. Headings are the primary
-    /// way a screen-reader user navigates a long document, which is what makes
-    /// that gap worth crossing rather than matching.
+    /// **the toolkit has the declaration and not the announcement.** `headingLevel()`
+    /// exists (the toolkit 5.15+), but a text edit's accessibility surface is
+    /// accessible text interface, whose whole vocabulary is character offsets,
+    /// selections and text attributes — it has no method that reports block
+    /// structure, so a toolkit document's heading levels reach its layout and
+    /// stop there. Headings are the primary way a screen-reader user navigates
+    /// a long document, which is what makes that gap worth crossing rather
+    /// than matching.
     Heading,
     Generic,
 }

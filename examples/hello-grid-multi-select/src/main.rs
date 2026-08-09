@@ -5,8 +5,8 @@
 //! data-grid cursor model. R780 (`hello-multi-select`) lands the multi-select
 //! index model over a virtualized *list*, and R781 wires keyboard-modifier
 //! click into the pointer send wire. This binding brings them together: the
-//! same [`VirtualSelectExternal`] in **`Multi`** mode (the Qt
-//! `QItemSelectionModel` `ExtendedSelection` analogue — a selection *set*
+//! same [`VirtualSelectExternal`] in **`Multi`** mode (the toolkit
+//! item selection model `ExtendedSelection` analogue — a selection *set*
 //! plus an `anchor` for range extension) drives a 10 000-row data-grid, and
 //! the selection is an arbitrary set of **data rows**:
 //!
@@ -18,15 +18,15 @@
 //! * **`Ctrl+A`** — select every one of the 10 000 rows.
 //! * **`Ctrl+Space`** — toggle the active row's membership.
 //! * **plain click** on a cell — select that cell's row (column irrelevant,
-//!   WAI-ARIA / Qt `SelectRows`).
+//!   WAI-ARIA / the toolkit `SelectRows`).
 //! * **`Ctrl`-click** — toggle the clicked row's membership.
 //! * **`Shift`-click** — extend the range from the `anchor` to the clicked
 //!   row.
 //! * **click a ROW HEADER** (R1562) — the same three chords, addressed from
-//!   the vertical band (Qt `QHeaderView` with `sectionsClickable`). The band is
+//!   the vertical band (the toolkit header view with `sectionsClickable`). The band is
 //!   pinned against the horizontal scroll, so it is the part of a row that is
 //!   on screen when the row's cells are not.
-//! * **click the CORNER** (R1562) — Qt's `QTableCornerButton`, here a
+//! * **click the CORNER** (R1562) — the toolkit's table corner button, here a
 //!   tri-state: it shows how much of the model is selected and toggles between
 //!   all and none.
 //!
@@ -62,17 +62,13 @@
 //!
 //! ## a11y
 //!
-//! Multi-select WAI-ARIA virtualized `grid` via the R782-lifted
-//! [`windowed_grid_nodes_multiselected`]: `aria-setsize = N`, the grid
-//! container `aria-multiselectable`, each rendered data row an
-//! `AriaRole::Row` with `aria-posinset` + `aria-selected =
-//! selection.contains(id)` (so several visible rows can be `aria-selected` at
-//! once) and a `gridcell` per column, under a frozen header row of
-//! `columnheader`s. The grid is the focusable tab stop. R1548 leads each row
-//! with its `rowheader`; R1562 leads the header row with the corner — a
-//! `columnheader` holding a named tri-state `checkbox`, which is the shape an
-//! HTML select-all has and which Qt's nameless private corner button cannot
-//! reach.
+//! Multi-select WAI-ARIA virtualized `grid` via the R782-lifted [`windowed_grid_nodes_multiselected`]: `aria-setsize = N`, the
+//! grid container `aria-multiselectable`, each rendered data row an `AriaRole::Row` with `aria-posinset` + `aria-selected = selection.contains(id)` (so
+//! several visible rows can be `aria-selected` at once) and a `gridcell` per column, under a
+//! frozen header row of `columnheader`s. The grid is the focusable tab stop. R1548 leads
+//! each row with its `rowheader`; R1562 leads the header row with the corner — a `columnheader`
+//! holding a named tri-state `checkbox`, which is the shape an HTML select-all has
+//! and which the toolkit's nameless private corner button cannot reach.
 
 use pinion_a11y::{
     AccessNode, WidgetA11y, attach_corner_button, attach_row_headers,
@@ -301,9 +297,9 @@ fn view(selection: &MultiSelection, _frame: &Frame) -> Scene {
             // R1562 — the vertical band, with a LIVE corner. Two things this
             // adds that a cell click cannot: a row is selectable from the one
             // part of it that is pinned against the horizontal scroll, and the
-            // whole model is selectable from a control that says how much of it
-            // already is (Qt's `QTableCornerButton` is nameless, stateless and
-            // one-way).
+            // whole model is selectable from a control that says how much of
+            // it already is (the toolkit's table corner button is nameless,
+            // stateless and one-way).
             rows: Some(RowHeaderAxis::select_all(
                 HeaderAxis::row_numbers(),
                 selection.extent(),
@@ -425,10 +421,10 @@ impl WidgetA11y for GridMultiSelectView {
         // R1548 — the vertical section axis reaches the tree as a `rowheader`
         // leading each windowed row. Identity source: this grid does not sort.
         attach_row_headers(&mut nodes, TABLE_TAG, &window, |view_pos| view_pos);
-        // R1562 — the corner control, named and carrying the tri-state. Qt's
-        // `QTableCornerButton` is a private nameless `QAbstractButton` with no
-        // state and no accessor on `QTableView`, so there is no supported way
-        // to announce either what it is or what it would do.
+        // R1562 — the corner control, named and carrying the tri-state. The
+        // toolkit's table corner button is a private nameless abstract button
+        // with no state and no accessor on table view, so there is no
+        // supported way to announce either what it is or what it would do.
         attach_corner_button(
             &mut nodes,
             TABLE_TAG,

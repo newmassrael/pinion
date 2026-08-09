@@ -948,13 +948,13 @@ where
     serde_json::from_value(wire).unwrap()
 }
 
-/// Blender's own localisation, as `update_link_validation` performs it.
+/// The DCC's own localisation, as `update_link_validation` performs it.
 ///
 /// Held here so the divergence below is **asserted** rather than described: a
 /// link is blamed when its endpoints came out of the toposort in the wrong
 /// order, and `update_toposort` restarts, for a tree with no acyclic start
 /// node, at whichever remaining node comes first in `nodes_by_id` — id order.
-/// So this takes the id-ordered walk Blender takes and answers the links it
+/// So this takes the id-ordered walk the DCC takes and answers the links it
 /// would clear `NODE_LINK_VALID` on.
 fn blender_blamed_links(document: &Document<Op>) -> Vec<crate::LinkId> {
     // `toposort_from_start_node`, depth-first over inputs, emitting a node once
@@ -987,8 +987,9 @@ fn blender_blamed_links(document: &Document<Op>) -> Vec<crate::LinkId> {
     let tree = document.tree(ROOT).unwrap();
     let mut order: Vec<NodeId> = Vec::new();
     let mut done: std::collections::BTreeSet<NodeId> = std::collections::BTreeSet::new();
-    // Start nodes first (nothing feeds out of them is Blender's LeftToRight
-    // test), then the leftovers "somewhere in the middle of a loop", in id order.
+    // Start nodes first (nothing feeds out of them is the DCC's LeftToRight
+    // test), then the leftovers "somewhere in the middle of a loop", in id
+    // order.
     for node in tree.nodes() {
         let feeds_anything = tree.links().iter().any(|l| l.from.node == node.id);
         if !feeds_anything {
@@ -1061,7 +1062,7 @@ fn a_cycle_is_localised_to_the_nodes_on_it_and_not_to_what_it_spoiled() {
     let mut evaluator = corrupt.evaluator();
     assert_eq!(evaluator.inputs(ROOT, after), vec![None]);
 
-    // Blender's answer to the same document, by its own rule: a bool for the
+    // The DCC's answer to the same document, by its own rule: a bool for the
     // tree, and a blamed LINK chosen by the order the nodes were created in.
     let blamed = blender_blamed_links(&corrupt);
     assert_eq!(
@@ -1229,7 +1230,7 @@ fn grouped() -> GroupedDoc {
 #[test]
 fn a_cut_records_the_wires_it_severed() {
     // Copying the middle of `two/three -> add -> sink` severs three wires.
-    // Blender's `node_copy_local` copies a link only when both ends are
+    // The DCC's `node_copy_local` copies a link only when both ends are
     // selected and records the others nowhere at all.
     let f = fixture();
     let cut = f.document.extract(ROOT, &[f.add]).unwrap();
@@ -1338,8 +1339,8 @@ fn an_interface_node_cannot_be_copied() {
 
 #[test]
 fn a_fragment_is_a_document_that_still_answers() {
-    // Blender's clipboard is `copybuffer_nodes.blend` in the temp directory, so
-    // the only thing that can be done with it is a paste.
+    // The DCC's clipboard is `copybuffer_nodes.blend` in the temp directory, so the only thing that
+    // can be done with it is a paste.
     let g = grouped();
     let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
     assert!(cut.validate().is_empty());
@@ -1406,8 +1407,8 @@ fn pasting_a_group_twice_leaves_one_definition() {
 
 #[test]
 fn forking_gives_the_copy_a_definition_of_its_own() {
-    // Blender's `duplicate(linked=false)`, where the arm is chosen by a USER
-    // PREFERENCE (`U.dupflag & USER_DUP_NTREE`) rather than stated at the call.
+    // The DCC's `duplicate(linked=false)`, where the arm is chosen by a USER PREFERENCE (`U.dupflag & USER_DUP_NTREE`) rather
+    // than stated at the call.
     let mut g = grouped();
     let cut = g.document.extract(ROOT, &[g.instance]).unwrap();
     let out = g
@@ -1432,7 +1433,7 @@ fn forking_gives_the_copy_a_definition_of_its_own() {
 
 #[test]
 fn a_same_named_but_different_definition_is_not_rebound() {
-    // THE case. Blender's paste matches a candidate datablock by NAME
+    // THE case. The DCC's paste matches a candidate datablock by NAME
     // (`BKE_main_merge` keys on `id->name`, and for two local IDs
     // `are_ids_from_different_mains_matching` returns true on the name alone),
     // so pasting a group into a file with an unrelated same-named group binds
@@ -1523,7 +1524,7 @@ fn pasting_a_group_inside_itself_is_refused_and_names_the_chain() {
 fn a_deeper_recursion_is_refused_too_and_the_chain_is_longer() {
     // Outer contains Sum. Pasting an Outer instance into Sum closes
     // Outer -> Sum -> Outer, and the chain names the definition in between —
-    // Blender's `node_group_poll` reports the same flat sentence at any depth.
+    // the DCC's `node_group_poll` reports the same flat sentence at any depth.
     let mut g = grouped();
     let outer = g.document.add_definition("Outer");
     g.document.instantiate(outer, g.definition, 0, 0).unwrap();
@@ -1549,9 +1550,9 @@ fn a_deeper_recursion_is_refused_too_and_the_chain_is_longer() {
 
 #[test]
 fn a_refused_insert_leaves_the_document_untouched() {
-    // Blender's paste does the opposite: `node_copy_local` reports the node it
-    // cannot place, skips it AND its links, and finishes — so a five-node paste
-    // can land four nodes and a message in a report list.
+    // The DCC's paste does the opposite: `node_copy_local` reports the node it cannot place,
+    // skips it AND its links, and finishes — so a five-node paste can land
+    // four nodes and a message in a report list.
     let mut g = grouped();
     let loose = g
         .document
@@ -1575,7 +1576,7 @@ fn a_refused_insert_leaves_the_document_untouched() {
 
 #[test]
 fn keeping_the_inbound_crossings_refeeds_the_copies() {
-    // Blender's `keep_inputs`, which exists on `NODE_OT_duplicate` only:
+    // The DCC's `keep_inputs`, which exists on `NODE_OT_duplicate` only:
     // `NODE_OT_clipboard_paste` declares one property, `offset`.
     let f = fixture();
     let mut document = f.document.clone();
@@ -1684,8 +1685,8 @@ fn a_restored_crossing_is_type_checked_before_it_is_wired() {
 #[test]
 fn the_outbound_crossings_are_published_and_never_restored() {
     // An input takes at most one link, so restoring an outbound crossing would
-    // displace the original's — the copy would steal the connection. Blender has
-    // `keep_inputs` and no `keep_outputs`, and says nowhere why.
+    // displace the original's — the copy would steal the connection. The DCC
+    // has `keep_inputs` and no `keep_outputs`, and says nowhere why.
     let f = fixture();
     let mut document = f.document.clone();
     let cut = document.extract(ROOT, &[f.add]).unwrap();
@@ -1893,7 +1894,7 @@ fn value_into(document: &Document<Op>, tree: TreeId, socket: Socket) -> Option<V
         .flatten()
 }
 
-/// Blender's Separate/Move, re-expressed over this crate's types.
+/// The DCC's Separate/Move, re-expressed over this crate's types.
 ///
 /// `node_group_separate_selected` at `8cf50599`: copy the selected nodes into
 /// the parent tree, and for the Move arm delete them from the group. It does
@@ -1936,7 +1937,7 @@ fn blender_separate(
     }
 }
 
-/// Blender's Group Insert interface rule, counted rather than performed.
+/// The DCC's Group Insert interface rule, counted rather than performed.
 ///
 /// `build_node_set_interface` walks only the sockets of the nodes being moved
 /// and appends one interface socket per value linked to a node outside them. It
@@ -2026,7 +2027,7 @@ fn a_value_that_already_crosses_does_not_get_a_second_port() {
         .connect(ROOT, Socket::new(twin, 0), Socket::new(tail, 0))
         .unwrap();
 
-    // Blender would expose one socket per connected socket of the moved node:
+    // The DCC would expose one socket per connected socket of the moved node:
     // three, two of them duplicating values that already cross here.
     assert_eq!(blender_insert_port_count(&b.document, ROOT, &[twin]), 3);
 
@@ -2178,13 +2179,13 @@ fn moving_a_group_into_a_group_it_contains_names_the_chain() {
 
 #[test]
 fn an_inward_move_that_would_close_a_cycle_is_refused_and_changes_nothing() {
-    // The group feeds `relay`, `relay` feeds `bystander`. Nothing is cyclic —
-    // until `bystander` moves in, and then the group feeds itself through a node
-    // that stayed outside. Blender's own test for this is one hop deep
-    // (`node_group_make_test_selected`: no unselected node may have both an
-    // input from the selection and an output to it), and `relay` has exactly
-    // that, so this case is the one where a one-hop rule and a reachability rule
-    // agree; R1577 covers the two-hop case where they do not.
+    // The group feeds `relay`, `relay` feeds `bystander`. Nothing is cyclic — until `bystander` moves
+    // in, and then the group feeds itself through a node that stayed outside.
+    // The DCC's own test for this is one hop deep (`node_group_make_test_selected`: no unselected node may
+    // have both an input from the selection and an output to it), and `relay` has
+    // exactly that, so this case is the one where a one-hop rule and a
+    // reachability rule agree; R1577 covers the two-hop case where they do
+    // not.
     let mut b = boundaried();
     let relay = b
         .document
@@ -2247,7 +2248,7 @@ fn a_node_moved_out_of_a_group_keeps_its_wiring_where_blender_loses_it() {
     assert!(interface.is_empty());
     assert!(ours.document.validate().is_empty());
 
-    // Blender's rule, on the same fixture: the sink is fed by a group that
+    // The DCC's rule, on the same fixture: the sink is fed by a group that
     // produces nothing, and the group keeps three sockets that reach nothing.
     let mut theirs = boundaried();
     blender_separate(
@@ -2453,8 +2454,8 @@ fn forking_a_definition_leaves_the_original_and_its_other_users_alone() {
     assert_ne!(copy, b.definition);
     assert_eq!(b.document.instance_count(b.definition), 1);
     assert_eq!(b.document.instance_count(copy), 1);
-    // A name is not an identity here, so the copy keeps it. Blender must rename,
-    // because an ID's name IS its key.
+    // A name is not an identity here, so the copy keeps it. The DCC must
+    // rename, because an ID's name IS its key.
     assert_eq!(
         b.document.tree(copy).unwrap().name,
         b.document.tree(b.definition).unwrap().name
@@ -2519,8 +2520,8 @@ fn a_link_naming_a_missing_node_is_refused_rather_than_crashing() {
 // ------------------------------------------------------------------- R1586
 // A node says how it takes part, and only one of those facts is the meaning.
 
-/// Blender's own rule for which input feeds a muted node's output, held here so
-/// the divergence is an **assertion** rather than a description.
+/// The DCC's own rule for which input feeds a muted node's output, held here
+/// so the divergence is an **assertion** rather than a description.
 ///
 /// `find_internally_linked_input` (`node_tree_update.cc`, `8cf50599`) scans the
 /// inputs per output, keeping the best by a static table of socket-type pairs
@@ -2669,9 +2670,9 @@ fn the_route_is_a_function_of_the_signature_where_blenders_reads_the_wiring() {
 #[test]
 fn the_pass_through_is_derived_and_not_stored() {
     let mut f = fixture();
-    // Blender materialises this into `node->runtime->internal_links` and keeps a
-    // tree-update pass to notice when the stored answer has gone stale. Here the
-    // answer follows an edit with nothing asked to refresh it.
+    // The DCC materialises this into `node->runtime->internal_links` and keeps a tree-update pass to
+    // notice when the stored answer has gone stale. Here the answer follows an
+    // edit with nothing asked to refresh it.
     let split = f
         .document
         .add_node(ROOT, NodeBody::Kind(Op::Split), 300, 200)
@@ -2753,7 +2754,7 @@ fn bypassing_and_dissolving_agree_on_every_value_when_the_route_is_wired() {
 #[test]
 fn where_the_two_cannot_agree_the_dissolve_names_the_difference() {
     // The routed input is UNWIRED, so a bypass passes its declared default on
-    // and a dissolve has no link to redirect. Blender removes exactly the same
+    // and a dissolve has no link to redirect. The DCC removes exactly the same
     // link and reports nothing at all.
     let unwire = |f: &mut Fixture| {
         let feed = f
@@ -3119,9 +3120,9 @@ fn a_bypass_and_a_look_travel_with_the_node() {
 #[test]
 fn what_a_node_looks_like_cannot_change_what_the_graph_computes() {
     let baseline = fixture().document.evaluate(ROOT, fixture().add);
-    // Every appearance field, one at a time and then all together. Blender keeps
-    // all of these in the same `flag` integer as `NODE_MUTED`, so which of them
-    // its evaluator may read is not stated anywhere in its model.
+    // Every appearance field, one at a time and then all together. The DCC
+    // keeps all of these in the same `flag` integer as `NODE_MUTED`, so which of them its
+    // evaluator may read is not stated anywhere in its model.
     let looks: [Appearance; 5] = [
         Appearance {
             collapsed: true,
@@ -3341,10 +3342,10 @@ fn the_identity_rule_is_falsifiable_where_position_and_type_order_disagree() {
         "bypassed, it is the identity — which is what bypassing MEANS"
     );
 
-    // Blender's rule gives output 1 the FIRST input, because its type-pair
+    // The DCC's rule gives output 1 the FIRST input, because its type-pair
     // priority is equal for both and its tie-break is linked-ness, which both
-    // satisfy. So a bypassed Swap there emits 10 twice and the right-hand value
-    // vanishes.
+    // satisfy. So a bypassed Swap there emits 10 twice and the right-hand
+    // value vanishes.
     assert_eq!(blender_internal_link(&document, ROOT, swap, 1), Some(0));
 }
 
@@ -3438,11 +3439,11 @@ fn dissolving_an_interface_node_severs_and_says_so() {
 // ------------------------------------------------------------------- R1587
 // A port says whether a value passes through it.
 
-/// A Blender node type that registers `internally_linked_input`, reduced to the
+/// A DCC node type that registers `internally_linked_input`, reduced to the
 /// shape its callback computes.
 ///
-/// Censused from `~/blender-ref` at `8cf50599`:
-/// `grep -rln "ntype.internally_linked_input = " source/blender/` answers
+/// Censused from `~/the DCC-ref` at `8cf50599`:
+/// `grep -rln "ntype.internally_linked_input = " source/the DCC/` answers
 /// **eleven** node types, and between them their callbacks compute exactly
 /// **three** things. Holding the census as a TABLE rather than a paragraph is
 /// what makes "our default already produces this" an assertion.
@@ -3511,7 +3512,7 @@ const BLENDER_HOOKS: &[(&str, BlenderHook, Option<u32>)] = &[
     ),
 ];
 
-/// Blender's OTHER mechanism, censused after the first pass got it wrong
+/// The DCC's OTHER mechanism, censused after the first pass got it wrong
 /// (R1587.1): `(declarations, on outputs, on inputs)`.
 ///
 /// The per-port form is *read* as `no_mute_links` and *set* through a builder
@@ -3521,7 +3522,7 @@ const BLENDER_HOOKS: &[(&str, BlenderHook, Option<u32>)] = &[
 /// spelling:
 ///
 /// ```text
-/// grep -rhoc "no_muted_links(" source/blender/nodes/   # 42, in 17 files
+/// grep -rhoc "no_muted_links(" source/the DCC/nodes/   # 42, in 17 files
 /// ```
 ///
 /// Both ends are used, which is why one field read from both ends is the shape
@@ -3529,7 +3530,7 @@ const BLENDER_HOOKS: &[(&str, BlenderHook, Option<u32>)] = &[
 /// nothing left to say here, not this one.
 const NO_MUTED_LINKS: (usize, usize, usize) = (42, 28, 14);
 
-/// A node built to order, so a Blender shape can be reproduced as a signature.
+/// A node built to order, so a DCC shape can be reproduced as a signature.
 #[derive(Clone, PartialEq, Debug)]
 struct Shaped {
     ins: Vec<(&'static str, Ty, bool)>,
@@ -3609,9 +3610,9 @@ fn our_default_reproduces_every_blender_pass_through_hook() {
                     ("Attribute", Ty::Number, true),
                 ],
             ),
-            // The same pairing reached by NAME in Blender. Our rule reaches it
-            // by index, and the two agree because a node that pairs its sockets
-            // declares them in one order — which is free to do here.
+            // The same pairing reached by NAME in the DCC. Our rule reaches it
+            // by index, and the two agree because a node that pairs its
+            // sockets declares them in one order — which is free to do here.
             BlenderHook::CorrespondingSocket => (
                 vec![("Geometry", Ty::Text, true), ("Count", Ty::Number, true)],
                 vec![("Geometry", Ty::Text, true), ("Count", Ty::Number, true)],
@@ -3658,7 +3659,7 @@ fn our_default_reproduces_every_blender_pass_through_hook() {
 
 #[test]
 fn a_control_input_sharing_the_data_type_is_the_first_shape_a_declaration_is_for() {
-    // Blender's Switch supports every socket data type, BOOLEAN included, so
+    // The DCC's Switch supports every socket data type, BOOLEAN included, so
     // `Switch(Switch: Bool, False: Bool, True: Bool) -> Bool` is a real
     // configuration — and there the identity rule picks the SWITCH.
     let control = ("Switch", Ty::Number, true);
@@ -3773,9 +3774,9 @@ fn a_port_declaration_survives_serialization() {
     );
     // R1599 CHANGED THIS, and the change is the point. A port's type and its
     // resting value moved inside `Flow`, because a CONTROL port has neither and
-    // leaving two fields it must not use would be exactly Unreal's defect in a
-    // different spelling — there, exec-ness is the string "exec" sitting in the
-    // type slot.
+    // leaving two fields it must not use would be exactly the engine's defect
+    // in a different spelling — there, exec-ness is the string "exec" sitting
+    // in the type slot.
     //
     // That reshapes the persisted form, so a pre-R1599 port must NOT read: an
     // old document has to arrive as "older than this reader" rather than be
@@ -3809,19 +3810,18 @@ fn a_port_declaration_survives_serialization() {
 
 // ------------------------------------------------------------------- frames
 //
-// R1589. Every claim about Blender below is stated as a HELPER that reproduces
+// R1589. Every claim about the DCC below is stated as a HELPER that reproduces
 // its rule over this crate's types, so the divergence is asserted rather than
 // described — the discipline R1577 and R1584 set, because a test that checks
 // only our own answer cannot tell a better rule from an equal one.
 
-/// Blender's containment guard, `node_is_parent_and_child(parent, child)` at
+/// The DCC's containment guard, `node_is_parent_and_child(parent, child)` at
 /// `8cf50599`: walk the CHILD's parent chain and see whether the parent is on
 /// it.
 ///
-/// Present because Blender states it as `BLI_assert` inside `node_attach_node`,
-/// which is compiled out of a release build — and because its own
-/// `NODE_OT_parent_set` calls `node_detach_node` first, so by the time the
-/// assert runs the chain it would have walked is already cleared.
+/// Present because the DCC states it as `BLI_assert` inside `node_attach_node`, which is compiled out
+/// of a release build — and because its own `NODE_OT_parent_set` calls `node_detach_node` first, so by the
+/// time the assert runs the chain it would have walked is already cleared.
 fn blender_is_parent_and_child(
     document: &Document<Op>,
     tree: TreeId,
@@ -3974,9 +3974,9 @@ fn the_common_frame_of_a_frame_and_its_content_is_the_frames_own_container() {
 #[test]
 fn a_containment_cycle_is_refused_where_blenders_own_guard_passes_it() {
     let mut f = framed();
-    // Blender's `NODE_OT_parent_set` with `outer` selected and `inner` active:
-    // it calls `node_detach_node(outer)` and THEN asserts. Reproduce that exact
-    // order and ask its guard the question it would ask.
+    // The DCC's `NODE_OT_parent_set` with `outer` selected and `inner` active: it calls `node_detach_node(outer)` and THEN
+    // asserts. Reproduce that exact order and ask its guard the question it
+    // would ask.
     let mut mirror = f.document.clone();
     mirror
         .tree_mut(ROOT)
@@ -4062,7 +4062,7 @@ fn framing_a_selection_attaches_only_its_outermost_members() {
 #[test]
 fn the_outermost_derivation_is_what_every_gesture_over_the_forest_uses() {
     let f = framed();
-    // Blender computes this three times — `node_join_attach_recursive`,
+    // The DCC computes this three times — `node_join_attach_recursive`,
     // `node_detach_recursive` (two recursive functions over two structs with
     // identical fields) and again in the transform code.
     assert_eq!(
@@ -4098,8 +4098,8 @@ fn unframing_leaves_one_level_where_blender_leaves_all_of_them() {
         vec![f.outer],
         "out of `inner`, still in `outer` — the containment the gesture did not touch"
     );
-    // Blender's `NODE_OT_detach` sets parent to nullptr, which is reachable here
-    // too and is a DIFFERENT request.
+    // The DCC's `NODE_OT_detach` sets parent to nullptr, which is reachable here too and is
+    // a DIFFERENT request.
     f.document.set_parent(ROOT, f.three, None).unwrap();
     assert!(f.document.ancestry(ROOT, f.three).is_empty());
     // Nothing to leave.
@@ -4149,7 +4149,7 @@ fn deleting_a_frame_hands_its_members_to_the_frame_above_it() {
         vec![f.outer],
         "only the containment the deletion destroyed is destroyed"
     );
-    // Blender's `node_unlink_attached` clears the child's parent outright, so
+    // The DCC's `node_unlink_attached` clears the child's parent outright, so
     // the same delete would put `three` on the canvas even though `outer` is
     // still there and still contains where it was.
     let mut blender = framed();
@@ -4345,7 +4345,7 @@ fn an_inline_keeps_the_definitions_own_frames_where_blender_flattens_them() {
         .group(ROOT, &[inner_frame, f.add], "Stage")
         .unwrap();
     // The instance itself sits in a frame, which is the case that triggers
-    // Blender's flattening loop at all.
+    // the DCC's flattening loop at all.
     let host_frame = f.document.add_node(ROOT, NodeBody::Frame, 0, 0).unwrap();
     f.document
         .set_parent(ROOT, made.node, Some(host_frame))
@@ -4375,7 +4375,7 @@ fn an_inline_keeps_the_definitions_own_frames_where_blender_flattens_them() {
         vec![host_frame, frames[0]],
         "the definition's forest survived, grafted onto the instance's container"
     );
-    // Blender assigns the group node's parent to EVERY copied node
+    // The DCC assigns the group node's parent to EVERY copied node
     // (`node_group.cc`, the `if (group_node.parent)` loop), overwriting the
     // parent/child relationships its own copy step had just recreated.
     let mut blender = f.document.clone();
@@ -4451,9 +4451,9 @@ fn a_duplicate_lands_back_in_its_frame_where_blender_leaves_it_outside() {
         vec![f.outer, f.inner],
         "a duplicate of something in a frame is in that frame"
     );
-    // Blender's copy path looks the parent up in the copy map, does not find it
-    // because the frame was not selected, and calls `node_detach_node` — with no
-    // record anywhere that it happened.
+    // The DCC's copy path looks the parent up in the copy map, does not find
+    // it because the frame was not selected, and calls `node_detach_node` — with no record
+    // anywhere that it happened.
     let mut blender = f.document.clone();
     blender
         .tree_mut(ROOT)
@@ -4613,12 +4613,13 @@ fn framing_nothing_is_refused_and_an_empty_frame_needs_no_derivation() {
 
 // ---------------------------------------------------------------- selecting
 //
-// R1590. As with the frames, every claim about Blender is a HELPER reproducing
-// its rule over these types, so a divergence is asserted rather than described.
+// R1590. As with the frames, every claim about the DCC is a HELPER reproducing
+// its rule over these types, so a divergence is asserted rather than
+// described.
 
-/// Blender's `node_select_linked_to_exec` / `..._from_exec` at `8cf50599`: for
-/// each selected node, walk its sockets' **directly linked** sockets and select
-/// their owners. One hop, every time — the reach is the number of keypresses.
+/// The DCC's `node_select_linked_to_exec` / `..._from_exec` at `8cf50599`: for each selected node, walk its sockets'
+/// **directly linked** sockets and select their owners. One hop, every time —
+/// the reach is the number of keypresses.
 fn blender_linked_one_hop(
     document: &Document<Op>,
     tree: TreeId,
@@ -4645,12 +4646,11 @@ fn blender_linked_one_hop(
 
 /// Compile-time witness that growing a selection is a **query**.
 ///
-/// This function body only compiles because `grow` takes `&self`, so the
-/// guarantee is the signature rather than an assertion — an edit that happened
-/// to change nothing would satisfy any runtime comparison, which is why
-/// `growing_a_selection_changes_nothing_in_the_document` is a consistency check
-/// and this is the proof. Blender's equivalents take the tree by mutable
-/// reference and carry `OPTYPE_UNDO`.
+/// This function body only compiles because `grow` takes `&self`, so the guarantee is
+/// the signature rather than an assertion — an edit that happened to change
+/// nothing would satisfy any runtime comparison, which is why `growing_a_selection_changes_nothing_in_the_document` is a
+/// consistency check and this is the proof. The DCC's equivalents take the
+/// tree by mutable reference and carry `OPTYPE_UNDO`.
 fn growing_needs_no_mutable_document(document: &Document<Op>) -> Vec<NodeId> {
     document
         .grow(ROOT, &[], Grow::SameKind)
@@ -4658,7 +4658,7 @@ fn growing_needs_no_mutable_document(document: &Document<Op>) -> Vec<NodeId> {
         .unwrap_or_default()
 }
 
-/// Blender's `node_select_grouped_name` for a suffix: the run after the last
+/// The DCC's `node_select_grouped_name` for a suffix: the run after the last
 /// delimiter, or — its own special case — the WHOLE NAME when there is none.
 fn blender_suffix(name: &str) -> &str {
     name.rsplit_once(['.', '-', '_'])
@@ -4920,7 +4920,7 @@ fn same_kind_is_what_a_node_does_and_never_what_it_is_set_to() {
     );
 
     // A label does not change what a node is. `NodeKind::name` is a stable
-    // identity token, which is Blender's `type_legacy` too.
+    // identity token, which is the DCC's `type_legacy` too.
     f.document
         .tree_mut(ROOT)
         .unwrap()
@@ -4975,8 +4975,9 @@ fn an_affix_that_is_not_there_offers_no_criterion() {
     named(&mut f.document, f.three, "decode.body");
     named(&mut f.document, f.add, "verify.header");
     // TWO delimiter-free nodes with the SAME name: without a second one, "this
-    // node has no suffix" and "its suffix is its whole name" give the identical
-    // answer, and the counterfactual for Blender's substitution passes (CF-3).
+    // node has no suffix" and "its suffix is its whole name" give the
+    // identical answer, and the counterfactual for the DCC's substitution
+    // passes (CF-3).
     named(&mut f.document, f.sink, "plain");
     let twin = f
         .document
@@ -5010,8 +5011,9 @@ fn an_affix_that_is_not_there_offers_no_criterion() {
          for a missing suffix, which conflates 'this node has no suffix' with \
          'its suffix is its entire name'"
     );
-    // Blender's rule held as a helper, and the divergence asserted: under it the
-    // twin WOULD join, because both nodes' whole names stand in as suffixes.
+    // The DCC's rule held as a helper, and the divergence asserted: under it
+    // the twin WOULD join, because both nodes' whole names stand in as
+    // suffixes.
     assert_eq!(blender_suffix("plain"), blender_suffix("plain"));
     assert!(
         !from_plain.selection.contains(&twin),
@@ -5031,7 +5033,7 @@ fn an_affix_that_is_not_there_offers_no_criterion() {
 fn the_affix_is_read_off_the_name_that_is_painted() {
     let mut f = fixture();
     // No label, so the displayed name is the body's own — which is what a node
-    // header shows. Blender groups on `bNode::name`, the datablock id
+    // header shows. The DCC groups on `bNode::name`, the datablock id
     // (`Mix.001`), which is not what its own header draws.
     assert_eq!(
         f.document
@@ -5084,7 +5086,7 @@ fn the_same_kind_run_is_in_evaluation_order_and_says_where_you_are() {
          NODE_OT_select_same_type_step answers by moving the active node and \
          reports only whether it moved"
     );
-    // Blender's operator is one line over this.
+    // The DCC's operator is one line over this.
     let step = |from: NodeId, forward: bool| -> Option<NodeId> {
         let at = run.iter().position(|&id| id == from)?;
         let next = if forward {
@@ -5395,10 +5397,10 @@ fn the_type_relation_is_directed_and_no_equality_could_be() {
 
 #[test]
 fn a_crossing_is_answerable_before_a_wire_exists() {
-    // The question an editor asks while a wire is being dragged. Blender's
-    // `validate_link` is a C function pointer on the tree type with no accessor
-    // in front of it, and whether the value would be CHANGED on the way lives in
-    // a different table again (`DataTypeConversions`).
+    // The question an editor asks while a wire is being dragged. The DCC's `validate_link`
+    // is a C function pointer on the tree type with no accessor in front of
+    // it, and whether the value would be CHANGED on the way lives in a
+    // different table again (`DataTypeConversions`).
     let f = lattice();
     let ask = |from: (NodeId, u32), to: (NodeId, u32)| {
         f.document
@@ -5445,7 +5447,7 @@ fn every_accepted_wire_can_carry_a_value() {
     // when a value survives the trip. Stated over THIS lattice, whose
     // conversions are total — a taxonomy whose conversion may decline a
     // particular value is a different case, and has its own test below.
-    // Blender cannot state either — a shader
+    // The DCC cannot state either — a shader
     // tree's `validate_link` returns `true` for pairs `DataTypeConversions`
     // has no entry for at all, so acceptance there does not entail carriage.
     for (from, to) in LATTICE {
@@ -5937,7 +5939,7 @@ fn a_port_carries_the_link_then_the_authored_value_then_the_kinds_own() {
         Some(LVal::Vector([1, 2, 3])),
         "and a link beats both — the authored value is HIDDEN, not discarded"
     );
-    // Unwire and it is still there, which is the Blueprint/Blender behaviour
+    // Unwire and it is still there, which is the Blueprint/the DCC behaviour
     // this crate's `Port::default` doc already claimed for the kind's value.
     let link = f.document.tree(ROOT).unwrap().links()[0].id;
     f.document.disconnect(ROOT, link).unwrap();
@@ -5949,7 +5951,7 @@ fn a_port_carries_the_link_then_the_authored_value_then_the_kinds_own() {
 
 #[test]
 fn a_source_constant_is_the_same_mechanism_as_a_pin_default() {
-    // The half Blender reaches through per-node C code: its Value node's
+    // The half the DCC reaches through per-node C code: its Value node's
     // constant IS its own output socket's `default_value`, read by
     // `node_shader_value.cc` and by nothing generic. Here it is the rule.
     let mut document = Document::new("root");
@@ -6037,7 +6039,7 @@ fn authoring_a_value_on_a_port_that_is_not_there_is_refused_by_name() {
             .set_port_value(ROOT, NodeId(99), PortRef::input(0), LVal::Scalar(1)),
         Err(PortValueError::NoSuchNode(NodeId(99)))
     );
-    // Blender writes a socket's `default_value` through RNA with no such gate.
+    // The DCC writes a socket's `default_value` through RNA with no such gate.
     assert!(f.document.validate().is_empty(), "and nothing was written");
 }
 
@@ -6886,7 +6888,7 @@ fn r1597_a_value_its_port_cannot_hold_is_named_on_a_document_that_arrived() {
 
 #[test]
 fn r1598_a_swap_keeps_the_node_and_everything_addressed_by_it() {
-    // ★ The whole divergence from Blender, whose `NODE_OT_swap_node` creates a
+    // ★ The whole divergence from the DCC, whose `NODE_OT_swap_node` creates a
     // new node and deletes the old one -- so every reference to it dies: a
     // selection, a saved layout, an undo record, an agent holding the id.
     let mut f = fixture();
@@ -6930,7 +6932,7 @@ fn r1598_a_swap_keeps_the_node_and_everything_addressed_by_it() {
 fn r1598_a_port_is_carried_by_name_first_then_by_position() {
     // `Swap` is (Left, Right) -> (Left, Right); `Add` is (Augend, Addend) ->
     // (Out). So Add -> Swap has NO name in common on the input side and the
-    // ports line up positionally, which is exactly the case Blender drops
+    // ports line up positionally, which is exactly the case the DCC drops
     // unless someone put both types in one of two hard-coded Python lists.
     let mut f = fixture();
     let swapped = f.document.set_kind(ROOT, f.add, Op::Swap).expect("swap");
@@ -6975,7 +6977,7 @@ fn r1598_a_port_is_carried_by_name_first_then_by_position() {
 
 #[test]
 fn r1598_what_does_not_survive_is_named_rather_than_dropped() {
-    // ★ Blender drops all of this inside three swallowed exceptions
+    // ★ the DCC drops all of this inside three swallowed exceptions
     // (`except IndexError`, `except KeyError`, `except (AttributeError,
     // KeyError, TypeError)`) plus a silent `tree.links.remove` for a link that
     // turned out invalid -- so "the swap worked" and "the swap worked and cost
@@ -7150,10 +7152,10 @@ fn r1598_a_swap_can_neither_close_a_cycle_nor_overfeed_an_input() {
 
 #[test]
 fn r1598_a_lone_port_lands_wherever_it_fits() {
-    // Blender's reroute arm, derived from the ARITY instead of from a node
+    // The DCC's reroute arm, derived from the ARITY instead of from a node
     // type: a side with exactly one port has no position worth preserving and
     // no name that means anything beside a name it is the only one of, so it
-    // takes the first port that will have it. Blender gates the same behaviour
+    // takes the first port that will have it. The DCC gates the same behaviour
     // on `old_node.bl_idname == "NodeReroute"`, so there it is one type's
     // privilege.
     //
@@ -7204,10 +7206,10 @@ fn r1598_a_lone_port_lands_wherever_it_fits() {
 
 // ------------------------------------------------- the control plane (R1599)
 //
-// Every claim about Unreal below is stated as a HELPER reproducing its rule
-// over this crate's types, so a divergence is asserted rather than described —
-// the discipline R1577 and R1584 set. Source facts are from a 5.8.1 tree
-// (`Engine/Build/Build.version`: 5.8.1, `BranchName: UE5`).
+// Every claim about the engine below is stated as a HELPER reproducing its
+// rule over this crate's types, so a divergence is asserted rather than
+// described — the discipline R1577 and R1584 set. Source facts are from a
+// 5.8.1 tree (`Engine/Build/Build.version`: 5.8.1, `BranchName: UE5`).
 
 /// A taxonomy with both flows, so a control graph is expressible at all.
 ///
@@ -7304,9 +7306,8 @@ impl NodeKind for Flo {
     }
 }
 
-/// Unreal's connection response, `UEdGraphSchema_K2::CanCreateConnection` at
-/// 5.8.1 (`EdGraphSchema_K2.cpp`), the two lines that decide which end gives
-/// way:
+/// The engine's connection response, `UEdGraphSchema_K2::CanCreateConnection` at 5.8.1 (`EdGraphSchema_K2.cpp`), the two lines that
+/// decide which end gives way:
 ///
 /// ```text
 /// bBreakExistingDueToExecOutput = IsExecPin(*OutputPin) && OutputPin->LinkedTo.Num() > 0;
@@ -7350,14 +7351,14 @@ fn r1599_multiplicity_is_the_duality_and_unreal_derives_the_same_two_rules() {
         );
     }
 
-    // And it agrees with Unreal's on both cells that a link can actually
+    // And it agrees with the engine's on both cells that a link can actually
     // occupy. The mixed pairs are deliberately NOT compared, and the reason is
-    // a divergence rather than a gap: `unreal_breaks_at` answers for them,
-    // because there those two booleans are evaluated for pairs that cannot
-    // connect — an exec pin is kept away from a float pin somewhere else
-    // entirely, by `ArePinsCompatible` comparing pin-category strings. Here the
-    // flow check is the FIRST thing `connect` does, so a mixed pair never
-    // reaches a multiplicity question at all; the case below asserts that.
+    // a divergence rather than a gap: `unreal_breaks_at` answers for them, because there
+    // those two booleans are evaluated for pairs that cannot connect — an exec
+    // pin is kept away from a float pin somewhere else entirely, by `ArePinsCompatible`
+    // comparing pin-category strings. Here the flow check is the FIRST thing
+    // `connect` does, so a mixed pair never reaches a multiplicity question at all;
+    // the case below asserts that.
     for (out_exec, in_exec) in [(false, false), (true, true)] {
         let source: Port<Ty, Val> = if out_exec {
             Port::control("o")
@@ -7427,9 +7428,9 @@ fn r1599_a_control_output_takes_one_successor_and_a_second_displaces_it() {
     assert_eq!(displaced.id, first.link);
     assert_eq!(displaced.to, Socket::new(a, 0));
 
-    // Unreal displaces here too (`CONNECT_RESPONSE_BREAK_OTHERS_A`/`_B`) and
-    // `TryCreateConnection` answers a bare `bool`, so what it broke is gone.
-    // Reporting it is what makes the replacement undoable.
+    // The engine displaces here too (`CONNECT_RESPONSE_BREAK_OTHERS_A`/`_B`) and `TryCreateConnection` answers a bare `bool`, so
+    // what it broke is gone. Reporting it is what makes the replacement
+    // undoable.
     assert_eq!(document.tree(ROOT).unwrap().links().len(), 1);
     assert!(document.validate().is_empty());
 }
@@ -7621,7 +7622,7 @@ fn r1599_a_control_cycle_is_a_loop_and_a_value_cycle_is_still_refused() {
     );
 }
 
-/// Unreal's `FKismetCompilerContext::PinIsImportantForDependancies`
+/// The engine's `FKismetCompilerContext::PinIsImportantForDependancies`
 /// (`KismetCompiler.h`, 5.8.1), commented *"the execution wires do not form
 /// data dependencies, they are only important for final scheduling and that is
 /// handled thru gotos"*:
@@ -7752,10 +7753,11 @@ fn r1599_entry_points_are_derived_from_the_signature() {
         "a pure node is not on the control plane at all"
     );
 
-    // `a`'s control input is UNWIRED, which makes it unreachable rather than an
-    // entry — a different fact, and one an editor reports differently. Unreal
-    // reaches the same set by node CLASS (UK2Node_Event, UK2Node_FunctionEntry),
-    // so there it is a list of types to know rather than a question to ask.
+    // `a`'s control input is UNWIRED, which makes it unreachable rather than
+    // an entry — a different fact, and one an editor reports differently. The
+    // engine reaches the same set by node CLASS (UK2Node_Event,
+    // UK2Node_FunctionEntry), so there it is a list of types to know rather
+    // than a question to ask.
     assert!(document.tree(ROOT).unwrap().links().is_empty());
     assert_eq!(document.entry_points(ROOT), vec![start]);
 }
@@ -7853,12 +7855,10 @@ fn r1599_a_sequence_runs_each_branch_to_completion_and_needs_no_code() {
          compiles exactly this as `push X1; goto A` (KCST_PushState)"
     );
 
-    // PAST UNREAL: the order is the PORT order, so renaming the control ports
-    // cannot change it. `FKCHandler_ExecutionSequence::Compile` finds its own
-    // outputs by testing `PinName.ToString().StartsWith("Then")` and carries the
-    // standing admission `//@TODO: Sort the pins by the number appended to the
-    // pin!` -- so there the order is the pin array's, and a pin the author
-    // renamed is not found at all.
+    // PAST the engine: the order is the PORT order, so renaming the control
+    // ports cannot change it. `FKCHandler_ExecutionSequence::Compile` finds its own outputs by testing `PinName.ToString().StartsWith("Then")` and
+    // carries the standing admission `//@TODO: Sort the pins by the number appended to the pin!` -- so there the order is the pin
+    // array's, and a pin the author renamed is not found at all.
     let renamed: Vec<String> = Flo::Sequence(3)
         .outputs()
         .iter()
@@ -7944,9 +7944,9 @@ fn r1599_a_loop_runs_until_the_budget_and_says_so() {
         "a node that runs more than once appears more than once"
     );
 
-    // The loop was nameable BEFORE it ran. Unreal has no equivalent: an exec
-    // loop compiles (exec pins are excluded from the dependency sort), and a
-    // runaway one is discovered at run time by counting to
+    // The loop was nameable BEFORE it ran. The engine has no equivalent: an
+    // exec loop compiles (exec pins are excluded from the dependency sort),
+    // and a runaway one is discovered at run time by counting to
     // GMaximumScriptLoopIterations and raising an InfiniteLoop exception.
     assert_eq!(document.control_loops(ROOT), {
         let mut m = vec![a, b];
@@ -8072,8 +8072,8 @@ fn r1599_a_kind_that_names_a_value_port_is_reported_not_obeyed() {
 fn r1599_a_bypassed_node_passes_control_through() {
     // R1586's rule, unchanged and now reaching further: a bypassed node is the
     // identity as far as its signature allows, and "as far as the signature
-    // allows" now includes the flow. Unreal's muted-node routing has no such
-    // unification -- get_internal_link_type_priority is a table over data
+    // allows" now includes the flow. The engine's muted-node routing has no
+    // such unification -- get_internal_link_type_priority is a table over data
     // socket types and exec is not in it.
     let Flow2 {
         mut document,
@@ -8139,10 +8139,10 @@ fn r1599_control_to_control_is_the_one_pair_with_no_type_question() {
 
 // ------------------------------------------ what a running graph keeps (R1600)
 //
-// Every claim about Blender and Unreal below is stated as a HELPER reproducing
-// its rule over this crate's types, so a divergence is ASSERTED rather than
-// described — the discipline R1577 and R1584 set. Blender facts are from
-// `~/blender-ref` at `8cf50599`; Unreal facts from a 5.8.1 tree.
+// Every claim about the DCC and the engine below is stated as a HELPER
+// reproducing its rule over this crate's types, so a divergence is ASSERTED
+// rather than described — the discipline R1577 and R1584 set. The DCC facts
+// are from `~/the DCC-ref` at `8cf50599`; the engine facts from a 5.8.1 tree.
 
 /// Build `[Const(seed)] -> Tally.A`, `Delay -> Tally.B`, `Tally -> Delay`: a
 /// value cycle closed **through a delay**, which is the whole point.
@@ -8356,7 +8356,7 @@ fn r1600_registers_advance_together_so_a_pair_of_them_swaps() {
     );
 }
 
-/// Blender's geometry-nodes simulation state is cached per node on the
+/// The DCC's geometry-nodes simulation state is cached per node on the
 /// modifier: `ModifierCache::simulation_cache_by_id` is a
 /// `Map<int, std::unique_ptr<SimulationNodeCache>>`, and the `int` is a
 /// `bNestedNodeRef::id` — a **flattened** `{node_id, id_in_node}` path kept as
@@ -8410,7 +8410,7 @@ fn r1600_two_instances_of_one_counting_group_count_separately() {
         "the instance fed 10 counted by tens, from the same node"
     );
 
-    // ★ Blender's address would have collided: keyed by the node alone, both
+    // ★ the DCC's address would have collided: keyed by the node alone, both
     // instances name one register and one of the two counts is lost.
     assert_eq!(
         key_by_node_alone(&first, delay),
@@ -8912,7 +8912,7 @@ fn r1600_a_run_reads_the_registers_so_the_trace_changes_between_ticks() {
 
 // ------------------------------------ what the references do instead (R1600)
 
-/// Blender's Repeat Zone, from `geometry_nodes_repeat_zone.cc` at `8cf50599`:
+/// The DCC's Repeat Zone, from `geometry_nodes_repeat_zone.cc` at `8cf50599`:
 ///
 /// > the graph is built with as many body copies as there are iterations. Since
 /// > this graph depends on the number of iterations, it can't be reused in
@@ -8944,7 +8944,7 @@ fn r1600_iterating_costs_one_register_where_blender_unrolls_the_body() {
     );
     assert_eq!(state.len(), 1, "one register, whatever the count");
 
-    // ★ Blender pays for the same fifty in nodes, every time, and cannot reuse
+    // ★ the DCC pays for the same fifty in nodes, every time, and cannot reuse
     // the built graph across a different count.
     assert_eq!(
         blender_repeat_zone_body_copies(nodes_before, 50),
@@ -8962,9 +8962,9 @@ fn delay_of(document: &Document<Flo>) -> NodeId {
         .expect("the fixture has one")
 }
 
-/// Unreal's recursion guard, `FindMacroCycle` in `KismetCompiler.cpp` at 5.8.1,
-/// reproduced exactly — including that it **returns on its first
-/// macro-instance child** instead of continuing the loop:
+/// The engine's recursion guard, `FindMacroCycle` in `KismetCompiler.cpp` at 5.8.1, reproduced exactly —
+/// including that it **returns on its first macro-instance child** instead of
+/// continuing the loop:
 ///
 /// ```text
 /// for (const UEdGraphNode* ChildNode : MacroGraph->Nodes) {
@@ -9034,9 +9034,9 @@ fn r1600_a_nesting_cycle_is_found_where_unreals_check_returns_on_its_first_child
         "refused, and the chain is NAMED"
     );
 
-    // ★ Unreal's check, on the same shape, answers false: it returns on the
-    // first macro-instance child it meets, so a cycle reachable only through
-    // the second one is never looked for.
+    // ★ the engine's check, on the same shape, answers false: it returns on
+    // the first macro-instance child it meets, so a cycle reachable only
+    // through the second one is never looked for.
     let graphs = std::collections::BTreeMap::from([
         (outer.0 as usize, vec![plain.0 as usize, loops.0 as usize]),
         (loops.0 as usize, vec![outer.0 as usize]),

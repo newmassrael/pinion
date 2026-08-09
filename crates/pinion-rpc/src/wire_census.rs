@@ -3,16 +3,14 @@
 //!
 //! # The gap this closes
 //!
-//! [`crate::methods`] discovers method NAMES. Its own module doc called the
-//! rest "the natural next slice, added when a consumer needs it" — a defer on
-//! consumer grounds, which [[qt-parity-over-yagni]] does not admit, and which
-//! R1538 then supplied a consumer for the hard way: it added `nodes_total` to
-//! [`crate::frame_timings::FrameTimingsMirror`] and
-//! [`crate::frame_timings::FrameTimingsProduce`], and `r1465_mirror_work.py` —
-//! which asserts the EXACT key set those groups answer with — went red in CI.
-//! Nothing between the edit and the push could see it: the round's local gate
-//! runs the crates it changed and the demos it touched, and that demo was
-//! neither.
+//! [`crate::methods`] discovers method NAMES. Its own module doc called the rest "the
+//! natural next slice, added when a consumer needs it" — a defer on consumer
+//! grounds, which [[the toolkit-parity-over-yagni]] does not admit, and which
+//! R1538 then supplied a consumer for the hard way: it added `nodes_total` to [`crate::frame_timings::FrameTimingsMirror`] and
+//! [`crate::frame_timings::FrameTimingsProduce`], and `r1465_mirror_work.py` — which asserts the EXACT key set those groups answer with —
+//! went red in CI. Nothing between the edit and the push could see it: the
+//! round's local gate runs the crates it changed and the demos it touched, and
+//! that demo was neither.
 //!
 //! The defect is not the demo. It is that **a published response shape was not
 //! written down anywhere a machine could check**, so growing one looked like
@@ -21,26 +19,26 @@
 //! edit now fails in `pinion-rpc`'s own unit tests, in the round that makes it,
 //! and the failure names the demos that assert on those very fields.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt's floor is `QMetaMethod`: `parameterNames()`, `parameterTypes()` and
-//! `returnMetaType()` make a signature discoverable at runtime. pinion offered
-//! method names and an OCC class and nothing else, so it sat BELOW that floor.
+//! The toolkit's floor is meta-method: `parameterNames()`, `parameterTypes()` and `returnMetaType()` make a signature
+//! discoverable at runtime. pinion offered method names and an OCC class and
+//! nothing else, so it sat BELOW that floor.
 //!
 //! Two things here are past it:
 //!
-//! - **Structure, not just a type name.** `QMetaMethod::returnMetaType()` on a
-//!   method answering with a `QVariantMap` yields `QVariantMap` — the keys are
-//!   opaque, and every Qt introspection client falls back to out-of-band
+//! - **Structure, not just a type name.** `returnMetaType()` on a
+//!   method answering with a variant map yields variant map — the keys are
+//!   opaque, and every the toolkit introspection client falls back to out-of-band
 //!   documentation for them. A [`WireType`] states the key set, each key's JSON
 //!   type, whether the key may be ABSENT, whether it may be `null`, and —
 //!   through [`WireField::of`] — the named type nested at it, recursively
 //!   (`$ref` into a definitions map, the shape JSON Schema uses, which is what
 //!   lets `LayoutNode.children` name `LayoutNode` without the const cycle an
 //!   inline census would need).
-//! - **It is checked against the code.** `moc` generates Qt's meta-object from
+//! - **It is checked against the code.** `moc` generates the toolkit's meta-object from
 //!   the declaration, and nothing anywhere asserts that a method returning
-//!   `QVariantMap` puts the documented keys in it — Qt's description cannot be
+//!   variant map puts the documented keys in it — the toolkit's description cannot be
 //!   wrong about the signature and cannot be right about the contents. Here
 //!   `census_matches_the_types` parses the crate's own source and fails on any
 //!   divergence, and `r1539_wire_states_its_shape.py` re-checks it a second,
@@ -55,16 +53,16 @@
 //! and **what type is nested at it**.
 //!
 //! It does NOT yet state **which method answers with which type**. That is the
-//! one place Qt is still ahead — `returnMetaType()` binds a return type to a
-//! method — and it is not published here because it cannot yet be published
-//! HONESTLY. The census holds 28 `*Outcome` types against 91 routed methods,
-//! so most of the surface builds its response with an ad-hoc `json!` / `Value`
-//! and has no type to name. A `response` column would therefore be `null` for
-//! most methods, and an agent reads a null return type as "answers with
-//! nothing", not as "not described yet" — a description that is wrong is worse
-//! than one that is absent. Binding them means giving those handlers response
-//! types first: a campaign, and the named next slice of this axis, rather than
-//! a gap this table papers over.
+//! one place the toolkit is still ahead — `returnMetaType()` binds a return type to a method
+//! — and it is not published here because it cannot yet be published HONESTLY.
+//! The census holds 28 `*Outcome` types against 91 routed methods, so most of the
+//! surface builds its response with an ad-hoc `json!` / `Value` and has no type to
+//! name. A `response` column would therefore be `null` for most methods, and an agent
+//! reads a null return type as "answers with nothing", not as "not described
+//! yet" — a description that is wrong is worse than one that is absent.
+//! Binding them means giving those handlers response types first: a campaign,
+//! and the named next slice of this axis, rather than a gap this table papers
+//! over.
 //!
 //! It also does not state: the element type of an array of scalars
 //! ([`WireTy::Array`] with no [`WireField::of`]); value ranges; or units.
@@ -1072,9 +1070,9 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("common_ancestor", WireTy::String, None),
                 // R1591 — the question is repeated in its own answer. A
                 // selection's result is only interpretable alongside the shape
-                // and the fit it was taken with, and Qt records neither: its
-                // rubber-band mode is a VIEW property, so nothing says which
-                // mode a given selection used.
+                // and the fit it was taken with, and the toolkit records
+                // neither: its rubber-band mode is a VIEW property, so nothing
+                // says which mode a given selection used.
                 WireField::new("shape", WireTy::String, None),
                 WireField::new("fit", WireTy::String, None),
             ],

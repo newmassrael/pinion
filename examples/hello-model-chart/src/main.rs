@@ -1,6 +1,6 @@
 // R837 §5.38 — example bindings tolerate looser doc-markdown lints than
 // substrate crates; the narrative carries many proper-noun identifiers
-// (QtCharts, ModelMapper, CellValue, WAI-ARIA, …).
+// (the toolkit's charting module, ModelMapper, CellValue, WAI-ARIA, …).
 #![allow(clippy::doc_markdown)]
 
 //! `hello-model-chart` — R1446: **a chart plots the field the user points it
@@ -40,13 +40,13 @@
 //!
 //! ## What this demo exists to show — the non-numeric column
 //!
-//! Qt reads a mapped model cell through `QVariant::toReal()`, which answers
-//! `0.0` for anything that is not a number: point a y axis at a label column
-//! and Qt draws a flat line **on the axis**, indistinguishable from measured
+//! The toolkit reads a mapped model cell through `toReal()`, which answers `0.0` for
+//! anything that is not a number: point a y axis at a label column and the
+//! toolkit draws a flat line **on the axis**, indistinguishable from measured
 //! zeros. Toggle `Month` on here and the chart plots *nothing* for it, and the
-//! status line says why — `Month: 8 text cells, not a measure`. The report is
-//! scene data ([`Mapped::unreadable`] projected into the tagged status text),
-//! so an AI client reads the diagnosis exactly as a sighted user does (§2 #7).
+//! status line says why — `Month: 8 text cells, not a measure`. The report is scene data ([`Mapped::unreadable`] projected into
+//! the tagged status text), so an AI client reads the diagnosis exactly as a
+//! sighted user does (§2 #7).
 //!
 //! ## Data input (§2 #2, AI-first)
 //!
@@ -242,7 +242,7 @@ fn status_line(mapped: &Mapped, x_option: usize, y_on: [bool; NCOLS]) -> String 
 }
 
 /// One note per column that held cells the mapping could not read. This is
-/// where Qt would have drawn zeros and said nothing.
+/// where the toolkit would have drawn zeros and said nothing.
 fn unreadable_notes(mapped: &Mapped) -> Vec<String> {
     (0..NCOLS)
         .filter_map(|col| {
@@ -941,7 +941,7 @@ mod tests {
         );
     }
 
-    /// The headline claim. Qt would draw a flat line on zero here.
+    /// The headline claim. The toolkit would draw a flat line on zero here.
     #[test]
     fn a_text_measure_plots_nothing_and_the_status_names_the_reason() {
         let scene = render(BOOT_X, [true, false, false, false]);

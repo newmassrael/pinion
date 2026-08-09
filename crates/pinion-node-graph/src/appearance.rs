@@ -1,10 +1,9 @@
 //! R1586 — what a node looks like, kept apart from what it means.
 //!
-//! Blender keeps a node's collapsed-ness, its option panel, its preview, its
-//! *selection* and its **mute** in one `flag` integer (`NODE_COLLAPSED`,
-//! `NODE_OPTIONS`, `NODE_PREVIEW`, `NODE_SELECT`, `NODE_MUTED`). Nothing in that
-//! model says which of those bits the evaluator is allowed to read, so the
-//! answer lives in whichever code happens to read them.
+//! The DCC keeps a node's collapsed-ness, its option panel, its preview, its
+//! *selection* and its **mute** in one `flag` integer (`NODE_COLLAPSED`, `NODE_OPTIONS`, `NODE_PREVIEW`, `NODE_SELECT`, `NODE_MUTED`).
+//! Nothing in that model says which of those bits the evaluator is allowed to
+//! read, so the answer lives in whichever code happens to read them.
 //!
 //! Here the answer is a type. [`Appearance`] is everything about a node that a
 //! renderer needs and evaluation must never see; [`Node::bypassed`] is the one
@@ -30,32 +29,32 @@ use crate::model::{Document, NodeId, NodeKind, TreeId, yes};
 /// `clippy::struct_excessive_bools` would prefer: each is a *separate* gesture
 /// with its own memory, and folding them together would lose the property that
 /// makes them usable — un-collapsing a node restores whatever it was already
-/// saying about its unused ports, rather than a default. Blender keeps them as
+/// saying about its unused ports, rather than a default. The DCC keeps them as
 /// separate bits for the same reason (and then keeps them in the same word as
 /// `NODE_MUTED`, which is the part not copied here).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Appearance {
-    /// Drawn small, with only its wired ports showing. Blender's
+    /// Drawn small, with only its wired ports showing. The DCC's
     /// `NODE_OT_collapse_toggle`.
     #[serde(default)]
     pub collapsed: bool,
-    /// Unwired ports are not drawn. Blender's `NODE_OT_hide_socket_toggle`,
+    /// Unwired ports are not drawn. The DCC's `NODE_OT_hide_socket_toggle`,
     /// whose own description is "Toggle unused node socket display".
     #[serde(default)]
     pub hide_unused_ports: bool,
-    /// Whether the node's own controls are shown. What a control *is* belongs to
-    /// the application; whether it is on screen travels with the node.
-    /// Blender's `NODE_OT_options_toggle`.
+    /// Whether the node's own controls are shown. What a control *is* belongs
+    /// to the application; whether it is on screen travels with the node. The
+    /// DCC's `NODE_OT_options_toggle`.
     #[serde(default = "yes")]
     pub show_options: bool,
-    /// Whether the node's preview is shown. Blender's
+    /// Whether the node's preview is shown. The DCC's
     /// `NODE_OT_preview_toggle`.
     #[serde(default)]
     pub show_preview: bool,
-    /// An authored width in the application's own units — the units `x` and `y`
-    /// are already in — or `None` for whatever width the application gives a
-    /// node of this kind. Blender's `NODE_OT_resize`.
+    /// An authored width in the application's own units — the units `x` and
+    /// `y` are already in — or `None` for whatever width the application gives a
+    /// node of this kind. The DCC's `NODE_OT_resize`.
     #[serde(default)]
     pub width: Option<u32>,
     /// An authored height, in the same units, or `None` for the height the
@@ -69,9 +68,9 @@ pub struct Appearance {
     /// which is exactly the case R1589 recorded as the reason this field was
     /// missing.
     ///
-    /// Blender carries both on every node (`bNode::width`, `bNode::height`) with
-    /// no such distinction, and its `NODE_OT_resize` is horizontal-only for
-    /// ordinary nodes by convention rather than by anything in the model.
+    /// The DCC carries both on every node (`bNode::width`, `bNode::height`) with no such distinction,
+    /// and its `NODE_OT_resize` is horizontal-only for ordinary nodes by convention rather
+    /// than by anything in the model.
     ///
     /// [`NodeBody::Frame`]: crate::NodeBody::Frame
     #[serde(default)]

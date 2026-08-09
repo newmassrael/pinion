@@ -36,48 +36,48 @@
 //! malformed `intervene` payload cannot put the type into a state its own
 //! methods refuse to build.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt's selection is already range-based — `QItemSelection` is a
-//! `QList<QItemSelectionRange>` — so the *idea* is Qt's floor, not this
-//! round's invention. Four things here are past it, and each is a consequence
-//! of the canonical invariant rather than an extra feature:
+//! The toolkit's selection is already range-based — item selection is a `list<item selection range>` —
+//! so the *idea* is the toolkit's floor, not this round's invention. Four
+//! things here are past it, and each is a consequence of the canonical
+//! invariant rather than an extra feature:
 //!
-//! - **The count is answerable.** `QItemSelectionModel` has `hasSelection()`
+//! - **The count is answerable.** item selection model has `hasSelection()`
 //!   and no count accessor at all, so "how many rows are selected" is
-//!   `selectedRows().size()` — a `QModelIndexList` with one `QModelIndex` per
+//!   `selectedRows().size()` — a model index list with one model index per
 //!   selected row, built and thrown away to read its length. [`IndexRuns::len`]
 //!   sums run lengths.
-//! - **The extremes are O(1).** `QItemSelectionModel::selectedIndexes()` is
+//! - **The extremes are O(1).** `selectedIndexes()` is
 //!   documented to return a list that "contains no duplicates, and is not
 //!   sorted", so the *first* selected row — the target of every
 //!   scroll-to-selection and find-next-selected — costs a scan of the whole
 //!   selection. [`IndexRuns::first`] and [`IndexRuns::last`] read the ends
 //!   of the run vector.
-//! - **Equality is set equality.** Only `QItemSelection::merge` is documented
+//! - **Equality is set equality.** Only `merge` is documented
 //!   to guarantee non-overlapping ranges; the container itself permits them,
-//!   which is why `selectedIndexes()` has to promise de-duplication. Two Qt
+//!   which is why `selectedIndexes()` has to promise de-duplication. Two the toolkit
 //!   selections covering the same rows can therefore differ as values,
 //!   depending on the order the `select()` calls arrived in.
 //! - **Materialising is a written decision.** [`IndexRuns::iter`] is the only
 //!   way to get one index per row out of this type, and it is lazy and named,
 //!   so a call site that pays the model's size is greppable. `indexes()` is how
-//!   a Qt consumer reads a selection at all.
+//!   a toolkit consumer reads a selection at all.
 //!
 //! # The second axis
 //!
-//! R1561 deferred Qt's two-dimensional range (`QItemSelectionRange` spans rows
-//! *and* columns, because `QItemSelectionModel` selects `QModelIndex`es) on the
-//! grounds that a second dimension nothing selects on would be a field every
-//! consumer had to fill in with "all columns". **R1563 adopted it**, and the
-//! deferral's own reasoning is what shaped it: the column axis is
-//! [`ColumnSpan`](super::cell_selection::ColumnSpan), whose
+//! R1561 deferred the toolkit's two-dimensional range (item selection range
+//! spans rows *and* columns, because item selection model selects model
+//! indexes) on the grounds that a second dimension nothing selects on would be
+//! a field every consumer had to fill in with "all columns". **R1563 adopted
+//! it**, and the deferral's own reasoning is what shaped it: the column axis
+//! is [`ColumnSpan`](super::cell_selection::ColumnSpan), whose
 //! [`All`](super::cell_selection::ColumnSpan::All) needs no column count to
 //! spell, so no consumer fills anything in and every pre-R1563 selection is
 //! that value. This type is the **row** axis of
-//! [`CellSelection`](super::cell_selection::CellSelection) and the runs inside
-//! a [`ColumnSpan::Runs`](super::cell_selection::ColumnSpan::Runs) — one
-//! canonical run set, used on both.
+//! [`CellSelection`](super::cell_selection::CellSelection) and the runs inside a
+//! [`ColumnSpan::Runs`](super::cell_selection::ColumnSpan::Runs) — one canonical run set,
+//! used on both.
 
 use core::fmt;
 
@@ -165,11 +165,11 @@ impl IndexRuns {
         self.runs.is_empty()
     }
 
-    /// How many **indices** are in the set — Qt's missing
-    /// `QItemSelectionModel::count()`.
+    /// How many **indices** are in the set — the toolkit's missing
+    /// `count()`.
     ///
     /// O(runs), so a whole-model selection answers from one addition rather
-    /// than by building the list Qt has to build to call `.size()` on it.
+    /// than by building the list the toolkit has to build to call `.size()` on it.
     #[must_use]
     pub fn len(&self) -> usize {
         self.runs.iter().map(Run::count).sum()

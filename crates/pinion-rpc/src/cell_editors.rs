@@ -1,24 +1,24 @@
 //! `scene/cell_editors` — which editor a grid cell of each datum kind opens
 //! (R1555 §5.12 §5.27 §2 #2 §2 #7).
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt's equivalent is `QItemEditorFactory`, and three properties of it make
-//! this question unanswerable there:
+//! The toolkit's equivalent is item editor factory, and three properties of it
+//! make this question unanswerable there:
 //!
 //! - **`createEditor` constructs.** Its only accessor
-//!   (`createEditor(QMetaType::Type, QWidget *parent)`) *instantiates a
-//!   `QWidget`*, so "what editor would an `int` cell get" cannot be asked
+//!   (`createEditor(Type, widget *parent)`) *instantiates a
+//!   widget*, so "what editor would an `int` cell get" cannot be asked
 //!   without building one and destroying it again. Here the mapping is
 //!   [`CellKind::editor_form`], a pure function, so a driver reads it.
-//! - **The registry cannot be enumerated.** `QItemEditorFactory` exposes
+//! - **The registry cannot be enumerated.** item editor factory exposes
 //!   `registerEditor` and `createEditor`; `creatorMap` is private and there is
 //!   no "which types do you handle". A caller can only probe types it already
 //!   thought of, and a `nullptr` answer does not distinguish "not registered"
 //!   from "deliberately not editable".
 //! - **The behaviour that follows is not stated anywhere.** Whether an editor's
 //!   in-flight value is its text or its current index decides how a commit reads
-//!   it back, and in Qt that lives in each delegate's `qobject_cast`. Every row
+//!   it back, and in the toolkit that lives in each delegate's `qobject_cast`. Every row
 //!   here carries it (`buffer_is_text`), beside the keystroke gate that admits
 //!   text into it in the first place.
 //!
@@ -82,14 +82,14 @@ use crate::RpcError;
 /// What one [`CellKind`] opens, and the behaviour that follows from it.
 #[derive(Debug, Clone, Serialize)]
 pub struct CellEditorEntry {
-    /// The datum kind (`CellKind::name`) — Qt's `QMetaType::Type` key.
+    /// The datum kind (`CellKind::name`) — the toolkit's `Type` key.
     pub kind: &'static str,
     /// The editor form it opens (`EditorForm::name`) — what
-    /// `QItemEditorFactory::createEditor` would have constructed.
+    /// `createEditor` would have constructed.
     pub form: &'static str,
     /// Whether the in-flight value is read back out of a text buffer rather
-    /// than held as a typed value. **The column Qt keeps inside each delegate's
-    /// `qobject_cast`.**
+    /// than held as a typed value. **The column the toolkit keeps inside each
+    /// delegate's `qobject_cast`.**
     pub buffer_is_text: bool,
     /// Whether the cell's own box is a text field the keystroke gate feeds — so
     /// an agent knows whether typing at the cell is the way in.
@@ -98,9 +98,10 @@ pub struct CellEditorEntry {
     /// (`CellKind::accepts_keystroke`). `false` for the two kinds that are
     /// gestured rather than typed.
     pub accepts_keystrokes: bool,
-    /// The WAI-ARIA role the open editor is announced with. Qt reaches its role
-    /// by accident of construction, so a Qt bool cell announces as a **combo
-    /// box** and a Qt colour cell announces nothing at all.
+    /// The WAI-ARIA role the open editor is announced with. The toolkit
+    /// reaches its role by accident of construction, so a toolkit bool cell
+    /// announces as a **combo box** and a toolkit colour cell announces
+    /// nothing at all.
     pub role: &'static str,
 }
 
@@ -177,7 +178,7 @@ mod tests {
                  buffer that would always be empty"
             );
         }
-        // The forms, and the roles Qt gets wrong by construction.
+        // The forms, and the roles the toolkit gets wrong by construction.
         assert_eq!(row("bool")["form"], "toggle");
         assert_eq!(
             row("bool")["role"],
@@ -191,8 +192,8 @@ mod tests {
 
     #[test]
     fn a_colour_cell_is_editable_here_and_says_how() {
-        // Qt's default factory has no QColor creator, so `createEditor` answers
-        // nullptr and `QAbstractItemView::edit` silently does nothing.
+        // The toolkit's default factory has no color creator, so `createEditor` answers
+        // nullptr and `edit` silently does nothing.
         let value = handle_scene_cell_editors().expect("ok");
         let rows = value["editors"].as_array().expect("array");
         let color = rows

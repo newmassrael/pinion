@@ -11,7 +11,7 @@
 //! state directly into widget keystroke handling. The W3C
 //! `KeyboardEvent` modifier surface (`shiftKey` / `ctrlKey` /
 //! `altKey` / `metaKey`) is the industry-portable vocabulary every
-//! desktop toolkit (winit, GTK, Qt, Cocoa) and every browser exposes
+//! desktop toolkit (winit, GTK, the toolkit, Cocoa) and every browser exposes
 //! as independent booleans — refactoring to a bitflag here would
 //! diverge from that substrate.
 //!
@@ -44,17 +44,15 @@ use crate::external::IntrospectValue;
 use crate::scene::Scene;
 
 /// R876 §5.49 §5.51 / R879 — the press-to-drag distance (logical px,
-/// Euclidean): a press that strays past this from its origin *became a
-/// drag* (Qt `startDragDistance`, the DOM no-`click`-after-drag rule).
-/// The runtime's `InputRouter` is the primary judge (its `became_drag`
-/// latch gates the `DnD` trailing click and the double-click detector),
-/// but the determination is a framework *contract*: a capture-path
-/// External that must distinguish its own click from its own drag (the
-/// node-graph release-select suppression + drag dead zone) measures
-/// against the SAME constant, so the two paths can never disagree on
-/// what a click is. Lives in `pinion-core` (the contract crate), not the
-/// runtime that happens to apply it ([[helper-crate-home-ssot-axis]] —
-/// the R877.1 `LINE_HEIGHT_PX` precedent).
+/// Euclidean): a press that strays past this from its origin *became a drag*
+/// (the toolkit `startDragDistance`, the DOM no-`click`-after-drag rule). The runtime's `InputRouter` is the
+/// primary judge (its `became_drag` latch gates the `DnD` trailing click and the
+/// double-click detector), but the determination is a framework *contract*: a
+/// capture-path External that must distinguish its own click from its own drag
+/// (the node-graph release-select suppression + drag dead zone) measures
+/// against the SAME constant, so the two paths can never disagree on what a
+/// click is. Lives in `pinion-core` (the contract crate), not the runtime that happens
+/// to apply it ([[helper-crate-home-ssot-axis]] — the R877.1 `LINE_HEIGHT_PX` precedent).
 pub const DRAG_CLICK_THRESHOLD_PX: f64 = 4.0;
 
 /// R880 — the press-to-drag **latch** over [`DRAG_CLICK_THRESHOLD_PX`]: a
@@ -106,9 +104,9 @@ impl DragLatch {
 
 /// R1549 §5.35 §5.38 — press-and-hold **auto-repeat** cadence: how long a
 /// held press waits before it starts repeating, and how fast it repeats
-/// after that. The Qt `QAbstractButton::autoRepeatDelay` /
-/// `autoRepeatInterval` pair, plus the `QAbstractSpinBox::accelerated`
-/// axis Qt keeps on a different class, expressed as one closed-form
+/// after that. The toolkit `autoRepeatDelay` /
+/// `autoRepeatInterval` pair, plus the `accelerated`
+/// axis the toolkit keeps on a different class, expressed as one closed-form
 /// declaration.
 ///
 /// A widget declares one through
@@ -127,7 +125,7 @@ impl DragLatch {
 /// where i(n) = max(min_interval, interval * accel^n)
 /// ```
 ///
-/// so `accel == 1.0` (the default) is Qt's fixed-interval repeat and
+/// so `accel == 1.0` (the default) is the toolkit's fixed-interval repeat and
 /// `accel < 1.0` is an accelerating one that bottoms out at
 /// `min_interval`. Closed-form in the fire ordinal — the ratified
 /// closed-form-primitive axis — so
@@ -138,9 +136,9 @@ impl DragLatch {
 /// # Defaults
 ///
 /// [`Self::DEFAULT_DELAY_SECS`] = 300 ms and
-/// [`Self::DEFAULT_INTERVAL_SECS`] = 100 ms are Qt's
+/// [`Self::DEFAULT_INTERVAL_SECS`] = 100 ms are the toolkit's
 /// `AUTO_REPEAT_DELAY` / `AUTO_REPEAT_INTERVAL` (`qabstractbutton.cpp`) —
-/// the widest-deployed desktop pair, and the Qt-parity floor this
+/// the widest-deployed desktop pair, and the toolkit-parity floor this
 /// framework measures against. Platform *keyboard* repeat (the OS
 /// `repeat` flag pinion already forwards on key presses) is a separate,
 /// user-configurable channel and is deliberately NOT read here: a
@@ -165,13 +163,12 @@ pub struct AutoRepeat {
 }
 
 impl AutoRepeat {
-    /// Qt `AUTO_REPEAT_DELAY` — the hold a press must survive before the
-    /// first repeat fires. Long enough that an ordinary click never
-    /// repeats.
+    /// The toolkit `AUTO_REPEAT_DELAY` — the hold a press must survive before the first repeat
+    /// fires. Long enough that an ordinary click never repeats.
     pub const DEFAULT_DELAY_SECS: f32 = 0.300;
 
-    /// Qt `AUTO_REPEAT_INTERVAL` — the steady-state gap between repeats
-    /// once the delay has elapsed (10 Hz).
+    /// The toolkit `AUTO_REPEAT_INTERVAL` — the steady-state gap between repeats once the delay
+    /// has elapsed (10 Hz).
     pub const DEFAULT_INTERVAL_SECS: f32 = 0.100;
 
     /// Hard floor on any interval (1 ms = 1000 Hz). Bounds the router's
@@ -180,8 +177,8 @@ impl AutoRepeat {
     pub const MIN_INTERVAL_FLOOR_SECS: f32 = 0.001;
 
     /// The desktop default cadence — [`Self::DEFAULT_DELAY_SECS`] then
-    /// [`Self::DEFAULT_INTERVAL_SECS`] forever, Qt's
-    /// `QAbstractButton::setAutoRepeat(true)` with both properties left
+    /// [`Self::DEFAULT_INTERVAL_SECS`] forever, the toolkit's
+    /// `setAutoRepeat(true)` with both properties left
     /// alone.
     #[must_use]
     pub fn desktop() -> Self {
@@ -206,11 +203,10 @@ impl AutoRepeat {
         }
     }
 
-    /// Add acceleration: each successive interval is `accel` times the
-    /// previous one, never dropping below `min_interval_secs`. Qt spells
-    /// this `QAbstractSpinBox::setAccelerated(true)` — a bare on/off with
-    /// no reachable curve; here the curve is the declaration, so two
-    /// widgets can ramp differently and each can say how.
+    /// Add acceleration: each successive interval is `accel` times the previous
+    /// one, never dropping below `min_interval_secs`. The toolkit spells this `setAccelerated(true)` — a bare
+    /// on/off with no reachable curve; here the curve is the declaration, so
+    /// two widgets can ramp differently and each can say how.
     ///
     /// `accel` is clamped into `(0.0, 1.0]`; a non-finite value disables
     /// acceleration rather than poisoning the cadence.
@@ -320,10 +316,10 @@ const fn clamp_exp(fires: u32) -> i32 {
 /// crate (the [`DRAG_CLICK_THRESHOLD_PX`] /
 /// [[helper-crate-home-ssot-axis]] discipline), not per shell.
 ///
-/// Tracked today: `Space` — the Figma / Photoshop / Krita hand-tool
-/// pan chord (left-drag pans while held). Closed-form like
-/// [`Modifiers`]: future chord keys (an `H` hand tool, a `Z` zoom
-/// chord) extend the struct by a `SemVer` minor bump.
+/// Tracked today: `Space` — the design tool / the raster editor / Krita hand-tool
+/// pan chord (left-drag pans while held). Closed-form like [`Modifiers`]: future chord
+/// keys (an `H` hand tool, a `Z` zoom chord) extend the struct by a `SemVer` minor
+/// bump.
 ///
 /// Key strings: pinion's named-key boundaries emit `"Space"` (the
 /// winit `NamedKey` / crossterm-bridge spelling — both backends
@@ -485,11 +481,10 @@ pub struct KeyDispatchFocus {
 /// release, and a divergence (one widget testing `Shift` first, one
 /// reading `Ctrl` without `Meta`) would be a cross-widget UX bug.
 ///
-/// What *extend* means is the consumer's model decision and is
-/// deliberately not encoded here: an ordered list extends the range from
-/// its anchor (the W3C listbox / Qt `ExtendedSelection` convention), an
-/// unordered canvas unions the swept set in (the Unreal graph
-/// convention).
+/// What *extend* means is the consumer's model decision and is deliberately
+/// not encoded here: an ordered list extends the range from its anchor (the
+/// W3C listbox / the toolkit `ExtendedSelection` convention), an unordered canvas unions the
+/// swept set in (the engine graph convention).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionChord {
     /// No chord — replace the selection with the interaction's target.
@@ -568,7 +563,7 @@ impl MultiSelectKeyOp {
 /// the four-bool shape mirrors the W3C `KeyboardEvent` modifier
 /// surface (`shiftKey` / `ctrlKey` / `altKey` / `metaKey`), which
 /// every browser and every desktop windowing toolkit (winit, GTK,
-/// Qt, Cocoa) exposes as independent booleans — refactoring to a
+/// the toolkit, Cocoa) exposes as independent booleans — refactoring to a
 /// bitflag or state-machine here would diverge from the industry
 /// vocabulary substrate callers expect.
 // R1569 §5.39 — `Hash` because a modifier state is half of a
@@ -890,11 +885,10 @@ impl PointerButton {
     }
 }
 
-/// R1431 §5.35 — the device that produced a pointer event, the W3C
-/// `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()` peer. `Pen` and
-/// `Eraser` distinguish the two ends of a stylus (the DCC "flip to erase"
-/// gesture, a Qt distinction that W3C folds into `"pen"`); `Mouse` and `Touch`
-/// are the non-tablet devices. Not `#[non_exhaustive]`: a closed set matching
+/// R1431 §5.35 — the device that produced a pointer event, the W3C `PointerEvent.pointerType` / the
+/// toolkit `pointerType()` peer. `Pen` and `Eraser` distinguish the two ends of a stylus (the DCC
+/// "flip to erase" gesture, a toolkit distinction that W3C folds into `"pen"`);
+/// `Mouse` and `Touch` are the non-tablet devices. Not `#[non_exhaustive]`: a closed set matching
 /// [`PointerButton`]'s precedent.
 ///
 /// The wire vocabulary is the W3C set plus `"eraser"`: `"mouse"` / `"pen"` /
@@ -906,9 +900,9 @@ pub enum PointerKind {
     Mouse,
     /// A stylus tip (`"pen"`) — the W3C `"pen"` type.
     Pen,
-    /// A stylus's ERASER end (`"eraser"`) — the Qt `Eraser` pointer type, which
-    /// W3C folds into `"pen"`; kept distinct so an eraser-aware surface flips to
-    /// erase without a device query.
+    /// A stylus's ERASER end (`"eraser"`) — the toolkit `Eraser` pointer type, which W3C
+    /// folds into `"pen"`; kept distinct so an eraser-aware surface flips to erase
+    /// without a device query.
     Eraser,
     /// A finger / touch contact (`"touch"`).
     Touch,
@@ -942,31 +936,29 @@ impl PointerKind {
 }
 
 /// R1432 §5.35 — the lifecycle phase of a continuous native gesture (a
-/// trackpad pinch / rotate), the winit `TouchPhase` / Qt
-/// `QNativeGestureEvent` `Qt::NativeGestureType` phase peer. A gesture is not a
-/// single event but an arc: it `Begin`s when the fingers land, streams
-/// `Update`s as they move, and `End`s when they lift — or `Cancel`s if the
-/// platform aborts the recognition. A magnification-aware surface accumulates
-/// the per-`Update` delta between `Begin` and `End`, and discards the
-/// accumulator on `Cancel` (the fingers lifted without committing), so it needs
-/// the phase to bracket the interaction rather than treat each delta in
-/// isolation.
+/// trackpad pinch / rotate), the winit `TouchPhase` / the toolkit native gesture event
+/// `NativeGestureType` phase peer. A gesture is not a single event but an arc: it `Begin`s when
+/// the fingers land, streams `Update`s as they move, and `End`s when they lift — or
+/// `Cancel`s if the platform aborts the recognition. A magnification-aware surface
+/// accumulates the per-`Update` delta between `Begin` and `End`, and discards the
+/// accumulator on `Cancel` (the fingers lifted without committing), so it needs the
+/// phase to bracket the interaction rather than treat each delta in isolation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum GesturePhase {
     /// The gesture started — the fingers landed (`"begin"`). winit
-    /// `TouchPhase::Started` / Qt `Qt::GestureStarted`.
+    /// `TouchPhase::Started` / the toolkit `GestureStarted`.
     #[default]
     Begin,
     /// The gesture is updating — the fingers moved and a fresh delta arrived
-    /// (`"update"`). winit `TouchPhase::Moved` / Qt `Qt::GestureUpdated`. This
-    /// is the phase that carries the meaningful magnification / rotation change.
+    /// (`"update"`). winit `TouchPhase::Moved` / the toolkit `GestureUpdated`. This is the phase that carries the
+    /// meaningful magnification / rotation change.
     Update,
     /// The gesture finished — the fingers lifted (`"end"`). winit
-    /// `TouchPhase::Ended` / Qt `Qt::GestureFinished`.
+    /// `TouchPhase::Ended` / the toolkit `GestureFinished`.
     End,
     /// The gesture was cancelled — the platform aborted recognition without a
-    /// clean finish (`"cancel"`). winit `TouchPhase::Cancelled` / Qt
-    /// `Qt::GestureCanceled`. A surface accumulating a preview drops it rather
+    /// clean finish (`"cancel"`). winit `TouchPhase::Cancelled` / the toolkit
+    /// `GestureCanceled`. A surface accumulating a preview drops it rather
     /// than committing.
     Cancel,
 }
@@ -1039,16 +1031,16 @@ impl PointerEdge {
     }
 }
 
-/// R1418 §5.35 §5.15 — the set of mouse buttons currently held, the pinion peer
-/// of Qt `QMouseEvent::buttons()` and the DOM `MouseEvent.buttons` bitmask.
+/// R1418 §5.35 §5.15 — the set of mouse buttons currently held, the pinion
+/// peer of the toolkit `buttons()` and the DOM `MouseEvent.buttons` bitmask.
 ///
-/// Carried on [`RawPointerButton`] so a raw sink reads WHICH buttons are down at
-/// each edge, not only the single [`button`](RawPointerButton::button) that just
-/// changed — a chord (press left, then right) reports `{left, right}` on the
-/// right-down edge, and the state an xterm SGR motion report or a Qt
-/// drag-with-buttons gesture needs. Following the DOM / Qt convention, the set
-/// reflects the state **after** the transition: a press INCLUDES the pressed
-/// button, a release EXCLUDES the released one.
+/// Carried on [`RawPointerButton`] so a raw sink reads WHICH buttons are down at each edge,
+/// not only the single [`button`](RawPointerButton::button) that just changed — a
+/// chord (press left, then right) reports `{left, right}` on the right-down edge, and the
+/// state an xterm SGR motion report or a toolkit drag-with-buttons gesture
+/// needs. Following the DOM / the toolkit convention, the set reflects the
+/// state **after** the transition: a press INCLUDES the pressed button, a
+/// release EXCLUDES the released one.
 ///
 /// A `u8` bitmask over the three [`PointerButton`]s (no external `bitflags`
 /// dependency, and `unsafe_code` is forbidden workspace-wide), exposed through
@@ -1157,17 +1149,16 @@ impl PointerButtons {
 /// `dispatch_send_mods`), so a raw sink reads a consistent modifier state on
 /// down and up — the shape a terminal mouse report or a marquee gesture needs.
 ///
-/// **[`buttons`](Self::buttons) carries the full held set** (R1418), the Qt
-/// `QMouseEvent::buttons()` peer, so a chord or a motion-with-buttons is
-/// expressible: `button` names the ONE that changed, `buttons` names ALL held
-/// after the change.
+/// **[`buttons`](Self::buttons) carries the full held set** (R1418), the toolkit `buttons()`
+/// peer, so a chord or a motion-with-buttons is expressible: `button` names the ONE
+/// that changed, `buttons` names ALL held after the change.
 ///
-/// **[`click_count`](Self::click_count) carries the consecutive-click ordinal**
-/// (R1422), the Qt `MouseButtonDblClick` / DOM `MouseEvent.detail` peer: the
-/// router synthesises `2` on a press that repeats the same button on the same
-/// spot within the double-click window, and echoes that count onto the matching
-/// release, so a raw sink reads a double-click without re-implementing the
-/// timing itself. See [`click_count`](Self::click_count) for the exact rule.
+/// **[`click_count`](Self::click_count) carries the consecutive-click ordinal** (R1422),
+/// the toolkit `MouseButtonDblClick` / DOM `MouseEvent.detail` peer: the router synthesises `2` on a press that
+/// repeats the same button on the same spot within the double-click window,
+/// and echoes that count onto the matching release, so a raw sink reads a
+/// double-click without re-implementing the timing itself. See
+/// [`click_count`](Self::click_count) for the exact rule.
 ///
 /// Not `#[non_exhaustive]`: the router (pinion-runtime) constructs it with a
 /// struct literal across the crate boundary, the
@@ -1175,27 +1166,26 @@ impl PointerButtons {
 /// cross-crate-carrier precedent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RawPointerButton {
-    /// Which mouse button transitioned (the Qt `QMouseEvent::button()` peer).
+    /// Which mouse button transitioned (the toolkit `button()` peer).
     pub button: PointerButton,
     /// Whether the button was pressed or released.
     pub edge: PointerEdge,
     /// The keyboard modifiers held at this edge.
     pub modifiers: Modifiers,
-    /// The full set of buttons held AFTER this edge (the Qt
-    /// `QMouseEvent::buttons()` / DOM `MouseEvent.buttons` peer): a press
+    /// The full set of buttons held AFTER this edge (the toolkit
+    /// `buttons()` / DOM `MouseEvent.buttons` peer): a press
     /// includes the pressed button, a release excludes the released one.
     pub buttons: PointerButtons,
     /// R1422 §5.35 — the consecutive-click ordinal of `button` at this edge, the
-    /// Qt `MouseButtonDblClick` / DOM `MouseEvent.detail` peer. `1` on a first
-    /// press (Qt `MouseButtonPress`); `2` on a second press of the SAME button,
-    /// at the same spot (within the framework double-click time + distance
-    /// window shared with the `DoubleClick` send-wire path so the two rules
-    /// cannot drift), i.e. the Qt `MouseButtonDblClick`. It caps at `2` — pinion
-    /// stops at binary single/double, matching the send-wire `DoubleClick` (no
-    /// rolling triple-click). A release ([`PointerEdge::Up`]) echoes the count of
-    /// the press it releases, so a press/release pair reads one consistent
-    /// ordinal (the DOM `detail` model, which Qt drops on release). A lone
-    /// release with no matching tracked press reports `1`.
+    /// toolkit `MouseButtonDblClick` / DOM `MouseEvent.detail` peer. `1` on a first press (the toolkit `MouseButtonPress`); `2`
+    /// on a second press of the SAME button, at the same spot (within the
+    /// framework double-click time + distance window shared with the `DoubleClick`
+    /// send-wire path so the two rules cannot drift), i.e. the toolkit `MouseButtonDblClick`. It
+    /// caps at `2` — pinion stops at binary single/double, matching the
+    /// send-wire `DoubleClick` (no rolling triple-click). A release ([`PointerEdge::Up`]) echoes the
+    /// count of the press it releases, so a press/release pair reads one
+    /// consistent ordinal (the DOM `detail` model, which the toolkit drops on
+    /// release). A lone release with no matching tracked press reports `1`.
     pub click_count: u8,
 }
 
@@ -1334,10 +1324,9 @@ impl<T: Copy> DragCalibration<T> {
 
     /// Has the drag strayed far enough from the press to be a **drag**, not a
     /// **click**? `true` once the cursor's largest pixel travel from the press
-    /// (`max fraction-delta · basis`) reaches `threshold_px` — pass
-    /// [`DRAG_CLICK_THRESHOLD_PX`] for the framework's click-vs-drag SSOT (Qt
-    /// `startDragDistance`, the DOM no-`click`-after-drag rule). `false` while
-    /// idle or still within the dead zone.
+    /// (`max fraction-delta · basis`) reaches `threshold_px` — pass [`DRAG_CLICK_THRESHOLD_PX`] for the framework's click-vs-drag SSOT
+    /// (the toolkit `startDragDistance`, the DOM no-`click`-after-drag rule). `false` while idle or
+    /// still within the dead zone.
     ///
     /// The opt-in discriminator for calibration consumers that ALSO have a
     /// click action on the same press (a scrub cell that a plain click should
@@ -1487,7 +1476,7 @@ pub fn forward_key_to_field(scene: &mut Scene, tag: &str, key: &str, modifiers: 
 /// * `Enter` runs the binding's `commit` policy, `Escape` its `cancel`
 ///   policy (both are per-binding closures — *what* a commit writes and
 ///   where focus returns stay binding decisions; W3C `aria-grid` /
-///   `QStyledItemDelegate` edit-mode convention).
+///   styled item delegate edit-mode convention).
 /// * The caret / deletion keys (`ArrowLeft` / `ArrowRight` / `Home` /
 ///   `End` / `Backspace` / `Delete`) always reach the field via
 ///   [`forward_key_to_field`] — editing motion never depends on the cell
@@ -1557,9 +1546,9 @@ mod tests {
     // R1549 §5.35 §5.38 — `AutoRepeat` cadence battery.
     // ─────────────────────────────────────────────────────────────
 
-    /// The declared defaults ARE Qt's `qabstractbutton.cpp` constants; a
-    /// silent drift here would silently change every held button in the
-    /// catalogue, so the pair is pinned rather than merely documented.
+    /// The declared defaults ARE the toolkit's `qabstractbutton.cpp` constants; a silent drift
+    /// here would silently change every held button in the catalogue, so the
+    /// pair is pinned rather than merely documented.
     #[test]
     fn desktop_defaults_are_the_qt_pair() {
         let r = AutoRepeat::desktop();
@@ -1588,8 +1577,8 @@ mod tests {
     }
 
     /// An accelerating cadence shortens monotonically and stops at its
-    /// declared floor — the peer of `QAbstractSpinBox::setAccelerated`,
-    /// which Qt offers only as an on/off with no reachable curve.
+    /// declared floor — the peer of `setAccelerated`,
+    /// which the toolkit offers only as an on/off with no reachable curve.
     #[test]
     fn accelerating_cadence_ramps_down_to_its_floor() {
         let r = AutoRepeat::new(0.3, 0.100).accelerating(0.5, 0.020);
@@ -1728,7 +1717,7 @@ mod tests {
         // The contract predicate over DRAG_CLICK_THRESHOLD_PX (4 logical
         // px, Euclidean, strictly greater): a wobble inside the dead zone
         // stays a click; once past, the gesture is a drag for its lifetime
-        // — even back at the origin (the Qt startDragDistance latch).
+        // — even back at the origin (the toolkit startDragDistance latch).
         let mut latch = DragLatch::new((10.0, 10.0));
         assert!(
             !latch.advance((12.0, 10.0)),

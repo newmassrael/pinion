@@ -1,6 +1,6 @@
 // R1456 §5.16 — example bindings tolerate looser doc-markdown lints
 // than substrate crates; the narrative carries many proper-noun
-// identifiers (FocusManager, QMessageBox, ModalState, …).
+// identifiers (FocusManager, message box, ModalState, …).
 #![allow(clippy::doc_markdown)]
 
 //! `hello-modal-handoff` — R1456 §5.16 §5.39 §5.50 modal **handoff**.
@@ -11,7 +11,7 @@
 //! opening and closing. This one proves the shape that has **two** modal
 //! surfaces trading places inside a single user action: a modal command
 //! menu whose destructive row dismisses the menu *and* raises a confirm
-//! dialog. Qt spells it `QMenu` action → `QMessageBox::question`;
+//! dialog. The toolkit spells it menu action → `question`;
 //! VS Code spells it palette command → confirmation; every toolkit ships
 //! it, because "are you sure?" is not a separate click.
 //!

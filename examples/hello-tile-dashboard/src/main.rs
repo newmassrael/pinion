@@ -1,5 +1,5 @@
-//! `hello-tile-dashboard` — R1608 §5.21 — a **Grafana-class tile dashboard**
-//! over the R1560 CSS Grid, driven by a press-drag and by the wire.
+//! `hello-tile-dashboard` — R1608 §5.21 — a **the dashboard tool-class tile dashboard** over the
+//! R1560 CSS Grid, driven by a press-drag and by the wire.
 //!
 //! R1607 built the model ([`TileGrid`]) and measured that the existing grid
 //! layout holds a dashboard, and then deliberately stopped: it had no consumer,
@@ -19,12 +19,13 @@
 //!
 //! ## Why the grab offset is the whole trick
 //!
-//! Snapping the cursor's cell and moving the card's top-left there makes a card
-//! jump under the pointer the moment you grab it anywhere but its corner. The
-//! latch therefore stores the cell the grab happened at *relative to the card*,
-//! and the move subtracts it — so the card stays under the finger, which is the
-//! difference between a drag and a teleport. Grafana does the same thing; what
-//! it does not do is tell you which other cards it pushed.
+//! Snapping the cursor's cell and moving the card's top-left there makes a
+//! card jump under the pointer the moment you grab it anywhere but its corner.
+//! The latch therefore stores the cell the grab happened at *relative to the
+//! card*, and the move subtracts it — so the card stays under the finger,
+//! which is the difference between a drag and a teleport. The dashboard tool
+//! does the same thing; what it does not do is tell you which other cards it
+//! pushed.
 //!
 //! ## The AI-first witness (§2 #7)
 //!
@@ -41,13 +42,12 @@
 //! *read* the arrangement and never change it, and a resize existed only as a
 //! wire verb with no handle to grab. Both close here.
 //!
-//! **One focus stop, a roving current card.** The board is the Tab stop and the
-//! selected card is its `aria-activedescendant` — the pattern
-//! `hello-grid-nav`'s current cell and the toolbar's roving item already use.
-//! Thirty cards must not be thirty Tab stops, and Qt's MDI alternative
-//! (`QMdiArea::activateNextSubWindow`, a walk down a `QList` in creation order)
-//! is the reason it needs a *spatial* move instead: plain arrows change the
-//! selection through [`TileGrid::neighbour`], which is total over a legal
+//! **One focus stop, a roving current card.** The board is the Tab stop and
+//! the selected card is its `aria-activedescendant` — the pattern `hello-grid-nav`'s current cell and the
+//! toolbar's roving item already use. Thirty cards must not be thirty Tab
+//! stops, and the toolkit's MDI alternative (`activateNextSubWindow`, a walk down a list in
+//! creation order) is the reason it needs a *spatial* move instead: plain
+//! arrows change the selection through [`TileGrid::neighbour`], which is total over a legal
 //! arrangement.
 //!
 //! **The keymap is twelve chords and no mode**, because [`TileNudge`] is twelve
@@ -62,8 +62,8 @@
 //! | <kbd>Escape</kbd> | cancel the session, board and all |
 //! | <kbd>Enter</kbd> | commit it |
 //!
-//! Qt reaches the same behaviours only after a system-menu round trip into
-//! `isInInteractiveMode`, warps the physical mouse cursor to do it, and treats
+//! The toolkit reaches the same behaviours only after a system-menu round trip
+//! into `isInInteractiveMode`, warps the physical mouse cursor to do it, and treats
 //! <kbd>Escape</kbd> and <kbd>Enter</kbd> identically so a keyboard move there
 //! cannot be abandoned.
 //!
@@ -74,13 +74,12 @@
 //! `CursorHint`'s two diagonal arms (R1189 had commanded them for a *window*
 //! corner since ~R1189 and no scene node could ask for one).
 //!
-//! **The displacement is announced.** The board carries a `polite`
-//! [`AccessLive`] region whose text names what the last edit pushed, because the
-//! cards that moved are exactly the ones the user is not on. No widget in Qt
-//! fires an announcement for this — `qmdisubwindow.cpp`, `qmdiarea.cpp` and
-//! `qsizegrip.cpp` contain no accessibility notification of any kind, so a Qt
-//! MDI window that moves or resizes is silent to a screen reader even though
-//! `QAccessibleMdiSubWindow::state()` advertises `movable` and `sizeable`.
+//! **The displacement is announced.** The board carries a `polite` [`AccessLive`] region
+//! whose text names what the last edit pushed, because the cards that moved
+//! are exactly the ones the user is not on. No widget in the toolkit fires an
+//! announcement for this — `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp` contain no accessibility
+//! notification of any kind, so a toolkit MDI window that moves or resizes is
+//! silent to a screen reader even though `state()` advertises `movable` and `sizeable`.
 
 use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y,
@@ -113,7 +112,7 @@ const THEME_TAG: &str = "app";
 /// (R1609) The live region that announces what an edit displaced.
 const REFLOW_TAG: &str = "dashboard.reflow";
 
-/// The dashboard's columns — the one number a Grafana layout declares.
+/// The dashboard's columns — the one number a dashboard tool layout declares.
 const COLUMNS: u32 = 12;
 /// A grid row's pixel height. Rows are fixed so a card's height is a count.
 const ROW_H: u32 = 64;
@@ -195,9 +194,10 @@ struct BoardState {
     /// (R1609) The roving current card — the board's `aria-activedescendant`,
     /// and what a keyboard chord acts on. `None` before anything is selected.
     current: Signal<Option<TileId>>,
-    /// (R1609) The open keyboard session, if any: the undo point <kbd>Escape</kbd>
-    /// restores. Opened lazily by the first editing chord, so there is no mode to
-    /// enter — Qt needs a system-menu action for this.
+    /// (R1609) The open keyboard session, if any: the undo point
+    /// <kbd>Escape</kbd> restores. Opened lazily by the first editing chord,
+    /// so there is no mode to enter — the toolkit needs a system-menu action
+    /// for this.
     session: Signal<Option<TileEdit>>,
     /// (R1609) The sentence the board's live region carries. What a screen reader
     /// says when an edit pushes cards the user is not looking at.
@@ -430,8 +430,8 @@ impl DashboardOracle {
     /// (R1609) Run one keyboard chord. `true` when it was this board's.
     ///
     /// **No mode.** The chord says whether it navigates, moves, grows or
-    /// shrinks; Qt reads the same four arrow keys against a `currentOperation`
-    /// that a system-menu action set, so its meaning depends on invisible state.
+    /// shrinks; the toolkit reads the same four arrow keys against a `currentOperation` that
+    /// a system-menu action set, so its meaning depends on invisible state.
     fn key(state: &BoardState, chord: &str) -> bool {
         let Some((key, alt, shift)) = Self::parse_chord(chord) else {
             return false;
@@ -494,7 +494,7 @@ impl DashboardOracle {
         }
         match key {
             "Escape" => {
-                // ★ Qt stores `oldGeometry` on entering interactive mode and
+                // ★ the toolkit stores `oldGeometry` on entering interactive mode and
                 // never restores it — Escape, Return and Enter share one arm
                 // there, so Escape commits.
                 if let Some(session) = state.session.get() {
@@ -726,9 +726,10 @@ impl ExternalIntrospect for DashboardOracle {
                     SchemaField::new("dragging", "string"),
                     // R1609 — the keyboard half, readable so an agent can see
                     // what a chord would act on and what a screen reader will
-                    // say. Qt keeps every one of these private: the current
-                    // subwindow's interactive mode, its saved geometry and its
-                    // announcement (which no widget sends) are all unreachable.
+                    // say. The toolkit keeps every one of these private: the
+                    // current subwindow's interactive mode, its saved geometry
+                    // and its announcement (which no widget sends) are all
+                    // unreachable.
                     SchemaField::new("current", "string"),
                     SchemaField::new("handle", "string"),
                     SchemaField::new("editing", "string"),
@@ -775,9 +776,9 @@ impl ExternalIntrospect for DashboardOracle {
             "current" => Some(IntrospectValue::Text(
                 Self::current_id(state).map_or_else(String::new, |id| id.to_string()),
             )),
-            // Which handle the live press grabbed, empty for an interior drag or
-            // no press. `QMdiSubWindowPrivate::Operation` is private, so Qt
-            // cannot be asked this at all.
+            // Which handle the live press grabbed, empty for an interior drag
+            // or no press. `Operation` is private, so the toolkit cannot be asked this
+            // at all.
             "handle" => Some(IntrospectValue::Text(
                 state
                     .grab
@@ -802,13 +803,13 @@ impl ExternalIntrospect for DashboardOracle {
                     .map_or_else(String::new, |s| Self::reflow_text(&s.reflow(&grid))),
             )),
             // The live region's text: what an AT will say. Readable because a
-            // live region is declared, where Qt's announcement is a fired event
-            // that leaves nothing behind to ask about.
+            // live region is declared, where the toolkit's announcement is a
+            // fired event that leaves nothing behind to ask about.
             "announcement" => Some(IntrospectValue::Text(state.announcement.get())),
-            // Every handle a card offers, with the cursor each asks for — derived
-            // from `TileHandle::ALL`, so a client can enumerate the resize
-            // affordances. Qt's operation map is private and its enum is in a
-            // `_p.h`.
+            // Every handle a card offers, with the cursor each asks for —
+            // derived from `TileHandle::ALL`, so a client can enumerate the resize
+            // affordances. The toolkit's operation map is private and its enum
+            // is in a `_p.h`.
             "handles" => Some(IntrospectValue::Text(
                 TileHandle::ALL
                     .iter()
@@ -1072,13 +1073,11 @@ fn view(
 /// the first — and the ring is one overlay node rather than eight positioned
 /// ones, so it can be turned on and off without touching the card's own content.
 ///
-/// Every grip's grid cell **and** its
-/// [`CursorHint`](pinion_core::style::CursorHint) come from
-/// [`TileHandle::horizontal`] / [`TileHandle::vertical`], so a ninth handle would
-/// need no new painting code and a grip cannot sit on a side its own drag does
-/// not move. Qt's nine `operationMap.insert` rows pair a private region with a
-/// cursor by hand, and `updateDirtyRegions` has to rebuild every one of them
-/// whenever the widget's geometry changes.
+/// Every grip's grid cell **and** its [`CursorHint`](pinion_core::style::CursorHint)
+/// come from [`TileHandle::horizontal`] / [`TileHandle::vertical`], so a ninth handle would need no new painting code
+/// and a grip cannot sit on a side its own drag does not move. The toolkit's
+/// nine `operationMap.insert` rows pair a private region with a cursor by hand, and `updateDirtyRegions` has to
+/// rebuild every one of them whenever the widget's geometry changes.
 fn handle_ring(id: &TileId, ink: pinion_core::style::Color) -> Scene {
     use pinion_core::widgets::tile_grid::TileEdge;
 
@@ -1210,7 +1209,7 @@ impl WidgetCore for DashboardView {
 impl WidgetA11y for DashboardView {
     /// The board as an `application` whose value counts the cards, plus one
     /// `group` per card **naming its slot** — so a screen-reader user can read
-    /// the arrangement, which a Grafana board does not expose at all.
+    /// the arrangement, which a dashboard tool board does not expose at all.
     fn access_node(_state: &(), focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_board_state();
         let grid = state.grid.get();
@@ -1243,10 +1242,10 @@ impl WidgetA11y for DashboardView {
                     tile.w,
                     tile.h
                 )));
-            // R1609 — `aria-selected` on the roving current card. Qt's
-            // `QAccessibleMdiSubWindow::state()` advertises `movable` and
-            // `sizeable` and then nothing tells an AT which subwindow the
-            // keyboard would act on, because interactive mode is private.
+            // R1609 — `aria-selected` on the roving current card. The toolkit's `state()`
+            // advertises `movable` and `sizeable` and then nothing tells an AT which
+            // subwindow the keyboard would act on, because interactive mode is
+            // private.
             if current.as_ref() == Some(&tile.id) {
                 node = node.with_selected(true);
             }
@@ -1257,10 +1256,9 @@ impl WidgetA11y for DashboardView {
         // the fact; a `polite` live region can, because an AT re-reads it when it
         // changes without anyone navigating there.
         //
-        // Qt has the capability (`QAccessibleAnnouncementEvent`, 6.8+) and no
-        // widget uses it: `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp`
-        // contain no accessibility notification at all, so a Qt MDI window that
-        // moves is silent.
+        // The toolkit has the capability (accessible announcement event, 6.8+)
+        // and no widget uses it: `qmdisubwindow.cpp`, `qmdiarea.cpp` and `qsizegrip.cpp` contain no accessibility
+        // notification at all, so a toolkit MDI window that moves is silent.
         nodes.push(
             AccessNode::new(REFLOW_TAG, AriaRole::Status)
                 .with_name("Layout change")

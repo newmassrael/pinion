@@ -4,7 +4,7 @@
 //! *removes* the rows a predicate rejects; **search** does the opposite — it
 //! keeps every row visible and instead carries a **cursor** that walks the
 //! rows a predicate *accepts*, scrolling each match into view. This is the
-//! "Find Packet" of a Wireshark capture, the search-and-jump of a dlt-viewer
+//! "Find Packet" of a analyser capture, the search-and-jump of a dlt-viewer
 //! log, the `Ctrl+G` "go to next match" of a code editor's results pane: the
 //! data set never shrinks, you navigate matches in place.
 //!

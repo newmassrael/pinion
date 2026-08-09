@@ -567,7 +567,7 @@ mod tests {
 
         #[test]
         fn two_steps_target_distinct_externals_rolled_back_independently() {
-            // R648 — the R660+ Figma queue multi-widget prereq. Two
+            // R648 — the R660+ the design tool queue multi-widget prereq. Two
             // tagged child Externals, simulate mutates both, snapshot
             // reflects both new values, rollback restores both.
             let mut scene = paired_counted_scene(5, 17);

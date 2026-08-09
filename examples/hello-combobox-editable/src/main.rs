@@ -3,12 +3,11 @@
 // (WAI-ARIA, TextFieldExternal, ListBoxExternal, dismiss_barrier, …).
 #![allow(clippy::doc_markdown)]
 
-//! `hello-combobox-editable` — R717 §5.38 §5.40 §5.50 **editable
-//! combobox** (the WAI-ARIA 1.2 §4.5 "Editable Combobox With List
-//! Autocomplete" pattern): a single-line text input that owns a popup
-//! list which *filters* to the options matching what the user types.
-//! The Qt / Flutter / web form factor (`QComboBox{editable:true}`,
-//! `Autocomplete`, `<input role=combobox aria-autocomplete=list>`).
+//! `hello-combobox-editable` — R717 §5.38 §5.40 §5.50 **editable combobox** (the WAI-ARIA 1.2 §4.5
+//! "Editable Combobox With List Autocomplete" pattern): a single-line text
+//! input that owns a popup list which *filters* to the options matching what
+//! the user types. The toolkit / another retained-mode toolkit / web form
+//! factor (`combo box{editable:true}`, `Autocomplete`, `<input role=combobox aria-autocomplete=list>`).
 //!
 //! ## 2nd combobox-class consumer of R714 — still pure composition
 //!

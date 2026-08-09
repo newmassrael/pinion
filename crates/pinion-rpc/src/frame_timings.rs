@@ -113,7 +113,7 @@
 //!   that wrote it, so reading it inside the frame would stall the
 //!   pipeline the measurement describes. It is polled, and therefore
 //!   reports a frame a step or two back — sound as a level, unsound to add
-//!   to the `last` row. Unreal's `stat gpu` has the same latency for the
+//!   to the `last` row. The engine's `stat gpu` has the same latency for the
 //!   same reason.
 //! - **`gpu_us` / `mean_gpu_us` / `max_gpu_us` are OMITTED, never zeroed,**
 //!   when the host has no `TIMESTAMP_QUERY` adapter or no sample has landed
@@ -197,7 +197,7 @@
 //!   count (`total_us > budget_us`, strict), `worst_overrun_us` the
 //!   largest single overrun, and `jank_ratio = over_budget_frames /
 //!   window_len` — the measure-first signal a frame-budget tuning round
-//!   reads before optimizing (Unreal `stat unit` hitches / Chrome jank).
+//!   reads before optimizing (the engine `stat unit` hitches / Chrome jank).
 //!
 //! ## Work that is not a frame
 //!
@@ -391,10 +391,9 @@ pub struct FrameTimingsLast {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FrameTimingsDraw {
     /// Draw commands encoded: every fill, stroke, image, blurred rect and clip
-    /// boundary. The peer of a 3D renderer's draw-call count
-    /// (`QQuick3DRenderStats::drawCallCount`, Unreal `stat rhi`), and the
-    /// coarsest number here — it says how many things were drawn without saying
-    /// how big any of them was.
+    /// boundary. The peer of a 3D renderer's draw-call count (`drawCallCount`, the engine
+    /// `stat rhi`), and the coarsest number here — it says how many things were drawn
+    /// without saying how big any of them was.
     pub draws: u32,
     /// Paths encoded: one per filled or stroked shape, plus one per closed clip
     /// layer. `0` on a frame that draws only text.
@@ -631,7 +630,7 @@ pub struct FrameTimingsOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_us: Option<u64>,
     /// Window samples whose `total_us` exceeded [`Self::budget_us`] —
-    /// the dropped-frame / jank count (Unreal `stat unit` hitches,
+    /// the dropped-frame / jank count (the engine `stat unit` hitches,
     /// Chrome janky frames). `0` when no budget is set. Window-scoped,
     /// like the min/mean/max — not the cumulative `frame_count`.
     pub over_budget_frames: u32,

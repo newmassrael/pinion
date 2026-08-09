@@ -16,16 +16,14 @@
 //! [`Sparkline`](crate::Sparkline), the [`Timeline`](crate::Timeline)
 //! ruler).
 //!
-//! [`ValueScale`] is the **axis** — Qt's `QAbstractAxis` distinction. It
-//! is what a numeric-x / numeric-y chart plots through, and it is the
-//! layer that knows a mapping can be *undefined*: a logarithmic axis has
-//! no pixel for zero or for a negative value. So [`ValueScale::map`]
-//! returns `Option<f32>` where [`LinearScale::map`] returns `f32`, and
-//! every call site has to decide what a point with no pixel looks like
-//! (the line chart breaks its polyline; the scatter chart omits the
-//! mark). That is the whole reason the two layers are separate — a
-//! partial map is the wrong contract for the affine core, and the right
-//! one for an axis.
+//! [`ValueScale`] is the **axis** — the toolkit's abstract axis distinction. It is what
+//! a numeric-x / numeric-y chart plots through, and it is the layer that knows
+//! a mapping can be *undefined*: a logarithmic axis has no pixel for zero or
+//! for a negative value. So [`ValueScale::map`] returns `Option<f32>` where [`LinearScale::map`] returns `f32`, and
+//! every call site has to decide what a point with no pixel looks like (the
+//! line chart breaks its polyline; the scatter chart omits the mark). That is
+//! the whole reason the two layers are separate — a partial map is the wrong
+//! contract for the affine core, and the right one for an axis.
 //!
 //! # An axis kind is more than its arithmetic (R1529)
 //!
@@ -61,8 +59,8 @@
 //!
 //! Like [`ValueScale::Time`] it is *affine* — in the category **index** —
 //! so it reuses [`LinearScale`] with no transform. Category `i` sits at
-//! value `i`, and its **band** spans `i ± 0.5`, which is Qt's
-//! `QBarCategoryAxis` geometry and d3's `scaleBand`.
+//! value `i`, and its **band** spans `i ± 0.5`, which is the toolkit's
+//! bar category axis geometry and d3's `scaleBand`.
 
 use std::sync::Arc;
 
@@ -136,7 +134,7 @@ impl LinearScale {
 }
 
 /// The default logarithm base — decades, what every log axis in a
-/// monitoring or profiling tool uses (Qt's `QLogValueAxis::base` default).
+/// monitoring or profiling tool uses (the toolkit's `base` default).
 pub const DEFAULT_LOG_BASE: f64 = 10.0;
 
 /// Logarithmic `f64` domain to `f32` pixel-range mapping (and its inverse).
@@ -237,8 +235,8 @@ impl LogScale {
     }
 }
 
-/// The ordered category list one categorical axis carries — Qt's
-/// `QBarCategoryAxis::categories`, d3's `scaleBand().domain(names)`.
+/// The ordered category list one categorical axis carries — the toolkit's
+/// `categories`, d3's `scaleBand().domain(names)`.
 ///
 /// Shared (`Arc`) rather than cloned: an [`AxisKind`] is copied into every
 /// chart builder, plot resolution and tick format that touches the axis, and
@@ -269,7 +267,7 @@ impl Categories {
         Self(names.into_iter().map(Into::into).collect())
     }
 
-    /// How many categories the axis carries (Qt's `QBarCategoryAxis::count`).
+    /// How many categories the axis carries (the toolkit's `count`).
     #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
@@ -284,8 +282,8 @@ impl Categories {
 
     /// The category at `index`, or `None` when the index names none.
     ///
-    /// Qt's `QBarCategoryAxis::at` answers an out-of-range index with an empty
-    /// `QString`, which is indistinguishable from a category whose name IS
+    /// The toolkit's `at` answers an out-of-range index with an empty
+    /// string, which is indistinguishable from a category whose name IS
     /// empty. An `Option` cannot be misread that way.
     #[must_use]
     pub fn at(&self, index: usize) -> Option<&str> {
@@ -324,7 +322,7 @@ impl Categories {
     /// axis is not a position at all. Such a point is *reported*
     /// ([`crate::OffScale`]) rather than drawn somewhere invented — the R1528
     /// stance for a log axis's zero, applied to the arm where "no such slot"
-    /// is the failure. Qt draws it off in space with no diagnostic.
+    /// is the failure. The toolkit draws it off in space with no diagnostic.
     #[must_use]
     pub fn spans(&self, value: f64) -> bool {
         if self.is_empty() || !value.is_finite() {
@@ -339,9 +337,9 @@ impl Categories {
     /// index names no category.
     ///
     /// The x a series takes to plot over this axis, so a consumer building
-    /// points never casts an index itself. Qt has no peer: a `QBarCategoryAxis`
-    /// exposes the names and the count, and the position a category occupies is
-    /// implicit in the series painter.
+    /// points never casts an index itself. The toolkit has no peer: a bar
+    /// category axis exposes the names and the count, and the position a
+    /// category occupies is implicit in the series painter.
     #[must_use]
     pub fn position(&self, index: usize) -> Option<f64> {
         self.at(index).map(|_| index_value(index))
@@ -353,17 +351,16 @@ impl Categories {
         (0..self.len()).map(index_value)
     }
 
-    /// The index of the category named `name` — Qt's implicit
-    /// `QStringList::indexOf` behind `setMin` / `setMax`.
+    /// The index of the category named `name` — the toolkit's implicit
+    /// `indexOf` behind `setMin` / `setMax`.
     ///
     /// # Errors
     ///
-    /// [`CategoryLookup::Unknown`] when no category has the name, and
-    /// [`CategoryLookup::Ambiguous`] when more than one does. Qt answers both
-    /// silently: an unknown name makes `setMin` a no-op the caller cannot
-    /// detect, and a duplicated one resolves to the first match, so
-    /// `setRange("a", "a")` over `["a", "b", "a"]` collapses the axis to one
-    /// slot with nothing said.
+    /// [`CategoryLookup::Unknown`] when no category has the name, and [`CategoryLookup::Ambiguous`] when more than one does.
+    /// The toolkit answers both silently: an unknown name makes `setMin` a no-op
+    /// the caller cannot detect, and a duplicated one resolves to the first
+    /// match, so `setRange("a", "a")` over `["a", "b", "a"]` collapses the axis to one slot with nothing
+    /// said.
     pub fn index_of(&self, name: &str) -> Result<usize, CategoryLookup> {
         let mut found = None;
         let mut count = 0_usize;
@@ -383,15 +380,15 @@ impl Categories {
         }
     }
 
-    /// The index window between two category NAMES — Qt's
-    /// `QBarCategoryAxis::setRange(min, max)`, resolved rather than applied.
+    /// The index window between two category NAMES — the toolkit's
+    /// `setRange(min, max)`, resolved rather than applied.
     ///
     /// The endpoints may be given in either order; the window is normalised.
     ///
     /// # Errors
     ///
     /// The first endpoint that does not resolve, per [`index_of`](Self::index_of).
-    /// Returning the failure is the whole point: Qt's `setRange` is `void`, so
+    /// Returning the failure is the whole point: the toolkit's `setRange` is `void`, so
     /// a typo'd category name leaves the axis silently unwindowed, and here it
     /// cannot reach the chart without the caller deciding what to do with it.
     pub fn window(&self, from: &str, to: &str) -> Result<CategoryWindow, CategoryLookup> {
@@ -429,7 +426,7 @@ impl std::fmt::Display for CategoryLookup {
 impl std::error::Error for CategoryLookup {}
 
 /// An inclusive index window over a [`Categories`] list — the resolved form
-/// of Qt's `QBarCategoryAxis::setRange`.
+/// of the toolkit's `setRange`.
 ///
 /// Normalised at construction (reversed endpoints swap), so a window is never
 /// in an invalid state to be repaired at read time — the [`crate::PlotWindow`]
@@ -487,24 +484,24 @@ impl CategoryWindow {
     }
 }
 
-/// Categorical `f64` index to `f32` pixel-range mapping — Qt's
-/// `QBarCategoryAxis`, d3's `scaleBand`.
+/// Categorical `f64` index to `f32` pixel-range mapping — the toolkit's
+/// bar category axis, d3's `scaleBand`.
 ///
 /// Affine in the category index (see the module doc), so it holds a
 /// [`LinearScale`] over the numeric domain and adds the two things a
 /// categorical axis has that a numeric one does not: the category **names**,
 /// and the per-category **band**.
 ///
-/// # The band is published (past Qt 6.11)
+/// # The band is published (past the toolkit 6.11)
 ///
-/// [`band`](Self::band) answers "which pixels does category `i` occupy". Qt's
-/// `QBarCategoryAxis` has no such accessor: a bar's rect is computed inside
-/// the private series painter (`QBarSeriesPrivate`), so a Qt application
-/// cannot ask where a category is drawn, and anything that needs to align to
-/// one re-derives the arithmetic. That is exactly what happened here before
-/// R1545 — `bar.rs` carried three copies of `left + i * slot`, one for the
-/// bar box, one for the label, one for the click surface, and the crate's own
-/// doc called that "the ONE definition of where bar `i` sits".
+/// [`band`](Self::band) answers "which pixels does category `i` occupy". The
+/// toolkit's bar category axis has no such accessor: a bar's rect is computed
+/// inside the private series painter (bar series private), so a toolkit
+/// application cannot ask where a category is drawn, and anything that needs
+/// to align to one re-derives the arithmetic. That is exactly what happened
+/// here before R1545 — `bar.rs` carried three copies of `left + i * slot`, one for the bar box,
+/// one for the label, one for the click surface, and the crate's own doc
+/// called that "the ONE definition of where bar `i` sits".
 #[derive(Debug, Clone, PartialEq)]
 pub struct CategoryScale {
     /// The affine scale over the numeric index domain.
@@ -588,11 +585,11 @@ impl CategoryScale {
     /// [`CategoryWindow::domain`] produces — holds exactly `lo..=hi` instead
     /// of touching its neighbours at the shared band edge.
     ///
-    /// Qt cannot answer this. `QBarCategoryAxis` reports `count()` (every
-    /// category) and `min()` / `max()` (the names it was *set* to), never
-    /// which categories a live window is showing — and since R1534 the window
-    /// here moves under a wheel gesture, so the question has an answer that
-    /// changes per frame.
+    /// The toolkit cannot answer this. bar category axis reports `count()` (every
+    /// category) and `min()` / `max()` (the names it was *set* to), never which
+    /// categories a live window is showing — and since R1534 the window here
+    /// moves under a wheel gesture, so the question has an answer that changes
+    /// per frame.
     #[must_use]
     pub fn visible(&self) -> Option<CategoryWindow> {
         let n = self.categories.len();
@@ -627,8 +624,8 @@ impl CategoryScale {
     }
 }
 
-/// Which KIND one chart axis is — Qt's `QValueAxis` / `QLogValueAxis` /
-/// `QDateTimeAxis` / `QBarCategoryAxis` choice, without a domain or a pixel
+/// Which KIND one chart axis is — the toolkit's value axis / log value axis /
+/// date time axis / bar category axis choice, without a domain or a pixel
 /// range attached.
 ///
 /// A chart knows its axis kinds before a plot is resolved (it needs them
@@ -658,14 +655,14 @@ pub enum AxisKind {
     Linear,
     /// A logarithmic axis in the given base.
     Log(f64),
-    /// A time axis over epoch **milliseconds**, UTC — the unit Qt's
-    /// `QDateTimeAxis` and d3's `scaleUtc` both carry. Affine in the
+    /// A time axis over epoch **milliseconds**, UTC — the unit the toolkit's
+    /// date time axis and d3's `scaleUtc` both carry. Affine in the
     /// instant, so it maps through the same [`LinearScale`] arithmetic a
     /// [`Linear`](Self::Linear) axis does; what differs is entirely which
     /// ticks it lands on and how they are labelled.
     Time,
-    /// A categorical axis over discrete, named slots — Qt's
-    /// `QBarCategoryAxis`, d3's `scaleBand`. Affine in the category *index*,
+    /// A categorical axis over discrete, named slots — the toolkit's
+    /// bar category axis, d3's `scaleBand`. Affine in the category *index*,
     /// so like [`Time`](Self::Time) it reuses [`LinearScale`] untouched; what
     /// differs is that its ticks are the indices, its labels are the names it
     /// carries, and a value naming no slot has no pixel.
@@ -704,8 +701,8 @@ impl AxisKind {
 
 /// The scale of one chart axis: linear, logarithmic, time, or categorical.
 ///
-/// This is the axis-level abstraction (Qt's `QAbstractAxis` distinction),
-/// distinct from the [`LinearScale`] arithmetic it is built on — see the
+/// This is the axis-level abstraction (the toolkit's abstract axis
+/// distinction), distinct from the [`LinearScale`] arithmetic it is built on — see the
 /// module doc. A closed enum rather than a trait object because the set of
 /// axis scales is closed.
 ///
@@ -727,8 +724,8 @@ pub enum ValueScale {
     /// transform to compose. That the arithmetic core is reused untouched
     /// by a third axis kind is the two-layer split of R1528 paying off.
     Time(LinearScale),
-    /// A categorical axis over named slots (R1545) — Qt's
-    /// `QBarCategoryAxis`. Affine in the category index, and the first arm
+    /// A categorical axis over named slots (R1545) — the toolkit's
+    /// bar category axis. Affine in the category index, and the first arm
     /// whose scale carries *data* (the names) rather than only a parameter.
     Category(CategoryScale),
 }
@@ -1143,7 +1140,7 @@ mod tests {
         assert_eq!(touching.visible(), Some(CategoryWindow::new(5, 5)));
     }
 
-    /// ★ Past Qt 6.11: `QBarCategoryAxis::setRange(QString, QString)` returns
+    /// ★ Past the toolkit 6.11: `setRange(string, string)` returns
     /// `void`, so a name that is not a category leaves the axis silently
     /// unwindowed, and a duplicated one resolves to the first match with
     /// nothing said. Here neither can reach a chart without being handled.
@@ -1243,7 +1240,7 @@ mod tests {
         assert_eq!(AxisKind::Category(months()).log_base(), None);
     }
 
-    /// The list accessors, including the one Qt cannot express: an
+    /// The list accessors, including the one the toolkit cannot express: an
     /// out-of-range `at` is `None` rather than an empty string that a
     /// legitimately-empty category name is indistinguishable from.
     #[test]

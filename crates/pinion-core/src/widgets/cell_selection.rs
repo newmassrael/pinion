@@ -7,15 +7,16 @@
 //! there was no column axis to select on. A selection was a set of rows, so
 //! "column 3" was not a statement the model could hold at any price.
 //!
-//! Qt's model is two-dimensional throughout — `QItemSelectionModel` selects
-//! `QModelIndex`es, and `QItemSelectionRange` is a rectangle from a top-left to
-//! a bottom-right index — so the *capability* is Qt's floor. The *shape* is
-//! chosen here, and the choice is forced by one fact a rectangle list cannot
-//! accommodate: this framework's selection is **canonical** (R1561), and a set
-//! of cells has no unique minimal decomposition into rectangles. A cross — row
-//! 0 entirely, plus column 0 entirely — is two rectangles two different ways,
-//! both minimal, and a representation that can spell one selection two ways
-//! cannot report whether an interaction changed anything.
+//! The toolkit's model is two-dimensional throughout — item selection model
+//! selects model indexes, and item selection range is a rectangle from a
+//! top-left to a bottom-right index — so the *capability* is the toolkit's
+//! floor. The *shape* is chosen here, and the choice is forced by one fact a
+//! rectangle list cannot accommodate: this framework's selection is
+//! **canonical** (R1561), and a set of cells has no unique minimal
+//! decomposition into rectangles. A cross — row 0 entirely, plus column 0
+//! entirely — is two rectangles two different ways, both minimal, and a
+//! representation that can spell one selection two ways cannot report whether
+//! an interaction changed anything.
 //!
 //! # The normal form
 //!
@@ -37,21 +38,20 @@
 //! whatever the schema turns out to hold. The row axis has no such value — a
 //! full-column selection names its rows as runs.
 //!
-//! That asymmetry is the model's, not an omission. The row axis is the one this
-//! framework **windows**: rows stream in by the million and a selection stated
-//! over them must not silently claim rows that arrive later (select the visible
-//! thousand, let five hundred more load, and they are *not* selected — which is
-//! what Qt does too, and what a user expects). Columns are the schema: adding a
-//! metadata column to a table must not turn a selected record into a partly
-//! selected one.
+//! That asymmetry is the model's, not an omission. The row axis is the one
+//! this framework **windows**: rows stream in by the million and a selection
+//! stated over them must not silently claim rows that arrive later (select the
+//! visible thousand, let five hundred more load, and they are *not* selected —
+//! which is what the toolkit does too, and what a user expects). Columns are
+//! the schema: adding a metadata column to a table must not turn a selected
+//! record into a partly selected one.
 //!
-//! **Past Qt 6.11.** Qt cannot state the column half at all. A full row there is
-//! `QItemSelectionRange(index(r, 0), index(r, columnCount() - 1))`, bound to the
-//! column count at the moment of selection, so inserting a column leaves the
-//! range covering every column *but the new one* — the row is silently no longer
-//! fully selected, and `QItemSelectionModel::selectedRows()`, which is
-//! documented to return rows "where all columns are selected", stops returning
-//! it. Here that row is [`ColumnSpan::All`] and stays whole.
+//! **Past the toolkit 6.11.** the toolkit cannot state the column half at all.
+//! A full row there is `item selection range(index(r, 0), index(r, columnCount() - 1))`, bound to the column count at the moment of
+//! selection, so inserting a column leaves the range covering every column
+//! *but the new one* — the row is silently no longer fully selected, and `selectedRows()`,
+//! which is documented to return rows "where all columns are selected", stops
+//! returning it. Here that row is [`ColumnSpan::All`] and stays whole.
 //!
 //! The one operation that gives the property up is **subtraction**: removing a
 //! column from "all columns" is a statement about a known set of columns, so
@@ -63,8 +63,8 @@
 use super::index_runs::IndexRuns;
 use super::virtual_select::SelectionExtent;
 
-/// R954 / R1563 §5.38 §5.40 — what a press selects: Qt
-/// `QAbstractItemView::setSelectionBehavior`.
+/// R954 / R1563 §5.38 §5.40 — what a press selects: the toolkit
+/// `setSelectionBehavior`.
 ///
 /// A property of the view, fixed when the coordinator is built, and orthogonal
 /// to cardinality (*how many* things a selection may hold — the eager
@@ -73,10 +73,10 @@ use super::virtual_select::SelectionExtent;
 /// [`SelectionMode`](super::virtual_select::SelectionMode)).
 ///
 /// R954 defined it on the eager `Table`; R1563 moved it here when the windowed
-/// coordinator acquired the same axis, and added Qt's **third** arm, which
-/// neither had. One enum rather than one per coordinator, because two
-/// vocabularies for one question can disagree about what `SelectItems` means —
-/// and Qt, which is the floor here, spells it once on `QAbstractItemView`.
+/// coordinator acquired the same axis, and added the toolkit's **third** arm,
+/// which neither had. One enum rather than one per coordinator, because two
+/// vocabularies for one question can disagree about what `SelectItems` means — and the
+/// toolkit, which is the floor here, spells it once on abstract item view.
 ///
 /// Not every coordinator offers every arm: the eager `Table`'s only setter is
 /// `with_select_items`, so it cannot hold [`SelectColumns`](Self::SelectColumns)
@@ -84,12 +84,11 @@ use super::virtual_select::SelectionExtent;
 /// said — rather than by each coordinator owning a narrower copy of the enum.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SelectionBehavior {
-    /// `SelectRows` — a press selects (washes) the whole **record**, whatever
-    /// cell it landed on. The R707 single-row / R735 multi-row model
-    /// (`hello-table`), and every selection this framework held before the
-    /// column axis existed, which is why it is the default here where Qt's is
-    /// `SelectItems`: the pre-existing behaviour must not move under a round
-    /// that adds an axis.
+    /// `SelectRows` — a press selects (washes) the whole **record**, whatever cell it
+    /// landed on. The R707 single-row / R735 multi-row model (`hello-table`), and every
+    /// selection this framework held before the column axis existed, which is
+    /// why it is the default here where the toolkit's is `SelectItems`: the pre-existing
+    /// behaviour must not move under a round that adds an axis.
     #[default]
     SelectRows,
     /// `SelectItems` — a press selects that single **cell**, and `Shift` grows
@@ -97,8 +96,8 @@ pub enum SelectionBehavior {
     /// `hello-cell-select` on the eager coordinator, `hello-column-select` on
     /// the windowed one).
     SelectItems,
-    /// R1563 — `SelectColumns`: a press selects the whole **column** it landed
-    /// in. Qt's third arm, which this framework did not have on either
+    /// R1563 — `SelectColumns`: a press selects the whole **column** it landed in. The
+    /// toolkit's third arm, which this framework did not have on either
     /// coordinator.
     SelectColumns,
 }
@@ -112,14 +111,13 @@ pub enum SelectionBehavior {
 /// ~6 columns of the window — so the cost of showing a selection is the
 /// window's size whatever the model's is.
 ///
-/// The blanket impl over `Fn(usize) -> bool` is what makes every pre-R1563
-/// caller keep compiling *and* keep its exact behaviour: a row predicate is a
-/// selection whose rows are whole records. Its
-/// [`column`](Self::column) is [`SelectionExtent::Empty`] because a row
-/// predicate carries no row count and so cannot say whether a column is fully
-/// covered — which is also the right *behaviour* for those grids, whose
-/// horizontal band is the sort control and shows no selection at all (Qt's
-/// `QHeaderView::highlightSections` defaults to `false` for the same reason).
+/// The blanket impl over `Fn(usize) -> bool` is what makes every pre-R1563 caller keep
+/// compiling *and* keep its exact behaviour: a row predicate is a selection
+/// whose rows are whole records. Its [`column`](Self::column) is [`SelectionExtent::Empty`] because a
+/// row predicate carries no row count and so cannot say whether a column is
+/// fully covered — which is also the right *behaviour* for those grids, whose
+/// horizontal band is the sort control and shows no selection at all (the
+/// toolkit's `highlightSections` defaults to `false` for the same reason).
 pub trait GridSelection {
     /// Whether the cell at `(row, col)` is selected.
     fn cell(&self, row: usize, col: usize) -> bool;
@@ -423,11 +421,10 @@ impl CellSelection {
     ///
     /// This is what a row-select grid's selection *is*, so it is the O(1)
     /// accessor and the one
-    /// [`VirtualSelect::selection`](super::virtual_select::VirtualSelect::selection)
-    /// answers with. A row whose columns are named individually is not in it
-    /// even if they happen to be all of them — see
-    /// [`rows_covering_all_columns`](Self::rows_covering_all_columns), which is
-    /// Qt's `selectedRows()` and needs the count.
+    /// [`VirtualSelect::selection`](super::virtual_select::VirtualSelect::selection) answers with. A
+    /// row whose columns are named individually is not in it even if they
+    /// happen to be all of them — see [`rows_covering_all_columns`](Self::rows_covering_all_columns),
+    /// which is the toolkit's `selectedRows()` and needs the count.
     #[must_use]
     pub fn rows_all_columns(&self) -> &IndexRuns {
         self.bands
@@ -436,8 +433,8 @@ impl CellSelection {
             .map_or(&NO_ROWS, |band| &band.rows)
     }
 
-    /// Qt `QItemSelectionModel::selectedRows()` — the rows in which every one of
-    /// a model's `column_count` columns is selected, however the span spells it.
+    /// The toolkit `selectedRows()` — the rows in which every one of a model's `column_count` columns
+    /// is selected, however the span spells it.
     #[must_use]
     pub fn rows_covering_all_columns(&self, column_count: usize) -> IndexRuns {
         self.bands
@@ -456,10 +453,10 @@ impl CellSelection {
 
     /// How much of `row` is selected, in a model `column_count` wide.
     ///
-    /// **Past Qt 6.11**: a Qt header section shows selection as a bool
-    /// (`QHeaderView::highlightSections`), so a row with two of two hundred
-    /// columns selected is indistinguishable from a fully selected one. The
-    /// tri-state is what the band actually knows.
+    /// **Past the toolkit 6.11**: a toolkit header section shows selection as
+    /// a bool (`highlightSections`), so a row with two of two hundred columns selected is
+    /// indistinguishable from a fully selected one. The tri-state is what the
+    /// band actually knows.
     #[must_use]
     pub fn row_extent(&self, row: usize, column_count: usize) -> SelectionExtent {
         self.row_span(row).map_or(SelectionExtent::Empty, |span| {
@@ -481,7 +478,7 @@ impl CellSelection {
         SelectionExtent::of(selected, row_count)
     }
 
-    /// Qt `QItemSelectionModel::selectedColumns()` — the columns selected in
+    /// The toolkit `selectedColumns()` — the columns selected in
     /// every one of a model's `row_count` rows.
     #[must_use]
     pub fn columns_covering_all_rows(&self, row_count: usize, column_count: usize) -> IndexRuns {
@@ -706,8 +703,8 @@ mod tests {
 
     #[test]
     fn r1563_all_columns_outlives_a_column_being_added() {
-        // The past-Qt property: a full row stays full when the schema grows,
-        // where a Qt range built against the old count does not.
+        // The past-the toolkit property: a full row stays full when the schema
+        // grows, where a toolkit range built against the old count does not.
         let mut whole = CellSelection::new();
         whole.replace(&runs(&[(2, 2)]), &ColumnSpan::All);
         let mut named = CellSelection::new();

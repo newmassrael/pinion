@@ -50,7 +50,7 @@
 //! shell bypasses winit, drives the initial paint scene through
 //! [`headless_screenshot::HeadlessScreenshot`] (wgpu + vello, no
 //! surface), writes the PNG, and exits. See the module docstring for
-//! the rationale (Figma → pinion design-parity verification path).
+//! the rationale (the design tool → pinion design-parity verification path).
 
 use std::borrow::Cow;
 use std::rc::Rc;

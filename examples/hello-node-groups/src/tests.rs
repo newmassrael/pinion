@@ -272,7 +272,7 @@ fn r1594_a_fresh_source_rests_where_its_kind_says() {
 }
 
 /// The taxonomy classifies its values, so a colour cannot be authored on an
-/// amount port. Blender gets this from a different C struct per socket type.
+/// amount port. The DCC gets this from a different C struct per socket type.
 #[test]
 fn r1594_the_lattice_gates_what_may_be_authored() {
     use pinion_node_graph::{PortRef, PortValueError};

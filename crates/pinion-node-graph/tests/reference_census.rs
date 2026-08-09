@@ -2,11 +2,11 @@
 //!
 //! # Why this file exists
 //!
-//! R1601 made the reference census a *tool*: `tools/reference_census.py`
-//! enumerates what Blender and Unreal register and `docs/reference-census.json`
-//! carries one verdict per operator. What that tool proves is **completeness** —
-//! no reference operator is silently absorbed into a percentage. What it does
-//! not prove, and cannot, is that any verdict is **true**.
+//! R1601 made the reference census a *tool*: `tools/reference_census.py` enumerates what the DCC and
+//! the engine register and `docs/reference-census.json` carries one verdict per operator. What that
+//! tool proves is **completeness** — no reference operator is silently
+//! absorbed into a percentage. What it does not prove, and cannot, is that any
+//! verdict is **true**.
 //!
 //! The asymmetry is what makes that dangerous. A wrong `absent` leaves a fake
 //! item on the gap list and the next round discovers it by trying to close it,
@@ -70,9 +70,9 @@ enum Op {
     /// carry a default, which is what makes a cleared authored value
     /// observable as a *value* rather than as an absence.
     Add,
-    /// `(Augend: Number = 2, Factor: Number) -> Out: Number`. `Augend` matches
-    /// `Add`'s by name and `Factor` does not, and `Factor` has **no default** —
-    /// the shape Unreal's "hide pins with no connection and no default" needs.
+    /// `(Augend: Number = 2, Factor: Number) -> Out: Number`. `Augend` matches `Add`'s by name and `Factor` does not, and `Factor` has **no
+    /// default** — the shape the engine's "hide pins with no connection and no
+    /// default" needs.
     Mul,
     /// `(Value: Number) -> Out: Number`. One in, one out: the shape a dissolve
     /// and a bypass are about.
@@ -144,10 +144,8 @@ impl NodeKind for Op {
 
     /// A **directed** relation, which is why it is here and not an equality: a
     /// number reads as text and text does not read back as a number. Both of
-    /// the reference hooks this answers — Unreal's
-    /// `CreateAutomaticConversionNodeAndConnections` and Blender's
-    /// `bNodeTreeType::validate_link` — need exactly this asymmetry, and it was
-    /// R1593's subject.
+    /// the reference hooks this answers — the engine's `CreateAutomaticConversionNodeAndConnections` and the DCC's `bNodeTreeType::validate_link` —
+    /// need exactly this asymmetry, and it was R1593's subject.
     fn conversion(from: &Ty, to: &Ty) -> Conversion<Val> {
         match (from, to) {
             (Ty::Number, Ty::Number) | (Ty::Text, Ty::Text) => Conversion::Direct,
@@ -417,7 +415,7 @@ fn blender_proofs() -> Vec<Proof> {
     ]
 }
 
-/// The HOOK surface (R1603): what Blender asks a node type, a tree type
+/// The HOOK surface (R1603): what the DCC asks a node type, a tree type
 /// and a socket type to decide.
 fn blender_hook_proofs() -> Vec<Proof> {
     vec![
@@ -587,8 +585,9 @@ fn unreal_editor_proofs() -> Vec<Proof> {
     )]
 }
 
-/// Unreal pastes the clipboard **at a point** rather than back where it came
-/// from, and the point has to mean the same thing for one node and for five.
+/// The engine pastes the clipboard **at a point** rather than back where it
+/// came from, and the point has to mean the same thing for one node and for
+/// five.
 ///
 /// `Fragment` stores every node's position relative to the selection's centroid
 /// (`Fragment::origin`), so `insert(.., at, ..)` puts the *fragment* there and
@@ -597,12 +596,11 @@ fn unreal_editor_proofs() -> Vec<Proof> {
 /// from a per-node override — so this one pastes three at once and asserts both
 /// halves: where the group landed, and that its shape survived.
 ///
-/// ★ Past Unreal 5.8: the anchor is a **value on the fragment**
-/// (`Fragment::origin`), so a client can ask a copied graph where it considers
-/// itself to be. Unreal's clipboard is a text blob
-/// (`FEdGraphUtilities::ExportNodesToText`) holding absolute node positions, and
-/// the averaging that turns it into a paste location lives inside
-/// `FBlueprintEditor::PasteNodesHere` — so nothing can ask the payload anything.
+/// ★ Past the engine 5.8: the anchor is a **value on the fragment** (`Fragment::origin`), so
+/// a client can ask a copied graph where it considers itself to be. The
+/// engine's clipboard is a text blob (`FEdGraphUtilities::ExportNodesToText`) holding absolute node positions,
+/// and the averaging that turns it into a paste location lives inside `FBlueprintEditor::PasteNodesHere` — so
+/// nothing can ask the payload anything.
 #[test]
 fn unreal_material_editor_matertial_paste_here() {
     let mut document: Document<Op> = Document::new("root");
@@ -752,7 +750,7 @@ fn unreal_hook_proofs() -> Vec<Proof> {
     ]
 }
 
-/// And the schema's half of it — what Unreal asks a GRAPH to decide.
+/// And the schema's half of it — what the engine asks a GRAPH to decide.
 fn unreal_schema_hook_proofs() -> Vec<Proof> {
     vec![
         proof(
@@ -810,11 +808,11 @@ fn unreal_schema_hook_proofs() -> Vec<Proof> {
 /// The proof name a reference row must carry, so the two are one decision.
 ///
 /// Two shapes, because a reference has two kinds of name. An **operator** is a
-/// bare identifier — snake case under a fixed prefix in Blender, Pascal case in
-/// Unreal. A **hook** is `Owner::member`, and its owner is stripped down to what
-/// distinguishes it: a leading `b` or `U`, a leading `EdGraph` and a trailing
-/// `Type` are all the reference's own naming furniture, so `bNodeTreeType` and
-/// `UEdGraphNode` become `node_tree` and `node`.
+/// bare identifier — snake case under a fixed prefix in the DCC, Pascal case
+/// in the engine. A **hook** is `Owner::member`, and its owner is stripped down to what
+/// distinguishes it: a leading `b` or `U`, a leading `EdGraph` and a trailing `Type`
+/// are all the reference's own naming furniture, so `bNodeTreeType` and `UEdGraphNode` become `node_tree` and
+/// `node`.
 fn proof_name(tree: &str, operator: &str) -> String {
     if let Some((owner, member)) = operator.split_once("::") {
         let tag = owner
@@ -853,12 +851,11 @@ fn snake(name: &str) -> String {
 ///
 /// ★ It is not a bijection any more, and the reason is a finding rather than a
 /// concession. One pinion mechanism often answers **several** reference rows —
-/// Blender's `bNodeTreeType::localize` and Unreal's `UEdGraphSchema::DuplicateGraph`
-/// are one `fork_definition`; `NODE_OT_delete` and `SafeDeleteNodeFromGraph` are
-/// one `remove_node` — and saying so is exactly the "the reference writes it
-/// three times and this derives it once" measurement R1589 recorded by hand. So
-/// a proof has one **owner** (the row its name derives from) and may be **cited**
-/// by any number of others, and the fan-out is reported.
+/// the DCC's `bNodeTreeType::localize` and the engine's `UEdGraphSchema::DuplicateGraph` are one `fork_definition`; `NODE_OT_delete` and `SafeDeleteNodeFromGraph` are one `remove_node` —
+/// and saying so is exactly the "the reference writes it three times and this
+/// derives it once" measurement R1589 recorded by hand. So a proof has one
+/// **owner** (the row its name derives from) and may be **cited** by any
+/// number of others, and the fan-out is reported.
 #[test]
 fn the_pin_and_the_proofs_agree() {
     let pin: BTreeMap<String, BTreeMap<String, Row>> =
@@ -940,9 +937,9 @@ fn every_proof_in_the_table_runs() {
 
 // ==================================================== groups and definitions
 
-/// Blender adds an empty group and drops you inside it. The two halves here are
-/// a definition with nothing in it and an instance standing for it — and the
-/// instance's signature is **derived**, so an empty definition gives an
+/// The DCC adds an empty group and drops you inside it. The two halves here
+/// are a definition with nothing in it and an instance standing for it — and
+/// the instance's signature is **derived**, so an empty definition gives an
 /// instance with no ports at all rather than a node with unresolved sockets.
 #[test]
 fn blender_add_empty_group() {
@@ -987,7 +984,7 @@ fn blender_add_group() {
     );
 }
 
-/// Blender's Group Input node. The interface is the definition's, and the node
+/// The DCC's Group Input node. The interface is the definition's, and the node
 /// is how the graph *inside* reaches it — so an `Input` interface node's ports
 /// are OUTPUTS, which is the part that is easy to get backwards.
 #[test]
@@ -1052,9 +1049,9 @@ fn blender_group_ungroup() {
     assert_eq!(arrives(&chain.document, Socket::new(chain.sink, 0)), before);
 }
 
-/// Move a node from the host INTO the group through its instance. Blender
-/// leaves the interface alone; here it is re-derived, so the value that used to
-/// cross keeps crossing and nothing is left describing a link that is gone.
+/// Move a node from the host INTO the group through its instance. The DCC
+/// leaves the interface alone; here it is re-derived, so the value that used
+/// to cross keeps crossing and nothing is left describing a link that is gone.
 #[test]
 fn blender_group_insert() {
     let mut chain = chain();
@@ -1087,7 +1084,7 @@ fn blender_group_insert() {
 
 /// The other direction: move a node out of the definition into the host. The
 /// value that used to cross the boundary is **reconnected**, which is where
-/// Blender loses it.
+/// the DCC loses it.
 #[test]
 fn blender_group_separate() {
     let mut chain = chain();
@@ -1120,7 +1117,7 @@ fn blender_group_separate() {
 }
 
 /// A definition is a tree of its own, addable without any node being collapsed
-/// into it. Blender's "New Node Tree".
+/// into it. The DCC's "New Node Tree".
 #[test]
 fn blender_new_node_tree() {
     let mut document: Document<Op> = Document::new("root");
@@ -1149,7 +1146,7 @@ fn blender_group_edit() {
     assert_eq!(path.breadcrumb(&chain.document).len(), 2);
 }
 
-/// The same pair used as Blender's toggle: entering and leaving returns the
+/// The same pair used as the DCC's toggle: entering and leaving returns the
 /// editor exactly where it was, which is the property a toggle needs and a
 /// remembered tree id cannot promise.
 #[test]
@@ -1166,7 +1163,7 @@ fn blender_group_enter_exit() {
     assert!(path.exit().is_err(), "there is nothing above the root");
 }
 
-/// Blender's "go to parent tree" — the same exit, reached from a nesting two
+/// The DCC's "go to parent tree" — the same exit, reached from a nesting two
 /// deep so that "parent" is not a synonym for "root".
 #[test]
 fn blender_tree_path_parent() {
@@ -1394,7 +1391,7 @@ fn blender_link() {
     assert!(refused.is_err(), "Text does not cross into a Number socket");
 }
 
-/// The same verb read as Blender's "Make Links": a value input takes exactly
+/// The same verb read as the DCC's "Make Links": a value input takes exactly
 /// one producer, so a second wire onto it **displaces** the first and says so,
 /// rather than leaving the node with two feeds.
 #[test]
@@ -1414,11 +1411,11 @@ fn blender_link_make() {
     );
 }
 
-/// ★ A **composition claim**: Blender's link-cut drags a stroke across the
-/// canvas and removes every wire it crossed. What an application has is the set
-/// of ids that stroke named, so the proof is that cutting a *set* is a loop over
-/// `disconnect` and that each cut hands back the link it removed — which is what
-/// an undo needs and what Blender's operator does not return.
+/// ★ A **composition claim**: the DCC's link-cut drags a stroke across the
+/// canvas and removes every wire it crossed. What an application has is the
+/// set of ids that stroke named, so the proof is that cutting a *set* is a
+/// loop over `disconnect` and that each cut hands back the link it removed — which is
+/// what an undo needs and what the DCC's operator does not return.
 #[test]
 fn blender_links_cut() {
     let mut chain = chain();
@@ -1450,7 +1447,7 @@ fn blender_links_cut() {
     );
 }
 
-/// Blender's "Detach Links": the node stays, its wires do not, and what the
+/// The DCC's "Detach Links": the node stays, its wires do not, and what the
 /// graph loses is reported rather than discovered.
 #[test]
 fn blender_links_detach() {
@@ -1462,9 +1459,9 @@ fn blender_links_detach() {
     assert_eq!(rewired.removed.len() + rewired.severed.len(), 3);
 }
 
-/// A muted link stops the value and keeps the wire. It is a different word from
-/// a bypassed node because it is the opposite behaviour, and Blender spells both
-/// "mute".
+/// A muted link stops the value and keeps the wire. It is a different word
+/// from a bypassed node because it is the opposite behaviour, and the DCC
+/// spells both "mute".
 #[test]
 fn blender_links_mute() {
     let mut chain = chain();
@@ -1503,7 +1500,7 @@ fn blender_delete() {
     assert!(chain.document.validate().is_empty());
 }
 
-/// Delete and reconnect. Blender's own description is "remove nodes and
+/// Delete and reconnect. The DCC's own description is "remove nodes and
 /// reconnect nodes **as if deletion was muted**", so the reconnection is the
 /// bypass derivation applied to the structure — one rule, not two.
 #[test]
@@ -1531,9 +1528,9 @@ fn blender_delete_reconnect() {
 }
 
 /// Bypass: the node stays and the values pass through it. The route is derived
-/// from the signature alone, so unplugging a different port cannot change which
-/// value leaves by which output — the property Blender's wiring-sensitive
-/// scoring does not have.
+/// from the signature alone, so unplugging a different port cannot change
+/// which value leaves by which output — the property the DCC's
+/// wiring-sensitive scoring does not have.
 #[test]
 fn blender_mute_toggle() {
     let mut document: Document<Op> = Document::new("root");
@@ -1556,10 +1553,10 @@ fn blender_mute_toggle() {
     assert!(document.tree(ROOT).unwrap().node(double).is_some());
 }
 
-/// Change what a node IS without changing which node it is. Blender creates a
-/// new node and deletes the old one, so every reference to it dies; here the id,
-/// the position and the frame membership all survive and what did not fit is
-/// reported.
+/// Change what a node IS without changing which node it is. The DCC creates a
+/// new node and deletes the old one, so every reference to it dies; here the
+/// id, the position and the frame membership all survive and what did not fit
+/// is reported.
 #[test]
 fn blender_swap_node() {
     let mut chain = chain();
@@ -1887,7 +1884,7 @@ fn blender_attach() {
     assert!(chain.document.members(ROOT, frame).contains(&chain.two));
 }
 
-/// Detach one. Blender's operator clears the parent outright, so only the
+/// Detach one. The DCC's operator clears the parent outright, so only the
 /// all-the-way form is reachable there; it is reachable here too, and the node
 /// lands on the canvas rather than in limbo.
 #[test]
@@ -1921,7 +1918,7 @@ fn blender_detach() {
 }
 
 /// Set a node's parent, and the two rules that makes it a forest: a container
-/// must be a frame, and nothing may contain itself. Blender states both as
+/// must be a frame, and nothing may contain itself. The DCC states both as
 /// assertions its shipped build compiles out, and its own operator detaches
 /// before it attaches so the cycle guard cannot fire even in a debug build.
 #[test]
@@ -2050,9 +2047,9 @@ fn blender_duplicate() {
 
 // ============================================================== selection
 
-/// What feeds this. Blender walks one hop per keypress with nothing telling you
-/// when the picture has stopped changing; the reach is a parameter here, and
-/// `added` is what says the transitive walk is done.
+/// What feeds this. The DCC walks one hop per keypress with nothing telling
+/// you when the picture has stopped changing; the reach is a parameter here,
+/// and `added` is what says the transitive walk is done.
 #[test]
 fn blender_select_linked_from() {
     let chain = chain();
@@ -2098,9 +2095,9 @@ fn blender_select_linked_to() {
     );
 }
 
-/// Blender's "select grouped by type". Keyed on the whole selection rather than
-/// on an active node, because a selection belongs to the editor and this crate
-/// has no notion of which of them is active.
+/// The DCC's "select grouped by type". Keyed on the whole selection rather
+/// than on an active node, because a selection belongs to the editor and this
+/// crate has no notion of which of them is active.
 #[test]
 fn blender_select_grouped() {
     let chain = chain();
@@ -2112,7 +2109,7 @@ fn blender_select_grouped() {
     assert!(!same.selection.contains(&chain.add));
 }
 
-/// Blender steps the selection to the *next* node of the same kind. The run is
+/// The DCC steps the selection to the *next* node of the same kind. The run is
 /// the answer that step walks, produced once.
 #[test]
 fn blender_select_same_type_step() {
@@ -2128,7 +2125,8 @@ fn blender_select_same_type_step() {
     );
 }
 
-// ============================================================ Unreal Engine
+// ============================================================ the engine
+// Engine
 
 /// Break every link on a node, leaving the node. ★ A **composition claim**: the
 /// crate's `disconnect` takes one link, so the proof is that an application can
@@ -2244,9 +2242,10 @@ fn unreal_graph_editor_collapse_nodes() {
     );
 }
 
-/// Unreal's "collapse to function": what separates a function from a one-off
-/// subgraph is that it is **callable again**, so the proof instantiates it a
-/// second time and checks the two occurrences do not share a value.
+/// The engine's "collapse to function": what separates a function from a
+/// one-off subgraph is that it is **callable again**, so the proof
+/// instantiates it a second time and checks the two occurrences do not share a
+/// value.
 #[test]
 fn unreal_graph_editor_collapse_selection_to_function() {
     let mut chain = chain();
@@ -2273,9 +2272,9 @@ fn unreal_graph_editor_collapse_selection_to_function() {
     assert_eq!(chain.document.instance_count(made.definition), 2);
 }
 
-/// Unreal's "collapse to macro": a macro is the reading of the same boundary
-/// that gets **expanded back into the caller**, so the proof is that the
-/// collapse is reversible into the host with the value unchanged.
+/// The engine's "collapse to macro": a macro is the reading of the same
+/// boundary that gets **expanded back into the caller**, so the proof is that
+/// the collapse is reversible into the host with the value unchanged.
 #[test]
 fn unreal_graph_editor_collapse_selection_to_macro() {
     let mut chain = chain();
@@ -2288,9 +2287,9 @@ fn unreal_graph_editor_collapse_selection_to_macro() {
     assert!(chain.document.tree(ROOT).unwrap().node(made.node).is_none());
 }
 
-/// Unreal's comment box. Structurally a frame: it holds a region of canvas, its
-/// members compute exactly as before, and the boundary means nothing to the
-/// evaluator.
+/// The engine's comment box. Structurally a frame: it holds a region of
+/// canvas, its members compute exactly as before, and the boundary means
+/// nothing to the evaluator.
 #[test]
 fn unreal_graph_editor_create_comment() {
     let mut chain = chain();
@@ -2332,8 +2331,8 @@ fn unreal_graph_editor_create_comment() {
     );
 }
 
-/// Unreal's delete-and-reconnect, over a selection rather than one node — the
-/// reading that shows the derivation composes.
+/// The engine's delete-and-reconnect, over a selection rather than one node —
+/// the reading that shows the derivation composes.
 #[test]
 fn unreal_graph_editor_delete_and_reconnect_nodes() {
     let mut document: Document<Op> = Document::new("root");
@@ -2359,9 +2358,9 @@ fn unreal_graph_editor_delete_and_reconnect_nodes() {
     assert_eq!(document.tree(ROOT).unwrap().node_count(), 2);
 }
 
-/// Unreal's Disable Nodes. Its own semantics are the pass-through this crate
-/// derives, and the outputs no input can feed are **named** rather than being
-/// discovered as a missing wire.
+/// The engine's Disable Nodes. Its own semantics are the pass-through this
+/// crate derives, and the outputs no input can feed are **named** rather than
+/// being discovered as a missing wire.
 #[test]
 fn unreal_graph_editor_disable_nodes() {
     let mut chain = chain();
@@ -2419,7 +2418,7 @@ fn unreal_graph_editor_enable_nodes() {
     );
 }
 
-/// Unreal's Expand Node — the inverse of a collapse, back into the caller.
+/// The engine's Expand Node — the inverse of a collapse, back into the caller.
 #[test]
 fn unreal_graph_editor_expand_nodes() {
     let mut chain = chain();
@@ -2438,7 +2437,7 @@ fn unreal_graph_editor_expand_nodes() {
     assert_eq!(chain.document.tree(ROOT).unwrap().node_count(), 4);
 }
 
-/// Unreal hides unconnected pins.
+/// The engine hides unconnected pins.
 #[test]
 fn unreal_graph_editor_hide_no_connection_pins() {
     let mut chain = chain();
@@ -2457,11 +2456,11 @@ fn unreal_graph_editor_hide_no_connection_pins() {
     assert_eq!(ports.hidden_inputs, vec![0]);
 }
 
-/// ★ Unreal's *other* hide command keeps a pin that has a **default**, because
-/// a defaulted pin still carries a value the reader wants to see. A
-/// **composition claim**: this crate publishes the hidden set and the signature
-/// says which ports have defaults, so the narrower rule is a filter an
-/// application writes — proven here by writing it.
+/// ★ the engine's *other* hide command keeps a pin that has a **default**,
+/// because a defaulted pin still carries a value the reader wants to see. A
+/// **composition claim**: this crate publishes the hidden set and the
+/// signature says which ports have defaults, so the narrower rule is a filter
+/// an application writes — proven here by writing it.
 #[test]
 fn unreal_graph_editor_hide_no_connection_no_default_pins() {
     let mut chain = chain();
@@ -2491,7 +2490,8 @@ fn unreal_graph_editor_hide_no_connection_no_default_pins() {
     );
 }
 
-/// Unreal's Show All Pins, which is the same declaration read the other way.
+/// The engine's Show All Pins, which is the same declaration read the other
+/// way.
 #[test]
 fn unreal_graph_editor_show_all_pins() {
     let mut chain = chain();
@@ -2525,9 +2525,10 @@ fn unreal_graph_editor_show_all_pins() {
     assert_eq!(ports.outputs, vec![0]);
 }
 
-/// Unreal promotes a selection to a re-usable function on the Blueprint. Same
-/// boundary, read as a definition that outlives the place it came from: the
-/// proof deletes the original instance and instantiates the definition again.
+/// The engine promotes a selection to a re-usable function on the Blueprint.
+/// Same boundary, read as a definition that outlives the place it came from:
+/// the proof deletes the original instance and instantiates the definition
+/// again.
 #[test]
 fn unreal_graph_editor_promote_selection_to_function() {
     let mut chain = chain();
@@ -2568,8 +2569,8 @@ fn unreal_graph_editor_promote_selection_to_macro() {
     assert!(chain.document.validate().is_empty());
 }
 
-/// ★ Unreal's Reconstruct Node re-reads a node against a signature that has
-/// changed underneath it. The pin's reason is that a signature here is
+/// ★ the engine's Reconstruct Node re-reads a node against a signature that
+/// has changed underneath it. The pin's reason is that a signature here is
 /// **derived**, so there is nothing to reconstruct — a claim about an absence,
 /// proven by changing the interface and observing the instance follow with the
 /// links that no longer fit **named**.
@@ -2607,11 +2608,11 @@ fn unreal_graph_editor_reconstruct_nodes() {
     assert!(chain.document.validate().is_empty());
 }
 
-/// Unreal resets a pin to the value its declaration gives it. The authored
+/// The engine resets a pin to the value its declaration gives it. The authored
 /// value is what a node carries when nothing else supplies one, so clearing it
-/// has to leave **no** authored value — asserted apart from the value that then
-/// arrives, because "removed" and "overwritten with the default" look identical
-/// if only the second is checked.
+/// has to leave **no** authored value — asserted apart from the value that
+/// then arrives, because "removed" and "overwritten with the default" look
+/// identical if only the second is checked.
 #[test]
 fn unreal_graph_editor_reset_pin_to_default_value() {
     let mut chain = chain();
@@ -2655,8 +2656,8 @@ fn unreal_graph_editor_reset_pin_to_default_value() {
     );
 }
 
-/// Unreal selects everything feeding the selection — the transitive question,
-/// which is the one a person actually has.
+/// The engine selects everything feeding the selection — the transitive
+/// question, which is the one a person actually has.
 #[test]
 fn unreal_graph_editor_select_all_input_nodes() {
     let chain = chain();
@@ -2692,9 +2693,9 @@ fn unreal_graph_editor_select_all_output_nodes() {
 // live here and on no operator list anywhere, which is why an operator census
 // read them as zero and the coverage judged on top of it was overstated.
 
-/// Blender calls a node type when the tree changed so it can bring itself up to
-/// date. Nothing here is ever told: every derived fact is recomputed on read, so
-/// a node cannot be stale.
+/// The DCC calls a node type when the tree changed so it can bring itself up
+/// to date. Nothing here is ever told: every derived fact is recomputed on
+/// read, so a node cannot be stale.
 #[test]
 fn blender_node_updatefunc() {
     let mut chain = chain();
@@ -2727,8 +2728,8 @@ fn blender_node_updatefunc() {
     );
 }
 
-/// Blender asks a node type whether its sockets may be re-synchronised with its
-/// declaration. There is nothing to synchronise: a node's signature IS its
+/// The DCC asks a node type whether its sockets may be re-synchronised with
+/// its declaration. There is nothing to synchronise: a node's signature IS its
 /// kind's, so changing the kind changes the signature in the same instant.
 #[test]
 fn blender_node_can_sync_sockets() {
@@ -2746,7 +2747,7 @@ fn blender_node_can_sync_sockets() {
     );
 }
 
-/// Blender calls a node type to copy its per-node storage. `adopt_from`
+/// The DCC calls a node type to copy its per-node storage. `adopt_from`
 /// destructures its source, so a field added to a node fails to compile until
 /// someone says whether a copy carries it — where a hand-written copy silently
 /// drops it (the defect R1589 found in this crate's own `move_nodes`).
@@ -2800,7 +2801,7 @@ fn blender_node_copyfunc() {
     );
 }
 
-/// Blender calls a node type to initialise a new node. Here a node is born as
+/// The DCC calls a node type to initialise a new node. Here a node is born as
 /// its kind: `add_node` takes the body, and the ports and their declared
 /// defaults are there in the same call.
 #[test]
@@ -2819,7 +2820,7 @@ fn blender_node_initfunc() {
     );
 }
 
-/// Blender calls a node type for the node's displayed label. Here the kind
+/// The DCC calls a node type for the node's displayed label. Here the kind
 /// answers and an authored label overrides it, which is one derivation
 /// (`display_name`) rather than a callback each type has to remember.
 #[test]
@@ -2854,9 +2855,9 @@ fn blender_node_labelfunc() {
     );
 }
 
-/// Blender's tree type decides whether a wire may exist. Here that is
-/// `NodeKind::conversion`, declared once **as the conversion**, so "may this
-/// wire exist" and "what arrives along it" are one answer — Blender keeps three.
+/// The DCC's tree type decides whether a wire may exist. Here that is `NodeKind::conversion`,
+/// declared once **as the conversion**, so "may this wire exist" and "what
+/// arrives along it" are one answer — the DCC keeps three.
 #[test]
 fn blender_node_tree_validate_link() {
     let mut document: Document<Op> = Document::new("root");
@@ -2880,7 +2881,7 @@ fn blender_node_tree_validate_link() {
     );
 }
 
-/// Blender's tree type is called to update after a change. Here the standing
+/// The DCC's tree type is called to update after a change. Here the standing
 /// check is `validate`, which is a question rather than a pass an edit has to
 /// remember to run — and it answers about a document that arrived from a file
 /// just as well as about one this process built.
@@ -2896,7 +2897,7 @@ fn blender_node_tree_update() {
     assert!(round_trip.validate().is_empty());
 }
 
-/// Blender's tree type makes a local copy of the tree to evaluate. Here a
+/// The DCC's tree type makes a local copy of the tree to evaluate. Here a
 /// definition is forked, and the fork is independent: an edit through one
 /// instance does not reach the other.
 #[test]
@@ -2933,7 +2934,7 @@ fn blender_node_tree_localize() {
     );
 }
 
-/// Blender's socket type builds an interface item from a socket. Here `expose`
+/// The DCC's socket type builds an interface item from a socket. Here `expose`
 /// takes the **port itself**, so an interface port is a port — name, type and
 /// declared default together — rather than a second description of one.
 #[test]
@@ -2951,9 +2952,9 @@ fn blender_node_socket_interface_from_socket() {
     assert_eq!(interface.inputs()[0].default_value(), Some(&Val::Number(4)));
 }
 
-/// And the other direction: Blender's socket type initialises a node socket
-/// from an interface item. Here an instance's socket **is** the interface port,
-/// derived, so the two cannot describe different things.
+/// And the other direction: the DCC's socket type initialises a node socket
+/// from an interface item. Here an instance's socket **is** the interface
+/// port, derived, so the two cannot describe different things.
 #[test]
 fn blender_node_socket_interface_init_socket() {
     let mut document: Document<Op> = Document::new("root");
@@ -2974,9 +2975,9 @@ fn blender_node_socket_interface_init_socket() {
     assert_eq!(signature.inputs[0].default_value(), Some(&Val::Number(4)));
 }
 
-// ---------------------------------------------------------- Unreal's node
+// ---------------------------------------------------------- the engine's node
 
-/// Unreal's node allocates its default pins. Here a kind **declares** its
+/// The engine's node allocates its default pins. Here a kind **declares** its
 /// ports, so a node's sockets are derived from the kind rather than built by a
 /// call the node has to make and could forget.
 #[test]
@@ -3000,9 +3001,10 @@ fn unreal_node_allocate_default_pins() {
     assert_eq!(signature.outputs.len(), 1);
 }
 
-/// Unreal's node is told to destroy itself. Here removal is the document's, and
-/// it **names** what went — the links, and the members a deleted frame handed to
-/// the frame above rather than stranding on the canvas.
+/// The engine's node is told to destroy itself. Here removal is the
+/// document's, and it **names** what went — the links, and the members a
+/// deleted frame handed to the frame above rather than stranding on the
+/// canvas.
 #[test]
 fn unreal_node_destroy_node() {
     let mut chain = chain();
@@ -3033,10 +3035,11 @@ fn unreal_node_destroy_node() {
     );
 }
 
-/// Unreal asks a node which pin a value passes through when the node is
+/// The engine asks a node which pin a value passes through when the node is
 /// disabled. Here the answer is derived from the **signature alone**, so
-/// unplugging a different port cannot change it — where Unreal's own equivalent
-/// ranks against a static type table and breaks ties on what happens to be wired.
+/// unplugging a different port cannot change it — where the engine's own
+/// equivalent ranks against a static type table and breaks ties on what
+/// happens to be wired.
 #[test]
 fn unreal_node_get_pass_through_pin() {
     let mut chain = chain();
@@ -3062,8 +3065,8 @@ fn unreal_node_get_pass_through_pin() {
     );
 }
 
-/// Unreal asks a node for a pin's displayed name. Here a port carries its name
-/// and the signature answers it, on an instance as well as on a kind.
+/// The engine asks a node for a pin's displayed name. Here a port carries its
+/// name and the signature answers it, on an instance as well as on a kind.
 #[test]
 fn unreal_node_get_pin_display_name() {
     let mut chain = chain();
@@ -3077,7 +3080,7 @@ fn unreal_node_get_pin_display_name() {
     assert!(derived.inputs.iter().all(|p| !p.name.is_empty()));
 }
 
-/// Unreal asks a node for the graphs it contains. Here containment is a
+/// The engine asks a node for the graphs it contains. Here containment is a
 /// document-level relation, so the nesting is readable in one call rather than
 /// one pointer at a time.
 #[test]
@@ -3100,9 +3103,9 @@ fn unreal_node_get_sub_graphs() {
     );
 }
 
-/// Unreal tells a node its connections changed. Here nothing is told, because
-/// nothing is stored: what the node computes is a function of the graph as it is
-/// when the question is asked.
+/// The engine tells a node its connections changed. Here nothing is told,
+/// because nothing is stored: what the node computes is a function of the
+/// graph as it is when the question is asked.
 #[test]
 fn unreal_node_node_connection_list_changed() {
     let mut chain = chain();
@@ -3120,9 +3123,10 @@ fn unreal_node_node_connection_list_changed() {
     );
 }
 
-/// Unreal tells a node one of its pins was removed. Here removing an interface
-/// port names every link that had to go **with the tree it was in** — which is
-/// the point, since the ones that matter are at instances, in other trees.
+/// The engine tells a node one of its pins was removed. Here removing an
+/// interface port names every link that had to go **with the tree it was in**
+/// — which is the point, since the ones that matter are at instances, in other
+/// trees.
 #[test]
 fn unreal_node_on_pin_removed() {
     let mut chain = chain();
@@ -3136,9 +3140,9 @@ fn unreal_node_on_pin_removed() {
     assert!(dropped.iter().any(|d| d.tree == made.definition));
 }
 
-/// Unreal's node is told it was renamed. Here a label is a field of the node, so
-/// a rename is an assignment — and it travels with a copy, which is what makes
-/// it a property of the node rather than of the editor.
+/// The engine's node is told it was renamed. Here a label is a field of the
+/// node, so a rename is an assignment — and it travels with a copy, which is
+/// what makes it a property of the node rather than of the editor.
 #[test]
 fn unreal_node_on_rename_node() {
     let mut chain = chain();
@@ -3172,8 +3176,8 @@ fn unreal_node_on_rename_node() {
     );
 }
 
-/// Unreal's comment node is told its text changed. A frame's label is the same
-/// field an ordinary node's is, so nothing here has a second text model.
+/// The engine's comment node is told its text changed. A frame's label is the
+/// same field an ordinary node's is, so nothing here has a second text model.
 #[test]
 fn unreal_node_on_update_comment_text() {
     let mut chain = chain();
@@ -3211,8 +3215,9 @@ fn unreal_node_on_update_comment_text() {
     );
 }
 
-/// Unreal tells one **pin** its connections changed. Here a port's visibility is
-/// a derivation over the declaration and the wiring together, per port.
+/// The engine tells one **pin** its connections changed. Here a port's
+/// visibility is a derivation over the declaration and the wiring together,
+/// per port.
 #[test]
 fn unreal_node_pin_connection_list_changed() {
     let mut chain = chain();
@@ -3244,9 +3249,9 @@ fn unreal_node_pin_connection_list_changed() {
     );
 }
 
-/// Unreal tells a node a pin's default value changed. Here the authored value
-/// is what the port carries when nothing else supplies one, so writing it
-/// changes what the node computes and nothing has to be notified.
+/// The engine tells a node a pin's default value changed. Here the authored
+/// value is what the port carries when nothing else supplies one, so writing
+/// it changes what the node computes and nothing has to be notified.
 #[test]
 fn unreal_node_pin_default_value_changed() {
     let mut chain = chain();
@@ -3268,8 +3273,9 @@ fn unreal_node_pin_default_value_changed() {
     );
 }
 
-/// Unreal's node is told it was pasted. Here the paste **reports** what it did,
-/// so a caller never has to scan for what arrived attached and what did not.
+/// The engine's node is told it was pasted. Here the paste **reports** what it
+/// did, so a caller never has to scan for what arrived attached and what did
+/// not.
 #[test]
 fn unreal_node_post_paste_node() {
     let mut chain = chain();
@@ -3313,8 +3319,8 @@ fn unreal_node_post_paste_node() {
     assert!(pasted.unattached.is_empty());
 }
 
-/// Unreal's node is told it was just placed, so it can finish itself. Here a
-/// placed node is complete by construction: it answers its signature, its
+/// The engine's node is told it was just placed, so it can finish itself. Here
+/// a placed node is complete by construction: it answers its signature, its
 /// declared defaults and its value in the same breath as its id.
 #[test]
 fn unreal_node_post_placed_new_node() {
@@ -3331,9 +3337,9 @@ fn unreal_node_post_placed_new_node() {
     assert!(document.validate().is_empty());
 }
 
-/// Unreal prepares a node for copying. Here the copy is a **value** that carries
-/// the definitions it depends on, so it can be written to a file or sent to
-/// another process rather than living inside one editor's clipboard.
+/// The engine prepares a node for copying. Here the copy is a **value** that
+/// carries the definitions it depends on, so it can be written to a file or
+/// sent to another process rather than living inside one editor's clipboard.
 #[test]
 fn unreal_node_prepare_for_copying() {
     let mut chain = chain();
@@ -3356,7 +3362,7 @@ fn unreal_node_prepare_for_copying() {
     );
 }
 
-/// Unreal resizes a node. A width is authored on any node; a **height** is
+/// The engine resizes a node. A width is authored on any node; a **height** is
 /// authored only where nothing derives it, which is what tells a frame apart
 /// from a node whose height is a function of its ports.
 #[test]
@@ -3410,11 +3416,11 @@ fn unreal_node_resize_node() {
     );
 }
 
-// -------------------------------------------------------- Unreal's schema
+// -------------------------------------------------------- the engine's schema
 
-/// Unreal asks the schema whether two pin types are equivalent. Here that is
-/// `NodeKind::conversion` answering `Direct`, which is the same declaration that
-/// decides what arrives.
+/// The engine asks the schema whether two pin types are equivalent. Here that
+/// is `NodeKind::conversion` answering `Direct`, which is the same declaration that decides what
+/// arrives.
 #[test]
 fn unreal_schema_are_pin_types_equivalent() {
     assert!(matches!(
@@ -3432,7 +3438,7 @@ fn unreal_schema_are_pin_types_equivalent() {
     assert!(Op::conversion(&Ty::Text, &Ty::Number).is_refused());
 }
 
-/// Unreal asks whether two **pins** are compatible, which is a different
+/// The engine asks whether two **pins** are compatible, which is a different
 /// question from whether their types are: a port also has a side and a flow.
 /// `crossing` is the one question every derivation in this crate asks.
 #[test]
@@ -3450,9 +3456,9 @@ fn unreal_schema_are_pins_compatible() {
     );
 }
 
-/// Unreal asks the schema whether a connection may be made. Here `connect`
-/// answers it and **names** whichever of the four things failed — including the
-/// path a refused wire would have closed.
+/// The engine asks the schema whether a connection may be made. Here `connect`
+/// answers it and **names** whichever of the four things failed — including
+/// the path a refused wire would have closed.
 #[test]
 fn unreal_schema_can_create_connection() {
     let mut document: Document<Op> = Document::new("root");
@@ -3473,9 +3479,9 @@ fn unreal_schema_can_create_connection() {
     );
 }
 
-/// Unreal asks whether a node may be encapsulated into a subgraph. Here the
-/// refusal is by **reachability** and it names the walk, where Unreal's own
-/// `CanEncapuslateNode` answers a bare bool.
+/// The engine asks whether a node may be encapsulated into a subgraph. Here
+/// the refusal is by **reachability** and it names the walk, where the
+/// engine's own `CanEncapuslateNode` answers a bare bool.
 #[test]
 fn unreal_schema_can_encapuslate_node() {
     let mut document: Document<Op> = Document::new("root");
@@ -3497,9 +3503,10 @@ fn unreal_schema_can_encapuslate_node() {
     );
 }
 
-/// ★ Unreal's schema materialises a whole conversion **node** into the graph
-/// when a wire needs one, so the graph the user sees is not the graph they drew.
-/// Here the conversion is a property of the link and costs no node at all.
+/// ★ the engine's schema materialises a whole conversion **node** into the
+/// graph when a wire needs one, so the graph the user sees is not the graph
+/// they drew. Here the conversion is a property of the link and costs no node
+/// at all.
 #[test]
 fn unreal_schema_create_automatic_conversion_node_and_connections() {
     let mut document: Document<Op> = Document::new("root");
@@ -3520,9 +3527,9 @@ fn unreal_schema_create_automatic_conversion_node_and_connections() {
     );
 }
 
-/// Unreal asks whether a pin still holds its default value. Here that is the
-/// authored value beside the declared one, and the two are separate questions
-/// with separate answers.
+/// The engine asks whether a pin still holds its default value. Here that is
+/// the authored value beside the declared one, and the two are separate
+/// questions with separate answers.
 #[test]
 fn unreal_schema_does_default_value_match() {
     let mut chain = chain();
@@ -3547,8 +3554,9 @@ fn unreal_schema_does_default_value_match() {
     );
 }
 
-/// Unreal asks the schema how to display a graph. Here a tree carries its name
-/// and the edit path reads the chain of them, so "where am I" is one call.
+/// The engine asks the schema how to display a graph. Here a tree carries its
+/// name and the edit path reads the chain of them, so "where am I" is one
+/// call.
 #[test]
 fn unreal_schema_get_graph_display_information() {
     let mut chain = chain();
@@ -3566,7 +3574,7 @@ fn unreal_schema_get_graph_display_information() {
     );
 }
 
-/// Unreal asks whether a pin's default value is valid. Here the write is
+/// The engine asks whether a pin's default value is valid. Here the write is
 /// **type-checked** through `NodeKind::value_type` and refused by name.
 #[test]
 fn unreal_schema_is_pin_default_valid() {
@@ -3592,9 +3600,9 @@ fn unreal_schema_is_pin_default_valid() {
     );
 }
 
-/// Unreal asks the schema to place a node. Here position is a field, and moving
-/// a frame carries what it contains — which is what the containment relation is
-/// for.
+/// The engine asks the schema to place a node. Here position is a field, and
+/// moving a frame carries what it contains — which is what the containment
+/// relation is for.
 #[test]
 fn unreal_schema_set_node_position() {
     let mut chain = chain();
@@ -3635,10 +3643,10 @@ fn unreal_schema_set_node_position() {
     );
 }
 
-/// Unreal's schema has one setter per value type (`TrySetDefaultValue`,
-/// `TrySetDefaultText`, `TrySetDefaultObject`). Here the value is the taxonomy's
-/// own, so there is one setter — and it is gated by the **signature**, refusing
-/// a port the node does not have and naming the arity.
+/// The engine's schema has one setter per value type (`TrySetDefaultValue`, `TrySetDefaultText`, `TrySetDefaultObject`). Here the
+/// value is the taxonomy's own, so there is one setter — and it is gated by
+/// the **signature**, refusing a port the node does not have and naming the
+/// arity.
 #[test]
 fn unreal_schema_try_set_default_value() {
     let mut chain = chain();

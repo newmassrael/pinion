@@ -524,14 +524,13 @@ impl LayoutCache {
     /// platform, so neither `Available` nor `Unavailable` is true of it. That
     /// also makes such a cache free of R1447's 25.5 ms scan.
     ///
-    /// # Against Qt 6.11
+    /// # Against the toolkit 6.11
     ///
-    /// Qt has the two halves this builds on — `QFontDatabase::addApplicationFont`
-    /// and `QApplication::setFont` — and **not** this one: `QFontDatabase`
-    /// always carries the system families, `removeAllApplicationFonts()` removes
-    /// only the *application's* faces, and there is no supported way to tell a
-    /// `QFontDatabase` to forget the platform's. A Qt application cannot make
-    /// its own text metrics independent of the host.
+    /// The toolkit has the two halves this builds on — `addApplicationFont` and `setFont` — and
+    /// **not** this one: font database always carries the system families, `removeAllApplicationFonts()`
+    /// removes only the *application's* faces, and there is no supported way
+    /// to tell a font database to forget the platform's. A toolkit application
+    /// cannot make its own text metrics independent of the host.
     #[must_use]
     pub fn with_own_fonts() -> Self {
         Self {
@@ -802,7 +801,7 @@ impl LayoutCache {
     /// [`Self::with_max_capacity`]. Reading it with [`Self::growths`] says
     /// which. A cache is still not by itself a strategy for a *measurement*
     /// pass — a pass that measures rows nobody will look at should measure
-    /// fewer, which is what Qt's `QHeaderView::resizeContentsPrecision`
+    /// fewer, which is what the toolkit's `resizeContentsPrecision`
     /// bounds — but a *paint* pass has no such freedom: it must visit every
     /// leaf it paints, so the cache is the only place the cost can go.
     ///
@@ -902,10 +901,10 @@ impl LayoutCache {
 
     /// R1448 §5.36 — whether this cache reached the platform font database.
     ///
-    /// [`SystemFontStatus::NotProbed`] until something shapes (R1447 defers
-    /// the scan), then `Available` or `Unavailable`. The Qt-parity condition
-    /// Qt reports as a `qWarning`, here as typed data a §2 #2 agent can read —
-    /// see the [`font_source`](crate::font_source) module docs.
+    /// [`SystemFontStatus::NotProbed`] until something shapes (R1447 defers the scan), then `Available` or `Unavailable`.
+    /// The toolkit-parity condition the toolkit reports as a `qWarning`, here as
+    /// typed data a §2 #2 agent can read — see the [`font_source`](crate::font_source)
+    /// module docs.
     #[must_use]
     pub fn system_font_status(&self) -> SystemFontStatus {
         self.font_status
@@ -914,7 +913,7 @@ impl LayoutCache {
     /// R1448 §5.36 — families this cache made selectable via
     /// [`Self::register_font_data`], in registration order without duplicates.
     ///
-    /// Qt's `QFontDatabase::applicationFontFamilies(int id)` answers this per
+    /// The toolkit's `applicationFontFamilies(int id)` answers this per
     /// registration id; this answers it for the cache, which is the question a
     /// binding publishing its font state actually has.
     #[must_use]
@@ -955,7 +954,7 @@ impl LayoutCache {
     }
 
     /// R1448 §5.36 — register a font from memory and return the families it
-    /// made selectable. Qt's `QFontDatabase::addApplicationFontFromData`.
+    /// made selectable. The toolkit's `addApplicationFontFromData`.
     ///
     /// `data` is the bytes of a font file (TrueType / OpenType, including a
     /// collection). The returned names are usable immediately as
@@ -966,12 +965,12 @@ impl LayoutCache {
     /// [`Available`](SystemFontStatus::Available). On a host where it is
     /// `Unavailable`, this is how an application gets glyphs at all.
     ///
-    /// Returns an empty vector if `data` is not a font pinion's shaper can
-    /// read. That is a report, not a panic: the caller passed bytes from
-    /// somewhere (a file, an asset bundle, an RPC payload) and a malformed
-    /// asset is an ordinary runtime condition. An empty return with
-    /// [`Self::application_font_families`] unchanged says precisely "nothing
-    /// became selectable", which is more than Qt's `-1` sentinel carries.
+    /// Returns an empty vector if `data` is not a font pinion's shaper can read.
+    /// That is a report, not a panic: the caller passed bytes from somewhere
+    /// (a file, an asset bundle, an RPC payload) and a malformed asset is an
+    /// ordinary runtime condition. An empty return with [`Self::application_font_families`] unchanged says
+    /// precisely "nothing became selectable", which is more than the toolkit's
+    /// `-1` sentinel carries.
     ///
     /// Registering forces the [`FontContext`] into existence, so it counts one
     /// [`Self::font_scans`] on a cache that had not shaped yet. That is not an
@@ -981,7 +980,7 @@ impl LayoutCache {
     /// Cached layouts are not invalidated: a name that previously resolved to
     /// a fallback keeps its already-shaped entry. Register before shaping the
     /// text that should use the face — which is what an application doing this
-    /// at startup, as Qt apps do, already does.
+    /// at startup, as the toolkit apps do, already does.
     pub fn register_font_data(&mut self, data: Vec<u8>) -> Vec<String> {
         let cx = ensure_font_context(
             &mut self.font_cx,
@@ -1005,16 +1004,15 @@ impl LayoutCache {
     }
 
     /// R1472 §5.36 — set the family an unset [`TextStyle::font_family`]
-    /// resolves to. Qt's `QApplication::setFont`.
+    /// resolves to. The toolkit's `setFont`.
     ///
-    /// [`Self::register_font_data`] is only half of what an application that
-    /// ships its own face needs: it makes the family selectable *by name*, and
-    /// a binding still has to name it on every [`TextStyle`] it emits. Qt
-    /// applications do not — they call `addApplicationFont` and then
-    /// `QApplication::setFont`, and every unstyled widget follows. Without the
-    /// second half, `font_family: None` means "the platform stack" and a face
-    /// the application shipped is unreachable to any node that did not spell
-    /// it out, so an application whose script the host has no face for renders
+    /// [`Self::register_font_data`] is only half of what an application that ships its own face
+    /// needs: it makes the family selectable *by name*, and a binding still
+    /// has to name it on every [`TextStyle`] it emits. The toolkit applications do not
+    /// — they call `addApplicationFont` and then `setFont`, and every unstyled widget follows.
+    /// Without the second half, `font_family: None` means "the platform stack" and a face the
+    /// application shipped is unreachable to any node that did not spell it
+    /// out, so an application whose script the host has no face for renders
     /// nothing while holding the glyphs in memory. That is the state R1471
     /// measured, and it is why a layout assertion about Hangul could not be
     /// written against a host-neutral view.
@@ -1281,7 +1279,7 @@ fn style_properties(
     ];
     // R47.6 — pinned font family override. R1472 §5.36 — an unset family is
     // resolved against the application default (`LayoutCache::
-    // set_default_font_family`, Qt's `QApplication::setFont`) before it is
+    // set_default_font_family`, the toolkit's `setFont`) before it is
     // allowed to mean "parley's platform stack"; with no default declared the
     // two are the same thing and this is byte-identical to pre-R1472.
     // R1002 §5.36 — the family is a typed
@@ -1575,11 +1573,11 @@ mod tests {
     /// The band registers with the caret's line box over the same bytes.
     ///
     /// Two INDEPENDENT observations of one question, which is what makes this
-    /// worth asserting: the band comes from parley's range geometry
-    /// (`selection_rects`) and the caret rect from its cursor geometry. A band
-    /// derived from font metrics instead — the other defensible choice, and the
-    /// one Qt makes — would sit a different number of pixels tall and a
-    /// highlight would no longer line up with the selection drawn over it.
+    /// worth asserting: the band comes from parley's range geometry (`selection_rects`) and
+    /// the caret rect from its cursor geometry. A band derived from font
+    /// metrics instead — the other defensible choice, and the one the toolkit
+    /// makes — would sit a different number of pixels tall and a highlight
+    /// would no longer line up with the selection drawn over it.
     #[test]
     fn r1546_the_band_registers_with_the_caret_line_box() {
         let mut cache = crate::test_font::own_font_cache();

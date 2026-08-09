@@ -3,10 +3,10 @@
 // (WAI-ARIA, ListBoxExternal, ButtonExternal, dismiss_barrier, …).
 #![allow(clippy::doc_markdown)]
 
-//! `hello-combobox` — R714 §5.38 §5.40 §5.50 select-only **combobox**
-//! (dropdown): the first Phase-B catalogue widget for choosing one value
-//! from a popup list. The defining Qt / Flutter / Compose form factor
-//! (`QComboBox`, `DropdownButton`, `ExposedDropdownMenu`).
+//! `hello-combobox` — R714 §5.38 §5.40 §5.50 select-only **combobox** (dropdown): the first
+//! Phase-B catalogue widget for choosing one value from a popup list. The
+//! defining the toolkit / another retained-mode toolkit / Compose form factor
+//! (combo box, `DropdownButton`, `ExposedDropdownMenu`).
 //!
 //! ## Why this binding is pure composition (no new coordinator)
 //!
@@ -31,8 +31,8 @@
 //!   popup emits `combo_barrier.click` and the reducer closes the
 //!   combobox. R714 introduced the transparent barrier inline (as a
 //!   modal scrim at zero opacity); R715 lifted it to its own module with
-//!   `hello-menu` as the 2nd consumer. (Qt's
-//!   `Qt::Popup` grab, Flutter's transparent route barrier, and Compose's
+//!   `hello-menu` as the 2nd consumer. (the toolkit's
+//!   `Popup` grab, another retained-mode toolkit's transparent route barrier, and Compose's
 //!   focusable `Popup` are all this same full-window catch-the-outside
 //!   layer.)
 //!

@@ -123,8 +123,8 @@ const TANG_BAR_Y: u32 = WIN_H - 44;
 const TANG_BAR_H: u32 = 6;
 const TANG_BAR_W: f32 = 120.0;
 
-/// R1430 — the pen-tip marker SHRINKS as the pen lifts (Qt `QTabletEvent::z()`):
-/// full size at contact, down to `TIP_MIN_SCALE` at `HEIGHT_FULL_PX` and beyond.
+/// R1430 — the pen-tip marker SHRINKS as the pen lifts (the toolkit `z()`): full
+/// size at contact, down to `TIP_MIN_SCALE` at `HEIGHT_FULL_PX` and beyond.
 const HEIGHT_FULL_PX: f32 = 30.0;
 const TIP_MIN_SCALE: f32 = 0.35;
 
@@ -143,9 +143,9 @@ struct ButtonReport {
     button: PointerButton,
     edge: PointerEdge,
     modifiers: Modifiers,
-    /// R1418 — the full set of buttons held after this edge (Qt `buttons()`).
+    /// R1418 — the full set of buttons held after this edge (the toolkit `buttons()`).
     buttons: PointerButtons,
-    /// R1422 — the consecutive-click ordinal (Qt `MouseButtonDblClick` = 2), the
+    /// R1422 — the consecutive-click ordinal (the toolkit `MouseButtonDblClick` = 2), the
     /// router-synthesised double-click count carried on the raw edge.
     click_count: u8,
     x_frac: Option<f32>,
@@ -188,7 +188,7 @@ struct SinkState {
     /// R1430 — the live tangential pressure (W3C `PointerEvent.tangentialPressure`),
     /// `-1.0..=1.0`; fills the finger-wheel bar.
     tangential: f32,
-    /// R1430 — the live hover height (Qt `QTabletEvent::z()`), `>= 0.0`; shrinks
+    /// R1430 — the live hover height (the toolkit `z()`), `>= 0.0`; shrinks
     /// the pen-tip marker as the pen lifts.
     height: f32,
     /// R1431 — the producing device (W3C `PointerEvent.pointerType`); colours the
@@ -206,9 +206,9 @@ fn readout_text(state: &SinkState) -> String {
                 (Some(x), Some(y)) => format!(" @ ({x:.2}, {y:.2})"),
                 _ => String::new(),
             };
-            // R1422 — surface a synthesised double-click (Qt `MouseButtonDblClick`)
-            // as a "×N" badge so the double is visible in the readout, not only in
-            // the introspect field.
+            // R1422 — surface a synthesised double-click (the toolkit `MouseButtonDblClick`) as
+            // a "×N" badge so the double is visible in the readout, not only
+            // in the introspect field.
             let clicks = if r.click_count >= 2 {
                 format!(" ×{}", r.click_count)
             } else {
@@ -232,8 +232,9 @@ fn readout_text(state: &SinkState) -> String {
             } else {
                 String::new()
             };
-            // R1430 — surface the remaining Qt QTabletEvent scalar axes (twist /
-            // tangential / height), each only when off its neutral rest.
+            // R1430 — surface the remaining the toolkit tablet event scalar
+            // axes (twist / tangential / height), each only when off its
+            // neutral rest.
             let barrel = if state.twist.abs() > 0.0 {
                 format!(" · twist {:.0}\u{b0}", state.twist)
             } else {
@@ -464,9 +465,9 @@ fn dot_scene(
 }
 
 /// R1429/R1430 — build the tilt indicator, or `None` with no known position. The
-/// marker sits at [`tip_center`] and SHRINKS as the pen lifts (Qt
-/// `QTabletEvent::z()`): full size in contact, down to `TIP_MIN_SCALE` at
-/// `HEIGHT_FULL_PX`. Present on any hover over the pane, independent of pressure.
+/// marker sits at [`tip_center`] and SHRINKS as the pen lifts (the toolkit `z()`): full
+/// size in contact, down to `TIP_MIN_SCALE` at `HEIGHT_FULL_PX`. Present on any hover over the pane,
+/// independent of pressure.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -622,9 +623,10 @@ struct RawPointerSink {
     /// so a pen's angle reads on screen — a tilt-aware surface.
     tilt_x: f32,
     tilt_y: f32,
-    /// R1430 — the remaining Qt `QTabletEvent` scalar axes: twist (barrel
-    /// rotation, orbits the orientation dot), tangential pressure (airbrush
-    /// wheel, fills the bar), and hover height (Qt `z()`, shrinks the tip).
+    /// R1430 — the remaining the toolkit tablet event scalar axes: twist
+    /// (barrel rotation, orbits the orientation dot), tangential pressure
+    /// (airbrush wheel, fills the bar), and hover height (the toolkit `z()`,
+    /// shrinks the tip).
     twist: f32,
     tangential: f32,
     height: f32,
@@ -705,7 +707,7 @@ impl External for RawPointerSink {
         self.tangential = tangential.clamp(-1.0, 1.0);
     }
 
-    /// R1430 — record the live hover height (Qt `QTabletEvent::z()`), floored at
+    /// R1430 — record the live hover height (the toolkit `z()`), floored at
     /// `0.0`. Shrinks the pen-tip marker — a hover-height-aware surface.
     fn pointer_height(&mut self, height: f32) {
         self.height = height.max(0.0);
@@ -752,11 +754,11 @@ impl ExternalIntrospect for RawPointerSink {
                     SchemaField::new("last_button", "string"),
                     SchemaField::new("last_edge", "string"),
                     SchemaField::new("last_mods", "string"),
-                    // R1418 — the held-button set after the last edge, the Qt
-                    // `buttons()` peer, as an `lmr` wire token (e.g. "lr").
+                    // R1418 — the held-button set after the last edge, the
+                    // toolkit `buttons()` peer, as an `lmr` wire token (e.g. "lr").
                     SchemaField::new("last_buttons", "string"),
-                    // R1422 — the consecutive-click ordinal of the last edge, the
-                    // Qt `MouseButtonDblClick` peer (2 = a synthesised double).
+                    // R1422 — the consecutive-click ordinal of the last edge,
+                    // the toolkit `MouseButtonDblClick` peer (2 = a synthesised double).
                     SchemaField::new("last_clicks", "int"),
                     // The position fraction stamped at the last edge (Null off-pane).
                     SchemaField::new("last_x", "float"),
@@ -771,8 +773,9 @@ impl ExternalIntrospect for RawPointerSink {
                     // in degrees -90..=90; leans the pen-tip marker off the cursor.
                     SchemaField::new("tilt_x", "float"),
                     SchemaField::new("tilt_y", "float"),
-                    // R1430 — the remaining Qt QTabletEvent scalar axes: twist
-                    // (0..=360 deg), tangential (-1..=1), height (Qt z(), >= 0).
+                    // R1430 — the remaining the toolkit tablet event scalar
+                    // axes: twist (0..=360 deg), tangential (-1..=1), height
+                    // (the toolkit z(), >= 0).
                     SchemaField::new("twist", "float"),
                     SchemaField::new("tangential", "float"),
                     SchemaField::new("height", "float"),
@@ -994,7 +997,7 @@ mod tests {
         modifiers: Modifiers,
     ) {
         // Single-edge helper (no chord): a press holds its button, a release
-        // holds nothing — the Qt `buttons()` state the router would compute.
+        // holds nothing — the toolkit `buttons()` state the router would compute.
         let buttons = match edge {
             PointerEdge::Down => PointerButtons::empty().with(button),
             PointerEdge::Up => PointerButtons::empty(),
@@ -1046,7 +1049,7 @@ mod tests {
 
     #[test]
     fn the_held_button_set_is_recorded_and_exposed() {
-        // R1418 — the sink stores and exposes the Qt `buttons()` held set the
+        // R1418 — the sink stores and exposes the toolkit `buttons()` held set the
         // router hands it (here a {left, right} chord), so an AI client reads
         // WHICH buttons are down, not only the one that changed.
         let mut sink = RawPointerSink::new();
@@ -1467,8 +1470,8 @@ mod tests {
 
     #[test]
     fn r1430_the_pen_tip_shrinks_as_the_pen_lifts() {
-        // R1430 — the tip marker shrinks with hover height (Qt z()): largest in
-        // contact, smaller as the pen lifts off the surface.
+        // R1430 — the tip marker shrinks with hover height (the toolkit z()):
+        // largest in contact, smaller as the pen lifts off the surface.
         let base = SinkState {
             x_frac: Some(0.5),
             y_frac: Some(0.5),

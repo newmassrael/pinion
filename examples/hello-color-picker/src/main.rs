@@ -68,7 +68,7 @@ const SV_TAG: &str = "sv_pad";
 const SV_SIZE: u32 = 220;
 
 /// The hue bar — an extra `SliderExternal`. Same width as the SV pad,
-/// stacked below it (the Photoshop layout).
+/// stacked below it (the raster editor layout).
 const HUE_TAG: &str = "hue_bar";
 const HUE_W: u32 = 220;
 const HUE_H: u32 = 24;

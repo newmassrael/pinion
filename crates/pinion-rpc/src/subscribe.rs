@@ -195,9 +195,9 @@ pub struct SubscriptionView {
 
 /// What `scene/subscriptions` answers with — the §2 #7 read side.
 ///
-/// Qt publishes no equivalent for `QLocalServer`: a Qt application cannot
-/// enumerate who is listening to what, because nothing in Qt binds a
-/// server-initiated write to a named stream in the first place.
+/// The toolkit publishes no equivalent for local server: a toolkit application
+/// cannot enumerate who is listening to what, because nothing in the toolkit
+/// binds a server-initiated write to a named stream in the first place.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SubscriptionsOutcome {
     /// Every live subscription, in id order.

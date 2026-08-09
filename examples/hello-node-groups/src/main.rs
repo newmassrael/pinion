@@ -1,4 +1,4 @@
-//! R1577 §5.38 §5.52 — a Blender-class node system, composed.
+//! R1577 §5.38 §5.52 — a DCC-class node system, composed.
 //! R1578 — and its clipboard, which is a `Fragment` held in a signal.
 //!
 //! # What this example is for
@@ -26,17 +26,17 @@
 //! insertion did — all readable without pasting.
 //!
 //! R1586 adds the other half of an editor's daily work: taking a stage OUT of
-//! the pipeline. A node can be **bypassed** — it stops computing and the values
-//! at its inputs pass through it — or **dissolved**, which does the same thing
-//! to the structure and deletes it. Both read one derivation, so the preview
-//! and the edit cannot disagree; `passthrough.<id>` publishes it, including the
+//! the pipeline. A node can be **bypassed** — it stops computing and the
+//! values at its inputs pass through it — or **dissolved**, which does the
+//! same thing to the structure and deletes it. Both read one derivation, so
+//! the preview and the edit cannot disagree; `passthrough.<id>` publishes it, including the
 //! outputs no input can feed, which is the value an author most needs told is
 //! about to disappear. A **link** can be muted, which is the opposite
-//! behaviour — the value stops — and so is a different word here than in
-//! Blender, where both are "mute".
+//! behaviour — the value stops — and so is a different word here than in the
+//! DCC, where both are "mute".
 //!
 //! R1584 adds the two boundary moves, and with them the fact an editor is
-//! obliged to show and Blender does not: a group definition is *shared*, so
+//! obliged to show and the DCC does not: a group definition is *shared*, so
 //! moving a node into one through this instance changes every other instance
 //! too. `last_move` says which ports appeared, which disappeared, which links
 //! died and where, and how many other instances came along — or `fork` first,
@@ -356,9 +356,9 @@ impl NodeKind for Op {
     /// R1594 — which socket type a value is one of.
     ///
     /// This taxonomy's values carry their own type, so it can answer, and
-    /// answering is what lets [`Document::set_port_value`] refuse a colour on an
-    /// amount port. Blender needs no equivalent because a socket's authored
-    /// value is a different C struct per socket type.
+    /// answering is what lets [`Document::set_port_value`] refuse a colour on an amount port. The DCC
+    /// needs no equivalent because a socket's authored value is a different C
+    /// struct per socket type.
     fn value_type(value: &Val) -> Option<Ty> {
         Some(match value {
             Val::Colour(_) => Ty::Colour,
@@ -374,11 +374,10 @@ impl NodeKind for Op {
     /// dragged, before there is a value and often before there is a node at the
     /// far end.
     ///
-    /// Declaring the conversion here — rather than declaring a *predicate* here
-    /// and the conversion somewhere else — is what makes "this wire is legal"
-    /// and "this is what arrives along it" impossible to disagree. Blender has
-    /// three separate answers to that one question (`validate_link`,
-    /// `DataTypeConversions`, `get_internal_link_type_priority`).
+    /// Declaring the conversion here — rather than declaring a *predicate*
+    /// here and the conversion somewhere else — is what makes "this wire is
+    /// legal" and "this is what arrives along it" impossible to disagree. The
+    /// DCC has three separate answers to that one question (`validate_link`, `DataTypeConversions`, `get_internal_link_type_priority`).
     fn conversion(from: &Ty, to: &Ty) -> Conversion<Val> {
         match (from, to) {
             (Ty::Colour, Ty::Colour) | (Ty::Amount, Ty::Amount) => Conversion::Direct,
@@ -423,8 +422,8 @@ struct GroupsState {
     /// second part: the user moved a node in one place and changed another.
     last_move: Signal<String>,
     /// R1586 — what the last dissolve or detach did: what it bridged, and what
-    /// it could not. The second half is the one Blender's `node_internal_relink`
-    /// discards, and it is what tells an author a value has just gone.
+    /// it could not. The second half is the one the DCC's `node_internal_relink` discards, and it
+    /// is what tells an author a value has just gone.
     last_rewire: Signal<String>,
 }
 
@@ -546,9 +545,9 @@ fn card_height(ports: (usize, usize)) -> i32 {
 /// container rather than on top of it.
 ///
 /// Derived by the **application**, because it needs card geometry the crate
-/// deliberately does not have: the crate answers *what does this contain*, this
-/// answers *how big is that*. Blender computes the same union in `node_draw.cc`
-/// into `runtime->draw_bounds`, a cache with a pass to keep it fresh.
+/// deliberately does not have: the crate answers *what does this contain*,
+/// this answers *how big is that*. The DCC computes the same union in `node_draw.cc` into
+/// `runtime->draw_bounds`, a cache with a pass to keep it fresh.
 ///
 /// `None` for a frame containing nothing — an empty fence has no derived size,
 /// and drawing a default-sized one would be inventing a fact.
@@ -697,7 +696,7 @@ fn port_scenes(
 /// The routing a bypassed node passes through, drawn across its card.
 ///
 /// An output with no route simply has no line reaching it — which is the fact
-/// an author most needs to see, and the one Blender's derivation discards.
+/// an author most needs to see, and the one the DCC's derivation discards.
 ///
 /// R1593 — a route that CONVERTS is drawn dotted, by the same
 /// [`WireLook`] a link is, because it is the same fact about the same value:
@@ -897,11 +896,11 @@ impl WireLook {
 
     /// The stroke that says it.
     ///
-    /// Solid, dashed and dotted are three arms of one vocabulary R1575 opened —
-    /// so a reader tells them apart without a legend, and a colour-blind reader
-    /// tells them apart at all. Blender shows an implicit conversion only by
-    /// materialising a whole `implicit_conversion` node into the tree, so
-    /// seeing that fact there costs a change to the graph you are looking at.
+    /// Solid, dashed and dotted are three arms of one vocabulary R1575 opened
+    /// — so a reader tells them apart without a legend, and a colour-blind
+    /// reader tells them apart at all. The DCC shows an implicit conversion
+    /// only by materialising a whole `implicit_conversion` node into the tree, so seeing that
+    /// fact there costs a change to the graph you are looking at.
     fn stroke(self, direct: Color, muted: Color) -> Stroke {
         match self {
             Self::Direct => Stroke::new(direct, 2),
@@ -1163,7 +1162,7 @@ fn describe_insert(out: &Inserted) -> String {
 
 /// R1589 — the containments an edit could not carry: `"3<7"`, the node and the
 /// frame it is no longer in. Published rather than left to be noticed, because
-/// a copy that quietly left its fence behind is exactly what Blender does.
+/// a copy that quietly left its fence behind is exactly what the DCC does.
 fn describe_orphans(orphaned: &[Orphaned]) -> String {
     orphaned
         .iter()
@@ -1317,9 +1316,9 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::new("current_tree", "int"),
                     SchemaField::new("selection", "string"),
                     // Why the last edit did not happen. The field an editor is
-                    // judged by, and the one Blender has no analogue for.
+                    // judged by, and the one the DCC has no analogue for.
                     SchemaField::new("last_refusal", "string"),
-                    // R1578 — the clipboard, as data. Blender's is a .blend
+                    // R1578 — the clipboard, as data. The DCC's is a .blend
                     // file in the temp directory, so none of this is askable
                     // there without pasting first.
                     SchemaField::new("clipboard", "string"),
@@ -1332,10 +1331,10 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::new("muted_links", "string"),
                     SchemaField::new("link_conversions", "string"),
                     SchemaField::new("last_rewire", "string"),
-                    // R1589 — the containment forest, whole. Neither Blender
-                    // nor Qt has an accessor for "what contains what right
-                    // now": `bNode::parent` is one pointer per node, so the
-                    // relation exists only as something you reassemble.
+                    // R1589 — the containment forest, whole. Neither the DCC
+                    // nor the toolkit has an accessor for "what contains what
+                    // right now": `bNode::parent` is one pointer per node, so the relation
+                    // exists only as something you reassemble.
                     SchemaField::new("frames", "string"),
                     // Argument-taking reads.
                     SchemaField::action("node_kind", "string"),
@@ -1711,7 +1710,7 @@ impl GroupsOracle {
                 links.iter().filter(|l| l.muted).map(|l| l.id.0),
             ))),
             // R1593 — which of this tree's links carry their value through a
-            // conversion. Blender makes the same fact visible by materialising
+            // conversion. The DCC makes the same fact visible by materialising
             // a whole `implicit_conversion` node into the tree; here it is
             // derived from the link's two ends, so nothing can go stale and
             // nothing has to be drawn to be asked.
@@ -2153,11 +2152,10 @@ impl GroupsOracle {
     ///
     /// The whole of what this application supplies is *where the boundary is*.
     /// Inward it is named by the argument, because the user is looking at the
-    /// host tree and pointing at a group. Outward it is the edit path's own last
-    /// step — the user is inside the group, so the group they are inside IS the
-    /// boundary — which is the same place Blender reads it from
-    /// (`snode->edittree` against `ED_node_tree_get(snode, 1)`), and refusing at
-    /// the root is its "Not inside node group".
+    /// host tree and pointing at a group. Outward it is the edit path's own
+    /// last step — the user is inside the group, so the group they are inside
+    /// IS the boundary — which is the same place the DCC reads it from (`snode->edittree`
+    /// against `ED_node_tree_get(snode, 1)`), and refusing at the root is its "Not inside node group".
     /// R1586 — the verbs that change how a node or a wire takes part.
     ///
     /// `bypass` and `mute_link` change what the graph *means*; `collapse` and
@@ -2375,10 +2373,9 @@ impl GroupsOracle {
 
     /// `"600,300"`, or with either policy named: `"600,300,keep,fork"`.
     ///
-    /// The two arms are *stated at the call*. Blender's `linked` arm defaults
-    /// from a user preference (`U.dupflag & USER_DUP_NTREE`), so whether an edit
-    /// to the copy also changes the original depends on a setting the gesture
-    /// does not mention.
+    /// The two arms are *stated at the call*. The DCC's `linked` arm defaults from
+    /// a user preference (`U.dupflag & USER_DUP_NTREE`), so whether an edit to the copy also changes
+    /// the original depends on a setting the gesture does not mention.
     fn placement(arg: &IntrospectValue) -> Result<Placement, InvokeError> {
         let raw = Self::text(arg)?;
         let mut point = (0_i32, 0_i32);
@@ -2538,7 +2535,7 @@ fn join_ids(ids: impl Iterator<Item = u32>) -> String {
 
 /// R1586 — a rewire in one line: what was bridged, and what nothing reached.
 ///
-/// The second half is the part Blender's `node_internal_relink` removes and
+/// The second half is the part the DCC's `node_internal_relink` removes and
 /// never mentions, so it is the reason this read exists at all.
 fn describe_rewire(out: &Rewired) -> String {
     let bridges = out

@@ -70,20 +70,19 @@
 //! equality is asserted rather than assumed — over a real encode in
 //! `paint_adapter`'s tests, and again over the wire.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt's floor for per-item render cost is **`QSG_RENDERER_DEBUG=render`**: an
-//! environment variable that makes the Qt Quick scene-graph renderer dump its
-//! batches to `stderr` as prose, with raw `QSGGeometryNode*` pointers for
-//! identity. `QQuick3DRenderStats` publishes `drawCallCount` /
-//! `drawVertexCount` / `renderPassCount` as bindable properties, but they are
-//! whole-frame and 3D-only. On the widget stack — `QWidget`, `QPainter`,
-//! `QGraphicsView` — there is no per-item draw-work accounting of any kind.
+//! The toolkit's floor for per-item render cost is **`QSG_RENDERER_DEBUG=render`**: an environment
+//! variable that makes the toolkit Quick scene-graph renderer dump its batches
+//! to `stderr` as prose, with raw `SG geometry node*` pointers for identity. quick3 D render stats
+//! publishes `drawCallCount` / `drawVertexCount` / `renderPassCount` as bindable properties, but they are whole-frame
+//! and 3D-only. On the widget stack — widget, painter, canvas view — there is
+//! no per-item draw-work accounting of any kind.
 //!
 //! Four things here are past that floor:
 //!
 //! - **It is queryable, not printed.** `scene/draw_profile` answers a request
-//!   with structured data. Qt's is `stderr` text behind an env var, which a
+//!   with structured data. The toolkit's is `stderr` text behind an env var, which a
 //!   running application cannot ask itself for.
 //! - **A node's identity is its address.** Every row carries the
 //!   `/window[main]/a/b` path `scene/locate` produces and
@@ -93,14 +92,14 @@
 //!   [`Scene::path_segment_at`](pinion_core::Scene::path_segment_at) rule the
 //!   hit-test uses. "Which subtree is expensive" and "act on that subtree" are
 //!   the same string, and the demo resolves a profile row's path through
-//!   `scene/query` to prove the two derivations agree. Qt hands back a
-//!   `QSGGeometryNode*`.
-//! - **It is deterministic, not sampled.** Tracy and Unreal Insights attribute
+//!   `scene/query` to prove the two derivations agree. The toolkit hands back a
+//!   `SG geometry node*`.
+//! - **It is deterministic, not sampled.** Tracy and the engine Insights attribute
 //!   by interrupting a clock, so two runs of the same frame disagree and a
 //!   cheap-but-frequent node can vanish between samples. Every number here is a
 //!   count read off the artifact, so the same scene profiles identically on
 //!   every host — which is also what lets a CI guard assert on it.
-//! - **Text is attributed.** No Qt surface reports a per-item glyph count
+//! - **Text is attributed.** No the toolkit surface reports a per-item glyph count
 //!   anywhere. R1531 measured the glyph-run walk at 37% of a warm frame, so on
 //!   a professional 2D application this is the term that decides the answer.
 //!

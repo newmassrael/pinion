@@ -10,7 +10,7 @@
 //! rows share one uniform-pitch [`view_virtual_list`] window, so only the
 //! visible window plus overscan is materialized however many groups expand.
 //!
-//! ## The three coordinators (Qt grouping-model shape)
+//! ## The three coordinators (the toolkit grouping-model shape)
 //!
 //! - **Primary** [`VirtualSelectExternal`] at [`LIST_TAG`] (R746 reuse) — the
 //!   windowed `glist#<source>` data rows route clicks here; selection is the

@@ -3,29 +3,27 @@
 // (WAI-ARIA, PropertyGridExternal, TextFieldExternal, gridcell, …).
 #![allow(clippy::doc_markdown)]
 
-//! `hello-property-grid` — R836 / R921 §5.38 §5.40 §5.50 **property-grid /
-//! inspector detail panel**: the editor's "Details" panel (Unreal Details
-//! / Qt `QtPropertyBrowser` / a CSS-devtools style editor) — a **tree** of
-//! `(name, typed-value)` rows where each value is editable in place by a
-//! *type-appropriate* control. Scalar properties nest under collapsible
-//! **category** branches (Identity / Appearance / Transform / …) and **struct**
-//! branches (a `Vector3` like Position expands into its X / Y / Z field rows —
-//! the Unreal / Qt Details core depth), with a **live name search box** (R872 —
-//! the Details-panel filter).
+//! `hello-property-grid` — R836 / R921 §5.38 §5.40 §5.50 **property-grid / inspector detail
+//! panel**: the editor's "Details" panel (the engine Details / the toolkit `QtPropertyBrowser`
+//! / a CSS-devtools style editor) — a **tree** of `(name, typed-value)` rows where each value is
+//! editable in place by a *type-appropriate* control. Scalar properties nest
+//! under collapsible **category** branches (Identity / Appearance / Transform
+//! / …) and **struct** branches (a `Vector3` like Position expands into its X / Y /
+//! Z field rows — the engine / the toolkit Details core depth), with a **live
+//! name search box** (R872 — the Details-panel filter).
 //!
 //! ## Why this is the Phase-B #1 leverage item
 //!
-//! The northern-star is an Unreal-class editor self-hosted in pinion. That
+//! The northern-star is an engine-class editor self-hosted in pinion. That
 //! editor's Details / Inspector panel is a property grid; this binding builds
-//! it as a **pure composition of existing substrate** — no new framework crate.
-//! R836–R920 built the flat, category-grouped grid; **R921** migrated its row
-//! backbone from the 2-level `GroupOrderState` group-by proxy to the
-//! arbitrary-depth WAI-ARIA Tree substrate (`flat_visible` / `resolve_tree_key`
-//! / `tree_access_nodes`), because categories and struct properties are the
-//! same thing — a collapsible branch — and a struct's X/Y/Z fields need a third
-//! level the group proxy cannot express. The self-hosted editor will be the 2nd
-//! consumer of the typed-editable-row model, at which point the stable parts
-//! lift to a framework crate (`[[abstraction-needs-second-consumer]]`).
+//! it as a **pure composition of existing substrate** — no new framework
+//! crate. R836–R920 built the flat, category-grouped grid; **R921** migrated
+//! its row backbone from the 2-level `GroupOrderState` group-by proxy to the arbitrary-depth
+//! WAI-ARIA Tree substrate (`flat_visible` / `resolve_tree_key` / `tree_access_nodes`), because categories and struct
+//! properties are the same thing — a collapsible branch — and a struct's X/Y/Z
+//! fields need a third level the group proxy cannot express. The self-hosted
+//! editor will be the 2nd consumer of the typed-editable-row model, at which
+//! point the stable parts lift to a framework crate (`[[abstraction-needs-second-consumer]]`).
 //!
 //! ## Architecture — the value model ⊥ the structure tree
 //!
@@ -225,7 +223,7 @@ const REMOVE_GLYPH: &str = "\u{2212}";
 /// is constant across the drag).
 const GRID_W_PX: f64 = (NAME_COL_W + VALUE_COL_W) as f64;
 /// Float scrub sensitivity: value units per pixel of horizontal drag (100 px
-/// ⇒ +1.0), the Blender / Unreal "drag the number field" gesture.
+/// ⇒ +1.0), the DCC / the engine "drag the number field" gesture.
 const SCRUB_FLOAT_PER_PX: f64 = 0.01;
 /// Int scrub sensitivity: pixels of horizontal drag per integer step (8 px ⇒
 /// +1), so an int scrubs in whole units without runaway.
@@ -442,15 +440,15 @@ fn confirm_asset() {
     });
 }
 
-/// R964 — the bounded-slider value cell for a ranged `Float` leaf: the Unreal
-/// Details / Blender "factor" gauge. The formatted number renders as before
-/// (flow, vertically centred), with a thin track + active fill pinned along the
-/// cell's bottom edge showing the value's position in `[min, max]`. Editing is
-/// unchanged (the existing clamped scrub / inline-edit / RPC write) — the gauge
-/// is the *visible range* affordance, so its bars are `pointer_transparent` and
-/// a press falls through to the row's scrub. The fill is tagged
-/// `{GRID_TAG}#gauge<slot>` so its rendered fraction is introspectable — the AI
-/// reads the gauge position from the painted frame, not just the value.
+/// R964 — the bounded-slider value cell for a ranged `Float` leaf: the engine
+/// Details / the DCC "factor" gauge. The formatted number renders as before
+/// (flow, vertically centred), with a thin track + active fill pinned along
+/// the cell's bottom edge showing the value's position in `[min, max]`. Editing is
+/// unchanged (the existing clamped scrub / inline-edit / RPC write) — the
+/// gauge is the *visible range* affordance, so its bars are `pointer_transparent` and a press
+/// falls through to the row's scrub. The fill is tagged `{GRID_TAG}#gauge<slot>` so its rendered
+/// fraction is introspectable — the AI reads the gauge position from the
+/// painted frame, not just the value.
 fn ranged_slider_cell(slot: usize, value: f64, min: f64, max: f64, theme: &Theme) -> Scene {
     let frac = if max > min {
         ((value - min) / (max - min)).clamp(0.0, 1.0)
@@ -679,13 +677,13 @@ fn default_properties() -> Vec<CellValue> {
 // The Inspector is a **tree**, not a flat list: the editor's Details panel
 // nests scalar properties under collapsible **category** branches (Identity /
 // Appearance / Transform …) and **struct** branches (a `Vector3` like Position
-// expands into its X / Y / Z field rows — the Unreal / Qt Details core depth).
-// Categories and structs are the SAME thing — a collapsible branch — so the
-// panel migrates off the 2-level `GroupOrderState` group-by proxy onto the
-// arbitrary-depth WAI-ARIA Tree substrate (`flat_visible` / `resolve_tree_key`
-// / `TreeNode`, R811/R820/R821): one visible-row sequence the paint, the
-// id-keyed roving cursor, the collapse set, the a11y `tree` and the
-// name filter all read, so no two derived sequences can diverge.
+// expands into its X / Y / Z field rows — the engine / the toolkit Details
+// core depth). Categories and structs are the SAME thing — a collapsible
+// branch — so the panel migrates off the 2-level `GroupOrderState` group-by proxy onto the
+// arbitrary-depth WAI-ARIA Tree substrate (`flat_visible` / `resolve_tree_key` / `TreeNode`, R811/R820/R821):
+// one visible-row sequence the paint, the id-keyed roving cursor, the collapse
+// set, the a11y `tree` and the name filter all read, so no two derived sequences
+// can diverge.
 //
 // The value model stays a flat `Vec<CellValue>` keyed by **value index** (the
 // scrub / popup / inline-edit / reset / `value.<i>` RPC machinery is unchanged):
@@ -713,9 +711,9 @@ const ARR_PREFIX: &str = "arr.";
 /// (a bare decimal addressing the flat model), an element leaf's value lives in
 /// the array sub-model at that position ([`ValueRef::Elem`]).
 const ELEM_PREFIX: &str = "elem.";
-/// R931 — the one demo array property: a `TArray<f32>` (the Unreal Details
-/// "growable list of floats" — spawn weights / LOD distances). One array proves
-/// the dynamic-collection path; multi-array is the same pattern repeated.
+/// R931 — the one demo array property: a `TArray<f32>` (the engine Details "growable
+/// list of floats" — spawn weights / LOD distances). One array proves the
+/// dynamic-collection path; multi-array is the same pattern repeated.
 const ARR_BRANCH_ID: &str = "arr.weights";
 /// R931 — the array property's display label (the branch row name).
 const ARRAY_LABEL: &str = "Spawn Weights";
@@ -771,10 +769,10 @@ impl PropertyNode {
         }
     }
 
-    /// R931 — an **array element** leaf at array position `k`. Its `value_index`
-    /// is `None` (the value lives in the array sub-model, not the flat model,
-    /// addressed by [`ValueRef::Elem`]); its id (`elem.<k>`) is what marks it an
-    /// editable leaf to [`row_ref`]. The label is the Unreal-style `[k]` index.
+    /// R931 — an **array element** leaf at array position `k`. Its `value_index` is `None`
+    /// (the value lives in the array sub-model, not the flat model, addressed
+    /// by [`ValueRef::Elem`]); its id (`elem.<k>`) is what marks it an editable leaf to [`row_ref`]. The
+    /// label is the engine-style `[k]` index.
     fn elem_leaf(k: usize) -> Self {
         Self {
             id: format!("{ELEM_PREFIX}{k}"),
@@ -1081,12 +1079,12 @@ fn use_property_model() -> Rc<Signal<Vec<CellValue>>> {
 }
 
 /// R919 — the frozen baseline: the class default value of every property (the
-/// same `default_properties()` the model starts from). A property is "modified"
-/// when its current value differs from this baseline (the Unreal / Qt Details
-/// "reset arrow" appears only on a changed property), and `reset` restores it.
-/// One immutable home (an `Rc<Vec<…>>`, never a `Signal` — defaults do not
-/// change) the External, the view, and the a11y all read, so the modified
-/// indicator and the reset target can never disagree.
+/// same `default_properties()` the model starts from). A property is "modified" when its current
+/// value differs from this baseline (the engine / the toolkit Details "reset
+/// arrow" appears only on a changed property), and `reset` restores it. One
+/// immutable home (an `Rc<Vec<…>>`, never a `Signal` — defaults do not change) the External,
+/// the view, and the a11y all read, so the modified indicator and the reset
+/// target can never disagree.
 #[must_use]
 fn use_property_defaults() -> Rc<Vec<CellValue>> {
     let owner = Owner::current().expect("use_property_defaults requires an active Owner scope");
@@ -1164,11 +1162,11 @@ fn current_search_query() -> String {
 }
 
 /// R921 — the per-node filter match: a node survives the search iff its
-/// *searchable name* contains the (already-lowercased) query. A **leaf** matches
-/// on its qualified [`PROPERTY_NAMES`] entry (so "position" finds "Position X"
-/// even though the in-tree label is the short "X"); a **branch** matches on its
-/// category / struct label. [`flat_visible_filtered`] then keeps any node on a
-/// path to a match (Qt recursive-filter semantics).
+/// *searchable name* contains the (already-lowercased) query. A **leaf**
+/// matches on its qualified [`PROPERTY_NAMES`] entry (so "position" finds "Position X" even
+/// though the in-tree label is the short "X"); a **branch** matches on its
+/// category / struct label. [`flat_visible_filtered`] then keeps any node on a path to a match
+/// (the toolkit recursive-filter semantics).
 fn node_matches_query(node: &PropertyNode, query: &str) -> bool {
     // R931 — an array element leaf (`value_index = None`, id `elem.<k>`) has no
     // per-element name, so it matches on its array's label ([`ARRAY_LABEL`]) —
@@ -1534,10 +1532,10 @@ impl PropertyGridExternal {
         toggle_expanded(&self.tree, id);
     }
 
-    /// R921 — whether any field of struct `struct_id` is modified from its
-    /// default (the struct row's reset-arrow gate — a struct is "modified" iff
-    /// any of its components is, the Unreal Details struct-row roll-up). Delegates
-    /// to the [`struct_is_modified`] one-gate the paint + a11y also use.
+    /// R921 — whether any field of struct `struct_id` is modified from its default
+    /// (the struct row's reset-arrow gate — a struct is "modified" iff any of
+    /// its components is, the engine Details struct-row roll-up). Delegates to
+    /// the [`struct_is_modified`] one-gate the paint + a11y also use.
     fn struct_modified(&self, struct_id: &str) -> bool {
         struct_is_modified(
             &self.model.get(),
@@ -1558,11 +1556,11 @@ impl PropertyGridExternal {
             .count()
     }
 
-    /// R921 — a struct row's collapsed-summary value, the parenthesised tuple of
-    /// its field display values (`"(12.5, -4, 0)"` for a `Vector3`), so a
-    /// collapsed struct still shows its value at a glance (the Unreal / Qt
-    /// Details struct-row summary). Reads the field displays through the same
-    /// [`CellValue::display`] the leaf cells use.
+    /// R921 — a struct row's collapsed-summary value, the parenthesised tuple
+    /// of its field display values (`"(12.5, -4, 0)"` for a `Vector3`), so a collapsed struct
+    /// still shows its value at a glance (the engine / the toolkit Details
+    /// struct-row summary). Reads the field displays through the same [`CellValue::display`]
+    /// the leaf cells use.
     fn struct_summary(&self, struct_id: &str) -> String {
         struct_value_summary(&self.model.get(), &self.tree.get(), struct_id)
     }
@@ -1676,9 +1674,10 @@ impl PropertyGridExternal {
     /// invalidate any latch / cursor that addressed the gone (or now-shifted)
     /// element. (1) If an in-flight edit was on *this* array (a removed or
     /// re-indexed element), cancel it — committing would write a stale slot
-    /// (the R930.1 reachable-panic class). (2) Re-anchor the roving cursor onto
-    /// the element now occupying the freed slot (or the new last element), Excel
-    /// / Qt list behaviour, so the cursor never strands on a vanished `elem.<k>`.
+    /// (the R930.1 reachable-panic class). (2) Re-anchor the roving cursor
+    /// onto the element now occupying the freed slot (or the new last
+    /// element), Excel / the toolkit list behaviour, so the cursor never
+    /// strands on a vanished `elem.<k>`.
     fn remove_elem(&self, index: usize) -> bool {
         if index >= self.array_len() {
             return false;
@@ -3352,12 +3351,11 @@ fn array_header_row(
     )
 }
 
-/// R921 — a **struct** branch header row: `[ ⟨disclosure⟩ name | (x, y, z)
-/// summary ]`, tagged `{GRID_TAG}#<id>` (the `row`'s node id) so a click toggles
-/// its collapse. Indented by the row's depth, with the disclosure glyph
-/// reflecting its expanded flag, the collapsed-value `summary` in the value
-/// column, and — when `modified` — the reset arrow (resetting every field). The
-/// Unreal / Qt Details struct row.
+/// R921 — a **struct** branch header row: `[ ⟨disclosure⟩ name | (x, y, z) summary ]`, tagged `{GRID_TAG}#<id>` (the `row`'s node id)
+/// so a click toggles its collapse. Indented by the row's depth, with the
+/// disclosure glyph reflecting its expanded flag, the collapsed-value `summary` in
+/// the value column, and — when `modified` — the reset arrow (resetting every field).
+/// The engine / the toolkit Details struct row.
 fn struct_header_row(
     row: &VisibleRow,
     summary: &str,

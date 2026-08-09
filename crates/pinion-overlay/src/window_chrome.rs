@@ -224,7 +224,7 @@ pub struct WindowChromeStyle {
 
 impl WindowChromeStyle {
     /// Default chrome: 32px strip, dark `#2B2B2B` background, light glyphs,
-    /// all three controls shown — the VS Code / Blender custom title bar.
+    /// all three controls shown — the VS Code / the DCC custom title bar.
     #[must_use]
     pub const fn new() -> Self {
         Self {

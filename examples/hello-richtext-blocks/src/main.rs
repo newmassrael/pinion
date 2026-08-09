@@ -1,6 +1,6 @@
 //! `hello-richtext-blocks` — R1551 §5.36 consumer of the **block format**: a
 //! document whose paragraphs each declare their own [`BlockFormat`]
-//! (Qt `QTextBlockFormat`).
+//! (the toolkit text block format).
 //!
 //! ## What this demonstrates
 //!
@@ -36,7 +36,7 @@
 //!   boxes, which is the only form in which "did my indent reach the layout"
 //!   has an answer — `tools/demos/r1551_block_format.py` reads both and checks
 //!   the first line's x against the amount declared.
-//! * `scene/access` exposes the heading outline, which Qt's own text
+//! * `scene/access` exposes the heading outline, which the toolkit's own text
 //!   accessibility interface cannot express at all.
 //! * this crate's own tests paint the SAME scene through the terminal backend,
 //!   so the §2 #6 claim is made by the consumer and not only by each backend.
@@ -388,8 +388,8 @@ mod tests {
     }
 
     /// The declaration lowers to the ordinary layout box, which is what lets
-    /// the flex pass indent a paragraph with no document-specific layout code —
-    /// the thing `QTextDocumentLayout` cannot do.
+    /// the flex pass indent a paragraph with no document-specific layout code
+    /// — the thing text document layout cannot do.
     #[test]
     fn r1551_the_quote_indent_is_the_nodes_margin() {
         let quote = block_node(&scene_for(false), 2).clone();
@@ -447,9 +447,9 @@ mod tests {
     }
 
     /// R1551 §5.40 — the heading levels become an outline an assistive
-    /// technology can navigate, named by the PAINTED text. Qt's
-    /// `QAccessibleTextInterface` has no method that reports block structure at
-    /// all, so this is the half of `headingLevel` Qt does not have.
+    /// technology can navigate, named by the PAINTED text. The toolkit's
+    /// accessible text interface has no method that reports block structure at
+    /// all, so this is the half of `headingLevel` the toolkit does not have.
     #[test]
     fn r1551_the_headings_become_an_at_outline() {
         let scene = scene_for(false);

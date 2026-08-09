@@ -7,13 +7,13 @@
 //! offset of the marked character, and whether anything else claims the same
 //! key.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! There is no Qt peer to be at parity with. Qt's accelerator state lives in
-//! `QShortcutMap`, reachable only through `qshortcutmap_p.h` — a private
-//! header — so a Qt application cannot enumerate its own mnemonics, and an
-//! external driver certainly cannot. The nearest public surface is
-//! `QAbstractButton::shortcut()`, one widget at a time, and only for buttons.
+//! There is no the toolkit peer to be at parity with. The toolkit's
+//! accelerator state lives in shortcut map, reachable only through `qshortcutmap_p.h` — a
+//! private header — so a toolkit application cannot enumerate its own
+//! mnemonics, and an external driver certainly cannot. The nearest public
+//! surface is `shortcut()`, one widget at a time, and only for buttons.
 //!
 //! Two consequences an agent gets here and cannot get there:
 //!
@@ -21,8 +21,8 @@
 //!   it lists exactly what a sighted user could see underlined, without a
 //!   screenshot (§2 #7).
 //! - **Conflicts before the keypress.** `ambiguous` is a property of the
-//!   scene. Qt reports a contested accelerator through
-//!   `QShortcutEvent::isAmbiguous()` — only to the application, only at the
+//!   scene. The toolkit reports a contested accelerator through
+//!   `isAmbiguous()` — only to the application, only at the
 //!   moment the user triggered it, by which time one of the two claimants has
 //!   already been activated. A window's mnemonic conflicts are assertable here
 //!   in one call, which makes "no screen in this app has an accelerator
@@ -154,7 +154,8 @@ mod tests {
 
     #[test]
     fn a_conflict_is_reported_before_anyone_presses_the_key() {
-        // The property Qt cannot answer: both claimants say so, statically.
+        // The property the toolkit cannot answer: both claimants say so,
+        // statically.
         let scene = Scene::Container(ContainerNode::new(vec![
             labelled("save", "&Save"),
             labelled("send", "&Send"),

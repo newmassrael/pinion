@@ -12,7 +12,7 @@
 //!
 //! Phase B widget-catalog entry. A descriptive tooltip — the contextual
 //! "what does this do?" popup a control surfaces on hover / focus, and a
-//! direct step toward the northern-star "Unreal-class editor self-hosted
+//! direct step toward the northern-star "the engine-class editor self-hosted
 //! in pinion" (every toolbar glyph + settings affordance ships one). It
 //! is the catalog's first **descriptive-class** widget (WAI-ARIA
 //! `tooltip`): no command, no selection, no toggle — passive text the

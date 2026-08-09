@@ -9,44 +9,44 @@
 //! [`TextField`](crate::widgets::text_field::TextFieldExternal) claims only the
 //! chords that are its own text.
 //!
-//! ## Where this is more than Qt 6.11
+//! ## Where this is more than the toolkit 6.11
 //!
-//! 1. **Recording is a state the user chose.** Qt starts on focus-in and stops
-//!    only on focus-out or a 1-second release timer, so a Qt keymap editor
+//! 1. **Recording is a state the user chose.** the toolkit starts on focus-in and stops
+//!    only on focus-out or a 1-second release timer, so a toolkit keymap editor
 //!    cannot stop grabbing while it still has focus, and a user who tabs into
 //!    the field and then presses the application's Save shortcut silently
 //!    overwrites the binding they were reading. `record` / `cancel` are events
 //!    here (`widgets/key_sequence.scxml`), which is also what makes
 //!    [`crate::external::External::shadows_accelerator`]
 //!    a function of something observable rather than of a private timer.
-//! 2. **A modifier-only press is kept, not dropped.** Qt's `keyPressEvent`
+//! 2. **A modifier-only press is kept, not dropped.** the toolkit's `keyPressEvent`
 //!    returns early for <kbd>Ctrl</kbd> / <kbd>Shift</kbd> / <kbd>Alt</kbd> /
 //!    <kbd>Meta</kbd>, so a held modifier is invisible: the field shows nothing
 //!    until a real key lands. [`KeySequenceEdit::pending`] publishes the prefix,
 //!    so `Ctrl+…` can be shown while the user is still deciding.
-//! 3. **Overflow is a named refusal.** `QKeySequenceEdit`'s documented
+//! 3. **Overflow is a named refusal.** key-sequence editor's documented
 //!    behaviour is that a sequence longer than `maximumSequenceLength()` "is
 //!    truncated" — silently, with no return value — so a caller cannot tell a
 //!    sequence that fit from one that was cut down.
 //!    [`crate::accelerator::SequenceFull`] carries the chord that
 //!    did not fit.
-//! 4. **A recorded chord reports what it would COLLIDE with.** Qt has nothing
-//!    here: `QKeySequenceEdit` will happily record a chord that is already a
-//!    `QShortcut`, and the collision surfaces only later, at dispatch, as
-//!    `QShortcutEvent::isAmbiguous()`. The conflict is derived from the two
+//! 4. **A recorded chord reports what it would COLLIDE with.** the toolkit has nothing
+//!    here: key-sequence editor will happily record a chord that is already a
+//!    shortcut, and the collision surfaces only later, at dispatch, as
+//!    `isAmbiguous()`. The conflict is derived from the two
 //!    accelerator layers that actually exist
 //!    ([`AcceleratorLayer`](crate::accelerator::AcceleratorLayer)) and answered
 //!    by `scene/accelerators` — a fact about the WINDOW rather than about this
 //!    widget, which is why it is not a slot here.
 //!
-//! ## What is deliberately Qt's shape
+//! ## What is deliberately the toolkit's shape
 //!
-//! The default maximum is Qt's four
+//! The default maximum is the toolkit's four
 //! ([`crate::accelerator::QT_MAX_SEQUENCE_LENGTH`]),
 //! and focus loss **accepts** the in-flight sequence because `focusOutEvent`
-//! calls `finishEditing()` in Qt. Neither is a capability, so neither is worth
-//! diverging on ([[qt-is-the-floor-not-the-target]] leaves the *shape* a fresh
-//! choice, and here Qt's shape is already right).
+//! calls `finishEditing()` in the toolkit. Neither is a capability, so neither is worth
+//! diverging on ([[the toolkit-is-the-floor-not-the-target]] leaves the *shape* a fresh
+//! choice, and here the toolkit's shape is already right).
 //!
 //! [`QKeySequenceEdit`]: https://doc.qt.io/qt-6/qkeysequenceedit.html
 
@@ -93,7 +93,7 @@ pub const KEY_SEQUENCE_CAPTURED_EVENT: &str = "key_sequence_captured";
 
 /// R1569 §5.38 — what happened to a chord offered to a recording editor.
 ///
-/// Every arm is an outcome `QKeySequenceEdit` also produces and does not
+/// Every arm is an outcome key-sequence editor also produces and does not
 /// report: it records, ignores a modifier, or truncates, and the caller learns
 /// which only by re-reading `keySequence()` and inferring.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +101,7 @@ pub enum RecordOutcome {
     /// The chord was appended at this index.
     Recorded(usize),
     /// The chord was a bare modifier and is held as a **prefix** rather than
-    /// recorded. Qt drops it entirely.
+    /// recorded. The toolkit drops it entirely.
     Pending,
     /// The widget was not in [`KeySequenceState::Recording`], so the chord was
     /// not offered to the sequence at all.
@@ -169,14 +169,14 @@ pub struct KeySequenceEdit {
     sequence: KeySequence,
     /// The sequence being built while [`KeySequenceState::Recording`].
     in_flight: KeySequence,
-    /// Modifiers held with no key yet. Qt discards this fact.
+    /// Modifiers held with no key yet. The toolkit discards this fact.
     pending: Option<Modifiers>,
-    /// Qt's `maximumSequenceLength`.
+    /// The toolkit's `maximumSequenceLength`.
     max_len: usize,
 }
 
 impl KeySequenceEdit {
-    /// An empty editor in [`KeySequenceState::Idle`], bounded to Qt's four.
+    /// An empty editor in [`KeySequenceState::Idle`], bounded to the toolkit's four.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -188,23 +188,23 @@ impl KeySequenceEdit {
         }
     }
 
-    /// Declare the maximum chord count (Qt `setMaximumSequenceLength`).
+    /// Declare the maximum chord count (the toolkit `setMaximumSequenceLength`).
     ///
     /// A `max` of zero is raised to one: a sequence that can hold nothing is a
-    /// widget that cannot do its job, and Qt clamps the same way.
+    /// widget that cannot do its job, and the toolkit clamps the same way.
     #[must_use]
     pub fn with_max_len(mut self, max: usize) -> Self {
         self.max_len = max.max(1);
         self
     }
 
-    /// Seed the displayed sequence without recording it (Qt `setKeySequence`).
+    /// Seed the displayed sequence without recording it (the toolkit `setKeySequence`).
     ///
     /// # Errors
     ///
-    /// [`SequenceFull`] naming the first chord past `max_len`, where Qt
-    /// truncates and says nothing. Nothing is stored when the call refuses, so
-    /// a refused seed cannot leave a half-applied value behind.
+    /// [`SequenceFull`] naming the first chord past `max_len`, where the toolkit truncates and
+    /// says nothing. Nothing is stored when the call refuses, so a refused
+    /// seed cannot leave a half-applied value behind.
     pub fn set_sequence(&mut self, sequence: &KeySequence) -> Result<(), SequenceFull> {
         let mut next = KeySequence::new();
         for chord in sequence.chords() {
@@ -270,13 +270,13 @@ impl KeySequenceEdit {
         &self.in_flight
     }
 
-    /// Modifiers held with no key yet — the prefix Qt discards.
+    /// Modifiers held with no key yet — the prefix the toolkit discards.
     #[must_use]
     pub const fn pending(&self) -> Option<Modifiers> {
         self.pending
     }
 
-    /// Qt's `maximumSequenceLength`.
+    /// The toolkit's `maximumSequenceLength`.
     #[must_use]
     pub const fn max_len(&self) -> usize {
         self.max_len
@@ -284,12 +284,12 @@ impl KeySequenceEdit {
 
     /// Offer `chord` to the in-flight sequence.
     ///
-    /// Appends and reports; it does **not** commit. Reaching `max_len` finishes
-    /// the recording (Qt's `QKeySequenceEdit` does the same), but that is a
-    /// statechart transition carrying a §5.20 intent, so it is driven by
-    /// [`KeySequenceEditExternal::record`] through the emitter rather than
-    /// raised behind it — a commit that skipped the emitter would be a
-    /// transition whose intent silently never fired.
+    /// Appends and reports; it does **not** commit. Reaching `max_len` finishes the
+    /// recording (the toolkit's key-sequence editor does the same), but that
+    /// is a statechart transition carrying a §5.20 intent, so it is driven by
+    /// [`KeySequenceEditExternal::record`] through the emitter rather than raised behind it — a commit that
+    /// skipped the emitter would be a transition whose intent silently never
+    /// fired.
     pub(crate) fn record(&mut self, chord: &Chord) -> RecordOutcome {
         if !self.is_recording() {
             return RecordOutcome::NotRecording;
@@ -384,7 +384,7 @@ impl KeySequenceEditExternal {
         }
     }
 
-    /// Declare the maximum chord count (Qt `setMaximumSequenceLength`).
+    /// Declare the maximum chord count (the toolkit `setMaximumSequenceLength`).
     #[must_use]
     pub fn with_max_len(mut self, max: usize) -> Self {
         let inner = std::mem::take(&mut self.em.inner);
@@ -528,7 +528,7 @@ impl External for KeySequenceEditExternal {
         self.em.inner.is_recording()
     }
 
-    /// Focus loss ACCEPTS the in-flight sequence — Qt's `focusOutEvent` calls
+    /// Focus loss ACCEPTS the in-flight sequence — the toolkit's `focusOutEvent` calls
     /// `finishEditing()`.
     fn on_focus_change(&mut self, focused: bool) {
         if !focused && self.em.inner.is_recording() {
@@ -563,9 +563,9 @@ impl ExternalIntrospect for KeySequenceEditExternal {
             "recording" => Some(IntrospectValue::Bool(edit.is_recording())),
             "sequence" => Some(IntrospectValue::Text(edit.sequence().portable())),
             "in_flight" => Some(IntrospectValue::Text(edit.in_flight().portable())),
-            // The prefix Qt drops. A held modifier with no key spells as the
-            // chord it would become, trailing separator and all, because that
-            // is what the field displays.
+            // The prefix the toolkit drops. A held modifier with no key spells
+            // as the chord it would become, trailing separator and all,
+            // because that is what the field displays.
             "pending" => Some(IntrospectValue::Text(edit.pending().map_or_else(
                 String::new,
                 |m| {
@@ -698,8 +698,7 @@ mod tests {
     #[test]
     fn a_disabled_editor_claims_nothing() {
         // A widget that will not act on the key must not stop the accelerator
-        // that would have — Qt gates `ShortcutOverride` on `isReadOnly()` for
-        // the same reason.
+        // that would have — the toolkit gates `ShortcutOverride` on `isReadOnly()` for the same reason.
         let mut w = recording();
         w.send(KeySequenceEvent::Disable);
         assert_eq!(w.state(), KeySequenceState::Disabled);
@@ -708,7 +707,7 @@ mod tests {
 
     #[test]
     fn a_modifier_only_press_is_a_published_prefix_not_a_drop() {
-        // Qt's `keyPressEvent` returns early here and the fact is lost.
+        // The toolkit's `keyPressEvent` returns early here and the fact is lost.
         let mut w = recording();
         let held = Modifiers {
             ctrl: true,
@@ -762,7 +761,8 @@ mod tests {
 
     #[test]
     fn cancel_discards_the_in_flight_run_and_keeps_the_previous_one() {
-        // Qt cannot do this at all: the release timer commits whatever arrived.
+        // The toolkit cannot do this at all: the release timer commits
+        // whatever arrived.
         let mut w = KeySequenceEditExternal::new();
         w.send(KeySequenceEvent::Record);
         w.record(&ctrl("k"));
@@ -785,7 +785,7 @@ mod tests {
 
     #[test]
     fn focus_loss_accepts_what_was_typed() {
-        // Qt's `focusOutEvent` calls `finishEditing()`; kept deliberately.
+        // The toolkit's `focusOutEvent` calls `finishEditing()`; kept deliberately.
         let mut w = recording();
         w.record(&ctrl("p"));
         w.on_focus_change(false);
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn seeding_past_the_maximum_refuses_and_stores_nothing() {
-        // Qt's `setKeySequence` truncates silently, so a caller cannot tell a
+        // The toolkit's `setKeySequence` truncates silently, so a caller cannot tell a
         // sequence that fit from one that was cut down to fit.
         let mut edit = KeySequenceEdit::new().with_max_len(2);
         let mut long = KeySequence::new();
@@ -866,8 +866,8 @@ mod tests {
             w.query("in_flight"),
             Some(IntrospectValue::Text("Ctrl+Shift+P".into())),
         );
-        // An unreadable spelling is a NAMED refusal, where Qt's `fromString`
-        // would hand back a sequence containing `Qt::Key_unknown`.
+        // An unreadable spelling is a NAMED refusal, where the toolkit's `fromString`
+        // would hand back a sequence containing `Key_unknown`.
         let err = w
             .invoke("record", IntrospectValue::Text("Ctrl+Frobnicate+P".into()))
             .expect_err("unreadable");

@@ -1,10 +1,10 @@
 //! `hello-grid-row-style` — R998 §5.40 **per-row style rules at scale**.
 //!
-//! A Wireshark packet list paints each row by the first **coloring rule** whose
-//! display filter the packet matches; a dlt-viewer colours log lines by filter.
-//! This binding is the grid analog over a 10 000-row virtualized data-grid:
-//! declarative [`RowStyleRule`]s, each a (predicate → tint) pair, paint the
-//! rows, with the **first** matching rule winning (Wireshark precedence).
+//! A analyser packet list paints each row by the first **coloring rule** whose
+//! display filter the packet matches; a dlt-viewer colours log lines by
+//! filter. This binding is the grid analog over a 10 000-row virtualized
+//! data-grid: declarative [`RowStyleRule`]s, each a (predicate → tint) pair, paint the
+//! rows, with the **first** matching rule winning (the analyser precedence).
 //!
 //! The decisive reuse: a rule's predicate **is** the R997
 //! [`GridFilter`] conjunction — the
@@ -136,10 +136,10 @@ fn use_rules() -> Rc<RowStyleState> {
     use_row_style(RULES_TAG)
 }
 
-/// The seed coloring rules (Wireshark-style): Status=Done rows paint
-/// red-on-white (rule 0), high-Score rows (≥ 900) paint green-on-black (rule 1).
-/// First-match precedence: a Done row with Score ≥ 900 still paints red (rule 0
-/// precedes rule 1).
+/// The seed coloring rules (the analyser-style): Status=Done rows paint
+/// red-on-white (rule 0), high-Score rows (≥ 900) paint green-on-black (rule
+/// 1). First-match precedence: a Done row with Score ≥ 900 still paints red
+/// (rule 0 precedes rule 1).
 fn seed_rules() -> Vec<RowStyleRule> {
     vec![
         RowStyleRule::new(

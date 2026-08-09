@@ -866,14 +866,14 @@ pub struct DropPoint {
     pub y_rel: f32,
 }
 
-/// (R1156 §5.51) Reserved [`DropPoint::tag`] the cross-window drop resolution
-/// returns when the cursor lands in the OUTER PERIMETER band of the drop surface
-/// (within [`OUTER_DOCK_MARGIN`] of the window content's edge) instead of over an
-/// inner panel. A dock consumer reads it as a FULL-SPAN outer dock at the edge
-/// the `x_rel` / `y_rel` (normalised over the WHOLE surface here, not a panel) is
-/// nearest — the container-edge / "outer dock guide" gesture (VS Code edge zones,
-/// Qt ADS outer dock areas). The leading `NUL` makes it a sentinel no real paint
-/// tag can collide with.
+/// (R1156 §5.51) Reserved [`DropPoint::tag`] the cross-window drop resolution returns when
+/// the cursor lands in the OUTER PERIMETER band of the drop surface (within
+/// [`OUTER_DOCK_MARGIN`] of the window content's edge) instead of over an inner panel. A dock
+/// consumer reads it as a FULL-SPAN outer dock at the edge the `x_rel` / `y_rel`
+/// (normalised over the WHOLE surface here, not a panel) is nearest — the
+/// container-edge / "outer dock guide" gesture (VS Code edge zones, the
+/// toolkit ADS outer dock areas). The leading `NUL` makes it a sentinel no real
+/// paint tag can collide with.
 pub const OUTER_DOCK_ZONE_TAG: &str = "\u{0}outer-dock-zone";
 
 /// (R1205 §5.51 §5.39) Tag the dock walker
@@ -1021,13 +1021,13 @@ impl InterveneError {
 /// of `-32602 Invalid params` in the same round. Matching on this text is the
 /// thing this type exists to stop, not to enable.
 ///
-/// # Past Qt
+/// # Past the toolkit
 ///
-/// Qt's floor here is the absence of a channel: `QMetaObject::invokeMethod`
-/// answers `bool`, `QAction::trigger()` answers `void`, and a `QAbstractButton`
-/// that declines a click reports nothing at all. There is no Qt API a refused
-/// action can put a sentence into, so nothing here is parity — the shape is
-/// chosen ([[qt-is-the-floor-not-the-target]]).
+/// The toolkit's floor here is the absence of a channel: `invokeMethod` answers `bool`, `trigger()`
+/// answers `void`, and a abstract button that declines a click reports nothing at
+/// all. There is no the toolkit API a refused action can put a sentence into,
+/// so nothing here is parity — the shape is chosen ([[the
+/// toolkit-is-the-floor-not-the-target]]).
 ///
 /// `Cow` rather than `String` because the overwhelming majority of in-tree
 /// reasons are fixed sentences known at compile time, and a refusal on a hot
@@ -1525,13 +1525,12 @@ pub trait External: core::fmt::Debug {
     }
 
     /// R51.34 §5.15 + §5.35 — pointer-capture opt-in. When `true`, the
-    /// framework's [`InputRouter`](crate#) keeps the cursor lock on
-    /// this widget across the `pointer_down` → `pointer_up` span
-    /// even when the cursor strays outside the widget rect (Material
-    /// / `SwiftUI` / Qt gesture-recognizer convention) — `cursor_moved`
-    /// forwards the cursor to the widget and **suppresses the
-    /// `PointerLeave` that hover re-resolution would otherwise fire** for
-    /// any stray, so a small jitter during the press cannot cancel it.
+    /// framework's [`InputRouter`](crate#) keeps the cursor lock on this widget across
+    /// the `pointer_down` → `pointer_up` span even when the cursor strays outside the widget rect
+    /// (Material / `SwiftUI` / the toolkit gesture-recognizer convention) — `cursor_moved`
+    /// forwards the cursor to the widget and **suppresses the `PointerLeave` that hover
+    /// re-resolution would otherwise fire** for any stray, so a small jitter
+    /// during the press cannot cancel it.
     ///
     /// R741 §5.35: button-like widgets (Button / Toggle / Checkbox /
     /// Radio) override this to `true` so a real-mouse click is robust to
@@ -1638,8 +1637,8 @@ pub trait External: core::fmt::Debug {
     /// R1549 §5.35 §5.38 — press-and-hold **auto-repeat** declaration: the
     /// cadence at which a press the user keeps holding re-activates this
     /// widget, or `None` (default) for a widget that fires once per press.
-    /// Qt `QAbstractButton::setAutoRepeat` /
-    /// `QAbstractSpinBox::setAccelerated`, asked of the widget rather than
+    /// The toolkit `setAutoRepeat` /
+    /// `setAccelerated`, asked of the widget rather than
     /// configured on it.
     ///
     /// # It is asked, not stored — and that is what makes a runaway repeat
@@ -1656,17 +1655,17 @@ pub trait External: core::fmt::Debug {
     /// }
     /// ```
     ///
-    /// so a press that slid off the target (its statechart already left
-    /// `Pressed` on `PointerLeave`), a widget that disabled itself
-    /// mid-hold, or one whose value hit its bound all stop repeating with
-    /// no un-arming code anywhere. Qt keeps a `QBasicTimer` that a missed
-    /// release / hide / disable path can leave running — the classic
-    /// runaway-spinbox bug class — because *arming* and *being pressed*
-    /// are two facts there that have to be kept in agreement.
+    /// so a press that slid off the target (its statechart already left `Pressed` on
+    /// `PointerLeave`), a widget that disabled itself mid-hold, or one whose value hit
+    /// its bound all stop repeating with no un-arming code anywhere. The
+    /// toolkit keeps a basic timer that a missed release / hide / disable path
+    /// can leave running — the classic runaway-spinbox bug class — because
+    /// *arming* and *being pressed* are two facts there that have to be kept
+    /// in agreement.
     ///
     /// A `None` answer mid-hold also **resets** the router's ramp, so
     /// sliding off a button and back on restarts from the delay rather
-    /// than resuming at speed (Qt's `mouseMoveEvent` does the same).
+    /// than resuming at speed (the toolkit's `mouseMoveEvent` does the same).
     ///
     /// # Which sub-region
     ///
@@ -1678,12 +1677,10 @@ pub trait External: core::fmt::Debug {
     ///
     /// # What a repeat actually does
     ///
-    /// The router re-dispatches the widget's own activation arc
-    /// (`PointerUp` then `PointerDown`) — Qt's `released(); clicked();
-    /// pressed();` in statechart vocabulary. There is no separate
+    /// The router re-dispatches the widget's own activation arc (`PointerUp` then `PointerDown`)
+    /// — the toolkit's `released(); clicked(); pressed();` in statechart vocabulary. There is no separate
     /// "repeat" event, so a repeat cannot mean anything different from a
-    /// click, and no widget has to grow an SCXML transition to be
-    /// repeatable.
+    /// click, and no widget has to grow an SCXML transition to be repeatable.
     fn auto_repeat(&self) -> Option<crate::input::AutoRepeat> {
         None
     }
@@ -1701,36 +1698,35 @@ pub trait External: core::fmt::Debug {
     ///
     /// Qt spells this [`QEvent::ShortcutOverride`], an event offered to the
     /// focus widget which it `accept()`s to claim the key. The capability is
-    /// Qt's floor; the shape is chosen ([[qt-is-the-floor-not-the-target]]),
+    /// the toolkit's floor; the shape is chosen ([[the toolkit-is-the-floor-not-the-target]]),
     /// and the choice is that this is a **question**, for two reasons:
     ///
-    /// 1. Qt's override must be accepted on *every* press, so a widget that
+    /// 1. The toolkit's override must be accepted on *every* press, so a widget that
     ///    handles a key in `keyPressEvent` and forgets the `ShortcutOverride`
     ///    arm in `event()` loses exactly the presses that collide with a
     ///    shortcut — invisible until someone adds the colliding shortcut, in
     ///    another file. A widget cannot be asked too late here.
     /// 2. A question can be evaluated **without a keystroke**, so
     ///    `scene/accelerators` can publish which declared accelerators are
-    ///    live right now and which are shadowed and by whom. Qt cannot: the
-    ///    event is transient and `QShortcutMap` is private.
+    ///    live right now and which are shadowed and by whom. The toolkit cannot: the
+    ///    event is transient and shortcut map is private.
     ///
     /// # Per chord, deliberately
     ///
     /// The right answer differs by chord for the same widget.
-    /// [`TextFieldExternal`](crate::widgets::text_field::TextFieldExternal)
-    /// claims a bare `d` (it is text — Qt's `QLineEdit` does the same) but
-    /// **not** <kbd>Alt</kbd>+<kbd>F</kbd>, so mnemonics keep working while
-    /// typing.
-    /// [`KeySequenceEditExternal`](crate::widgets::key_sequence::KeySequenceEditExternal)
-    /// claims everything while recording, because recording a chord means
-    /// recording *that* chord.
+    /// [`TextFieldExternal`](crate::widgets::text_field::TextFieldExternal) claims a bare `d`
+    /// (it is text — the toolkit's line edit does the same) but **not**
+    /// <kbd>Alt</kbd>+<kbd>F</kbd>, so mnemonics keep working while typing.
+    /// [`KeySequenceEditExternal`](crate::widgets::key_sequence::KeySequenceEditExternal) claims
+    /// everything while recording, because recording a chord means recording
+    /// *that* chord.
     ///
     /// # Only the focused widget is asked
     ///
-    /// Qt's scope too (`ShortcutOverride` goes to the focus widget), and it is
-    /// what bounds the mechanism: at most one widget can shadow, and it is the
-    /// one the user is typing into. An unfocused widget is never consulted, so
-    /// a `true` here can never make a window's accelerators mysteriously inert.
+    /// The toolkit's scope too (`ShortcutOverride` goes to the focus widget), and it is what
+    /// bounds the mechanism: at most one widget can shadow, and it is the one
+    /// the user is typing into. An unfocused widget is never consulted, so a
+    /// `true` here can never make a window's accelerators mysteriously inert.
     ///
     /// Default `false` — the accelerator layers keep the precedence they had
     /// before R1569, so no existing widget changes behaviour by omission.
@@ -1806,15 +1802,14 @@ pub trait External: core::fmt::Debug {
     /// the cursor X).
     fn pointer_move(&mut self, _x_rel: f32, _y_rel: f32) {}
 
-    /// R1423 §5.35 §5.15 — the current pointer PRESSURE for this widget, the W3C
-    /// `PointerEvent.pressure` / Qt `QTabletEvent::pressure()` peer: a normalised
-    /// `0.0..=1.0` force, `0.0` when no pressure is reported (a plain mouse, or a
-    /// lifted pen). Forwarded alongside each [`pointer_move`](Self::pointer_move)
-    /// (pressure travels WITH position, the W3C `pointermove` model) AND on a
-    /// standalone pressure change (a pen pressing harder in place), so a
-    /// pressure-aware surface — an ink brush whose width tracks force, a DCC
-    /// viewport, a velocity-sensitive control — reads the live force without a
-    /// separate device query.
+    /// R1423 §5.35 §5.15 — the current pointer PRESSURE for this widget, the
+    /// W3C `PointerEvent.pressure` / the toolkit `pressure()` peer: a normalised `0.0..=1.0` force, `0.0` when no
+    /// pressure is reported (a plain mouse, or a lifted pen). Forwarded
+    /// alongside each [`pointer_move`](Self::pointer_move) (pressure travels WITH
+    /// position, the W3C `pointermove` model) AND on a standalone pressure change (a pen
+    /// pressing harder in place), so a pressure-aware surface — an ink brush
+    /// whose width tracks force, a DCC viewport, a velocity-sensitive control
+    /// — reads the live force without a separate device query.
     ///
     /// The native source is the platform pen / touch force (winit
     /// `Touch::force`, normalised); the AI-first source is the `scene/pointer_pressure`
@@ -1822,23 +1817,22 @@ pub trait External: core::fmt::Debug {
     /// tablet is not required to exercise a pressure-reactive widget.
     ///
     /// Default no-op; only a widget that reacts to force overrides. A mouse
-    /// reports `0.0` (Qt gives a mouse no `QTabletEvent` either — pressure is a
-    /// pen/touch axis, not a synthesised mouse-button level).
+    /// reports `0.0` (the toolkit gives a mouse no tablet event either —
+    /// pressure is a pen/touch axis, not a synthesised mouse-button level).
     fn pointer_pressure(&mut self, _pressure: f32) {}
 
     /// R1429 §5.35 §5.15 — the current pointer TILT for this widget, the W3C
-    /// `PointerEvent.tiltX` / `tiltY` / Qt `QTabletEvent::xTilt()` / `yTilt()`
-    /// peer: the pen's lean off the surface normal, in DEGREES, each axis
-    /// `-90.0..=90.0`. `tilt_x` is the lean in the device X-Z plane (positive =
-    /// the pen top tilts toward +X / screen right); `tilt_y` in the Y-Z plane
-    /// (positive = the pen top tilts toward +Y / screen bottom). `(0.0, 0.0)` is
-    /// a pen held perpendicular, and what a plain mouse reports (a mouse has no
-    /// tilt, exactly as it has no pressure). Forwarded alongside each
-    /// [`pointer_move`](Self::pointer_move) (tilt travels WITH position, the W3C
-    /// `pointermove` model) AND on a standalone tilt change (a pen leaning in
-    /// place), so a tilt-aware surface — a calligraphy nib whose stroke shape
-    /// follows the lean, a DCC viewport — reads the live angle without a separate
-    /// device query.
+    /// `PointerEvent.tiltX` / `tiltY` / the toolkit `xTilt()` / `yTilt()` peer: the pen's lean off the surface
+    /// normal, in DEGREES, each axis `-90.0..=90.0`. `tilt_x` is the lean in the device X-Z
+    /// plane (positive = the pen top tilts toward +X / screen right); `tilt_y` in
+    /// the Y-Z plane (positive = the pen top tilts toward +Y / screen bottom).
+    /// `(0.0, 0.0)` is a pen held perpendicular, and what a plain mouse reports (a
+    /// mouse has no tilt, exactly as it has no pressure). Forwarded alongside
+    /// each [`pointer_move`](Self::pointer_move) (tilt travels WITH position, the W3C `pointermove`
+    /// model) AND on a standalone tilt change (a pen leaning in place), so a
+    /// tilt-aware surface — a calligraphy nib whose stroke shape follows the
+    /// lean, a DCC viewport — reads the live angle without a separate device
+    /// query.
     ///
     /// winit 0.30 exposes no tablet-tilt axis, so the sole driver is the
     /// `scene/pointer_tilt` RPC (§2 #2, the AI-first primary path): the value is
@@ -1851,12 +1845,12 @@ pub trait External: core::fmt::Debug {
     fn pointer_tilt(&mut self, _tilt_x: f32, _tilt_y: f32) {}
 
     /// R1430 §5.35 §5.15 — the current pointer TWIST for this widget, the W3C
-    /// `PointerEvent.twist` / Qt `QTabletEvent::rotation()` peer: the barrel
-    /// rotation of an art pen about its own axis, in DEGREES clockwise,
-    /// normalised `0.0..=360.0` (`0.0` = a plain pen / mouse, which has no barrel
-    /// to turn). Forwarded WITH position like the tilt / pressure axes, so a
-    /// twist-aware surface — a calligraphic nib whose broad edge follows the
-    /// barrel, a pattern brush whose stamp rotates — reads the live angle.
+    /// `PointerEvent.twist` / the toolkit `rotation()` peer: the barrel rotation of an art pen about its
+    /// own axis, in DEGREES clockwise, normalised `0.0..=360.0` (`0.0` = a plain pen /
+    /// mouse, which has no barrel to turn). Forwarded WITH position like the
+    /// tilt / pressure axes, so a twist-aware surface — a calligraphic nib
+    /// whose broad edge follows the barrel, a pattern brush whose stamp
+    /// rotates — reads the live angle.
     ///
     /// The sole driver is the `scene/pointer_twist` RPC (§2 #2): winit 0.30
     /// exposes no barrel-rotation axis, so the value is drivable / introspectable
@@ -1864,22 +1858,21 @@ pub trait External: core::fmt::Debug {
     fn pointer_twist(&mut self, _twist: f32) {}
 
     /// R1430 §5.35 §5.15 — the current pointer TANGENTIAL PRESSURE for this
-    /// widget, the W3C `PointerEvent.tangentialPressure` / Qt
-    /// `QTabletEvent::tangentialPressure()` peer: the airbrush finger-wheel
-    /// position, normalised `-1.0..=1.0` (`0.0` = the wheel's neutral rest, and
-    /// what a plain pen / mouse reports — it has no wheel). Forwarded WITH
-    /// position like the other axes, so an airbrush-aware surface reads the live
-    /// wheel without a device query.
+    /// widget, the W3C `PointerEvent.tangentialPressure` / the toolkit `tangentialPressure()` peer: the airbrush finger-wheel
+    /// position, normalised `-1.0..=1.0` (`0.0` = the wheel's neutral rest, and what a
+    /// plain pen / mouse reports — it has no wheel). Forwarded WITH position
+    /// like the other axes, so an airbrush-aware surface reads the live wheel
+    /// without a device query.
     ///
     /// The sole driver is the `scene/pointer_tangential_pressure` RPC (§2 #2):
     /// winit 0.30 exposes no finger-wheel axis. Default no-op.
     fn pointer_tangential_pressure(&mut self, _tangential: f32) {}
 
-    /// R1430 §5.35 §5.15 — the current pointer HEIGHT for this widget, the Qt
-    /// `QTabletEvent::z()` peer: the pen's distance ABOVE the tablet surface
-    /// while it hovers, `0.0` at contact and rising as the pen lifts (device
-    /// units, non-negative — there is no W3C `PointerEvent` equivalent, so this
-    /// is the Qt-parity axis). Forwarded WITH position like the other axes, so a
+    /// R1430 §5.35 §5.15 — the current pointer HEIGHT for this widget, the
+    /// toolkit `z()` peer: the pen's distance ABOVE the tablet surface while it
+    /// hovers, `0.0` at contact and rising as the pen lifts (device units,
+    /// non-negative — there is no W3C `PointerEvent` equivalent, so this is the
+    /// toolkit-parity axis). Forwarded WITH position like the other axes, so a
     /// hover-height-aware surface — a preview that fades as the pen lifts, a
     /// depth-cued brush cursor — reads the live distance.
     ///
@@ -1888,10 +1881,9 @@ pub trait External: core::fmt::Debug {
     fn pointer_height(&mut self, _height: f32) {}
 
     /// R1431 §5.35 §5.15 — the DEVICE that produced the current pointer stream
-    /// for this widget, the W3C `PointerEvent.pointerType` / Qt
-    /// `QTabletEvent::pointerType()` peer: [`PointerKind::Mouse`] / `Pen` /
-    /// `Eraser` / `Touch`. `Mouse` is the default — what a plain pointer reports.
-    /// The `Eraser` variant is the stylus's eraser end (a Qt distinction W3C folds
+    /// for this widget, the W3C `PointerEvent.pointerType` / the toolkit `pointerType()` peer: [`PointerKind::Mouse`] / `Pen` / `Eraser`
+    /// / `Touch`. `Mouse` is the default — what a plain pointer reports. The `Eraser`
+    /// variant is the stylus's eraser end (a toolkit distinction W3C folds
     /// into `"pen"`), so an eraser-aware surface — a paint canvas that flips to
     /// erase when the pen is inverted — reads the device without a query.
     /// Forwarded WITH position like the scalar axes.
@@ -1901,9 +1893,9 @@ pub trait External: core::fmt::Debug {
     fn pointer_kind(&mut self, _kind: PointerKind) {}
 
     /// R1432 §5.35 §5.15 — a native PINCH (magnify) gesture over this widget,
-    /// the Qt `QNativeGestureEvent` `ZoomNativeGesture` / macOS `magnify:` /
-    /// W3C wheel-with-`Ctrl` peer: a two-finger trackpad pinch a viewport reads
-    /// to zoom without a wheel or a button chord.
+    /// the toolkit native gesture event `ZoomNativeGesture` / macOS `magnify:` / W3C wheel-with-`Ctrl`
+    /// peer: a two-finger trackpad pinch a viewport reads to zoom without a
+    /// wheel or a button chord.
     ///
     /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect the
     ///   [`wheel`](Self::wheel) / [`pointer_move`](Self::pointer_move) hooks use
@@ -1921,11 +1913,11 @@ pub trait External: core::fmt::Debug {
     ///   the wheel reads), so a `Shift`-constrained or `Alt`-fine zoom is one
     ///   hook.
     ///
-    /// Return `true` to consume the gesture, `false` (default) to decline — the
-    /// same consume contract as [`wheel`](Self::wheel), though a pinch has no
-    /// `Scene::Scroll` default action to fall through to (Qt delivers a native
-    /// gesture only to the widget under the cursor, with no scroll fallback), so
-    /// declining is simply a no-op.
+    /// Return `true` to consume the gesture, `false` (default) to decline — the same
+    /// consume contract as [`wheel`](Self::wheel), though a pinch has no `Scene::Scroll`
+    /// default action to fall through to (the toolkit delivers a native
+    /// gesture only to the widget under the cursor, with no scroll fallback),
+    /// so declining is simply a no-op.
     ///
     /// The native source is the platform trackpad (winit
     /// `WindowEvent::PinchGesture`, macOS / iOS only); the AI-first source is
@@ -1944,10 +1936,9 @@ pub trait External: core::fmt::Debug {
     }
 
     /// R1433 §5.35 §5.15 — native two-finger ROTATION gesture, the
-    /// [`pinch_gesture`](Self::pinch_gesture) sibling with rotation in place of
-    /// scale. The Qt `QNativeGestureEvent` `RotateNativeGesture` / macOS
-    /// `rotateWithEvent:` peer: a trackpad twist an editor reads to rotate a
-    /// canvas / gizmo without a modifier chord.
+    /// [`pinch_gesture`](Self::pinch_gesture) sibling with rotation in place of scale. The
+    /// toolkit native gesture event `RotateNativeGesture` / macOS `rotateWithEvent:` peer: a trackpad twist an
+    /// editor reads to rotate a canvas / gizmo without a modifier chord.
     ///
     /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect the
     ///   [`pinch_gesture`](Self::pinch_gesture) / [`wheel`](Self::wheel) hooks
@@ -1956,7 +1947,7 @@ pub trait External: core::fmt::Debug {
     ///   basis).
     /// * `rotation` — the INCREMENTAL rotation delta for this event, in
     ///   **degrees** (winit's `RotationGesture::delta` / the macOS
-    ///   `rotation` / Qt's `RotateNativeGesture` value, all degrees): winit's
+    ///   `rotation` / the toolkit's `RotateNativeGesture` value, all degrees): winit's
     ///   sign convention is positive = **counter-clockwise**, negative =
     ///   clockwise, `0.0` at rest. It is a per-event increment, not an absolute
     ///   angle, so a surface accumulates it across the
@@ -1968,11 +1959,11 @@ pub trait External: core::fmt::Debug {
     ///   the pinch / wheel read), so a `Shift`-snap-to-15° or `Alt`-fine twist
     ///   is one hook.
     ///
-    /// Return `true` to consume the gesture, `false` (default) to decline — the
-    /// same consume contract as [`pinch_gesture`](Self::pinch_gesture), and like
-    /// a pinch a rotation has no default action to fall through to (Qt delivers
-    /// a native gesture only to the widget under the cursor, with no fallback),
-    /// so declining is simply a no-op.
+    /// Return `true` to consume the gesture, `false` (default) to decline — the same
+    /// consume contract as [`pinch_gesture`](Self::pinch_gesture), and like a pinch a
+    /// rotation has no default action to fall through to (the toolkit delivers
+    /// a native gesture only to the widget under the cursor, with no
+    /// fallback), so declining is simply a no-op.
     ///
     /// The native source is the platform trackpad (winit
     /// `WindowEvent::RotationGesture`, macOS / iOS only); the AI-first source is
@@ -1993,8 +1984,8 @@ pub trait External: core::fmt::Debug {
     /// R1434 §5.35 §5.15 — native N-finger PAN gesture, the
     /// [`pinch_gesture`](Self::pinch_gesture) /
     /// [`rotation_gesture`](Self::rotation_gesture) sibling with a
-    /// **two-dimensional** delta in place of a single scalar. The Qt
-    /// `QNativeGestureEvent` `PanNativeGesture` / winit
+    /// **two-dimensional** delta in place of a single scalar. The toolkit
+    /// native gesture event `PanNativeGesture` / winit
     /// `WindowEvent::PanGesture` peer: the trackpad / touch pan a map or a
     /// canvas reads to translate its content by direct manipulation.
     ///
@@ -2019,11 +2010,11 @@ pub trait External: core::fmt::Debug {
     ///   the pinch / rotation / wheel read), so a `Shift`-axis-locked or
     ///   `Alt`-fine pan is one hook.
     ///
-    /// Return `true` to consume the gesture, `false` (default) to decline — the
-    /// same consume contract as [`pinch_gesture`](Self::pinch_gesture); like
-    /// every native gesture a pan has no default action to fall through to (Qt
-    /// delivers it only to the widget under the cursor), so declining is simply
-    /// a no-op. Note this is the NATIVE gesture, not the framework's
+    /// Return `true` to consume the gesture, `false` (default) to decline — the same
+    /// consume contract as [`pinch_gesture`](Self::pinch_gesture); like every native
+    /// gesture a pan has no default action to fall through to (the toolkit
+    /// delivers it only to the widget under the cursor), so declining is
+    /// simply a no-op. Note this is the NATIVE gesture, not the framework's
     /// drag-to-pan: a held pointer drag stays on the pointer hooks.
     ///
     /// The native source is the platform trackpad / touchscreen (winit
@@ -2044,11 +2035,10 @@ pub trait External: core::fmt::Debug {
     }
 
     /// R1435 §5.35 §5.15 — native SMART-ZOOM gesture, the last member of the
-    /// native-gesture family and the one shaped unlike the others: the Qt
-    /// `QNativeGestureEvent` `SmartZoomNativeGesture` / macOS
-    /// `smartMagnifyWithEvent:` / winit `WindowEvent::DoubleTapGesture` peer — a
-    /// two-finger double tap that a document view reads to zoom the *object*
-    /// under the cursor to fit, and to restore when tapped again.
+    /// native-gesture family and the one shaped unlike the others: the toolkit
+    /// native gesture event `SmartZoomNativeGesture` / macOS `smartMagnifyWithEvent:` / winit `WindowEvent::DoubleTapGesture` peer — a two-finger
+    /// double tap that a document view reads to zoom the *object* under the
+    /// cursor to fit, and to restore when tapped again.
     ///
     /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect the
     ///   [`pinch_gesture`](Self::pinch_gesture) / [`wheel`](Self::wheel) hooks
@@ -2187,16 +2177,16 @@ pub trait External: core::fmt::Debug {
     /// so a zone the source would only reject cannot be claimed in the first
     /// place.
     ///
-    /// **The invariant this closes.** R1201 declared the VS Code / Qt ADS rule —
-    /// *an outer drop indicator is offered only when the outcome differs* — but
-    /// enforced it one layer too LATE, at RESOLVE (`resolve_drop_checked` mapped a
-    /// redundant perimeter drop to a stay-put `SnapBack`). The claim still
-    /// happened, so the outcome died while the CLAIM survived: the band previewed
-    /// nothing, did nothing, and masked the split bands of the panel beneath it —
-    /// a dead strip. A source that answers this the same way it resolves makes
-    /// "claimed but inert" unrepresentable, rather than merely unwanted.
-    /// Implementors MUST therefore answer with the SAME predicate their
-    /// `drag_release` resolves with, so claim and outcome cannot drift.
+    /// **The invariant this closes.** R1201 declared the VS Code / the toolkit
+    /// ADS rule — *an outer drop indicator is offered only when the outcome
+    /// differs* — but enforced it one layer too LATE, at RESOLVE (`resolve_drop_checked` mapped a
+    /// redundant perimeter drop to a stay-put `SnapBack`). The claim still happened,
+    /// so the outcome died while the CLAIM survived: the band previewed
+    /// nothing, did nothing, and masked the split bands of the panel beneath
+    /// it — a dead strip. A source that answers this the same way it resolves
+    /// makes "claimed but inert" unrepresentable, rather than merely unwanted.
+    /// Implementors MUST therefore answer with the SAME predicate their `drag_release`
+    /// resolves with, so claim and outcome cannot drift.
     fn accepts_outer_dock(&self, _payload: &DragPayload, _point: &DropPoint) -> bool {
         true
     }

@@ -67,9 +67,9 @@ pub enum InvokeError {
     /// R1566 §2 #7 — the path is declared, on the **read** channel: it is a
     /// slot to `query` and `intervene`, not an action to call.
     ///
-    /// Qt fuses this too. `QMetaObject::invokeMethod()` on a property name
+    /// The toolkit fuses this too. `invokeMethod()` on a property name
     /// answers `false`, and the caller is left to discover from the
-    /// meta-object that what they named was a `QMetaProperty` all along.
+    /// meta-object that what they named was a meta-property all along.
     PathIsAReadSlot,
     /// The args variant does not match the action's declared type.
     InvokeTypeMismatch,

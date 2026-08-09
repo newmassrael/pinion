@@ -5,8 +5,8 @@
 //! exactly one row at a time, the macOS/Windows file-list "selection IS the
 //! cursor" model. The selection coordinator's own doc flagged multi-select
 //! as "a later additive axis". This binding closes it: the same
-//! [`VirtualSelectExternal`] is constructed in **`Multi`** mode (the Qt
-//! `QItemSelectionModel` `ExtendedSelection` analogue — a selection *set*
+//! [`VirtualSelectExternal`] is constructed in **`Multi`** mode (the toolkit
+//! item selection model `ExtendedSelection` analogue — a selection *set*
 //! plus an `anchor` for range extension), and the keyboard grows / shrinks
 //! the set:
 //!

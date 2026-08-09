@@ -17,9 +17,8 @@
 //!
 //! # Why the derivation lives here rather than in the caller
 //!
-//! Qt's `QBoxSet` takes exactly five numbers — `LowerExtreme`,
-//! `LowerQuartile`, `Median`, `UpperQuartile`, `UpperExtreme` — and `QtCharts`
-//! computes none of them. Its own box-plot example ships a `findMedian()`
+//! The toolkit's box set takes exactly five numbers — `LowerExtreme`, `LowerQuartile`, `Median`, `UpperQuartile`, `UpperExtreme`
+//! — and `the toolkit's charting module` computes none of them. Its own box-plot example ships a `findMedian()`
 //! helper in the *example*, because the library has no quantile API at all.
 //! Three consequences follow, and this module exists to remove all three:
 //!
@@ -31,22 +30,22 @@
 //! * **Outliers are inexpressible.** Tukey's box plot stops each whisker at
 //!   the most extreme sample still *inside* the `k * IQR` fence and draws
 //!   everything beyond it as an individual point — that fence is the
-//!   defining half of the form. `QBoxSet` has five slots and no per-outlier
-//!   geometry, so a Qt box plot cannot show one. [`Distribution::outliers`]
+//!   defining half of the form. box set has five slots and no per-outlier
+//!   geometry, so a toolkit box plot cannot show one. [`Distribution::outliers`]
 //!   is a `Vec`.
 //! * **The sample count is lost**, and with it the notch. `McGill`, Tukey &
 //!   Larsen (*Variations of Box Plots*, 1978) put a waist at
 //!   `median +- 1.58 * IQR / sqrt(n)`, so two boxes whose notches do not
-//!   overlap have significantly different medians at roughly 95%. `QBoxSet`
-//!   does not carry `n`, so Qt could not offer a notch even as a paint
+//!   overlap have significantly different medians at roughly 95%. box set
+//!   does not carry `n`, so the toolkit could not offer a notch even as a paint
 //!   option. [`Distribution::notch`] answers it — and answers `None` for a
 //!   summary handed in without samples, because the statistic does not
 //!   exist there.
 //!
 //! The pre-computed path is still supported, because a consumer whose
 //! million rows were summarised in the database has five numbers and no
-//! samples: [`Distribution::from_summary`] is Qt's contract, with the
-//! ordering *checked* rather than assumed (`QBoxSet::setValue` will accept an
+//! samples: [`Distribution::from_summary`] is the toolkit's contract, with the
+//! ordering *checked* rather than assumed (`setValue` will accept an
 //! upper quartile below the lower one and paint an inverted box in silence).
 
 use std::fmt::Write as _;
@@ -217,7 +216,7 @@ fn hinge_at(sorted: &[f64], d: f64) -> f64 {
 }
 
 /// Where the five numbers of a summary sit, in ascending order — the names
-/// of Qt's `QBoxSet::ValuePositions`, so an error can say *which* landmark
+/// of the toolkit's `ValuePositions`, so an error can say *which* landmark
 /// broke the ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummaryPosition {
@@ -256,9 +255,9 @@ impl std::fmt::Display for SummaryPosition {
 /// Why a [`Distribution`] could not be built.
 ///
 /// Every arm names the input that was wrong, because these are all *caller*
-/// errors and a caller cannot fix one it cannot locate. Qt reports none of
-/// them: `QBoxSet` accepts any five doubles in any order, including NaN, and
-/// paints whatever geometry they imply.
+/// errors and a caller cannot fix one it cannot locate. The toolkit reports
+/// none of them: box set accepts any five doubles in any order, including NaN,
+/// and paints whatever geometry they imply.
 ///
 /// **No arm carries a non-finite number.** An error is a value a caller
 /// compares — and `NaN != NaN`, so an arm holding one would not equal
@@ -321,12 +320,11 @@ impl std::error::Error for DistributionError {}
 /// Where a [`Distribution`]'s numbers came from — and therefore which
 /// statistics are answerable at all.
 ///
-/// This is the part Qt has no room for. A `QBoxSet` is five doubles: nothing
-/// records whether they were computed or typed in, by what definition, or
-/// over how many samples. Carrying the provenance *in the value* is what
-/// makes [`Distribution::notch`] total — it returns `None` for a summary
-/// because the confidence interval is not merely unknown there, it does not
-/// exist.
+/// This is the part the toolkit has no room for. A box set is five doubles:
+/// nothing records whether they were computed or typed in, by what definition,
+/// or over how many samples. Carrying the provenance *in the value* is what
+/// makes [`Distribution::notch`] total — it returns `None` for a summary because the confidence
+/// interval is not merely unknown there, it does not exist.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DistributionSource {
     /// Derived from raw samples by this crate.
@@ -339,8 +337,8 @@ pub enum DistributionSource {
         /// whiskers.
         fence: f64,
     },
-    /// Handed in already summarised — Qt's `QBoxSet` contract. No sample
-    /// count, so no notch; no samples, so no outliers.
+    /// Handed in already summarised — the toolkit's box set contract. No
+    /// sample count, so no notch; no samples, so no outliers.
     Summary,
 }
 
@@ -518,8 +516,8 @@ impl Distribution {
         })
     }
 
-    /// Take five pre-computed numbers — Qt's
-    /// `QBoxSet(le, lq, m, uq, ue)` — for a consumer whose data was
+    /// Take five pre-computed numbers — the toolkit's
+    /// `box set(le, lq, m, uq, ue)` — for a consumer whose data was
     /// summarised upstream (a database `percentile_cont`, a metrics
     /// pipeline) and who therefore has no samples to hand.
     ///
@@ -529,10 +527,9 @@ impl Distribution {
     ///
     /// # Errors
     ///
-    /// [`DistributionError::NotFinite`] naming the first non-finite
-    /// landmark, or [`DistributionError::OutOfOrder`] naming the first one
-    /// that goes backwards. Qt performs neither check and paints an inverted
-    /// box in silence.
+    /// [`DistributionError::NotFinite`] naming the first non-finite landmark, or [`DistributionError::OutOfOrder`] naming the first
+    /// one that goes backwards. The toolkit performs neither check and paints
+    /// an inverted box in silence.
     pub fn from_summary(
         label: impl Into<String>,
         lower_extreme: f64,
@@ -611,11 +608,11 @@ impl Distribution {
     /// whose notches do not overlap have significantly different medians at
     /// roughly 95%.
     ///
-    /// `None` for a [`Summary`](DistributionSource::Summary): the interval is
-    /// a function of `n`, and a summary has none. That is the whole reason
-    /// [`DistributionSource`] is part of the value rather than a builder
-    /// argument — Qt's `QBoxSet` carries no `n`, so a notch could not be
-    /// offered there even as a paint option.
+    /// `None` for a [`Summary`](DistributionSource::Summary): the interval is a
+    /// function of `n`, and a summary has none. That is the whole reason [`DistributionSource`]
+    /// is part of the value rather than a builder argument — the toolkit's box
+    /// set carries no `n`, so a notch could not be offered there even as a
+    /// paint option.
     ///
     /// The interval is **not** clamped to the box. A small sample with a
     /// wide IQR yields a notch taller than the box itself, which R draws as
@@ -753,8 +750,8 @@ mod tests {
 
     /// ★ The three methods are not roundings of one answer — they give three
     /// different boxes over the same four samples, which is why naming the
-    /// method is load-bearing rather than documentation. Qt computes none of
-    /// them, so a `QBoxSet` cannot record which one built it.
+    /// method is load-bearing rather than documentation. The toolkit computes
+    /// none of them, so a box set cannot record which one built it.
     ///
     /// The counterfactual is inside the test: all three agree on the MEDIAN,
     /// so this is not "the methods differ everywhere" (which would also pass
@@ -798,8 +795,8 @@ mod tests {
     }
 
     /// ★ The whisker stops at the fence and the sample beyond it becomes an
-    /// individual outlier — the half of the box plot Qt's five-slot `QBoxSet`
-    /// cannot express at all.
+    /// individual outlier — the half of the box plot the toolkit's five-slot
+    /// box set cannot express at all.
     ///
     /// The counterfactual is the second assertion: with the fence widened the
     /// SAME sample is inside, so the classification is the fence's doing and
@@ -838,7 +835,7 @@ mod tests {
     /// ★ The notch exists only where `n` does. A derived distribution answers
     /// the McGill-Tukey-Larsen interval; a pre-computed summary answers
     /// `None`, because the statistic is a function of a sample count the
-    /// summary never carried. Qt's `QBoxSet` is always the second case.
+    /// summary never carried. The toolkit's box set is always the second case.
     #[test]
     fn r1553_the_notch_needs_the_sample_count() {
         let d = Distribution::from_samples("n", &[1.0, 2.0, 3.0, 4.0], QuantileMethod::Tukey)
@@ -858,7 +855,7 @@ mod tests {
     }
 
     /// ★ An out-of-order summary is rejected and the rejection NAMES the
-    /// landmark. `QBoxSet::setValue` accepts the same input and paints an
+    /// landmark. `setValue` accepts the same input and paints an
     /// inverted box.
     #[test]
     fn r1553_an_inverted_summary_is_rejected_by_position() {
@@ -1025,7 +1022,7 @@ mod tests {
 
     /// ★ The readout states the sample count and the method, and says
     /// "pre-computed" when it cannot — the difference between a box a reader
-    /// can weigh and a picture. Qt's charts announce nothing at all.
+    /// can weigh and a picture. The toolkit's charts announce nothing at all.
     #[test]
     fn r1553_the_readout_states_its_provenance() {
         let d = Distribution::from_samples(

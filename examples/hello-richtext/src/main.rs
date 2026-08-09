@@ -106,8 +106,8 @@ const FOX_RED: Color = Color::rgb(0xd1, 0x1d, 0x2a);
 
 // R1540 — the two diagnostic mark colours. Deliberately UNLIKE the colour of
 // the text they sit under: that is the whole point of an underline having its
-// own colour (Qt `setUnderlineColor`, SGR 58). A red curly error under
-// saddle-brown italic prose is one run, not a recolouring of the prose.
+// own colour (the toolkit `setUnderlineColor`, SGR 58). A red curly error under saddle-brown
+// italic prose is one run, not a recolouring of the prose.
 const DIAG_ERROR_RED: Color = Color::rgb(0xe1, 0x1d, 0x1d);
 const DIAG_HINT_BLUE: Color = Color::rgb(0x1d, 0x5f, 0xe1);
 

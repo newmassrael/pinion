@@ -10,14 +10,14 @@
 //! (`toggle.activate` vs `button.activate`) so listeners can
 //! discriminate at the intent layer.
 //!
-//! Figma fidelity & AI introspect (user frame, 2026-05-18):
+//! The design tool fidelity & AI introspect (user frame, 2026-05-18):
 //!
 //! * **Visual rendering**: Toggle is a pure state + value primitive;
 //!   labels and styling live in the surrounding `Scene::Text` /
 //!   `Scene::Box` nodes, which already carry the full
 //!   §5.36 R47.5/6 `TextStyle` (`font_weight` × 11 const, `font_style`
 //!   italic / oblique, `line_height`, `letter_spacing`, `text_align`,
-//!   decoration underline / strikethrough, overflow clip) Figma-
+//!   decoration underline / strikethrough, overflow clip) the design tool-
 //!   fidelity field set. Toggle imposes no rendering constraint;
 //!   applications compose the visual the same way they would for any
 //!   Scene primitive.

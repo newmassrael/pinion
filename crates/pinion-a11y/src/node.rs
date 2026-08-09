@@ -204,8 +204,8 @@ pub struct AccessNode {
     /// A cell's span is the half of a table's geometry that a position alone
     /// cannot carry: without it an assistive technology reads a merged cell as
     /// occupying one slot and every cell after it as being in the wrong place.
-    /// Qt's document tables reach no accessibility interface at all
-    /// (`QAccessibleTextInterface` has no method that reports block
+    /// The toolkit's document tables reach no accessibility interface at all
+    /// (accessible text interface has no method that reports block
     /// structure), so this is not a smaller amount of the same thing.
     pub row_span: Option<u32>,
     /// R1560 §5.40 §5.36 — WAI-ARIA `aria-colspan`: how many columns this cell
@@ -349,13 +349,12 @@ pub struct AccessNode {
     /// default action (`"Alt+F"`), lowered via
     /// `accesskit::Node::set_access_key`.
     ///
-    /// This is HTML's `accesskey` / UIA's `AccessKey` / AT-SPI's key binding —
-    /// a mnemonic — and it is deliberately **not**
-    /// `accesskit::Node::keyboard_shortcut` (UIA `AcceleratorKey`), which names
-    /// an application-wide chord such as <kbd>Ctrl</kbd>+S. The two are
-    /// different properties and a node may carry both; Qt collapses them into
-    /// one `QAccessible::Accelerator` string and loses the distinction, so an
-    /// AT cannot tell a menu-local mnemonic from a global accelerator.
+    /// This is HTML's `accesskey` / UIA's `AccessKey` / AT-SPI's key binding — a mnemonic —
+    /// and it is deliberately **not** `accesskit::Node::keyboard_shortcut` (UIA `AcceleratorKey`), which names an
+    /// application-wide chord such as <kbd>Ctrl</kbd>+S. The two are different
+    /// properties and a node may carry both; the toolkit collapses them into
+    /// one `Accelerator` string and loses the distinction, so an AT cannot tell a
+    /// menu-local mnemonic from a global accelerator.
     ///
     /// Never authored by hand: the §5.40
     /// [`enrich_access_keys_from_scene`](crate::enrich_access_keys_from_scene)
@@ -383,13 +382,12 @@ pub struct AccessNode {
     ///
     /// ## Why a declared region and not an announcement event
     ///
-    /// Qt's peer is `QAccessibleAnnouncementEvent` (Qt 6.8+, with a
-    /// `QAccessible::AnnouncementPoliteness` of `Polite` / `Assertive`), which is
-    /// **fired** rather than declared — and measured against Qt 6.11.1, *no
-    /// widget in `qtbase/src/widgets` fires one*: the only references outside
-    /// `qaccessible.{h,cpp}` are the platform adapters that deliver it and
-    /// `qtestaccessible.h`. So the capability is there and the widget set
-    /// announces nothing.
+    /// The toolkit's peer is accessible announcement event (the toolkit 6.8+,
+    /// with a `AnnouncementPoliteness` of `Polite` / `Assertive`), which is **fired** rather than declared — and
+    /// measured against the toolkit 6.11.1, *no widget in `the toolkit's widget module/src/widgets` fires one*: the
+    /// only references outside `qaccessible.{h,cpp}` are the platform adapters that deliver it
+    /// and `qtestaccessible.h`. So the capability is there and the widget set announces
+    /// nothing.
     ///
     /// Declaring it is also the only shape compatible with §2 #7. A fired event
     /// leaves no trace, so `scene/access` could not report it and a test could
@@ -403,10 +401,10 @@ pub struct AccessNode {
 /// R1609 §5.40 — how urgently an assistive technology should announce a change
 /// inside a live region (WAI-ARIA `aria-live`).
 ///
-/// Three arms where Qt's `AnnouncementPoliteness` has two, and the extra one is
-/// not padding: an event has no "off" because not firing it *is* off, while a
-/// declared region can be nested, so [`Self::Off`] is how a subtree opts out of
-/// an ancestor's liveness. Mirrors `accesskit::Live` exactly.
+/// Three arms where the toolkit's `AnnouncementPoliteness` has two, and the extra one is not
+/// padding: an event has no "off" because not firing it *is* off, while a
+/// declared region can be nested, so [`Self::Off`] is how a subtree opts out of an
+/// ancestor's liveness. Mirrors `accesskit::Live` exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccessLive {
     /// Changes here are not announced — an explicit opt-out, meaningful inside
@@ -809,7 +807,7 @@ pub struct AccessState {
     /// two-state (the WAI-ARIA `aria-checked` value table). Default `false`.
     pub mixed: bool,
     /// R1544 §5.40 — WAI-ARIA `aria-readonly`: the value is **presented but
-    /// not editable**, the axis a Model/View grid's `Qt::ItemIsEditable` flag
+    /// not editable**, the axis a Model/View grid's `ItemIsEditable` flag
     /// controls per cell.
     ///
     /// A separate axis from [`disabled`](Self::disabled), exactly as in

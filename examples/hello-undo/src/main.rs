@@ -1,6 +1,6 @@
 //! `hello-undo` — R748 §5.52 **undo / redo command stack**.
 //!
-//! A counter editor sitting on the [`UndoStack`] substrate (the `QUndoStack`
+//! A counter editor sitting on the [`UndoStack`] substrate (the undo stack
 //! peer). The `+` / `-` buttons do not mutate the counter directly: each
 //! records a reversible [`SignalEdit`] onto a shared [`UndoStack`], so the
 //! stack is the single mutation path. `Undo` / `Redo` step the cursor; both
@@ -15,7 +15,7 @@
 //! is `[Increment, Increment]` with the cursor at the top, Undo enabled /
 //! Redo disabled. `invoke "undo"` (or the button) → `1`, cursor steps back,
 //! Redo enables. A fresh `+` after an undo truncates the redo branch (the
-//! single-branch `QUndoStack` model). The whole proof is data (see
+//! single-branch undo stack model). The whole proof is data (see
 //! `tools/demos/r748_undo.py`).
 //!
 //! ## The four buttons

@@ -8,18 +8,16 @@
 //! the two and closes the deferred axis: a **selectable, keyboard-
 //! navigable, flex-viewport** virtualized list.
 //!
-//! The decisive new capability is **scroll-into-view by index**. When the
-//! user presses `End` the selection jumps to row 9 999 — a row that was
-//! never materialized — and the list must *scroll there*. A virtualized
-//! list cannot `scrollIntoView` a DOM node (there is no node); the offset
-//! is computed from the row's known slot by
-//! [`scroll_offset_to_reveal`](pinion_core::widgets::virtual_list::scroll_offset_to_reveal)
-//! (the canonical `react-window` `scrollToItem` / Qt `scrollTo` / Flutter
-//! `ensureVisible` arithmetic, landed this round). Everything else is
-//! composition: the selection model is the unchanged R746
-//! [`VirtualSelectExternal`], the windowing is the unchanged R774
-//! [`view_flex_virtual_list`], and the scroll offset is the unchanged
-//! `ScrollState`.
+//! The decisive new capability is **scroll-into-view by index**. When the user
+//! presses `End` the selection jumps to row 9 999 — a row that was never
+//! materialized — and the list must *scroll there*. A virtualized list cannot
+//! `scrollIntoView` a DOM node (there is no node); the offset is computed from the row's
+//! known slot by
+//! [`scroll_offset_to_reveal`](pinion_core::widgets::virtual_list::scroll_offset_to_reveal) (the
+//! canonical `react-window` `scrollToItem` / the toolkit `scrollTo` / another retained-mode toolkit `ensureVisible`
+//! arithmetic, landed this round). Everything else is composition: the
+//! selection model is the unchanged R746 [`VirtualSelectExternal`], the windowing is the unchanged
+//! R774 [`view_flex_virtual_list`], and the scroll offset is the unchanged `ScrollState`.
 //!
 //! ## Keyboard model (single-select, selection-follows-focus)
 //!

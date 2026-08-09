@@ -1,6 +1,6 @@
 //! R1451 §5.27 §5.51 — **header section layout**: the one place a grid's
 //! column *order*, *size*, and *visibility* are held together, keyed the way
-//! Qt's `QHeaderView` keys them.
+//! the toolkit's header view keys them.
 //!
 //! ## The composition that had no home
 //!
@@ -8,11 +8,10 @@
 //! (R990), sort (R778), filter (R783/R997), frozen panes (R859), and section
 //! order (R1450) — but each lived in its own binding or holder, and the
 //! *composition* of the first three did not exist. The consequence was not a
-//! missing convenience but a wrong answer: [`ColumnWidths`] indexes widths by
-//! **screen position**, so moving a column left the widths behind. Qt keys
-//! `sectionSize` and `isSectionHidden` by the **logical** section, which is
-//! exactly why a resized column in a Qt view keeps its width when dragged
-//! elsewhere.
+//! missing convenience but a wrong answer: [`ColumnWidths`] indexes widths by **screen
+//! position**, so moving a column left the widths behind. The toolkit keys `sectionSize`
+//! and `isSectionHidden` by the **logical** section, which is exactly why a resized column
+//! in a toolkit view keeps its width when dragged elsewhere.
 //!
 //! `ColumnLayout` is that keying:
 //!
@@ -36,7 +35,7 @@
 //! stale ([[r1449-completion-model]]: a rule that both derives and writes
 //! diverges on the path that forgot the write).
 //!
-//! ## Hidden sections keep their place (Qt's rule, not a simplification)
+//! ## Hidden sections keep their place (the toolkit's rule, not a simplification)
 //!
 //! Hiding a section does **not** remove it from the permutation — its visual
 //! index survives, so showing it again puts it back where it was rather than
@@ -53,17 +52,17 @@
 //! projection a binding feeds its headers, cells, and a11y tree through. So a
 //! grid composes the whole header state with no paint-layer change at all.
 //!
-//! ## AI clients (§2 #7 + §2 #2 — where Qt cannot follow)
+//! ## AI clients (§2 #7 + §2 #2 — where the toolkit cannot follow)
 //!
-//! Qt persists a header as `QHeaderView::saveState()`, an **opaque versioned
-//! `QByteArray`**: an agent can round-trip it but can neither read "how wide
+//! The toolkit persists a header as `saveState()`, an **opaque versioned
+//! byte array**: an agent can round-trip it but can neither read "how wide
 //! is the third column now" out of it nor author one without a live widget.
 //! Here the same state is [`ColumnLayoutState`] — typed, readable field by
 //! field through [`query`](ColumnLayout::query) (`state`, `sizes`, `hidden`,
 //! `visible_sections`, `section_position.<logical>`, `logical_index_at.<x>`,
 //! …) and writable whole through
 //! [`intervene`](ColumnLayout::intervene)`("state", …)`, the restore half.
-//! Section mutation is Qt's own vocabulary over the wire:
+//! Section mutation is the toolkit's own vocabulary over the wire:
 //! `move_section` / `swap_sections` / `resize_section` /
 //! `set_section_hidden`.
 
@@ -85,8 +84,8 @@ use crate::widgets::reorder::{ReorderAxis, ReorderModel};
 use crate::widgets::table::cycle_col_sort;
 use crate::widgets::view_order::sort_dir_str;
 
-/// R1451 §5.27 — a whole header layout as data: the peer of Qt's
-/// `QHeaderView::saveState()` / `restoreState()`, except every field is
+/// R1451 §5.27 — a whole header layout as data: the peer of the toolkit's
+/// `saveState()` / `restoreState()`, except every field is
 /// readable and authorable instead of an opaque byte blob.
 ///
 /// `order` is `order[visual] = logical`; `sizes` and `hidden` are indexed by
@@ -95,13 +94,12 @@ use crate::widgets::view_order::sort_dir_str;
 /// section's size and visibility back on the section, not on the position.
 ///
 /// `clippy::struct_excessive_bools` is intentionally suppressed, for the reason
-/// [`Modifiers`](crate::input::Modifiers) suppresses it: the field set is not
-/// ours to shape. This is the peer of a specific external serialisation, and
-/// `QHeaderViewPrivate::write()` carries `sortIndicatorShown`,
-/// `movableSections`, `clickableSections` and `cascadingResizing` as four
-/// independent booleans. Bundling them into sub-structs would make this type
-/// stop looking like the thing it is the peer of, and would put a shape between
-/// `to_json` and the flat wire object it has to produce.
+/// [`Modifiers`](crate::input::Modifiers) suppresses it: the field set is not ours to
+/// shape. This is the peer of a specific external serialisation, and `write()`
+/// carries `sortIndicatorShown`, `movableSections`, `clickableSections` and `cascadingResizing` as four independent booleans. Bundling them
+/// into sub-structs would make this type stop looking like the thing it is the
+/// peer of, and would put a shape between `to_json` and the flat wire object it has
+/// to produce.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct ColumnLayoutState {
@@ -111,90 +109,88 @@ pub struct ColumnLayoutState {
     pub sizes: Vec<u32>,
     /// Per-**logical**-section hidden flag.
     pub hidden: Vec<bool>,
-    /// R1452 — per-**logical**-section sizing policy. Qt's `saveState` carries
-    /// the modes too; a snapshot without them (one taken before R1452) decodes
-    /// as all-`Interactive`, so an older saved layout still restores.
+    /// R1452 — per-**logical**-section sizing policy. The toolkit's `saveState`
+    /// carries the modes too; a snapshot without them (one taken before R1452)
+    /// decodes as all-`Interactive`, so an older saved layout still restores.
     pub modes: Vec<SectionResizeMode>,
     /// R1491 — which section carries the sort indicator, and in which
-    /// direction: Qt's `sortIndicatorSection()` / `sortIndicatorOrder()`, which
-    /// `saveState()` carries and this snapshot did not until now. `true` is
-    /// ascending. Keyed by **logical** section like `sizes` and `hidden`, which
-    /// is the whole reason it belongs here: an indicator keyed by screen
-    /// position points at a different column the moment one is dragged.
+    /// direction: the toolkit's `sortIndicatorSection()` / `sortIndicatorOrder()`, which `saveState()` carries and this snapshot
+    /// did not until now. `true` is ascending. Keyed by **logical** section like
+    /// `sizes` and `hidden`, which is the whole reason it belongs here: an indicator
+    /// keyed by screen position points at a different column the moment one is
+    /// dragged.
     pub sort_indicator: Option<(usize, bool)>,
-    /// R1491 — whether the indicator is painted at all: Qt's
-    /// `sortIndicatorShown`. Separate from *which* section carries it, because
-    /// Qt keeps the section while a view hides the arrow, and a restore has to
-    /// put both back.
+    /// R1491 — whether the indicator is painted at all: the toolkit's `sortIndicatorShown`.
+    /// Separate from *which* section carries it, because the toolkit keeps the
+    /// section while a view hides the arrow, and a restore has to put both
+    /// back.
     pub sort_indicator_shown: bool,
-    /// R1493 — the size a section takes when nothing else determined it: Qt's
-    /// `defaultSectionSize`, which `saveState()` carries. Scalar, not per
-    /// section: it is the header's rule, and the per-section outcome is already
-    /// in [`sizes`](Self::sizes).
+    /// R1493 — the size a section takes when nothing else determined it: the
+    /// toolkit's `defaultSectionSize`, which `saveState()` carries. Scalar, not per section: it is the
+    /// header's rule, and the per-section outcome is already in
+    /// [`sizes`](Self::sizes).
     pub default_section_size: u32,
-    /// R1493 — the resize floor: Qt's `minimumSectionSize`, another field
-    /// `saveState()` carries and R1492 added to the header without adding here.
-    /// A snapshot that restored sizes but not the bounds that shape them could
-    /// hand back widths the restored header immediately re-clamps.
+    /// R1493 — the resize floor: the toolkit's `minimumSectionSize`, another field `saveState()` carries
+    /// and R1492 added to the header without adding here. A snapshot that
+    /// restored sizes but not the bounds that shape them could hand back
+    /// widths the restored header immediately re-clamps.
     pub min_section_size: u32,
-    /// R1493 — the resize ceiling: Qt's `maximumSectionSize`, the peer of
+    /// R1493 — the resize ceiling: the toolkit's `maximumSectionSize`, the peer of
     /// [`min_section_size`](Self::min_section_size).
     pub max_section_size: u32,
     /// R1494 — whether an interactive resize takes its space from the
-    /// following sections: Qt's `cascadingSectionResizes`, which `saveState()`
-    /// carries too. The cascade *in flight* is not here and should not be —
-    /// that is gesture state, not layout state, and Qt does not save it either.
+    /// following sections: the toolkit's `cascadingSectionResizes`, which `saveState()` carries too. The
+    /// cascade *in flight* is not here and should not be — that is gesture
+    /// state, not layout state, and the toolkit does not save it either.
     pub cascading_section_resizes: bool,
     /// R1498 — whether the section painted last absorbs the leftover viewport:
-    /// Qt's `stretchLastSection`, which `QHeaderViewPrivate::write()`
+    /// The toolkit's `stretchLastSection`, which `write()`
     /// serialises. It belongs here rather than in [`modes`](Self::modes)
     /// because it is keyed by position and the modes are keyed by column: a
     /// restore that replayed the modes alone would put the fill back on
     /// whichever column happened to be last when the snapshot was taken.
     pub stretch_last_section: bool,
-    /// R1496 — whether the user may drag a section to a new position: Qt's
-    /// `sectionsMovable`, which `QHeaderViewPrivate::write()` serialises as
-    /// `movableSections`. A saved layout that restored the permutation but not
-    /// the permission hands back an order the restored header would never have
-    /// let the user reach.
+    /// R1496 — whether the user may drag a section to a new position: the
+    /// toolkit's `sectionsMovable`, which `write()` serialises as `movableSections`. A saved layout that
+    /// restored the permutation but not the permission hands back an order the
+    /// restored header would never have let the user reach.
     pub sections_movable: bool,
     /// R1496 — whether a press-release on a section is reported as a click:
-    /// Qt's `sectionsClickable`, serialised as `clickableSections`. Independent
-    /// of [`sections_movable`](Self::sections_movable) in Qt and here, which is
-    /// the whole reason both are needed: a header can be sortable and pinned,
-    /// or reorderable and inert.
+    /// The toolkit's `sectionsClickable`, serialised as `clickableSections`. Independent of
+    /// [`sections_movable`](Self::sections_movable) in the toolkit and here, which is the
+    /// whole reason both are needed: a header can be sortable and pinned, or
+    /// reorderable and inert.
     pub sections_clickable: bool,
-    /// R1496 — how many rows a `ResizeToContents` consumer should measure:
-    /// Qt's `resizeContentsPrecision`, which `saveState()` carries. R1454 put
-    /// it on the header and did not put it here, so a restore replayed every
-    /// content-fitted width while dropping the sampling bound that produced
-    /// them — the same omission R1493 found for the size bounds.
+    /// R1496 — how many rows a `ResizeToContents` consumer should measure: The toolkit's `resizeContentsPrecision`,
+    /// which `saveState()` carries. R1454 put it on the header and did not put it here,
+    /// so a restore replayed every content-fitted width while dropping the
+    /// sampling bound that produced them — the same omission R1493 found for
+    /// the size bounds.
     pub resize_contents_precision: usize,
-    /// R1504 — where a section's label sits along the row: Qt's
-    /// `QHeaderView::defaultAlignment`, which `QHeaderViewPrivate::write()`
+    /// R1504 — where a section's label sits along the row: the toolkit's
+    /// `defaultAlignment`, which `write()`
     /// serialises. Scalar, not per section, because it is the header's rule —
-    /// Qt keeps the per-section exception in the **model**
+    /// the toolkit keeps the per-section exception in the **model**
     /// (`headerData(TextAlignmentRole)`) and its `saveState()` does not carry
     /// it, so neither does this. A snapshot is a header's state, and a model's
     /// answers are not the header's to replay.
     ///
-    /// Only the horizontal axis. Qt bundles both into one `Qt::Alignment`
-    /// flag word; pinion's [`TextAlign`] is the CSS split, where the cross-axis
-    /// placement is a layout property rather than a text one. The consequence
-    /// is stated rather than hidden: a Qt `AlignVCenter` has no counterpart
-    /// here and none is invented.
+    /// Only the horizontal axis. The toolkit bundles both into one `Alignment` flag
+    /// word; pinion's [`TextAlign`] is the CSS split, where the cross-axis placement
+    /// is a layout property rather than a text one. The consequence is stated
+    /// rather than hidden: a toolkit `AlignVCenter` has no counterpart here and none is
+    /// invented.
     pub default_alignment: TextAlign,
-    /// R1510 — whether a section the selection reaches is highlighted: Qt's
-    /// `QHeaderView::highlightSections`, which `QHeaderViewPrivate::write()`
-    /// serialises as `highlightSelected`.
+    /// R1510 — whether a section the selection reaches is highlighted: the
+    /// toolkit's `highlightSections`, which `write()` serialises as `highlightSelected`.
     ///
-    /// The RULE is here; the selection is not. Qt's header holds a pointer to
-    /// the view's selection model and only ever reads it, so a header snapshot
-    /// carries the permission to highlight and never the thing highlighted —
-    /// the same division R1504 drew between this header's
-    /// [`default_alignment`](Self::default_alignment) and the model's
-    /// per-section exceptions. Restoring a layout into a view whose selection
-    /// has moved on must not put the old selection back.
+    /// The RULE is here; the selection is not. The toolkit's header holds a
+    /// pointer to the view's selection model and only ever reads it, so a
+    /// header snapshot carries the permission to highlight and never the thing
+    /// highlighted — the same division R1504 drew between this header's
+    /// [`default_alignment`](Self::default_alignment) and the model's per-section exceptions.
+    /// Restoring a layout into a view whose selection has moved on must not
+    /// put the old selection back.
     pub highlight_sections: bool,
 }
 
@@ -222,11 +218,11 @@ impl ColumnLayoutState {
             "min_section_size": self.min_section_size,
             "max_section_size": self.max_section_size,
             "cascading_section_resizes": self.cascading_section_resizes,
-            // R1498 — the other layout rule Qt's `saveState()` carries. Without
+            // R1498 — the other layout rule the toolkit's `saveState()` carries. Without
             // it a restore replays sizes that were never painted: under this
             // rule the last section's stored width is not its width.
             "stretch_last_section": self.stretch_last_section,
-            // R1496 — the two permissions and the sampling bound Qt's
+            // R1496 — the two permissions and the sampling bound the toolkit's
             // `saveState()` carries and this snapshot did not. Without them a
             // restore hands back a permutation the restored header may forbid,
             // and content widths measured under a bound it no longer has.
@@ -239,8 +235,9 @@ impl ColumnLayoutState {
             // type owns its spelling, and this one had two live consumers
             // before this header wanted it.
             "default_alignment": self.default_alignment.as_wire(),
-            // R1510 — the highlight rule. Qt serialises this one and not the
-            // selection that satisfies it, because the selection is the view's.
+            // R1510 — the highlight rule. The toolkit serialises this one and
+            // not the selection that satisfies it, because the selection is
+            // the view's.
             "highlight_sections": self.highlight_sections,
         })
     }
@@ -320,30 +317,30 @@ impl ColumnLayoutState {
             default_section_size: scalar("default_section_size", DEFAULT_SECTION_SIZE)?,
             min_section_size: scalar("min_section_size", DEFAULT_MIN_COL_WIDTH)?,
             max_section_size: scalar("max_section_size", DEFAULT_MAX_COL_WIDTH)?,
-            // R1494 — same absent-is-the-older-shape rule; Qt's own default is
-            // `false`, so an older snapshot decodes to a header that does not
-            // cascade.
+            // R1494 — same absent-is-the-older-shape rule; the toolkit's own
+            // default is `false`, so an older snapshot decodes to a header that
+            // does not cascade.
             cascading_section_resizes: match value.get("cascading_section_resizes") {
                 None => false,
                 Some(v) => v.as_bool()?,
             },
-            // R1498 — absent decodes to `false`, and here Qt's default and the
-            // older header AGREE, unlike the two permissions below. Measured
-            // before the round: the pre-R1498 header left 70px of its 640-wide
-            // viewport unpainted, so "did not fill" is what an older snapshot
-            // describes as well as what Qt starts at.
+            // R1498 — absent decodes to `false`, and here the toolkit's default
+            // and the older header AGREE, unlike the two permissions below.
+            // Measured before the round: the pre-R1498 header left 70px of its
+            // 640-wide viewport unpainted, so "did not fill" is what an older
+            // snapshot describes as well as what the toolkit starts at.
             stretch_last_section: match value.get("stretch_last_section") {
                 None => false,
                 Some(v) => v.as_bool()?,
             },
-            // R1496 — absent decodes to **`true`**, which is deliberately NOT
-            // the construction default. The other absent-field fallbacks above
-            // all name a Qt default because that is also what the older header
-            // did; here the two diverge. A pre-R1496 header had no such rule
-            // and was unconditionally movable and clickable — measured over the
-            // wire before the round — so `true` is what the snapshot describes.
-            // Decoding it as Qt's `false` would silently strip interaction from
-            // every layout saved before this round.
+            // R1496 — absent decodes to **`true`**, which is deliberately NOT the
+            // construction default. The other absent-field fallbacks above all
+            // name a toolkit default because that is also what the older
+            // header did; here the two diverge. A pre-R1496 header had no such
+            // rule and was unconditionally movable and clickable — measured
+            // over the wire before the round — so `true` is what the snapshot
+            // describes. Decoding it as the toolkit's `false` would silently strip
+            // interaction from every layout saved before this round.
             sections_movable: match value.get("sections_movable") {
                 None => true,
                 Some(v) => v.as_bool()?,
@@ -360,12 +357,12 @@ impl ColumnLayoutState {
                 Some(v) => usize::try_from(v.as_u64()?).ok()?,
             },
             // R1504 — the second field whose absent-value is deliberately NOT
-            // the construction default, for the same reason `sections_movable`
-            // above is: `Start` is what a pre-R1504 header PAINTED (its labels
-            // sat at a fixed 12px inset from the section's left edge, measured
-            // on the real paint), while a fresh header starts at Qt's `Center`.
-            // Decoding absent as `Center` would move every label in every
-            // layout saved before this round.
+            // the construction default, for the same reason `sections_movable` above is: `Start`
+            // is what a pre-R1504 header PAINTED (its labels sat at a fixed
+            // 12px inset from the section's left edge, measured on the real
+            // paint), while a fresh header starts at the toolkit's `Center`.
+            // Decoding absent as `Center` would move every label in every layout
+            // saved before this round.
             //
             // An unknown spelling is a shape error like any other here, not a
             // silent `Start`: `from_wire` is the strict reader, and this
@@ -375,13 +372,13 @@ impl ColumnLayoutState {
                 None => TextAlign::Start,
                 Some(v) => TextAlign::from_wire(v.as_str()?)?,
             },
-            // R1510 — absent decodes to `false`, and here Qt's default and the
-            // older header AGREE, as they did for `stretch_last_section` and
-            // unlike the two permissions and the alignment above. Measured over
-            // the wire before the round: a pre-R1510 header painted all five
-            // labels at weight 400 whatever was selected — it had no selection
-            // input at all — so "did not highlight" is both what an older
-            // snapshot describes and where Qt starts.
+            // R1510 — absent decodes to `false`, and here the toolkit's default
+            // and the older header AGREE, as they did for `stretch_last_section` and unlike the
+            // two permissions and the alignment above. Measured over the wire
+            // before the round: a pre-R1510 header painted all five labels at
+            // weight 400 whatever was selected — it had no selection input at
+            // all — so "did not highlight" is both what an older snapshot
+            // describes and where the toolkit starts.
             highlight_sections: match value.get("highlight_sections") {
                 None => false,
                 Some(v) => v.as_bool()?,
@@ -434,19 +431,19 @@ impl Default for ColumnLayoutState {
             max_section_size: DEFAULT_MAX_COL_WIDTH,
             cascading_section_resizes: false,
             stretch_last_section: false,
-            // R1496 — Qt's defaults, and the ones a fresh `ColumnLayout` has.
-            // `from_json` decodes an ABSENT field as `true` instead; the two
-            // answer different questions — this is the state of a new header,
-            // that is the state of an old one.
+            // R1496 — the toolkit's defaults, and the ones a fresh `ColumnLayout` has.
+            // `from_json` decodes an ABSENT field as `true` instead; the two answer
+            // different questions — this is the state of a new header, that is
+            // the state of an old one.
             sections_movable: false,
             sections_clickable: false,
             resize_contents_precision: DEFAULT_CONTENTS_PRECISION,
-            // R1504 — Qt's horizontal-header default
-            // (`QHeaderViewPrivate::setDefaultValues` centres it), and the same
+            // R1504 — the toolkit's horizontal-header default
+            // (`setDefaultValues` centres it), and the same
             // new-vs-old split `sections_movable` above carries: `from_json`
             // decodes ABSENT as `Start`.
             default_alignment: DEFAULT_HEADER_ALIGNMENT,
-            // R1510 — Qt's default, and the same value `from_json` decodes an
+            // R1510 — the toolkit's default, and the same value `from_json` decodes an
             // absent field as: a header that has never been told to highlight
             // and an older header that could not are the same header.
             highlight_sections: false,
@@ -459,13 +456,12 @@ impl Default for ColumnLayoutState {
 /// [`ColumnLayout::visible_placements`], which is the only walk that applies
 /// hiding and sums the cumulative offset.
 ///
-/// `visual` is the section's index in the **full** permutation, hidden
-/// sections included (Qt's rule), so it is the identity a hit test and a drag
+/// `visual` is the section's index in the **full** permutation, hidden sections
+/// included (the toolkit's rule), so it is the identity a hit test and a drag
 /// drop-classification speak; it is deliberately *not* the position in this
-/// vector, which shifts as neighbours are hidden.
-/// `Default` is the empty placement — meaningful only as the filler a
-/// fixed-`N` consumer pads a `[SectionPlacement; N]` buffer with (a
-/// `WidgetCore::State` is `Copy`, so a binding cannot hold the `Vec`).
+/// vector, which shifts as neighbours are hidden. `Default` is the empty placement —
+/// meaningful only as the filler a fixed-`N` consumer pads a `[SectionPlacement; N]` buffer with
+/// (a `WidgetCore::State` is `Copy`, so a binding cannot hold the `Vec`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SectionPlacement {
     /// Index in the full visual permutation — the section's hit identity.
@@ -479,8 +475,8 @@ pub struct SectionPlacement {
 }
 
 /// R1493 §5.27 — the size a section takes when nothing else determined it:
-/// Qt's `QHeaderView::defaultSectionSize`, whose own default is style-derived
-/// and lands at 100 logical pixels in Qt's common styles.
+/// The toolkit's `defaultSectionSize`, whose own default is style-derived
+/// and lands at 100 logical pixels in the toolkit's common styles.
 ///
 /// It is the fourth way a section acquires a size, and the one that was
 /// missing. The other three — a stored width, a `ResizeToContents` hint, a
@@ -491,13 +487,11 @@ pub struct SectionPlacement {
 pub const DEFAULT_SECTION_SIZE: u32 = 100;
 
 /// R1454 §5.36 — how many rows a `ResizeToContents` consumer measures by
-/// default, matching Qt's `QHeaderView::resizeContentsPrecision` default.
+/// default, matching the toolkit's `resizeContentsPrecision` default.
 pub const DEFAULT_CONTENTS_PRECISION: usize = 1000;
 
-/// R1504 §5.27 — where a fresh header's labels sit: Qt centres a horizontal
-/// header (`QHeaderViewPrivate::setDefaultValues` sets
-/// `Qt::AlignCenter | Qt::AlignVCenter`), and this is the horizontal half of
-/// that.
+/// R1504 §5.27 — where a fresh header's labels sit: the toolkit centres a
+/// horizontal header (`setDefaultValues` sets `AlignCenter | AlignVCenter`), and this is the horizontal half of that.
 ///
 /// Deliberately **not** what [`ColumnLayoutState::from_json`] gives an absent
 /// field. A snapshot taken before this round describes a header whose labels
@@ -505,24 +499,24 @@ pub const DEFAULT_CONTENTS_PRECISION: usize = 1000;
 /// new-header-vs-old-snapshot split R1496 drew for `sections_movable`.
 pub const DEFAULT_HEADER_ALIGNMENT: TextAlign = TextAlign::Center;
 
-/// R1452 §5.27 — where a section's size **comes from**: Qt's
-/// `QHeaderView::setSectionResizeMode`.
+/// R1452 §5.27 — where a section's size **comes from**: the toolkit's
+/// `setSectionResizeMode`.
 ///
 /// Before this, every pinion grid had exactly one policy — a stored number —
 /// so a column could not fill the viewport and could not fit its content. The
 /// mode is per **logical** section, like the size it governs.
 ///
-/// The two questions the rest of the module asks are separate, because Qt
-/// answers them differently: [`stores_size`](Self::stores_size) decides whether
+/// The two questions the rest of the module asks are separate, because the
+/// toolkit answers them differently: [`stores_size`](Self::stores_size) decides whether
 /// the size is the stored one or a derived one, and
-/// [`user_resizable`](Self::user_resizable) decides whether a *human gesture*
-/// may change it. `Fixed` is the mode where those differ — a program may
-/// resize it, a drag may not.
+/// [`user_resizable`](Self::user_resizable) decides whether a *human gesture* may change
+/// it. `Fixed` is the mode where those differ — a program may resize it, a drag
+/// may not.
 // `Signal` snapshots its value (`Owner::snapshot`), so a mode vector held in
 // one must be serde round-trippable — the `GridSortState::SortDir` precedent.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SectionResizeMode {
-    /// The stored size, and the user may drag it. Qt's default.
+    /// The stored size, and the user may drag it. The toolkit's default.
     #[default]
     Interactive,
     /// The stored size, but only a program may change it.
@@ -536,8 +530,8 @@ pub enum SectionResizeMode {
 
 impl SectionResizeMode {
     /// Whether the size is the **stored** one rather than derived. The two
-    /// derived modes ignore what [`resize_section`](ColumnLayout::resize_section)
-    /// was last given, exactly as Qt does.
+    /// derived modes ignore what [`resize_section`](ColumnLayout::resize_section) was last
+    /// given, exactly as the toolkit does.
     #[must_use]
     pub fn stores_size(self) -> bool {
         matches!(self, Self::Interactive | Self::Fixed)
@@ -586,47 +580,47 @@ impl std::fmt::Display for SectionResizeMode {
 }
 
 /// R1510 §5.27 — how much of a section the selection covers: the two
-/// predicates `QHeaderView::paintSection` asks, as one value.
+/// predicates `paintSection` asks, as one value.
 ///
-/// Qt resolves a selection into two independent style flags — `State_On` when
-/// `sectionIntersectsSelection(logical)` and `State_Sunken` when
-/// `isSectionSelected(logical)`, the second being the whole section — and both
-/// are gated on `highlightSections`. Two predicates over the same selection
-/// cannot disagree in only one direction (a covered section always intersects),
-/// so they are three states rather than two booleans: the pair `(false, true)`
-/// does not exist, and a type that can express it invites a caller to build it.
+/// The toolkit resolves a selection into two independent style flags — `State_On`
+/// when `sectionIntersectsSelection(logical)` and `State_Sunken` when `isSectionSelected(logical)`, the second being the whole section — and both
+/// are gated on `highlightSections`. Two predicates over the same selection cannot disagree in
+/// only one direction (a covered section always intersects), so they are three
+/// states rather than two booleans: the pair `(false, true)` does not exist, and a type
+/// that can express it invites a caller to build it.
 ///
-/// **Who computes this is the point.** Qt's header does, because it has the
-/// selection model *and* the row count. [`ColumnLayout`] has neither — it is a
-/// header, not a view — so the consumer that owns the rows publishes the answer
-/// through [`set_section_selection`](ColumnLayout::set_section_selection),
-/// exactly as it already publishes the content widths Qt's header gets from
-/// `sectionSizeFromContents()`. Deriving it here would mean growing a selection
-/// model inside a column header.
+/// **Who computes this is the point.** the toolkit's header does, because it
+/// has the selection model *and* the row count. [`ColumnLayout`] has neither — it is a
+/// header, not a view — so the consumer that owns the rows publishes the
+/// answer through [`set_section_selection`](ColumnLayout::set_section_selection), exactly as it
+/// already publishes the content widths the toolkit's header gets from `sectionSizeFromContents()`.
+/// Deriving it here would mean growing a selection model inside a column
+/// header.
 // `Signal` snapshots its value, so this must round-trip serde for the same
 // reason `SectionResizeMode` above must.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SectionSelection {
-    /// The selection does not reach this section: neither Qt predicate holds.
+    /// The selection does not reach this section: neither the toolkit
+    /// predicate holds.
     #[default]
     Unselected,
-    /// Some of the section's cells are selected — Qt's
+    /// Some of the section's cells are selected — the toolkit's
     /// `sectionIntersectsSelection` alone.
     Partial,
-    /// Every one of the section's cells is selected — Qt's
+    /// Every one of the section's cells is selected — the toolkit's
     /// `isSectionSelected`, which implies the intersection as well.
     Full,
 }
 
 impl SectionSelection {
-    /// Whether the selection reaches the section at all — Qt's
+    /// Whether the selection reaches the section at all — the toolkit's
     /// `sectionIntersectsSelection`, the predicate behind `State_On`.
     #[must_use]
     pub fn intersects(self) -> bool {
         matches!(self, Self::Partial | Self::Full)
     }
 
-    /// Whether the selection covers the section entirely — Qt's
+    /// Whether the selection covers the section entirely — the toolkit's
     /// `isSectionSelected`, the predicate behind `State_Sunken`.
     #[must_use]
     pub fn covers(self) -> bool {
@@ -670,7 +664,7 @@ impl std::fmt::Display for SectionSelection {
     }
 }
 
-/// R1498 §5.27 — Qt's `stretchLastSection` override, stated once.
+/// R1498 §5.27 — the toolkit's `stretchLastSection` override, stated once.
 ///
 /// "If this value is set to true, this property will override the resize mode
 /// set on the last section in the header" — so the last painted section becomes
@@ -712,7 +706,7 @@ struct Cascade {
 }
 
 /// R1451 §5.27 §5.51 — order × size × visibility for one grid's columns,
-/// keyed as `QHeaderView` keys them. See the [module docs](self) for the
+/// keyed as header view keys them. See the [module docs](self) for the
 /// ownership split; construct one per grid and let the header `External`
 /// delegate its drag hooks to [`sections`](Self::sections).
 #[derive(Debug)]
@@ -736,31 +730,30 @@ pub struct ColumnLayout {
     /// R1452 — `content_widths[logical]`: the size hint a
     /// [`SectionResizeMode::ResizeToContents`] section takes.
     ///
-    /// Supplied by the consumer, because that is where the answer is: Qt's
-    /// `QHeaderView` does not measure either — `sectionSizeFromContents()`
-    /// asks the model / delegate for a `sizeHint`. A grid that measures its
-    /// cells feeds the measurement in here; one that knows its content
-    /// (fixed-format columns, a monospace grid) computes it directly.
+    /// Supplied by the consumer, because that is where the answer is: the
+    /// toolkit's header view does not measure either — `sectionSizeFromContents()` asks the model /
+    /// delegate for a `sizeHint`. A grid that measures its cells feeds the
+    /// measurement in here; one that knows its content (fixed-format columns,
+    /// a monospace grid) computes it directly.
     content_widths: Signal<Vec<u32>>,
     /// R1452 — the width [`SectionResizeMode::Stretch`] sections divide.
     /// `None` until a consumer publishes its viewport, in which case a
     /// `Stretch` section falls back to its stored size rather than collapsing.
     available_width: Signal<Option<u32>>,
-    /// R1491 — `(logical, ascending)`: Qt's `sortIndicatorSection()` paired
-    /// with `sortIndicatorOrder()`. Reactive, because a header repaints its
-    /// glyph and re-announces its `aria-sort` when the indicator moves.
+    /// R1491 — `(logical, ascending)`: the toolkit's `sortIndicatorSection()` paired with `sortIndicatorOrder()`. Reactive, because a
+    /// header repaints its glyph and re-announces its `aria-sort` when the indicator
+    /// moves.
     ///
     /// It lives with the permutation rather than in the sorting model for the
-    /// reason Qt puts it in `QHeaderView`: it is *header* state. It has to
-    /// survive `saveState` / `restoreState` with no model attached, and it has
-    /// to be keyed the way the sizes and hidden flags are keyed, so dragging a
-    /// section carries its arrow along instead of leaving it on the position.
-    /// What is sorted is still the model's answer — a consumer connects the two
-    /// exactly as Qt connects `sortIndicatorChanged` to `sortByColumn`.
+    /// reason the toolkit puts it in header view: it is *header* state. It has
+    /// to survive `saveState` / `restoreState` with no model attached, and it has to be keyed the
+    /// way the sizes and hidden flags are keyed, so dragging a section carries
+    /// its arrow along instead of leaving it on the position. What is sorted
+    /// is still the model's answer — a consumer connects the two exactly as
+    /// the toolkit connects `sortIndicatorChanged` to `sortByColumn`.
     sort_indicator: Signal<Option<(usize, bool)>>,
-    /// R1491 — Qt's `sortIndicatorShown`. Default `false`, as in Qt, where the
-    /// view turns it on (`QTableView::setSortingEnabled`) rather than the
-    /// header assuming it.
+    /// R1491 — the toolkit's `sortIndicatorShown`. Default `false`, as in the toolkit, where the
+    /// view turns it on (`setSortingEnabled`) rather than the header assuming it.
     sort_indicator_shown: Signal<bool>,
     /// R1454 — how many rows a `ResizeToContents` consumer should measure.
     ///
@@ -771,11 +764,11 @@ pub struct ColumnLayout {
     /// view could not reach the hints at all. The demo caught it: the knob read
     /// back its new value and every content width stayed put.
     contents_precision: Signal<usize>,
-    /// R1494 — Qt's `cascadingSectionResizes`. Default `false`, as in Qt.
+    /// R1494 — the toolkit's `cascadingSectionResizes`. Default `false`, as in the toolkit.
     cascading: Signal<bool>,
-    /// R1498 — Qt's `stretchLastSection`: whether the section painted **last**
-    /// takes whatever the viewport has left over. Default `false`, as in Qt,
-    /// where the view opts in (`QTreeView`'s header does; `QTableView`'s does
+    /// R1498 — the toolkit's `stretchLastSection`: whether the section painted **last** takes
+    /// whatever the viewport has left over. Default `false`, as in the toolkit,
+    /// where the view opts in (tree view's header does; table view's does
     /// not).
     ///
     /// Keyed by *position*, which is the whole reason it is not
@@ -786,48 +779,45 @@ pub struct ColumnLayout {
     /// A mode belongs to a column and travels with it; this rule belongs to the
     /// header and stays where it is.
     stretch_last: Signal<bool>,
-    /// R1504 — Qt's `defaultAlignment`: where a section's label sits when the
-    /// model has no opinion. Reactive, because it is painted — the mistake
+    /// R1504 — the toolkit's `defaultAlignment`: where a section's label sits when the model
+    /// has no opinion. Reactive, because it is painted — the mistake
     /// [`contents_precision`](Self::contents_precision) documents above.
     default_alignment: Signal<TextAlign>,
     /// R1504 — the per-section exceptions, `None` meaning "take the header's
-    /// rule". Qt keeps these in the **model**
-    /// (`headerData(section, orientation, Qt::TextAlignmentRole)`) rather than
-    /// the header, and its `saveState()` does not carry them; this vector is
-    /// the same separation, which is why it is a field here and not a member of
-    /// [`ColumnLayoutState`].
+    /// rule". The toolkit keeps these in the **model** (`headerData(section, orientation, TextAlignmentRole)`) rather than the
+    /// header, and its `saveState()` does not carry them; this vector is the same
+    /// separation, which is why it is a field here and not a member of [`ColumnLayoutState`].
     ///
     /// Keyed by **logical** section, like `sizes` and `hidden`: an exception
     /// belongs to a column and has to travel with it when the column is
     /// dragged.
     section_alignments: Signal<Vec<Option<TextAlign>>>,
-    /// R1510 — Qt's `highlightSections`. Default `false`, as in Qt. Reactive
+    /// R1510 — the toolkit's `highlightSections`. Default `false`, as in the toolkit. Reactive
     /// because it is painted: turning it off has to un-bold every label that
     /// was bold, which is only possible if the write reaches the view.
     highlight: Signal<bool>,
     /// R1510 — `selection[logical]`: how much of each section the selection
     /// covers, as published by the consumer.
     ///
-    /// Supplied rather than derived, for the reason [`SectionSelection`]
-    /// documents: Qt's header reads a selection model this widget does not have,
-    /// and a header that grew one would be a view. The peer of
-    /// [`content_widths`](Self::content_widths) — both are answers only the
-    /// consumer can give, and both are inputs to what gets painted.
+    /// Supplied rather than derived, for the reason [`SectionSelection`] documents: the
+    /// toolkit's header reads a selection model this widget does not have, and
+    /// a header that grew one would be a view. The peer of
+    /// [`content_widths`](Self::content_widths) — both are answers only the consumer can
+    /// give, and both are inputs to what gets painted.
     ///
     /// Keyed by **logical** section, like `sizes` and the alignment exceptions:
     /// a selection is a fact about a *column*, so dragging that column to a new
     /// position has to carry its highlight along.
     ///
-    /// Not part of [`ColumnLayoutState`], for the same reason the alignment
-    /// exceptions are not: Qt's `saveState()` carries the rule and never the
-    /// selection.
+    /// Not part of [`ColumnLayoutState`], for the same reason the alignment exceptions are
+    /// not: the toolkit's `saveState()` carries the rule and never the selection.
     selection: Signal<Vec<SectionSelection>>,
     /// R1494 — the cascade currently in flight, if any.
     ///
     /// A cascade has to be *undoable* or it is not a drag: pulling a section
     /// wide and back must leave the row where it started, which means
-    /// remembering what each follower was before it paid. Qt keeps the same
-    /// memory (`cascadingSectionSize`) and clears it when the drag ends.
+    /// remembering what each follower was before it paid. The toolkit keeps
+    /// the same memory (`cascadingSectionSize`) and clears it when the drag ends.
     ///
     /// pinion has no drag session on this widget (the pointer grabber is a
     /// different binding — see [`interactive_resize_section`](ColumnLayout::interactive_resize_section)),
@@ -835,8 +825,8 @@ pub struct ColumnLayout {
     /// gesture and drops the old memory, as does any write that invalidates the
     /// sizes it remembers.
     cascade: Signal<Option<Cascade>>,
-    /// R1493 — Qt's `defaultSectionSize`: the size a section takes when
-    /// nothing else determined it.
+    /// R1493 — the toolkit's `defaultSectionSize`: the size a section takes when nothing else
+    /// determined it.
     ///
     /// Stored raw and clamped **at read**
     /// ([`default_section_size`](Self::default_section_size)) rather than on
@@ -847,9 +837,9 @@ pub struct ColumnLayout {
     /// written: the bounds live in the shared width model, which does not know
     /// this layout exists.
     default_size: Signal<u32>,
-    /// R1496 — Qt's `sectionsMovable`. Default `false`, as in Qt, where the
-    /// view opts in (`QTableView` does not; a reorderable header is a
-    /// deliberate affordance, not the baseline).
+    /// R1496 — the toolkit's `sectionsMovable`. Default `false`, as in the toolkit, where the
+    /// view opts in (table view does not; a reorderable header is a deliberate
+    /// affordance, not the baseline).
     ///
     /// Reactive because a header that stops being movable paints differently —
     /// the readout naming the rule, and anything that dresses a draggable
@@ -857,11 +847,11 @@ pub struct ColumnLayout {
     /// view that reads it (the R1454 lesson: a rule read inside a view fn is
     /// an input to a painted result, not "policy").
     movable: Signal<bool>,
-    /// R1496 — Qt's `sectionsClickable`. Default `false`, as in Qt, where
-    /// `QTableView::setSortingEnabled(true)` is what turns it on.
+    /// R1496 — the toolkit's `sectionsClickable`. Default `false`, as in the toolkit, where `setSortingEnabled(true)` is
+    /// what turns it on.
     clickable: Signal<bool>,
-    /// R1496 — the **visual** section a `PointerDown` last landed on, held
-    /// until the matching release so the click can test Qt's rule that a press
+    /// R1496 — the **visual** section a `PointerDown` last landed on, held until the
+    /// matching release so the click can test the toolkit's rule that a press
     /// and its release must be on the same section.
     ///
     /// The [`ReorderModel`]'s own `pressed` cannot answer this: the drag
@@ -893,7 +883,7 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("section_sizes", "json"),
     SchemaField::new("resize_modes", "json"),
     SchemaField::new("effective_resize_modes", "json"),
-    // The header-wide rules Qt's `saveState()` carries.
+    // The header-wide rules the toolkit's `saveState()` carries.
     SchemaField::new("default_section_size", "int"),
     SchemaField::new("min_section_size", "int"),
     SchemaField::new("max_section_size", "int"),
@@ -902,11 +892,11 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("sections_movable", "boolean"),
     SchemaField::new("sections_clickable", "boolean"),
     SchemaField::new("resize_contents_precision", "int"),
-    // R1504 — the label rule. Qt's `defaultAlignment` is a header scalar its
-    // `saveState()` carries; the per-section exception below is the model's and
-    // is not saved, which is why only this one sits among the saved rules.
+    // R1504 — the label rule. The toolkit's `defaultAlignment` is a header scalar its `saveState()`
+    // carries; the per-section exception below is the model's and is not
+    // saved, which is why only this one sits among the saved rules.
     SchemaField::new("default_alignment", "string"),
-    // R1510 — the highlight rule, the last field Qt's `saveState()` carries
+    // R1510 — the highlight rule, the last field the toolkit's `saveState()` carries
     // that this header did not have.
     SchemaField::new("highlight_sections", "boolean"),
     SchemaField::new("sort_indicator", "string"),
@@ -1015,7 +1005,7 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
         "int",
         const { &[SchemaArg::index("x", "visible_total")] },
     ),
-    // Qt's section vocabulary, as `invoke` channels.
+    // The toolkit's section vocabulary, as `invoke` channels.
     SchemaField::action("swap_sections", "string"),
     SchemaField::action("resize_section", "string"),
     SchemaField::action("interactive_resize_section", "string"),
@@ -1071,12 +1061,13 @@ impl ColumnLayout {
             default_size: Signal::new(DEFAULT_SECTION_SIZE),
             cascading: Signal::new(false),
             stretch_last: Signal::new(false),
-            // R1504 — Qt's horizontal default, and no exceptions: a fresh
-            // header has a rule and the model has said nothing.
+            // R1504 — the toolkit's horizontal default, and no exceptions: a
+            // fresh header has a rule and the model has said nothing.
             default_alignment: Signal::new(DEFAULT_HEADER_ALIGNMENT),
             section_alignments: Signal::new(vec![None; count]),
-            // R1510 — Qt's default, and an empty selection: a fresh header may
-            // not highlight, and nothing has been selected to highlight.
+            // R1510 — the toolkit's default, and an empty selection: a fresh
+            // header may not highlight, and nothing has been selected to
+            // highlight.
             highlight: Signal::new(false),
             selection: Signal::new(vec![SectionSelection::Unselected; count]),
             cascade: Signal::new(None),
@@ -1118,31 +1109,31 @@ impl ColumnLayout {
         self.sections.order()
     }
 
-    /// Where logical section `logical` currently sits — Qt's
+    /// Where logical section `logical` currently sits — the toolkit's
     /// `visualIndex()`. Counts hidden sections, which keep their place.
     #[must_use]
     pub fn visual_index(&self, logical: usize) -> Option<usize> {
         self.sections.order().iter().position(|&l| l == logical)
     }
 
-    /// Which logical section sits at visual position `visual` — Qt's
+    /// Which logical section sits at visual position `visual` — the toolkit's
     /// `logicalIndex()`.
     #[must_use]
     pub fn logical_index(&self, visual: usize) -> Option<usize> {
         self.sections.order().get(visual).copied()
     }
 
-    /// Move the section at visual `from` to visual `to` — Qt's
+    /// Move the section at visual `from` to visual `to` — the toolkit's
     /// `moveSection()`. Sizes and hidden flags are keyed by logical section,
     /// so they travel with it and nothing else has to be updated.
     pub fn move_section(&self, from: usize, to: usize) {
         self.sections.move_section(from, to);
     }
 
-    /// Exchange the sections at two visual positions — Qt's `swapSections()`.
-    /// Distinct from [`move_section`](Self::move_section): a swap displaces
-    /// exactly one other section, a move shifts every section in between.
-    /// Out-of-range indices are ignored.
+    /// Exchange the sections at two visual positions — the toolkit's `swapSections()`.
+    /// Distinct from [`move_section`](Self::move_section): a swap displaces exactly one
+    /// other section, a move shifts every section in between. Out-of-range
+    /// indices are ignored.
     pub fn swap_sections(&self, a: usize, b: usize) {
         if a >= self.count || b >= self.count || a == b {
             return;
@@ -1156,9 +1147,9 @@ impl ColumnLayout {
     }
 
     /// R1491 — which **logical** section carries the sort indicator and in
-    /// which direction (`true` ascending) — Qt's `sortIndicatorSection()` and
-    /// `sortIndicatorOrder()` in one read, because the two are never useful
-    /// apart and a pair cannot go out of step with itself.
+    /// which direction (`true` ascending) — the toolkit's `sortIndicatorSection()` and `sortIndicatorOrder()` in one
+    /// read, because the two are never useful apart and a pair cannot go out
+    /// of step with itself.
     ///
     /// Pair it with
     /// [`col_sort_dir`](crate::widgets::grid_sort::col_sort_dir) to ask the
@@ -1169,9 +1160,9 @@ impl ColumnLayout {
         self.sort_indicator.get()
     }
 
-    /// R1491 — put the indicator on a section — Qt's `setSortIndicator()`.
-    /// Out of range is a no-op, so a stale column index cannot move the arrow
-    /// onto a section that does not exist.
+    /// R1491 — put the indicator on a section — the toolkit's `setSortIndicator()`. Out of
+    /// range is a no-op, so a stale column index cannot move the arrow onto a
+    /// section that does not exist.
     pub fn set_sort_indicator(&self, logical: usize, ascending: bool) {
         if logical >= self.count {
             return;
@@ -1180,9 +1171,8 @@ impl ColumnLayout {
     }
 
     /// R1491 — take the indicator off every section, leaving the header
-    /// unsorted. Qt spells this `setSortIndicator(-1, …)`; a `usize` section
-    /// cannot carry that sentinel, and a named method says what the sentinel
-    /// meant.
+    /// unsorted. The toolkit spells this `setSortIndicator(-1, …)`; a `usize` section cannot carry that
+    /// sentinel, and a named method says what the sentinel meant.
     pub fn clear_sort_indicator(&self) {
         self.sort_indicator.set(None);
     }
@@ -1199,44 +1189,43 @@ impl ColumnLayout {
         ));
     }
 
-    /// R1491 — whether the indicator is painted — Qt's `isSortIndicatorShown()`.
+    /// R1491 — whether the indicator is painted — the toolkit's `isSortIndicatorShown()`.
     #[must_use]
     pub fn is_sort_indicator_shown(&self) -> bool {
         self.sort_indicator_shown.get()
     }
 
-    /// R1491 — Qt's `setSortIndicatorShown()`. Turning it off keeps *which*
-    /// section is sorted, exactly as Qt does: the arrow stops being drawn, the
+    /// R1491 — the toolkit's `setSortIndicatorShown()`. Turning it off keeps *which* section is
+    /// sorted, exactly as the toolkit does: the arrow stops being drawn, the
     /// sort does not stop being the sort.
     pub fn set_sort_indicator_shown(&self, shown: bool) {
         self.sort_indicator_shown.set(shown);
     }
 
-    /// R1496 — whether the user may drag a section to a new position — Qt's
-    /// `QHeaderView::sectionsMovable()`.
+    /// R1496 — whether the user may drag a section to a new position — the
+    /// toolkit's `sectionsMovable()`.
     #[must_use]
     pub fn sections_movable(&self) -> bool {
         self.movable.get()
     }
 
-    /// R1496 — Qt's `setSectionsMovable()`. Governs the **interactive** move
-    /// only: [`move_section`](Self::move_section) and `swap_sections` keep
-    /// working, exactly as Qt's `moveSection()` does on a header the user
-    /// cannot drag. The split is the one R1494 already drew between
-    /// `resize_section` and `interactive_resize_section` — a permission is
-    /// about the gesture, not about the model.
+    /// R1496 — the toolkit's `setSectionsMovable()`. Governs the **interactive** move only:
+    /// [`move_section`](Self::move_section) and `swap_sections` keep working, exactly as the
+    /// toolkit's `moveSection()` does on a header the user cannot drag. The split is the
+    /// one R1494 already drew between `resize_section` and `interactive_resize_section` — a permission is about the
+    /// gesture, not about the model.
     pub fn set_sections_movable(&self, movable: bool) {
         self.movable.set(movable);
     }
 
     /// R1496 — whether a press-release on a section is reported as a click —
-    /// Qt's `QHeaderView::sectionsClickable()`.
+    /// the toolkit's `sectionsClickable()`.
     #[must_use]
     pub fn sections_clickable(&self) -> bool {
         self.clickable.get()
     }
 
-    /// R1496 — Qt's `setSectionsClickable()`. Independent of
+    /// R1496 — the toolkit's `setSectionsClickable()`. Independent of
     /// [`set_sections_movable`](Self::set_sections_movable): a header may be
     /// clickable and pinned (the common sortable table) or movable and inert.
     pub fn set_sections_clickable(&self, clickable: bool) {
@@ -1248,10 +1237,10 @@ impl ColumnLayout {
     /// `begin_drag` should call.
     ///
     /// `None` on a header that is not movable, which is what makes the refusal
-    /// real: with no payload the router opens no session, so nothing previews a
-    /// drop and nothing commits one. The press is still recorded, so the
-    /// release is still a click — Qt keeps those two independent and so does
-    /// this.
+    /// real: with no payload the router opens no session, so nothing previews
+    /// a drop and nothing commits one. The press is still recorded, so the
+    /// release is still a click — the toolkit keeps those two independent and
+    /// so does this.
     #[must_use]
     pub fn begin_section_drag(&self, kind: Cow<'static, str>) -> Option<DragPayload> {
         if !self.sections_movable() {
@@ -1264,14 +1253,14 @@ impl ColumnLayout {
     /// which also reported the **click**; that half was wrong twice over.
     ///
     /// It re-derived a determination the framework already owns. R794 §5.51 is
-    /// the click-vs-drag SSOT — it withholds the trailing `PointerUp` after a
-    /// drag that travelled past `DRAG_CLICK_THRESHOLD_PX`, and says in as many
-    /// words that no drag source re-derives this per binding. R1491 re-derived
-    /// it, from the permutation, and got a different answer: a section dragged
-    /// across the strip and dropped back into its own gap leaves the
-    /// permutation untouched, so that rule called it a click and sorted the
-    /// column the user had just decided not to move. Qt calls it a move, by the
-    /// same `startDragDistance` the router already applies here.
+    /// the click-vs-drag SSOT — it withholds the trailing `PointerUp` after a drag
+    /// that travelled past `DRAG_CLICK_THRESHOLD_PX`, and says in as many words that no drag source
+    /// re-derives this per binding. R1491 re-derived it, from the permutation,
+    /// and got a different answer: a section dragged across the strip and
+    /// dropped back into its own gap leaves the permutation untouched, so that
+    /// rule called it a click and sorted the column the user had just decided
+    /// not to move. The toolkit calls it a move, by the same `startDragDistance` the router
+    /// already applies here.
     ///
     /// So the click now arrives where every other draggable-and-clickable
     /// widget in this workspace takes it — the trailing `PointerUp`, decoded in
@@ -1312,23 +1301,23 @@ impl ColumnLayout {
 
     /// R1496 — decode a `send` payload's pointer edge and report a **click**.
     ///
-    /// Returns the **logical** section a press-release landed on, or `None`.
-    /// The caller decides what a click means — this type will not cycle its own
-    /// indicator, because what is sorted is the model's answer and a header can
-    /// be clickable without a sort attached (Qt splits it the same way, through
-    /// `sortIndicatorChanged`).
+    /// Returns the **logical** section a press-release landed on, or `None`. The
+    /// caller decides what a click means — this type will not cycle its own
+    /// indicator, because what is sorted is the model's answer and a header
+    /// can be clickable without a sort attached (the toolkit splits it the
+    /// same way, through `sortIndicatorChanged`).
     ///
-    /// Two rules, both Qt's:
+    /// Two rules, both the toolkit's:
     ///
     /// - the press and the release must be on the **same** section, so a press
     ///   that slid onto a neighbour activates nothing;
     /// - a moved drag is not a click — which needs no code here, because R794
     ///   does not dispatch the release at all in that case.
     ///
-    /// `PointerUp` only, not the broader [`is_activation_event`](crate::input::is_activation_event):
-    /// the header's click is a press-release *pair*, and the pair is what the
+    /// `PointerUp` only, not the broader [`is_activation_event`](crate::input::is_activation_event): the
+    /// header's click is a press-release *pair*, and the pair is what the
     /// same-section rule tests. A keyboard activation has no press to pair
-    /// with, and Qt has no keyboard peer of `sectionClicked` to copy.
+    /// with, and the toolkit has no keyboard peer of `sectionClicked` to copy.
     #[must_use]
     pub fn handle_send(&self, payload: &str) -> Option<usize> {
         let (sub, event, _mods) = split_send_payload(payload)?;
@@ -1364,25 +1353,25 @@ impl ColumnLayout {
         self.logical_index(visual)
     }
 
-    /// R1492 — the smallest any section may be — Qt's
-    /// `QHeaderView::minimumSectionSize()`.
+    /// R1492 — the smallest any section may be — the toolkit's
+    /// `minimumSectionSize()`.
     ///
-    /// Header-level in Qt and delegated to the shared width model here, because
-    /// that is where the clamp lives and a bound with two homes is a bound two
-    /// paths can disagree about.
+    /// Header-level in the toolkit and delegated to the shared width model
+    /// here, because that is where the clamp lives and a bound with two homes
+    /// is a bound two paths can disagree about.
     #[must_use]
     pub fn minimum_section_size(&self) -> u32 {
         self.sizes.min_width()
     }
 
-    /// R1492 — Qt's `setMinimumSectionSize()`. Every stored width is re-clamped,
-    /// and a floor above the current ceiling carries the ceiling with it.
+    /// R1492 — the toolkit's `setMinimumSectionSize()`. Every stored width is re-clamped, and a
+    /// floor above the current ceiling carries the ceiling with it.
     pub fn set_minimum_section_size(&self, size: u32) {
         self.sizes.set_min_width(size);
     }
 
-    /// R1492 — the largest any section may be — Qt's
-    /// `QHeaderView::maximumSectionSize()`.
+    /// R1492 — the largest any section may be — the toolkit's
+    /// `maximumSectionSize()`.
     /// [`DEFAULT_MAX_COL_WIDTH`] means unbounded, which is what every pinion
     /// header was before this. (R1493 brought the constant into scope here, so
     /// the explicit link target it used to need is now redundant.)
@@ -1391,22 +1380,22 @@ impl ColumnLayout {
         self.sizes.max_width()
     }
 
-    /// R1492 — Qt's `setMaximumSectionSize()`. Applies to **every** way a
-    /// section gets a size: a stored width, a content hint, and a stretch
-    /// share. A ceiling that only one of the three honoured would be worse than
-    /// none, because the row would fill differently depending on the mode.
+    /// R1492 — the toolkit's `setMaximumSectionSize()`. Applies to **every** way a section gets a
+    /// size: a stored width, a content hint, and a stretch share. A ceiling
+    /// that only one of the three honoured would be worse than none, because
+    /// the row would fill differently depending on the mode.
     pub fn set_maximum_section_size(&self, size: u32) {
         self.sizes.set_max_width(size);
     }
 
-    /// R1452 — where logical section `logical` takes its size from — Qt's
+    /// R1452 — where logical section `logical` takes its size from — the toolkit's
     /// `sectionResizeMode()`.
     #[must_use]
     pub fn resize_mode(&self, logical: usize) -> SectionResizeMode {
         self.modes.get().get(logical).copied().unwrap_or_default()
     }
 
-    /// R1452 — set one section's sizing policy — Qt's
+    /// R1452 — set one section's sizing policy — the toolkit's
     /// `setSectionResizeMode(logicalIndex, mode)`. Out of range is a no-op.
     pub fn set_resize_mode(&self, logical: usize, mode: SectionResizeMode) {
         if logical >= self.count {
@@ -1421,7 +1410,7 @@ impl ColumnLayout {
         });
     }
 
-    /// R1452 — set every section's policy at once — Qt's
+    /// R1452 — set every section's policy at once — the toolkit's
     /// `setSectionResizeMode(mode)`.
     pub fn set_all_resize_modes(&self, mode: SectionResizeMode) {
         self.modes.set(vec![mode; self.count]);
@@ -1435,8 +1424,8 @@ impl ColumnLayout {
     }
 
     /// R1454 §5.36 — how many rows a consumer should measure when it computes
-    /// a [`ResizeToContents`](SectionResizeMode::ResizeToContents) hint: Qt's
-    /// `QHeaderView::resizeContentsPrecision`, default `1000` like Qt's.
+    /// a [`ResizeToContents`](SectionResizeMode::ResizeToContents) hint: the toolkit's `resizeContentsPrecision`,
+    /// default `1000` like the toolkit's.
     ///
     /// Not a nicety — a bound the measurement demands. A shape **miss costs
     /// 18.5 us** against a **118 ns** cache hit
@@ -1447,18 +1436,18 @@ impl ColumnLayout {
     /// pays **5.6 ms per 300 strings** — a third of a 60fps frame, forever.
     /// Sampling a bounded prefix keeps the working set warm.
     ///
-    /// It lives here, on the header, because that is where Qt puts it and
-    /// because it is then readable and writable as data (`query` /
-    /// `intervene`) rather than a constant buried in a binding. The *consumer*
-    /// honours it, exactly as it supplies the hints themselves — and reads it
-    /// inside its view fn, which is why it subscribes.
+    /// It lives here, on the header, because that is where the toolkit puts it
+    /// and because it is then readable and writable as data (`query` / `intervene`) rather
+    /// than a constant buried in a binding. The *consumer* honours it, exactly
+    /// as it supplies the hints themselves — and reads it inside its view fn,
+    /// which is why it subscribes.
     ///
-    /// R1496 — and why it is saved. R1454 held that it "decides what a consumer
-    /// MEASURES, not what the header IS" and kept it out of
-    /// [`save_state`](Self::save_state); Qt serialises it
-    /// (`QHeaderViewPrivate::write()`), and the argument that made it a
-    /// `Signal` is the argument that saves it — a bound that is an input to a
-    /// painted width belongs with the widths it produced.
+    /// R1496 — and why it is saved. R1454 held that it "decides what a
+    /// consumer MEASURES, not what the header IS" and kept it out of
+    /// [`save_state`](Self::save_state); the toolkit serialises it (`write()`), and the
+    /// argument that made it a `Signal` is the argument that saves it — a bound
+    /// that is an input to a painted width belongs with the widths it
+    /// produced.
     #[must_use]
     pub fn resize_contents_precision(&self) -> usize {
         self.contents_precision.get()
@@ -1472,10 +1461,10 @@ impl ColumnLayout {
         self.contents_precision.set(rows.max(1));
     }
 
-    /// R1452 — publish the per-**logical**-section content size hints (Qt's
-    /// delegate `sizeHint`). A vector of the wrong length is ignored, because a
-    /// partially-applied hint set would size some columns to another grid's
-    /// content.
+    /// R1452 — publish the per-**logical**-section content size hints (the
+    /// toolkit's delegate `sizeHint`). A vector of the wrong length is ignored,
+    /// because a partially-applied hint set would size some columns to another
+    /// grid's content.
     pub fn set_content_widths(&self, widths: Vec<u32>) {
         if widths.len() == self.count {
             self.content_widths.set(widths);
@@ -1494,16 +1483,16 @@ impl ColumnLayout {
         self.available_width.set(width);
     }
 
-    /// Size of logical section `logical` — Qt's `sectionSize()`, resolved
-    /// through the section's [`resize_mode`](Self::resize_mode). `0` for an
-    /// unknown section (Qt's answer too).
+    /// Size of logical section `logical` — the toolkit's `sectionSize()`, resolved through the
+    /// section's [`resize_mode`](Self::resize_mode). `0` for an unknown section (the
+    /// toolkit's answer too).
     ///
     /// A hidden section reports the size it will have when shown rather than
-    /// Qt's `0` — [`section_position`](Self::section_position) is the slot that
-    /// says "painted nowhere", so reporting the size here is strictly more
-    /// information and no ambiguity. A hidden `Stretch` section reports its
-    /// stored size: it takes part in no division, because there is no share to
-    /// take when it occupies no width.
+    /// the toolkit's `0` — [`section_position`](Self::section_position) is the slot that says
+    /// "painted nowhere", so reporting the size here is strictly more
+    /// information and no ambiguity. A hidden `Stretch` section reports its stored
+    /// size: it takes part in no division, because there is no share to take
+    /// when it occupies no width.
     #[must_use]
     pub fn section_size(&self, logical: usize) -> u32 {
         if logical >= self.count {
@@ -1529,9 +1518,10 @@ impl ColumnLayout {
     /// never told a number the grid is not painting"). The single-section write
     /// path kept that promise; the plural read path did not.
     ///
-    /// Qt keeps one number per section and re-derives on relayout, so it needs
-    /// no such pair; pinion keeps the size you asked for across a mode switch,
-    /// and having kept two numbers must say which one it is handing you.
+    /// The toolkit keeps one number per section and re-derives on relayout, so
+    /// it needs no such pair; pinion keeps the size you asked for across a
+    /// mode switch, and having kept two numbers must say which one it is
+    /// handing you.
     ///
     /// Hidden sections are painted nowhere, so they report the size they bring
     /// to the division — the same fallback the singular has always used.
@@ -1562,17 +1552,17 @@ impl ColumnLayout {
         }
     }
 
-    /// Resize logical section `logical` — Qt's `resizeSection()`. Returns the
-    /// applied size after the width model's minimum-width clamp (`0` when the
-    /// section does not exist), so an AI client learns the outcome in the same
+    /// Resize logical section `logical` — the toolkit's `resizeSection()`. Returns the applied
+    /// size after the width model's minimum-width clamp (`0` when the section
+    /// does not exist), so an AI client learns the outcome in the same
     /// round-trip it asked for the change.
     ///
-    /// R1452 — writes the stored size whatever the mode, but a `Stretch` or
-    /// `ResizeToContents` section keeps deriving its size, so the write is only
-    /// visible after a switch back. That is Qt (`resizeSection` "has no
-    /// effect" outside `Interactive` / `Fixed`), plus the stored value kept
-    /// rather than discarded; the return is the size the section actually has,
-    /// so a client is never told a number the grid is not painting.
+    /// R1452 — writes the stored size whatever the mode, but a `Stretch` or `ResizeToContents`
+    /// section keeps deriving its size, so the write is only visible after a
+    /// switch back. That is the toolkit (`resizeSection` "has no effect" outside `Interactive` /
+    /// `Fixed`), plus the stored value kept rather than discarded; the return is
+    /// the size the section actually has, so a client is never told a number
+    /// the grid is not painting.
     pub fn resize_section(&self, logical: usize, size: u32) -> u32 {
         if logical >= self.count {
             return 0;
@@ -1587,7 +1577,7 @@ impl ColumnLayout {
     }
 
     /// R1493 — the size a section takes when nothing else determined it —
-    /// Qt's `defaultSectionSize`.
+    /// the toolkit's `defaultSectionSize`.
     ///
     /// Clamped into the R1492 bounds on the way out, so it can never name a
     /// size the header would refuse: lower the ceiling under the default and
@@ -1598,14 +1588,14 @@ impl ColumnLayout {
         self.sizes.clamp(self.default_size.get())
     }
 
-    /// R1493 — set the default and apply it — Qt's `setDefaultSectionSize()`,
-    /// which does both: the new default governs sections acquired later, *and*
-    /// every section already there takes it now.
+    /// R1493 — set the default and apply it — the toolkit's `setDefaultSectionSize()`, which does
+    /// both: the new default governs sections acquired later, *and* every
+    /// section already there takes it now.
     ///
-    /// Hidden sections keep their size, which is Qt's rule and already this
-    /// module's ("the section keeps its visual place and its size while
-    /// hidden") — a bulk resize a user cannot see is a resize they cannot
-    /// undo.
+    /// Hidden sections keep their size, which is the toolkit's rule and
+    /// already this module's ("the section keeps its visual place and its size
+    /// while hidden") — a bulk resize a user cannot see is a resize they
+    /// cannot undo.
     ///
     /// Returns the applied default after the bound clamp, so a client learns
     /// the outcome in the round-trip it asked for the change.
@@ -1623,32 +1613,31 @@ impl ColumnLayout {
         applied
     }
 
-    /// R1493 — back to [`DEFAULT_SECTION_SIZE`] — Qt's
-    /// `resetDefaultSectionSize()`. Qt needs the separate call because its
-    /// default is style-derived and a caller cannot name it; the same holds
-    /// here for a caller that never learned the constant.
+    /// R1493 — back to [`DEFAULT_SECTION_SIZE`] — the toolkit's `resetDefaultSectionSize()`. The toolkit needs the
+    /// separate call because its default is style-derived and a caller cannot
+    /// name it; the same holds here for a caller that never learned the
+    /// constant.
     pub fn reset_default_section_size(&self) -> u32 {
         self.set_default_section_size(DEFAULT_SECTION_SIZE)
     }
 
     /// R1504 — where a section's label sits when the model has no opinion:
-    /// Qt's `QHeaderView::defaultAlignment`. [`DEFAULT_HEADER_ALIGNMENT`] on a
+    /// The toolkit's `defaultAlignment`. [`DEFAULT_HEADER_ALIGNMENT`] on a
     /// fresh header.
     #[must_use]
     pub fn default_alignment(&self) -> TextAlign {
         self.default_alignment.get()
     }
 
-    /// R1504 — set the header's rule — Qt's `setDefaultAlignment`. Sections
-    /// carrying an exception keep it; this is the fallback, not an override.
+    /// R1504 — set the header's rule — the toolkit's `setDefaultAlignment`. Sections carrying an
+    /// exception keep it; this is the fallback, not an override.
     pub fn set_default_alignment(&self, align: TextAlign) {
         self.default_alignment.set(align);
     }
 
     /// R1504 — the exception this **logical** section carries, if any: the
-    /// answer Qt's model gives to `headerData(section, …, TextAlignmentRole)`.
-    /// `None` means the section defers to
-    /// [`default_alignment`](Self::default_alignment).
+    /// answer the toolkit's model gives to `headerData(section, …, TextAlignmentRole)`. `None` means the section defers
+    /// to [`default_alignment`](Self::default_alignment).
     ///
     /// Out of range answers `None` rather than a guess — a section that does
     /// not exist carries no exception, and inventing one would be a value from
@@ -1713,18 +1702,18 @@ impl ColumnLayout {
         Ok(self.query("alignments").unwrap_or(IntrospectValue::Null))
     }
 
-    /// R1510 — whether a section the selection reaches is highlighted: Qt's
-    /// `QHeaderView::highlightSections`. `false` on a fresh header, as in Qt.
+    /// R1510 — whether a section the selection reaches is highlighted: the
+    /// toolkit's `highlightSections`. `false` on a fresh header, as in the toolkit.
     #[must_use]
     pub fn highlight_sections(&self) -> bool {
         self.highlight.get()
     }
 
-    /// R1510 — set the rule — Qt's `setHighlightSections`. The published
-    /// selection is untouched: turning the rule off stops the header painting a
-    /// selection it still knows about, which is exactly what makes
-    /// [`section_selection`](Self::section_selection) and
-    /// [`section_highlight`](Self::section_highlight) two different questions.
+    /// R1510 — set the rule — the toolkit's `setHighlightSections`. The published selection is
+    /// untouched: turning the rule off stops the header painting a selection
+    /// it still knows about, which is exactly what makes
+    /// [`section_selection`](Self::section_selection) and [`section_highlight`](Self::section_highlight) two
+    /// different questions.
     pub fn set_highlight_sections(&self, highlight: bool) {
         self.highlight.set(highlight);
     }
@@ -1745,11 +1734,10 @@ impl ColumnLayout {
     /// published selection when the rule permits it, and
     /// [`Unselected`](SectionSelection::Unselected) when it does not.
     ///
-    /// The effective half of the pair, like
-    /// [`section_alignment`](Self::section_alignment) against its override and
-    /// `section_size` against `sizes`. Qt gates both of its flags on
-    /// `highlightSections` in `paintSection` for the same reason: the selection
-    /// is still there, the header is simply not dressing it.
+    /// The effective half of the pair, like [`section_alignment`](Self::section_alignment)
+    /// against its override and `section_size` against `sizes`. The toolkit gates both of its
+    /// flags on `highlightSections` in `paintSection` for the same reason: the selection is still there,
+    /// the header is simply not dressing it.
     #[must_use]
     pub fn section_highlight(&self, logical: usize) -> Option<SectionSelection> {
         let published = self.section_selection(logical)?;
@@ -1834,8 +1822,8 @@ impl ColumnLayout {
     }
 
     /// R1494 — whether an interactive resize takes its space from the
-    /// following sections instead of from the row's width — Qt's
-    /// `cascadingSectionResizes`. `false` by default, as in Qt.
+    /// following sections instead of from the row's width — the toolkit's
+    /// `cascadingSectionResizes`. `false` by default, as in the toolkit.
     #[must_use]
     pub fn cascading_section_resizes(&self) -> bool {
         self.cascading.get()
@@ -1854,7 +1842,7 @@ impl ColumnLayout {
     }
 
     /// R1498 — whether the section painted last absorbs the leftover viewport
-    /// width — Qt's `stretchLastSection`. `false` by default, as in Qt.
+    /// width — the toolkit's `stretchLastSection`. `false` by default, as in the toolkit.
     #[must_use]
     pub fn stretch_last_section(&self) -> bool {
         self.stretch_last.get()
@@ -1863,12 +1851,12 @@ impl ColumnLayout {
     /// R1498 — turn the rule on or off.
     ///
     /// Nothing is written to any section: the fill is resolved in
-    /// [`visible_placements`](Self::visible_placements) from the stored widths,
-    /// so turning the rule off restores what the last section had by
-    /// construction. Qt has to remember a `lastSectionSize` because Qt writes
-    /// the stretched width into the section; this module keeps the stored size
-    /// and the painted size apart already (R1493), and that split is what makes
-    /// the memory unnecessary here.
+    /// [`visible_placements`](Self::visible_placements) from the stored widths, so turning the
+    /// rule off restores what the last section had by construction. The
+    /// toolkit has to remember a `lastSectionSize` because the toolkit writes the stretched
+    /// width into the section; this module keeps the stored size and the
+    /// painted size apart already (R1493), and that split is what makes the
+    /// memory unnecessary here.
     pub fn set_stretch_last_section(&self, on: bool) {
         self.stretch_last.set(on);
     }
@@ -1894,13 +1882,12 @@ impl ColumnLayout {
     /// R1498 — the mode the layout actually applies to a section, as distinct
     /// from the one that was **set** on it ([`resize_mode`](Self::resize_mode)).
     ///
-    /// The two differ only under `stretchLastSection`, whose documented Qt
-    /// behaviour is exactly this: "this property will override the resize mode
-    /// set on the last section in the header". Readable for the R1492 reason
-    /// the bounds are — a client that watches an interactive resize come back
-    /// unchanged can otherwise not tell a `Fixed` section from a filled one —
-    /// and it is the same stored/effective pair `sizes` and `section_sizes`
-    /// already form.
+    /// The two differ only under `stretchLastSection`, whose documented the toolkit behaviour
+    /// is exactly this: "this property will override the resize mode set on
+    /// the last section in the header". Readable for the R1492 reason the
+    /// bounds are — a client that watches an interactive resize come back
+    /// unchanged can otherwise not tell a `Fixed` section from a filled one — and
+    /// it is the same stored/effective pair `sizes` and `section_sizes` already form.
     #[must_use]
     pub fn effective_resize_mode(&self, logical: usize) -> SectionResizeMode {
         stretch_last_override(
@@ -1910,9 +1897,9 @@ impl ColumnLayout {
         )
     }
 
-    /// Whether logical section `logical` can be squeezed to pay for a
-    /// neighbour's growth: Qt takes only from `Interactive` sections, and a
-    /// hidden section is painted nowhere so it has no width to give.
+    /// Whether logical section `logical` can be squeezed to pay for a neighbour's
+    /// growth: the toolkit takes only from `Interactive` sections, and a hidden section
+    /// is painted nowhere so it has no width to give.
     ///
     /// R1498 — against the **effective** mode. A section the last-section rule
     /// is filling derives its width like any other `Stretch` section, so
@@ -1923,15 +1910,15 @@ impl ColumnLayout {
             && !self.is_section_hidden(logical)
     }
 
-    /// R1494 — resize a section the way a **drag** does — Qt's interactive
-    /// resize, which is where `cascadingSectionResizes` applies.
+    /// R1494 — resize a section the way a **drag** does — the toolkit's
+    /// interactive resize, which is where `cascadingSectionResizes` applies.
     ///
-    /// With cascading off this is exactly [`resize_section`](Self::resize_section),
-    /// which is also Qt: `resizeSection()` never cascades, and the property
-    /// governs "interactive resizing" only. With it on, the space comes from
-    /// the **following** sections rather than from the row's total width —
-    /// growing a section squeezes the ones after it, each down to the floor, in
-    /// visual order; shrinking it hands that space back to the same sections,
+    /// With cascading off this is exactly [`resize_section`](Self::resize_section), which
+    /// is also the toolkit: `resizeSection()` never cascades, and the property governs
+    /// "interactive resizing" only. With it on, the space comes from the
+    /// **following** sections rather than from the row's total width — growing
+    /// a section squeezes the ones after it, each down to the floor, in visual
+    /// order; shrinking it hands that space back to the same sections,
     /// most-recently-squeezed first, never past what they held before they
     /// paid.
     ///
@@ -1948,9 +1935,10 @@ impl ColumnLayout {
     /// Returns the size the anchor actually has afterwards, the same
     /// read-outcome contract [`resize_section`](Self::resize_section) has.
     ///
-    /// This mirrors the *documented* behaviour of Qt's property — the space a
-    /// resize needs is taken from the following sections — not Qt's private
-    /// multi-anchor bookkeeping, which pinion has no gesture to exercise.
+    /// This mirrors the *documented* behaviour of the toolkit's property — the
+    /// space a resize needs is taken from the following sections — not the
+    /// toolkit's private multi-anchor bookkeeping, which pinion has no gesture
+    /// to exercise.
     pub fn interactive_resize_section(&self, logical: usize, size: u32) -> u32 {
         if logical >= self.count {
             return 0;
@@ -2042,16 +2030,16 @@ impl ColumnLayout {
         }
     }
 
-    /// Whether logical section `logical` is hidden — Qt's
+    /// Whether logical section `logical` is hidden — the toolkit's
     /// `isSectionHidden()`.
     #[must_use]
     pub fn is_section_hidden(&self, logical: usize) -> bool {
         self.hidden.get().get(logical).copied().unwrap_or(false)
     }
 
-    /// Show or hide logical section `logical` — Qt's `setSectionHidden()`.
-    /// The section keeps its visual place and its size while hidden. An
-    /// out-of-range section is a silent no-op.
+    /// Show or hide logical section `logical` — the toolkit's `setSectionHidden()`. The section keeps
+    /// its visual place and its size while hidden. An out-of-range section is
+    /// a silent no-op.
     pub fn set_section_hidden(&self, logical: usize, hidden: bool) {
         if logical >= self.count {
             return;
@@ -2065,7 +2053,7 @@ impl ColumnLayout {
         });
     }
 
-    /// How many sections are hidden — Qt's `hiddenSectionCount()`.
+    /// How many sections are hidden — the toolkit's `hiddenSectionCount()`.
     #[must_use]
     pub fn hidden_section_count(&self) -> usize {
         self.hidden.get().iter().filter(|h| **h).count()
@@ -2186,7 +2174,7 @@ impl ColumnLayout {
         self.visible_placements().last().map_or(0, |p| p.x + p.size)
     }
 
-    /// The x offset logical section `logical` is painted at — Qt's
+    /// The x offset logical section `logical` is painted at — the toolkit's
     /// `sectionPosition()`. `None` when the section is hidden or unknown
     /// (a hidden section is painted nowhere, so it has no position).
     #[must_use]
@@ -2197,7 +2185,7 @@ impl ColumnLayout {
             .map(|p| p.x)
     }
 
-    /// Which logical section covers header x offset `x` — Qt's
+    /// Which logical section covers header x offset `x` — the toolkit's
     /// `logicalIndexAt()`. Reads the painted geometry, so it is correct for
     /// non-uniform widths and steps over hidden sections; `None` past the last
     /// painted section.
@@ -2209,7 +2197,7 @@ impl ColumnLayout {
             .map(|p| p.logical)
     }
 
-    /// The whole layout as data — Qt's `saveState()`, readable.
+    /// The whole layout as data — the toolkit's `saveState()`, readable.
     #[must_use]
     pub fn save_state(&self) -> ColumnLayoutState {
         ColumnLayoutState {
@@ -2234,25 +2222,25 @@ impl ColumnLayout {
             stretch_last_section: self.stretch_last.get(),
             // R1496 — the permissions travel with the layout they permit. The
             // press in flight does not: that is gesture state, like the
-            // cascade above, and Qt saves neither.
+            // cascade above, and the toolkit saves neither.
             sections_movable: self.movable.get(),
             sections_clickable: self.clickable.get(),
             resize_contents_precision: self.contents_precision.get(),
             // R1504 — the header's rule travels; the per-section exceptions do
-            // NOT, because they are the model's and Qt's `saveState()` does not
+            // NOT, because they are the model's and the toolkit's `saveState()` does not
             // carry them either. A restore therefore hands back a header whose
-            // sections all defer to the rule, which is exactly what restoring a
-            // header without its model should mean.
+            // sections all defer to the rule, which is exactly what restoring
+            // a header without its model should mean.
             default_alignment: self.default_alignment.get(),
             // R1510 — the permission to highlight, and never the selection it
-            // would highlight. Qt's `write()` carries `highlightSelected` and
-            // has no access to the view's selection model at all.
+            // would highlight. The toolkit's `write()` carries `highlightSelected` and has no access
+            // to the view's selection model at all.
             highlight_sections: self.highlight.get(),
         }
     }
 
-    /// Restore a saved layout — Qt's `restoreState()`. Refused, with **no
-    /// change at all**, when `state` does not describe this header.
+    /// Restore a saved layout — the toolkit's `restoreState()`. Refused, with **no change
+    /// at all**, when `state` does not describe this header.
     ///
     /// Atomic by construction rather than by a pre-check copy: the length
     /// tests are cheap and total, and
@@ -2262,13 +2250,12 @@ impl ColumnLayout {
     ///
     /// # Errors
     ///
-    /// R1565 — [`InterveneError::OutOfRange`] naming **which** of the five
-    /// guards refused: a wrong `sizes` / `hidden` / `modes` length, a sort
-    /// indicator on a section this header lacks, a crossed bound pair, or an
-    /// `order` that is not a permutation of `0..count`. Qt's `restoreState()`
-    /// answers `bool` for the same five, which is the shape this returned until
-    /// R1565 and the reason a refused restore told a client nothing about a
-    /// seven-field snapshot.
+    /// R1565 — [`InterveneError::OutOfRange`] naming **which** of the five guards refused: a wrong `sizes`
+    /// / `hidden` / `modes` length, a sort indicator on a section this header lacks, a
+    /// crossed bound pair, or an `order` that is not a permutation of `0..count`. The
+    /// toolkit's `restoreState()` answers `bool` for the same five, which is the shape this
+    /// returned until R1565 and the reason a refused restore told a client
+    /// nothing about a seven-field snapshot.
     pub fn restore_state(&self, state: &ColumnLayoutState) -> Result<(), InterveneError> {
         // R1565 — `Result` rather than `bool`. This function refuses for FIVE
         // distinct reasons, each already explained by a comment beside its
@@ -2339,25 +2326,25 @@ impl ColumnLayout {
         // stored.
         self.stretch_last.set(state.stretch_last_section);
         // R1504 — the rule comes back, and the exceptions are DROPPED rather
-        // than kept: the snapshot does not carry them (Qt's does not either),
-        // so leaving the outgoing header's exceptions in place would let a
-        // restore paint a column with an alignment the restored state never
-        // mentioned. Restoring a header without its model means every section
-        // defers to the rule.
+        // than kept: the snapshot does not carry them (the toolkit's does not
+        // either), so leaving the outgoing header's exceptions in place would
+        // let a restore paint a column with an alignment the restored state
+        // never mentioned. Restoring a header without its model means every
+        // section defers to the rule.
         self.default_alignment.set(state.default_alignment);
         self.section_alignments.set(vec![None; self.count]);
         // R1510 — the rule comes back, and the published selection is KEPT,
-        // which is the opposite of what happens to the alignment exceptions one
-        // line up. The two look alike — neither is in the snapshot — and are
-        // owned by different objects. An alignment exception is *header* data
-        // (Qt's model answers `headerData(TextAlignmentRole)`), so a header
-        // restored without its model has none. A selection is not the header's
-        // at all: it belongs to the view's selection model, which Qt's
-        // `restoreState()` cannot reach and does not disturb. Clearing the
-        // user's selection because they reloaded a column layout would be a
-        // surprise Qt does not produce — and it would be inert as well as
-        // wrong, because the consumer that owns the rows republishes the
-        // coverage on the next frame.
+        // which is the opposite of what happens to the alignment exceptions
+        // one line up. The two look alike — neither is in the snapshot — and
+        // are owned by different objects. An alignment exception is *header*
+        // data (the toolkit's model answers `headerData(TextAlignmentRole)`), so a header restored without
+        // its model has none. A selection is not the header's at all: it
+        // belongs to the view's selection model, which the toolkit's `restoreState()`
+        // cannot reach and does not disturb. Clearing the user's selection
+        // because they reloaded a column layout would be a surprise the
+        // toolkit does not produce — and it would be inert as well as wrong,
+        // because the consumer that owns the rows republishes the coverage on
+        // the next frame.
         self.highlight.set(state.highlight_sections);
         self.sizes.set_widths(state.sizes.clone());
         self.hidden.set(state.hidden.clone());
@@ -2413,7 +2400,7 @@ impl ColumnLayout {
     /// reorder slots (`order` / `preview` / `focused_index` / `grabbed`),
     /// which fall through to the embedded [`ReorderModel`]:
     ///
-    /// - `state` — the whole [`ColumnLayoutState`] (Qt `saveState`, readable)
+    /// - `state` — the whole [`ColumnLayoutState`] (the toolkit `saveState`, readable)
     /// - `sizes` / `hidden` — the logical-keyed vectors. `sizes` is the
     ///   **stored** size — the one a restore replays; `section_sizes` (R1493)
     ///   is the **effective** one the header paints, and under `Stretch` /
@@ -2426,11 +2413,11 @@ impl ColumnLayout {
     /// - `sort_indicator` / `sort_indicator_section` / `sort_indicator_order` /
     ///   `sort_indicator_shown` (R1491)
     /// - `min_section_size` / `max_section_size` (R1492)
-    /// - `sections_movable` / `sections_clickable` (R1496) — Qt's two
+    /// - `sections_movable` / `sections_clickable` (R1496) — the toolkit's two
     ///   interaction permissions, both of which `saveState()` carries
-    /// - `stretch_last_section` (R1498) — Qt's rule that the last painted
+    /// - `stretch_last_section` (R1498) — the toolkit's rule that the last painted
     ///   section absorbs the leftover viewport
-    /// - `highlight_sections` (R1510) — Qt's rule that a section the selection
+    /// - `highlight_sections` (R1510) — the toolkit's rule that a section the selection
     ///   reaches is highlighted, plus `selections` /
     ///   `section_selection.<logical>` (what the consumer published) and
     ///   `highlights` / `section_highlight.<logical>` (what the rule makes of
@@ -2514,8 +2501,8 @@ impl ColumnLayout {
             "visible_widths" => Some(json_of(self.visible_widths())),
             // The painted geometry as data — an agent aims a drag or a click
             // at a section from this without re-deriving a single offset, and
-            // without a screenshot. Qt exposes the equivalent only through
-            // per-section C++ calls against a live widget.
+            // without a screenshot. The toolkit exposes the equivalent only
+            // through per-section C++ calls against a live widget.
             "placements" => Some(IntrospectValue::Json(serde_json::Value::Array(
                 self.visible_placements()
                     .iter()
@@ -2551,10 +2538,10 @@ impl ColumnLayout {
                     .collect(),
             ))),
             "content_widths" => Some(json_of(self.content_widths.get())),
-            // R1491 — the header's own sort state. `sort_indicator` is the
-            // compound string the grid proxy already speaks; `sort_indicator_
-            // section` and `_order` are Qt's two separate getters, kept because
-            // an agent filtering on "which column" should not have to parse.
+            // R1491 — the header's own sort state. `sort_indicator` is the compound string
+            // the grid proxy already speaks; `sort_indicator_ section` and `_order` are the toolkit's two
+            // separate getters, kept because an agent filtering on "which
+            // column" should not have to parse.
             "sort_indicator" => Some(IntrospectValue::Text(grid_sort_str(self.sort_indicator()))),
             "sort_indicator_section" => Some(opt_int(self.sort_indicator().map(|(l, _)| l))),
             "sort_indicator_order" => Some(IntrospectValue::Text(
@@ -2777,11 +2764,9 @@ impl ColumnLayout {
         }
     }
 
-    /// Header-layout slots for [`ExternalIntrospect::intervene`]: `state` is
-    /// the restore half of the round-trip (Qt's `restoreState`, authorable),
-    /// and `sizes` / `hidden` / `sort_indicator` / `sort_indicator_shown` write
-    /// one field each. `focused_index` and `order` fall through to the embedded
-    /// [`ReorderModel`].
+    /// Header-layout slots for [`ExternalIntrospect::intervene`]: `state` is the restore half of the
+    /// round-trip (the toolkit's `restoreState`, authorable), and `sizes` / `hidden` / `sort_indicator` / `sort_indicator_shown`
+    /// write one field each. `focused_index` and `order` fall through to the embedded [`ReorderModel`].
     ///
     /// # Errors
     ///
@@ -2819,12 +2804,13 @@ impl ColumnLayout {
                 Ok(())
             }
             // R1510 — the third such input, writable for exactly that reason.
-            // `QHeaderView` has no selection setter — a Qt client drives the
-            // view's selection model — but the class boundary Qt draws is not
-            // this surface's contract: §2 #2 makes the wire an agent's primary
-            // path, and the two inputs above are already writable here so an
-            // agent can explore a layout without a real grid. An input it could
-            // read and never move would make the whole rule unexplorable.
+            // header view has no selection setter — a toolkit client drives
+            // the view's selection model — but the class boundary the toolkit
+            // draws is not this surface's contract: §2 #2 makes the wire an
+            // agent's primary path, and the two inputs above are already
+            // writable here so an agent can explore a layout without a real
+            // grid. An input it could read and never move would make the whole
+            // rule unexplorable.
             "selections" => {
                 let IntrospectValue::Json(serde_json::Value::Array(items)) = value else {
                     return Err(InterveneError::TypeMismatch);
@@ -2842,13 +2828,12 @@ impl ColumnLayout {
             }
             // R1491 — the restore half for the header's own sort, both as the
             // compound string and as the shown flag. Strict on a malformed
-            // string, unlike the older `GridSortExternal::intervene("sort")`,
-            // which reads one as "unsorted": the two doors of THIS header must
-            // agree, and its other door (`state`) reports the error.
-            // R1504 — Qt's `setDefaultAlignment`. A spelling this build does not
-            // know is a TYPE error rather than a silent `Start`: the strict
-            // reader is `TextAlign::from_wire`, and the lenient behaviour that
-            // exists elsewhere is one decoder's documented choice, not this
+            // string, unlike the older `GridSortExternal::intervene("sort")`, which reads one as "unsorted": the
+            // two doors of THIS header must agree, and its other door (`state`)
+            // reports the error. R1504 — the toolkit's `setDefaultAlignment`. A spelling this
+            // build does not know is a TYPE error rather than a silent `Start`:
+            // the strict reader is `TextAlign::from_wire`, and the lenient behaviour that exists
+            // elsewhere is one decoder's documented choice, not this
             // channel's.
             "default_alignment" => {
                 let IntrospectValue::Text(s) = value else {
@@ -2918,9 +2903,9 @@ impl ColumnLayout {
     /// that sets one header-wide policy, each a decoder and a setter.
     /// `None` for anything else, so the caller's reorder fall-through runs.
     ///
-    /// (R1498) Split out on the axis [`query_parametric`](Self::query_parametric)
-    /// was: the two halves take different shapes of value, and only this one
-    /// grows when Qt's next header property is added. Every round from R1492 on
+    /// (R1498) Split out on the axis [`query_parametric`](Self::query_parametric) was: the
+    /// two halves take different shapes of value, and only this one grows when
+    /// the toolkit's next header property is added. Every round from R1492 on
     /// has added exactly one arm here.
     ///
     /// # Errors
@@ -2936,37 +2921,35 @@ impl ColumnLayout {
         // body of its own; the closure is that body, run once.
         let apply = || -> Result<(), InterveneError> {
             match path {
-                // R1492 — Qt's two setters. Writable for the same reason the
-                // modes are: an agent explores a layout by moving the rule, not
-                // only the numbers the rule applies to.
+                // R1492 — the toolkit's two setters. Writable for the same
+                // reason the modes are: an agent explores a layout by moving
+                // the rule, not only the numbers the rule applies to.
                 "min_section_size" => self.set_minimum_section_size(px_bound(value)?),
                 "max_section_size" => self.set_maximum_section_size(px_bound(value)?),
-                // R1493 — Qt's `setDefaultSectionSize`, through the same door
-                // its two bound siblings use, because it is the same kind of
-                // thing: a scalar rule that shapes every section's size.
+                // R1493 — the toolkit's `setDefaultSectionSize`, through the same door its two
+                // bound siblings use, because it is the same kind of thing: a
+                // scalar rule that shapes every section's size.
                 "default_section_size" => {
                     self.set_default_section_size(px_bound(value)?);
                 }
-                // R1494 — Qt's `cascadingSectionResizes`, writable like the
-                // modes and the bounds.
+                // R1494 — the toolkit's `cascadingSectionResizes`, writable like the modes and the
+                // bounds.
                 "cascading_section_resizes" => {
                     self.set_cascading_section_resizes(bool_rule(value)?);
                 }
-                // R1498 — Qt's `setStretchLastSection`. The effective modes and
-                // every painted width follow from it, so an agent moves the
-                // rule and reads the consequence in one round trip.
+                // R1498 — the toolkit's `setStretchLastSection`. The effective modes and every
+                // painted width follow from it, so an agent moves the rule and
+                // reads the consequence in one round trip.
                 "stretch_last_section" => self.set_stretch_last_section(bool_rule(value)?),
-                // R1496 — Qt's `setSectionsMovable` / `setSectionsClickable`. A
-                // permission an agent can read but not move is one it cannot
-                // explore.
+                // R1496 — the toolkit's `setSectionsMovable` / `setSectionsClickable`. A permission an agent can
+                // read but not move is one it cannot explore.
                 "sections_movable" => self.set_sections_movable(bool_rule(value)?),
                 "sections_clickable" => self.set_sections_clickable(bool_rule(value)?),
-                // R1510 — Qt's `setHighlightSections`. The rule and the
-                // selection it gates are written through different doors on
-                // purpose: this one, and the `selections` vector beside
-                // `content_widths`, because they are different kinds of thing —
-                // a permission the header owns, and an input a consumer feeds
-                // it.
+                // R1510 — the toolkit's `setHighlightSections`. The rule and the selection it
+                // gates are written through different doors on purpose: this
+                // one, and the `selections` vector beside `content_widths`, because they are
+                // different kinds of thing — a permission the header owns, and
+                // an input a consumer feeds it.
                 "highlight_sections" => self.set_highlight_sections(bool_rule(value)?),
                 // R1454 — the row-sampling bound a `ResizeToContents` consumer
                 // honours; writable so an agent can shrink it and watch the
@@ -2987,9 +2970,8 @@ impl ColumnLayout {
         }
     }
 
-    /// Header-layout actions for [`ExternalIntrospect::invoke`] — Qt's own
-    /// section vocabulary, each taking the typed pair wire form
-    /// ([`require_pair`]):
+    /// Header-layout actions for [`ExternalIntrospect::invoke`] — the toolkit's own section vocabulary,
+    /// each taking the typed pair wire form ([`require_pair`]):
     ///
     /// - `swap_sections` — `"<visual_a>:<visual_b>"`; returns the new order
     /// - `resize_section` — `"<logical>:<px>"`; returns the applied size
@@ -3042,9 +3024,9 @@ impl ColumnLayout {
                 )))
             }
             // R1494 — the drag's resize, as distinct from the programmatic one
-            // above: this is the entry point `cascading_section_resizes`
-            // governs, because in Qt the property applies to interactive
-            // resizing and `resizeSection()` never cascades.
+            // above: this is the entry point `cascading_section_resizes` governs, because in the
+            // toolkit the property applies to interactive resizing and `resizeSection()`
+            // never cascades.
             "interactive_resize_section" => {
                 let (logical, size) = self.section_and_size(args)?;
                 Ok(IntrospectValue::Int(i64::from(
@@ -3061,18 +3043,18 @@ impl ColumnLayout {
                     .query("visible_sections")
                     .unwrap_or(IntrospectValue::Null))
             }
-            // R1504 — Qt's per-section `TextAlignmentRole`, as a channel. The
-            // value half is a `TextAlign` spelling or the literal `default`,
-            // which is how a client hands a section BACK to the header's rule;
-            // without it an exception could be set and never cleared.
+            // R1504 — the toolkit's per-section `TextAlignmentRole`, as a channel. The value
+            // half is a `TextAlign` spelling or the literal `default`, which is how a client
+            // hands a section BACK to the header's rule; without it an
+            // exception could be set and never cleared.
             "set_section_alignment" => self.invoke_set_section_alignment(&pair_text(args)?),
             // R1510 — one section's coverage, the per-section door beside the
             // whole-row `selections`.
             "set_section_selection" => self.invoke_set_section_selection(&pair_text(args)?),
-            // R1452 — Qt's setSectionResizeMode, both overloads. Each returns
-            // the resulting painted widths, because changing one section's
-            // policy re-sizes every `Stretch` section sharing the row with it —
-            // the outcome an agent needs is the row, not the section.
+            // R1452 — the toolkit's setSectionResizeMode, both overloads. Each
+            // returns the resulting painted widths, because changing one
+            // section's policy re-sizes every `Stretch` section sharing the row with
+            // it — the outcome an agent needs is the row, not the section.
             "set_resize_mode" => {
                 let text = pair_text(args)?;
                 let (logical, mode) =
@@ -3083,11 +3065,11 @@ impl ColumnLayout {
                     .query("visible_widths")
                     .unwrap_or(IntrospectValue::Null))
             }
-            // R1491 — Qt's setSortIndicator, and the cycle a header click
-            // performs. Both return the resulting indicator string rather than
-            // nothing, so one round-trip both sorts and reports — which matters
-            // most for the cycle, whose whole point is that the caller does not
-            // know the direction it lands on.
+            // R1491 — the toolkit's setSortIndicator, and the cycle a header
+            // click performs. Both return the resulting indicator string
+            // rather than nothing, so one round-trip both sorts and reports —
+            // which matters most for the cycle, whose whole point is that the
+            // caller does not know the direction it lands on.
             "set_sort_indicator" => {
                 let text = pair_text(args)?;
                 let (logical, ascending) =
@@ -3127,10 +3109,10 @@ impl ColumnLayout {
                     .query("visible_widths")
                     .unwrap_or(IntrospectValue::Null))
             }
-            // R1493 — Qt's `resetDefaultSectionSize()`. An `invoke` rather than
-            // a second `intervene` slot because it carries no value: the point
-            // is to reach the constant WITHOUT naming it, which is exactly the
-            // caller who does not know what it is.
+            // R1493 — the toolkit's `resetDefaultSectionSize()`. An `invoke` rather than a second `intervene` slot
+            // because it carries no value: the point is to reach the constant
+            // WITHOUT naming it, which is exactly the caller who does not know
+            // what it is.
             //
             // Answers `section_sizes`, not the default it just applied — a
             // bulk resize's outcome is the row, and under a `Stretch` header
@@ -3173,11 +3155,11 @@ pub fn use_column_layout(key: &'static str, sizes: impl FnOnce() -> Vec<u32>) ->
 /// of it.
 ///
 /// The permissions R1496 added ([`set_sections_movable`](ColumnLayout::set_sections_movable),
-/// [`set_sections_clickable`](ColumnLayout::set_sections_clickable)) are the
-/// reason it exists. They default to Qt's `false`, so a header that wants them
-/// has to say so — and it cannot say so from inside a view fn, because that
-/// runs on every pass and would overwrite whatever the user or an agent had
-/// since written. `build` runs once, on the pass that creates the layout.
+/// [`set_sections_clickable`](ColumnLayout::set_sections_clickable)) are the reason it exists. They
+/// default to the toolkit's `false`, so a header that wants them has to say so —
+/// and it cannot say so from inside a view fn, because that runs on every pass
+/// and would overwrite whatever the user or an agent had since written. `build`
+/// runs once, on the pass that creates the layout.
 ///
 /// # Panics
 ///
@@ -3348,13 +3330,13 @@ mod tests {
         }
     }
 
-    /// R1501 — the declared paths that are `invoke` channels. They read as
-    /// nothing by design, because [`SchemaField`] does not separate a readable
-    /// value from an action yet (its own doc says so), so the walk below names
-    /// them rather than probing them.
-    /// R1504 — Qt centres a horizontal header; a snapshot taken before this
-    /// round describes one painted flush left. The two are different questions
-    /// and the module answers them differently, which is the R1496 split.
+    /// R1501 — the declared paths that are `invoke` channels. They read as nothing
+    /// by design, because [`SchemaField`] does not separate a readable value from an
+    /// action yet (its own doc says so), so the walk below names them rather
+    /// than probing them. R1504 — the toolkit centres a horizontal header; a
+    /// snapshot taken before this round describes one painted flush left. The
+    /// two are different questions and the module answers them differently,
+    /// which is the R1496 split.
     #[test]
     fn r1504_a_new_header_centres_and_an_old_snapshot_does_not() {
         assert_eq!(DEFAULT_HEADER_ALIGNMENT, TextAlign::Center);
@@ -3464,7 +3446,7 @@ mod tests {
     }
 
     /// R1504 — the header's rule is saved and the model's exceptions are not,
-    /// which is what Qt's `saveState()` carries. A restore therefore hands back
+    /// which is what the toolkit's `saveState()` carries. A restore therefore hands back
     /// a header whose sections all defer.
     #[test]
     fn r1504_the_rule_survives_a_restore_and_the_exceptions_do_not() {
@@ -3517,7 +3499,7 @@ mod tests {
         assert_eq!(l.section_highlight(2), Some(SectionSelection::Full));
     }
 
-    /// R1510 — the two Qt predicates, and the pair that cannot exist.
+    /// R1510 — the two the toolkit predicates, and the pair that cannot exist.
     #[test]
     fn r1510_coverage_implies_intersection() {
         assert!(!SectionSelection::Unselected.intersects());
@@ -3611,8 +3593,8 @@ mod tests {
         );
     }
 
-    /// R1510 — an older snapshot decodes as `false`, which is both Qt's default
-    /// and what a pre-R1510 header did.
+    /// R1510 — an older snapshot decodes as `false`, which is both the toolkit's
+    /// default and what a pre-R1510 header did.
     #[test]
     fn r1510_an_older_snapshot_does_not_highlight() {
         let l = layout();
@@ -3683,9 +3665,8 @@ mod tests {
         );
 
         // The input is writable too, like the two consumer-published inputs
-        // beside it — §2 #2, not Qt's class boundary. A wrong length is the
-        // same `OutOfRange` `content_widths` reports, and an unknown spelling
-        // the same `TypeMismatch`.
+        // beside it — §2 #2, not the toolkit's class boundary. A wrong length
+        // is the same `OutOfRange` `content_widths` reports, and an unknown spelling the same `TypeMismatch`.
         assert_out_of_range_saying(
             &l.intervene(
                 "selections",
@@ -3894,8 +3875,9 @@ mod tests {
 
     #[test]
     fn a_hidden_section_keeps_its_place_and_its_size() {
-        // Qt's rule: hiding does not remove a section from the permutation,
-        // so showing it again puts it back rather than appending it.
+        // The toolkit's rule: hiding does not remove a section from the
+        // permutation, so showing it again puts it back rather than appending
+        // it.
         let l = layout();
         l.resize_section(1, 300);
         l.set_section_hidden(1, true);
@@ -3945,8 +3927,8 @@ mod tests {
 
     #[test]
     fn swap_displaces_one_section_where_a_move_shifts_the_span() {
-        // Qt has both because they are different operations; a test that only
-        // checked "the order changed" would not tell them apart.
+        // The toolkit has both because they are different operations; a test
+        // that only checked "the order changed" would not tell them apart.
         let swapped = layout();
         swapped.swap_sections(0, 3);
         assert_eq!(swapped.order(), vec![3, 1, 2, 0]);
@@ -3987,7 +3969,7 @@ mod tests {
 
     #[test]
     fn a_restore_replays_the_permissions_and_the_sampling_bound() {
-        // R1496 — the three fields Qt's `QHeaderViewPrivate::write()` carries
+        // R1496 — the three fields the toolkit's `write()` carries
         // and this snapshot did not. Measured over the wire before the round:
         // the header answered `resize_contents_precision` = 1000, saved a
         // state, was moved to 7, restored — and stayed at 7. A snapshot that
@@ -4025,9 +4007,9 @@ mod tests {
     #[test]
     fn an_older_snapshot_restores_a_header_that_still_interacts() {
         // R1496 — the one absent-field fallback in this decoder that is NOT a
-        // Qt default. A layout saved before this round came from a header with
-        // no such rule, which was unconditionally movable and clickable;
-        // decoding the absence as Qt's `false` would silently strip the
+        // toolkit default. A layout saved before this round came from a header
+        // with no such rule, which was unconditionally movable and clickable;
+        // decoding the absence as the toolkit's `false` would silently strip the
         // interaction out of every layout anyone had already saved.
         let mut older = interactive_layout().save_state().to_json();
         for key in [
@@ -4441,8 +4423,9 @@ mod tests {
 
     #[test]
     fn a_derived_section_stores_the_resize_but_keeps_deriving() {
-        // Qt: resizeSection has no effect outside Interactive / Fixed. The
-        // value is not discarded though, so switching back reveals it.
+        // The toolkit: resizeSection has no effect outside Interactive /
+        // Fixed. The value is not discarded though, so switching back reveals
+        // it.
         let l = layout();
         l.set_resize_mode(2, SectionResizeMode::Stretch);
         l.set_available_width(Some(600));
@@ -4648,10 +4631,11 @@ mod tests {
 
     #[test]
     fn the_contents_precision_bound_is_readable_writable_and_never_zero() {
-        // R1454 — the bound the measurement demands. Qt's default, and a `0`
-        // clamped to `1`: measuring nothing would leave a content-fitted
-        // column with no content to fit, and a silent floor-sized column is
-        // the kind of answer a caller cannot tell from a bug.
+        // R1454 — the bound the measurement demands. The toolkit's default,
+        // and a `0` clamped to `1`: measuring nothing would leave a
+        // content-fitted column with no content to fit, and a silent
+        // floor-sized column is the kind of answer a caller cannot tell from a
+        // bug.
         let l = layout();
         assert_eq!(
             l.resize_contents_precision(),
@@ -4680,14 +4664,12 @@ mod tests {
             50,
             "the refusal changed nothing"
         );
-        // R1496 REVERSES R1454 here. This assertion read
-        // `assert_eq!(l.save_state(), layout().save_state())` — "it does not
-        // touch the saved layout; it decides what a consumer MEASURES, not what
-        // the header IS" — and that line does not hold. Qt saves it:
-        // `QHeaderViewPrivate::write()` serialises `resizeContentsPrecision`
-        // beside the section items, and reads it back conditionally so older
-        // streams still load, which is the same absent-is-the-older-shape rule
-        // this decoder already follows.
+        // R1496 REVERSES R1454 here. This assertion read `assert_eq!(l.save_state(), layout().save_state())` — "it does not
+        // touch the saved layout; it decides what a consumer MEASURES, not
+        // what the header IS" — and that line does not hold. The toolkit saves
+        // it: `write()` serialises `resizeContentsPrecision` beside the section items, and reads it back
+        // conditionally so older streams still load, which is the same
+        // absent-is-the-older-shape rule this decoder already follows.
         //
         // R1454 had in fact already abandoned "policy, not state" once — it
         // made this field a `Signal` on the grounds that the bound is an INPUT
@@ -4776,12 +4758,12 @@ mod tests {
 
     // ----- R1491: the sort indicator is header state -----
 
-    /// Press `visual` so [`ReorderModel::begin_drag_payload`] can arm a drag,
-    /// then hand back the payload the router would carry.
-    /// R1496 — a header with Qt's two permissions turned on, the posture a
-    /// reorderable, sortable view configures. `layout()` keeps Qt's defaults
-    /// (both off) so that the tests below which assert a refusal are asserting
-    /// the *boot* header rather than one this helper disarmed.
+    /// Press `visual` so [`ReorderModel::begin_drag_payload`] can arm a drag, then hand back the payload the
+    /// router would carry. R1496 — a header with the toolkit's two permissions
+    /// turned on, the posture a reorderable, sortable view configures. `layout()`
+    /// keeps the toolkit's defaults (both off) so that the tests below which
+    /// assert a refusal are asserting the *boot* header rather than one this
+    /// helper disarmed.
     fn interactive_layout() -> ColumnLayout {
         let l = layout();
         l.set_sections_movable(true);
@@ -4822,9 +4804,9 @@ mod tests {
 
     #[test]
     fn a_moved_section_carries_its_sort_indicator() {
-        // THE claim. Qt keys `sortIndicatorSection` logically for exactly this
-        // reason, and it is why the indicator belongs to the header rather
-        // than to whatever is doing the sorting.
+        // THE claim. The toolkit keys `sortIndicatorSection` logically for exactly this reason,
+        // and it is why the indicator belongs to the header rather than to
+        // whatever is doing the sorting.
         let l = layout();
         l.set_sort_indicator(0, true);
         l.move_section(0, 2);
@@ -4851,9 +4833,9 @@ mod tests {
 
     #[test]
     fn a_hidden_sort_section_keeps_the_indicator_it_stops_painting() {
-        // Qt's rule: hiding a section does not unsort the view. The indicator
-        // survives so that showing the section again restores the arrow
-        // instead of silently landing on nothing.
+        // The toolkit's rule: hiding a section does not unsort the view. The
+        // indicator survives so that showing the section again restores the
+        // arrow instead of silently landing on nothing.
         let l = layout();
         l.set_sort_indicator(2, false);
         l.set_section_hidden(2, true);
@@ -4871,9 +4853,9 @@ mod tests {
 
     #[test]
     fn a_click_is_a_press_and_a_release_on_the_same_section() {
-        // R1496 — Qt's rule (`logicalIndexAt(pos) == d->pressed`). Both halves
-        // are asserted because either alone passes a broken implementation —
-        // "always Some" and "always None" each satisfy one.
+        // R1496 — the toolkit's rule (`logicalIndexAt(pos) == d->pressed`). Both halves are asserted because
+        // either alone passes a broken implementation — "always Some" and
+        // "always None" each satisfy one.
         let l = interactive_layout();
 
         press(&l, 1);
@@ -4894,14 +4876,14 @@ mod tests {
 
     #[test]
     fn a_drag_release_reports_no_click_of_its_own() {
-        // R1496 — the regression R1491 shipped. Its `release_section` derived
-        // the click from the permutation, so a section dragged across the strip
-        // and dropped back into its own gap read as a click and sorted the
-        // column the user had just decided not to move. Qt calls that a move,
-        // by `startDragDistance`; so does this workspace, in ONE place (R794
-        // withholds the trailing `PointerUp`). The drop commit therefore has no
-        // click to report — it cannot, because it does not know how far the
-        // cursor travelled, which is exactly why it must not be asked.
+        // R1496 — the regression R1491 shipped. Its `release_section` derived the click from
+        // the permutation, so a section dragged across the strip and dropped
+        // back into its own gap read as a click and sorted the column the user
+        // had just decided not to move. The toolkit calls that a move, by `startDragDistance`;
+        // so does this workspace, in ONE place (R794 withholds the trailing
+        // `PointerUp`). The drop commit therefore has no click to report — it cannot,
+        // because it does not know how far the cursor travelled, which is
+        // exactly why it must not be asked.
         let l = interactive_layout();
 
         let payload = press(&l, 0);
@@ -4938,8 +4920,8 @@ mod tests {
     #[test]
     fn the_two_permissions_are_independent() {
         // R1496 — THE claim, and the reason both properties exist rather than
-        // one. Qt keeps `sectionsMovable` and `sectionsClickable` apart, and a
-        // sortable-but-pinned header is the commoner of the two shapes.
+        // one. The toolkit keeps `sectionsMovable` and `sectionsClickable` apart, and a sortable-but-pinned
+        // header is the commoner of the two shapes.
         let l = layout();
         assert!(!l.sections_movable(), "off by default, as in Qt");
         assert!(!l.sections_clickable(), "off by default, as in Qt");
@@ -4970,8 +4952,8 @@ mod tests {
     #[test]
     fn the_programmatic_move_ignores_the_movable_rule() {
         // R1496 — the R1494 split, applied to the other gesture: the property
-        // governs what a HAND may do. Qt's `moveSection()` reorders a header
-        // the user cannot drag, and so does this.
+        // governs what a HAND may do. The toolkit's `moveSection()` reorders a header the
+        // user cannot drag, and so does this.
         let l = layout();
         assert!(!l.sections_movable());
         l.move_section(0, 2);
@@ -5058,8 +5040,8 @@ mod tests {
 
     #[test]
     fn hiding_the_arrow_keeps_which_section_is_sorted() {
-        // Qt separates `sortIndicatorShown` from `sortIndicatorSection`, and a
-        // consumer that conflated them would lose the sort on a view toggle.
+        // The toolkit separates `sortIndicatorShown` from `sortIndicatorSection`, and a consumer that conflated
+        // them would lose the sort on a view toggle.
         let l = layout();
         l.set_sort_indicator(1, true);
         l.set_sort_indicator_shown(true);
@@ -5262,8 +5244,8 @@ mod tests {
         l.set_available_width(Some(5_000));
         assert_eq!(l.section_size(2), 110, "stretch share: clamped down");
         // The row consequently does NOT fill the width it was given — which is
-        // correct and is Qt's behaviour: a bound the user set outranks a
-        // division, and `visible_total` reports the truth rather than a number
+        // correct and is the toolkit's behaviour: a bound the user set
+        // outranks a division, and `visible_total` reports the truth rather than a number
         // the grid is not painting.
         assert!(
             l.visible_total() < 5_000,
@@ -5430,8 +5412,8 @@ mod tests {
 
     #[test]
     fn r1493_the_default_governs_every_shown_section_and_spares_the_hidden() {
-        // Qt's `setDefaultSectionSize`: the new default applies now, to the
-        // sections a user can see it happen to.
+        // The toolkit's `setDefaultSectionSize`: the new default applies now, to the sections a
+        // user can see it happen to.
         let l = layout();
         assert_eq!(l.default_section_size(), DEFAULT_SECTION_SIZE);
         l.set_section_hidden(2, true);
@@ -5473,9 +5455,9 @@ mod tests {
 
     #[test]
     fn r1493_a_snapshot_carries_the_rules_that_shaped_its_sizes() {
-        // `ColumnLayoutState` calls itself the peer of Qt's `saveState()`, and
-        // `saveState()` carries these three. Restoring outcomes without the
-        // rules that produced them means the next resize obeys a different one.
+        // `ColumnLayoutState` calls itself the peer of the toolkit's `saveState()`, and `saveState()` carries
+        // these three. Restoring outcomes without the rules that produced them
+        // means the next resize obeys a different one.
         let l = layout();
         l.set_minimum_section_size(60);
         l.set_maximum_section_size(150);
@@ -5619,8 +5601,8 @@ mod tests {
 
     #[test]
     fn r1494_off_by_default_and_off_means_the_plain_resize() {
-        // Qt's default, and Qt's split: `resizeSection()` never cascades, so
-        // with the property off the interactive path must be the same call.
+        // The toolkit's default, and the toolkit's split: `resizeSection()` never cascades,
+        // so with the property off the interactive path must be the same call.
         let l = layout();
         assert!(!l.cascading_section_resizes(), "off, as in Qt");
         assert_eq!(l.interactive_resize_section(0, 200), 200);
@@ -5828,7 +5810,8 @@ mod tests {
             other.cascading_section_resizes(),
             "a restore replays the rule, not only the widths it produced"
         );
-        // An older snapshot has no such field and decodes to Qt's default.
+        // An older snapshot has no such field and decodes to the toolkit's
+        // default.
         let older = serde_json::json!({
             "order": [0, 1, 2, 3],
             "sizes": BOOT,
@@ -5959,8 +5942,8 @@ mod tests {
 
     #[test]
     fn r1498_it_overrides_the_mode_set_on_the_last_section() {
-        // Qt states this on the property itself: "this property will override
-        // the resize mode set on the last section in the header".
+        // The toolkit states this on the property itself: "this property will
+        // override the resize mode set on the last section in the header".
         let l = filled();
         l.set_resize_mode(3, SectionResizeMode::Fixed);
         l.set_stretch_last_section(true);
@@ -6014,7 +5997,7 @@ mod tests {
 
     #[test]
     fn r1498_the_stored_width_is_untouched_so_withdrawing_the_rule_restores_it() {
-        // Qt has to remember a `lastSectionSize` because Qt writes the
+        // The toolkit has to remember a `lastSectionSize` because the toolkit writes the
         // stretched width into the section. Nothing here writes, so there is
         // nothing to remember.
         let l = filled();
@@ -6135,9 +6118,9 @@ mod tests {
             "and the restored header fills, from the stored widths it was given"
         );
 
-        // An older snapshot has no such field. Here Qt's default and the
-        // pre-R1498 header agree — that header did not fill either — so unlike
-        // the R1496 permissions there is no divergence to encode.
+        // An older snapshot has no such field. Here the toolkit's default and
+        // the pre-R1498 header agree — that header did not fill either — so
+        // unlike the R1496 permissions there is no divergence to encode.
         let older = serde_json::json!({
             "order": [0, 1, 2, 3],
             "sizes": BOOT,

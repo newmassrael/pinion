@@ -10,7 +10,7 @@
 //! descendant + the `"selected"` index intent. The split mirrors the
 //! R51.15 `RadioGroup` factoring (framework-owned mutual exclusion;
 //! industry consensus = HTML `<select>`, Material `DropdownMenu`,
-//! `SwiftUI` `List` with `selection:`, Qt `QListWidget`).
+//! `SwiftUI` `List` with `selection:`, the toolkit list widget).
 //!
 //! Semantic axis vs [`RadioGroup`](crate::widgets::radio_group::RadioGroup):
 //!

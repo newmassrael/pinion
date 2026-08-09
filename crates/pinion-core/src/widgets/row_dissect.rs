@@ -1,12 +1,12 @@
 //! R1007 §5.27 §5.40 — **master-detail row dissection** over a Model/View
 //! dataset.
 //!
-//! The Model/View-at-scale campaign's earlier slices act on the *row set*:
-//! the filter axis (R997 [`GridFilter`](crate::widgets::grid_sort::GridFilter))
-//! removes rows, the R998 coloring engine tints them, the R1004 search cursor
-//! walks them. **Master-detail** turns the other way — it takes the *one*
-//! selected row and explodes its structured payload into a recursive tree of
-//! fields. This is Wireshark's packet-detail pane below the packet list, the
+//! The Model/View-at-scale campaign's earlier slices act on the *row set*: the
+//! filter axis (R997 [`GridFilter`](crate::widgets::grid_sort::GridFilter)) removes
+//! rows, the R998 coloring engine tints them, the R1004 search cursor walks
+//! them. **Master-detail** turns the other way — it takes the *one* selected
+//! row and explodes its structured payload into a recursive tree of fields.
+//! This is the analyser's packet-detail pane below the packet list, the
 //! dlt-viewer message-detail tree, the inspector panel that follows a
 //! selection: pick a row up top, read its inner structure below.
 //!
@@ -154,10 +154,10 @@ pub struct DissectNode {
 }
 
 impl DissectNode {
-    /// The painted row text: `"name: value"` for a leaf, `"name  (n)"` for a
-    /// branch (n = child count) — the Wireshark "field: value" / "Protocol
-    /// (count)" detail row. The substrate's [`TreeNode::label`] stays the bare
-    /// `name` (the type-ahead key); this is what the binding feeds the painter.
+    /// The painted row text: `"name: value"` for a leaf, `"name  (n)"` for a branch (n = child
+    /// count) — the analyser "field: value" / "Protocol (count)" detail row.
+    /// The substrate's [`TreeNode::label`] stays the bare `name` (the type-ahead key); this is
+    /// what the binding feeds the painter.
     #[must_use]
     pub fn display(&self) -> String {
         if self.kind.is_branch() {
@@ -204,7 +204,7 @@ fn render_scalar(value: &Value) -> String {
 /// Dissect one `value` into a node named `name` at `path`, recursing into
 /// object fields and array elements. A branch starts expanded only at
 /// `depth == 0`, so a freshly selected row shows its top-level structure one
-/// level deep and the user expands further — the Wireshark/Qt default.
+/// level deep and the user expands further — the analyser/the toolkit default.
 fn dissect_node(name: &str, value: &Value, path: &str, depth: u32) -> DissectNode {
     let kind = DissectKind::of(value);
     let children = match value {

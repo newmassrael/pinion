@@ -29,8 +29,8 @@
 //!   the visual<->source column mapping lives here.
 //!
 //!   R1451 audited that mapping against the substrate that now exists for it,
-//!   [`ColumnLayout`](pinion_core::widgets::column_layout::ColumnLayout) (Qt's
-//!   `QHeaderView` state: order x size x visibility, keyed by logical
+//!   [`ColumnLayout`](pinion_core::widgets::column_layout::ColumnLayout) (the toolkit's
+//!   header view state: order x size x visibility, keyed by logical
 //!   section), and **deliberately left this binding alone**. That model earns
 //!   its keep where the three axes compose; here the order is always identity
 //!   and the eager [`view_table`] sizes every column at the uniform

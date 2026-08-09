@@ -1,21 +1,20 @@
 //! `hello-app-font` — R1448 §5.36 — **an application ships its own face**, and
 //! its font-source state is data rather than a log line.
 //!
-//! ## The Qt call this mirrors
+//! ## The toolkit call this mirrors
 //!
-//! Qt applications that cannot rely on the host's fonts call
-//! `QFontDatabase::addApplicationFont` (or `…FromData`) in `main()`, before any
-//! widget exists, then select the returned family by name. This binding does
-//! the same through [`ShellConfig::with_application_font`], which registers the
-//! face into the shell's render cache while the shell is being built — so the
+//! The toolkit applications that cannot rely on the host's fonts call `addApplicationFont` (or
+//! `…FromData`) in `main()`, before any widget exists, then select the returned family by
+//! name. This binding does the same through [`ShellConfig::with_application_font`], which registers the face
+//! into the shell's render cache while the shell is being built — so the
 //! "before any widget" ordering is structural instead of a rule to remember.
 //!
-//! ## What it shows that Qt cannot
+//! ## What it shows that the toolkit cannot
 //!
-//! Qt answers "does this host have fonts?" with a `qWarning` on stderr. Nobody
-//! downstream can read that: not an agent driving the app over §2 #2, not a
-//! screen-QA tool, not a headless capture — which just produces blank text with
-//! the reason in a log nobody parsed.
+//! The toolkit answers "does this host have fonts?" with a `qWarning` on stderr.
+//! Nobody downstream can read that: not an agent driving the app over §2 #2,
+//! not a screen-QA tool, not a headless capture — which just produces blank
+//! text with the reason in a log nobody parsed.
 //!
 //! Here the answer is a [`FontSourceReport`] the view fn reads with
 //! [`font_sources()`] and paints into the scene, so it travels over

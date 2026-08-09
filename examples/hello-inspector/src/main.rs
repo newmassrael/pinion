@@ -2,12 +2,12 @@
 //!
 //! ## What this demonstrates
 //!
-//! The editor "Details" panel that Unreal, Unity (Inspector), and Qt
-//! (`QtPropertyBrowser`) are built around — extended (R922) to its
-//! **multi-object** core: select several scene objects at once and the
-//! panel shows the properties **common** to every selected object, a
-//! "Multiple Values" placeholder wherever the selected objects disagree,
-//! and an edit that writes the new value into **all** of them at once.
+//! The editor "Details" panel that the engine, Unity (Inspector), and the
+//! toolkit (`QtPropertyBrowser`) are built around — extended (R922) to its **multi-object**
+//! core: select several scene objects at once and the panel shows the
+//! properties **common** to every selected object, a "Multiple Values"
+//! placeholder wherever the selected objects disagree, and an edit that writes
+//! the new value into **all** of them at once.
 //!
 //! - An object list (left) of scene entities — Player / Camera / Light —
 //!   each carrying a typed [`CellValue`] property schema that *shares a
@@ -529,12 +529,12 @@ fn parse_step_spec(spec: &str) -> Option<(usize, i32)> {
 
 /// R958 — is the common property `name` MODIFIED from its class default in ANY
 /// selected object? Each selected object compares its own current value (by
-/// name) to its own frozen default (by name) via the NaN-safe
-/// [`CellValue::value_eq`] SSOT, so the "reset to default" arrow shows whenever
-/// the selection diverges from the baseline — the Unreal / Qt inspector
-/// affordance. Orthogonal to [`CommonProperty::mixed`]: a property can be
-/// uniform-but-modified or mixed-but-default. The single source the External
-/// query, the reset gate, and the paint indicator all read (divergence-is-a-bug).
+/// name) to its own frozen default (by name) via the NaN-safe [`CellValue::value_eq`] SSOT, so
+/// the "reset to default" arrow shows whenever the selection diverges from the
+/// baseline — the engine / the toolkit inspector affordance. Orthogonal to
+/// [`CommonProperty::mixed`]: a property can be uniform-but-modified or mixed-but-default. The
+/// single source the External query, the reset gate, and the paint indicator
+/// all read (divergence-is-a-bug).
 fn property_modified_from_default(
     objects: &[ObjectData],
     selection: &IndexRuns,
@@ -614,7 +614,7 @@ struct ScrubTarget {
 /// `VirtualSelectExternal`) plus selection-relative common-property
 /// query / intervene. The `value.<i>` addressing resolves against the
 /// derived common-property list, and an edit writes through to every
-/// selected object — the Unreal multi-object Details core.
+/// selected object — the engine multi-object Details core.
 struct InspectorExternal {
     objects: Rc<Signal<Vec<ObjectData>>>,
     selection: Rc<Signal<VirtualSelect>>,
@@ -976,15 +976,15 @@ impl InspectorExternal {
             }
             return;
         }
-        // R1373 — a numeric Details value cell (`inspector#typein<i>`) is a
-        // press-and-drag SCRUB target (the Blender / Unreal "drag the number"
-        // gesture): a `PointerDown` arms it, the captured `pointer_move` drives it
-        // across the whole selection (mix-preserving), and the release (or a
-        // capture-stray `PointerLeave` / `PointerCancel`) tears it down. A real
-        // scrub committed live, so its trailing click is suppressed — the typein
-        // cell's only click action is `DoubleClick` (its own event), so nothing
-        // further needs gating here. A Colour typein cell arms nothing
-        // (`arm_scrub` declines a non-numeric row), so a Colour drag stays a click.
+        // R1373 — a numeric Details value cell (`inspector#typein<i>`) is a press-and-drag SCRUB
+        // target (the DCC / the engine "drag the number" gesture): a `PointerDown` arms
+        // it, the captured `pointer_move` drives it across the whole selection
+        // (mix-preserving), and the release (or a capture-stray `PointerLeave` / `PointerCancel`)
+        // tears it down. A real scrub committed live, so its trailing click is
+        // suppressed — the typein cell's only click action is `DoubleClick` (its own
+        // event), so nothing further needs gating here. A Colour typein cell
+        // arms nothing (`arm_scrub` declines a non-numeric row), so a Colour drag
+        // stays a click.
         if let Some(idx) = prefixed_index(key, TYPEIN_PREFIX) {
             match event_name {
                 "PointerDown" => {
@@ -1137,13 +1137,13 @@ impl InspectorExternal {
     }
 
     /// R1221 — set common **Bool** property `idx` across EVERY selected object
-    /// (the multi-object toggle), writing through [`set_property`](Self::set_property)
-    /// — the SAME path `intervene value.<i>` drives. R1223 — a **mixed** Bool
-    /// resolves to `true` (checked), the Qt / Unreal convention for clicking an
+    /// (the multi-object toggle), writing through [`set_property`](Self::set_property) —
+    /// the SAME path `intervene value.<i>` drives. R1223 — a **mixed** Bool resolves to `true`
+    /// (checked), the toolkit / the engine convention for clicking an
     /// indeterminate checkbox: an order-INDEPENDENT definite state, not the
-    /// pre-R1223 `!first_selected` (which turned a mostly-on group OFF depending
-    /// on which object happened to be first). A **uniform** Bool flips. `false`
-    /// (no write) when `idx` is out of range or the common property is not a Bool.
+    /// pre-R1223 `!first_selected` (which turned a mostly-on group OFF depending on which
+    /// object happened to be first). A **uniform** Bool flips. `false` (no write)
+    /// when `idx` is out of range or the common property is not a Bool.
     fn toggle_property(&self, idx: usize) -> bool {
         let common = self.common();
         let Some(prop) = common.get(idx) else {
@@ -2089,8 +2089,8 @@ fn value_visual(value: &CellValue, fg: Color, accent: Color, muted: Color) -> Sc
 }
 
 /// The placeholder shown for a property whose selected objects disagree (the
-/// Unreal "Multiple Values" mixed state). One SSOT so the painted text and the
-/// a11y name announce the same word.
+/// the engine "Multiple Values" mixed state). One SSOT so the painted text and
+/// the a11y name announce the same word.
 const MULTIPLE_VALUES: &str = "Multiple Values";
 
 /// The On/Off label for a bool value — one SSOT for the painted pill text and
@@ -2117,7 +2117,7 @@ fn common_value_label(prop: &CommonProperty) -> String {
 
 /// The right-column visual for a common-property row: the typed value when
 /// the selection agrees, the "Multiple Values" placeholder when it differs
-/// (the Unreal mixed-value state — paint peer of `query mixed.<i>` and of the
+/// (the engine mixed-value state — paint peer of `query mixed.<i>` and of the
 /// a11y [`common_value_label`]).
 fn detail_value_visual(prop: &CommonProperty, fg: Color, accent: Color, muted: Color) -> Scene {
     if prop.mixed {
@@ -2292,15 +2292,14 @@ fn detail_value_cell(
     }
 }
 
-/// One Details row: `name` (left, muted) + value visual (right). Tagged
-/// `prop_<i>` so the demo can locate it. R958 — when `modified` (the property
-/// diverges from its class default in any selected object) a reset arrow is
-/// absolutely positioned at the trailing edge, tagged `inspector#reset<i>` so a
-/// click routes to [`InspectorExternal::reset_property`] (the Unreal / Qt
-/// "reset to default" affordance; the arrow paints only on a changed property).
-/// R1224 — when `focused` (the Details pane owns the keyboard and this is the
-/// property cursor) the row carries an accent focus ring, the paint peer of the
-/// a11y active-descendant.
+/// One Details row: `name` (left, muted) + value visual (right). Tagged `prop_<i>` so
+/// the demo can locate it. R958 — when `modified` (the property diverges from its
+/// class default in any selected object) a reset arrow is absolutely
+/// positioned at the trailing edge, tagged `inspector#reset<i>` so a click routes to [`InspectorExternal::reset_property`] (the
+/// engine / the toolkit "reset to default" affordance; the arrow paints only
+/// on a changed property). R1224 — when `focused` (the Details pane owns the
+/// keyboard and this is the property cursor) the row carries an accent focus
+/// ring, the paint peer of the a11y active-descendant.
 fn property_row(
     index: usize,
     prop: &CommonProperty,
@@ -3135,8 +3134,8 @@ mod tests {
             Some(IntrospectValue::Bool(true)),
             "Visible starts mixed"
         );
-        // R1223 — a MIXED Bool resolves to `true` (checked), the Qt/Unreal
-        // indeterminate-checkbox convention (order-independent), NOT
+        // R1223 — a MIXED Bool resolves to `true` (checked), the toolkit/the
+        // engine indeterminate-checkbox convention (order-independent), NOT
         // `!first_selected`.
         assert_eq!(
             e.invoke("toggle_property", IntrospectValue::Int(0))

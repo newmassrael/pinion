@@ -1,17 +1,17 @@
 //! R1554 §5.50 §5.39 §5.40 — the **group box**: a titled frame around a set of
-//! controls, optionally gated by a checkbox in its own title. Qt `QGroupBox`,
-//! HTML `<fieldset>` + `<legend>`, WAI-ARIA `role="group"`.
+//! controls, optionally gated by a checkbox in its own title. The toolkit
+//! group box, HTML `<fieldset>` + `<legend>`, WAI-ARIA `role="group"`.
 //!
 //! # Why it did not exist before
 //!
-//! `grep -rn GroupBox` over 29 crates and 206 examples answered nothing, and the
-//! reason is not that a frame with a label is hard to draw. It is that the half
-//! of `QGroupBox` that matters — `setCheckable(true)`, where clearing the title
-//! checkbox makes the whole panel inert — was **inexpressible**: the scene had
-//! no way to say "this subtree is disabled", so a binding could only reach the
-//! look by threading a disabled flag into every descendant widget's own state,
-//! and even then the Tab order, the pointer router and the accessibility tree
-//! would each have needed their own copy of the same bookkeeping.
+//! `grep -rn GroupBox` over 29 crates and 206 examples answered nothing, and the reason is not
+//! that a frame with a label is hard to draw. It is that the half of group box
+//! that matters — `setCheckable(true)`, where clearing the title checkbox makes the whole panel
+//! inert — was **inexpressible**: the scene had no way to say "this subtree is
+//! disabled", so a binding could only reach the look by threading a disabled
+//! flag into every descendant widget's own state, and even then the Tab order,
+//! the pointer router and the accessibility tree would each have needed their
+//! own copy of the same bookkeeping.
 //!
 //! R1554's [`LayoutStyle::with_disabled`](pinion_core::style::LayoutStyle::with_disabled)
 //! is that missing declaration, and this widget is its first consumer. One flag
@@ -19,24 +19,25 @@
 //!
 //! # Geometry: the title sits ABOVE the frame, and that is a decision
 //!
-//! Qt draws the title *interrupting* the frame's top edge, the label's
-//! background cutting a gap in the frame line. Reproducing that needs the title
-//! to paint **after** the frame, and paint order in a §5.2 scene is declaration
-//! order — which is also §5.39 **Tab order**. An overlapping title therefore
-//! welds the two axes together, and they disagree: the gate must come FIRST in
-//! the tab chain (it is what re-enables the rest) and LAST in the paint chain.
+//! The toolkit draws the title *interrupting* the frame's top edge, the
+//! label's background cutting a gap in the frame line. Reproducing that needs
+//! the title to paint **after** the frame, and paint order in a §5.2 scene is
+//! declaration order — which is also §5.39 **Tab order**. An overlapping title
+//! therefore welds the two axes together, and they disagree: the gate must
+//! come FIRST in the tab chain (it is what re-enables the rest) and LAST in
+//! the paint chain.
 //!
-//! It was built the overlapping way first, and the binding's own test caught it:
-//! Tab visited `opt_verbose`, `opt_trace`, then the gate. Rather than pick which
-//! axis to be wrong on, the title moved above the frame — `AppKit`'s `NSBox` and
-//! GTK 4's `GtkFrame` label convention — where nothing overlaps and both orders
-//! are the declaration order. The *capability* Qt sets the floor for is a titled
-//! frame that gates its contents; where the title sits is a shape choice, and
-//! this shape has one fewer coupling in it.
+//! It was built the overlapping way first, and the binding's own test caught
+//! it: Tab visited `opt_verbose`, `opt_trace`, then the gate. Rather than pick which axis to be
+//! wrong on, the title moved above the frame — `AppKit`'s `NSBox` and GTK 4's `GtkFrame` label
+//! convention — where nothing overlaps and both orders are the declaration
+//! order. The *capability* the toolkit sets the floor for is a titled frame
+//! that gates its contents; where the title sits is a shape choice, and this
+//! shape has one fewer coupling in it.
 //!
-//! A [`flat`](GroupBoxStyle::flat) group box draws the top rule alone (Qt's
-//! `PE_FrameGroupBox` reduced to its top line) — the convention for a group
-//! that sections a form it does not need to box.
+//! A [`flat`](GroupBoxStyle::flat) group box draws the top rule alone (the
+//! toolkit's `PE_FrameGroupBox` reduced to its top line) — the convention for a group that
+//! sections a form it does not need to box.
 
 use pinion_core::Scene;
 use pinion_core::composite_tag::GroupBoxTag;
@@ -50,25 +51,25 @@ use pinion_core::widgets::checkbox::CheckboxState;
 
 use crate::checkbox::{CheckboxStyle, view_checkbox_box};
 
-/// Where the title sits along the frame's top edge — Qt
-/// `QGroupBox::setAlignment`.
+/// Where the title sits along the frame's top edge — the toolkit
+/// `setAlignment`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GroupBoxTitleAlign {
-    /// Inset from the leading edge by [`GroupBoxStyle::title_indent`]. Qt's
-    /// `Qt::AlignLeft` and its default.
+    /// Inset from the leading edge by [`GroupBoxStyle::title_indent`]. The toolkit's `AlignLeft` and its
+    /// default.
     #[default]
     Start,
-    /// Centred over the frame. Qt `Qt::AlignHCenter`.
+    /// Centred over the frame. The toolkit `AlignHCenter`.
     Center,
-    /// Inset from the trailing edge. Qt `Qt::AlignRight`.
+    /// Inset from the trailing edge. The toolkit `AlignRight`.
     End,
 }
 
-/// The gate a **checkable** group box carries in its title — Qt
-/// `QGroupBox::setCheckable(true)` plus `isChecked()`.
+/// The gate a **checkable** group box carries in its title — the toolkit
+/// `setCheckable(true)` plus `isChecked()`.
 ///
-/// `None` where this appears as an `Option` is Qt's default non-checkable group:
-/// a titled frame that gates nothing.
+/// `None` where this appears as an `Option` is the toolkit's default non-checkable
+/// group: a titled frame that gates nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupBoxCheck {
     /// Whether the gate is on. `false` is what makes the content region
@@ -86,7 +87,7 @@ pub struct GroupBoxStyle {
     /// Title font size, px.
     pub title_font_size_px: u32,
     /// Inset of the title band from the frame's leading (or trailing) edge, px
-    /// — Qt's title offset. Ignored for [`GroupBoxTitleAlign::Center`].
+    /// — the toolkit's title offset. Ignored for [`GroupBoxTitleAlign::Center`].
     pub title_indent: u32,
     /// Horizontal breathing room inside the title band, px: the gap it cuts in
     /// the frame line on each side of the text.
@@ -104,14 +105,14 @@ pub struct GroupBoxStyle {
     pub content_padding: u32,
     /// Gap between the content's children, px.
     pub content_gap: u32,
-    /// Draw the top rule alone instead of a frame — Qt `setFlat(true)`.
+    /// Draw the top rule alone instead of a frame — the toolkit `setFlat(true)`.
     pub flat: bool,
     /// Where the title sits.
     pub title_align: GroupBoxTitleAlign,
 }
 
 impl Default for GroupBoxStyle {
-    /// M3-flavoured defaults close to Qt Fusion's group-box metrics.
+    /// M3-flavoured defaults close to the toolkit Fusion's group-box metrics.
     fn default() -> Self {
         Self {
             title_font_size_px: 14,
@@ -148,18 +149,18 @@ impl Default for GroupBoxStyle {
 /// descendant, faded ink, a `scene/disabled` row naming `"{tag}_content"` as
 /// the cause — is the §5.39 cascade's, derived from that one flag.
 ///
-/// The title band and the frame are deliberately **outside** the region: a gate
-/// that disabled its own checkbox could not be turned back on. That is Qt's
-/// behaviour too, and here it is a property of where the declaration sits
-/// rather than a special case in the cascade.
+/// The title band and the frame are deliberately **outside** the region: a
+/// gate that disabled its own checkbox could not be turned back on. That is
+/// the toolkit's behaviour too, and here it is a property of where the
+/// declaration sits rather than a special case in the cascade.
 ///
 /// # Mnemonic
 ///
-/// `title` goes through [`TextNode::mnemonic_styled`], so `"&Advanced"`
-/// underlines the `A` and binds <kbd>Alt</kbd>+`A` — the R1543 vocabulary, one
-/// declaration, and the binding it produces targets the painted title band,
-/// which for a checkable group is the checkbox. Qt's `QGroupBox` accepts the
-/// same `&` in its title and does the same thing with it.
+/// `title` goes through [`TextNode::mnemonic_styled`], so `"&Advanced"` underlines the `A` and binds
+/// <kbd>Alt</kbd>+`A` — the R1543 vocabulary, one declaration, and the binding
+/// it produces targets the painted title band, which for a checkable group is
+/// the checkbox. The toolkit's group box accepts the same `&` in its title and
+/// does the same thing with it.
 #[must_use]
 pub fn view_group_box(
     tag: &'static str,
@@ -193,8 +194,8 @@ pub fn view_group_box(
     );
 
     let framed = if style.flat {
-        // Qt `setFlat(true)`: the top line only. A 1px rule above the content,
-        // in a column so the content still flows beneath it.
+        // The toolkit `setFlat(true)`: the top line only. A 1px rule above the content, in
+        // a column so the content still flows beneath it.
         let rule = Scene::Box(
             BoxNode::new(Rect::default(), BoxStyle::filled(outline)).with_layout(
                 LayoutStyle::new()

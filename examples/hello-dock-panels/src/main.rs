@@ -72,14 +72,13 @@
 //!
 //! ## Why this matters for the northern-star
 //!
-//! Phase B (Pro GUI) and Phase D (editor self-hosted in pinion) both
-//! ride this substrate: every Photoshop / Figma / Unreal Editor /
-//! `VSCode` pane system is a dock + tear-off lattice. R683.C is the
-//! smallest binding that exercises the full chain — dynamic window
-//! lifecycle through `windows_signal`, draggable Splitter handles,
-//! tear-off intent emission, multi-panel cross-window state sync —
-//! so substrate gaps surface immediately rather than waiting for a
-//! real DCC binding.
+//! Phase B (Pro GUI) and Phase D (editor self-hosted in pinion) both ride this
+//! substrate: every the raster editor / the design tool / the engine Editor /
+//! `the code editor` pane system is a dock + tear-off lattice. R683.C is the smallest
+//! binding that exercises the full chain — dynamic window lifecycle through
+//! `windows_signal`, draggable Splitter handles, tear-off intent emission, multi-panel
+//! cross-window state sync — so substrate gaps surface immediately rather than
+//! waiting for a real DCC binding.
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -300,7 +299,7 @@ const VIEWPORT_BTN_CLICK_INTENT_TAG: &str = intent_tag!("viewport_btn", "click")
 
 /// Main splitter default ratio — inspector+property column gets ~32 %
 /// of the main window's width, viewport gets ~68 %. Matches the
-/// VSCode / IntelliJ "side panel + editor canvas" default split feel.
+/// code editor / IntelliJ "side panel + editor canvas" default split feel.
 const MAIN_SPLIT_RATIO_DEFAULT: f32 = 0.32;
 /// Left splitter default ratio — inspector tree gets ~55 % of the
 /// left column's height, property pane gets ~45 %. Matches the

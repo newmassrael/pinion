@@ -73,10 +73,10 @@ pub enum InterveneError {
     /// R1566 §2 #7 — the path is declared, on the **invoke** channel: it is an
     /// action to call, not a slot to write.
     ///
-    /// Qt has no answer here at all. `QObject::setProperty()` returns a bare
-    /// `bool`, so a Qt caller who addressed a method name as a property learns
-    /// only that it did not work, and has to go back to the meta-object and
-    /// search `QMetaObject::method()` themselves to find out why.
+    /// The toolkit has no answer here at all. `setProperty()` returns a bare `bool`, so a
+    /// toolkit caller who addressed a method name as a property learns only
+    /// that it did not work, and has to go back to the meta-object and search
+    /// `method()` themselves to find out why.
     PathIsAnAction,
     /// The value variant does not match the slot's declared type.
     InterveneTypeMismatch,

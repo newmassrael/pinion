@@ -27,7 +27,7 @@
 //! `chart.box.{i}` (the box, notched or not), `chart.median.{i}`,
 //! `chart.whisker.{i}.lo` / `.hi`, `chart.cap.{i}.lo` / `.hi`, and
 //! `chart.outlier.{i}.{j}` — one node per outlier, which is the half of the
-//! form Qt's five-slot `QBoxSet` cannot represent. The shared cartesian
+//! form the toolkit's five-slot box set cannot represent. The shared cartesian
 //! furniture keeps its usual tags (`chart.bg`, `chart.grid.y.{k}`,
 //! `chart.grid.minor.y.{k}`, `chart.axis.x` / `.y`, `chart.label.y.{k}`),
 //! and the category labels are `chart.xlabel.{i}` — the bar chart's
@@ -68,8 +68,8 @@ use crate::scale::{
 use crate::style::ChartStyle;
 use crate::ticks::{TickFormat, tick_step};
 
-/// The fraction of a category slot the box occupies. Qt's
-/// `QBoxPlotSeries::boxWidth` defaults to `0.5`; a little wider reads better
+/// The fraction of a category slot the box occupies. The toolkit's
+/// `boxWidth` defaults to `0.5`; a little wider reads better
 /// against this crate's gap-free category bands.
 const BOX_WIDTH_FRAC: f32 = 0.6;
 
@@ -158,8 +158,8 @@ impl BoxPlotChart {
         &self.categories
     }
 
-    /// Show only `window`'s slice of the category axis (Qt
-    /// `QBarCategoryAxis::setRange`). The boxes, their labels and the
+    /// Show only `window`'s slice of the category axis (the toolkit
+    /// `setRange`). The boxes, their labels and the
     /// inspect hit-test all narrow together, because all three derive from
     /// the axis.
     #[must_use]
@@ -214,7 +214,7 @@ impl BoxPlotChart {
     /// A distribution with no notch (a pre-computed summary, which carries
     /// no sample count) keeps its plain rectangular box, so a chart mixing
     /// derived and supplied data shows exactly which of its boxes the test
-    /// applies to. Qt has no equivalent at any setting.
+    /// applies to. The toolkit has no equivalent at any setting.
     #[must_use]
     pub const fn notched(mut self, notched: bool) -> Self {
         self.notched = notched;
@@ -635,9 +635,9 @@ impl BoxPlotChart {
     ///
     /// It names the sample count and the quantile method, which is what
     /// separates a box a reader can weigh from a picture: a box over six
-    /// samples and one over sixty thousand are the same rectangle. Qt's
-    /// charts implement no accessibility interface at all, so a Qt box plot
-    /// announces nothing.
+    /// samples and one over sixty thousand are the same rectangle. The
+    /// toolkit's charts implement no accessibility interface at all, so a
+    /// toolkit box plot announces nothing.
     #[must_use]
     pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
         let g = self.geom(rect, style);
@@ -758,9 +758,9 @@ mod tests {
         assert_eq!(count_prefix(&scene, "chart.outlier."), 0);
     }
 
-    /// ★ An outlier is its own addressable mark. Qt's `QBoxSet` has five
-    /// slots and no per-outlier geometry, so this is the half of Tukey's
-    /// form a Qt box plot cannot draw at all.
+    /// ★ An outlier is its own addressable mark. The toolkit's box set has
+    /// five slots and no per-outlier geometry, so this is the half of Tukey's
+    /// form a toolkit box plot cannot draw at all.
     #[test]
     fn r1553_each_outlier_is_its_own_node() {
         let mut with_far = samples(0.0);

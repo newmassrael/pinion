@@ -10,27 +10,27 @@
 //! resolved line boxes — which is the only form in which "did my indent reach
 //! the layout" is a question with an answer.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has both halves and joins neither to the other, nor exposes either as
-//! data.
+//! The toolkit has both halves and joins neither to the other, nor exposes
+//! either as data.
 //!
-//! - **The declaration** lives in `QTextBlockFormat`, reachable only in-process
-//!   through a `QTextCursor`, and only as a **property bag**:
-//!   `QTextFormat::property(int)` returns a `QVariant`, an unset property
+//! - **The declaration** lives in text block format, reachable only in-process
+//!   through a text cursor, and only as a **property bag**:
+//!   `property(int)` returns a dynamic value, an unset property
 //!   returns an invalid one, and the typed getters silently substitute a
-//!   default. So a Qt program cannot enumerate what a block declared — only ask
+//!   default. So a toolkit program cannot enumerate what a block declared — only ask
 //!   about properties it already thought to name. Here the block's whole
 //!   content is a struct, and the wire carries every field of it.
-//! - **The units** are not one unit in Qt. `indent()` is an `int` multiplied by
-//!   the document-wide `QTextDocument::indentWidth`, while `leftMargin()` and
+//! - **The units** are not one unit in the toolkit. `indent()` is an `int` multiplied by
+//!   the document-wide `indentWidth`, while `leftMargin()` and
 //!   its siblings are `qreal` pixels — two scales in one class, with nothing on
 //!   the value saying which it is. Everything below is px.
 //! - **The geometry** lives in a different object again
-//!   (`QAbstractTextDocumentLayout::blockBoundingRect`), is not published, and
-//!   stops at the block: Qt has no accessor for where an individual *line*
-//!   landed after alignment and indentation. `QTextLine::x()` exists but only
-//!   while you hold the `QTextLayout`, which `QTextDocument` owns privately.
+//!   (`blockBoundingRect`), is not published, and
+//!   stops at the block: the toolkit has no accessor for where an individual *line*
+//!   landed after alignment and indentation. `x()` exists but only
+//!   while you hold the text layout, which text document owns privately.
 //!
 //! # Wire shape
 //!
@@ -137,15 +137,15 @@ pub struct TextBlockReport {
 /// the author wrote.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct BlockFormatWire {
-    /// Qt `setLeftMargin` + `setIndent`, in px.
+    /// The toolkit `setLeftMargin` + `setIndent`, in px.
     pub left_indent_px: u32,
-    /// Qt `setRightMargin`, in px.
+    /// The toolkit `setRightMargin`, in px.
     pub right_indent_px: u32,
-    /// Qt `setTopMargin`, in px.
+    /// The toolkit `setTopMargin`, in px.
     pub space_above_px: u32,
-    /// Qt `setBottomMargin`, in px.
+    /// The toolkit `setBottomMargin`, in px.
     pub space_below_px: u32,
-    /// Qt `setHeadingLevel`; `0` = not a heading.
+    /// The toolkit `setHeadingLevel`; `0` = not a heading.
     pub heading_level: u8,
     /// The WAI-ARIA `aria-level` this block announces, `null` when it is not a
     /// heading.

@@ -20,12 +20,11 @@
 //!
 //! ## Why runs carry the font size
 //!
-//! A [`StyleRun`]'s [`TextStyle`] is *fully resolved* — the paint adapter shapes
-//! the run's glyphs at the run's own size, and [`TextStyle::default`] is size 0
-//! (invisible). So [`highlight_code`] stamps the field's `font_size_px` onto
-//! every run, overriding only the colour (the Qt `setCharFormat` shape the
-//! manual styling path already uses): the base font flows through, the token
-//! colour overlays.
+//! A [`StyleRun`]'s [`TextStyle`] is *fully resolved* — the paint adapter shapes the run's
+//! glyphs at the run's own size, and [`TextStyle::default`] is size 0 (invisible). So [`highlight_code`]
+//! stamps the field's `font_size_px` onto every run, overriding only the colour (the
+//! toolkit `setCharFormat` shape the manual styling path already uses): the base font
+//! flows through, the token colour overlays.
 //!
 //! ## Scope (honest boundaries)
 //!

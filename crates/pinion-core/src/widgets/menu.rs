@@ -467,11 +467,11 @@ impl MenuBar {
     /// here from a mnemonic (<kbd>Alt</kbd>+F) rather than from the already-focused
     /// title.
     ///
-    /// Distinct from [`Self::toggle_title`] — the pointer path — in exactly the
-    /// way the APG distinguishes them: a mouse open pre-highlights nothing
-    /// (the pointer is the cursor), a keyboard open highlights the first
-    /// navigable item (the keyboard needs one). Re-activating the open menu
-    /// closes it, which is both the pointer path's behaviour and Qt's.
+    /// Distinct from [`Self::toggle_title`] — the pointer path — in exactly the way the APG
+    /// distinguishes them: a mouse open pre-highlights nothing (the pointer is
+    /// the cursor), a keyboard open highlights the first navigable item (the
+    /// keyboard needs one). Re-activating the open menu closes it, which is
+    /// both the pointer path's behaviour and the toolkit's.
     fn activate_title(&mut self, m: usize) {
         if m >= self.menu_count() {
             return;

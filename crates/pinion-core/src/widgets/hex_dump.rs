@@ -38,9 +38,10 @@
 //!
 //! ## Past the references
 //!
-//! Qt has no hex view at all — no widget, no geometry, nothing to be a floor —
-//! so the *existence* is not parity with anything and the *shape* is chosen.
-//! Two choices are worth naming against what a hex editor normally does:
+//! The toolkit has no hex view at all — no widget, no geometry, nothing to be
+//! a floor — so the *existence* is not parity with anything and the *shape* is
+//! chosen. Two choices are worth naming against what a hex editor normally
+//! does:
 //!
 //! * **A cell that is not a byte says WHAT it is.** [`Region`] names the offset
 //!   field, the gutter bars and the padding apart from each other, where the

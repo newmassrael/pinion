@@ -1,4 +1,4 @@
-//! R1568 — the polar chart (Qt's `QPolarChart`).
+//! R1568 — the polar chart (the toolkit's polar chart).
 //!
 //! The consumer of [`crate::polar`]'s coordinate system, and the first chart
 //! here whose grid is not a pair of orthogonal rulers: rings at the radial
@@ -7,31 +7,30 @@
 //! # It takes the SAME series as a cartesian chart
 //!
 //! A [`Series`] of `(x, y)` is re-read as `(angular value, radial value)`,
-//! which is what Qt does too — `QPolarChart` accepts the ordinary
-//! `QLineSeries` / `QScatterSeries` and re-plots them. Keeping the datum
+//! which is what the toolkit does too — polar chart accepts the ordinary
+//! line series / scatter series and re-plots them. Keeping the datum
 //! means a dashboard can hand the same data to a line chart and a polar one
 //! and compare, and it means every consumer of [`crate::plot`]'s off-scale
 //! reporting keeps working.
 //!
 //! # The angular axis is REQUIRED, and that is the design
 //!
-//! Every cartesian builder here auto-scales an axis it was not given.
-//! [`PolarChart::new`] will not, because a period is a fact about the
-//! *quantity* rather than about the samples — see [`AngularScale`]. Qt
-//! auto-scales the angular axis like any other, so a wind rose whose samples
-//! span `10 .. 350` silently gets a period of 340 and every bearing means
-//! something different.
+//! Every cartesian builder here auto-scales an axis it was not given. [`PolarChart::new`]
+//! will not, because a period is a fact about the *quantity* rather than about
+//! the samples — see [`AngularScale`]. The toolkit auto-scales the angular axis like any
+//! other, so a wind rose whose samples span `10 .. 350` silently gets a period of 340
+//! and every bearing means something different.
 //!
 //! # What follows from periodicity
 //!
 //! * The series **closes on itself** when the axis closes, derived rather
-//!   than asked for. A Qt radar needs the caller to append the first point
+//!   than asked for. A toolkit radar needs the caller to append the first point
 //!   again, which puts a duplicate in the data the model does not contain.
 //! * The tick at the end of the period is the tick at its start, so a closed
-//!   axis emits **one** of them. Qt would draw both, stacking two labels at
+//!   axis emits **one** of them. The toolkit would draw both, stacking two labels at
 //!   12 o'clock.
 //! * A sample outside the period is placed and **reported as wrapped**
-//!   ([`PolarChart::wrapped`]), where Qt drops it.
+//!   ([`PolarChart::wrapped`]), where the toolkit drops it.
 //!
 //! # Introspection
 //!
@@ -100,8 +99,8 @@ impl PolarChart {
     /// `"chart"` tag prefix.
     ///
     /// **The angular axis is required.** See the module doc: a period cannot
-    /// be inferred from samples, and Qt inferring one is how a wind rose
-    /// silently gets a 340-degree compass.
+    /// be inferred from samples, and the toolkit inferring one is how a wind
+    /// rose silently gets a 340-degree compass.
     #[must_use]
     pub fn new(series: Vec<Series>, angular: AngularScale) -> Self {
         Self {
@@ -126,7 +125,7 @@ impl PolarChart {
     /// convention [`CategoryScale`](crate::CategoryScale) already sets for a
     /// cartesian slot axis. The period is `0 .. n`, so category `i` sits at
     /// `i / n` of the turn and the loop closes between the last and the
-    /// first, which is exactly the segment a Qt radar needs a duplicated
+    /// first, which is exactly the segment a toolkit radar needs a duplicated
     /// datum to draw.
     #[must_use]
     pub fn radar(series: Vec<Series>, categories: Categories) -> Self {
@@ -163,7 +162,7 @@ impl PolarChart {
     }
 
     /// Occupy `sweep` radians rather than a full turn — a gauge, a fan, a
-    /// quarter plot. `QPolarChart` is always a full circle.
+    /// quarter plot. polar chart is always a full circle.
     ///
     /// A chart-level builder rather than something a caller reaches by
     /// handing in a whole replacement axis, and the split is the round's own
@@ -179,7 +178,7 @@ impl PolarChart {
         self
     }
 
-    /// Set which way values increase. `QPolarChart` hard-codes clockwise.
+    /// Set which way values increase. polar chart hard-codes clockwise.
     #[must_use]
     pub fn with_winding(mut self, winding: Winding) -> Self {
         self.angular = self.angular.with_winding(winding);
@@ -205,7 +204,7 @@ impl PolarChart {
     /// rather than reimplemented, because a radial axis IS a value axis on a
     /// pixel range.
     ///
-    /// `QPolarChart` supports a `QLogValueAxis` here too, so this is parity
+    /// polar chart supports a log value axis here too, so this is parity
     /// rather than divergence — but a radial value the axis cannot place is
     /// reported by [`off_scale`](Self::off_scale) rather than dropped
     /// silently.
@@ -285,9 +284,9 @@ impl PolarChart {
     /// Every sample the angular axis carried by **wrapping** it — placed, and
     /// outside the period as given.
     ///
-    /// The report a periodic axis owes its caller. Qt cannot answer it: such
-    /// a value is simply not drawn there, and a consumer that pre-wrapped its
-    /// own data has already destroyed the evidence.
+    /// The report a periodic axis owes its caller. The toolkit cannot answer
+    /// it: such a value is simply not drawn there, and a consumer that
+    /// pre-wrapped its own data has already destroyed the evidence.
     #[must_use]
     pub fn wrapped(&self) -> Vec<OffScale> {
         let mut out = Vec::new();
@@ -418,7 +417,8 @@ impl PolarChart {
             if pixels.len() >= 2 {
                 // THE ROUND, in one boolean: the segment from the last sample
                 // back to the first is a property of the AXIS, not of the
-                // data. A Qt radar gets it by appending the first point again.
+                // data. A toolkit radar gets it by appending the first point
+                // again.
                 let closed = self.angular.closes();
                 if self.filled {
                     out.push(polygon_node(
@@ -612,9 +612,9 @@ impl PolarChart {
     /// The inspect readout as one line — the same facts the tooltip paints,
     /// stated for a screen reader. `None` when nothing is scrubbed.
     ///
-    /// Names the bearing it scrubbed and every series' value there. Qt's
-    /// charts implement no accessibility interface at all, so a Qt polar
-    /// chart announces nothing.
+    /// Names the bearing it scrubbed and every series' value there. The
+    /// toolkit's charts implement no accessibility interface at all, so a
+    /// toolkit polar chart announces nothing.
     #[must_use]
     pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
         let angular = self.inspect?;
@@ -785,7 +785,7 @@ mod tests {
 
     /// ★ The round's claim in the paint: on a CLOSED axis the series polygon
     /// carries the segment from the last sample back to the first, and on a
-    /// sector it does not. A Qt radar gets that segment by appending the
+    /// sector it does not. A toolkit radar gets that segment by appending the
     /// first point again — a duplicate in the data the model does not have.
     #[test]
     fn r1568_a_closed_axis_closes_the_series_by_derivation() {
@@ -810,8 +810,8 @@ mod tests {
     }
 
     /// ★ A bearing outside the period is PLACED and reported as wrapped, not
-    /// dropped. Qt's angular axis is an ordinary `QValueAxis`, so 370 there
-    /// is out of range and draws nothing.
+    /// dropped. The toolkit's angular axis is an ordinary value axis, so 370
+    /// there is out of range and draws nothing.
     #[test]
     fn r1568_a_wrapped_bearing_is_placed_and_reported() {
         let style = ChartStyle::default();
@@ -863,8 +863,8 @@ mod tests {
         );
     }
 
-    /// ★ A closed axis emits ONE tick where the period's two ends meet. Qt
-    /// would draw both and stack two labels at 12 o'clock.
+    /// ★ A closed axis emits ONE tick where the period's two ends meet. The
+    /// toolkit would draw both and stack two labels at 12 o'clock.
     ///
     /// The period is `0 .. 300` and NOT the compass's `0 .. 360`, and that is
     /// the test's own correction: `nice_ticks` never lands on 360 for a

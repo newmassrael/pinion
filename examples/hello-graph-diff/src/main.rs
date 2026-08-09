@@ -41,29 +41,29 @@
 //! updated, which is precisely the class of bug a maintained `kind` field
 //! exists to produce (two sources of one truth, [[use-substrate-not-hand-rolled-equivalent]]).
 //!
-//! ## Where this is past Qt
+//! ## Where this is past the toolkit
 //!
-//! Qt draws dashes (`QPen::setDashPattern` / `setDashOffset`), so the *line* is
-//! parity. Four things here are not:
+//! The toolkit draws dashes (`setDashPattern` / `setDashOffset`), so the *line* is parity. Four things
+//! here are not:
 //!
 //! 1. **The dash is readable.** `scene/snapshot` publishes every path's
 //!    `style.stroke.dash` — `null` for solid, otherwise `{on, off, offset,
-//!    period}`. A `QPen` is an argument to a paint call: nothing can ask a Qt
-//!    scene which of its edges are dashed, so a Qt agent's only route to "is
+//!    period}`. A pen is an argument to a paint call: nothing can ask a toolkit
+//!    scene which of its edges are dashed, so a toolkit agent's only route to "is
 //!    this link drawn as missing?" is to rasterize and look at pixels. Here the
 //!    demo asserts the *paint* against the *model* — two independent readings
 //!    of the same fact, which is what makes the drawing checkable at all.
-//! 2. **The dash geometry is pixels.** Qt's pattern is in units of the pen
+//! 2. **The dash geometry is pixels.** the toolkit's pattern is in units of the pen
 //!    width, so widening a line silently rescales its rhythm. Widening one here
 //!    changes the width and nothing else.
 //! 3. **A malformed dash is unrepresentable.** `setDashPattern` takes a
-//!    `QList<qreal>` that may be odd-length (Qt warns at runtime and ignores
+//!    `list<qreal>` that may be odd-length (the toolkit warns at runtime and ignores
 //!    it) or all zeros. [`Dash`]'s `on` / `off` are `NonZeroU32`.
 //! 4. **The animation is data.** The marching-ants offset is a declared value
 //!    (`intervene flow`, `invoke advance_flow`), canonical modulo the period —
-//!    so an agent can step it, read it back, and prove it cycles. Qt's
+//!    so an agent can step it, read it back, and prove it cycles. The toolkit's
 //!    `dashOffset` is a pen property set inside a paint call and driven by a
-//!    `QTimer` nobody outside the process can address.
+//!    timer nobody outside the process can address.
 //!
 //! ## The AI surface (§2 #7)
 //!
@@ -751,10 +751,11 @@ impl WidgetA11y for GraphDiffView {
     /// The view is a WAI-ARIA `img` whose value text says what the drawing
     /// says — including which links are missing and which drifted, by name.
     ///
-    /// This is the reading a sighted user gets from solid-versus-dashed, and it
-    /// is why the dash had to become a declaration rather than a paint detail:
-    /// a `QPen` dash reaches the screen and nothing else, so the same
-    /// distinction in Qt is invisible to assistive technology by construction.
+    /// This is the reading a sighted user gets from solid-versus-dashed, and
+    /// it is why the dash had to become a declaration rather than a paint
+    /// detail: a pen dash reaches the screen and nothing else, so the same
+    /// distinction in the toolkit is invisible to assistive technology by
+    /// construction.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_diff_state();
         let describe = |kind: LinkKind| {

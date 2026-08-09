@@ -172,7 +172,7 @@
 //!   really reaches the file backend). The same snapshot is the AI-first
 //!   `query serialized` / `invoke set_graph` read-write pair, and `Ctrl+S` /
 //!   `Ctrl+O` drive save / open. Loading a graph clears the undo history (the
-//!   opened document is a fresh baseline — the `QUndoStack` model). R1258 — an
+//!   opened document is a fresh baseline — the undo stack model). R1258 — an
 //!   `set_graph` blob is **structurally validated** ([`graph_invariants_hold`])
 //!   before it is installed, so an untrusted AI-first write of a malformed graph
 //!   (ill-typed edge / wrong-arity op / duplicate id / mistyped default) is
@@ -195,7 +195,7 @@
 //!   world `ScrollNode`; zero canvas code). **Edge-drag auto-pan** (R1182): a
 //!   node held against the canvas rim auto-scrolls the viewport toward that
 //!   edge every frame (the [`AutoPan`] [`Tickable`], [`use_autopan`]) and the
-//!   dragged nodes stay pinned under the cursor — the DCC / Unreal
+//!   dragged nodes stay pinned under the cursor — the DCC / the engine
 //!   drag-past-the-edge convention. Wire-connect auto-pan (the `begin_drag`
 //!   DnD path) stays a documented follow-up.
 //! - **Inline edit** (R878 title / R901 port default): double-click a node
@@ -505,7 +505,7 @@ const MARQUEE_FILL_ALPHA: u8 = 40;
 // ─── R877 viewport (pan = ScrollState, zoom = shared Signal) ───────
 
 /// R877 — the world extent (graph units, both axes): the finite huge
-/// canvas every desktop node editor uses (Unreal's blueprint graph is
+/// canvas every desktop node editor uses (the engine's blueprint graph is
 /// likewise bounded, just vast). Pan = a [`ScrollAxis::Both`] scroll
 /// over this world; the scene substrate is unsigned so the world's
 /// origin is its top-left corner and node coordinates stay `>= 0`.
@@ -526,9 +526,9 @@ const FRAME_MARGIN: i32 = 24;
 
 /// R1182 — edge-drag auto-pan hot zone: the fraction of the canvas, measured
 /// in from each edge, within which a live node drag auto-scrolls the viewport
-/// toward that edge (the DCC / Unreal convention — a node dragged to the rim
-/// keeps going without releasing). 0.12 of the 640×420 canvas ≈ a 77 px / 50 px
-/// rim.
+/// toward that edge (the DCC / the engine convention — a node dragged to the
+/// rim keeps going without releasing). 0.12 of the 640×420 canvas ≈ a 77 px /
+/// 50 px rim.
 const AUTOPAN_MARGIN: f64 = 0.12;
 /// R1182 — auto-pan speed at full rim penetration, in world px per second (the
 /// [`ScrollState`] offset basis). Scaled by the frame `dt` and the linear
@@ -607,17 +607,17 @@ fn ppt(x: i32, y: i32) -> PathPoint {
 /// R1227 / R1596 — a comment frame is a **node** (`NodeBody::Frame`), so its
 /// handle is a [`NodeId`] and it is minted from the same counter.
 ///
-/// That is Blender's model (`NODE_FRAME` is an ordinary node type) and it is
-/// what makes containment a fact the document maintains — `Node::parent`, whose
-/// forest invariants the crate enforces — rather than a rectangle the paint
-/// re-derives membership from every frame.
+/// That is the DCC's model (`NODE_FRAME` is an ordinary node type) and it is what makes
+/// containment a fact the document maintains — `Node::parent`, whose forest invariants
+/// the crate enforces — rather than a rectangle the paint re-derives
+/// membership from every frame.
 type FrameId = NodeId;
 
-/// R898 — a port's data type. The lattice that makes the graph a *typed*
-/// node editor: an edge connects an output to an input only when a value can
-/// cross from the output's type to the input's ([`MaterialOp::conversion`]), so
-/// the canvas rejects an ill-typed wire the way Unreal's blueprint / material
-/// graphs do. Two material-graph types (`Float` scalar, `Vector` colour/vec3).
+/// R898 — a port's data type. The lattice that makes the graph a *typed* node
+/// editor: an edge connects an output to an input only when a value can cross
+/// from the output's type to the input's ([`MaterialOp::conversion`]), so the canvas rejects an
+/// ill-typed wire the way the engine's blueprint / material graphs do. Two
+/// material-graph types (`Float` scalar, `Vector` colour/vec3).
 ///
 /// R1596 — the relation is **directed** and is now declared as the conversion
 /// itself, once, in [`NodeKind::conversion`]: `is_assignable_to` was this
@@ -632,10 +632,10 @@ enum PortType {
     Vector,
 }
 
-/// R898 — a `Float` port's signature colour. Node editors colour-code pins by
-/// type (Unreal/Blender) so a connection's validity is legible at a glance;
-/// the colour is a fixed type identity, *not* themed (a `Float` reads the same
-/// green in light and dark).
+/// R898 — a `Float` port's signature colour. Node editors colour-code pins by type
+/// (the engine/the DCC) so a connection's validity is legible at a glance; the
+/// colour is a fixed type identity, *not* themed (a `Float` reads the same green
+/// in light and dark).
 const FLOAT_PORT_COLOR: Color = Color::rgb(0x7c, 0xd0, 0x6f);
 /// R898 — a `Vector` port's signature colour (gold, the vec3 convention).
 const VECTOR_PORT_COLOR: Color = Color::rgb(0xe0, 0xb0, 0x3a);
@@ -1091,12 +1091,12 @@ fn frame_node(graph: &Graph, id: FrameId) -> Option<&Node<MaterialOp>> {
 /// R1227 / R1596 — the nodes frame `id` holds, as a **fact** rather than a
 /// rectangle test ([`Document::members`], one level).
 ///
-/// The editor asked its geometry — "whose centre is inside this box" — on every
-/// read, so a frame silently adopted a node dragged over it and abandoned one
-/// dragged out, and a resize changed what the frame *said* it held with nobody
-/// having edited membership. R1589 made containment a stored relation the
-/// document maintains, which is Blender's `bNode::parent` and the reason
-/// `NODE_OT_join` exists there as an explicit act.
+/// The editor asked its geometry — "whose centre is inside this box" — on
+/// every read, so a frame silently adopted a node dragged over it and
+/// abandoned one dragged out, and a resize changed what the frame *said* it
+/// held with nobody having edited membership. R1589 made containment a stored
+/// relation the document maintains, which is the DCC's `bNode::parent` and the reason `NODE_OT_join`
+/// exists there as an explicit act.
 fn frame_members(graph: &Graph, id: FrameId) -> Vec<Node<MaterialOp>> {
     let Some(tree) = graph.tree(TREE) else {
         return Vec::new();
@@ -1312,14 +1312,13 @@ fn first_compatible_input(kind: usize, from: PortType) -> Option<usize> {
         .position(|p| p.value_type().is_some_and(|to| from.is_assignable_to(*to)))
 }
 
-/// R1220 — the [`PALETTE`] kinds a pin-drop from an output of type `from` may
-/// create, in palette order: a kind qualifies iff it has at least one input
-/// port assignable from `from` (so the new node can be auto-wired —
-/// [`first_compatible_input`] is guaranteed `Some`), and, when `filter` is
-/// non-empty, its title contains `filter` (case-insensitive) — the type-to-narrow
-/// search the Unreal / Blender pin-drop menu offers. A pure fn over `(from,
-/// filter)` so both the coordinator (menu candidates + commit gate) and the tests
-/// read one SSOT.
+/// R1220 — the [`PALETTE`] kinds a pin-drop from an output of type `from` may create,
+/// in palette order: a kind qualifies iff it has at least one input port
+/// assignable from `from` (so the new node can be auto-wired — [`first_compatible_input`] is
+/// guaranteed `Some`), and, when `filter` is non-empty, its title contains `filter`
+/// (case-insensitive) — the type-to-narrow search the engine / the DCC
+/// pin-drop menu offers. A pure fn over `(from, filter)` so both the coordinator (menu
+/// candidates + commit gate) and the tests read one SSOT.
 fn pin_create_candidates(from: PortType, filter: &str) -> Vec<usize> {
     let needle = filter.trim().to_ascii_lowercase();
     (0..PALETTE.len())
@@ -1896,15 +1895,15 @@ fn use_preview() -> Rc<Signal<Option<Preview>>> {
     owner.cache("node_graph.preview", || Signal::new(None))
 }
 
-/// R1220 — the in-flight pin-drop create menu (`None` when closed): the
-/// signature Unreal / Blender authoring gesture — drag a wire off an output pin,
-/// release on empty canvas, and a type-filtered menu of the nodes that output can
-/// feed opens; pick one and it is created at the drop point AND auto-wired in one
-/// undo step. Written by the coordinator (the live [`NodeGraphExternal::drag_release`]
-/// empty-canvas branch and the `open_pin_create` RPC verb), read by the view fn
-/// (which paints the floating menu — reading it subscribes the paint Effect, so
-/// open / filter / highlight changes repaint) and the keyboard path. Transient UI
-/// state, like [`use_preview`] / [`use_marquee_rect`].
+/// R1220 — the in-flight pin-drop create menu (`None` when closed): the signature
+/// the engine / the DCC authoring gesture — drag a wire off an output pin,
+/// release on empty canvas, and a type-filtered menu of the nodes that output
+/// can feed opens; pick one and it is created at the drop point AND auto-wired
+/// in one undo step. Written by the coordinator (the live [`NodeGraphExternal::drag_release`] empty-canvas
+/// branch and the `open_pin_create` RPC verb), read by the view fn (which paints the
+/// floating menu — reading it subscribes the paint Effect, so open / filter /
+/// highlight changes repaint) and the keyboard path. Transient UI state, like
+/// [`use_preview`] / [`use_marquee_rect`].
 #[must_use]
 fn use_pin_create() -> Rc<Signal<Option<PinCreate>>> {
     let owner = Owner::current().expect("use_pin_create requires an active Owner scope");
@@ -1982,7 +1981,7 @@ enum EditSurface {
     /// The node card in the canvas — a header title (R878) or a pin default
     /// label (R901).
     Card,
-    /// A Details panel row (R918) — the Unreal "click a property to edit it"
+    /// A Details panel row (R918) — the engine "click a property to edit it"
     /// surface.
     Panel,
 }
@@ -2336,14 +2335,14 @@ struct NodeDragStart {
     /// R879 — one entry per dragged member: `(id, grab_dx, grab_dy,
     /// x_at_press, y_at_press)`. Grabbing a *selected* node drags the whole
     /// selection rigidly (each member keeps its own graph-space grab
-    /// anchor); grabbing an unselected node drags just it (the Unreal /
-    /// QGraphicsView group-move convention). Id-sorted by construction
+    /// anchor); grabbing an unselected node drags just it (the engine /
+    /// canvas view group-move convention). Id-sorted by construction
     /// (selection-set order) so `end_gesture`'s journal entry matches
     /// `GraphEdit::merge`'s same-member ordering.
     members: Vec<(NodeId, f64, f64, i32, i32)>,
     /// R879 audit fix / R880 — the dead zone: the framework [`DragLatch`]
     /// (the SAME contract predicate the router and the marquee advance).
-    /// Until it latches, members do NOT move (the Qt `startDragDistance`
+    /// Until it latches, members do NOT move (the toolkit `startDragDistance`
     /// dead zone — a jittery click neither displaces nodes nor journals a
     /// move) and the release still selects (`gesture_moved` reads this
     /// SAME latch, so "the nodes moved" and "the release must not select"
@@ -2384,12 +2383,12 @@ struct MarqueeStart {
 /// R1592 — a card's extent for an area selection, as **inclusive** corners in
 /// graph units: `x..=right()`, its far edge INCLUDED.
 ///
-/// A card spans `x..right()` everywhere else in this file, so this widens it by
-/// one unit on each far side — deliberately, and it is the "touching counts"
-/// rule this marquee has stated since R880 (Qt's rubber band and Unreal's share
-/// it): a sweep whose edge lands exactly on a card's far edge takes the card.
-/// Before R1592 that rule lived as `n.right() >= x0` inside a filter, where it
-/// read as an off-by-one; here it is a sentence about the card, and the one
+/// A card spans `x..right()` everywhere else in this file, so this widens it by one
+/// unit on each far side — deliberately, and it is the "touching counts" rule
+/// this marquee has stated since R880 (the toolkit's rubber band and the
+/// engine's share it): a sweep whose edge lands exactly on a card's far edge
+/// takes the card. Before R1592 that rule lived as `n.right() >= x0` inside a filter, where
+/// it read as an off-by-one; here it is a sentence about the card, and the one
 /// place the marquee, the lasso and the circle all get it from.
 fn card_span(node: &Node<MaterialOp>) -> (Point, Point) {
     (
@@ -2469,10 +2468,10 @@ enum PendingPress {
 /// is one value, so there is nothing to enumerate.
 ///
 /// The editor's own note called snapshots the wrong shape
-/// ([[granular-undo-not-snapshot]]), against a model that was a `Vec<GraphNode>`
-/// the whole graph had to be cloned out of by hand. It is also what **Blender**
-/// does — `node_undosys` stores a copy of the tree per step — and what makes an
-/// undo here provably total rather than total-as-far-as-anyone-remembered.
+/// ([[granular-undo-not-snapshot]]), against a model that was a `Vec<GraphNode>` the whole
+/// graph had to be cloned out of by hand. It is also what **the DCC** does —
+/// `node_undosys` stores a copy of the tree per step — and what makes an undo here
+/// provably total rather than total-as-far-as-anyone-remembered.
 struct GraphEdit {
     document: Rc<Signal<Graph>>,
     selection: Rc<Signal<Selection>>,
@@ -2620,9 +2619,10 @@ impl GraphHandle {
     }
 }
 
-/// R948 — which edge / centre line of the selection's bounding box an
-/// `align_*` snaps every selected node to. Horizontal specs move only `x`,
-/// vertical specs only `y` — the canonical Qt / Blender / Figma align set.
+/// R948 — which edge / centre line of the selection's bounding box an `align_*`
+/// snaps every selected node to. Horizontal specs move only `x`, vertical
+/// specs only `y` — the canonical the toolkit / the DCC / the design tool
+/// align set.
 #[derive(Clone, Copy)]
 enum AlignSpec {
     Left,
@@ -3288,7 +3288,7 @@ impl NodeGraphExternal {
         self.set_zoom_anchored(target, f64::from(WIN_W) / 2.0, f64::from(WIN_H) / 2.0)
     }
 
-    /// R877 — `frame_all` (`f`, the Unreal / Blender "frame" idiom): fit
+    /// R877 — `frame_all` (`f`, the engine / the DCC "frame" idiom): fit
     /// the node bounding box into the canvas with [`FRAME_MARGIN`],
     /// clamped to the zoom range, and centre it. `false` on an empty
     /// graph (nothing to frame, viewport unchanged).
@@ -3379,11 +3379,12 @@ impl NodeGraphExternal {
         serde_json::to_string(&self.snapshot()).unwrap_or_default()
     }
 
-    /// R852 — replace the whole graph from a snapshot: swap nodes / edges, resume
-    /// the id counters where the snapshot left off, drop the selection / preview,
-    /// and clear the undo history — the opened document is a fresh baseline (the
-    /// `QUndoStack` "open clears the stack" model). The single restore path
-    /// behind `set_graph` / `load`, so every entry point clears undo identically.
+    /// R852 — replace the whole graph from a snapshot: swap nodes / edges,
+    /// resume the id counters where the snapshot left off, drop the selection
+    /// / preview, and clear the undo history — the opened document is a fresh
+    /// baseline (the undo stack "open clears the stack" model). The single
+    /// restore path behind `set_graph` / `load`, so every entry point clears undo
+    /// identically.
     fn apply_snapshot(&self, g: SerializedGraph) {
         self.document.set(g.graph);
         self.selection.set(Selection::None);
@@ -4125,15 +4126,14 @@ impl NodeGraphExternal {
     /// selection is untouched — frames are a separate annotation axis, not part
     /// of [`Selection`].
     ///
-    /// R1596 — membership becomes a **fact** here ([`Document::enframe`], which
-    /// writes each member's [`Node::parent`]) where the editor re-derived it
-    /// from the rectangle on every read. That is Blender's model
-    /// (`NODE_OT_join`) and it is what makes a member survive a resize: a
-    /// rectangle test silently adopts and abandons nodes as the box is dragged,
-    /// so what the frame *said* it held changed without anyone editing it.
-    /// The **geometry** stays this application's — the crate deliberately has no
-    /// card extent (R1589) — so the padded bounding box is written onto the
-    /// frame node right after the relation is made.
+    /// R1596 — membership becomes a **fact** here ([`Document::enframe`], which writes each
+    /// member's [`Node::parent`]) where the editor re-derived it from the rectangle on
+    /// every read. That is the DCC's model (`NODE_OT_join`) and it is what makes a member
+    /// survive a resize: a rectangle test silently adopts and abandons nodes
+    /// as the box is dragged, so what the frame *said* it held changed without
+    /// anyone editing it. The **geometry** stays this application's — the
+    /// crate deliberately has no card extent (R1589) — so the padded bounding
+    /// box is written onto the frame node right after the relation is made.
     fn add_frame(&self) -> Option<FrameId> {
         let graph = self.graph();
         let selected = self.selection.get().nodes();
@@ -4268,12 +4268,12 @@ impl NodeGraphExternal {
         Ok(IntrospectValue::Int(i64::from(id.0)))
     }
 
-    /// R1598 — swap what a node IS, keeping which node it is (Blender's
+    /// R1598 — swap what a node IS, keeping which node it is (the DCC's
     /// `NODE_OT_swap_node`). Answers what the swap cost, as
     /// `"<carried>|<severed>|<discarded>"` — three CSVs, so a client can tell
     /// "it worked" from "it worked and cost you a wire" without a second call.
     ///
-    /// The node's id survives, which is the whole point: Blender's operator
+    /// The node's id survives, which is the whole point: the DCC's operator
     /// creates a new node and deletes the old one, so a selection, a saved
     /// layout and an agent holding the id all break.
     fn swap_node(&self, id: NodeId, kind: usize) -> Option<String> {
@@ -4390,13 +4390,13 @@ impl NodeGraphExternal {
     /// `contains`. `None` when the path is not a frame path or the id / field is
     /// unknown.
     ///
-    /// R1596 — `contains` answers the **relation** ([`frame_members`]) where it
-    /// used to answer a rectangle test, and two reads join it: `parent` (the
-    /// frame this frame is inside, so a nest is readable from either end) and
-    /// `contents` (every descendant, which is what a drag actually carries).
-    /// Blender publishes none of the three — `bNode::parent` reaches Python as
-    /// `node.parent` and there is no accessor for a frame's children at all, so
-    /// its own UI code walks every node in the tree comparing pointers.
+    /// R1596 — `contains` answers the **relation** ([`frame_members`]) where it used to answer a
+    /// rectangle test, and two reads join it: `parent` (the frame this frame is
+    /// inside, so a nest is readable from either end) and `contents` (every
+    /// descendant, which is what a drag actually carries). The DCC publishes
+    /// none of the three — `bNode::parent` reaches Python as `node.parent` and there is no accessor
+    /// for a frame's children at all, so its own UI code walks every node in
+    /// the tree comparing pointers.
     fn query_frame(&self, path: &str) -> Option<IntrospectValue> {
         let rest = path.strip_prefix("frame.")?;
         let (id_str, field) = rest.split_once('.')?;
@@ -4458,10 +4458,10 @@ impl NodeGraphExternal {
                 "inputs" => Some(IntrospectValue::Int(int_of(signature.inputs.len()))),
                 "outputs" => Some(IntrospectValue::Int(int_of(signature.outputs.len()))),
                 // R1596 — the frame this node sits in, or `Null` on the bare
-                // canvas ([`Node::parent`], R1589). Membership is now a fact the
-                // document maintains, so it is readable from the member's end as
-                // well as the frame's — Blender has `node.parent` in Python and
-                // no accessor for the other direction at all.
+                // canvas ([`Node::parent`], R1589). Membership is now a fact the document
+                // maintains, so it is readable from the member's end as well
+                // as the frame's — the DCC has `node.parent` in Python and no accessor
+                // for the other direction at all.
                 "parent" => Some(node.parent.map_or(IntrospectValue::Null, |p| {
                     IntrospectValue::Int(i64::from(p.0))
                 })),
@@ -4728,23 +4728,23 @@ impl NodeGraphExternal {
     /// `dissolve_node` verb, so an editor can gray out / offer "Dissolve"
     /// without a mutate-to-probe).
     ///
-    /// The predicate **widened** this round and the word it answers changed with
-    /// it. The editor's own rule was "exactly one wire in and one out", a shape
-    /// test that refused a two-input node whose dissolve is perfectly
-    /// well-defined; [`Document::dissolve`] is the general form (R1586,
-    /// Blender's `NODE_OT_delete_reconnect`), so what is worth asking is no
-    /// longer *can it* but **does it lose anything** — [`Rewired::lossless`].
+    /// The predicate **widened** this round and the word it answers changed
+    /// with it. The editor's own rule was "exactly one wire in and one out", a
+    /// shape test that refused a two-input node whose dissolve is perfectly
+    /// well-defined; [`Document::dissolve`] is the general form (R1586, the DCC's `NODE_OT_delete_reconnect`), so what
+    /// is worth asking is no longer *can it* but **does it lose anything** —
+    /// [`Rewired::lossless`].
     fn dissolvable(&self, id: NodeId) -> bool {
         self.dissolve_plan(id).is_some_and(|r| r.lossless())
     }
 
     /// R1596 — the wires a dissolve of `id` would CUT, as a CSV of edge ids.
     ///
-    /// Empty exactly when [`dissolvable`](Self::dissolvable) is true, so the
-    /// boolean and the reason are one derivation read two ways. Blender's
-    /// `node_internal_relink` deletes those links with `node_remove_link` and
-    /// returns `void`, so nothing there can be asked what a reconnect-delete is
-    /// about to throw away — the user finds out by doing it.
+    /// Empty exactly when [`dissolvable`](Self::dissolvable) is true, so the boolean and
+    /// the reason are one derivation read two ways. The DCC's `node_internal_relink` deletes
+    /// those links with `node_remove_link` and returns `void`, so nothing there can be asked
+    /// what a reconnect-delete is about to throw away — the user finds out by
+    /// doing it.
     fn dissolve_severs(&self, id: NodeId) -> Option<String> {
         let plan = self.dissolve_plan(id)?;
         Some(csv_ids(plan.severed.iter().map(|link| link.id.0)))
@@ -4780,11 +4780,11 @@ impl NodeGraphExternal {
     /// R1596 — the **innermost** frame whose rect holds node `n`'s centre.
     ///
     /// Innermost, because a nested frame sits inside its container's rect too,
-    /// so "which frame did I drop this in" has one answer only once depth breaks
-    /// the tie. Blender's `node_find_frame_to_attach` walks its node list from
-    /// the END and takes the first rect hit, which is z-order — so there the
-    /// answer depends on the order frames were created in, and dropping a node
-    /// into an inner frame lands it in the outer one whenever the outer was made
+    /// so "which frame did I drop this in" has one answer only once depth
+    /// breaks the tie. The DCC's `node_find_frame_to_attach` walks its node list from the END and
+    /// takes the first rect hit, which is z-order — so there the answer
+    /// depends on the order frames were created in, and dropping a node into
+    /// an inner frame lands it in the outer one whenever the outer was made
     /// later.
     fn frame_under(graph: &Graph, n: &Node<MaterialOp>) -> Option<NodeId> {
         frame_nodes(graph)
@@ -4793,8 +4793,8 @@ impl NodeGraphExternal {
             .map(|f| f.id)
     }
 
-    /// R1596 — Blender's `NODE_OT_attach`: put each selected node into the frame
-    /// it is sitting on, as one undo step. Answers the nodes that changed frame.
+    /// R1596 — the DCC's `NODE_OT_attach`: put each selected node into the frame it is
+    /// sitting on, as one undo step. Answers the nodes that changed frame.
     ///
     /// This is where the geometric question ([`frame_contains`]) becomes the
     /// membership FACT ([`Node::parent`]) — one act, at a moment the user chose,
@@ -4832,13 +4832,13 @@ impl NodeGraphExternal {
         attached
     }
 
-    /// R1596 — Blender's `NODE_OT_detach`: take each selected node out of the
-    /// frame immediately containing it, as one undo step. Answers the nodes that
+    /// R1596 — the DCC's `NODE_OT_detach`: take each selected node out of the frame
+    /// immediately containing it, as one undo step. Answers the nodes that
     /// moved.
     ///
-    /// **One level** ([`Document::unframe`]), so a node in `Outer > Inner` lands
-    /// in `Outer` and repeating walks out. Blender's operator clears the parent
-    /// outright, so only the all-the-way form is reachable there.
+    /// **One level** ([`Document::unframe`]), so a node in `Outer > Inner` lands in `Outer` and repeating
+    /// walks out. The DCC's operator clears the parent outright, so only the
+    /// all-the-way form is reachable there.
     fn detach_selected(&self) -> Vec<NodeId> {
         let selected: Vec<NodeId> = self.selection.get().nodes().into_iter().collect();
         let mut moved = Vec::new();
@@ -4999,15 +4999,15 @@ impl NodeGraphExternal {
     }
 
     /// R1383 — tidy the WHOLE graph into a layered (Sugiyama) left-to-right
-    /// arrangement in ONE discrete undo step: data flows forward across columns
-    /// with a crossing-reduced vertical order (see [`Layered`]). The
-    /// AI-first peer of a node editor's "arrange" / "tidy" command (Unreal
-    /// Blueprint, Blender, Substance) — no selection needed (it lays out
-    /// everything), anchored at the graph's current top-left so the graph stays
-    /// roughly in place instead of jumping to the origin. A no-op `false` on
-    /// fewer than two nodes (a single node is already tidy) or when nothing moves
-    /// (the graph is already laid out — the pass is idempotent). Routes through
-    /// the same [`apply_node_moves`](Self::apply_node_moves) SSOT as align /
+    /// arrangement in ONE discrete undo step: data flows forward across
+    /// columns with a crossing-reduced vertical order (see [`Layered`]). The
+    /// AI-first peer of a node editor's "arrange" / "tidy" command (the engine
+    /// Blueprint, the DCC, Substance) — no selection needed (it lays out
+    /// everything), anchored at the graph's current top-left so the graph
+    /// stays roughly in place instead of jumping to the origin. A no-op `false` on
+    /// fewer than two nodes (a single node is already tidy) or when nothing
+    /// moves (the graph is already laid out — the pass is idempotent). Routes
+    /// through the same [`apply_node_moves`](Self::apply_node_moves) SSOT as align /
     /// distribute / nudge, so a single `Ctrl+Z` reverts the whole arrangement;
     /// comment frames are left in place (the align / distribute precedent).
     fn auto_layout(&self) -> bool {
@@ -5062,15 +5062,16 @@ impl NodeGraphExternal {
     }
 
     /// Select a node by id (must exist). The sum type makes any prior edge
-    /// selection vanish for free — no "clear the other" bookkeeping.
-    /// R920 — write the selection, first committing any in-flight *panel* edit
-    /// whose node is leaving the single selection. The Details panel renders only
-    /// the single selected node, so a selection change that orphans a panel edit
-    /// must end it (Unreal commit-on-selection-change, like a blur) — otherwise
-    /// the shared field would paint nowhere while `query editing` still advertised
-    /// it (an introspection lie reachable on the RPC path). A *card* edit is
-    /// selection-independent (its card always paints), so it is left untouched.
-    /// Every user-facing selection mutator routes through here.
+    /// selection vanish for free — no "clear the other" bookkeeping. R920 —
+    /// write the selection, first committing any in-flight *panel* edit whose
+    /// node is leaving the single selection. The Details panel renders only
+    /// the single selected node, so a selection change that orphans a panel
+    /// edit must end it (the engine commit-on-selection-change, like a blur) —
+    /// otherwise the shared field would paint nowhere while `query editing` still
+    /// advertised it (an introspection lie reachable on the RPC path). A
+    /// *card* edit is selection-independent (its card always paints), so it is
+    /// left untouched. Every user-facing selection mutator routes through
+    /// here.
     fn set_selection(&self, next: Selection) {
         if let Some(active) = self.editing.get() {
             if active.surface == EditSurface::Panel && next.node() != Some(active.target.node()) {
@@ -5104,7 +5105,7 @@ impl NodeGraphExternal {
     }
 
     /// R879 — `Shift`-add `id` to the node selection (an unordered graph
-    /// has no range to extend, so Shift means "add" — the Unreal graph
+    /// has no range to extend, so Shift means "add" — the engine graph
     /// convention). Unknown ids are ignored.
     fn add_node_to_selection(&self, id: NodeId) {
         if kind_node(&self.graph(), id).is_none() {
@@ -5127,15 +5128,14 @@ impl NodeGraphExternal {
         true
     }
 
-    /// R880 — apply a completed marquee: every node whose card intersects
-    /// the graph-space rect joins the hit set (Qt rubber-band / Unreal
-    /// intersects semantics — touching counts). The release modifiers pick
-    /// the area form of the R879 click policy through the framework
-    /// [`SelectionChord`] decode (R880.1 — *extend* on an unordered canvas
-    /// means union): plain *replaces* the selection with the hit
-    /// set (an empty sweep clears — the background-click deselect
-    /// generalised to an area), `Ctrl` *toggles* each hit member, `Shift`
-    /// *unions* the hit set in.
+    /// R880 — apply a completed marquee: every node whose card intersects the
+    /// graph-space rect joins the hit set (the toolkit rubber-band / the
+    /// engine intersects semantics — touching counts). The release modifiers
+    /// pick the area form of the R879 click policy through the framework [`SelectionChord`]
+    /// decode (R880.1 — *extend* on an unordered canvas means union): plain
+    /// *replaces* the selection with the hit set (an empty sweep clears — the
+    /// background-click deselect generalised to an area), `Ctrl` *toggles* each
+    /// hit member, `Shift` *unions* the hit set in.
     fn apply_marquee(&self, rect: MarqueeRect, mods: Modifiers) {
         let (x0, y0, x1, y1) = rect;
         self.apply_region(
@@ -5156,7 +5156,7 @@ impl NodeGraphExternal {
     ///
     /// A card's extent is passed as `x..=right()` — its far edge INCLUDED —
     /// which is the "touching counts" rule this marquee has stated since R880
-    /// and Qt's rubber band shares. Stating it here rather than in an
+    /// and the toolkit's rubber band shares. Stating it here rather than in an
     /// inequality is the point: it is now a sentence about the card, not an
     /// off-by-one in a filter.
     fn apply_region(&self, region: &Region, mods: Modifiers) {
@@ -5284,14 +5284,14 @@ impl NodeGraphExternal {
         self.set_selection(next);
     }
 
-    /// R878 / R901 — begin an inline edit of `target` (a node title or an
-    /// input port default): validate the target exists, commit any in-flight
-    /// edit of a *different* target first (the Qt item-view discipline — an
-    /// open editor commits when another item enters edit; without it the
-    /// migration would silently discard the typed text), flag
-    /// [`use_active_edit`], seed the shared field with the target's current
-    /// text (caret parked at the end — the todomvc `begin_edit` UX), and hand
-    /// focus to the field through the focus-request mailbox.
+    /// R878 / R901 — begin an inline edit of `target` (a node title or an input
+    /// port default): validate the target exists, commit any in-flight edit of
+    /// a *different* target first (the toolkit item-view discipline — an open
+    /// editor commits when another item enters edit; without it the migration
+    /// would silently discard the typed text), flag [`use_active_edit`], seed the shared
+    /// field with the target's current text (caret parked at the end — the
+    /// todomvc `begin_edit` UX), and hand focus to the field through the focus-request
+    /// mailbox.
     fn begin_edit(&self, target: EditTarget, surface: EditSurface) -> bool {
         // R1246 — a reroute knot paints as a compact dot with NO card
         // ([`view_reroute_knot`] renders no header / port rows), so a CARD-surface
@@ -5314,8 +5314,9 @@ impl NodeGraphExternal {
         // (the R878 todomvc restart-editing UX); committing the buffer on a
         // surface move would be the very silent-discard the migration-commit guards.
         let migrate_surface = prev.is_some_and(|p| p.target == target && p.surface != surface);
-        // R901 — opening a *different* target commits the in-flight one first (the
-        // Qt item-view discipline), so the migration never silently drops text.
+        // R901 — opening a *different* target commits the in-flight one first
+        // (the toolkit item-view discipline), so the migration never
+        // silently drops text.
         if let Some(prev) = prev {
             if prev.target != target {
                 let text = self.edit_buffer.text();
@@ -5672,11 +5673,11 @@ impl NodeGraphExternal {
                     .collect();
                 let dragged = !moves.is_empty();
                 self.record_moves(moves, false);
-                // R1596 — a node dropped onto a frame JOINS it (Blender runs the
-                // same attach out of its transform's `special_aftertrans_update`).
-                // Only after a real move: a click that grabbed and released in
-                // place must not silently re-parent, and only then can attach be
-                // its own undo step without a stray one behind every click.
+                // R1596 — a node dropped onto a frame JOINS it (the DCC runs
+                // the same attach out of its transform's `special_aftertrans_update`). Only after a
+                // real move: a click that grabbed and released in place must
+                // not silently re-parent, and only then can attach be its own
+                // undo step without a stray one behind every click.
                 if dragged {
                     self.attach_selected();
                 }
@@ -5809,7 +5810,7 @@ impl External for NodeGraphExternal {
             // cursor): snapshot the dragged member set. Grabbing a *selected*
             // node drags the whole selection rigidly (per-member graph-space
             // grab anchors); grabbing an unselected node drags just it,
-            // leaving the selection untouched (the Unreal / QGraphicsView
+            // leaving the selection untouched (the engine / canvas view
             // convention).
             let selection = self.selection.get();
             let members: BTreeSet<NodeId> = if selection.contains_node(node) {
@@ -5837,7 +5838,7 @@ impl External for NodeGraphExternal {
         }
         // R879 audit fix — the dead zone: nothing moves until the framework
         // `DragLatch` (the SAME predicate the router applies to routed
-        // clicks / DnD) latches past the press point (Qt
+        // clicks / DnD) latches past the press point (the toolkit
         // `startDragDistance`; this is the capture-path twin).
         {
             let mut start = self.node_drag.borrow_mut();
@@ -5866,7 +5867,7 @@ impl External for NodeGraphExternal {
     ///
     /// * `Ctrl`+wheel — zoom, anchored at the cursor (consumed).
     /// * `Shift`+wheel — horizontal pan: the vertical notches drive the
-    ///   x offset, the browser/Figma convention (consumed; written
+    ///   x offset, the browser/the design tool convention (consumed; written
     ///   straight onto the shared [`ScrollState`]).
     /// * plain wheel — **declined** (`false`): the router's pre-R877
     ///   scroll fallback pans the world `ScrollNode` natively, so the
@@ -6107,10 +6108,10 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
         "string",
         const { &[SchemaArg::open("id", "int")] },
     ),
-    // R1596 — containment read from BOTH ends and at BOTH depths: `contains` is
-    // one level, `contents` everything below it, and `parent` the frame this
-    // frame is inside. Blender exposes `node.parent` to Python and has no
-    // accessor for a frame's children at all.
+    // R1596 — containment read from BOTH ends and at BOTH depths: `contains` is one
+    // level, `contents` everything below it, and `parent` the frame this frame is inside.
+    // The DCC exposes `node.parent` to Python and has no accessor for a frame's children
+    // at all.
     SchemaField::parametric(
         "frame.<id>.contents",
         "string",
@@ -6288,11 +6289,11 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     // nothing is selected); `remove_frame` deletes a frame by id.
     SchemaField::action("add_frame", "int"),
     SchemaField::action("remove_frame", "int"),
-    // R1596 — Blender's NODE_OT_attach / NODE_OT_detach: put the selection into
-    // the frame it is sitting on, or take it out one level. Both answer the CSV
-    // of nodes whose frame changed, where Blender's operators report only
-    // whether the operator ran at all.
-    // R1598 — swap what a node IS, keeping which node it is.
+    // R1596 — the DCC's NODE_OT_attach / NODE_OT_detach: put the selection
+    // into the frame it is sitting on, or take it out one level. Both answer
+    // the CSV of nodes whose frame changed, where the DCC's operators report
+    // only whether the operator ran at all. R1598 — swap what a node IS,
+    // keeping which node it is.
     SchemaField::action("swap_node", "string"),
     SchemaField::action("attach", "string"),
     SchemaField::action("detach", "string"),
@@ -6304,7 +6305,7 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::action("dissolve_node", "int"),
     SchemaField::action("dissolve_selected", "json"),
     SchemaField::action("select_all", "json"),
-    // R1592 — Blender's NODE_OT_select_lasso / _circle, in graph units.
+    // R1592 — the DCC's NODE_OT_select_lasso / _circle, in graph units.
     // `select_lasso "x,y;x,y;..."` (three vertices or more, closed by
     // derivation); `select_circle "x,y,r"`. Both answer how many nodes the
     // shape took, and both are the SAME call the marquee makes — a
@@ -6683,7 +6684,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // `false` on an empty graph.
             "select_all" => Ok(IntrospectValue::Bool(self.select_all())),
             // R1592 — an area selection by a shape the pointer cannot draw
-            // over a wire. Blender needs an operator each; here both are one
+            // over a wire. The DCC needs an operator each; here both are one
             // `Region` value applied by one call.
             "select_lasso" | "select_circle" => self.invoke_region_select(path, &args),
             // R878 — open the inline rename editor: an `Int` targets that
@@ -7187,7 +7188,7 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
             let _ = intro.intervene("selected", IntrospectValue::Null);
             true
         }
-        // R877 — frame the whole graph (Unreal / Blender `F`).
+        // R877 — frame the whole graph (the engine / the DCC `F`).
         "f" => matches!(
             intro.invoke("frame_all", IntrospectValue::Null),
             Ok(IntrospectValue::Bool(true))
@@ -7587,7 +7588,7 @@ fn view_node(
     let mut children = vec![header];
     // R898 — each port paints in its [`PortType`] signature colour, so a
     // connection's validity (output colour vs input colour) is legible at a
-    // glance — the Unreal/Blender colour-coded-pin convention.
+    // glance — the engine/the DCC colour-coded-pin convention.
     for (i, port) in signature.inputs.iter().enumerate() {
         children.push(view_port(
             format!("{GRAPH_TAG}#iport_{id}_{i}"),
@@ -8002,11 +8003,11 @@ fn detail_rows(graph: &Graph, node: &Node<MaterialOp>) -> Vec<DetailRow> {
 }
 
 /// R916 — the Details panel: the single selected node's editable properties
-/// (title / position / per-port defaults) reflected as rows, the Unreal Details
-/// "select → inspect" surface. Mirrors the palette sidebar's shape (a sibling
-/// column of the canvas). When the selection is not exactly one node it shows a
-/// placeholder — there is no unambiguous "the" node to inspect (the `selected` /
-/// `detail.node` `Null` case made visible).
+/// (title / position / per-port defaults) reflected as rows, the engine
+/// Details "select → inspect" surface. Mirrors the palette sidebar's shape (a
+/// sibling column of the canvas). When the selection is not exactly one node
+/// it shows a placeholder — there is no unambiguous "the" node to inspect (the
+/// `selected` / `detail.node` `Null` case made visible).
 fn view_details_panel(
     graph: &Graph,
     selection: &Selection,

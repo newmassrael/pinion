@@ -1,11 +1,11 @@
-//! R998 §5.40 — **declarative per-row style rules** (Wireshark "coloring
+//! R998 §5.40 — **declarative per-row style rules** (the analyser "coloring
 //! rules" / dlt-viewer filter-colours) for a data grid at scale.
 //!
-//! A Wireshark packet list paints each row by the first **coloring rule** whose
+//! A analyser packet list paints each row by the first **coloring rule** whose
 //! display filter the packet matches; a dlt-viewer colours log lines by ECU /
 //! app / level filters. This module is the grid analog: an ordered list of
-//! [`RowStyleRule`]s, each a (predicate → tint) pair, and a row paints with the
-//! **first** rule it matches (Wireshark's first-match precedence).
+//! [`RowStyleRule`]s, each a (predicate → tint) pair, and a row paints with the **first**
+//! rule it matches (the analyser's first-match precedence).
 //!
 //! ## The match half REUSES the R997 [`GridFilter`]
 //!
@@ -75,13 +75,12 @@ impl RowTint {
 }
 
 /// R998 §5.40 — one row-coloring rule: rows whose cells satisfy
-/// [`filter`](Self::filter) paint with [`tint`](Self::tint). The grid analog of
-/// a Wireshark coloring rule; the predicate is the R997
-/// [`GridFilter`] conjunction (shared
-/// wire vocab with the filter axis). The wire form is
-/// `"<filter>;<bg-hex>;<fg-hex>"` (the filter half may itself contain `;` only
-/// in a value — split takes the **last two** `;`-fields as the tint, the rest
-/// is the filter; in practice a filter wire never contains `;`).
+/// [`filter`](Self::filter) paint with [`tint`](Self::tint). The grid analog of a
+/// analyser coloring rule; the predicate is the R997 [`GridFilter`] conjunction (shared
+/// wire vocab with the filter axis). The wire form is `"<filter>;<bg-hex>;<fg-hex>"` (the filter half may
+/// itself contain `;` only in a value — split takes the **last two**
+/// `;`-fields as the tint, the rest is the filter; in practice a filter wire
+/// never contains `;`).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RowStyleRule {
     /// The predicate a row must satisfy to paint with this rule.
@@ -197,9 +196,9 @@ impl RowStyleState {
         self.rules.set(Vec::new());
     }
 
-    /// The index of the **first** rule a row matches, or `None` — Wireshark's
-    /// first-match precedence. `cell` yields the text of the row's column
-    /// `col`. Subscribes to the rule `Signal` (reads it once per call).
+    /// The index of the **first** rule a row matches, or `None` — the analyser's
+    /// first-match precedence. `cell` yields the text of the row's column `col`.
+    /// Subscribes to the rule `Signal` (reads it once per call).
     #[must_use]
     pub fn match_index<'a, F: Fn(usize) -> &'a str>(&self, cell: F) -> Option<usize> {
         Self::match_index_in(&self.rules.get(), cell)

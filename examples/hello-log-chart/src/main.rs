@@ -1,10 +1,9 @@
 //! `hello-log-chart` — R1528 §5.38 the value axis can be **logarithmic**.
 //!
-//! The forcing consumer for [`pinion_chart::LineChart::y_log`], the crate's
-//! first non-affine axis (Qt's `QLogValueAxis`). Until R1528 every axis in
-//! `pinion-chart` was a [`pinion_chart::LinearScale`], which is the right
-//! default and the wrong one for the data every profiler and monitoring tool
-//! actually carries: latency percentiles.
+//! The forcing consumer for [`pinion_chart::LineChart::y_log`], the crate's first non-affine axis (the
+//! toolkit's log value axis). Until R1528 every axis in `pinion-chart` was a [`pinion_chart::LinearScale`], which
+//! is the right default and the wrong one for the data every profiler and
+//! monitoring tool actually carries: latency percentiles.
 //!
 //! ## What the toggle shows
 //!

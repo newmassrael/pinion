@@ -6,7 +6,7 @@
 //! may be selected at a time; activating a day replaces the previous
 //! selection. The header's previous/next navigation rolls the displayed
 //! month (with year rollover) without changing the selection — the
-//! Material / `SwiftUI` / Qt `QCalendarWidget` convention.
+//! Material / `SwiftUI` / the toolkit calendar widget convention.
 //!
 //! `DatePicker` is a single coordinator (mirroring
 //! [`RadioGroup`](crate::widgets::radio_group::RadioGroup) — a "select

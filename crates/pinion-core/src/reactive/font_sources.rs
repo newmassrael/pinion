@@ -3,9 +3,9 @@
 //!
 //! # Why this exists
 //!
-//! Qt's `QFontDatabase` reports "there are no fonts on this host" by writing a
-//! `qWarning` to stderr. A line on a stream is not a fact anyone can query: an
-//! agent driving the app over §2 #2 cannot read it, a screen-QA tool cannot
+//! The toolkit's font database reports "there are no fonts on this host" by
+//! writing a `qWarning` to stderr. A line on a stream is not a fact anyone can query:
+//! an agent driving the app over §2 #2 cannot read it, a screen-QA tool cannot
 //! assert on it, and a headless capture produces blank text with the
 //! explanation sitting in a log nobody parsed. Blank text with no reachable
 //! reason is the worst of the three possible outcomes.
@@ -27,10 +27,9 @@
 //! the slot carries the report itself.
 //!
 //! The report is a **boot-time snapshot**, and both of its fields are settled
-//! by the time it is taken. `application_families` is settled because the only
-//! way an application supplies a face is by declaring it before the shell starts
-//! (`ShellConfig::with_application_font`, mirroring Qt apps calling
-//! `addApplicationFont` in `main()`). `system` is settled because the shell
+//! by the time it is taken. `application_families` is settled because the only way an application
+//! supplies a face is by declaring it before the shell starts (`ShellConfig::with_application_font`, mirroring
+//! the toolkit apps calling `addApplicationFont` in `main()`). `system` is settled because the shell
 //! **probes for it**, deliberately, while building — `LayoutCache::probe_system_fonts`.
 //!
 //! That probe is not incidental. R1447 defers the platform scan to the first
@@ -96,8 +95,8 @@ pub enum SystemFontStatus {
     /// identical font configuration.
     ///
     /// Text still shapes and still lays out — a caller gets boxes, not a
-    /// crash, which is Qt's behavior and, before R1448, not pinion's. To get
-    /// glyphs, declare a face at boot.
+    /// crash, which is the toolkit's behavior and, before R1448, not pinion's.
+    /// To get glyphs, declare a face at boot.
     Unavailable,
 }
 
@@ -137,7 +136,7 @@ pub struct FontSourceReport {
     pub system: SystemFontStatus,
     /// Families the application supplied itself, in declaration order.
     ///
-    /// Qt's `QFontDatabase::applicationFontFamilies`, except answered for the
+    /// The toolkit's `applicationFontFamilies`, except answered for the
     /// process rather than per opaque registration id. Non-empty here with
     /// `system: Unavailable` is the interesting state: a host with no fonts
     /// where the application shipped its own and text renders anyway.
@@ -146,7 +145,7 @@ pub struct FontSourceReport {
     /// [`TextStyle::font_family`](crate::style::TextStyle) resolves to, or
     /// `None` when unset means the platform stack.
     ///
-    /// Qt's `QApplication::font()`. Without it §2 #7 has a hole: a scene node
+    /// The toolkit's `font()`. Without it §2 #7 has a hole: a scene node
     /// reports its family as `null`, and nothing anywhere says what `null`
     /// renders as in this process — so an agent can read every node and still
     /// not know which face drew the text. The node carries the style **as

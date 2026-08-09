@@ -1,20 +1,19 @@
 //! `hello-boxplot` — R1553 §5.38 a datum can be a **distribution**.
 //!
-//! The forcing consumer for [`pinion_chart::Distribution`] and
-//! [`pinion_chart::BoxPlotChart`] (Qt's `QBoxPlotSeries`). Every datum this
-//! crate could plot until R1553 resolved to one position; a distribution
-//! occupies a span of the value axis and carries interior landmarks, so one
-//! datum draws a box, a median, two whiskers, two caps and a mark per
-//! outlier.
+//! The forcing consumer for [`pinion_chart::Distribution`] and [`pinion_chart::BoxPlotChart`] (the toolkit's box plot series).
+//! Every datum this crate could plot until R1553 resolved to one position; a
+//! distribution occupies a span of the value axis and carries interior
+//! landmarks, so one datum draws a box, a median, two whiskers, two caps and a
+//! mark per outlier.
 //!
 //! ## The dataset is SAMPLES, and that is the point
 //!
 //! Five endpoints hand over their raw per-request latencies. Nothing here
-//! computes a quartile — [`Distribution::from_samples`] does, under a method
-//! the reader picks at runtime. Qt cannot be used this way: `QBoxSet` takes
-//! five doubles and `QtCharts` computes none of them (its own box-plot
-//! example ships a `findMedian()` helper *in the example*), so a Qt consumer
-//! summarises upstream and the definition it used is lost.
+//! computes a quartile — [`Distribution::from_samples`] does, under a method the reader picks at
+//! runtime. The toolkit cannot be used this way: box set takes five doubles
+//! and `the toolkit's charting module` computes none of them (its own box-plot example ships a `findMedian()` helper
+//! *in the example*), so a toolkit consumer summarises upstream and the
+//! definition it used is lost.
 //!
 //! ## What the three method chips show
 //!
@@ -31,8 +30,8 @@
 //!
 //! The notch chip draws the McGill-Tukey-Larsen waist
 //! (`median +- 1.58 * IQR / sqrt(n)`): where two notches do not overlap, the
-//! medians differ significantly at roughly 95%. `QBoxSet` carries no sample
-//! count, so Qt could not offer this even as a paint option.
+//! medians differ significantly at roughly 95%. box set carries no sample
+//! count, so the toolkit could not offer this even as a paint option.
 //!
 //! ## The zero samples are data, not sentinels
 //!
@@ -517,7 +516,7 @@ impl WidgetA11y for BoxPlotView {
     /// The method group as a WAI-ARIA `radiogroup`, the options as a `group`
     /// of `button[aria-pressed]`, and the caption as a live region — so the
     /// off-scale report and the quartile the method chose are HEARD, not only
-    /// seen. Qt's charts implement no accessibility interface at all.
+    /// seen. The toolkit's charts implement no accessibility interface at all.
     fn access_node(state: &Options, focused: Option<&str>) -> Vec<AccessNode> {
         let group_focused = focused == Some(METHOD_TAG);
         let active = rc::active_index(&state.method_rows, state.method_focused);
@@ -635,9 +634,9 @@ mod tests {
     }
 
     /// ★ The round, read off the derived data: at `n = 6` the three standard
-    /// quartile definitions disagree, and the disagreement decides whether
-    /// the 41 ms sample is a whisker end or an outlier. Qt computes none of
-    /// the three, so a `QBoxSet` cannot record which one it was built with.
+    /// quartile definitions disagree, and the disagreement decides whether the
+    /// 41 ms sample is a whisker end or an outlier. The toolkit computes none
+    /// of the three, so a box set cannot record which one it was built with.
     #[test]
     fn r1553_the_method_decides_whether_the_sample_is_an_outlier() {
         let q3_and_outliers = |m| {
@@ -677,8 +676,8 @@ mod tests {
         assert_eq!(count_prefix(&scene, "chart.whisker."), ENDPOINTS.len() * 2);
         assert_eq!(count_prefix(&scene, "chart.cap."), ENDPOINTS.len() * 2);
         // /health's two zero cache hits, /login's 48 ms tail, and /report's
-        // three far samples — six marks Qt's five-slot `QBoxSet` has no room
-        // for at all.
+        // three far samples — six marks the toolkit's five-slot box set has no
+        // room for at all.
         assert_eq!(count_prefix(&scene, "chart.outlier."), 6);
     }
 

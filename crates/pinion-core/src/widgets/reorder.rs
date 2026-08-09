@@ -138,7 +138,7 @@ impl ReorderModel {
     }
 
     /// R1450 §5.51 — move the item at visual index `from` **to** visual index
-    /// `to`, both clamped. Qt's `QHeaderView::moveSection`: `to` is the
+    /// `to`, both clamped. The toolkit's `moveSection`: `to` is the
     /// destination *index*, not an insertion gap, so a caller says where the
     /// item should end up and never has to reason about the shift the removal
     /// introduces.
@@ -162,8 +162,8 @@ impl ReorderModel {
     /// type's [`order`](Self::order) field documents, checked in the one place
     /// that owns it rather than at each caller.
     ///
-    /// The restore half of the layout round-trip (Qt's
-    /// `QHeaderView::restoreState`, minus the sizes and hidden flags that live
+    /// The restore half of the layout round-trip (the toolkit's
+    /// `restoreState`, minus the sizes and hidden flags that live
     /// on other axes). A readable order that could not be written back would
     /// break the read/write symmetry every other pinion wire slot keeps.
     pub fn set_order(&self, next: &[usize]) -> bool {
@@ -426,7 +426,7 @@ impl ReorderModel {
                 }
                 Ok(IntrospectValue::Null)
             }
-            // R1450 — Qt `QHeaderView::moveSection(from, to)`. The wire form is
+            // R1450 — the toolkit `moveSection(from, to)`. The wire form is
             // the composite `"{from}:{to}"` the rest of this model already
             // speaks for a pair, and the return is the resulting order so one
             // round-trip both moves and reports.
@@ -748,8 +748,9 @@ mod tests {
             &m.intervene("focused_index", &IntrospectValue::Int(9)),
             "no position 9 in this model",
         );
-        // R1450 — `order` became writable (Qt restoreState), so a wrong-shaped
-        // value is now a TypeMismatch rather than "you may not write this".
+        // R1450 — `order` became writable (the toolkit restoreState), so a
+        // wrong-shaped value is now a TypeMismatch rather than "you may not
+        // write this".
         assert!(matches!(
             m.intervene("order", &IntrospectValue::Int(0)),
             Err(InterveneError::TypeMismatch)
@@ -814,12 +815,13 @@ mod tests {
         assert!(!v.grabbed);
     }
 
-    // ----- R1450 explicit move + order restore (Qt QHeaderView) -----
+    // ----- R1450 explicit move + order restore (the toolkit header view)
+    // -----
 
     #[test]
     fn r1450_move_section_lands_on_the_destination_index_not_a_gap() {
         let m = ReorderModel::new(5, ReorderAxis::Horizontal);
-        // Qt's moveSection(0, 2): the item ends up AT index 2.
+        // The toolkit's moveSection(0, 2): the item ends up AT index 2.
         m.move_section(0, 2);
         assert_eq!(m.order(), [1, 2, 0, 3, 4]);
         assert_eq!(m.order()[2], 0, "the moved item is at the destination");

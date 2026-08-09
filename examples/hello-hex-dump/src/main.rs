@@ -28,7 +28,7 @@
 //! ascii cell. The rest of the dump stays as context (default background).
 //! This is the cross-filter matrix (R1384-R1398) extended to a NEW
 //! geometry: a hex grid whose two views of each datum stay in lockstep —
-//! exactly the field selection a protocol inspector (Wireshark, a `dlt`
+//! exactly the field selection a protocol inspector (the analyser, a `dlt`
 //! trace) or a hex editor draws when you click a packet field.
 //!
 //! ## Two orthogonal selections: a field brush and a drag selection

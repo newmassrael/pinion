@@ -39,13 +39,13 @@
 //! gives each sample's position along the mark, so the area's gradient stops are
 //! checkable against the data instead of against even spacing.
 //!
-//! ## Qt reference
+//! ## the toolkit reference
 //!
-//! `QLineSeries` carries one pen; Qt Charts has no per-vertex or per-segment line
-//! colour and no gradient-along-a-series fill driven by a third channel, so a
-//! heat-line there is custom `QPainter` work. Here both forms are retained scene
-//! nodes whose colours and gradient stops an AI reads out of `scene/snapshot`
-//! (§2 #7). See `tools/demos/r1440_elevation_trace.py`.
+//! line series carries one pen; the toolkit Charts has no per-vertex or
+//! per-segment line colour and no gradient-along-a-series fill driven by a
+//! third channel, so a heat-line there is custom painter work. Here both forms
+//! are retained scene nodes whose colours and gradient stops an AI reads out
+//! of `scene/snapshot` (§2 #7). See `tools/demos/r1440_elevation_trace.py`.
 
 use std::rc::Rc;
 

@@ -3323,11 +3323,9 @@ fn paint_grid_cursor(
 /// Filled Button's `radius: 100` against a 40-px-tall rect) naturally
 /// resolves to a pill shape without an explicit caller-side clamp.
 ///
-/// Per-corner asymmetric radii (Figma `rectangleCornerRadii: [tl, tr,
-/// br, bl]`) deferred to a follow-up round once the first asymmetric
-/// binding lands — `kurbo::RoundedRectRadii` already supports the
-/// shape, this slice only wires the single-radius surface
-/// [`BoxStyle.corner_radius`] exposes today.
+/// Per-corner asymmetric radii (the design tool `rectangleCornerRadii: [tl, tr, br, bl]`) deferred to a follow-up
+/// round once the first asymmetric binding lands — `kurbo::RoundedRectRadii` already supports the
+/// shape, this slice only wires the single-radius surface [`BoxStyle.corner_radius`] exposes today.
 fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color, corner_radius: u32, transform: Affine) {
     if fill == Color::TRANSPARENT {
         return;
@@ -3624,12 +3622,11 @@ fn paint_box_decoration(
     }
 }
 
-/// R708 §5.50 — paint a Box / Container background: the
-/// [`BoxStyle::gradient`] overlay when present, otherwise the solid
-/// `solid` colour. `solid` is the caller-resolved fill (a `Box`'s
-/// `fill_hook` override or `style.fill`; a `Container`'s `style.fill`),
-/// so a gradient takes precedence over the solid only when explicitly
-/// set — mirroring Flutter's `BoxDecoration { color, gradient }`.
+/// R708 §5.50 — paint a Box / Container background: the [`BoxStyle::gradient`] overlay when
+/// present, otherwise the solid `solid` colour. `solid` is the caller-resolved fill (a
+/// `Box`'s `fill_hook` override or `style.fill`; a `Container`'s `style.fill`), so a gradient takes precedence
+/// over the solid only when explicitly set — mirroring another retained-mode
+/// toolkit's `BoxDecoration { color, gradient }`.
 fn fill_box_bg(out: &mut VelloScene, r: Rect, style: &BoxStyle, solid: Color, transform: Affine) {
     if let Some(gradient) = &style.gradient {
         fill_rect_gradient(out, r, gradient, style.corner_radius, transform);
@@ -3779,8 +3776,8 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
     );
 }
 
-/// Emit one Vello glyph run per parley [`GlyphRun`](pinion_text::parley::GlyphRun) shaped from
-/// `t.content` + `t.style` (R47.3 §5.36 + R47.6 Figma-fidelity wire).
+/// Emit one Vello glyph run per parley [`GlyphRun`](pinion_text::parley::GlyphRun)
+/// shaped from `t.content` + `t.style` (R47.3 §5.36 + R47.6 the design tool-fidelity wire).
 ///
 /// The text origin is `(t.rect.x, t.rect.y)`; `t.rect.w > 0` wraps at
 /// that pixel width, `w == 0` flows on a single unbounded line.
@@ -3996,8 +3993,8 @@ fn paint_text(
         out.push_clip_layer(Fill::NonZero, parent_transform, &clip_rect);
     }
     // R1546 §5.36 — the declared backgrounds, filled BEFORE the glyphs so the
-    // text reads on top of them (Qt `QTextCharFormat::setBackground`, whose
-    // rect its own `QTextLayout::draw` fills first for the same reason). One
+    // text reads on top of them (the toolkit `setBackground`, whose
+    // rect its own `draw` fills first for the same reason). One
     // borrow of the cache at a time: the bands are copied out because
     // `positioned_runs` below needs `&mut cache` again, and a band is 28 bytes
     // against a re-derivation the entry has already paid for.
@@ -4067,8 +4064,9 @@ fn paint_decorations(out: &mut VelloScene, run: &PositionedRun, transform: Affin
         );
     }
     if let Some(deco) = run.strikethrough.as_ref() {
-        // A strikethrough has one form in both SGR (9) and Qt, so it stays on
-        // the plain primitive rather than borrowing a form axis it cannot use.
+        // A strikethrough has one form in both SGR (9) and the toolkit, so it
+        // stays on the plain primitive rather than borrowing a form axis it
+        // cannot use.
         stroke_hrule(
             out,
             transform,
@@ -5012,9 +5010,9 @@ mod tests {
 
     #[test]
     fn r1557_text_is_attributed_to_the_leaf_that_drew_it() {
-        // The claim no Qt surface makes: which item the glyphs belong to. A
-        // `Text` leaf is one node whether it holds two glyphs or four thousand,
-        // so this is the term a node census cannot reach.
+        // The claim no the toolkit surface makes: which item the glyphs belong
+        // to. A `Text` leaf is one node whether it holds two glyphs or four
+        // thousand, so this is the term a node census cannot reach.
         let (root, _) = profile_once(&profile_scene());
         assert_eq!(
             root.own.glyphs, 0,

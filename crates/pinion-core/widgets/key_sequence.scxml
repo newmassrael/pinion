@@ -22,7 +22,7 @@
            declared maximum length, or by the user stopping deliberately.
          * `cancel` -> `idle` silently — the sequence in flight is
            discarded and the previous one kept.
-         * `blur` -> `idle` with `keysequence.captured` raised. Qt's
+         * `blur` -> `idle` with `keysequence.captured` raised. The toolkit's
            `focusOutEvent` calls `finishEditing()`, so focus loss
            ACCEPTING what was typed is Qt's behaviour and is kept.
 

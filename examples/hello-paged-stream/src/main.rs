@@ -3,7 +3,7 @@
 //! `hello-streaming-log` (R996, slice ①a) named as its successor: a log whose
 //! row count **grows at runtime** *and* whose rows are **paged behind an
 //! LRU-bounded async cache**, so memory stays flat while the stream is
-//! unbounded — a GB DLT log, a Wireshark capture, a `tail -f` on a file too
+//! unbounded — a GB DLT log, a analyser capture, a `tail -f` on a file too
 //! large to hold in RAM.
 //!
 //! ## The two halves it merges

@@ -1,6 +1,6 @@
 //! `hello-grid-search` — R1004 §5.27 §5.40 **search-and-jump cursor at scale**.
 //!
-//! A code editor's results pane, a Wireshark "Find Packet", a dlt-viewer log
+//! A code editor's results pane, a analyser "Find Packet", a dlt-viewer log
 //! search: a query selects matching rows, but the data set never shrinks — you
 //! navigate the matches in place, each scrolling into view. This binding is
 //! that pattern over a 10 000-row virtualized data-grid: a [`RowSearchState`]

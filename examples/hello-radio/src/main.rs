@@ -11,7 +11,7 @@
 //! 2-px border, `corner_radius = 12` to make a true circle) with the
 //! `(state, selected)` cross-product encoded as border colour. When
 //! `selected = true` a centred 12×12 filled dot child (Material /
-//! `SwiftUI` / Qt convention) marks the chosen radio. The dot is a
+//! `SwiftUI` / the toolkit convention) marks the chosen radio. The dot is a
 //! `Scene::Box` with `corner_radius = 6` — same flex-centred Container
 //! technique `crate::widgets::Toggle`'s knob and
 //! `crate::widgets::Checkbox`'s glyph already use. A right-of label

@@ -1,6 +1,5 @@
-//! R1446 — the seam between a typed **cell model** and a chart:
-//! [`ModelMapper`], the `QtCharts` `Q*XYModelMapper` contract expressed over
-//! [`CellValue`].
+//! R1446 — the seam between a typed **cell model** and a chart: [`ModelMapper`], the `the toolkit's charting module`
+//! `Q*XYModelMapper` contract expressed over [`CellValue`].
 //!
 //! # Why this exists
 //!
@@ -14,9 +13,9 @@
 //! plots, and *which* field is plotted becomes a runtime choice rather than a
 //! recompile.
 //!
-//! # The one place this is deliberately not Qt
+//! # The one place this is deliberately not the toolkit
 //!
-//! Qt reads a model cell through `QVariant::toReal()`, which answers `0.0`
+//! The toolkit reads a model cell through `toReal()`, which answers `0.0`
 //! for anything that is not a number. A mistyped cell, or a y-axis pointed at
 //! a label column, therefore plots as a point **on the axis** —
 //! indistinguishable from a measured zero, and silent. That is the classic
@@ -68,19 +67,20 @@ use crate::series::{DataPoint, Series};
 
 /// Which way the **fields** run through a row-major cell block.
 ///
-/// Qt splits this into two classes (`QVXYModelMapper` / `QHXYModelMapper`);
-/// one mapper with an orientation keeps a single code path, and makes the
-/// orientation itself introspectable data rather than a type choice frozen at
-/// the call site.
+/// The toolkit splits this into two classes (VXY model mapper / HXY model
+/// mapper); one mapper with an orientation keeps a single code path, and makes
+/// the orientation itself introspectable data rather than a type choice frozen
+/// at the call site.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Orientation {
     /// Each **column** is a field and each **row** a record — the spreadsheet
-    /// norm, and what every editable grid in the tree holds (Qt's
-    /// `QVXYModelMapper`).
+    /// norm, and what every editable grid in the tree holds (the toolkit's
+    /// VXY model mapper).
     #[default]
     Columns,
     /// Each **row** is a field and each **column** a record — a pivoted block,
-    /// where a field's samples run across one row (Qt's `QHXYModelMapper`).
+    /// where a field's samples run across one row (the toolkit's HXY model
+    /// mapper).
     Rows,
 }
 
@@ -156,12 +156,12 @@ impl<'a> CellTable<'a> {
 
 /// The numeric reading of a cell, or `None` when the cell holds no number.
 ///
-/// **[`CellValue::Int`] and [`CellValue::Float`] only.** A `Bool` is a flag,
-/// not a measure — Qt would widen it to `0.0` / `1.0`, but a checkbox column
-/// silently plotted as a two-level signal is a guess about intent, and a
-/// consumer that wants that encoding can map it explicitly. `Text` is not
-/// parsed either: a typed cell's kind is declared by its column, so a numeric
-/// string in a text column means the column is text.
+/// **[`CellValue::Int`] and [`CellValue::Float`] only.** A `Bool` is a flag, not a measure — the toolkit
+/// would widen it to `0.0` / `1.0`, but a checkbox column silently plotted as a
+/// two-level signal is a guess about intent, and a consumer that wants that
+/// encoding can map it explicitly. `Text` is not parsed either: a typed cell's
+/// kind is declared by its column, so a numeric string in a text column means
+/// the column is text.
 ///
 /// This is the crate's single definition of "reads as a number" — a field
 /// picker asks it the same question the mapper does.
@@ -237,9 +237,8 @@ struct MappedField {
     name: String,
 }
 
-/// Binds a [`CellTable`] to chart [`Series`] — the `QtCharts`
-/// `Q*XYModelMapper` contract (`setXColumn` / `setYColumn` / `setFirstRow` /
-/// `setRowCount`), with [`Mapped::unreadable`] in place of Qt's silent zero.
+/// Binds a [`CellTable`] to chart [`Series`] — the `the toolkit's charting module` `Q*XYModelMapper` contract (`setXColumn` / `setYColumn` / `setFirstRow` /
+/// `setRowCount`), with [`Mapped::unreadable`] in place of the toolkit's silent zero.
 ///
 /// The mapper is plain data: build one, keep it in state, and re-run
 /// [`map`](Self::map) each frame over the live cells. Re-pointing an axis is
@@ -268,7 +267,8 @@ impl ModelMapper {
         }
     }
 
-    /// Read fields along rows instead of columns (Qt's `QHXYModelMapper`).
+    /// Read fields along rows instead of columns (the toolkit's HXY model
+    /// mapper).
     #[must_use]
     pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
         self.orientation = orientation;
@@ -297,9 +297,9 @@ impl ModelMapper {
         self
     }
 
-    /// Restrict the mapping to `count` records starting at `first` (Qt's
-    /// `setFirstRow` / `setRowCount`) — the "plot only the newest N samples"
-    /// window. Both ends are clamped to the table.
+    /// Restrict the mapping to `count` records starting at `first` (the toolkit's `setFirstRow`
+    /// / `setRowCount`) — the "plot only the newest N samples" window. Both ends are
+    /// clamped to the table.
     #[must_use]
     pub const fn with_record_range(mut self, first: usize, count: usize) -> Self {
         self.first = first;
@@ -489,9 +489,9 @@ mod tests {
         assert_close(mapped.series[1].points[1].y, 18.0);
     }
 
-    /// The headline difference from Qt: a y axis pointed at a label column
-    /// plots NOTHING and says why, where `QVariant::toReal()` would draw a
-    /// flat line on zero that reads as measured data.
+    /// The headline difference from the toolkit: a y axis pointed at a label
+    /// column plots NOTHING and says why, where `toReal()` would draw a flat line on
+    /// zero that reads as measured data.
     #[test]
     fn a_text_column_is_reported_never_plotted_as_zero() {
         let cells = sample_cells();

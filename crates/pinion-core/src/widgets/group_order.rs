@@ -1,14 +1,14 @@
 //! R843 §5.27 §5.40 — **group-by proxy with collapsible group headers** for a
 //! Model/View list.
 //!
-//! R747 lands the sort/filter [`view-order proxy`](crate::widgets::view_order)
-//! and R821 the [`tree filter proxy`](crate::widgets::tree_filter), completing
-//! the *flat* and *hierarchical* proxy axes. This module adds the fourth axis
-//! every data grid and asset browser needs: a **group-by proxy** that
-//! partitions an ordered list of source rows into named groups, each fronted by
-//! a **collapsible header** — Qt `QTreeView` with a grouping model, WPF
-//! `CollectionView.GroupDescriptions`, a DCC asset browser's "group by type",
-//! a code editor's outline "group by symbol kind".
+//! R747 lands the sort/filter [`view-order proxy`](crate::widgets::view_order) and R821 the
+//! [`tree filter proxy`](crate::widgets::tree_filter), completing the *flat* and
+//! *hierarchical* proxy axes. This module adds the fourth axis every data grid
+//! and asset browser needs: a **group-by proxy** that partitions an ordered
+//! list of source rows into named groups, each fronted by a **collapsible
+//! header** — the toolkit tree view with a grouping model, WPF `CollectionView.GroupDescriptions`, a DCC
+//! asset browser's "group by type", a code editor's outline "group by symbol
+//! kind".
 //!
 //! ## The flattening ([`group_rows`])
 //!

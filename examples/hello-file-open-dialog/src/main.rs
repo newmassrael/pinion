@@ -29,7 +29,7 @@
 //! pinion scene, so an AI agent can drive the entire open flow — browse,
 //! select, confirm — through the RPC channel and read the chosen path
 //! back as data, no pixels required. A direct step toward the
-//! northern-star "Unreal-class editor self-hosted in pinion" (every
+//! northern-star "the engine-class editor self-hosted in pinion" (every
 //! editor `File → Open` routes through one).
 //!
 //! ## Architecture (unidirectional, no reducer→widget back-channel)

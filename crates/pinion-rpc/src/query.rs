@@ -166,7 +166,7 @@ pub enum QueryError {
     /// saw a name, and asked for its value was told the name does not exist —
     /// by the surface that had just published it.
     ///
-    /// Qt's `QObject::property()` answers an **invalid `QVariant`** for a
+    /// The toolkit's `property()` answers an **invalid dynamic value** for a
     /// method name, which is the same value it answers for a name that is not
     /// in the meta-object at all.
     PathIsAnAction,

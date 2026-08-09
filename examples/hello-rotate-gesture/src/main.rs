@@ -1,14 +1,12 @@
 //! R1433 §5.35 §5.15 — a native ROTATION gesture spins a gizmo.
 //!
-//! A `RotationGizmo` [`External`] overrides [`External::rotation_gesture`] — the
-//! Qt `QNativeGestureEvent` `RotateNativeGesture` / macOS `rotateWithEvent:`
-//! peer — and accumulates the INCREMENTAL degrees of a two-finger trackpad twist
-//! across the [`GesturePhase::Begin`]`..`[`End`](GesturePhase::End) arc:
-//! `angle += rotation` per event (winit's sign convention, positive =
-//! counter-clockwise). The whole point of the phase is the arc bracket — on
-//! [`GesturePhase::Cancel`] the gizmo DISCARDS the in-flight rotation and reverts
-//! to the angle it held when the gesture began, exactly as a preview drops when
-//! the fingers lift without committing.
+//! A `RotationGizmo` [`External`] overrides [`External::rotation_gesture`] — the toolkit native gesture event `RotateNativeGesture` / macOS
+//! `rotateWithEvent:` peer — and accumulates the INCREMENTAL degrees of a two-finger trackpad
+//! twist across the [`GesturePhase::Begin`]`..`[`End`](GesturePhase::End) arc: `angle += rotation` per event
+//! (winit's sign convention, positive = counter-clockwise). The whole point of
+//! the phase is the arc bracket — on [`GesturePhase::Cancel`] the gizmo DISCARDS the in-flight
+//! rotation and reverts to the angle it held when the gesture began, exactly
+//! as a preview drops when the fingers lift without committing.
 //!
 //! winit surfaces `WindowEvent::RotationGesture` only on macOS / iOS, so the
 //! `scene/rotation_gesture` RPC is the AI-first driver (§2 #2): a headless client
@@ -152,7 +150,8 @@ struct RotationGizmo {
     events: u64,
     /// The anchor fraction of the last rotation (`None` before the first).
     anchor: Option<(f32, f32)>,
-    /// The modifiers held on the last rotation (the Qt-parity `Shift`-snap bit).
+    /// The modifiers held on the last rotation (the toolkit-parity `Shift`-snap
+    /// bit).
     modifiers: Modifiers,
 }
 

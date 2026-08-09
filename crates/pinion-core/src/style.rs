@@ -1453,7 +1453,8 @@ fn hash_gradient<H: core::hash::Hasher>(gradient: &Gradient, state: &mut H) {
 }
 
 /// R710 §5.50 — one drop-shadow cast behind a [`BoxNode`](crate::scene::BoxNode) /
-/// [`ContainerNode`](crate::scene::ContainerNode), the CSS `box-shadow` / Flutter `BoxShadow` model.
+/// [`ContainerNode`](crate::scene::ContainerNode), the CSS `box-shadow` / another retained-mode
+/// toolkit `BoxShadow` model.
 ///
 /// A shadow is the box's rounded silhouette, translated by
 /// `(offset_x, offset_y)`, inflated by `spread` (negative shrinks),
@@ -1462,10 +1463,9 @@ fn hash_gradient<H: core::hash::Hasher>(gradient: &Gradient, state: &mut H) {
 /// native blurred-rounded-rect primitive (CSS convention:
 /// the gaussian std-dev is `blur / 2`).
 ///
-/// All fields are POD (`Color` is `Copy`, the rest `f32`), so
-/// `BoxShadow` is `Copy`; it lives in [`BoxStyle::shadows`] as a `Vec`
-/// (the Flutter `List<BoxShadow>` model — Material elevation composes a
-/// key + ambient pair, so a single `Option` would not suffice).
+/// All fields are POD (`Color` is `Copy`, the rest `f32`), so `BoxShadow` is `Copy`; it lives in
+/// [`BoxStyle::shadows`] as a `Vec` (the retained-mode toolkit `List<BoxShadow>` model — Material elevation
+/// composes a key + ambient pair, so a single `Option` would not suffice).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoxShadow {
     /// Shadow colour, including alpha (drop-shadows are typically a
@@ -1538,16 +1538,14 @@ fn hash_box_shadow<H: core::hash::Hasher>(shadow: &BoxShadow, state: &mut H) {
 /// drop-in compatible with the previous `BoxNode { fill: 0, .. }`
 /// shape.
 ///
-/// R708 §5.50 added the optional [`Gradient`] overlay (the Flutter
-/// `BoxDecoration { color, gradient }` model — when `gradient` is
-/// `Some`, the rasterizer paints it *in place of* the solid `fill`;
-/// `fill` remains the solid fallback). R710 §5.50 added the
-/// [`shadows`](Self::shadows) list (Flutter `List<BoxShadow>`) painted
-/// *behind* the box. Because a [`Gradient`] / [`BoxShadow`] list is
-/// heap- and float-bearing, `BoxStyle` is no longer `Copy`/`Eq` and
-/// hand-rolls `Hash` (below) so the §5.16 R682 paint-cache
-/// `b.style.hash()` stays a faithful key — a gradient or shadow change
-/// re-keys and re-paints.
+/// R708 §5.50 added the optional [`Gradient`] overlay (the retained-mode toolkit `BoxDecoration { color, gradient }`
+/// model — when `gradient` is `Some`, the rasterizer paints it *in place of* the solid
+/// `fill`; `fill` remains the solid fallback). R710 §5.50 added the
+/// [`shadows`](Self::shadows) list (another retained-mode toolkit `List<BoxShadow>`) painted
+/// *behind* the box. Because a [`Gradient`] / [`BoxShadow`] list is heap- and float-bearing,
+/// `BoxStyle` is no longer `Copy`/`Eq` and hand-rolls `Hash` (below) so the §5.16 R682
+/// paint-cache `b.style.hash()` stays a faithful key — a gradient or shadow change re-keys
+/// and re-paints.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BoxStyle {
@@ -1557,8 +1555,8 @@ pub struct BoxStyle {
     /// Optional gradient overlay. `Some` paints the gradient in place
     /// of `fill`; `None` (default) keeps the solid `fill`.
     pub gradient: Option<Gradient>,
-    /// Drop-shadows painted behind the box, back-to-front in list
-    /// order (Flutter `List<BoxShadow>`). Empty (default) = no shadow.
+    /// Drop-shadows painted behind the box, back-to-front in list order
+    /// (another retained-mode toolkit `List<BoxShadow>`). Empty (default) = no shadow.
     pub shadows: Vec<BoxShadow>,
 }
 
@@ -1636,7 +1634,7 @@ impl BoxStyle {
         self
     }
 
-    /// Builder: replace the entire shadow list (Flutter
+    /// Builder: replace the entire shadow list (another retained-mode toolkit
     /// `BoxDecoration { boxShadow }`).
     #[must_use]
     pub fn with_shadows(mut self, shadows: Vec<BoxShadow>) -> Self {
@@ -1750,7 +1748,8 @@ impl BoxFacet {
     }
 }
 
-/// CSS / OpenType font-weight axis value (§5.36 R47.5 Figma-fidelity).
+/// CSS / OpenType font-weight axis value (§5.36 R47.5 the design
+/// tool-fidelity).
 ///
 /// Newtype over `u16` for CSS-style integer values in `[1, 1000]`. The
 /// 11 named constants (`THIN`..`EXTRA_BLACK`) cover the common variable
@@ -1795,7 +1794,8 @@ impl Default for FontWeight {
     }
 }
 
-/// CSS / OpenType font-style axis value (§5.36 R47.5 Figma-fidelity).
+/// CSS / OpenType font-style axis value (§5.36 R47.5 the design
+/// tool-fidelity).
 ///
 /// Mirrors fontique's `FontStyle` with one simplification: the oblique
 /// angle (when supplied) is `Option<i16>` degrees rather than `f32`, so
@@ -1817,7 +1817,7 @@ pub enum FontStyle {
     Oblique(Option<i16>),
 }
 
-/// Line-height policy (§5.36 R47.5 Figma-fidelity).
+/// Line-height policy (§5.36 R47.5 the design tool-fidelity).
 ///
 /// `Normal` defers to the font's preferred line height (parley
 /// `MetricsRelative(1.0)` equivalent). `Px` pins absolute pixels;
@@ -1917,13 +1917,12 @@ impl TextAlign {
 /// diagnostics need a red curly error and a blue dotted spellcheck to be
 /// separately renderable, not flattened to one rule.
 ///
-/// **Against Qt 6.11.** `QTextCharFormat::UnderlineStyle` has eight arms;
-/// this has six, and the two it does not adopt — `DashDotLine` and
-/// `DashDotDotLine` — are deliberate. They exist in Qt because they are
-/// `Qt::PenStyle` arms, they have no SGR encoding, and adopting them would
-/// make the same document render differently by backend for a mark no editor
-/// draws. What is gained instead is the thing Qt has no equivalent for: this
-/// vocabulary reaches a **terminal** as well as a screen.
+/// **Against the toolkit 6.11.** `UnderlineStyle` has eight arms; this has six, and the two
+/// it does not adopt — `DashDotLine` and `DashDotDotLine` — are deliberate. They exist in the toolkit
+/// because they are `PenStyle` arms, they have no SGR encoding, and adopting them
+/// would make the same document render differently by backend for a mark no
+/// editor draws. What is gained instead is the thing the toolkit has no
+/// equivalent for: this vocabulary reaches a **terminal** as well as a screen.
 ///
 /// The set is the complete, closed SGR vocabulary (SGR `4` / `4:0`–`4:5` and
 /// `21`), so `#[non_exhaustive]` is deliberately **not** applied and callers
@@ -2003,13 +2002,13 @@ impl UnderlineStyle {
     }
 }
 
-/// Inline text decoration (§5.36 R47.5 Figma-fidelity; R1540 underline axis).
+/// Inline text decoration (§5.36 R47.5 the design tool-fidelity; R1540
+/// underline axis).
 ///
-/// A run may be underlined and struck through at once (Figma allows the
-/// combination). R47.6 wires the strikethrough into parley as
-/// `StyleProperty::Strikethrough(bool)`; the underline's METRICS come from
-/// parley the same way, and the stroke itself is drawn by the paint adapter
-/// so the [`UnderlineStyle`] vocabulary reaches pixels.
+/// A run may be underlined and struck through at once (the design tool allows
+/// the combination). R47.6 wires the strikethrough into parley as `StyleProperty::Strikethrough(bool)`; the
+/// underline's METRICS come from parley the same way, and the stroke itself is
+/// drawn by the paint adapter so the [`UnderlineStyle`] vocabulary reaches pixels.
 #[non_exhaustive]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
@@ -2020,11 +2019,11 @@ pub struct TextDecoration {
     /// five forms. [`UnderlineStyle::None`] is "no underline".
     pub underline: UnderlineStyle,
     pub strikethrough: bool,
-    /// R1540 — the underline's own colour (Qt `setUnderlineColor`, SGR 58).
+    /// R1540 — the underline's own colour (the toolkit `setUnderlineColor`, SGR 58).
     ///
-    /// `None` (the default) means the underline tracks the text colour, which
-    /// is Qt's default and the only behaviour available before R1540. `Some`
-    /// makes it independent, which is what a diagnostic mark needs: a red
+    /// `None` (the default) means the underline tracks the text colour, which is
+    /// the toolkit's default and the only behaviour available before R1540.
+    /// `Some` makes it independent, which is what a diagnostic mark needs: a red
     /// curly error under otherwise normally-coloured code is one run, not a
     /// recolouring of the code beneath it.
     pub underline_color: Option<Color>,
@@ -2042,7 +2041,7 @@ impl TextDecoration {
         }
     }
 
-    /// Both a single underline and a strikethrough — Figma allows
+    /// Both a single underline and a strikethrough — the design tool allows
     /// this combination.
     #[must_use]
     pub const fn both() -> Self {
@@ -2080,7 +2079,7 @@ impl TextDecoration {
         self
     }
 
-    /// Builder: give the underline its own colour (R1540, Qt
+    /// Builder: give the underline its own colour (R1540, the toolkit
     /// `setUnderlineColor`). `None` returns it to tracking the text colour.
     #[must_use]
     pub const fn with_underline_color(mut self, color: Option<Color>) -> Self {
@@ -2088,13 +2087,13 @@ impl TextDecoration {
         self
     }
 
-    /// Builder: turn a plain underline on or off (Qt `setFontUnderline`).
+    /// Builder: turn a plain underline on or off (the toolkit `setFontUnderline`).
     ///
-    /// `true` selects [`UnderlineStyle::Single`] — Qt's own bool setter has
-    /// exactly this meaning, and it is what every pre-R1540 caller intended.
-    /// `false` clears the underline WHATEVER its style, so a caller that
-    /// turns a squiggle off does not have to know it was a squiggle. Reach
-    /// for [`Self::with_underline_style`] to pick a form.
+    /// `true` selects [`UnderlineStyle::Single`] — the toolkit's own bool setter has exactly this
+    /// meaning, and it is what every pre-R1540 caller intended. `false` clears the
+    /// underline WHATEVER its style, so a caller that turns a squiggle off
+    /// does not have to know it was a squiggle. Reach for [`Self::with_underline_style`] to pick a
+    /// form.
     #[must_use]
     pub const fn with_underline(mut self, on: bool) -> Self {
         self.underline = if on {
@@ -2134,22 +2133,22 @@ pub enum TextOverflow {
 }
 
 /// R1551 §5.36 — CSS `text-indent`: how far the *first* line of a paragraph
-/// starts from the paragraph's own start edge (Qt `QTextBlockFormat::
+/// starts from the paragraph's own start edge (the toolkit `QTextBlockFormat::
 /// setTextIndent`).
 ///
 /// This is a **paragraph-level** field: it describes the first line of the
 /// whole [`TextStyle`]-bearing node, so a per-run value is ignored exactly the
 /// way [`TextAlign`] is (see [`StyleRun`](crate::scene::StyleRun)).
 ///
-/// # Why three fields where Qt has one number
+/// # Why three fields where the toolkit has one number
 ///
-/// Qt's `textIndent()` is a bare `qreal` applied to the first line. CSS names
-/// two more cases that real documents want and that a bare number cannot say:
+/// The toolkit's `textIndent()` is a bare `qreal` applied to the first line. CSS names two
+/// more cases that real documents want and that a bare number cannot say:
 ///
 /// * `hanging` inverts which lines are indented — the *continuation* lines
 ///   move in and the first line stays put. That is the shape of a dictionary
 ///   entry, a bibliography, and every list item whose marker hangs in the
-///   margin, and expressing it Qt's way needs a negative indent plus a
+///   margin, and expressing it the toolkit's way needs a negative indent plus a
 ///   compensating left margin, i.e. two properties that must agree.
 /// * `each_line` re-applies the indent after every *hard* break inside the
 ///   same block, which is what a poem stanza or an address block wants.
@@ -2246,67 +2245,66 @@ impl TextIndent {
 }
 
 /// R1551 §5.36 — the **block** (paragraph) format: everything about a
-/// paragraph that is not about its characters. Qt `QTextBlockFormat`.
+/// paragraph that is not about its characters. The toolkit text block format.
 ///
 /// # Why this is a separate type from [`TextStyle`]
 ///
-/// Qt splits character formatting (`QTextCharFormat`) from block formatting
-/// (`QTextBlockFormat`) because the two have different *extents*: a character
-/// format applies to a byte range, a block format applies to a whole
+/// The toolkit splits character formatting (text char format) from block
+/// formatting (text block format) because the two have different *extents*: a
+/// character format applies to a byte range, a block format applies to a whole
 /// paragraph. pinion had only the character half, so a paragraph could say how
 /// its glyphs looked and nothing about how the paragraph itself sat — no
 /// indent, no space between paragraphs, no way to mark one a heading.
 ///
-/// The two fields Qt puts here that pinion already had keep their existing
-/// homes rather than being duplicated: **alignment** is
-/// [`TextStyle::text_align`] and **line height** is [`TextStyle::line_height`]
-/// (which is finer than Qt's — pinion resolves it per
-/// [`StyleRun`](crate::scene::StyleRun), Qt only per block). Restating either
-/// here would be two declarations that must agree, and the round that added
-/// this type is the round after the one that fused exactly such a pair.
+/// The two fields the toolkit puts here that pinion already had keep their
+/// existing homes rather than being duplicated: **alignment** is [`TextStyle::text_align`] and
+/// **line height** is [`TextStyle::line_height`] (which is finer than the toolkit's — pinion
+/// resolves it per [`StyleRun`](crate::scene::StyleRun), the toolkit only per block).
+/// Restating either here would be two declarations that must agree, and the
+/// round that added this type is the round after the one that fused exactly
+/// such a pair.
 ///
 /// # Units
 ///
-/// Every length here is CSS px. Qt's is not one unit: `QTextBlockFormat::
-/// indent()` is an `int` multiplied by the document-wide
-/// `QTextDocument::indentWidth`, while `leftMargin()` and friends are `qreal`
-/// pixels — so a number read off a Qt block format does not say what it
-/// measures. A single unit is why [`Self::left_indent_px`] can absorb both of
-/// Qt's left-side properties without a conversion table.
+/// Every length here is CSS px. The toolkit's is not one unit: `QTextBlockFormat:: indent()` is an `int`
+/// multiplied by the document-wide `indentWidth`, while `leftMargin()` and friends are `qreal` pixels —
+/// so a number read off a toolkit block format does not say what it measures.
+/// A single unit is why [`Self::left_indent_px`] can absorb both of the toolkit's left-side
+/// properties without a conversion table.
 ///
 /// # The declaration outlives its lowering
 ///
-/// A block format lowers to the node's [`LayoutStyle::margin`], and a margin
-/// cannot be read back as a block format — a paragraph indented 24px and a
-/// paragraph in a container that happens to inset 24px produce the same box.
-/// So [`TextNode::block`](crate::scene::TextNode::block) keeps the declaration
-/// alongside the box it produced, and the §7 wire publishes it. Qt keeps its
-/// block formats in the document and its geometry in the (separate) document
-/// layout, and exposes neither as data.
+/// A block format lowers to the node's [`LayoutStyle::margin`], and a margin cannot be read back
+/// as a block format — a paragraph indented 24px and a paragraph in a
+/// container that happens to inset 24px produce the same box. So
+/// [`TextNode::block`](crate::scene::TextNode::block) keeps the declaration alongside the
+/// box it produced, and the §7 wire publishes it. The toolkit keeps its block
+/// formats in the document and its geometry in the (separate) document layout,
+/// and exposes neither as data.
 #[non_exhaustive]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
 pub struct BlockFormat {
     /// Space between the paragraph's start edge and its container's, in px.
-    /// Qt `setLeftMargin` + `setIndent` × `QTextDocument::indentWidth`, which
+    /// The toolkit `setLeftMargin` + `setIndent` × `indentWidth`, which
     /// this collapses into one number because both measure the same distance.
     pub left_indent_px: u32,
     /// Space between the paragraph's end edge and its container's, in px.
-    /// Qt `setRightMargin`.
+    /// The toolkit `setRightMargin`.
     pub right_indent_px: u32,
-    /// Space above the paragraph, in px. Qt `setTopMargin`.
+    /// Space above the paragraph, in px. The toolkit `setTopMargin`.
     pub space_above_px: u32,
-    /// Space below the paragraph, in px. Qt `setBottomMargin`.
+    /// Space below the paragraph, in px. The toolkit `setBottomMargin`.
     pub space_below_px: u32,
     /// `0` = ordinary paragraph; `1..=6` = a heading of that level
-    /// (`1` is the most significant). Qt `setHeadingLevel`.
+    /// (`1` is the most significant). The toolkit `setHeadingLevel`.
     ///
-    /// Unlike Qt's, this reaches assistive technology: the block is announced
-    /// as a heading of this level. Qt's `QAccessibleTextInterface` — the
-    /// interface a `QTextEdit` implements — has no method that reports block
-    /// structure at all, so a Qt document's heading levels are visible to the
-    /// layout and invisible to a screen reader.
+    /// Unlike the toolkit's, this reaches assistive technology: the block is
+    /// announced as a heading of this level. The toolkit's accessible text
+    /// interface — the interface a text edit implements — has no method that
+    /// reports block structure at all, so a toolkit document's heading levels
+    /// are visible to the layout and invisible to a screen reader.
     ///
     /// Levels beyond 6 are clamped at the a11y wire (WAI-ARIA `aria-level`
     /// counts from 1 and HTML stops at 6); the value stored here is whatever
@@ -2337,14 +2335,14 @@ impl BlockFormat {
         self
     }
 
-    /// Builder: indent the start edge by `px` (Qt `setLeftMargin`).
+    /// Builder: indent the start edge by `px` (the toolkit `setLeftMargin`).
     #[must_use]
     pub const fn with_left_indent(mut self, px: u32) -> Self {
         self.left_indent_px = px;
         self
     }
 
-    /// Builder: indent the end edge by `px` (Qt `setRightMargin`).
+    /// Builder: indent the end edge by `px` (the toolkit `setRightMargin`).
     #[must_use]
     pub const fn with_right_indent(mut self, px: u32) -> Self {
         self.right_indent_px = px;
@@ -2359,7 +2357,7 @@ impl BlockFormat {
         self
     }
 
-    /// Builder: declare this paragraph a heading of `level` (Qt
+    /// Builder: declare this paragraph a heading of `level` (the toolkit
     /// `setHeadingLevel`; `0` un-declares it).
     #[must_use]
     pub const fn with_heading_level(mut self, level: u8) -> Self {
@@ -2550,13 +2548,11 @@ impl<'de> serde::Deserialize<'de> for FontFamily {
 
 /// Sidecar style for [`TextNode`](crate::scene::TextNode) per §5.3 R20.
 ///
-/// R47.5 §5.36 Figma-fidelity expansion: `font_weight`, `font_style`,
-/// `line_height`, `letter_spacing`, `text_align`, `decoration`,
-/// `overflow` join `font_family` / `font_size_px` / `fg_color` in the
-/// schema. All new fields are `Hash + Eq` (integer-based) so the
-/// `LayoutCache::LayoutKey` continues to deduplicate stable inputs;
-/// any field change (including weight / line-height / alignment)
-/// produces a fresh cache entry on the next shape pass.
+/// R47.5 §5.36 the design tool-fidelity expansion: `font_weight`, `font_style`, `line_height`, `letter_spacing`, `text_align`,
+/// `decoration`, `overflow` join `font_family` / `font_size_px` / `fg_color` in the schema. All new fields are `Hash + Eq`
+/// (integer-based) so the `LayoutCache::LayoutKey` continues to deduplicate stable inputs; any
+/// field change (including weight / line-height / alignment) produces a fresh
+/// cache entry on the next shape pass.
 ///
 /// `pinion-core` carries the schema only — no parley dependency. The
 /// `pinion-text` crate wires each field into the corresponding
@@ -2570,9 +2566,9 @@ pub struct TextStyle {
     pub font_family: Option<FontFamily>,
     pub font_size_px: u32,
     pub fg_color: Color,
-    /// R1546 §5.36 — the colour painted BEHIND this run's glyphs, or `None`
-    /// for no background at all (Qt `QTextCharFormat::setBackground`, CSS
-    /// `background-color` on an inline span, Flutter `TextStyle.background`).
+    /// R1546 §5.36 — the colour painted BEHIND this run's glyphs, or `None` for
+    /// no background at all (the toolkit `setBackground`, CSS `background-color` on an inline span,
+    /// another retained-mode toolkit `TextStyle.background`).
     ///
     /// `None` is the unset brush, not a transparent one: an absent background
     /// emits no band, so a consumer reading the paint scene sees nothing where
@@ -2596,13 +2592,12 @@ pub struct TextStyle {
     /// **Not the view-level bands.** A `TextField`'s selection / find-match /
     /// current-line / IME-preedit tints stay separate absolute-positioned
     /// boxes, and that is a property of this type rather than an oversight: a
-    /// `StyleRun` carries a FULLY RESOLVED `TextStyle`, so layering a selection
-    /// run over a syntax run would clobber the syntax run's `fg_color`. Qt
-    /// splits the same way and for the same reason — `QTextCharFormat` for the
-    /// document, `QTextEdit::ExtraSelection` for the view — and merges its
-    /// format ranges onto the base format, which this type deliberately does
-    /// not do (the resolved-value shape is what keeps the layout cache key a
-    /// value comparison).
+    /// `StyleRun` carries a FULLY RESOLVED `TextStyle`, so layering a selection run over a
+    /// syntax run would clobber the syntax run's `fg_color`. The toolkit splits the
+    /// same way and for the same reason — text char format for the document,
+    /// `ExtraSelection` for the view — and merges its format ranges onto the base format,
+    /// which this type deliberately does not do (the resolved-value shape is
+    /// what keeps the layout cache key a value comparison).
     pub bg_color: Option<Color>,
     /// CSS `font-weight` (R47.5). Default = [`FontWeight::NORMAL`] (400).
     pub font_weight: FontWeight,
@@ -2614,8 +2609,8 @@ pub struct TextStyle {
     pub letter_spacing: i32,
     /// CSS `text-align` (R47.5). Default = [`TextAlign::Start`].
     pub text_align: TextAlign,
-    /// CSS `text-indent` (R1551) — the first line's own start offset, and the
-    /// only field of Qt's `QTextBlockFormat` that changes how the text is
+    /// CSS `text-indent` (R1551) — the first line's own start offset, and the only field
+    /// of the toolkit's text block format that changes how the text is
     /// *broken* rather than where its box sits.
     ///
     /// It lives here, beside [`Self::text_align`], because that is where this
@@ -2633,7 +2628,7 @@ pub struct TextStyle {
 }
 
 impl TextStyle {
-    /// v0 default: system font, 16px, opaque black, Figma-fidelity
+    /// v0 default: system font, 16px, opaque black, the design tool-fidelity
     /// fields all at their CSS defaults (Normal weight, Normal style,
     /// Normal line height, 0 letter-spacing, Start align, no
     /// decoration, Visible overflow).
@@ -2758,8 +2753,8 @@ impl TextStyle {
         self
     }
 
-    /// Builder: paint `color` behind this run's glyphs (R1546, Qt
-    /// `QTextCharFormat::setBackground`). See [`TextStyle::bg_color`].
+    /// Builder: paint `color` behind this run's glyphs (R1546, the toolkit
+    /// `setBackground`). See [`TextStyle::bg_color`].
     #[must_use]
     pub const fn with_bg_color(mut self, color: Color) -> Self {
         self.bg_color = Some(color);
@@ -2809,24 +2804,24 @@ pub enum StrokeCap {
 
 /// R1575 §5.3 — the repeating on/off rhythm a [`Stroke`] is drawn with.
 ///
-/// ## Qt reference: `QPen::setDashPattern` / `setDashOffset`
+/// ## the toolkit reference: `setDashPattern` / `setDashOffset`
 ///
-/// Qt takes a `QList<qreal>` of alternating on/off lengths plus a `qreal`
-/// offset. Three things here are deliberately not that shape:
+/// The toolkit takes a `list<qreal>` of alternating on/off lengths plus a `qreal` offset.
+/// Three things here are deliberately not that shape:
 ///
-/// - **The lengths are pixels, not multiples of the pen width.** Qt's dash
+/// - **The lengths are pixels, not multiples of the pen width.** the toolkit's dash
 ///   pattern is documented in units of the pen's width, so widening a line
 ///   from 1 to 3 silently triples its dash geometry and a caller who wanted
 ///   "4 on, 4 off" has to divide by a width it may not own. Here the numbers
 ///   are the geometry: the same [`Dash`] draws the same rhythm at every width.
 /// - **A malformed pattern is unrepresentable.** `setDashPattern` accepts an
-///   odd-length list (Qt answers with a runtime `qWarning` and ignores it) and
+///   odd-length list (the toolkit answers with a runtime `qWarning` and ignores it) and
 ///   an all-zero one. `on` and `off` are [`NonZeroU32`], so a dash that draws
 ///   nothing, or draws solid while claiming to be dashed, is not a value.
 /// - **The offset is canonical.** It is reduced modulo the period on
 ///   construction, so two dashes that paint identically compare equal — the
 ///   same reason [`crate::widgets::index_runs`] keeps its runs non-adjacent.
-///   Qt keeps whatever `qreal` it was handed, so a Qt pen carrying offset 12
+///   the toolkit keeps whatever `qreal` it was handed, so a toolkit pen carrying offset 12
 ///   and one carrying offset 2 over a period of 10 are different values that
 ///   draw the same line.
 ///
@@ -2837,8 +2832,8 @@ pub enum StrokeCap {
 /// **is** the distinction being communicated. That makes the dash a fact about
 /// the scene rather than a flourish over it, so it travels the §2 #7 wire like
 /// any other declaration and an agent reads which layer a link belongs to
-/// without looking at pixels. A `QPen` lives inside a paint call; nothing can
-/// ask a Qt scene which of its edges are dashed.
+/// without looking at pixels. A pen lives inside a paint call; nothing can
+/// ask a toolkit scene which of its edges are dashed.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Dash {
@@ -2914,12 +2909,12 @@ pub struct Stroke {
     pub cap: StrokeCap,
     /// R1575 — the dash rhythm, or `None` for a solid stroke.
     ///
-    /// `None` rather than a `Dash` meaning "solid" because solid is not a
-    /// rhythm: there is no period, no offset, and no animation step. Qt spells
-    /// the same distinction with a `Qt::PenStyle` enum that has both `SolidLine`
-    /// and `CustomDashLine` arms *plus* a separate pattern list, so a Qt pen can
-    /// hold a dash pattern that its style makes inert — two fields that
-    /// disagree. Here there is one.
+    /// `None` rather than a `Dash` meaning "solid" because solid is not a rhythm:
+    /// there is no period, no offset, and no animation step. The toolkit
+    /// spells the same distinction with a `PenStyle` enum that has both `SolidLine` and `CustomDashLine`
+    /// arms *plus* a separate pattern list, so a toolkit pen can hold a dash
+    /// pattern that its style makes inert — two fields that disagree. Here
+    /// there is one.
     pub dash: Option<Dash>,
 }
 
@@ -3146,29 +3141,28 @@ pub enum Display {
 
 /// (R1560 §5.21) How one grid track is sized — CSS
 /// [`<track-size>`](https://www.w3.org/TR/css-grid-1/#typedef-track-size), and
-/// the vocabulary Qt spells as `QTextLength` on a text table's columns.
+/// the vocabulary the toolkit spells as text length on a text table's columns.
 ///
-/// The four Qt has (`VariableLength` / `FixedLength` / `PercentageLength`, plus
-/// the implicit share-what-is-left) are [`Self::Auto`], [`Self::Px`],
-/// [`Self::Percent`] and [`Self::Fr`]; [`Self::MinContent`] /
-/// [`Self::MaxContent`] are CSS's intrinsic keywords, which Qt's table layout
-/// computes internally and offers no way to ask for.
+/// The four the toolkit has (`VariableLength` / `FixedLength` / `PercentageLength`, plus the implicit
+/// share-what-is-left) are [`Self::Auto`], [`Self::Px`], [`Self::Percent`] and [`Self::Fr`]; [`Self::MinContent`] / [`Self::MaxContent`] are
+/// CSS's intrinsic keywords, which the toolkit's table layout computes
+/// internally and offers no way to ask for.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub enum GridTrack {
     /// CSS `auto` — sized to its items, then given a share of any space left
-    /// over. Qt `QTextLength::VariableLength`, and what a table column takes
+    /// over. The toolkit `VariableLength`, and what a table column takes
     /// when nothing says otherwise.
     #[default]
     Auto,
-    /// CSS `<length>` — a fixed px extent. Qt `QTextLength::FixedLength`.
+    /// CSS `<length>` — a fixed px extent. The toolkit `FixedLength`.
     Px(u32),
-    /// CSS `<percentage>` of the grid container's content box. Qt
-    /// `QTextLength::PercentageLength`.
+    /// CSS `<percentage>` of the grid container's content box. The toolkit
+    /// `PercentageLength`.
     Percent(f32),
-    /// CSS `<flex>` (`1fr`) — a share of the space remaining once the fixed
-    /// and intrinsic tracks are sized. Qt has no per-column equivalent; its
-    /// variable columns share equally.
+    /// CSS `<flex>` (`1fr`) — a share of the space remaining once the fixed and
+    /// intrinsic tracks are sized. The toolkit has no per-column equivalent;
+    /// its variable columns share equally.
     Fr(f32),
     /// CSS `min-content` — the narrowest the track's items can be without
     /// overflowing.
@@ -3607,7 +3601,7 @@ pub struct LayoutStyle {
     /// * **Pointer** — [`Scene::hit_test`](crate::Scene::hit_test) does not
     ///   descend: the disabled node itself is the deepest hit, so a press
     ///   inside the region resolves to the region and never to the control
-    ///   under the cursor (Qt propagates such an event to the parent).
+    ///   under the cursor (the toolkit propagates such an event to the parent).
     /// * **Assistive technology** — the a11y assembler stamps
     ///   `AccessState::disabled` on every node in the region, so `aria-disabled`
     ///   cannot disagree with the scene.
@@ -3623,26 +3617,26 @@ pub struct LayoutStyle {
     /// [`QWidget::setEnabled(false)`]: https://doc.qt.io/qt-6/qwidget.html#enabled-prop
     pub disabled: bool,
     /// (R1554 §5.39) Derived: the cascade has resolved this node as disabled —
-    /// by its own [`declaration`](Self::disabled) or by an ancestor's. Qt's
-    /// `QWidget::isEnabled()`, inverted.
+    /// by its own [`declaration`](Self::disabled) or by an ancestor's. The toolkit's
+    /// `isEnabled()`, inverted.
     ///
     /// Written **only** by [`resolve_disabled`](crate::scene_disabled::resolve_disabled),
     /// which recomputes it from the declarations on every produced paint scene
     /// — never by a binding, which is why there is no builder for it. Keeping
     /// the derived value in its own field beside the declaration is what lets
-    /// `scene/disabled` answer *which* ancestor disabled a node (Qt's
-    /// `isEnabled()` is a bool, and `isEnabledTo()` requires the caller to
-    /// already name the ancestor it is asking about), and it is what makes the
-    /// fade idempotent: the ink is faded on the pass that first sets this, so
-    /// laying the same scene out twice cannot fade it twice.
+    /// `scene/disabled` answer *which* ancestor disabled a node (the toolkit's `isEnabled()` is a
+    /// bool, and `isEnabledTo()` requires the caller to already name the ancestor it is
+    /// asking about), and it is what makes the fade idempotent: the ink is
+    /// faded on the pass that first sets this, so laying the same scene out
+    /// twice cannot fade it twice.
     ///
-    /// It is a per-paint derivation, not stored state — `V::view` rebuilds the
-    /// tree from scratch every frame (R26), so the field arrives back at its
-    /// `false` default and the cascade re-derives it, in both directions. This
-    /// is the difference from Qt, whose `QWidgetPrivate::setEnabled_helper`
-    /// **writes** `WA_Disabled` into every descendant widget and must walk them
-    /// again to take it back, keeping N copies of one fact in step by
-    /// procedure — most delicately across a reparent.
+    /// It is a per-paint derivation, not stored state — `V::view` rebuilds the tree
+    /// from scratch every frame (R26), so the field arrives back at its `false`
+    /// default and the cascade re-derives it, in both directions. This is the
+    /// difference from the toolkit, whose `setEnabled_helper` **writes** `WA_Disabled` into every
+    /// descendant widget and must walk them again to take it back, keeping N
+    /// copies of one fact in step by procedure — most delicately across a
+    /// reparent.
     pub resolved_disabled: bool,
     /// (R1196 §5.16 §5.39) The hover mouse **cursor** this node requests when
     /// the pointer is over it — a [`CursorHint`], or `None` (the default) for
@@ -3668,16 +3662,16 @@ pub struct LayoutStyle {
     /// `scene/cursor_hint` RPC method), the same posture R1189's chrome-resize
     /// cursor takes.
     pub cursor: Option<CursorHint>,
-    /// (R1560 §5.21) CSS `grid-template-columns` — this container's explicit
-    /// column tracks, in order. Empty (the default) leaves every column
-    /// implicit and [`GridTrack::Auto`], which is CSS's own behaviour and Qt's
-    /// default for a text table.
+    /// (R1560 §5.21) CSS `grid-template-columns` — this container's explicit column tracks, in
+    /// order. Empty (the default) leaves every column implicit and [`GridTrack::Auto`],
+    /// which is CSS's own behaviour and the toolkit's default for a text
+    /// table.
     ///
     /// This is the field that cost [`LayoutStyle`] its `Copy`. A track list is
     /// a list — CSS's grammar is `<track-size>+` — and the alternatives were
     /// each a way of not saying that: a fixed inline capacity puts an
     /// arbitrary column limit in the layout engine, and `repeat(n, track)`
-    /// alone cannot express the per-column widths Qt's
+    /// alone cannot express the per-column widths the toolkit's
     /// `setColumnWidthConstraints` already has. The cost was measured before
     /// it was paid: removing `Copy` broke exactly one call site in the
     /// workspace, and an empty `Vec` neither allocates nor makes a clone do
@@ -3688,8 +3682,8 @@ pub struct LayoutStyle {
     ///
     /// Present because the two axes are the same axis twice and a grid with
     /// only one of them would be a hole a reader has to remember. A text table
-    /// leaves it empty: rows size to their content, which is Qt's rule too
-    /// (`QTextTableFormat` has no row-height constraint).
+    /// leaves it empty: rows size to their content, which is the toolkit's
+    /// rule too (text table format has no row-height constraint).
     pub grid_template_rows: Vec<GridTrack>,
     /// (R1560 §5.21) CSS `grid-row` — which row track(s) this item covers.
     /// `None` (the default) leaves the item to the container's auto-placement.
@@ -3723,9 +3717,8 @@ pub enum CursorHint {
     /// this so a `TextGrid` link reads as clickable, the terminal convention.
     Pointer,
     /// (R1609) A diagonal (top-left ↔ bottom-right, `⤡`) resize affordance — a
-    /// corner handle whose horizontal and vertical edges move together. Maps to
-    /// the CSS `nwse-resize` / winit `NwseResize`, and to Qt's
-    /// `Qt::SizeFDiagCursor`.
+    /// corner handle whose horizontal and vertical edges move together. Maps
+    /// to the CSS `nwse-resize` / winit `NwseResize`, and to the toolkit's `SizeFDiagCursor`.
     ///
     /// ★ The capability was already proven in this tree and only this
     /// *vocabulary* could not say it: the R1189 window-chrome resize path maps
@@ -3737,7 +3730,7 @@ pub enum CursorHint {
     NwseResize,
     /// (R1609) A diagonal (top-right ↔ bottom-left, `⤢`) resize affordance —
     /// the other corner pair. Maps to the CSS `nesw-resize` / winit
-    /// `NeswResize`, and to Qt's `Qt::SizeBDiagCursor`.
+    /// `NeswResize`, and to the toolkit's `SizeBDiagCursor`.
     NeswResize,
 }
 
@@ -3835,7 +3828,7 @@ impl LayoutStyle {
     }
 
     /// (R1554 §5.39 §5.35 §5.40) Builder: declare this node and its whole
-    /// subtree disabled — Qt `QWidget::setEnabled(false)`, HTML
+    /// subtree disabled — the toolkit `setEnabled(false)`, HTML
     /// `<fieldset disabled>`. See [`Self::disabled`] for the four consequences
     /// the framework derives from it.
     ///
@@ -4846,7 +4839,7 @@ mod tests {
         assert!(s.font_family.is_none());
         assert_eq!(s.font_size_px, 16);
         assert_eq!(s.fg_color, Color::rgb(0, 0, 0));
-        // R47.5 Figma-fidelity defaults — every new field at its CSS
+        // R47.5 the design tool-fidelity defaults — every new field at its CSS
         // default so that a freshly-constructed TextStyle behaves
         // identically to the pre-R47.5 shape.
         assert_eq!(s.font_weight, FontWeight::NORMAL);
@@ -5011,7 +5004,7 @@ mod tests {
 
     #[test]
     fn text_style_variant_styles_produce_distinct_hashes() {
-        // R47.5 — different Figma-fidelity field values must produce
+        // R47.5 — different the design tool-fidelity field values must produce
         // distinct cache keys so LayoutCache shapes them independently.
         // R47.6 wires each into parley; the cache-key distinction is
         // the prereq.

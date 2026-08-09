@@ -2,8 +2,8 @@
 //!
 //! ## What this demonstrates
 //!
-//! The editor-universal **command palette** (VS Code Ctrl+P, Unreal /
-//! Blender command search): type a query, a command list filters by a
+//! The editor-universal **command palette** (VS Code Ctrl+P, the engine /
+//! the DCC command search): type a query, a command list filters by a
 //! subsequence-scored fuzzy match, Arrow keys / clicks navigate, and
 //! Enter / a click runs the selected command. It is the keyboard-first
 //! entry point to every editor action — the highest-leverage "find and

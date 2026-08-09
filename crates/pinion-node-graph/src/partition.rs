@@ -25,13 +25,13 @@
 //! * **reconnects** every value whose crossing disappeared, so the graph goes
 //!   on computing what it computed.
 //!
-//! That last one is what Blender does not do. Measured against `~/blender-ref`
-//! at `8cf50599`: `node_group_separate_selected` copies the selected nodes into
-//! the parent tree and, for the Move arm, deletes them from the group. It does
-//! not touch the interface, so the group keeps sockets that reach nothing, and
-//! the separated nodes arrive wired only to each other — the value that used to
-//! flow through them is gone. This crate's tests hold that rule as a helper and
-//! assert the divergence rather than describing it.
+//! That last one is what the DCC does not do. Measured against `~/the DCC-ref` at `8cf50599`: `node_group_separate_selected`
+//! copies the selected nodes into the parent tree and, for the Move arm,
+//! deletes them from the group. It does not touch the interface, so the group
+//! keeps sockets that reach nothing, and the separated nodes arrive wired only
+//! to each other — the value that used to flow through them is gone. This
+//! crate's tests hold that rule as a helper and assert the divergence rather
+//! than describing it.
 //!
 //! # A round trip keeps the meaning and not the order
 //!
@@ -52,10 +52,10 @@
 //! # A definition is shared; an edit through one instance is not
 //!
 //! The nodes move into (or out of) a *definition*, and a definition can have
-//! many instances, so editing it through one changes all of them. Blender does
-//! that silently: `node_group_insert_exec` appends to the group its active node
-//! references, and every other user of that group gains the sockets and the
-//! behaviour without being told.
+//! many instances, so editing it through one changes all of them. The DCC does
+//! that silently: `node_group_insert_exec` appends to the group its active node references, and
+//! every other user of that group gains the sockets and the behaviour without
+//! being told.
 //!
 //! Here the caller says which they meant — [`Sharing`] — and is told what it
 //! cost either way: [`Repartitioned::other_instances`] counts the instances that
@@ -64,11 +64,11 @@
 //!
 //! # Separate's other arm
 //!
-//! Blender's Separate offers Copy as well as Move. Copy is
-//! [`Document::extract`](crate::Document::extract) followed by
-//! [`Document::insert`](crate::Document::insert) — R1578 — which copies the
-//! nodes, leaves the group untouched and *names* the boundary it cut. There is
-//! one spelling of each thing here, so [`Document::group_separate`] is the move.
+//! The DCC's Separate offers Copy as well as Move. Copy is
+//! [`Document::extract`](crate::Document::extract) followed by [`Document::insert`](crate::Document::insert)
+//! — R1578 — which copies the nodes, leaves the group untouched and *names*
+//! the boundary it cut. There is one spelling of each thing here, so [`Document::group_separate`] is
+//! the move.
 
 use pinion_graph::group as boundary;
 use std::collections::{BTreeMap, BTreeSet};
@@ -86,13 +86,13 @@ use crate::numbering::Numbering;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sharing {
     /// Edit the definition itself, so every instance of it changes at once.
-    /// That is what a definition being shared *means*, and it is the only thing
-    /// Blender's Group Insert and Separate can do.
+    /// That is what a definition being shared *means*, and it is the only
+    /// thing the DCC's Group Insert and Separate can do.
     Shared,
     /// Copy the definition first and point this instance at the copy, leaving
     /// the other instances with what they had.
     ///
-    /// Blender reaches the same place in two steps and a different vocabulary:
+    /// The DCC reaches the same place in two steps and a different vocabulary:
     /// a node group is an ID datablock, so you make it single-user first.
     Fork,
 }
@@ -247,11 +247,11 @@ impl<K: NodeKind> Document<K> {
     /// Copy the definition an instance names, and point that instance at the
     /// copy.
     ///
-    /// Blender's "make single user", reached here in one call because the thing
-    /// copied is a tree rather than an ID datablock. The copy keeps the
-    /// original's name — a name is not an identity in this crate, where
-    /// Blender must rename because an ID's name *is* its key — and the copy's
-    /// own group instances still name the same inner definitions, which is what
+    /// The DCC's "make single user", reached here in one call because the
+    /// thing copied is a tree rather than an ID datablock. The copy keeps the
+    /// original's name — a name is not an identity in this crate, where the
+    /// DCC must rename because an ID's name *is* its key — and the copy's own
+    /// group instances still name the same inner definitions, which is what
     /// makes this a fork of one level rather than of a whole subtree.
     ///
     /// # Errors
@@ -274,10 +274,10 @@ impl<K: NodeKind> Document<K> {
 
     /// Move `selection` out of `tree` and into the definition `instance` names.
     ///
-    /// Blender's `NODE_OT_group_insert`, with the interface re-derived rather
-    /// than only appended to: a value that already crosses at this instance
-    /// keeps its port instead of gaining a second, and a port whose feed ends up
-    /// inside is removed rather than left describing nothing.
+    /// The DCC's `NODE_OT_group_insert`, with the interface re-derived rather than only appended
+    /// to: a value that already crosses at this instance keeps its port
+    /// instead of gaining a second, and a port whose feed ends up inside is
+    /// removed rather than left describing nothing.
     ///
     /// # Errors
     ///
@@ -299,11 +299,11 @@ impl<K: NodeKind> Document<K> {
 
     /// Move `selection` out of the definition `instance` names and into `tree`.
     ///
-    /// Blender's `NODE_OT_group_separate` with `type='MOVE'`, except that the
-    /// values which used to cross the boundary are **reconnected**: a moved node
-    /// fed from the group's input is fed by whatever feeds that input here, and
-    /// a moved node that fed the group's output now feeds whatever that output
-    /// fed. The graph goes on computing what it computed.
+    /// The DCC's `NODE_OT_group_separate` with `type='MOVE'`, except that the values which used to cross the
+    /// boundary are **reconnected**: a moved node fed from the group's input
+    /// is fed by whatever feeds that input here, and a moved node that fed the
+    /// group's output now feeds whatever that output fed. The graph goes on
+    /// computing what it computed.
     ///
     /// `selection` names nodes in the *definition*, not in `tree`.
     ///

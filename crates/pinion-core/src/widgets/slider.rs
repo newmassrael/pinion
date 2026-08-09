@@ -9,7 +9,7 @@
 //! owns the typed value (SCXML "null datamodel + typed Rust
 //! sidecar" pattern).
 //!
-//! Value semantics split into two phases (Material / `SwiftUI` / Qt
+//! Value semantics split into two phases (Material / `SwiftUI` / the toolkit
 //! convention):
 //!
 //! * **`value_changing`** — every effective [`Slider::set_value`]
@@ -75,17 +75,17 @@ use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 /// R1533 §5.45 §5.38 — one wheel notch on a **continuous** slider, in
 /// normalised units.
 ///
-/// A discrete slider steps by its own [`Slider::step`]; a continuous one has
-/// no such unit, and Qt offers no guidance because a `QSlider` is always an
+/// A discrete slider steps by its own [`Slider::step`]; a continuous one has no such
+/// unit, and the toolkit offers no guidance because a slider is always an
 /// integer range. 5% is the small step every slider binding in this repo
-/// already spells in its arrow-key map (`hello-slider`, `hello-scrubber`,
-/// `settings-panel`), which is the property worth preserving: Qt ties the
-/// wheel and the arrow keys to ONE `singleStep`, so a wheel notch and an
-/// `ArrowRight` moving the same distance is the contract, not a coincidence.
+/// already spells in its arrow-key map (`hello-slider`, `hello-scrubber`, `settings-panel`), which is the property
+/// worth preserving: the toolkit ties the wheel and the arrow keys to ONE `singleStep`,
+/// so a wheel notch and an `ArrowRight` moving the same distance is the contract, not a
+/// coincidence.
 ///
-/// A per-slider override (Qt's `setSingleStep`) is the natural extension the
-/// moment a binding wants a different one; none does today, so the constant
-/// is not yet a builder ([[abstraction-needs-second-consumer]]).
+/// A per-slider override (the toolkit's `setSingleStep`) is the natural extension the
+/// moment a binding wants a different one; none does today, so the constant is
+/// not yet a builder ([[abstraction-needs-second-consumer]]).
 pub const CONTINUOUS_WHEEL_STEP: f32 = 0.05;
 
 /// R51.39 §5.38 — Slider track orientation. `Horizontal` (the
@@ -296,7 +296,7 @@ impl WidgetTransition for Slider {
 pub struct SliderExternal {
     em: IntentEmitter<Slider>,
     /// R1533 §5.45 — sub-notch wheel carry (see [`Self::wheel`]). Per
-    /// instance, exactly as each Qt `QAbstractSlider` owns its own
+    /// instance, exactly as each the toolkit abstract slider owns its own
     /// `offset_accumulated`: two sliders on one screen must not spend each
     /// other's banked motion.
     wheel: WheelStepper,
@@ -439,7 +439,7 @@ impl External for SliderExternal {
     /// the cursor pinned to this Slider for the duration of the
     /// `pointer_down` → `pointer_up` span, even when the cursor
     /// strays outside the widget's track rect. Required for the
-    /// canonical drag UX (Material / `SwiftUI` / Qt): the user can
+    /// canonical drag UX (Material / `SwiftUI` / the toolkit): the user can
     /// drag past the track ends without the press cancelling.
     fn wants_pointer_capture(&self) -> bool {
         true
@@ -474,30 +474,29 @@ impl External for SliderExternal {
         self.set_value(value_axis.clamp(0.0, 1.0));
     }
 
-    /// R1533 §5.45 §5.38 — the wheel steps the value: Qt
-    /// `QAbstractSlider::wheelEvent`, and the reason every volume slider,
+    /// R1533 §5.45 §5.38 — the wheel steps the value: the toolkit
+    /// `wheelEvent`, and the reason every volume slider,
     /// zoom slider and DCC parameter track in a desktop tool answers a
     /// wheel without being clicked first.
     ///
-    /// One notch ([`LINE_HEIGHT_PX`](crate::event::LINE_HEIGHT_PX) pixels) is
-    /// one [`CONTINUOUS_WHEEL_STEP`] on a continuous slider, or one snap
-    /// [`Slider::step`] on a discrete one — so a discrete slider walks its
-    /// own stops and cannot land between them. Qt reaches the same place
-    /// from the other side: there `singleStep` *is* the wheel step, and its
-    /// slider is an integer range whose unit is that step.
+    /// One notch ([`LINE_HEIGHT_PX`](crate::event::LINE_HEIGHT_PX) pixels) is one [`CONTINUOUS_WHEEL_STEP`] on
+    /// a continuous slider, or one snap [`Slider::step`] on a discrete one — so a
+    /// discrete slider walks its own stops and cannot land between them. The
+    /// toolkit reaches the same place from the other side: there `singleStep` *is* the
+    /// wheel step, and its slider is an integer range whose unit is that step.
     ///
     /// Sub-notch motion banks in a [`WheelStepper`] rather than rounding to
     /// nothing, so a trackpad moves the slider at all.
     ///
-    /// Deliberately NOT Qt's `wheelScrollLines` multiplier (Qt travels
-    /// **three** single-steps a notch): that constant exists because a Qt
+    /// Deliberately NOT the toolkit's `wheelScrollLines` multiplier (the toolkit travels
+    /// **three** single-steps a notch): that constant exists because a toolkit
     /// slider's step is usually 1 of a 0..99 range, whereas a step here is a
-    /// normalised fraction the binding chose — `hello-slider-discrete` has
-    /// six stops, and three of them a notch is not a slider, it is a jump.
+    /// normalised fraction the binding chose — `hello-slider-discrete` has six stops, and three of
+    /// them a notch is not a slider, it is a jump.
     ///
     /// Only the **vertical** wheel axis is read, on both orientations. That
     /// is the axis every mouse has, and it keeps "wheel forward raises the
-    /// value" true for a vertical and a horizontal track alike (Qt
+    /// value" true for a vertical and a horizontal track alike (the toolkit
     /// normalises orientation for the same reason). A horizontal wheel /
     /// trackpad axis on a horizontal track is a further refinement, not a
     /// different rule.
@@ -533,9 +532,9 @@ impl External for SliderExternal {
         }
         // A notch is atomic — there is no press to release — so the value it
         // leaves is settled, and the commit channel has to say so or a
-        // consumer that persists / seeks on commit only (`hello-scrubber`,
-        // `settings-panel`) would see the thumb move and never act. Qt's
-        // wheel likewise emits `valueChanged`, not just `sliderMoved`.
+        // consumer that persists / seeks on commit only (`hello-scrubber`, `settings-panel`) would see
+        // the thumb move and never act. The toolkit's wheel likewise emits
+        // `valueChanged`, not just `sliderMoved`.
         self.em.push(Intent::new_static(
             crate::widgets::commit::VALUE_COMMITTED_EVENT,
             IntrospectValue::Float(f64::from(self.em.inner.value())),
@@ -1027,8 +1026,8 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // R1533 §5.45 §5.38 — the wheel steps the value (Qt
-    // `QAbstractSlider::wheelEvent`).
+    // R1533 §5.45 §5.38 — the wheel steps the value (the toolkit
+    // `wheelEvent`).
     // ─────────────────────────────────────────────────────────────────
 
     /// One notch of forward wheel, in the pixel units the router hands out.

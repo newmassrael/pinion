@@ -1,4 +1,4 @@
-//! `pinion-node-graph` — the mechanism of a Blender/Blueprint-class node system,
+//! `pinion-node-graph` — the mechanism of a DCC/Blueprint-class node system,
 //! with the taxonomy left to the application (R1577, Phase B).
 //!
 //! # Why this crate exists
@@ -35,7 +35,7 @@
 //!   expressible at all: equality is symmetric, and that relation is not. It is
 //!   declared once, **as the conversion itself**, which is what makes "this
 //!   wire is legal" and "this is what arrives along it" unable to disagree.
-//!   Blender keeps those two apart, and keeps a third copy for muted nodes.
+//!   the DCC keeps those two apart, and keeps a third copy for muted nodes.
 //! * **Groups** — [`Document::group`] collapses a selection into a re-usable
 //!   definition plus one instance, with the interface **derived** from the
 //!   links that cross the boundary. [`Document::instantiate`] places another
@@ -64,7 +64,7 @@
 //!   a delete leaves behind cannot disagree. A [`Link`] can be muted too, which
 //!   is the opposite behaviour and therefore a different word. A [`Port`] may
 //!   declare itself off that path ([`Port::no_passthrough`]) — the whole
-//!   extension point, because the default *is* the identity: eleven Blender
+//!   extension point, because the default *is* the identity: eleven the DCC
 //!   node types register a per-node C callback to redirect their pass-through
 //!   and not one of them computes anything this default does not already
 //!   produce.
@@ -72,10 +72,10 @@
 //!   contains, and [`Node::parent`] is the relation. Read across a tree that
 //!   relation is a **forest**: [`Document::set_parent`] refuses a container that
 //!   is not a frame and a containment that would close a cycle, naming the
-//!   chain, where Blender states both rules as assertions its shipped build
+//!   chain, where the DCC states both rules as assertions its shipped build
 //!   compiles out. Every gesture over it — [`Document::enframe`],
 //!   [`Document::unframe`], [`Document::translate`] — is a call site of one
-//!   derivation, [`Document::outermost`], which Blender writes three times.
+//!   derivation, [`Document::outermost`], which the DCC writes three times.
 //!   Deleting a frame hands its members to the frame *above* rather than to the
 //!   canvas, and every operation that moves nodes between trees says what became
 //!   of a container that stayed behind ([`Orphaned`]).

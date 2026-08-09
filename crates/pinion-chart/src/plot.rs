@@ -85,9 +85,9 @@ pub(crate) struct CartesianPlot {
 
 impl CartesianPlot {
     /// Resolve the plot geometry for `rect` under `style`: the margin-inset plot
-    /// area, and an x / y [`LinearScale`] over each axis's domain (a pinned
-    /// domain verbatim, else the data extent snapped to its nice-tick range so
-    /// the outer gridlines land on the plot edges — Qt `applyNiceNumbers`).
+    /// area, and an x / y [`LinearScale`] over each axis's domain (a pinned domain
+    /// verbatim, else the data extent snapped to its nice-tick range so the
+    /// outer gridlines land on the plot edges — the toolkit `applyNiceNumbers`).
     ///
     /// [`Rescale::to_visible`] (R1381) chooses the auto-domain source: `false`
     /// measures every series ([`data_bounds`] — hiding a series never rescales

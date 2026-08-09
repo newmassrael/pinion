@@ -1,4 +1,4 @@
-//! R1506 R1510 §5.16 §5.27 §5.36 — `QHeaderView`-style column-header section
+//! R1506 R1510 §5.16 §5.27 §5.36 — header view-style column-header section
 //! paint.
 //!
 //! # Why this is a crate and not a binding's private fn
@@ -20,7 +20,7 @@
 //!
 //! The geometry of a header section — how a section's width becomes a label
 //! box, where the sort glyph sits, which parts are decoration — is
-//! `QHeaderView` knowledge and is here. WHAT the sections are (the
+//! header view knowledge and is here. WHAT the sections are (the
 //! permutation, the sizes, the labels, which column sorts) is the
 //! [`ColumnLayout`](pinion_core::widgets::column_layout::ColumnLayout)
 //! external's, and arrives as [`SectionPlacement`] + [`HeaderSection`].
@@ -36,7 +36,7 @@ use pinion_core::widgets::column_layout::{SectionPlacement, SectionSelection};
 /// Geometry + type scale for a header strip, in logical pixels.
 ///
 /// The defaults are `hello-column-reorder`'s, which is where every one of
-/// these numbers was measured against Qt before this module existed.
+/// these numbers was measured against the toolkit before this module existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnHeaderStyle {
     /// Strip height, and therefore each section's.
@@ -80,14 +80,14 @@ impl ColumnHeaderStyle {
 
     /// The width of the box a section's label is aligned WITHIN.
     ///
-    /// This is the number the whole alignment feature rests on. `paint_text`
-    /// hands a text leaf's own `rect.w` to the shaper as the width to align
-    /// in, so a label pinned to its glyphs renders identically under every
-    /// [`TextAlign`] — the alignment would be declared and unobservable. The
-    /// box therefore spans the section less the insets, and less the glyph's
-    /// reserved end when a sort indicator is showing (Qt reserves the same
-    /// room; a centred label over an unreserved arrow reads as a collision the
-    /// moment a column is sorted).
+    /// This is the number the whole alignment feature rests on. `paint_text` hands a
+    /// text leaf's own `rect.w` to the shaper as the width to align in, so a label
+    /// pinned to its glyphs renders identically under every [`TextAlign`] — the
+    /// alignment would be declared and unobservable. The box therefore spans
+    /// the section less the insets, and less the glyph's reserved end when a
+    /// sort indicator is showing (the toolkit reserves the same room; a
+    /// centred label over an unreserved arrow reads as a collision the moment
+    /// a column is sorted).
     ///
     /// Floored at 1: a zero-width text rect makes `paint_text` pass `None` for
     /// the width, which silently turns alignment back off.
@@ -121,8 +121,9 @@ pub struct HeaderSection<'a> {
     /// The label text.
     pub label: &'a str,
     /// Where the label sits inside its box — the header's own rule, or the
-    /// model's per-section exception. Resolved by the caller, because Qt keeps
-    /// the two in different places and only the caller knows both.
+    /// model's per-section exception. Resolved by the caller, because the
+    /// toolkit keeps the two in different places and only the caller knows
+    /// both.
     pub align: TextAlign,
     /// The sort indicator's glyph, already chosen (see
     /// [`sort_glyph`](crate::glyph::sort_glyph)), or `None` when this section
@@ -146,13 +147,13 @@ pub struct HeaderSection<'a> {
 
 /// The label's own text style.
 fn label_style(section: &HeaderSection, style: &ColumnHeaderStyle, theme: &Theme) -> TextStyle {
-    // R1510 — the two Qt flags reach two properties of the LABEL, and neither
-    // touches the box's fill.
+    // R1510 — the two the toolkit flags reach two properties of the LABEL, and
+    // neither touches the box's fill.
     //
-    // Weight is `State_On` (the selection intersects the section) and colour is
-    // `State_Sunken` (it covers the whole of it). Qt's own mapping for the
-    // second is a sunken bevel, which this theme does not have; the accent is
-    // this theme's resolution, stated here rather than implied.
+    // Weight is `State_On` (the selection intersects the section) and colour is `State_Sunken`
+    // (it covers the whole of it). The toolkit's own mapping for the second is
+    // a sunken bevel, which this theme does not have; the accent is this
+    // theme's resolution, stated here rather than implied.
     //
     // WHY NOT THE FILL, and why not a border. The fill is already spoken for by
     // the drag and the keyboard cursor ([`view_header_cell`]), and a selected
@@ -199,7 +200,7 @@ fn label_style(section: &HeaderSection, style: &ColumnHeaderStyle, theme: &Theme
 /// node's style and box, and a guard that built its own would be testing its
 /// own arithmetic.
 ///
-/// The leaf is `pointer_transparent` (R1499): Qt's
+/// The leaf is `pointer_transparent` (R1499): the toolkit's
 /// `WA_TransparentForMouseEvents` / CSS's `pointer-events: none`. It is tagged
 /// for snapshot assertions and the a11y walk, and nothing dispatches to it, so
 /// a press landing on it must reach the section underneath. Since R1504 gave
@@ -369,8 +370,8 @@ mod tests {
     }
 
     /// R1510 — the two levels reach two different channels, and each reaches
-    /// only its own: weight tracks Qt's `State_On` (the selection intersects),
-    /// the border tracks `State_Sunken` (it covers).
+    /// only its own: weight tracks the toolkit's `State_On` (the selection
+    /// intersects), the border tracks `State_Sunken` (it covers).
     #[test]
     fn the_two_highlight_levels_use_two_channels() {
         let theme = Theme::light();

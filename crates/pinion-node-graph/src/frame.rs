@@ -11,33 +11,29 @@
 //! actually does to a big graph — put a fence round eight nodes and call it
 //! "decode" — has nowhere to be recorded.
 //!
-//! The relation itself is one nullable field ([`Node::parent`]). What makes it
-//! worth a module is that it is a **forest**, and a forest is a thing that can
-//! be broken: a parent that is not a container, a parent that is not there, a
-//! node that contains itself. Blender declares the same field and states both
-//! of its rules as `BLI_assert` — `node_attach_node` asserts `parent.is_frame()`
-//! and `!node_is_parent_and_child(parent, node)` — which are compiled out of
-//! the build it ships. Worse, its own `NODE_OT_parent_set` **detaches before it
-//! attaches**, so by the time that second assert runs the chain it would have
-//! walked is already cleared: select a frame's own container along with it,
-//! press <kbd>Ctrl</kbd>+<kbd>P</kbd>, and the two nodes contain each other in a
-//! debug build too. Nothing in Blender then terminates —
-//! `node_is_parent_and_child` and `get_sorted_node_parents` both walk `parent`
-//! to `nullptr`.
+//! The relation itself is one nullable field ([`Node::parent`]). What makes it worth a
+//! module is that it is a **forest**, and a forest is a thing that can be
+//! broken: a parent that is not a container, a parent that is not there, a
+//! node that contains itself. The DCC declares the same field and states both
+//! of its rules as `BLI_assert` — `node_attach_node` asserts `parent.is_frame()` and `!node_is_parent_and_child(parent, node)` — which are compiled out of
+//! the build it ships. Worse, its own `NODE_OT_parent_set` **detaches before it attaches**, so
+//! by the time that second assert runs the chain it would have walked is
+//! already cleared: select a frame's own container along with it, press
+//! <kbd>Ctrl</kbd>+<kbd>P</kbd>, and the two nodes contain each other in a
+//! debug build too. Nothing in the DCC then terminates — `node_is_parent_and_child` and `get_sorted_node_parents` both walk
+//! `parent` to `nullptr`.
 //!
 //! So here the two rules are checked, the refusal **names the chain**, and
 //! [`Document::validate`] reports a forest that arrived broken from a file.
 //!
 //! # One derivation, not one per gesture
 //!
-//! Every gesture over the forest asks the same question: *which members of this
-//! selection are not inside another member of it?* Framing attaches those;
-//! unframing detaches those; a drag moves those. Blender writes it twice, as
-//! `node_join_attach_recursive` and `node_detach_recursive` — two recursive
-//! functions over two structs with identical fields (`NodeJoinState` and
-//! `NodeDetachstate`, both `{bool done; bool descendent;}`) — and a third time
-//! inside the transform code. Here it is [`Document::outermost`], and the
-//! gestures are its call sites.
+//! Every gesture over the forest asks the same question: *which members of
+//! this selection are not inside another member of it?* Framing attaches
+//! those; unframing detaches those; a drag moves those. The DCC writes it
+//! twice, as `node_join_attach_recursive` and `node_detach_recursive` — two recursive functions over two structs with
+//! identical fields (`NodeJoinState` and `NodeDetachstate`, both `{bool done; bool descendent;}`) — and a third time inside the
+//! transform code. Here it is [`Document::outermost`], and the gestures are its call sites.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -61,11 +57,10 @@ pub struct Enframed {
 ///
 /// Reported wherever a selection travels without the frame that contained it:
 /// out of a tree as a [`Fragment`](crate::Fragment), into a group definition, or
-/// across a group boundary. Blender's copy path detaches in exactly these cases
-/// (`node_copy_local` looks the parent up in the copy map and calls
-/// `node_detach_node` when it is not there) and records nothing, so a user who
-/// duplicates a node that was in a frame gets one that is not, with no
-/// indication that anything happened.
+/// across a group boundary. The DCC's copy path detaches in exactly these
+/// cases (`node_copy_local` looks the parent up in the copy map and calls `node_detach_node` when it is not
+/// there) and records nothing, so a user who duplicates a node that was in a
+/// frame gets one that is not, with no indication that anything happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Orphaned {
     /// The node, in the numbering of wherever it now is.
@@ -93,8 +88,8 @@ pub enum ParentError {
         /// The node that is not in it.
         node: NodeId,
     },
-    /// The proposed container is not a [`NodeBody::Frame`], so it is not a thing
-    /// that contains. Blender states this as an assertion that ships disabled.
+    /// The proposed container is not a [`NodeBody::Frame`], so it is not a thing that
+    /// contains. The DCC states this as an assertion that ships disabled.
     NotAFrame {
         /// The node that was offered as a container.
         node: NodeId,
@@ -149,7 +144,7 @@ impl<K: NodeKind> Document<K> {
     /// Put `node` inside `parent`, or take it out of everything (`None`),
     /// answering where it was.
     ///
-    /// The one mutator of the forest. Blender's `NODE_OT_parent_set` and the
+    /// The one mutator of the forest. The DCC's `NODE_OT_parent_set` and the
     /// model half of its `NODE_OT_attach`.
     ///
     /// # Errors
@@ -265,9 +260,9 @@ impl<K: NodeKind> Document<K> {
     /// The innermost frame containing every one of `nodes`, or `None` when they
     /// share only the canvas.
     ///
-    /// Blender's `find_common_parent_node`, and the same derivation: the longest
-    /// common **prefix** of the ancestries, which is what a lowest common
-    /// ancestor is in a forest.
+    /// The DCC's `find_common_parent_node`, and the same derivation: the longest common **prefix**
+    /// of the ancestries, which is what a lowest common ancestor is in a
+    /// forest.
     ///
     /// A frame in `nodes` is judged by what contains *it*, not by itself — so
     /// asking about a frame and something inside it answers with the frame's own
@@ -311,9 +306,9 @@ impl<K: NodeKind> Document<K> {
 
     /// Put `selection` in a new frame and answer it.
     ///
-    /// Blender's `NODE_OT_join`. The frame lands at the selection's centre, and
-    /// **inside whatever already contained all of it** ([`Self::common_frame`]),
-    /// so framing part of a pipeline does not lift it out of the pipeline.
+    /// The DCC's `NODE_OT_join`. The frame lands at the selection's centre, and **inside
+    /// whatever already contained all of it** ([`Self::common_frame`]), so framing part of a
+    /// pipeline does not lift it out of the pipeline.
     ///
     /// # Errors
     ///
@@ -359,11 +354,11 @@ impl<K: NodeKind> Document<K> {
     /// Take `selection` out of the frames immediately containing it, answering
     /// the nodes that moved.
     ///
-    /// **One level**, so a node in `Outer > Inner` lands in `Outer`. That is what
-    /// "out of its frame" means, it composes (repeat to leave the next one), and
-    /// the all-the-way form is [`Self::set_parent`] with `None`. Blender's
-    /// `NODE_OT_detach` clears the parent outright, so only the second of those
-    /// two behaviours is reachable there.
+    /// **One level**, so a node in `Outer > Inner` lands in `Outer`. That is what "out of its
+    /// frame" means, it composes (repeat to leave the next one), and the
+    /// all-the-way form is [`Self::set_parent`] with `None`. The DCC's `NODE_OT_detach` clears the parent
+    /// outright, so only the second of those two behaviours is reachable
+    /// there.
     ///
     /// Acts on [`Self::outermost`]: a selected node inside another selected node
     /// keeps its container, because that container is itself moving and taking
@@ -407,9 +402,9 @@ impl<K: NodeKind> Document<K> {
     /// node that moved, `node` first.
     ///
     /// This is what the relation is *for*: a frame that did not carry its
-    /// members when dragged would be a rectangle drawn behind them. Blender
-    /// reaches the same behaviour from its transform system rather than from its
-    /// node model, which is why `space_node` has a third copy of the
+    /// members when dragged would be a rectangle drawn behind them. The DCC
+    /// reaches the same behaviour from its transform system rather than from
+    /// its node model, which is why `space_node` has a third copy of the
     /// selection-roots walk.
     ///
     /// # Errors

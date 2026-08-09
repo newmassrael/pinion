@@ -48,10 +48,10 @@ use crate::widgets::virtual_list::{RowOffsets, VisibleWindow, compute_visible_ra
 /// that hides its content or vanishes entirely.
 pub const DEFAULT_MIN_COL_WIDTH: u32 = 40;
 
-/// R1492 — default maximum column width: **no ceiling**. Qt spells the same
-/// default `QWIDGETSIZE_MAX`, a sentinel large enough that no real column
-/// reaches it; `u32::MAX` says the same thing without inviting a caller to
-/// treat the sentinel as a real limit.
+/// R1492 — default maximum column width: **no ceiling**. The toolkit spells
+/// the same default `QWIDGETSIZE_MAX`, a sentinel large enough that no real column reaches
+/// it; `u32::MAX` says the same thing without inviting a caller to treat the sentinel
+/// as a real limit.
 ///
 /// A ceiling is not decoration. Before this, a `resize_section` of 99999 into a
 /// 700px window applied *verbatim*, and a `ResizeToContents` section took its
@@ -113,8 +113,8 @@ pub struct ColumnWidths {
     /// that re-runs only on `widths` would keep painting the old floor. The
     /// R1454 `contents_precision` correction, exactly.
     min_width: Signal<u32>,
-    /// R1492 — upper clamp applied on every width write. Qt's
-    /// `QHeaderView::maximumSectionSize`; [`DEFAULT_MAX_COL_WIDTH`] means none.
+    /// R1492 — upper clamp applied on every width write. The toolkit's
+    /// `maximumSectionSize`; [`DEFAULT_MAX_COL_WIDTH`] means none.
     max_width: Signal<u32>,
 }
 
@@ -125,7 +125,7 @@ impl ColumnWidths {
     /// (R785.1 audit-correction) The "every width ≥ `min_width`" invariant
     /// holds from construction, not just after a mutation — clamping the
     /// initial widths the same way [`set_width`](Self::set_width) /
-    /// [`set_widths`](Self::set_widths) do (the Qt / AG-Grid contract: a
+    /// [`set_widths`](Self::set_widths) do (the toolkit / AG-Grid contract: a
     /// column can never be *narrower* than its minimum, however it was sized).
     #[must_use]
     pub fn new(widths: Vec<u32>) -> Self {
@@ -166,12 +166,11 @@ impl ColumnWidths {
         self
     }
 
-    /// R1492 — move the floor at runtime, re-clamping every stored width — Qt's
-    /// `QHeaderView::setMinimumSectionSize`, which is a setter, not a
-    /// construction argument. A floor above the current ceiling raises the
-    /// ceiling with it, so the two never describe an empty range; the caller
-    /// learns what actually happened by reading either back, which is the whole
-    /// reason both are readable.
+    /// R1492 — move the floor at runtime, re-clamping every stored width — the
+    /// toolkit's `setMinimumSectionSize`, which is a setter, not a construction argument. A floor
+    /// above the current ceiling raises the ceiling with it, so the two never
+    /// describe an empty range; the caller learns what actually happened by
+    /// reading either back, which is the whole reason both are readable.
     pub fn set_min_width(&self, min_width: u32) {
         self.min_width.set(min_width);
         if self.max_width.get() < min_width {
@@ -180,8 +179,8 @@ impl ColumnWidths {
         self.reclamp();
     }
 
-    /// R1492 — move the ceiling at runtime — Qt's
-    /// `QHeaderView::setMaximumSectionSize`. A ceiling below the current floor
+    /// R1492 — move the ceiling at runtime — the toolkit's
+    /// `setMaximumSectionSize`. A ceiling below the current floor
     /// lowers the floor with it (the mirror of
     /// [`set_min_width`](Self::set_min_width)).
     pub fn set_max_width(&self, max_width: u32) {
@@ -329,8 +328,8 @@ impl ColumnWidths {
 /// [`compute_visible_range_variable`] over a [`RowOffsets`] prefix sum of the
 /// column widths. A grid's two axes are the same one-dimensional problem —
 /// cumulative extents, binary-search the viewport edges, pad by `overscan` —
-/// which is why Qt serves both orientations from one `QHeaderView`
-/// implementation parameterised by `Qt::Orientation`. Re-deriving it here would
+/// which is why the toolkit serves both orientations from one header view
+/// implementation parameterised by `Orientation`. Re-deriving it here would
 /// be the divergence-is-a-bug class (an off-by-one on one axis only).
 ///
 /// Before R1523 the grid windowed rows and materialised **every** column,
@@ -569,11 +568,11 @@ impl ExternalIntrospect for ColumnWidthExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            // R1492 — both bounds became runtime settings (Qt's two setters),
-            // so this surface had to stop calling the floor read-only. The
-            // `ColumnLayout` over the SAME model exposes them as writable; a
-            // door that refused what the other door allows would be the R1484
-            // split, over one piece of state rather than one address.
+            // R1492 — both bounds became runtime settings (the toolkit's two
+            // setters), so this surface had to stop calling the floor
+            // read-only. The `ColumnLayout` over the SAME model exposes them as writable;
+            // a door that refused what the other door allows would be the
+            // R1484 split, over one piece of state rather than one address.
             "min_width" => match value.as_usize() {
                 Some(px) => {
                     self.state.set_min_width(pixel_width("min_width", px)?);
@@ -1449,9 +1448,9 @@ mod tests {
 
     #[test]
     fn a_ceiling_reclamps_the_widths_already_stored() {
-        // Qt's setters are runtime, not construction arguments, so a bound that
-        // only governed FUTURE writes would leave the invariant false for every
-        // width set before it.
+        // The toolkit's setters are runtime, not construction arguments, so a
+        // bound that only governed FUTURE writes would leave the invariant
+        // false for every width set before it.
         let w = widths();
         assert_eq!(w.widths(), vec![130, 90, 200]);
         w.set_max_width(100);

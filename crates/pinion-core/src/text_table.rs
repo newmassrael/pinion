@@ -1,6 +1,6 @@
 //! R1560 §5.36 §5.40 — the **table** format and the cell addressing derived
-//! from it (Qt `QTextTable` / `QTextTableFormat`; the HTML table model's slot
-//! allocation and CSS Grid placement).
+//! from it (the toolkit text table / text table format; the HTML table model's
+//! slot allocation and CSS Grid placement).
 //!
 //! # What a table is, and why its addresses cannot be hand-written
 //!
@@ -18,35 +18,35 @@
 //! blocks are cells and how far each one reaches; where each one lands is
 //! [`place_cells`]'s answer.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has the concept and reaches it from the other end. A `QTextTable` is a
-//! `QTextFrame` owned by a `QTextDocument`, built by `insertRows` /
-//! `insertColumns` into a **rectangular grid the caller maintains**, and spans
-//! exist only as `mergeCells(row, column, numRows, numCols)` applied afterwards
-//! to a rectangle the caller has to work out. Five things here go past it:
+//! The toolkit has the concept and reaches it from the other end. A text table
+//! is a text frame owned by a text document, built by `insertRows` / `insertColumns` into a
+//! **rectangular grid the caller maintains**, and spans exist only as `mergeCells(row, column, numRows, numCols)`
+//! applied afterwards to a rectangle the caller has to work out. Five things
+//! here go past it:
 //!
-//! * **The address is derived, not maintained.** In Qt the author owns the
+//! * **The address is derived, not maintained.** In the toolkit the author owns the
 //!   grid and the merges; here the author owns neither, so a table cannot be
 //!   internally inconsistent — there is no second copy of the geometry to
 //!   disagree with the first.
 //! * **A span that does not fit is clamped and NAMED.** `mergeCells` returns
 //!   `void` and silently does nothing when the rectangle is not a merge
-//!   candidate, so a Qt caller learns about a bad merge by looking at the
+//!   candidate, so a toolkit caller learns about a bad merge by looking at the
 //!   screen. [`CellPlacement`] carries both the declared span and the one it
 //!   got ([`CellPlacement::clamped`]), so the difference is data.
-//! * **A table may be ragged.** Qt's grid is always full: `insertRows` creates
+//! * **A table may be ragged.** the toolkit's grid is always full: `insertRows` creates
 //!   every cell. Here the last row can simply stop, and the slots nobody filled
 //!   are reported ([`TableRun::slack`]) rather than being an unrepresentable
 //!   state.
-//! * **Header COLUMNS.** Qt has `QTextTableFormat::headerRowCount` and no
+//! * **Header COLUMNS.** the toolkit has `headerRowCount` and no
 //!   column equivalent, and its purpose is pagination — repeating the header
 //!   when the table breaks across pages. [`TableFormat::header_columns`] is the
 //!   missing half, and header-ness is *derived from the address*
 //!   ([`CellPlacement::header`]) rather than declared per cell, which is the
 //!   same argument as the numbering: a cell that moves into the header row
 //!   becomes a header.
-//! * **The addressing is data.** `QTextTableCell::row()` is an in-process C++
+//! * **The addressing is data.** `row()` is an in-process C++
 //!   call; the derivation here rides the painted scene and is published by
 //!   `scene/text_tables`, so an agent can read a document's table structure
 //!   without pixels and without being in-process (§2 #7).
@@ -97,8 +97,8 @@ impl HeaderScope {
     }
 }
 
-/// A table's declared format — Qt `QTextTableFormat`, plus the column-header
-/// band Qt does not have.
+/// A table's declared format — the toolkit text table format, plus the
+/// column-header band the toolkit does not have.
 ///
 /// Carried on every [`CellSpec`] rather than stated once, for
 /// [`crate::text_list::ListFormat`]'s reason: the blocks are a flat sequence
@@ -107,7 +107,7 @@ impl HeaderScope {
 /// two tables separated by nothing still two tables.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TableFormat {
-    /// How many columns the table has — Qt `QTextTable::columns()`.
+    /// How many columns the table has — the toolkit `columns()`.
     ///
     /// Declared rather than derived from the widest row, because it is what
     /// makes the flow *wrap*: a cell that reaches the last column puts the
@@ -117,36 +117,35 @@ pub struct TableFormat {
     /// derivation. Zero is read as one — a table with no columns has nowhere
     /// to put a cell.
     pub columns: u16,
-    /// Per-column track sizing — Qt
-    /// `QTextTableFormat::setColumnWidthConstraints`, CSS
+    /// Per-column track sizing — the toolkit
+    /// `setColumnWidthConstraints`, CSS
     /// `grid-template-columns`.
     ///
-    /// Shorter than [`Self::columns`] is padded with [`GridTrack::Auto`] and
-    /// longer is truncated ([`Self::tracks`]), so the two can never describe
-    /// different tables. Qt keeps the same vector and simply ignores the
-    /// mismatch.
+    /// Shorter than [`Self::columns`] is padded with [`GridTrack::Auto`] and longer is truncated
+    /// ([`Self::tracks`]), so the two can never describe different tables. The toolkit
+    /// keeps the same vector and simply ignores the mismatch.
     pub column_widths: Vec<GridTrack>,
-    /// How many leading rows are header rows — Qt
-    /// `QTextTableFormat::headerRowCount`.
+    /// How many leading rows are header rows — the toolkit
+    /// `headerRowCount`.
     pub header_rows: u16,
-    /// How many leading columns are header columns — the axis Qt has no
-    /// property for.
+    /// How many leading columns are header columns — the axis the toolkit has
+    /// no property for.
     pub header_columns: u16,
-    /// Space between a cell's border and its content, in px — Qt
-    /// `QTextTableFormat::cellPadding`.
+    /// Space between a cell's border and its content, in px — the toolkit
+    /// `cellPadding`.
     pub cell_padding_px: u32,
-    /// Space between neighbouring cells, in px — Qt
-    /// `QTextTableFormat::cellSpacing`, CSS `grid-gap`.
+    /// Space between neighbouring cells, in px — the toolkit
+    /// `cellSpacing`, CSS `grid-gap`.
     pub cell_spacing_px: u32,
-    /// The width of the rule drawn around each cell, in px — Qt
-    /// `QTextFrameFormat::border` as it applies to a table.
+    /// The width of the rule drawn around each cell, in px — the toolkit
+    /// `border` as it applies to a table.
     pub border_px: u32,
-    /// The colour of that rule — Qt `QTextFrameFormat::setBorderBrush`.
+    /// The colour of that rule — the toolkit `setBorderBrush`.
     ///
     /// On the format rather than taken from the composing view's palette
-    /// because it is a property of the *table*, the way Qt has it: two tables
-    /// in one document can rule differently, and a view that owned the colour
-    /// could not let them.
+    /// because it is a property of the *table*, the way the toolkit has it:
+    /// two tables in one document can rule differently, and a view that owned
+    /// the colour could not let them.
     pub border_color: Color,
 }
 
@@ -177,7 +176,7 @@ impl TableFormat {
         self
     }
 
-    /// Builder: the leading `rows` are header rows (Qt `headerRowCount`).
+    /// Builder: the leading `rows` are header rows (the toolkit `headerRowCount`).
     #[must_use]
     pub const fn with_header_rows(mut self, rows: u16) -> Self {
         self.header_rows = rows;
@@ -199,8 +198,8 @@ impl TableFormat {
         self
     }
 
-    /// Builder: the rule drawn around each cell — Qt
-    /// `QTextFrameFormat::setBorder` + `setBorderBrush`.
+    /// Builder: the rule drawn around each cell — the toolkit
+    /// `setBorder` + `setBorderBrush`.
     #[must_use]
     pub const fn with_border(mut self, width_px: u32, color: Color) -> Self {
         self.border_px = width_px;
@@ -241,14 +240,14 @@ pub struct CellSpec {
     /// The format the enclosing table declares.
     pub format: TableFormat,
     /// How many rows this cell reaches down — HTML `rowspan`, the `numRows`
-    /// of Qt's `mergeCells`. `0` is read as `1`.
+    /// of the toolkit's `mergeCells`. `0` is read as `1`.
     pub row_span: u16,
     /// How many columns this cell reaches across — HTML `colspan`. `0` is read
     /// as `1`.
     pub column_span: u16,
     /// This block continues the **previous** block's cell rather than opening
-    /// one of its own — Qt's cell is a frame holding any number of blocks, and
-    /// this is the flat-sequence spelling of that.
+    /// one of its own — the toolkit's cell is a frame holding any number of
+    /// blocks, and this is the flat-sequence spelling of that.
     ///
     /// It is a declaration and not a derivation because nothing about a
     /// paragraph says whether it belongs with the one before it. Continuing
@@ -318,18 +317,18 @@ pub struct CellPlacement {
     pub cell_tag: String,
     /// The paint tag of the row this cell starts in.
     pub row_tag: String,
-    /// 0-based row — Qt `QTextTableCell::row()`.
+    /// 0-based row — the toolkit `row()`.
     pub row: u32,
-    /// 0-based column — Qt `QTextTableCell::column()`.
+    /// 0-based column — the toolkit `column()`.
     pub column: u32,
-    /// Rows this cell covers after clamping — Qt `QTextTableCell::rowSpan()`.
+    /// Rows this cell covers after clamping — the toolkit `rowSpan()`.
     pub row_span: u16,
-    /// Columns this cell covers after clamping — Qt
-    /// `QTextTableCell::columnSpan()`.
+    /// Columns this cell covers after clamping — the toolkit
+    /// `columnSpan()`.
     pub column_span: u16,
     /// The column span the author asked for, kept beside the one they got.
     ///
-    /// Qt's `mergeCells` discards this distinction: an impossible merge is a
+    /// The toolkit's `mergeCells` discards this distinction: an impossible merge is a
     /// silent no-op, so the request and the result are indistinguishable
     /// afterwards.
     pub declared_column_span: u16,
@@ -337,10 +336,10 @@ pub struct CellPlacement {
     /// downwards, so there is no bound to hit — and carried anyway so the pair
     /// is symmetric and a future bound has somewhere to be reported.
     pub declared_row_span: u16,
-    /// How many rows the finished table has (Qt `QTextTable::rows()`), stamped
+    /// How many rows the finished table has (the toolkit `rows()`), stamped
     /// once the table ends.
     pub row_count: u32,
-    /// How many columns the finished table has (Qt `QTextTable::columns()`).
+    /// How many columns the finished table has (the toolkit `columns()`).
     pub column_count: u32,
     /// Which axis, if any, this cell is a header for — derived from the
     /// address.
@@ -359,7 +358,7 @@ pub struct CellPlacement {
 impl CellPlacement {
     /// The declared column span did not fit in the row and was reduced.
     ///
-    /// The one thing Qt cannot report, because `mergeCells` answers `void`.
+    /// The one thing the toolkit cannot report, because `mergeCells` answers `void`.
     #[must_use]
     pub const fn clamped(&self) -> bool {
         self.declared_column_span > self.column_span
@@ -368,8 +367,8 @@ impl CellPlacement {
 
 /// One slot of a table's grid that no cell covers.
 ///
-/// A state Qt's table model cannot be in: `QTextTable` fills its grid on
-/// construction, so every slot has a cell whether the author wanted one or
+/// A state the toolkit's table model cannot be in: text table fills its grid
+/// on construction, so every slot has a cell whether the author wanted one or
 /// not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GridSlot {
@@ -379,7 +378,8 @@ pub struct GridSlot {
     pub column: u32,
 }
 
-/// One table the addressing discovered — the object Qt calls a `QTextTable`.
+/// One table the addressing discovered — the object the toolkit calls a text
+/// table.
 ///
 /// Reported beside the per-cell placements because a table has facts that are
 /// not any one cell's: how many rows it turned out to have, and which of its
@@ -390,9 +390,9 @@ pub struct TableRun {
     pub tag: String,
     /// Discovery order among the document's tables.
     pub index: usize,
-    /// Rows the allocation needed — Qt `QTextTable::rows()`.
+    /// Rows the allocation needed — the toolkit `rows()`.
     pub rows: u32,
-    /// Columns the format declared — Qt `QTextTable::columns()`.
+    /// Columns the format declared — the toolkit `columns()`.
     pub columns: u32,
     /// How many cells the table holds (a multi-block cell counts once).
     pub cells: u32,
@@ -773,7 +773,7 @@ mod tests {
 
     /// A row span reaches into rows that have not been written yet, so the
     /// cells of the next row start to its right — the case a per-row loop
-    /// cannot express and Qt makes the caller `mergeCells` by hand.
+    /// cannot express and the toolkit makes the caller `mergeCells` by hand.
     #[test]
     fn a_row_span_pushes_the_next_rows_cells_aside() {
         let format = TableFormat::new(3);
@@ -794,7 +794,7 @@ mod tests {
     }
 
     /// A span that does not fit is clamped AND the request survives beside the
-    /// result — the distinction Qt's `void mergeCells` throws away.
+    /// result — the distinction the toolkit's `void mergeCells` throws away.
     #[test]
     fn an_oversized_span_is_clamped_and_named() {
         let format = TableFormat::new(3);
@@ -849,7 +849,7 @@ mod tests {
     }
 
     /// A ragged table is representable, and the slots nobody filled are
-    /// reported — a state `QTextTable` cannot be in at all.
+    /// reported — a state text table cannot be in at all.
     #[test]
     fn an_unfinished_row_reports_its_slack() {
         let a = cells(&plain(&TableFormat::new(4), 6));

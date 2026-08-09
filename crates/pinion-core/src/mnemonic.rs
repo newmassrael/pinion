@@ -1,9 +1,9 @@
-//! R1543 §5.20 §5.39 §5.40 — label mnemonics (Qt `&File`).
+//! R1543 §5.20 §5.39 §5.40 — label mnemonics (the toolkit `&File`).
 //!
 //! A **mnemonic** is one character of a widget's *visible label*, marked in
 //! the label source with `&`, that activates that widget from anywhere in the
 //! window via <kbd>Alt</kbd>+char and is drawn underlined so it can be
-//! discovered without documentation. Every desktop toolkit has one; Qt spells
+//! discovered without documentation. Every desktop toolkit has one; the toolkit spells
 //! it `&File` / [`QKeySequence::mnemonic`] / [`QLabel::setBuddy`], GTK spells
 //! it `_File`, Win32 spells it `&File`, and HTML spells it `accesskey`.
 //!
@@ -33,37 +33,37 @@
 //! from the value it produced, and here the recovery would additionally be
 //! ambiguous (rich text underlines characters for reasons of its own).
 //!
-//! ## Where this is more than Qt 6.11
+//! ## Where this is more than the toolkit 6.11
 //!
 //! 1. **The map is a published fact.** [`scene_mnemonics`] enumerates every
 //!    mnemonic in a window with its target, its label and its conflicts; the
-//!    §5.12 `scene/mnemonics` method hands the same list to an agent. Qt's
-//!    equivalent state lives in `QShortcutMap`, which is private
-//!    (`qshortcutmap_p.h`) — an application cannot ask Qt what its own
+//!    §5.12 `scene/mnemonics` method hands the same list to an agent. The toolkit's
+//!    equivalent state lives in shortcut map, which is private
+//!    (`qshortcutmap_p.h`) — an application cannot ask the toolkit what its own
 //!    accelerators are.
-//! 2. **Ambiguity is static and reportable, not a dispatch-time surprise.** Qt
+//! 2. **Ambiguity is static and reportable, not a dispatch-time surprise.** the toolkit
 //!    tells you two widgets claim <kbd>Alt</kbd>+F only when the user presses
-//!    it, via `QShortcutEvent::isAmbiguous()`. [`MnemonicBinding::ambiguous`]
+//!    it, via `isAmbiguous()`. [`MnemonicBinding::ambiguous`]
 //!    is a property of the *scene*, so a test or CI gate can assert a window
 //!    has no conflicts before anyone types anything.
-//! 3. **The ink and the binding cannot disagree.** Qt parses `&` twice through
-//!    unrelated code — `QKeySequence::mnemonic` for the shortcut and
-//!    `QStyle::drawItemText` for the underline, re-run on every paint. Here
+//! 3. **The ink and the binding cannot disagree.** the toolkit parses `&` twice through
+//!    unrelated code — `mnemonic` for the shortcut and
+//!    `drawItemText` for the underline, re-run on every paint. Here
 //!    both come from one parse held in one field.
 //! 4. **The target is structural, not wired.** A widget's mnemonic addresses
 //!    the widget whose label carries it — the innermost enclosing tagged
-//!    container — so nothing has to be connected. `QLabel::setBuddy`'s explicit
+//!    container — so nothing has to be connected. `setBuddy`'s explicit
 //!    pointer survives only as the *override* ([`Mnemonic::with_buddy`]), for
 //!    the one case where the label is not the widget's own.
 //!
-//! ## What is deliberately Qt's shape, not more
+//! ## What is deliberately the toolkit's shape, not more
 //!
-//! The parse is Qt's, character for character (see [`MnemonicLabel::parse`]).
-//! A mnemonic vocabulary that differed from `&`/`&&` would make every label
-//! literal a porting hazard for no capability gained — [[qt-is-the-floor-not-the-target]]
-//! makes the *existence* of a feature Qt's floor and leaves its *shape* a
-//! fresh choice each time, and here the fresh choice is that Qt's shape is
-//! already right.
+//! The parse is the toolkit's, character for character (see [`MnemonicLabel::parse`]). A mnemonic
+//! vocabulary that differed from `&`/`&&` would make every label literal a
+//! porting hazard for no capability gained — [[the
+//! toolkit-is-the-floor-not-the-target]] makes the *existence* of a feature
+//! the toolkit's floor and leaves its *shape* a fresh choice each time, and
+//! here the fresh choice is that the toolkit's shape is already right.
 //!
 //! [`QKeySequence::mnemonic`]: https://doc.qt.io/qt-6/qkeysequence.html
 //! [`QLabel::setBuddy`]: https://doc.qt.io/qt-6/qlabel.html
@@ -91,14 +91,14 @@ pub struct Mnemonic {
     pub index: u32,
     /// UTF-8 byte length of `key` (1..=4).
     pub len: u32,
-    /// Qt `QLabel::setBuddy` — the tag this mnemonic activates instead of the
+    /// The toolkit `setBuddy` — the tag this mnemonic activates instead of the
     /// widget whose label it is.
     ///
-    /// `None` (the common case) targets the innermost enclosing tagged
-    /// container: a button, a menu title and a checkbox all label *themselves*,
-    /// so nothing has to be wired. `Some(tag)` is the standalone-label case —
-    /// `&Name:` in a form focuses the field beside it — which is the only
-    /// situation Qt's explicit buddy pointer ever described.
+    /// `None` (the common case) targets the innermost enclosing tagged container:
+    /// a button, a menu title and a checkbox all label *themselves*, so
+    /// nothing has to be wired. `Some(tag)` is the standalone-label case — `&Name:` in a
+    /// form focuses the field beside it — which is the only situation the
+    /// toolkit's explicit buddy pointer ever described.
     pub buddy: Option<Cow<'static, str>>,
 }
 
@@ -118,7 +118,7 @@ impl Mnemonic {
         }
     }
 
-    /// Qt `QLabel::setBuddy` — retarget this mnemonic at another tag
+    /// The toolkit `setBuddy` — retarget this mnemonic at another tag
     /// (builder form). See [`Self::buddy`].
     #[must_use]
     pub fn with_buddy(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
@@ -177,10 +177,10 @@ pub struct MnemonicLabel {
 }
 
 impl MnemonicLabel {
-    /// Parse Qt's `&`-marked label vocabulary.
+    /// Parse the toolkit's `&`-marked label vocabulary.
     ///
-    /// The rules, in full — deliberately Qt's, so a label literal ports both
-    /// ways unchanged:
+    /// The rules, in full — deliberately the toolkit's, so a label literal
+    /// ports both ways unchanged:
     ///
     /// * `&&` is a **literal ampersand**, never a marker: `"Save && Exit"`
     ///   displays `Save & Exit` with no mnemonic.
@@ -188,7 +188,7 @@ impl MnemonicLabel {
     ///   removed from the display: `"&File"` displays `File`, mnemonic `F` at
     ///   byte 0.
     /// * Only the **first** marker binds. Later ones are still stripped from
-    ///   the display (Qt strips in the style and binds in `QKeySequence`, and
+    ///   the display (the toolkit strips in the style and binds in key sequence, and
     ///   the two disagree about how many exist; stripping is the behaviour a
     ///   reader sees).
     /// * A **trailing lone `&`** is dropped.
@@ -210,7 +210,8 @@ impl MnemonicLabel {
                 continue;
             }
             match chars.next() {
-                // Trailing lone `&` — dropped, exactly as Qt drops it.
+                // Trailing lone `&` — dropped, exactly as the toolkit drops
+                // it.
                 None => {}
                 // `&&` — a literal ampersand, not a marker.
                 Some('&') => display.push('&'),
@@ -259,10 +260,10 @@ pub struct MnemonicBinding {
     /// Another binding in the same scene claims the same key under
     /// [`Mnemonic::fold`].
     ///
-    /// Qt surfaces this only at dispatch time, as a bool on the event the user
-    /// triggered; here it is a property of the scene, so it can be asserted
-    /// before anyone types. Dispatch still resolves an ambiguous key rather
-    /// than refusing it — see the shell's cycling rule.
+    /// The toolkit surfaces this only at dispatch time, as a bool on the event
+    /// the user triggered; here it is a property of the scene, so it can be
+    /// asserted before anyone types. Dispatch still resolves an ambiguous key
+    /// rather than refusing it — see the shell's cycling rule.
     pub ambiguous: bool,
 }
 
@@ -272,7 +273,7 @@ pub struct MnemonicBinding {
 /// [`Scene::Container`] seen so far. Each [`Scene::Text`] that declares a
 /// [`Mnemonic`] resolves its target by precedence:
 ///
-/// 1. [`Mnemonic::buddy`] when set (`QLabel::setBuddy`),
+/// 1. [`Mnemonic::buddy`] when set (`setBuddy`),
 /// 2. else the innermost enclosing tagged container — *the widget whose label
 ///    this is*, which is why the common case needs no wiring at all,
 /// 3. else the text node's own tag, for a label that is itself the addressable
@@ -498,7 +499,7 @@ mod tests {
 
     #[test]
     fn a_buddy_overrides_the_enclosing_widget() {
-        // `QLabel::setBuddy` — a standalone label focuses the field beside it.
+        // `setBuddy` — a standalone label focuses the field beside it.
         let parsed = MnemonicLabel::parse("&Name:");
         let node = TextNode::new(parsed.display, Rect::default())
             .with_mnemonic(parsed.mnemonic.expect("marked").with_buddy("name_field"));

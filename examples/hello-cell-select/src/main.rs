@@ -5,7 +5,7 @@
 //! the §5.50 [`pinion_widget_paint::table`] data grid.
 //!
 //! A spreadsheet selects a **rectangle of cells** by anchor + extent (Excel,
-//! Qt `QTableView::SelectItems`): a click / plain arrow starts a single-cell
+//! the toolkit `SelectItems`): a click / plain arrow starts a single-cell
 //! selection at the cursor, and a `Shift`-drag / `Shift`-arrow grows the
 //! rectangle from the pinned anchor. This is a *different selection model*
 //! from `hello-table`'s `SelectRows` (one whole row washed). R952 added the

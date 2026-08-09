@@ -1,8 +1,8 @@
-//! R638 §5.7 — `pinion figma-diff` sub-command.
+//! R638 §5.7 — `pinion the design tool-diff` sub-command.
 //!
-//! Pixel-diff side of the Figma → pinion design-parity loop. Pre-R638
+//! Pixel-diff side of the design tool → pinion design-parity loop. Pre-R638
 //! the workflow stopped after R637 saved the pinion-rendered PNG —
-//! comparing it against the Figma reference (R636 output) required
+//! comparing it against the design tool reference (R636 output) required
 //! eyeballing the two images in an external viewer. R638 closes the
 //! loop with a typed CLI that decodes both PNGs, optionally resizes
 //! one to match the other, computes per-channel MAE / max-delta /
@@ -11,7 +11,7 @@
 //! ## Wire shape
 //!
 //! ```text
-//! $ pinion figma-diff /tmp/pinion-btn.png /tmp/figma-btn-ref.png \
+//! $ pinion the design tool-diff /tmp/pinion-btn.png /tmp/the design tool-btn-ref.png \
 //!     --resize b-to-a -o /tmp/btn-diff.png
 //! image-a: 320 x 160 RGBA
 //! image-b: 218 x 80 RGBA (resized to 320 x 160 via Lanczos3)
@@ -29,8 +29,8 @@
 //! - `--resize a-to-b`: resample image-a to image-b's dimensions
 //!   (Lanczos3 — image-rs `imageops::resize` with `FilterType::Lanczos3`).
 //! - `--resize b-to-a`: resample image-b to image-a's dimensions
-//!   (the Figma → pinion workflow default: pinion's 320×160 canvas
-//!   carries the framing, Figma's tight 109×40 ref gets upscaled).
+//!   (the design tool → pinion workflow default: pinion's 320×160 canvas
+//!   carries the framing, the design tool's tight 109×40 ref gets upscaled).
 //!
 //! ## Diff visualization
 //!
@@ -42,7 +42,7 @@
 //!
 //! ## Metrics rationale
 //!
-//! - **Per-channel MAE** — directly comparable to Figma's documented
+//! - **Per-channel MAE** — directly comparable to the design tool's documented
 //!   color spec (`#675AA4` = R=103 G=80 B=164); deviation per channel
 //!   surfaces "wrong color" vs "wrong placement" classifications.
 //! - **Max abs delta** — single-pixel outliers (font-rendering edge
@@ -53,7 +53,7 @@
 //!   100% after substrate changes).
 //!
 //! SSIM (`imageproc::stats::ssim`) is intentionally deferred — MAE
-//! plus exact-match-percent surfaces Figma → pinion divergence in
+//! plus exact-match-percent surfaces the design tool → pinion divergence in
 //! every case observed so far (R635 first binding land); SSIM gains
 //! signal only when "perceptual similarity" outranks per-channel
 //! bit-exactness, which is not yet the design-parity loop's focus.
@@ -89,15 +89,15 @@ impl std::str::FromStr for ResizeMode {
     }
 }
 
-/// Arguments for the `figma-diff` sub-command.
+/// Arguments for the `the design tool-diff` sub-command.
 #[derive(Args)]
 pub struct FigmaDiffArgs {
     /// First image (canonical: pinion output from R637
     /// `PINION_SCREENSHOT=...`).
     pub image_a: PathBuf,
 
-    /// Second image (canonical: Figma reference from R636
-    /// `pinion figma-fetch-image`).
+    /// Second image (canonical: the design tool reference from R636
+    /// `pinion the design tool-fetch-image`).
     pub image_b: PathBuf,
 
     /// Output path for the diff visualization PNG. When omitted only
@@ -131,7 +131,7 @@ pub struct DiffMetrics {
     pub exact_match_count: u64,
 }
 
-/// R638 §5.7 — execute the `figma-diff` sub-command.
+/// R638 §5.7 — execute the `the design tool-diff` sub-command.
 ///
 /// # Errors
 ///
@@ -304,7 +304,7 @@ fn render_diff_visualization(image_a: &RgbaImage, image_b: &RgbaImage) -> RgbIma
 /// `u64`; the lint is correct in principle but irrelevant here —
 /// our denominator is `width * height` and our numerator is
 /// `sum_of_abs_deltas ≤ 255 * pixel_count`. For an 8K × 8K image
-/// (well past the figma-diff use case) those land at ~6.7e7 and
+/// (well past the design tool-diff use case) those land at ~6.7e7 and
 /// ~1.7e10 respectively, both ≪ 2^53 ≈ 9e15 f64 mantissa ceiling.
 /// One helper keeps the allow + rationale in a single spot rather
 /// than 5 inline annotations.

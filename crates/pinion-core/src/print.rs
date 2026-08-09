@@ -1,7 +1,7 @@
 //! R833 §3 §5.53 §5.15 — print substrate: the own-rendered print-dialog
 //! backend contract.
 //!
-//! pinion paints its **own** print dialog (no native GTK / Qt / Win32
+//! pinion paints its **own** print dialog (no native GTK / the toolkit / Win32
 //! print dialog — those are out of the own-renderer scope, §5.53) and,
 //! when the user confirms, hands a [`PrintJob`] to a [`PrintBackend`].
 //! Mirrors the R665 [`Storage`](crate::storage) trait pattern exactly:

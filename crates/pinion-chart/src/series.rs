@@ -19,7 +19,7 @@ pub struct DataPoint {
     /// colouring by value leaves such a point on its series colour.
     ///
     /// Carrying the magnitude ON the point rather than in a parallel
-    /// index-keyed side table (the Qt `QXYSeries::setPointConfiguration`
+    /// index-keyed side table (the toolkit `setPointConfiguration`
     /// shape) makes misalignment unrepresentable: there is no second array to
     /// fall out of step with this one.
     pub value: Option<f64>,

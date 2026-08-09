@@ -42,27 +42,26 @@
 //!
 //! # Why a trait with exhaustive destructuring, and not a formula
 //!
-//! Every implementation in this workspace destructures its type
-//! (`let Self { a, b, c } = self;`) and sums the bindings. That is not a style
-//! preference — it is the whole guarantee. A field added later to a cached
-//! struct **fails to compile** until someone states what it contributes, so
-//! the number cannot silently start under-counting. Qt's nearest equivalent,
-//! `QImage::sizeInBytes()`, is a formula (`bytesPerLine * height`) with
-//! nothing tying it to the object's fields; a new buffer on the class changes
-//! nothing about what it answers.
+//! Every implementation in this workspace destructures its type (`let Self { a, b, c } = self;`) and sums
+//! the bindings. That is not a style preference — it is the whole guarantee. A
+//! field added later to a cached struct **fails to compile** until someone
+//! states what it contributes, so the number cannot silently start
+//! under-counting. The toolkit's nearest equivalent, `sizeInBytes()`, is a formula (`bytesPerLine * height`)
+//! with nothing tying it to the object's fields; a new buffer on the class
+//! changes nothing about what it answers.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt's floor is real but narrow. `QPixmapCache::setCacheLimit(int kb)` sets a
-//! byte budget, `QImage::sizeInBytes()` and
-//! `QQuickTextureFactory::textureByteCount()` let an object state its own size.
+//! The toolkit's floor is real but narrow. `setCacheLimit(int kb)` sets a
+//! byte budget, `sizeInBytes()` and
+//! `textureByteCount()` let an object state its own size.
 //!
 //! Two things here are past it:
 //!
-//! - **Usage, not just the budget.** `QPixmapCache` has `cacheLimit()` and
-//!   `clear()` and *no accessor for how much of the limit is in use* — a Qt
+//! - **Usage, not just the budget.** pixmap cache has `cacheLimit()` and
+//!   `clear()` and *no accessor for how much of the limit is in use* — a toolkit
 //!   application cannot tell whether its pixmap cache sits at 1% or 99% of the
-//!   ceiling it set. `QFontCache`, which is the closer analogue of the §5.36
+//!   ceiling it set. font cache, which is the closer analogue of the §5.36
 //!   shape cache, is private in its entirety. Here every arena answers with
 //!   what it is holding right now.
 //! - **The accounting cannot silently rot.** See above: `sizeInBytes()` is a

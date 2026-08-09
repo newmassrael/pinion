@@ -4,7 +4,7 @@
 //! Phase B widget-catalog entry — the edge-anchored navigation sheet
 //! every pro DCC / IDE / CAD tool ships (a left nav rail, a right
 //! inspector / properties panel), and a direct step toward the
-//! northern-star "Unreal-class editor self-hosted in pinion".
+//! northern-star "the engine-class editor self-hosted in pinion".
 //!
 //! ## Relationship to [`crate::dialog`]
 //!

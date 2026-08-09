@@ -50,16 +50,13 @@
 //!
 //! ## Why a `thread_local` mailbox over an `Owner` field
 //!
-//! `Owner` is reactive infrastructure that the shell may construct
-//! per-dispatch wrap (`root_owner.run(...)`). A field on `Owner`
-//! would force every focus request to flow through whichever owner
-//! the caller currently sits under, and the shell would need to
-//! enumerate every owner at drain time to discover requests. The
-//! `thread_local` mailbox is the React `useImperativeHandle` /
-//! `Solid createRef` / Flutter `FocusNode.requestFocus` shape —
-//! imperative side channel, single drain point, zero cost when
-//! unused (`Cell<Option<String>>::take` is a single conditional
-//! pointer write on the empty-mailbox path).
+//! `Owner` is reactive infrastructure that the shell may construct per-dispatch
+//! wrap (`root_owner.run(...)`). A field on `Owner` would force every focus request to flow through
+//! whichever owner the caller currently sits under, and the shell would need
+//! to enumerate every owner at drain time to discover requests. The `thread_local`
+//! mailbox is the React `useImperativeHandle` / `Solid createRef` / another retained-mode toolkit `FocusNode.requestFocus` shape —
+//! imperative side channel, single drain point, zero cost when unused (`Cell<Option<String>>::take` is
+//! a single conditional pointer write on the empty-mailbox path).
 //!
 //! ## Inert inside a containment scope (R1468)
 //!

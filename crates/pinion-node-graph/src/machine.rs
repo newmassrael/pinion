@@ -20,11 +20,11 @@
 //!
 //! That is the deliberate limit and it is what buys everything below. A tick's
 //! result is a function of the registers and the document; run the same
-//! document from the same [`Machine`] and the same thing happens. Unreal takes
+//! document from the same [`Machine`] and the same thing happens. The engine takes
 //! the other road — state there is a Blueprint *variable*, arbitrary mutable
-//! memory written by a `UK2Node_VariableSet` — so which value a read sees
-//! depends on where the execution wire happened to go, and the graph's meaning
-//! is not a function of the graph.
+//! memory written by a `UK2Node_VariableSet` — so which value a read sees depends on where the
+//! execution wire happened to go, and the graph's meaning is not a function of
+//! the graph.
 //!
 //! # Read, then commit
 //!
@@ -183,7 +183,7 @@ impl<K: NodeKind> Machine<K> {
 
     /// Every register holding a value, ascending by instance then node.
     ///
-    /// The whole of the machine's memory, enumerable. Blender's equivalent —
+    /// The whole of the machine's memory, enumerable. The DCC's equivalent —
     /// the geometry-nodes simulation cache — is a private
     /// `Map<int, std::unique_ptr<SimulationNodeCache>>` on the modifier, keyed
     /// by a flattened nested-node id, with no accessor that walks it.

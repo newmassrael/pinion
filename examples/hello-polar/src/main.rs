@@ -2,7 +2,7 @@
 //! system**, and the axis that is PERIODIC.
 //!
 //! The forcing consumer for [`pinion_chart::AngularScale`] and
-//! [`pinion_chart::PolarChart`] (Qt's `QPolarChart`).
+//! [`pinion_chart::PolarChart`] (the toolkit's polar chart).
 //!
 //! ## What a circle can do that a line cannot
 //!
@@ -11,17 +11,17 @@
 //!
 //! * The 372-degree gust below is a **bearing of 12**, so it draws — and is
 //!   reported as *wrapped*, which is a thing only an axis that placed it can
-//!   say. Qt's angular axis is an ordinary `QValueAxis`, so there it is
+//!   say. The toolkit's angular axis is an ordinary value axis, so there it is
 //!   simply out of range and nothing is drawn.
 //! * The trace **closes on itself**: the segment from the last sample back to
-//!   the first is the axis's doing. A Qt radar gets it by appending the first
+//!   the first is the axis's doing. A toolkit radar gets it by appending the first
 //!   point a second time, which puts a duplicate in the data the model does
 //!   not contain.
 //! * The tick at 360 is the tick at 0, so only one is drawn.
 //!
-//! ## The three chips are the three declarations Qt hard-codes
+//! ## The three chips are the three declarations the toolkit hard-codes
 //!
-//! `QPolarChart` fixes the origin at 12 o'clock, fixes the winding clockwise,
+//! polar chart fixes the origin at 12 o'clock, fixes the winding clockwise,
 //! and is always a full circle. Here each is a declaration:
 //!
 //! * **form** — the numeric compass (a wind rose over `0 .. 360`) or the
@@ -30,7 +30,7 @@
 //!   tick comes back, and the wrapped sample becomes genuinely off-scale:
 //!   wrapping a sector would fold data onto the gap it deliberately leaves.
 //! * **counter-clockwise** — the mathematical convention, which
-//!   `QPolarChart` cannot draw at all.
+//!   polar chart cannot draw at all.
 //!
 //! ## Verification (substrate-first)
 //!
@@ -87,8 +87,8 @@ const FORM_LABELS: [&str; 2] = ["Compass (0-360)", "Radar (named)"];
 const FORM_COMPASS: usize = 0;
 const FORM_RADAR: usize = 1;
 
-/// Boot: the compass, a full turn, clockwise — Qt's own configuration, so the
-/// first interaction with any chip is a visible change.
+/// Boot: the compass, a full turn, clockwise — the toolkit's own
+/// configuration, so the first interaction with any chip is a visible change.
 const BOOT_FORM: usize = FORM_COMPASS;
 const BOOT_SECTOR: bool = false;
 const BOOT_CCW: bool = false;
@@ -503,10 +503,10 @@ fn resolve_form_target(
 }
 
 impl WidgetA11y for PolarView {
-    /// The form group as a WAI-ARIA `radiogroup`, the options as a `group` of
-    /// `button[aria-pressed]`, and the caption as a live region — so what the
-    /// axis did with the out-of-period reading is HEARD, not only seen. Qt's
-    /// charts implement no accessibility interface at all.
+    /// The form group as a WAI-ARIA `radiogroup`, the options as a `group` of `button[aria-pressed]`, and the
+    /// caption as a live region — so what the axis did with the out-of-period
+    /// reading is HEARD, not only seen. The toolkit's charts implement no
+    /// accessibility interface at all.
     fn access_node(state: &Options, focused: Option<&str>) -> Vec<AccessNode> {
         let group_focused = focused == Some(FORM_TAG);
         let active = rc::active_index(&state.form_rows, state.form_focused);
@@ -632,9 +632,9 @@ mod tests {
         }
     }
 
-    /// ★ The round, read off the paint: on a full turn the trace CLOSES —
-    /// five samples and a `Close` — and on a sector it does not. A Qt radar
-    /// gets that segment by appending the first point again.
+    /// ★ The round, read off the paint: on a full turn the trace CLOSES — five
+    /// samples and a `Close` — and on a sector it does not. A toolkit radar gets
+    /// that segment by appending the first point again.
     #[test]
     fn r1568_the_sector_chip_opens_the_loop() {
         assert_eq!(
@@ -650,9 +650,9 @@ mod tests {
     }
 
     /// ★ The 372-degree reading is a bearing of 12 on a full turn — drawn and
-    /// reported as wrapped — and genuinely off-scale on a sector. Qt's
-    /// angular axis is an ordinary `QValueAxis`, so it is out of range in
-    /// both cases and draws nothing.
+    /// reported as wrapped — and genuinely off-scale on a sector. The
+    /// toolkit's angular axis is an ordinary value axis, so it is out of range
+    /// in both cases and draws nothing.
     #[test]
     fn r1568_the_out_of_period_reading_is_placed_only_where_the_axis_closes() {
         let full = render(FORM_COMPASS, false, false);
@@ -695,7 +695,7 @@ mod tests {
     }
 
     /// ★ The winding is a declaration and it reaches the paint: the same
-    /// bearing lands on the other side of the vertical. `QPolarChart` cannot
+    /// bearing lands on the other side of the vertical. polar chart cannot
     /// draw the counter-clockwise convention at all.
     #[test]
     fn r1568_the_winding_chip_mirrors_the_plot() {

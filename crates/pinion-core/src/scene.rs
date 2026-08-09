@@ -445,10 +445,9 @@ impl Scene {
         }
     }
 
-    /// (R1554 §5.39) The node's own
-    /// [`disabled`](crate::style::LayoutStyle::disabled) DECLARATION — Qt
-    /// `QWidget::setEnabled(false)` written on this widget rather than
-    /// inherited from an ancestor (Qt's `WA_ForceDisabled`).
+    /// (R1554 §5.39) The node's own [`disabled`](crate::style::LayoutStyle::disabled)
+    /// DECLARATION — the toolkit `setEnabled(false)` written on this widget rather than
+    /// inherited from an ancestor (the toolkit's `WA_ForceDisabled`).
     ///
     /// This is what the two descending walks ([`Self::hit_test`],
     /// [`Self::collect_focusable_tags`]) test, because each of them is already
@@ -464,7 +463,7 @@ impl Scene {
     /// (R1554 §5.39) Whether the node is disabled at all — its own
     /// [`declaration`](Self::declares_disabled), or the
     /// [`resolved`](crate::style::LayoutStyle::resolved_disabled) half the
-    /// cascade wrote. Qt's `QWidget::isEnabled()` inverted.
+    /// cascade wrote. The toolkit's `isEnabled()` inverted.
     ///
     /// Only meaningful after
     /// [`resolve_disabled`](crate::scene_disabled::resolve_disabled) has run
@@ -586,8 +585,8 @@ impl Scene {
 
     fn collect_focusable_tags_into(&self, out: &mut Vec<String>) {
         // R1554 §5.39 — a disabled region contributes no Tab stops, its own
-        // node included. Qt skips a disabled widget in `focusNextPrevChild`
-        // for the same reason: Tab must not park on a control that cannot act.
+        // node included. The toolkit skips a disabled widget in `focusNextPrevChild` for the
+        // same reason: Tab must not park on a control that cannot act.
         // Returning here (rather than filtering afterwards) is what makes the
         // property structural — the region is never enumerated, so there is no
         // intermediate list in which a disabled stop exists.
@@ -1172,9 +1171,9 @@ impl Scene {
                 // pointer but not transparent to it: the press stops at the
                 // region instead of reaching the control under the cursor, and
                 // does NOT fall through to whatever sibling is painted
-                // beneath. Qt's disabled widget behaves the same way — the
-                // event propagates to the PARENT, never to an occluded peer.
-                // `continue` (the pointer-transparent arm above) would be the
+                // beneath. The toolkit's disabled widget behaves the same way
+                // — the event propagates to the PARENT, never to an occluded
+                // peer. `continue` (the pointer-transparent arm above) would be the
                 // wrong shape here for exactly that reason.
                 if child.declares_disabled() && rect_contains(child.rect(), x, y) {
                     let seg = child.path_segment_at(idx);
@@ -1278,10 +1277,10 @@ impl Scene {
     /// R1591 §5.32 §2 #7 — every primitive a [`Region`] covers, under a
     /// [`RegionFit`].
     ///
-    /// The general form of [`Self::hit_test_region`], which is now the
-    /// rectangle-and-touching case of it. A lasso, a circle and a rectangle are
-    /// one question here; Blender answers them with three operators and Qt with
-    /// three `items()` overloads whose mode comes from a view property.
+    /// The general form of [`Self::hit_test_region`], which is now the rectangle-and-touching case
+    /// of it. A lasso, a circle and a rectangle are one question here; the DCC
+    /// answers them with three operators and the toolkit with three `items()`
+    /// overloads whose mode comes from a view property.
     ///
     /// Walks in the same order, translates through [`Scene::Scroll`] the same
     /// way, and reports the same `bbox` — the node's own rect in the frame it is
@@ -2387,8 +2386,9 @@ pub struct TextNode {
     /// the engine too) is a later campaign step; until then this marker is the
     /// R1070.1 "exclude caret-bearing text" contract.
     pub caret_bearing: bool,
-    /// R1543 §5.39 §5.40 — this label declares a mnemonic (Qt `&File`): one of
-    /// its characters activates the enclosing widget via <kbd>Alt</kbd>+char.
+    /// R1543 §5.39 §5.40 — this label declares a mnemonic (the toolkit `&File`):
+    /// one of its characters activates the enclosing widget via
+    /// <kbd>Alt</kbd>+char.
     ///
     /// **This field is the authority.** The underline that makes the mnemonic
     /// discoverable is *derived ink*, lowered into [`Self::runs`] by
@@ -2405,13 +2405,13 @@ pub struct TextNode {
     /// painted label and the key it binds cannot drift apart.
     pub mnemonic: Option<Mnemonic>,
     /// R1551 §5.36 — this text is a **document block** (a paragraph), and this
-    /// is its [`BlockFormat`] (Qt `QTextBlockFormat`).
+    /// is its [`BlockFormat`] (the toolkit text block format).
     ///
-    /// `None` (the default) is an ordinary label: it has no paragraph
-    /// semantics, so nothing about it is a block declaration. Every static
-    /// label in the tree keeps that shape, which is why this is an `Option`
-    /// where Qt gives every block a format — in Qt a `QTextBlock` only exists
-    /// inside a `QTextDocument`, and here a `TextNode` is used for both.
+    /// `None` (the default) is an ordinary label: it has no paragraph semantics,
+    /// so nothing about it is a block declaration. Every static label in the
+    /// tree keeps that shape, which is why this is an `Option` where the toolkit
+    /// gives every block a format — in the toolkit a text block only exists
+    /// inside a text document, and here a `TextNode` is used for both.
     ///
     /// **This field is the authority**, in the same sense as
     /// [`Self::mnemonic`]. The format lowers to [`Self::layout`]'s margin (by
@@ -2425,7 +2425,8 @@ pub struct TextNode {
     /// other.
     pub block: Option<BlockFormat>,
     /// R1559 §5.36 — where this paragraph sits in the document's **list**
-    /// structure (Qt `QTextList`): which list, at what depth, numbered what.
+    /// structure (the toolkit text list): which list, at what depth, numbered
+    /// what.
     ///
     /// `None` (the default) is a paragraph that is not a list item — every
     /// ordinary label and every ordinary block.
@@ -2443,7 +2444,8 @@ pub struct TextNode {
     /// derivation.
     pub list: Option<ListPlacement>,
     /// R1560 §5.36 — where this paragraph sits in the document's **table**
-    /// structure (Qt `QTextTable`): which table, which cell, at what address.
+    /// structure (the toolkit text table): which table, which cell, at what
+    /// address.
     ///
     /// `None` (the default) is a paragraph outside any table.
     ///
@@ -2561,8 +2563,8 @@ impl TextNode {
     /// on the inline axis, `space_above_px` / `space_below_px` on the block
     /// axis — so a paragraph's indent is honoured by the same flex pass that
     /// lays out everything else, on both backends, with no text-specific
-    /// stacking code. Qt's block margins are known only to
-    /// `QTextDocumentLayout`, which is why a Qt block's indent cannot
+    /// stacking code. The toolkit's block margins are known only to
+    /// text document layout, which is why a toolkit block's indent cannot
     /// participate in the surrounding widget layout at all.
     ///
     /// It writes the margin rather than merging into it: a node cannot both be
@@ -2664,7 +2666,7 @@ impl TextNode {
     }
 
     /// R1543 §5.39 §5.40 — construct a styled label from an authored source
-    /// carrying Qt's `&` mnemonic markup.
+    /// carrying the toolkit's `&` mnemonic markup.
     ///
     /// The one-call pairing of [`MnemonicLabel::parse`](crate::mnemonic::MnemonicLabel::parse)
     /// with [`Self::with_mnemonic`], and the form widget code should use: the
@@ -2733,8 +2735,8 @@ impl TextNode {
         self
     }
 
-    /// R1543 §5.39 — retarget this label's mnemonic at another tag (Qt
-    /// `QLabel::setBuddy`).
+    /// R1543 §5.39 — retarget this label's mnemonic at another tag (the
+    /// toolkit `setBuddy`).
     ///
     /// The form-row case: a standalone label above a field carries the mark,
     /// but the key must move focus to the **field**, not to the text. Compose
@@ -3398,7 +3400,7 @@ pub struct ScrollNode {
     /// into the shared state. Only the primary owns that write.
     ///
     /// This is the substrate behind the frozen-column data-grid (the
-    /// Qt `QTableView` / AG-Grid / Excel "linked scrollbar" pattern):
+    /// the toolkit table view / AG-Grid / Excel "linked scrollbar" pattern):
     /// the frozen pane's body and the scrolling pane's body are two
     /// *vertical* scroll nodes that both reference one vertical
     /// [`ScrollState`] (so they scroll in vertical lockstep), but they
@@ -3444,7 +3446,7 @@ pub struct ScrollNode {
     /// [`use_scroll_state`](crate::widgets::scroll::use_scroll_state) and
     /// builds the matching `ScrollNode` in the same paint cycle —
     /// the widget-owns-state pattern Material / `SwiftUI` / GTK /
-    /// Qt all carry. Left `None` for the "declarative-only" use
+    /// the toolkit all carry. Left `None` for the "declarative-only" use
     /// (a pure offset snapshot with no input wiring, e.g. an
     /// AI-driven scroll preview the agent measures without ever
     /// dispatching wheel input).
@@ -5012,9 +5014,9 @@ mod tests {
     // ----- R1554 §5.39 §5.35 — the disabled region, in the two walks -----
 
     /// A disabled region + the sibling painted UNDER it, so the two failure
-    /// modes are distinguishable: the press must land on the region (Qt
-    /// propagates to the parent) and must not fall through to the peer beneath
-    /// (which `continue`, the pointer-transparent arm's shape, would do).
+    /// modes are distinguishable: the press must land on the region (the
+    /// toolkit propagates to the parent) and must not fall through to the peer
+    /// beneath (which `continue`, the pointer-transparent arm's shape, would do).
     fn disabled_region_over_a_peer() -> Scene {
         let under = tagged_box_at(0, 0, 100, 100, "under");
         let mut region = ContainerNode::new(vec![tagged_box_at(0, 0, 100, 100, "inner")]);

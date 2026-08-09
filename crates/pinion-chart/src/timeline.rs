@@ -2,7 +2,7 @@
 //! horizontal [`Lane`]s, onto a shared numeric time axis, with a draggable
 //! **playhead** scrubber. The crate's first NON-value form: a line / bar /
 //! scatter chart answers "how big", a timeline answers "when, and for how
-//! long" — the track view (Chrome tracing / Unreal Insights / a DAW's
+//! long" — the track view (Chrome tracing / the engine Insights / a DAW's
 //! transport) an editor sequencer and a capture-replay tool reach for.
 //!
 //! # Why a distinct builder rather than a chart mode

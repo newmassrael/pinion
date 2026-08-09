@@ -16,7 +16,7 @@
 //!
 //! The two f32 sidecars live in the Rust binding (SCXML "null
 //! datamodel + typed Rust sidecar" split). Value semantics mirror
-//! the Slider's two-phase Material / `SwiftUI` / Qt convention:
+//! the Slider's two-phase Material / `SwiftUI` / the toolkit convention:
 //!
 //! * **`value_changing`** — every effective [`ColorArea::set_xy`]
 //!   during drag emits a continuous intent carrying the live

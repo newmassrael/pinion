@@ -37,13 +37,13 @@
 //!
 //! ## Scope
 //!
-//! This is the **in-memory** streaming slice (①a): the producer's lines live in
-//! an unbounded `Vec` and the row count is a `Signal`. That covers a bounded
-//! scrollback (a terminal, a capped log). The **out-of-memory** case — millions
-//! of streaming rows paged behind an LRU cache with a tail-page re-fetch (a GB
-//! DLT log, a Wireshark capture) — is slice ①b, demonstrated in
-//! `hello-paged-stream` (R1005) via [`ResourceCache::invalidate`]. The
-//! tail-follow + windowing structure here is the shared part both slices use.
+//! This is the **in-memory** streaming slice (①a): the producer's lines live
+//! in an unbounded `Vec` and the row count is a `Signal`. That covers a bounded
+//! scrollback (a terminal, a capped log). The **out-of-memory** case —
+//! millions of streaming rows paged behind an LRU cache with a tail-page
+//! re-fetch (a GB DLT log, a analyser capture) — is slice ①b, demonstrated in
+//! `hello-paged-stream` (R1005) via [`ResourceCache::invalidate`]. The tail-follow + windowing structure here is the
+//! shared part both slices use.
 //!
 //! [`follow_tail`]: pinion_core::widgets::virtual_list::follow_tail
 //! [`ResourceCache::invalidate`]: pinion_core::reactive::ResourceCache::invalidate

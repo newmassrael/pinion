@@ -1,6 +1,6 @@
 // R1462 §5.16 — example bindings tolerate looser doc-markdown lints
 // than substrate crates; the narrative carries many proper-noun
-// identifiers (FocusManager, QMessageBox, ModalState, …).
+// identifiers (FocusManager, message box, ModalState, …).
 #![allow(clippy::doc_markdown)]
 
 //! `hello-modal-refocus` — R1462 §5.16 §5.39 §5.50 a modal that hands

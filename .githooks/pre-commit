@@ -105,3 +105,21 @@ fi
 if ! consumer_test_gate "pre-commit" "$repo_root" staged; then
     exit 1
 fi
+
+# R1611 — the reference-name ratchet.
+#
+# A standing directive says other projects' names must not appear in what we
+# publish. R1610 received it, zeroed its OWN output and registered the rest as
+# debt, and nothing measured the rest: 7,999 occurrences across 501 files. A
+# directive whose state nobody can see is a directive that grows. This makes the
+# number monotone -- every push holds it or lowers it -- and refuses one that
+# adds a name to a file, or a name to a file that had none.
+echo "pre-commit: reference names ..." >&2
+if ! python3 "$repo_root/tools/reference_names.py" --selftest >&2; then
+    echo "pre-commit: the reference-name ratchet failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/reference_names.py" --check >&2; then
+    exit 1
+fi
+

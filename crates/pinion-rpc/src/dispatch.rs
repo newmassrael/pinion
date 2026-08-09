@@ -1075,45 +1075,41 @@ pub enum DeferredInput {
         button: PointerButton,
         edge: PointerEdge,
     },
-    /// R1423 §5.35 §5.15 — `scene/pointer_pressure` injection: set the pointer's
-    /// PRESSURE (W3C `PointerEvent.pressure` / Qt `QTabletEvent::pressure()`),
-    /// normalised `0.0..=1.0`. Positionless like [`Self::SetModifiers`] — it sets
+    /// R1423 §5.35 §5.15 — `scene/pointer_pressure` injection: set the pointer's PRESSURE (W3C `PointerEvent.pressure`
+    /// / the toolkit `pressure()`), normalised `0.0..=1.0`. Positionless like [`Self::SetModifiers`] — it sets
     /// an out-of-band per-pointer state that rides subsequent moves and is
     /// delivered to the surface under the pointer at once. The AI-first source
     /// for a pressure-reactive surface (an ink brush, a DCC viewport), so a
     /// tablet is not required to exercise force headless (§2 #2).
     PointerPressure { value: f32 },
-    /// R1429 §5.35 §5.15 — `scene/pointer_tilt` injection: set the pointer's
-    /// TILT (W3C `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`),
-    /// each axis in degrees `-90.0..=90.0`. Positionless like
-    /// [`Self::PointerPressure`] — an out-of-band per-pointer state that rides
-    /// subsequent moves and is delivered to the surface under the pointer at
-    /// once. The AI-first source for a tilt-reactive surface (a calligraphy nib,
-    /// a DCC viewport), so a tablet is not required to exercise lean headless
-    /// (§2 #2); winit 0.30 exposes no tilt axis, making the RPC the sole driver.
+    /// R1429 §5.35 §5.15 — `scene/pointer_tilt` injection: set the pointer's TILT (W3C `PointerEvent.tiltX/tiltY` /
+    /// the toolkit `xTilt/yTilt`), each axis in degrees `-90.0..=90.0`. Positionless like [`Self::PointerPressure`] —
+    /// an out-of-band per-pointer state that rides subsequent moves and is
+    /// delivered to the surface under the pointer at once. The AI-first source
+    /// for a tilt-reactive surface (a calligraphy nib, a DCC viewport), so a
+    /// tablet is not required to exercise lean headless (§2 #2); winit 0.30
+    /// exposes no tilt axis, making the RPC the sole driver.
     PointerTilt { tilt_x: f32, tilt_y: f32 },
     /// R1430 §5.35 §5.15 — `scene/pointer_twist` injection: set the pointer's
-    /// TWIST (W3C `PointerEvent.twist` / Qt `QTabletEvent::rotation()`), the
+    /// TWIST (W3C `PointerEvent.twist` / the toolkit `rotation()`), the
     /// barrel rotation in degrees `0.0..=360.0` (wrapped at the router).
     /// Positionless like [`Self::PointerPressure`]; the AI-first source for a
     /// barrel-rotation surface (§2 #2), winit exposing no such axis.
     PointerTwist { twist: f32 },
-    /// R1430 §5.35 §5.15 — `scene/pointer_tangential_pressure` injection: set the
-    /// pointer's TANGENTIAL PRESSURE (W3C `PointerEvent.tangentialPressure` / Qt
-    /// `QTabletEvent::tangentialPressure()`), the airbrush finger-wheel position
-    /// `-1.0..=1.0` (clamped at the router). Positionless; the AI-first airbrush
-    /// source (§2 #2).
+    /// R1430 §5.35 §5.15 — `scene/pointer_tangential_pressure` injection: set the pointer's TANGENTIAL
+    /// PRESSURE (W3C `PointerEvent.tangentialPressure` / the toolkit `tangentialPressure()`), the airbrush finger-wheel
+    /// position `-1.0..=1.0` (clamped at the router). Positionless; the AI-first
+    /// airbrush source (§2 #2).
     PointerTangentialPressure { tangential: f32 },
-    /// R1430 §5.35 §5.15 — `scene/pointer_height` injection: set the pointer's
-    /// HEIGHT (Qt `QTabletEvent::z()`), the hover distance above the surface
-    /// `>= 0.0` (floored at the router). Positionless; the AI-first hover-height
-    /// source (§2 #2), no W3C peer.
+    /// R1430 §5.35 §5.15 — `scene/pointer_height` injection: set the pointer's HEIGHT (the
+    /// toolkit `z()`), the hover distance above the surface `>= 0.0` (floored at the
+    /// router). Positionless; the AI-first hover-height source (§2 #2), no W3C
+    /// peer.
     PointerHeight { height: f32 },
-    /// R1431 §5.35 §5.15 — `scene/pointer_type` injection: set the pointer's
-    /// device KIND (W3C `PointerEvent.pointerType` / Qt
-    /// `QTabletEvent::pointerType()`) — `mouse` / `pen` / `eraser` / `touch`.
-    /// Positionless; the AI-first source that lets a headless client present as a
-    /// pen / eraser (§2 #2), winit not classifying the device.
+    /// R1431 §5.35 §5.15 — `scene/pointer_type` injection: set the pointer's device KIND (W3C
+    /// `PointerEvent.pointerType` / the toolkit `pointerType()`) — `mouse` / `pen` / `eraser` / `touch`. Positionless; the
+    /// AI-first source that lets a headless client present as a pen / eraser
+    /// (§2 #2), winit not classifying the device.
     PointerKind { kind: PointerKind },
     /// R1432 §5.35 §5.15 — `scene/pinch_gesture` injection: a native PINCH
     /// (magnify) gesture at `(x, y)`. The embedder applies `cursor_moved(x, y)`
@@ -1498,11 +1494,10 @@ pub struct DeclaredWindow {
     /// nowhere: the first declares nothing, the second declares something the
     /// desk cannot honour.
     ///
-    /// The three `kind`s are the whole story a restored layout needs:
-    /// `on_declared` (the display is here), `substituted` (it is not, and the
-    /// window went to the fallback — **both** ids are reported), `no_display`
-    /// (there are no monitors). Qt's `restoreGeometry` returns a bare `bool`
-    /// and has no channel for any of it.
+    /// The three `kind`s are the whole story a restored layout needs: `on_declared` (the
+    /// display is here), `substituted` (it is not, and the window went to the fallback —
+    /// **both** ids are reported), `no_display` (there are no monitors). The toolkit's
+    /// `restoreGeometry` returns a bare `bool` and has no channel for any of it.
     ///
     /// Derived from the declaration and the live topology each dispatch, never
     /// stored — so it cannot become a second, stale copy of where the window
@@ -2647,8 +2642,9 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     HandlerKind::Read,
                 ),
                 // R1555 §5.27 — which editor each datum kind opens: the
-                // factory census Qt's `QItemEditorFactory` cannot be asked for.
-                // Framework knowledge, so it reads no scene and takes no params.
+                // factory census the toolkit's item editor factory cannot be
+                // asked for. Framework knowledge, so it reads no scene and
+                // takes no params.
                 "scene/cell_editors" => (
                     crate::cell_editors::handle_scene_cell_editors(),
                     HandlerKind::Read,
@@ -3505,7 +3501,7 @@ where
 }
 
 /// R1423 §5.35 §5.15 — `scene/pointer_pressure` handler: set the pointer's
-/// PRESSURE (W3C `PointerEvent.pressure` / Qt `QTabletEvent::pressure()`),
+/// PRESSURE (W3C `PointerEvent.pressure` / the toolkit `pressure()`),
 /// normalised `0.0..=1.0`. Positionless (out-of-band, like `scene/modifiers`):
 /// the value rides subsequent moves and is delivered to the surface under the
 /// pointer at once. Required param `value` (a number); out-of-range is clamped
@@ -3533,7 +3529,7 @@ fn handle_scene_pointer_pressure(
 }
 
 /// R1429 §5.35 §5.15 — `scene/pointer_tilt` handler: set the pointer's TILT
-/// (W3C `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`), each axis
+/// (W3C `PointerEvent.tiltX/tiltY` / the toolkit `xTilt/yTilt`), each axis
 /// in degrees. Positionless (out-of-band, like `scene/pointer_pressure`): the
 /// value rides subsequent moves and is delivered to the surface under the
 /// pointer at once. Required params `tilt_x` and `tilt_y` (both numbers);
@@ -3586,7 +3582,7 @@ fn require_axis_value(params: &Value, key: &str, hint: &str) -> Result<f32, RpcE
 }
 
 /// R1430 §5.35 §5.15 — `scene/pointer_twist` handler: set the pointer's TWIST
-/// (W3C `PointerEvent.twist` / Qt `QTabletEvent::rotation()`), degrees; the
+/// (W3C `PointerEvent.twist` / the toolkit `rotation()`), degrees; the
 /// router wraps to `0.0..=360.0`. Positionless, out-of-band like pressure.
 fn handle_scene_pointer_twist(
     inbox: Option<&mut Vec<DeferredInput>>,
@@ -3600,9 +3596,8 @@ fn handle_scene_pointer_twist(
     Ok(Value::Null)
 }
 
-/// R1430 §5.35 §5.15 — `scene/pointer_tangential_pressure` handler: set the
-/// pointer's TANGENTIAL PRESSURE (W3C `PointerEvent.tangentialPressure` / Qt
-/// `QTabletEvent::tangentialPressure()`); the router clamps to `-1.0..=1.0`.
+/// R1430 §5.35 §5.15 — `scene/pointer_tangential_pressure` handler: set the pointer's TANGENTIAL PRESSURE (W3C
+/// `PointerEvent.tangentialPressure` / the toolkit `tangentialPressure()`); the router clamps to `-1.0..=1.0`.
 fn handle_scene_pointer_tangential_pressure(
     inbox: Option<&mut Vec<DeferredInput>>,
     params: Option<&Value>,
@@ -3619,8 +3614,8 @@ fn handle_scene_pointer_tangential_pressure(
     Ok(Value::Null)
 }
 
-/// R1430 §5.35 §5.15 — `scene/pointer_height` handler: set the pointer's HEIGHT
-/// (Qt `QTabletEvent::z()` hover distance); the router floors at `0.0`.
+/// R1430 §5.35 §5.15 — `scene/pointer_height` handler: set the pointer's HEIGHT (the toolkit `z()`
+/// hover distance); the router floors at `0.0`.
 fn handle_scene_pointer_height(
     inbox: Option<&mut Vec<DeferredInput>>,
     params: Option<&Value>,
@@ -3633,10 +3628,9 @@ fn handle_scene_pointer_height(
     Ok(Value::Null)
 }
 
-/// R1431 §5.35 §5.15 — `scene/pointer_type` handler: set the pointer's device
-/// KIND (W3C `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()`).
-/// Required param `type` — a string in the vocabulary `mouse` / `pen` / `eraser`
-/// / `touch`; anything else rejects so a typo surfaces at the call.
+/// R1431 §5.35 §5.15 — `scene/pointer_type` handler: set the pointer's device KIND (W3C `PointerEvent.pointerType` /
+/// the toolkit `pointerType()`). Required param `type` — a string in the vocabulary `mouse` / `pen`
+/// / `eraser` / `touch`; anything else rejects so a typo surfaces at the call.
 fn handle_scene_pointer_type(
     inbox: Option<&mut Vec<DeferredInput>>,
     params: Option<&Value>,
@@ -5181,10 +5175,10 @@ fn text_snapshot_into_json(
     // structure as data.
     let runs: Vec<Value> = snap.runs.iter().map(style_run_to_json).collect();
     obj.insert("runs".to_string(), Value::Array(runs));
-    // R1551 §5.36 — the declared block format (Qt `QTextBlockFormat`), `null`
-    // for an ordinary label. The DECLARATION, not its lowering: the indents it
-    // states also become this node's layout margin, and a margin cannot be read
-    // back as a block format. Where the shaped lines landed is
+    // R1551 §5.36 — the declared block format (the toolkit text block format),
+    // `null` for an ordinary label. The DECLARATION, not its lowering: the
+    // indents it states also become this node's layout margin, and a margin
+    // cannot be read back as a block format. Where the shaped lines landed is
     // `scene/text_blocks`.
     obj.insert(
         "block".to_string(),
@@ -5768,11 +5762,11 @@ fn stroke_cap_to_json(cap: pinion_core::style::StrokeCap) -> Value {
 
 /// R1575 §5.49 — wire serialization for [`pinion_core::style::Dash`].
 ///
-/// `null` is the solid stroke, which is why this is not an enum of named
-/// styles: an agent asking "is this link drawn dashed?" gets a yes/no from the
-/// field's presence, and one asking "how?" reads the same numbers the caller
-/// declared. Qt publishes neither — a `QPen` is an argument to a paint call,
-/// so a Qt scene cannot be asked which of its edges are dashed at all, and the
+/// `null` is the solid stroke, which is why this is not an enum of named styles:
+/// an agent asking "is this link drawn dashed?" gets a yes/no from the field's
+/// presence, and one asking "how?" reads the same numbers the caller declared.
+/// The toolkit publishes neither — a pen is an argument to a paint call, so a
+/// toolkit scene cannot be asked which of its edges are dashed at all, and the
 /// only way to find out is to rasterize and look.
 ///
 /// `period` is derived rather than left for the client to add up, because it
@@ -5894,7 +5888,7 @@ fn text_align_to_json(a: pinion_core::style::TextAlign) -> Value {
 }
 
 /// R55.G.10 §5.49 — wire serialization for `TextDecoration`. Both
-/// flags may be `true` simultaneously (Figma allows underline +
+/// flags may be `true` simultaneously (the design tool allows underline +
 /// strikethrough combo), so the wire keeps them as independent bools.
 fn text_decoration_to_json(d: pinion_core::style::TextDecoration) -> Value {
     let mut obj = serde_json::Map::new();
@@ -5915,10 +5909,10 @@ fn text_decoration_to_json(d: pinion_core::style::TextDecoration) -> Value {
     Value::Object(obj)
 }
 
-/// R1551 §5.36 — wire serialization for `BlockFormat`: every declared field,
-/// because the whole point of a struct where Qt has a property bag is that a
-/// reader can enumerate what a block said rather than guessing which properties
-/// to ask about.
+/// R1551 §5.36 — wire serialization for `BlockFormat`: every declared field, because the
+/// whole point of a struct where the toolkit has a property bag is that a
+/// reader can enumerate what a block said rather than guessing which
+/// properties to ask about.
 ///
 /// The derived `aria_level` is NOT here. `scene/snapshot` carries scene data,
 /// and the announcement a heading level produces is a fact about the
@@ -6008,10 +6002,10 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
         Value::Number(style.font_size_px.into()),
     );
     obj.insert("fg_color".to_string(), color_to_json(style.fg_color));
-    // R1546 §5.36 — the DECLARED background (Qt `QTextCharFormat::background`).
-    // `null` is the unset brush, which is a different fact from a transparent
-    // one; where the band was PAINTED is `scene/text_backgrounds`, because that
-    // needs the shaped layout and this is scene data.
+    // R1546 §5.36 — the DECLARED background (the toolkit `background`). `null` is the
+    // unset brush, which is a different fact from a transparent one; where the
+    // band was PAINTED is `scene/text_backgrounds`, because that needs the shaped layout and this
+    // is scene data.
     obj.insert(
         "bg_color".to_string(),
         style.bg_color.map_or(Value::Null, color_to_json),
@@ -6036,8 +6030,8 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
         "text_align".to_string(),
         text_align_to_json(style.text_align),
     );
-    // R1551 §5.36 — the DECLARED CSS `text-indent` (Qt
-    // `QTextBlockFormat::setTextIndent`, plus the two CSS keywords Qt has no
+    // R1551 §5.36 — the DECLARED CSS `text-indent` (the toolkit
+    // `setTextIndent`, plus the two CSS keywords the toolkit has no
     // spelling for). Where the indented line actually landed is
     // `scene/text_blocks`, because that needs the shaped layout and this is
     // scene data.
@@ -7198,10 +7192,10 @@ fn handle_scene_scroll_state(
     }
 }
 
-/// R1571 §5.27 — `scene/grid_editors` typed handler, read-only. Returns the
-/// whole open-editor set of the [`GridEditState`](pinion_core::widgets::grid_edit::GridEditState)
-/// bound at `params.tag` — see [`crate::grid_editors`] for the wire shape and
-/// for why Qt's `QAbstractItemView` cannot answer this.
+/// R1571 §5.27 — `scene/grid_editors` typed handler, read-only. Returns the whole open-editor
+/// set of the [`GridEditState`](pinion_core::widgets::grid_edit::GridEditState) bound at
+/// `params.tag` — see [`crate::grid_editors`] for the wire shape and for why the toolkit's abstract item
+/// view cannot answer this.
 ///
 /// `params.tag` is required for the reason `scene/scroll_state`'s is: every
 /// grid owns its own state under a distinct key, so there is no default.
@@ -7989,11 +7983,12 @@ fn window_declare_error_to_rpc(err: WindowDeclareError) -> RpcError {
 /// edge.
 ///
 /// The shell replays its own winit `Focused` arm in full (R1420): the gate + the
-/// R1419 paint-path mirror, THEN the focus save/restore and held-key-chord clear
-/// a real OS blur/refocus performs — so a driven blur dims the panel AND settles
-/// held state AND remembers the focused widget for the driven refocus, matching a
-/// physical alt-tab (and Qt's window deactivation). Rejects with `-32602` on a
-/// backend with no OS-window-focus gate (the TUI, which never wires the closure).
+/// R1419 paint-path mirror, THEN the focus save/restore and held-key-chord
+/// clear a real OS blur/refocus performs — so a driven blur dims the panel AND
+/// settles held state AND remembers the focused widget for the driven refocus,
+/// matching a physical alt-tab (and the toolkit's window deactivation).
+/// Rejects with `-32602` on a backend with no OS-window-focus gate (the TUI, which
+/// never wires the closure).
 fn handle_scene_window_focus<F>(
     window_focus_request: Option<&mut F>,
     params: Option<&Value>,

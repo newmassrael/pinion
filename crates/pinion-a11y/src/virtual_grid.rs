@@ -127,7 +127,7 @@ enum GridSelection<'a> {
     /// that, and the set was a third representation of a fact the model
     /// (`IndexRuns`) and the binding's own paint projection each already hold.
     /// The question this axis asks is per rendered row and is nothing but
-    /// membership — Qt's `QItemSelectionModel::isSelected(index)` — so it takes
+    /// membership — the toolkit's `isSelected(index)` — so it takes
     /// the question rather than a container that can answer it, and a caller
     /// holding runs, a bitmap or a tree passes its own without converting.
     Multi(&'a dyn Fn(usize) -> bool),
@@ -143,10 +143,9 @@ enum GridSelection<'a> {
     /// demanded all of them, announce nothing at all for the selection the user
     /// just made.
     ///
-    /// **Past Qt 6.11 by being connected at all.** Qt has the accessor —
-    /// `QAccessibleTableCell::isSelected()` — but it reads
-    /// `QItemSelectionModel::isSelected` on the *view's* model, and
-    /// `QAccessibleTableHeaderCell` has no selection state of any kind, so a
+    /// **Past the toolkit 6.11 by being connected at all.** the toolkit has
+    /// the accessor — `isSelected()` — but it reads `isSelected` on the *view's* model, and
+    /// accessible table header cell has no selection state of any kind, so a
     /// fully selected column announces exactly as an unselected one.
     Cells(&'a dyn CoreGridSelection),
 }
@@ -167,15 +166,15 @@ fn cell_tag(grid_tag: &str, id: usize, col: usize) -> String {
 /// once an axis holds a slice, the slice has to say what it is a slice of, or
 /// the AT reads a 200-column table as five columns wide.
 ///
-/// R1547 — it holds **counts, not labels**. Until R1547 it carried the label of
-/// every column in the tree, for one purpose: stamping each `columnheader`'s
+/// R1547 — it holds **counts, not labels**. Until R1547 it carried the label
+/// of every column in the tree, for one purpose: stamping each `columnheader`'s
 /// accessible name. That made the builder a *second* source for what a column
 /// is called, and the paint the first — the shape R1536 removed from the cell
 /// axis, where a hand-stamped name would have silently won over the derivation
 /// and hidden whatever the grid actually drew. Now the name comes from the
 /// painted header, so the AT tree and the pixels cannot disagree, and a
-/// section's `Qt::DecorationRole` mark can reach the name at all (it is painted
-/// there, and nothing here could see it).
+/// section's `DecorationRole` mark can reach the name at all (it is painted there, and
+/// nothing here could see it).
 ///
 /// Private — every public builder either states the tree holds every column
 /// ([`Self::all`]) or states a window plus the table's width, so no caller
@@ -278,7 +277,7 @@ fn grid_nodes(
     for col in cols.indices() {
         // R1547 §5.40 — NO `with_name`. The name is derived from the painted
         // header (`enrich_names_from_scene` skips any node that already has
-        // one), which is what lets a section's `Qt::DecorationRole` mark join
+        // one), which is what lets a section's `DecorationRole` mark join
         // it and what keeps the announced string identical to the drawn one.
         let mut header =
             AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
@@ -329,7 +328,7 @@ fn grid_nodes(
                 // R1523 — a windowed cell states its absolute column, so it
                 // stays locatable with its predecessors absent from the tree.
                 .with_column(col);
-            // R1563 — Qt `QAccessibleTableCell::isSelected()`. Set only on the
+            // R1563 — the toolkit `isSelected()`. Set only on the
             // two-axis arm, so every row-select grid's tree is byte-identical:
             // there `aria-selected` on the row is the whole fact, and a
             // per-cell flag would restate it once per column.
@@ -457,8 +456,8 @@ pub fn windowed_grid_nodes_selected(
 /// caller built over the window each frame, purely so this could ask
 /// `contains` about the ~20 rows in it — a third representation of a fact the
 /// model and the binding's own paint projection each already hold. The
-/// question this axis asks is nothing but membership (Qt's
-/// `QItemSelectionModel::isSelected`), so it takes the question rather than a
+/// question this axis asks is nothing but membership (the toolkit's
+/// `isSelected`), so it takes the question rather than a
 /// container that can answer it, and a caller holding runs, a bitmap or a tree
 /// passes its own without converting.
 #[must_use]
@@ -652,14 +651,14 @@ pub fn windowed_grid_nodes_sorted(
 ///
 /// # Why the *non*-editable cells are the ones marked
 ///
-/// WAI-ARIA's `aria-readonly` defaults to `false`, so an unmarked cell already
-/// reads as editable. Marking the read-only ones is therefore the whole
-/// statement, and it means a display-only grid that passes
-/// `|_| false` says so to assistive technology — which no grid in this tree
-/// did before R1544, and which Qt does not say at all: `QAccessibleTableCell`
-/// builds its state from the *view's* selection and expansion, never from the
-/// model's `Qt::ItemIsEditable`, so a Qt screen-reader user cannot tell a
-/// fixed column from an editable one until they try to type into it.
+/// WAI-ARIA's `aria-readonly` defaults to `false`, so an unmarked cell already reads as
+/// editable. Marking the read-only ones is therefore the whole statement, and
+/// it means a display-only grid that passes `|_| false` says so to assistive
+/// technology — which no grid in this tree did before R1544, and which the
+/// toolkit does not say at all: accessible table cell builds its state from
+/// the *view's* selection and expansion, never from the model's `ItemIsEditable`, so a
+/// toolkit screen-reader user cannot tell a fixed column from an editable one
+/// until they try to type into it.
 ///
 /// `rows` is the row window the tree was built from and `cols` the column
 /// window — the same two the builder used, so this asks about exactly the
@@ -687,39 +686,40 @@ pub fn mark_grid_editability(
 /// R1555 §5.40 §5.27 — announce the **open editor** under the cell hosting it,
 /// with the role its [`EditorForm`] actually has.
 ///
-/// The a11y half of Qt's `QItemEditorFactory`. Called with the latch's
-/// `(index, form)` when — and only when — an editor is painted, which is one
-/// statement on the paint side ([`cell_editor`](../../pinion_widget_paint/table/fn.cell_editor.html)
+/// The a11y half of the toolkit's item editor factory. Called with the latch's
+/// `(index, form)` when — and only when — an editor is painted, which is one statement on
+/// the paint side ([`cell_editor`](../../pinion_widget_paint/table/fn.cell_editor.html)
 /// dispatches on the same `form`), so the announced control and the drawn one
 /// cannot be different kinds.
 ///
 /// # Why a child node and not a role on the cell
 ///
-/// A `gridcell` stays a `gridcell` while it hosts an editor — that is what keeps
-/// the row / column geometry intact for AT table navigation. WAI-ARIA puts the
-/// input *inside* the cell, and so does Qt: the editor is a real child `QWidget`
-/// with its own `QAccessibleInterface`. The [`attach_child_button`](crate::node::attach_child_button)
-/// precedent gives the same orphan-free rule — a cell absent from `nodes`
-/// (windowed out on either axis) emits **nothing**, neither the link nor the
-/// node, so an editor node with no host cannot exist.
+/// A `gridcell` stays a `gridcell` while it hosts an editor — that is what keeps the row /
+/// column geometry intact for AT table navigation. WAI-ARIA puts the input
+/// *inside* the cell, and so does the toolkit: the editor is a real child
+/// widget with its own accessible interface. The
+/// [`attach_child_button`](crate::node::attach_child_button) precedent gives the same
+/// orphan-free rule — a cell absent from `nodes` (windowed out on either axis)
+/// emits **nothing**, neither the link nor the node, so an editor node with no
+/// host cannot exist.
 ///
-/// # Against Qt 6.11
+/// # Against the toolkit 6.11
 ///
-/// Qt reaches the right role by accident of construction: because the editor is
-/// a widget, `QAccessible` reports whatever that widget is. The consequence is
-/// that Qt's *default* factory decides the announced role too — a bool cell
-/// announces as a **combo box** there, because that is what
-/// `QItemEditorFactory` hands back for `QMetaType::Bool`, and a colour cell
-/// announces nothing at all because no editor is created. Here the role follows
-/// from the datum, so the announcement is a property of the cell's type rather
-/// than of which widget the factory happened to construct.
+/// The toolkit reaches the right role by accident of construction: because the
+/// editor is a widget, accessible reports whatever that widget is. The
+/// consequence is that the toolkit's *default* factory decides the announced
+/// role too — a bool cell announces as a **combo box** there, because that is
+/// what item editor factory hands back for `Bool`, and a colour cell announces
+/// nothing at all because no editor is created. Here the role follows from the
+/// datum, so the announcement is a property of the cell's type rather than of
+/// which widget the factory happened to construct.
 ///
 /// - `index` — the editing cell, from
 ///   [`GridEditState::editing`](../../pinion_core/widgets/grid_edit/struct.GridEditState.html#method.editing).
 /// - `form` — its [`EditorForm`].
 /// - `name` — the editor's accessible name. The cell's own name is its
 ///   *content*; an editor needs to say what is being edited, which only the
-///   binding knows (Qt has the same gap and fills it from the column header).
+///   binding knows (the toolkit has the same gap and fills it from the column header).
 pub fn attach_cell_editor(
     nodes: &mut Vec<AccessNode>,
     grid_tag: &str,
@@ -757,8 +757,8 @@ pub fn editor_role(form: EditorForm) -> AriaRole {
 /// axis**: every windowed `row` gains a leading WAI-ARIA `rowheader` cell, and
 /// a node for it is appended.
 ///
-/// The a11y half of Qt's `headerData(section, Qt::Vertical, …)` /
-/// `QTableView::verticalHeader()`, paired with
+/// The a11y half of the toolkit's `headerData(section, Vertical, …)` /
+/// `verticalHeader()`, paired with
 /// [`GridModel::rows`](../../pinion_widget_paint/table/struct.GridModel.html)
 /// on the paint side. Call it when — and only when — the grid's model answers
 /// that axis, which is exactly when the band is painted: the two are one
@@ -782,9 +782,9 @@ pub fn editor_role(form: EditorForm) -> AriaRole {
 ///
 /// R1547's rule, on the second axis: the `rowheader`'s accessible name is
 /// derived from the painted band, so the announced string is the drawn one and
-/// a section's `Qt::DecorationRole` mark can join it. Qt derives a header
+/// a section's `DecorationRole` mark can join it. The toolkit derives a header
 /// cell's name from the model on a path independent of `paintSection`
-/// (`QAccessibleTableHeaderCell::text` reads `Qt::DisplayRole`), so a Qt view
+/// (`text` reads `DisplayRole`), so a toolkit view
 /// that elides or overrides its row header announces a string that is not on
 /// screen — and one whose distinguishing information is a glyph announces
 /// nothing.
@@ -816,7 +816,8 @@ pub fn attach_row_headers(
 }
 
 /// R1562 §5.40 §5.27 — give a grid's tree the **corner control**: the
-/// select-all where the two section axes meet (Qt's `QTableCornerButton`).
+/// select-all where the two section axes meet (the toolkit's table corner
+/// button).
 ///
 /// Two nodes, in HTML's own shape — a `columnheader` (the `<th>` above the row
 /// header band) holding a `checkbox` (the `<input type=checkbox>` inside it) —
@@ -825,10 +826,10 @@ pub fn attach_row_headers(
 /// on WAI-ARIA's own axes: [`AccessState::checked`](crate::node::AccessState)
 /// for the definite legs, `mixed` for `aria-checked="mixed"`.
 ///
-/// # What Qt does not have here
+/// # What the toolkit does not have here
 ///
-/// `QTableCornerButton` is a private `QAbstractButton` built inside
-/// `qtableview.cpp` with **no text and no accessible name**, and `QTableView`
+/// table corner button is a private abstract button built inside
+/// `qtableview.cpp` with **no text and no accessible name**, and table view
 /// exposes only `setCornerButtonEnabled(bool)` / `isCornerButtonEnabled()` —
 /// no accessor for the button — so there is no supported way to name it. A
 /// screen-reader user meets an unnamed button whose state is not reported
@@ -1422,9 +1423,10 @@ mod tests {
 
     #[test]
     fn r1555_the_open_editor_is_announced_with_its_form_s_role() {
-        // Every form's role is decided by the datum's kind, not by which widget
-        // a factory happened to construct — which is why a Qt bool cell
-        // announces as a combo box and a Qt colour cell announces nothing.
+        // Every form's role is decided by the datum's kind, not by which
+        // widget a factory happened to construct — which is why a toolkit bool
+        // cell announces as a combo box and a toolkit colour cell announces
+        // nothing.
         let expected = [
             (EditorForm::Field, AriaRole::TextInput),
             (EditorForm::Stepper, AriaRole::SpinButton),

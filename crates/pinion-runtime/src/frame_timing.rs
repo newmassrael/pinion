@@ -23,7 +23,7 @@
 //! ## The four phases
 //!
 //! Each painted frame is bracketed into the canonical desktop-app
-//! frame breakdown (cf. Unreal `stat unit` Game/Draw/GPU; Chrome
+//! frame breakdown (cf. The engine `stat unit` Game/Draw/GPU; Chrome
 //! `DevTools` Scripting/Rendering/Painting):
 //!
 //! - **build** — `ShellCore::compute_paint_scene_for_window`: the
@@ -171,11 +171,10 @@ pub struct DrawWork {
     /// Draw commands the frame encoded: every fill, stroke, image, blurred rect
     /// and clip boundary, in the order the rasterizer consumes them.
     ///
-    /// The closest peer of a 3D renderer's draw-call count (Unreal `stat rhi`,
-    /// `QQuick3DRenderStats::drawCallCount`), and the coarsest number here — it
-    /// says how many things were drawn without saying how big any of them was,
-    /// which is exactly the limit [`Self::path_segments`] and [`Self::glyphs`]
-    /// exist to lift.
+    /// The closest peer of a 3D renderer's draw-call count (the engine `stat rhi`,
+    /// `drawCallCount`), and the coarsest number here — it says how many things were drawn
+    /// without saying how big any of them was, which is exactly the limit
+    /// [`Self::path_segments`] and [`Self::glyphs`] exist to lift.
     pub draws: u32,
     /// Paths the frame encoded. One per filled or stroked shape, plus one per
     /// closed clip layer.
@@ -377,10 +376,10 @@ pub struct FrameTiming {
     /// — [`LayoutCache`](pinion_text::LayoutCache) misses, not lookups.
     ///
     /// R1454 measured what one miss costs (18.5µs against a 118ns hit) and
-    /// bounded the worst offender with Qt's `resizeContentsPrecision`, but
-    /// that bound is **consumer-honoured**: a binding that ignores it still
-    /// measures every row, and nothing noticed. This is what notices. A steady
-    /// state repaint should read `0`.
+    /// bounded the worst offender with the toolkit's `resizeContentsPrecision`, but that bound is
+    /// **consumer-honoured**: a binding that ignores it still measures every
+    /// row, and nothing noticed. This is what notices. A steady state repaint
+    /// should read `0`.
     ///
     /// # Why this is a count and pinion ships no cost to multiply it by
     ///
@@ -410,7 +409,7 @@ pub struct FrameTiming {
     /// GPU-bound while every CPU phase reads fast, and nothing here could
     /// say so. That was the pro-tool-performance axis's largest stated
     /// gap, and it is the first number on this struct that a pro tool
-    /// states first (Unreal's `stat gpu`).
+    /// states first (the engine's `stat gpu`).
     ///
     /// # Why it is one frame behind
     ///
@@ -712,7 +711,7 @@ impl FrameTimingStats {
     /// maps it to `(x, y)` vertices in one pass without an intermediate
     /// `Vec`, and oldest-first means the sample index *is* the x-axis
     /// position (left = oldest), which is the reading order every
-    /// frame-time HUD uses (Unreal `stat unit`, Chrome frame history).
+    /// frame-time HUD uses (the engine `stat unit`, Chrome frame history).
     #[must_use]
     pub fn samples(&self) -> impl ExactSizeIterator<Item = &FrameTiming> + '_ {
         self.samples.iter()
@@ -1225,7 +1224,7 @@ pub struct FrameTimingsSnapshot {
     /// (`0`) when this is `None`.
     pub budget_us: Option<u64>,
     /// Window samples whose `total_us` exceeded [`Self::budget_us`] —
-    /// the "dropped frame" / jank count a pro-tool HUD reports (Unreal
+    /// the "dropped frame" / jank count a pro-tool HUD reports (the engine
     /// `stat unit` hitches, Chrome janky frames). `0` when no budget is
     /// set. Window-scoped, like the min/mean/max (not the cumulative
     /// [`Self::frame_count`]).

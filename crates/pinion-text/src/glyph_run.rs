@@ -28,12 +28,12 @@
 //! # The canonical shape
 //!
 //! Every professional 2D stack separates *shaping* from a *replayable
-//! positioned glyph list*: Skia's `SkTextBlob`, Qt's `QGlyphRun` (and the
-//! `QStaticText` that caches one). The list is immutable, cheap to hold, and
-//! drawn many times per build. This module is that type for pinion, and the
-//! cache that already owns the shaped layout owns it too — same key, same
-//! lifetime, same eviction — because it is the second half of one derivation
-//! rather than a separate thing to keep in sync.
+//! positioned glyph list*: Skia's `SkTextBlob`, the toolkit's glyph run (and the static
+//! text that caches one). The list is immutable, cheap to hold, and drawn many
+//! times per build. This module is that type for pinion, and the cache that
+//! already owns the shaped layout owns it too — same key, same lifetime, same
+//! eviction — because it is the second half of one derivation rather than a
+//! separate thing to keep in sync.
 //!
 //! # Backend-orthogonal by construction
 //!
@@ -85,9 +85,9 @@ pub struct RunDecoration {
 /// R1540 §5.36 — a run's underline: where the rule sits, and which FORM it
 /// takes.
 ///
-/// A separate type from [`RunDecoration`] rather than a field on it, because
-/// only the underline has a form axis — a strikethrough is one straight rule
-/// in both SGR (9) and Qt. Folding them together would put a field on the
+/// A separate type from [`RunDecoration`] rather than a field on it, because only the
+/// underline has a form axis — a strikethrough is one straight rule in both
+/// SGR (9) and the toolkit. Folding them together would put a field on the
 /// strikethrough that no reader could act on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RunUnderline {

@@ -4,13 +4,13 @@
 
 //! `hello-row-dissect` — R1007 §5.27 §5.40 **master-detail row dissection**.
 //!
-//! The Model/View-at-scale campaign's earlier slices act on the row *set* — the
-//! R997 filter removes rows, the R998 coloring tints them, the R1004 search
-//! cursor walks them. **Master-detail** turns the other way: pick the *one*
-//! selected row up top and read its structured payload exploded into a
-//! recursive field tree below. This is Wireshark's packet-detail pane under the
-//! packet list, the dlt-viewer message-detail tree, the inspector that follows
-//! a selection.
+//! The Model/View-at-scale campaign's earlier slices act on the row *set* —
+//! the R997 filter removes rows, the R998 coloring tints them, the R1004
+//! search cursor walks them. **Master-detail** turns the other way: pick the
+//! *one* selected row up top and read its structured payload exploded into a
+//! recursive field tree below. This is the analyser's packet-detail pane under
+//! the packet list, the dlt-viewer message-detail tree, the inspector that
+//! follows a selection.
 //!
 //! ## What is new vs. reused
 //!

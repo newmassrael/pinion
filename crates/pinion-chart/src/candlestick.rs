@@ -16,10 +16,10 @@
 //! which is right for reading price action and wrong for anything that cares
 //! how long a move took.
 //!
-//! Qt exposes both — `QCandlestickSeries` attaches to a `QDateTimeAxis` or a
-//! `QBarCategoryAxis` — and the choice costs something there that it does not
-//! cost here. A `QBarCategoryAxis` is constructed from a `QStringList` the
-//! caller supplies **separately** from the sets' `timestamp` values, so a Qt
+//! The toolkit exposes both — candlestick series attaches to a date time axis
+//! or a bar category axis — and the choice costs something there that it does
+//! not cost here. A bar category axis is constructed from a string list the
+//! caller supplies **separately** from the sets' `timestamp` values, so a toolkit
 //! candlestick chart holds two descriptions of when its sessions were, in two
 //! objects, with nothing checking that they agree or even that they are the
 //! same length. Here the slot labels are *derived* from the instants by
@@ -27,9 +27,9 @@
 //! construction, so the two readings cannot disagree about their order or
 //! their names.
 //!
-//! # What else is past Qt 6.11
+//! # What else is past the toolkit 6.11
 //!
-//! * **The direction survives the loss of hue.** Qt encodes it in
+//! * **The direction survives the loss of hue.** the toolkit encodes it in
 //!   `increasingColor` / `decreasingColor` alone. Here it is *also* the body's
 //!   [`BodyFill`](crate::BodyFill) — hollow for a rise, solid for a fall, the
 //!   traditional Japanese form, which predates colour — and
@@ -46,15 +46,13 @@
 //!
 //! # Introspection
 //!
-//! Under `tag_prefix` (default `"chart"`), per candle `i`: `chart.candle.{i}`
-//! (the body), `chart.wick.{i}.hi` / `.lo`, and — when
-//! [`with_caps`](CandlestickChart::with_caps) is on, Qt's `capsVisible` —
-//! `chart.cap.{i}.hi` / `.lo`. The shared cartesian furniture keeps its usual
-//! tags. The x labels differ **by reading**, and deliberately: the ordinal
-//! reading emits one per slot (`chart.xlabel.{i}`, the bar chart's
-//! cardinality) and the elapsed reading one per tick
-//! (`chart.label.x.{k}`, the line chart's), because those are two different
-//! questions and collapsing them would make the tag lie about what it counts.
+//! Under `tag_prefix` (default `"chart"`), per candle `i`: `chart.candle.{i}` (the body), `chart.wick.{i}.hi` / `.lo`, and —
+//! when [`with_caps`](CandlestickChart::with_caps) is on, the toolkit's `capsVisible` — `chart.cap.{i}.hi` /
+//! `.lo`. The shared cartesian furniture keeps its usual tags. The x labels
+//! differ **by reading**, and deliberately: the ordinal reading emits one per
+//! slot (`chart.xlabel.{i}`, the bar chart's cardinality) and the elapsed reading one per
+//! tick (`chart.label.x.{k}`, the line chart's), because those are two different questions
+//! and collapsing them would make the tag lie about what it counts.
 //!
 //! # Coordinate contract
 //!
@@ -82,16 +80,16 @@ use crate::scale::{
 use crate::style::ChartStyle;
 use crate::ticks::{TickFormat, format_time_tick, tick_step};
 
-/// The fraction of a session's pitch the body occupies. Qt's
-/// `QCandlestickSeries::bodyWidth` defaults to `0.5`; a little wider reads
+/// The fraction of a session's pitch the body occupies. The toolkit's
+/// `bodyWidth` defaults to `0.5`; a little wider reads
 /// better against this crate's gap-free bands, and matches
 /// [`BoxPlotChart`](crate::BoxPlotChart)'s box so the two interval forms sit
 /// at the same weight in one dashboard.
 const BODY_WIDTH_FRAC: f32 = 0.6;
 
-/// The cap's width as a fraction of the body's — Qt's `capsWidth` default
-/// relative to `bodyWidth`, and the same subordinate proportion the box
-/// plot's whisker caps use.
+/// The cap's width as a fraction of the body's — the toolkit's `capsWidth` default
+/// relative to `bodyWidth`, and the same subordinate proportion the box plot's whisker
+/// caps use.
 const CAP_WIDTH_FRAC: f32 = 0.5;
 
 /// How many pitches wide the plot is assumed to be when a single session
@@ -102,20 +100,20 @@ const LONE_SESSION_PITCHES: f32 = 20.0;
 
 /// Which reading of the x-axis a candlestick chart is drawn on.
 ///
-/// The two are Qt's `QBarCategoryAxis` and `QDateTimeAxis`, reached there by
-/// attaching different axis objects and supplying the category names as a
-/// second data source. Here they are one declaration over one datum.
+/// The two are the toolkit's bar category axis and date time axis, reached
+/// there by attaching different axis objects and supplying the category names
+/// as a second data source. Here they are one declaration over one datum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionAxis {
     /// Each session is one equal slot, whatever real time separates it from
-    /// its neighbour (d3's `scaleBand`, Qt's `QBarCategoryAxis`).
+    /// its neighbour (d3's `scaleBand`, the toolkit's bar category axis).
     ///
     /// The default, because it is what a price chart is read on: the gap a
     /// weekend or a halt leaves is not information about the price, and
     /// drawing it spends pixels on paper the market was shut.
     #[default]
     Ordinal,
-    /// Real UTC time (R1529's [`AxisKind::Time`], Qt's `QDateTimeAxis`).
+    /// Real UTC time (R1529's [`AxisKind::Time`], the toolkit's date time axis).
     ///
     /// Every non-trading interval is visible as a gap, which is what a
     /// reader asking *how long* a move took needs and what a reader of price
@@ -173,7 +171,7 @@ impl CandlestickChart {
     ///
     /// **The sessions are sorted by instant**, stably. That is not tidying:
     /// both readings are derived from this one order, so sorting here is what
-    /// makes them agree by construction. `QCandlestickSeries::append` does not
+    /// makes them agree by construction. `append` does not
     /// sort, and its two axes disagree when the caller's insertion order does
     /// not match its timestamps — the category axis draws insertion order
     /// while the datetime axis draws time order, from the same sets.
@@ -220,16 +218,16 @@ impl CandlestickChart {
         self.reading
     }
 
-    /// Draw the x-axis as real UTC time (Qt's `QDateTimeAxis`) instead of
-    /// equal slots. See [`SessionAxis`].
+    /// Draw the x-axis as real UTC time (the toolkit's date time axis) instead
+    /// of equal slots. See [`SessionAxis`].
     #[must_use]
     pub const fn elapsed(mut self) -> Self {
         self.reading = SessionAxis::Elapsed;
         self
     }
 
-    /// Draw the x-axis as equal ordinal slots (Qt's `QBarCategoryAxis`) — the
-    /// default, stated explicitly.
+    /// Draw the x-axis as equal ordinal slots (the toolkit's bar category
+    /// axis) — the default, stated explicitly.
     #[must_use]
     pub const fn ordinal(mut self) -> Self {
         self.reading = SessionAxis::Ordinal;
@@ -240,10 +238,9 @@ impl CandlestickChart {
     ///
     /// **One declaration, both readings.** On the ordinal reading it narrows
     /// the category domain; on the elapsed reading it narrows the *time*
-    /// domain to the instants those indices carry. Qt needs two calls against
-    /// two axis objects, in two vocabularies (`QBarCategoryAxis::setRange`
-    /// takes category *strings*, `QDateTimeAxis::setRange` takes
-    /// `QDateTime`s), and nothing relates them.
+    /// domain to the instants those indices carry. The toolkit needs two calls
+    /// against two axis objects, in two vocabularies (`setRange` takes category
+    /// *strings*, `setRange` takes date times), and nothing relates them.
     #[must_use]
     pub const fn window(mut self, window: CategoryWindow) -> Self {
         self.window = Some(window);
@@ -276,17 +273,17 @@ impl CandlestickChart {
         self
     }
 
-    /// Draw the short horizontal caps at each session's high and low (Qt's
-    /// `QCandlestickSeries::capsVisible`, which also defaults to off).
+    /// Draw the short horizontal caps at each session's high and low (the
+    /// toolkit's `capsVisible`, which also defaults to off).
     #[must_use]
     pub const fn with_caps(mut self, caps: bool) -> Self {
         self.caps = caps;
         self
     }
 
-    /// Override the three direction colours (Qt has the first two as
-    /// `increasingColor` / `decreasingColor`; the third has no Qt equivalent
-    /// because a doji has no Qt name).
+    /// Override the three direction colours (the toolkit has the first two as
+    /// `increasingColor` / `decreasingColor`; the third has no the toolkit equivalent because a doji has
+    /// no the toolkit name).
     #[must_use]
     pub const fn with_direction_colors(
         mut self,
@@ -313,13 +310,12 @@ impl CandlestickChart {
     /// The WCAG contrast ratio between the rising and falling hues, `1.0` to
     /// `21.0`.
     ///
-    /// WCAG 2.2 §1.4.11 asks for at least `3.0` between a meaningful
-    /// graphical object and the colours adjacent to it, and the two candle
-    /// bodies are exactly that pair. Publishing it makes "a reader can tell
-    /// these apart" a thing a test can assert; Qt will paint any two brushes
-    /// and say nothing. Note this is the *hue* half only — the fill half
-    /// ([`Direction::body_fill`]) is what carries the distinction when hue is
-    /// gone altogether.
+    /// WCAG 2.2 §1.4.11 asks for at least `3.0` between a meaningful graphical
+    /// object and the colours adjacent to it, and the two candle bodies are
+    /// exactly that pair. Publishing it makes "a reader can tell these apart"
+    /// a thing a test can assert; the toolkit will paint any two brushes and
+    /// say nothing. Note this is the *hue* half only — the fill half ([`Direction::body_fill`])
+    /// is what carries the distinction when hue is gone altogether.
     #[must_use]
     pub fn direction_contrast(&self) -> f32 {
         contrast_ratio(self.rising, self.falling)
@@ -623,12 +619,11 @@ impl CandlestickChart {
     /// The narrowest positive gap between consecutive windowed instants —
     /// the pitch a body must fit inside for two sessions never to overlap.
     ///
-    /// The *minimum* rather than a mean: Qt clamps a mean-derived column
-    /// between `minimumColumnWidth` and `maximumColumnWidth`, which overlaps
-    /// wherever the data is irregular — and real session data is irregular by
-    /// construction, because a half-day before a holiday is a real bar.
-    /// `None` when no two sessions differ, which is the degenerate case
-    /// [`LONE_SESSION_PITCHES`] covers.
+    /// The *minimum* rather than a mean: the toolkit clamps a mean-derived
+    /// column between `minimumColumnWidth` and `maximumColumnWidth`, which overlaps wherever the data is
+    /// irregular — and real session data is irregular by construction, because
+    /// a half-day before a holiday is a real bar. `None` when no two sessions
+    /// differ, which is the degenerate case [`LONE_SESSION_PITCHES`] covers.
     fn min_pitch_ms(&self) -> Option<f64> {
         let mut best: Option<f64> = None;
         for pair in self.windowed().windows(2) {
@@ -654,7 +649,7 @@ impl CandlestickChart {
         // groups, where a stable axis is what makes them comparable, while
         // this one selects a contiguous stretch of ONE series, where an axis
         // covering the sessions off screen spends its range on prices nothing
-        // in view shows. Qt rescales neither.
+        // in view shows. The toolkit rescales neither.
         let measured = match self.y_kind {
             AxisKind::Log(_) => positive_candle_bounds(self.windowed()),
             AxisKind::Linear | AxisKind::Time | AxisKind::Category(_) => {
@@ -833,9 +828,9 @@ impl CandlestickChart {
     /// stated for a screen reader. `None` when nothing is inspected.
     ///
     /// It names the direction, which is the fact the picture encodes twice
-    /// (hue and fill) and a screen reader receives neither of. Qt's charts
-    /// implement no accessibility interface at all, so a Qt candlestick chart
-    /// announces nothing.
+    /// (hue and fill) and a screen reader receives neither of. The toolkit's
+    /// charts implement no accessibility interface at all, so a toolkit
+    /// candlestick chart announces nothing.
     #[must_use]
     pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
         let g = self.geom(rect, style);
@@ -865,8 +860,8 @@ const DEFAULT_RISING: Color = Color::rgb(0x00, 0xC8, 0x53);
 /// carried a second time by [`Direction::body_fill`].
 const DEFAULT_FALLING: Color = Color::rgb(0x8B, 0x1A, 0x1A);
 
-/// The doji hue — neutral, because a doji is neither, and Qt has no slot for
-/// it at all.
+/// The doji hue — neutral, because a doji is neither, and the toolkit has no
+/// slot for it at all.
 const DEFAULT_DOJI: Color = Color::rgb(0x8A, 0x92, 0x9E);
 
 /// The plot geometry, both scales, tick sets and body pitch a candlestick
@@ -954,8 +949,8 @@ mod tests {
     /// evenly pitched — the weekend is invisible. On the elapsed reading the
     /// last gap is three times the others, because three days passed.
     ///
-    /// Qt reaches the same two pictures by attaching two different axis
-    /// objects and supplying the category names as a SECOND data source.
+    /// The toolkit reaches the same two pictures by attaching two different
+    /// axis objects and supplying the category names as a SECOND data source.
     #[test]
     fn r1567_one_datum_two_readings_of_the_x_axis() {
         let style = ChartStyle::default();
@@ -992,8 +987,8 @@ mod tests {
     }
 
     /// ★ The slot names are DERIVED from the instants, so the two readings
-    /// cannot disagree about which session is which. Qt's category axis takes
-    /// a `QStringList` unrelated to the sets' timestamps.
+    /// cannot disagree about which session is which. The toolkit's category
+    /// axis takes a string list unrelated to the sets' timestamps.
     #[test]
     fn r1567_the_slot_names_come_from_the_instants() {
         let chart = week_chart();
@@ -1015,7 +1010,7 @@ mod tests {
 
     /// ★ The sessions are sorted by instant at construction, so a caller's
     /// insertion order cannot make the two readings disagree.
-    /// `QCandlestickSeries::append` does not sort, and its category axis then
+    /// `append` does not sort, and its category axis then
     /// draws insertion order while its datetime axis draws time order.
     #[test]
     fn r1567_the_order_is_the_instants_not_the_insertion() {
@@ -1032,8 +1027,8 @@ mod tests {
     }
 
     /// ★ The direction reaches the PAINT twice — once as hue, once as fill —
-    /// and the fill half is the one that survives a grayscale pipeline. Qt
-    /// encodes it in hue alone.
+    /// and the fill half is the one that survives a grayscale pipeline. The
+    /// toolkit encodes it in hue alone.
     ///
     /// The counterfactual is inside the test: if only hue carried it, the
     /// fill alpha would be constant across the six bodies.
@@ -1078,8 +1073,8 @@ mod tests {
         );
 
         // ...and the three inks are pairwise distinct, so the DOJI is not
-        // quietly wearing the falling colour — which is precisely what Qt
-        // does, having only two brushes to give it.
+        // quietly wearing the falling colour — which is precisely what the
+        // toolkit does, having only two brushes to give it.
         let chart = week_chart();
         let inks = [Direction::Rising, Direction::Falling, Direction::Doji]
             .map(|d| chart.direction_color(d));
@@ -1114,7 +1109,7 @@ mod tests {
     /// because it is the round's own finding: the *conventional* finance pair
     /// is nearly ISOLUMINANT, so a reader who loses hue loses everything.
     ///
-    /// Qt will paint any two brushes and say nothing, and its own
+    /// The toolkit will paint any two brushes and say nothing, and its own
     /// documentation offers no guidance beyond "the colour used when the
     /// close value is higher than the open value".
     #[test]
@@ -1149,9 +1144,9 @@ mod tests {
         );
     }
 
-    /// ★ One window declaration narrows BOTH readings. Qt needs two calls
-    /// against two axis objects, in two vocabularies, with nothing relating
-    /// them.
+    /// ★ One window declaration narrows BOTH readings. The toolkit needs two
+    /// calls against two axis objects, in two vocabularies, with nothing
+    /// relating them.
     ///
     /// The second half is the part a counterfactual found missing: asserting
     /// only *which* sessions are drawn cannot see a window that failed to
@@ -1308,7 +1303,7 @@ mod tests {
         assert!(count_prefix(&elapsed, "chart.grid.x.") > 0);
     }
 
-    /// ★ The caps are Qt's `capsVisible`, off by default, and they are their
+    /// ★ The caps are the toolkit's `capsVisible`, off by default, and they are their
     /// own addressable marks when on.
     #[test]
     fn r1567_the_caps_are_opt_in() {

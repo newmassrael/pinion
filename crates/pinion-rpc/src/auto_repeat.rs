@@ -7,13 +7,13 @@
 //!
 //! ## Why this method exists at all
 //!
-//! Qt has no peer, and the gap is structural rather than an omission.
-//! `QAbstractButton::autoRepeat()` answers a **static property of one
+//! The toolkit has no peer, and the gap is structural rather than an omission.
+//! `autoRepeat()` answers a **static property of one
 //! widget you already hold a pointer to**; the *run* — is this press
 //! repeating right now, how many times has it fired, when is the next one
-//! — lives in a private `QBasicTimer` inside `QAbstractButtonPrivate` and
+//! — lives in a private basic timer inside abstract button private and
 //! is observable only through its side effects. There is no
-//! application-wide enumeration of holds, and no way to ask a live Qt
+//! application-wide enumeration of holds, and no way to ask a live the toolkit
 //! application "is a button repeating?".
 //!
 //! For pinion that is not a nicety: §2 #2 makes the RPC plane the AI
@@ -89,7 +89,7 @@ pub struct AutoRepeatHoldOutcome {
     ///
     /// `false` is a real answer with three distinct causes, all of which
     /// an agent can then confirm from the widget's own introspection: the
-    /// widget never repeats (a plain `QPushButton` peer), it repeats but
+    /// widget never repeats (a plain push button peer), it repeats but
     /// has run out of range (a spin arrow at its bound), or it disabled
     /// itself mid-hold.
     pub repeating: bool,
@@ -100,19 +100,18 @@ pub struct AutoRepeatHoldOutcome {
     /// Repeats fired so far during this press. `0` for a press that has
     /// not yet outlived its delay, and for one that never will.
     pub fires: u32,
-    /// Declared hold before the first repeat, in seconds (Qt
+    /// Declared hold before the first repeat, in seconds (the toolkit
     /// `autoRepeatDelay`). Omitted while `repeating` is `false` — there
     /// is no cadence to report, and a `0` would read as "fires
     /// instantly".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delay_secs: Option<f32>,
-    /// Declared first repeat interval, in seconds (Qt
+    /// Declared first repeat interval, in seconds (the toolkit
     /// `autoRepeatInterval`). Omitted while not repeating.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interval_secs: Option<f32>,
-    /// Per-fire interval multiplier; `1.0` = Qt's fixed cadence, below
-    /// `1.0` = the peer of `QAbstractSpinBox::setAccelerated(true)`.
-    /// Omitted while not repeating.
+    /// Per-fire interval multiplier; `1.0` = the toolkit's fixed cadence, below
+    /// `1.0` = the peer of `setAccelerated(true)`. Omitted while not repeating.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accel: Option<f32>,
     /// Floor an accelerating cadence bottoms out at, in seconds. Equal to

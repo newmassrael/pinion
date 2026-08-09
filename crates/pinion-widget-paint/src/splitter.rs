@@ -139,9 +139,8 @@ impl SplitterOrientation {
 /// `disabled_alpha`) behind builders without breaking the
 /// constructor surface.
 ///
-/// Use [`Self::m3_default`] for the M3-canonical 4-px handle (the
-/// `VSCode` / `JetBrains` / Figma desktop default) tinted with
-/// [`ColorRole::Outline`] for visibility against any palette.
+/// Use [`Self::m3_default`] for the M3-canonical 4-px handle (the `the code editor` / `the IDE vendor` / the design tool
+/// desktop default) tinted with [`ColorRole::Outline`] for visibility against any palette.
 #[non_exhaustive]
 /// (R685.B §5.16) Lost `Copy` (was R683.B) when `tag` became
 /// `Cow<'static, str>` — `Cow::Owned(String)` is not `Copy`. `Clone`

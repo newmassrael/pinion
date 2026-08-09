@@ -473,13 +473,13 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_modal();
     }
 
-    // R1609 §5.40 — WAI-ARIA `aria-live`. Emitted only when declared, so a node
-    // that says nothing about liveness keeps the attribute absent rather than
-    // asserting `Off` — the same absent-vs-explicit distinction `aria-readonly`
-    // has, and it matters here because `Off` is a meaningful opt-out inside a
-    // live ancestor. Qt's peer is a fired `QAccessibleAnnouncementEvent`, which
-    // no widget in `qtbase/src/widgets` fires; a declaration is also the only
-    // form §2 #7 can report, since a fired event leaves nothing to read back.
+    // R1609 §5.40 — WAI-ARIA `aria-live`. Emitted only when declared, so a node that
+    // says nothing about liveness keeps the attribute absent rather than
+    // asserting `Off` — the same absent-vs-explicit distinction `aria-readonly` has, and it
+    // matters here because `Off` is a meaningful opt-out inside a live ancestor.
+    // The toolkit's peer is a fired accessible announcement event, which no
+    // widget in `the toolkit's widget module/src/widgets` fires; a declaration is also the only form §2 #7 can
+    // report, since a fired event leaves nothing to read back.
     if let Some(live) = access.live {
         node.set_live(live.to_accesskit());
     }
@@ -1445,9 +1445,9 @@ mod tests {
             &AccessNode::new("urgent", AriaRole::Group)
                 .with_live(crate::node::AccessLive::Assertive),
         );
-        // `Off` is why this axis is three-valued where Qt's politeness is two:
-        // a fired event has no "off", a declared region nested in a live
-        // ancestor does.
+        // `Off` is why this axis is three-valued where the toolkit's politeness
+        // is two: a fired event has no "off", a declared region nested in a
+        // live ancestor does.
         b.add(&AccessNode::new("optout", AriaRole::Group).with_live(crate::node::AccessLive::Off));
         let update = b.build(None);
 

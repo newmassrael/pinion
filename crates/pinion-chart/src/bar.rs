@@ -34,8 +34,8 @@
 //!
 //! [`CategoryScale`]: crate::CategoryScale
 //!
-//! What that bought beyond tidiness is [`BarChart::x_window`] — Qt's
-//! `QBarCategoryAxis::setRange`. A window narrows the axis domain, and
+//! What that bought beyond tidiness is [`BarChart::x_window`] — the toolkit's
+//! `setRange`. A window narrows the axis domain, and
 //! because everything above derives from the axis, the bars, their labels,
 //! their click surfaces and the inspect hit-test all follow with no further
 //! code.
@@ -176,8 +176,8 @@ pub struct BarChart {
     /// [`AxisKind::Category`](crate::AxisKind) the axis resolves from carries,
     /// and rebuilding it would clone `n` heap strings on every paint.
     categories: Categories,
-    /// R1545 — the visible slice of the category axis (Qt
-    /// `QBarCategoryAxis::setRange`). `None` shows every category.
+    /// R1545 — the visible slice of the category axis (the toolkit
+    /// `setRange`). `None` shows every category.
     x_window: Option<CategoryWindow>,
     tag_prefix: String,
 }
@@ -203,8 +203,8 @@ impl BarChart {
         }
     }
 
-    /// This chart's x-axis category list (R1545) — Qt's
-    /// `QBarCategoryAxis::categories`, derived from the bar labels.
+    /// This chart's x-axis category list (R1545) — the toolkit's
+    /// `categories`, derived from the bar labels.
     ///
     /// The entry point for resolving a [`x_window`](Self::x_window) by NAME:
     /// `chart.categories().window("Mar", "Aug")` answers a
@@ -215,8 +215,8 @@ impl BarChart {
         &self.categories
     }
 
-    /// Show only `window`'s slice of the category axis — Qt's
-    /// `QBarCategoryAxis::setRange(min, max)`, with the resolution already
+    /// Show only `window`'s slice of the category axis — the toolkit's
+    /// `setRange(min, max)`, with the resolution already
     /// done (see [`categories`](Self::categories)).
     ///
     /// The bars, their labels, their click surfaces and the inspect hit-test
@@ -224,10 +224,11 @@ impl BarChart {
     /// chart in 600px gives every bar 10px; windowed to twelve it gives each
     /// one 50px, which is the difference between a readable axis and a comb.
     ///
-    /// Qt takes the two endpoints as `QString`s and returns `void`, so a name
-    /// that is not a category leaves the axis silently unwindowed. Here the
-    /// name is resolved before it can reach the chart, so a typo is a value
-    /// the caller must handle rather than a chart that quietly ignored it.
+    /// The toolkit takes the two endpoints as strings and returns `void`, so a
+    /// name that is not a category leaves the axis silently unwindowed. Here
+    /// the name is resolved before it can reach the chart, so a typo is a
+    /// value the caller must handle rather than a chart that quietly ignored
+    /// it.
     #[must_use]
     pub const fn x_window(mut self, window: CategoryWindow) -> Self {
         self.x_window = Some(window);
@@ -239,8 +240,8 @@ impl BarChart {
     /// left, resolved through the same axis the bars are drawn from.
     ///
     /// `None` when the chart carries no category, or when the window has
-    /// closed past every one of them. Qt has no equivalent: a
-    /// `QBarCategoryAxis` reports `count()` (all of them) and the min/max
+    /// closed past every one of them. The toolkit has no equivalent: a
+    /// bar category axis reports `count()` (all of them) and the min/max
     /// names it was *set* to, never which slots a live window is showing.
     #[must_use]
     pub fn visible_categories(&self, rect: Rect, style: &ChartStyle) -> Option<CategoryWindow> {
@@ -506,8 +507,8 @@ impl BarChart {
             &y_pos,
             // A bar encodes magnitude by length from a ZERO baseline, and a
             // log axis has no zero — so this axis is linear by construction
-            // and takes the constant-step format (R1528). Qt permits a log
-            // bar chart; the length encoding is what makes it a lie.
+            // and takes the constant-step format (R1528). The toolkit permits
+            // a log bar chart; the length encoding is what makes it a lie.
             &TickFormat::Step(g.y_step),
             style,
             &self.tag_prefix,
@@ -564,7 +565,7 @@ impl BarChart {
         // the nearer domain edge.
         let baseline_y = y.map(0.0_f64.clamp(y_lo, y_hi));
         // R1545 — the x-axis. Its domain is the category window when one is
-        // set (Qt `QBarCategoryAxis::setRange`), else the whole band run; the
+        // set (the toolkit `setRange`), else the whole band run; the
         // slot width the bars are sized from is the axis's own band width, so
         // "how wide is a bar" and "where is category i" answer from one place.
         let domain = self
@@ -859,7 +860,8 @@ mod tests {
             wide > narrow * 2,
             "3 of 12 -> 4 of 12 visible should widen a lot: {narrow} -> {wide}"
         );
-        // And the visible window is reportable — what Qt's axis cannot answer.
+        // And the visible window is reportable — what the toolkit's axis
+        // cannot answer.
         assert_eq!(
             windowed.visible_categories(rect, &style),
             Some(CategoryWindow::new(2, 5))

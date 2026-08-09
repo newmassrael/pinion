@@ -45,7 +45,7 @@ impl MonospaceMetrics for LayoutCacheMonospaceMetrics {
 
 /// R1453 §5.36 — a [`TextMetrics`] provider backed by a dedicated
 /// [`LayoutCache`]: the parley-backed answer to "how wide is this string in
-/// this style", Qt's `QFontMetrics::horizontalAdvance` / `boundingRect`.
+/// this style", the toolkit's `horizontalAdvance` / `boundingRect`.
 ///
 /// Separate from [`LayoutCacheMonospaceMetrics`] rather than folded into it:
 /// the two answer different questions (one cell of a fixed-pitch face at a

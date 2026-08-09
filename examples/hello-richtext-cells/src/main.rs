@@ -1,5 +1,5 @@
-//! `hello-richtext-cells` — R1560 §5.36 consumer of the **table**: a document
-//! whose cells are addressed by their place in the flow (Qt `QTextTable`).
+//! `hello-richtext-cells` — R1560 §5.36 consumer of the **table**: a document whose cells are
+//! addressed by their place in the flow (the toolkit text table).
 //!
 //! ## What this demonstrates
 //!
@@ -15,8 +15,8 @@
 //!   author wrote changes for the cells that follow, and every one of them
 //!   re-addresses — a whole row further down. That is the feature, in one
 //!   click;
-//! * the note declares a span of **nine columns** in a three-column table. Qt's
-//!   `QTextTable::mergeCells` returns `void` and silently does nothing when a
+//! * the note declares a span of **nine columns** in a three-column table. The toolkit's
+//!   `mergeCells` returns `void` and silently does nothing when a
 //!   merge does not fit; here the span is clamped to the free run and the ask
 //!   survives beside the result, so `scene/text_tables` reports
 //!   `column_span: 3, declared_column_span: 9, clamped: true`;
@@ -25,22 +25,22 @@
 //!   free run, not the row's remaining width — two different numbers, and the
 //!   only pair that tells the two rules apart;
 //! * that leaves the topic slot of the last row with no cell at all — a state
-//!   `QTextTable` cannot be in, because `insertRows` fills its grid.
+//!   text table cannot be in, because `insertRows` fills its grid.
 //!
 //! ## Verification (substrate-first)
 //!
 //! * `scene/text_tables` publishes each table with its shape, its slack and
-//!   every cell's address and painted box — a census Qt has no accessor for at
-//!   all (finding a `QTextDocument`'s tables means walking the frame tree
+//!   every cell's address and painted box — a census the toolkit has no accessor for at
+//!   all (finding a text document's tables means walking the frame tree
 //!   `qobject_cast`-ing each child, in-process);
 //! * `scene/snapshot` carries the same derivation on each paragraph node, so
 //!   the two introspection channels check each other rather than restating one
 //!   derivation;
 //! * `scene/access` carries the WAI-ARIA `table` / `row` / `cell` structure
 //!   with `aria-rowindex` / `aria-colindex` / `aria-rowspan` and the
-//!   `columnheader` / `rowheader` bands. A `QTextTable` reaches no
-//!   accessibility interface at all — `QAccessibleTextInterface` has no method
-//!   that reports block structure — so to a screen reader a Qt document's table
+//!   `columnheader` / `rowheader` bands. A text table reaches no
+//!   accessibility interface at all — accessible text interface has no method
+//!   that reports block structure — so to a screen reader a toolkit document's table
 //!   is an undifferentiated run of paragraphs;
 //! * this crate's own tests lay out and paint the SAME scene through the
 //!   terminal backend. A table is an ordinary grid container, so the cell
@@ -93,11 +93,11 @@ const ROW_GAP: u32 = 14;
 /// be clamped against.
 const COLUMNS: u16 = 3;
 /// The day column's width. Fixed, because a row label reads better in a band
-/// that does not move when a topic gets longer — Qt's
-/// `QTextLength::FixedLength`.
+/// that does not move when a topic gets longer — the toolkit's
+/// `FixedLength`.
 const DAY_COL_PX: u32 = 90;
 /// The room column's width, as a fraction of what is left over — CSS `fr`,
-/// which Qt's column constraints have no equivalent for.
+/// which the toolkit's column constraints have no equivalent for.
 const ROOM_COL_FR: f32 = 1.0;
 /// The topic column's share. Twice the room's, so the wide text gets the space.
 const TOPIC_COL_FR: f32 = 2.0;
@@ -201,8 +201,8 @@ pub fn blocks(base: &TextStyle, on_surface: Color, muted: Color, noting: bool) -
         // that has not been written yet — and Tuesday's cells step around it.
         TextBlock::new(ROOM_A).in_cell(CellSpec::new(week_format(muted)).spanning_rows(2)),
         cell(TOPIC_KICKOFF, muted),
-        // A second paragraph in the SAME cell — Qt's cell is a frame of blocks,
-        // and this is the flat-sequence spelling of that.
+        // A second paragraph in the SAME cell — the toolkit's cell is a frame
+        // of blocks, and this is the flat-sequence spelling of that.
         TextBlock::new(KICKOFF_NOTE)
             .with_style(base.clone().with_fg(muted))
             .in_cell(CellSpec::new(week_format(muted)).continued()),
@@ -473,8 +473,8 @@ mod tests {
     }
 
     /// A cell that reaches down into a row nobody has written yet pushes the
-    /// next row's cells aside — the case a nest of flex rows cannot express and
-    /// Qt makes the caller `mergeCells` by hand.
+    /// next row's cells aside — the case a nest of flex rows cannot express
+    /// and the toolkit makes the caller `mergeCells` by hand.
     #[test]
     fn r1560_a_two_day_booking_pushes_tuesdays_cells_aside() {
         let scene = scene_for(false);
@@ -490,7 +490,7 @@ mod tests {
     }
 
     /// The span that does not fit is clamped, and the ask survives beside the
-    /// result — the distinction Qt's `void mergeCells` throws away.
+    /// result — the distinction the toolkit's `void mergeCells` throws away.
     #[test]
     fn r1560_the_notes_impossible_span_is_clamped_and_named() {
         let scene = scene_for(true);

@@ -8,7 +8,7 @@
 //! explicitly ratifies ("`wgpu-fallback` feature for dev"), which is
 //! the textbook canonical first slice for AI-first introspection
 //! ([[ai-first-rpc-introspection-obligation]]) — the AI agent (and
-//! the Figma → pinion design-parity workflow R634/R635/R636 just
+//! the design tool → pinion design-parity workflow R634/R635/R636 just
 //! landed) need a way to capture the live paint scene as pixels
 //! without spinning a winit window the binary may not be allowed to
 //! open (CI, headless dev box, AI environment).
@@ -46,7 +46,7 @@
 //!   binary (the R637 hook in [`crate::run`]) — first-paint scene
 //!   rendered + written to `<path>` + process exits, no winit window
 //!   opened.
-//! - Future R638+ `pinion figma-diff` CLI calling the substrate
+//! - Future R638+ `pinion the design tool-diff` CLI calling the substrate
 //!   directly to render scene fragments for byte-golden comparison.
 //! - Future `scene/screenshot` RPC wiring — the live `AppShell` already
 //!   owns a wgpu `Device` / `Queue`; a follow-up round can plumb
@@ -4228,10 +4228,10 @@ mod tests {
     /// R1510 §5.36 §5.49 — the pixel half of "a header dresses the sections the
     /// selection reaches", for the level that can have one.
     ///
-    /// `Full` is Qt's `State_Sunken` — the selection covers the whole section —
-    /// and this theme paints it by accenting the label. Only that level: an
-    /// unhighlighted section and a partially-selected one both ink their label in
-    /// `OnSurface`, which is what makes the accent a witness for the LEVEL rather
+    /// `Full` is the toolkit's `State_Sunken` — the selection covers the whole section — and
+    /// this theme paints it by accenting the label. Only that level: an
+    /// unhighlighted section and a partially-selected one both ink their label
+    /// in `OnSurface`, which is what makes the accent a witness for the LEVEL rather
     /// than for the highlight in general.
     ///
     /// Renders the PRODUCTION cell (`view_header_cell`, the function

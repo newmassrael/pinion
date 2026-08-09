@@ -1,9 +1,8 @@
 //! `hello-time-chart` — R1529 §5.38 the x-axis can be **UTC time**.
 //!
-//! The forcing consumer for [`pinion_chart::LineChart::x_time`], the crate's
-//! third axis kind (Qt's `QDateTimeAxis`, d3's `scaleUtc`). Until R1529 a
-//! timestamp reaching a `pinion-chart` axis was a plain number, and the axis
-//! every monitoring chart has could not be drawn.
+//! The forcing consumer for [`pinion_chart::LineChart::x_time`], the crate's third axis kind (the toolkit's
+//! date time axis, d3's `scaleUtc`). Until R1529 a timestamp reaching a `pinion-chart` axis was
+//! a plain number, and the axis every monitoring chart has could not be drawn.
 //!
 //! ## What the toggle shows, and why it is two defects
 //!
@@ -124,9 +123,9 @@ const SERIES_COLORS: [Color; 2] = [Color::rgb(0x42, 0x85, 0xf4), Color::rgb(0xea
 /// Request latency (ms) over the incident window, sampled every ten minutes.
 ///
 /// The x-channel is an epoch millisecond — the unit
-/// [`LineChart::x_time`](pinion_chart::LineChart::x_time) reads, matching Qt's
-/// `QDateTimeAxis` and d3's `scaleUtc`. The shape is incidental to the round;
-/// what matters is that x is a real instant.
+/// [`LineChart::x_time`](pinion_chart::LineChart::x_time) reads, matching the toolkit's date
+/// time axis and d3's `scaleUtc`. The shape is incidental to the round; what matters
+/// is that x is a real instant.
 #[allow(
     clippy::cast_precision_loss,
     reason = "sample index (0..25) -> f64 offset is exact"
@@ -415,9 +414,8 @@ impl ExternalIntrospect for PlotZoomExternal {
         Err(pinion_core::external::InterveneError::ReadOnly)
     }
 
-    /// `reset` — `QtCharts`' `zoomReset`. Answers whether it had to do anything,
-    /// so a key binding can decline `Escape` on an unzoomed plot instead of
-    /// swallowing it.
+    /// `reset` — `the toolkit's charting module`' `zoomReset`. Answers whether it had to do anything, so a key binding
+    /// can decline `Escape` on an unzoomed plot instead of swallowing it.
     fn invoke(
         &mut self,
         path: &str,
@@ -624,10 +622,10 @@ impl WidgetCore for TimeChartView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        // R1534 — Escape resets the zoom (QtCharts' `zoomReset`), and only
-        // CONSUMES the key when there was a zoom to reset: a binding that
-        // swallowed Escape on an unzoomed plot would shadow whatever else the
-        // app wants it for.
+        // R1534 — Escape resets the zoom (the toolkit's charting module' `zoomReset`),
+        // and only CONSUMES the key when there was a zoom to reset: a binding
+        // that swallowed Escape on an unzoomed plot would shadow whatever else
+        // the app wants it for.
         if key == "Escape" {
             let reset = scene
                 .find_external_with_tag_mut(PLOT_TAG)

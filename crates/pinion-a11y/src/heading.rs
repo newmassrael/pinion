@@ -16,15 +16,15 @@
 //! paints a block, including ones that do not exist yet, where a parameter
 //! threaded through a builder reaches only that builder.
 //!
-//! ## Qt has the declaration and not the announcement
+//! ## the toolkit has the declaration and not the announcement
 //!
-//! `QTextBlockFormat::setHeadingLevel()` has existed since Qt 5.15 and Qt's
-//! Markdown reader sets it. But the accessibility surface a `QTextEdit`
-//! implements is `QAccessibleTextInterface`, whose vocabulary is character
-//! offsets, selections, ranges and text attributes; it has **no method that
-//! reports block structure**, so those heading levels reach `QTextDocumentLayout`
-//! (which draws them larger) and stop. The information exists in the document
-//! and never reaches the user who most needs it.
+//! `setHeadingLevel()` has existed since the toolkit 5.15 and the toolkit's Markdown reader
+//! sets it. But the accessibility surface a text edit implements is accessible
+//! text interface, whose vocabulary is character offsets, selections, ranges
+//! and text attributes; it has **no method that reports block structure**, so
+//! those heading levels reach text document layout (which draws them larger)
+//! and stop. The information exists in the document and never reaches the user
+//! who most needs it.
 //!
 //! ## The walk is [`Scene::for_each_text_leaf`]
 //!

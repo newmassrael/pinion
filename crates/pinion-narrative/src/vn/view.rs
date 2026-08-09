@@ -432,8 +432,8 @@ mod tests {
             // NAME, and `vn_scene` names none, so the unset style still shaped
             // .notdef and the line stayed one row.
             //
-            // The missing half was `set_default_font_family` (Qt's
-            // `QApplication::setFont`) — the same pair `hello-vn-tide` now makes
+            // The missing half was `set_default_font_family` (the toolkit's
+            // `setFont`) — the same pair `hello-vn-tide` now makes
             // at boot, so what this measures is what the binding ships rather
             // than a test-only arrangement. `pinion-text`'s `font_less_host`
             // fixture pins the resolution rule itself on a host built to have

@@ -15,7 +15,7 @@
 //! fill, 2-px border, `corner_radius = 12` for a true circle) each
 //! with a `(state, selected)`-driven border colour. Selected rings
 //! carry a centred 12×12 filled dot child — the Material / `SwiftUI`
-//! / Qt convention hello-radio already uses, replicated three times
+//! / the toolkit convention hello-radio already uses, replicated three times
 //! under the composite group. Each row pairs the ring with a
 //! `"Tier {0|1|2}"` label so the multi-radio picker reads at a
 //! glance.

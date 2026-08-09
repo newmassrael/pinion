@@ -3,42 +3,39 @@
 //! # Why this module exists
 //!
 //! Selecting by dragging a shape over what is drawn is one gesture that every
-//! canvas has: a node editor's marquee and lasso, a timeline's range, a chart's
-//! brush, a diagram editor's rubber band. The framework had exactly one of the
-//! shapes — [`Scene::hit_test_region`](crate::scene::Scene::hit_test_region)
-//! takes a rectangle — and exactly one of the two things you can mean by
-//! "covered": *touches*. R1590 measured the absence from the other end, against
-//! Blender's `NODE_OT_select_circle` and `NODE_OT_select_lasso`, and recorded
-//! that those are not node-graph capabilities at all: they test a region
-//! against `node->runtime->draw_bounds`, the **drawn** rectangle, which is a
+//! canvas has: a node editor's marquee and lasso, a timeline's range, a
+//! chart's brush, a diagram editor's rubber band. The framework had exactly
+//! one of the shapes — [`Scene::hit_test_region`](crate::scene::Scene::hit_test_region) takes a
+//! rectangle — and exactly one of the two things you can mean by "covered":
+//! *touches*. R1590 measured the absence from the other end, against the DCC's
+//! `NODE_OT_select_circle` and `NODE_OT_select_lasso`, and recorded that those are not node-graph capabilities at
+//! all: they test a region against `node->runtime->draw_bounds`, the **drawn** rectangle, which is a
 //! question for the layer that knows what was painted where. This is that
 //! layer.
 //!
 //! # A value, not a pen
 //!
-//! Qt's floor is `QGraphicsScene::items(const QPainterPath &, Qt::ItemSelectionMode)`
-//! and its `QPolygonF` overload, so arbitrary-shape queries exist there. What
-//! is different here is that a [`Region`] is a **value** — comparable, copyable,
-//! with no interior state — and therefore expressible on a wire: `scene/locate`
-//! takes one, so something with no pointer at all can ask what a lasso covers.
-//! A `QPainterPath` is an opaque mutable object that can only be built
-//! in-process, which is why no Qt application can be asked that from outside it.
-//! (The wire spelling lives in `pinion-rpc`, beside every other scene type's —
-//! [`Rect`] itself is not `serde` either.)
+//! The toolkit's floor is `items(const painter path &, ItemSelectionMode)` and its polygon F overload, so arbitrary-shape
+//! queries exist there. What is different here is that a [`Region`] is a **value**
+//! — comparable, copyable, with no interior state — and therefore expressible
+//! on a wire: `scene/locate` takes one, so something with no pointer at all can ask what
+//! a lasso covers. A painter path is an opaque mutable object that can only be
+//! built in-process, which is why no the toolkit application can be asked that
+//! from outside it. (The wire spelling lives in `pinion-rpc`, beside every other scene
+//! type's — [`Rect`] itself is not `serde` either.)
 //!
 //! # The fit belongs to the question
 //!
-//! [`RegionFit`] is an argument. Qt's rubber band takes its mode from
-//! `QGraphicsView::rubberBandSelectionMode`, a **view property**, so two
-//! selections in one view cannot mean different things and nothing records which
-//! mode a given selection used.
+//! [`RegionFit`] is an argument. The toolkit's rubber band takes its mode from `rubberBandSelectionMode`, a
+//! **view property**, so two selections in one view cannot mean different
+//! things and nothing records which mode a given selection used.
 //!
-//! Qt's `Qt::ItemSelectionMode` has four arms because it crosses
-//! contains/intersects with shape/bounding-rect. Here there are two, and that is
-//! a fact about this framework rather than an omission: a [`Scene`] node's
-//! extent *is* a [`Rect`] — every hit test in the tree, including the pointer's,
-//! is rectangular — so an item's shape and its bounding rectangle are the same
-//! thing and the other two arms would be aliases.
+//! The toolkit's `ItemSelectionMode` has four arms because it crosses contains/intersects with
+//! shape/bounding-rect. Here there are two, and that is a fact about this
+//! framework rather than an omission: a [`Scene`] node's extent *is* a [`Rect`] —
+//! every hit test in the tree, including the pointer's, is rectangular — so an
+//! item's shape and its bounding rectangle are the same thing and the other
+//! two arms would be aliases.
 //!
 //! # Integer arithmetic, on purpose
 //!
@@ -75,17 +72,17 @@ impl Point {
 
 /// Whether a node has to be *inside* the region or merely to *touch* it.
 ///
-/// Qt's `Qt::ItemSelectionMode`, minus the two arms that would be aliases here —
-/// see the module docs.
+/// The toolkit's `ItemSelectionMode`, minus the two arms that would be aliases here — see the
+/// module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RegionFit {
-    /// The node shares at least one pixel with the region. Qt's
+    /// The node shares at least one pixel with the region. The toolkit's
     /// `IntersectsItemShape`, and what
     /// [`Scene::hit_test_region`](crate::scene::Scene::hit_test_region) has
     /// always meant.
     #[default]
     Intersects,
-    /// The region covers the whole node. Qt's `ContainsItemShape`.
+    /// The region covers the whole node. The toolkit's `ContainsItemShape`.
     Contains,
 }
 
@@ -114,7 +111,7 @@ pub enum Region {
         /// Bottom-right, inclusive.
         max: Point,
     },
-    /// A disc. Blender's `NODE_OT_select_circle`, and the shape a brush tool
+    /// A disc. The DCC's `NODE_OT_select_circle`, and the shape a brush tool
     /// paints a selection with.
     Circle {
         /// Centre.
@@ -122,13 +119,13 @@ pub enum Region {
         /// Radius, in pixels. Zero covers nothing.
         radius: u32,
     },
-    /// A closed polygon, in the order it was drawn. Blender's
+    /// A closed polygon, in the order it was drawn. The DCC's
     /// `NODE_OT_select_lasso`.
     ///
     /// **Closed by derivation**: the last vertex joins the first, so a caller
-    /// never repeats a point to close the loop — the way Qt's `QPolygonF` and
-    /// Blender's own lasso buffer both require. Repeating it is harmless; it
-    /// adds a zero-length edge.
+    /// never repeats a point to close the loop — the way the toolkit's polygon
+    /// F and the DCC's own lasso buffer both require. Repeating it is
+    /// harmless; it adds a zero-length edge.
     ///
     /// May be concave and may cross itself; the interior is decided by the
     /// even-odd rule, which is what a hand-drawn lasso means.
@@ -141,10 +138,9 @@ pub enum Region {
 pub enum RegionError {
     /// A lasso with fewer than three vertices, which bounds no area.
     ///
-    /// Named rather than answered with an empty result. Qt's
-    /// `QGraphicsScene::items(QPolygonF, ..)` returns a `QList`, which has no
-    /// channel for this — so there, "your lasso was degenerate" and "nothing is
-    /// there" are the same value.
+    /// Named rather than answered with an empty result. The toolkit's `items(polygon F, ..)`
+    /// returns a list, which has no channel for this — so there, "your lasso
+    /// was degenerate" and "nothing is there" are the same value.
     LassoTooShort {
         /// How many vertices it had.
         vertices: usize,
@@ -394,9 +390,8 @@ impl Region {
 
     /// Whether a point is inside the region.
     ///
-    /// Even-odd for a lasso, which is what a hand-drawn loop that crosses itself
-    /// means, and what SVG's `fill-rule: evenodd` and Blender's own lasso both
-    /// use.
+    /// Even-odd for a lasso, which is what a hand-drawn loop that crosses
+    /// itself means, and what SVG's `fill-rule: evenodd` and the DCC's own lasso both use.
     #[must_use]
     pub fn holds(&self, point: Point) -> bool {
         match self {
@@ -528,7 +523,7 @@ mod tests {
     use super::{Point, Region, RegionError, RegionFit};
     use crate::scene::Rect;
 
-    /// Blender's `NODE_OT_select_circle` rule, over these types: a rect is
+    /// The DCC's `NODE_OT_select_circle` rule, over these types: a rect is
     /// selected when the disc intersects it (`BLI_rctf_isect_circle` against
     /// `node->runtime->draw_bounds`). Present so the agreement is asserted
     /// rather than assumed — the divergence is the FIT, not the geometry.
@@ -569,7 +564,7 @@ mod tests {
             disc.covers(swallowed, RegionFit::Intersects),
             "and touching too"
         );
-        // Agreement with Blender on the geometry itself.
+        // Agreement with the DCC on the geometry itself.
         for rect in [straddling, swallowed, Rect::new(0, 0, 5, 5)] {
             assert_eq!(
                 disc.covers(rect, RegionFit::Intersects),

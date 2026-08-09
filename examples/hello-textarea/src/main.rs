@@ -54,15 +54,13 @@
 //! `field_shaping` SSOT so paint and caret/hit-test geometry shape one
 //! identical run-aware `Layout`.
 //!
-//! R768 adds **apply-to-selection**: a colour-swatch toolbar under the
-//! field. Select a range, click a swatch → that span takes the swatch's
-//! colour via
-//! [`TextEditState::apply_style_run`](pinion_core::widgets::text_edit::TextEditState::apply_style_run)
-//! (Qt `setCharFormat` semantics — the overlay carves existing runs and
-//! merges abutting identical spans); the clear swatch strips formatting.
-//! The same operation is the AI-first `apply-style` / `clear-style`
-//! invoke funnel on [`TextFieldExternal`], so a `scene/invoke` drives the
-//! identical path. A runs-only change (no text edit) repaints through the
+//! R768 adds **apply-to-selection**: a colour-swatch toolbar under the field.
+//! Select a range, click a swatch → that span takes the swatch's colour via
+//! [`TextEditState::apply_style_run`](pinion_core::widgets::text_edit::TextEditState::apply_style_run) (the
+//! toolkit `setCharFormat` semantics — the overlay carves existing runs and merges
+//! abutting identical spans); the clear swatch strips formatting. The same
+//! operation is the AI-first `apply-style` / `clear-style` invoke funnel on [`TextFieldExternal`], so a `scene/invoke` drives
+//! the identical path. A runs-only change (no text edit) repaints through the
 //! reactive `style_runs` `Signal`.
 //!
 //! R769 adds **field-level merge** (`mergeCharFormat`): **B** / **I**
@@ -88,23 +86,19 @@
 //!
 //! R799 makes the formatting toolbar a **framework-routed, non-focusable
 //! [`Toolbar`](pinion_core::widgets::toolbar::Toolbar) widget** instead of
-//! hand-rolled decoration. The R768/R769 toolbar was a row of tagged
-//! `BoxNode`s that the caret press hook scanned by hand (`hit_tag` /
-//! `try_toolbar_press`) — an application re-implementing the
-//! `InputRouter`. Now the strip is a [`ToolbarExternal`] sibling: its six
-//! controls paint with the composite tags `fmt_toolbar#<i>`, so the router
-//! dispatches a click to the External, which emits a `"command"` intent
-//! [`TextAreaView::update`] maps to the same `merge_style_run` /
-//! `apply_style_run` / `clear_style_runs` op on the live selection. Two
-//! framework axes compose to give the editor's canonical behaviour with no
-//! new substrate: *routing* (the `InputRouter`, by composite tag) applies
-//! the format, while *focus* (the scene-derived `.with_focusable(true)`
-//! Tab-stop set) leaves
-//! the strip out, so the W3C / Qt-`NoFocus` rule the shell encodes means a
-//! control click never steals the field's focus — the selection survives.
-//! The B / I "pressed" state is reflective: the cell paints a tonal fill
-//! read from the selection's `style_at`, so the toolbar mirrors the
-//! document rather than owning a toggle bit.
+//! hand-rolled decoration. The R768/R769 toolbar was a row of tagged `BoxNode`s that
+//! the caret press hook scanned by hand (`hit_tag` / `try_toolbar_press`) — an application
+//! re-implementing the `InputRouter`. Now the strip is a [`ToolbarExternal`] sibling: its six controls
+//! paint with the composite tags `fmt_toolbar#<i>`, so the router dispatches a click to the
+//! External, which emits a `"command"` intent [`TextAreaView::update`] maps to the same `merge_style_run` / `apply_style_run` / `clear_style_runs`
+//! op on the live selection. Two framework axes compose to give the editor's
+//! canonical behaviour with no new substrate: *routing* (the `InputRouter`, by
+//! composite tag) applies the format, while *focus* (the scene-derived `.with_focusable(true)`
+//! Tab-stop set) leaves the strip out, so the W3C / the toolkit-`NoFocus` rule the
+//! shell encodes means a control click never steals the field's focus — the
+//! selection survives. The B / I "pressed" state is reflective: the cell
+//! paints a tonal fill read from the selection's `style_at`, so the toolbar mirrors
+//! the document rather than owning a toggle bit.
 //!
 //! R928 makes **formatting itself undoable**. R798's undo covered typing
 //! and run-reversal-on-delete, but the toolbar's `apply_style_run` /
@@ -203,18 +197,17 @@ const INK_GREEN: Rgb = (0x1F, 0x8A, 0x34);
 const INK_BLUE: Rgb = (0x26, 0x4C, 0xD8);
 
 // R799 §5.36 §5.22 §5.38 — the formatting toolbar is a *framework-routed*
-// control strip (a non-focusable [`ToolbarExternal`] extra-external), not
-// the hand-rolled decoration the pre-R799 binding scanned by hand. Each
-// control is painted with the composite tag `fmt_toolbar#<i>`, so the
-// InputRouter hit-tests it and dispatches the click to the toolbar
-// External — which emits a `"command"` intent the reducer maps to a format
-// op on the live selection. The old manual `hit_tag` / `try_toolbar_press`
-// rect-scan (an application re-implementing the router) is gone. Because
-// the strip is *not* marked `.with_focusable(true)`, clicking a control
-// applies formatting without stealing the field's focus — the W3C / Qt
-// `NoFocus` rule the shell already encodes (only focusable tags focus on
-// press) supplies the no-focus-steal the decoration used to need by
-// construction, so the selection survives the click.
+// control strip (a non-focusable [`ToolbarExternal`] extra-external), not the hand-rolled
+// decoration the pre-R799 binding scanned by hand. Each control is painted
+// with the composite tag `fmt_toolbar#<i>`, so the InputRouter hit-tests it and dispatches
+// the click to the toolbar External — which emits a `"command"` intent the reducer
+// maps to a format op on the live selection. The old manual `hit_tag` / `try_toolbar_press`
+// rect-scan (an application re-implementing the router) is gone. Because the
+// strip is *not* marked `.with_focusable(true)`, clicking a control applies formatting without
+// stealing the field's focus — the W3C / the toolkit `NoFocus` rule the shell
+// already encodes (only focusable tags focus on press) supplies the
+// no-focus-steal the decoration used to need by construction, so the selection
+// survives the click.
 //
 // Control indices (parallel to the `ToolItem::Command` strip + the paint):
 //   0 bold · 1 italic · 2 red · 3 green · 4 blue · 5 clear
@@ -285,7 +278,7 @@ fn base_text_style(theme: &pinion_core::theme::Theme, interaction: TextFieldStat
 /// *reflective* toggle state read from the selection (`style_at`) — the
 /// toolbar owns no format state, it mirrors the document — so the B / I
 /// cell paints a tonal fill when the selection start already carries that
-/// style (Qt's "the bold action is checked when the cursor is in bold
+/// style (the toolkit's "the bold action is checked when the cursor is in bold
 /// text"). `view_toolbar` (the label-only strip) is deliberately not
 /// reused: the colour swatches diverge in paint, so the shared substrate
 /// is the External routing + intent model, not the label paint (R773).

@@ -28,21 +28,19 @@
 //! exposes an un-built row before the next frame lands. The consumer
 //! builds scene nodes for **only** that window.
 //!
-//! The matching scroll bound is preserved by a full-height *sizer* —
-//! see [`content_height`] and
+//! The matching scroll bound is preserved by a full-height *sizer* — see [`content_height`]
+//! and
 //! [`view_virtual_list`](../../../pinion_widget_paint/virtual_list/fn.view_virtual_list.html)
-//! in `pinion-widget-paint`, which positions the windowed rows
-//! absolutely inside a container sized to `item_count × row_pitch`. The
-//! runtime layout pass then reads that sizer's height into
-//! [`ScrollState::set_max`](crate::widgets::scroll::ScrollState::set_max)
-//! exactly as it does for a fully-materialized column, so the scrollbar
-//! peer sizes its thumb against the *total* extent while only the
-//! visible window exists in the tree. This is the canonical
-//! "spacer-of-total-height + absolutely-positioned visible items"
-//! technique web virtualizers (`react-window` `FixedSizeList`, Qt
-//! `QListView` with `uniformItemSizes`, Flutter `ListView.builder` with
-//! `itemExtent`) all converge on — adapted to pinion's existing scroll
-//! substrate with **zero** changes to scroll, layout, or the scrollbar.
+//! in `pinion-widget-paint`, which positions the windowed rows absolutely inside a container
+//! sized to `item_count × row_pitch`. The runtime layout pass then reads that sizer's height into
+//! [`ScrollState::set_max`](crate::widgets::scroll::ScrollState::set_max) exactly as it does for
+//! a fully-materialized column, so the scrollbar peer sizes its thumb against
+//! the *total* extent while only the visible window exists in the tree. This
+//! is the canonical "spacer-of-total-height + absolutely-positioned visible
+//! items" technique web virtualizers (`react-window` `FixedSizeList`, the toolkit list view with `uniformItemSizes`,
+//! another retained-mode toolkit `ListView.builder` with `itemExtent`) all converge on — adapted to
+//! pinion's existing scroll substrate with **zero** changes to scroll, layout,
+//! or the scrollbar.
 //!
 //! ## Scope of this slice (honest boundaries)
 //!
@@ -59,7 +57,7 @@
 //!   same capability the IR variant wants (see the §5.27 note).
 //! - **No selection / sort / `Model` trait.** The "model" is the
 //!   consumer's `item_count` plus a `FnMut(usize) -> Scene` row builder
-//!   (the Flutter / `react-window` shape), not a retained trait object.
+//!   (the retained-mode toolkit / `react-window` shape), not a retained trait object.
 //!   A formal `VirtualListModel` trait waits for the second consumer
 //!   that proves the shape — premature here (abstraction needs a second
 //!   consumer). Selection reuses the
@@ -80,13 +78,13 @@
 //! current 9-variant `Scene` at impl".
 //!
 //! R744 lands the §5.27 *capability* now via view-fn composition over the
-//! existing [`ScrollNode`](crate::scene::ScrollNode): O(window)
-//! materialization per frame, AI-introspectable as scene-data, zero new IR.
-//! This is the React-school of virtualization (`react-window` / `TanStack`:
-//! the view layer windows against scroll + a known viewport); the R32 IR design
-//! is the Flutter/Compose school (the layout/measure phase drives lazy item
-//! creation). Both are textbook — this is a peer technique, not a lesser
-//! slice of the IR one.
+//! existing [`ScrollNode`](crate::scene::ScrollNode): O(window) materialization per
+//! frame, AI-introspectable as scene-data, zero new IR. This is the
+//! React-school of virtualization (`react-window` / `TanStack`: the view layer windows against
+//! scroll + a known viewport); the R32 IR design is the retained-mode
+//! toolkit/Compose school (the layout/measure phase drives lazy item
+//! creation). Both are textbook — this is a peer technique, not a lesser slice
+//! of the IR one.
 //!
 //! Why the IR variant stays deferred (R744.1 honest correction — the
 //! earlier "blocked on Scene-clone, a `Box<dyn Fn>` cannot derive `Clone`"
@@ -254,8 +252,8 @@ pub fn pages_in_window(window: &VisibleWindow, page_size: usize) -> impl Iterato
 /// navigable: the target row may not be materialized, so "scroll to the
 /// selected row" cannot be a DOM `scrollIntoView` on a node — it is an
 /// offset computed from the row's known slot. The canonical primitive
-/// behind `react-window`'s `scrollToItem(align:"auto")`, Qt
-/// `QAbstractItemView::scrollTo(EnsureVisible)`, and Flutter
+/// behind `react-window`'s `scrollToItem(align:"auto")`, the toolkit
+/// `scrollTo(EnsureVisible)`, and another retained-mode toolkit
 /// `Scrollable.ensureVisible`. It is the windowing peer of
 /// [`compute_visible_range`]: that maps an offset to the visible window;
 /// this maps a target index to the offset that reveals it.
@@ -421,15 +419,13 @@ pub fn follow_tail(
 /// heights**, enabling O(log n) windowing for a variable-height
 /// virtualized list.
 ///
-/// This is the variable-pitch peer of [`compute_visible_range`]'s integer
-/// divide: where the uniform path computes a row's top as `index · pitch`
-/// in O(1), a variable-height list must remember where every row starts.
-/// The canonical structure (`react-window` `VariableSizeList`,
-/// `TanStack Virtual`, Qt `QHeaderView`'s section offsets) is a cumulative
-/// sum: `offsets[i]` is the total height of rows `0..i`, i.e. the top edge
-/// of row `i`, and the final entry is the total content height. Because
-/// the sums are monotonically non-decreasing, the visible window is found
-/// by binary search ([`compute_visible_range_variable`]).
+/// This is the variable-pitch peer of [`compute_visible_range`]'s integer divide: where the
+/// uniform path computes a row's top as `index · pitch` in O(1), a variable-height list
+/// must remember where every row starts. The canonical structure (`react-window` `VariableSizeList`,
+/// `TanStack Virtual`, the toolkit header view's section offsets) is a cumulative sum: `offsets[i]` is
+/// the total height of rows `0..i`, i.e. the top edge of row `i`, and the final
+/// entry is the total content height. Because the sums are monotonically
+/// non-decreasing, the visible window is found by binary search ([`compute_visible_range_variable`]).
 ///
 /// The table is built once from the height slice and reused across frames
 /// (the consumer caches it; rebuilding only when the heights change), so
@@ -606,7 +602,7 @@ pub fn compute_visible_range_variable(
 /// out — wrapped log/packet rows, variable-height document paragraphs, an
 /// asset browser's differently-sized thumbnails — the
 /// `react-virtualized` `CellMeasurer` / `TanStack Virtual`
-/// `measureElement` / Qt `QAbstractItemView::ResizeToContents` capability.
+/// `measureElement` / the toolkit `ResizeToContents` capability.
 ///
 /// A row's height is its measured value once known, else `estimated`, so
 /// [`Self::offsets`] always yields a complete [`RowOffsets`] table — the

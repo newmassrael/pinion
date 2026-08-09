@@ -1,29 +1,28 @@
 // R1449 §5.16 — example bindings tolerate looser doc-markdown lints than
 // substrate crates; the architectural narrative carries many proper-noun
-// identifiers (QCompleter, CompletionState, TextFieldExternal, WAI-ARIA, …).
+// identifiers (completer, CompletionState, TextFieldExternal, WAI-ARIA, …).
 #![allow(clippy::doc_markdown)]
 
-//! `hello-completer` — R1449 §5.27 §5.38 §5.40 **a completer attached to a
-//! plain text input**: Qt's `QCompleter`, which is not a widget but a model you
+//! `hello-completer` — R1449 §5.27 §5.38 §5.40 **a completer attached to a plain text
+//! input**: the toolkit's completer, which is not a widget but a model you
 //! hang off any input.
 //!
 //! ## Why this binding exists (and is not the editable combobox again)
 //!
-//! R717 `hello-combobox-editable` filters a *fixed option set* a value must
-//! come from, with one hard-coded rule: case-insensitive substring. A completer
-//! is the other thing — the input accepts free text and the candidates are only
-//! *suggestions* — and its rule is configurable. This binding is the first
-//! pinion consumer of [`pinion_core::widgets::completion`], and drives all
-//! three Qt knobs live:
+//! R717 `hello-combobox-editable` filters a *fixed option set* a value must come from, with one
+//! hard-coded rule: case-insensitive substring. A completer is the other thing
+//! — the input accepts free text and the candidates are only *suggestions* —
+//! and its rule is configurable. This binding is the first pinion consumer of
+//! [`pinion_core::widgets::completion`], and drives all three the toolkit knobs live:
 //!
 //! * **filter mode** — `starts_with` / `contains` / `ends_with`
-//!   (`QCompleter::setFilterMode`). The candidate list is code identifiers, so
+//!   (`setFilterMode`). The candidate list is code identifiers, so
 //!   each mode gives a visibly different answer: `render` starts three of them,
 //!   `Scene` is contained in three others, `Buffer` ends two.
-//! * **case sensitivity** — `QCompleter::setCaseSensitivity`. `render` matches
+//! * **case sensitivity** — `setCaseSensitivity`. `render` matches
 //!   `RenderPass` insensitively and not sensitively, over the same list.
 //! * **completion mode** — `popup` / `unfiltered_popup` / `inline`
-//!   (`QCompleter::setCompletionMode`). The unfiltered popup lists **every**
+//!   (`setCompletionMode`). The unfiltered popup lists **every**
 //!   candidate with the match marked; inline mode has no popup at all and
 //!   instead completes the field in place.
 //!
@@ -38,7 +37,7 @@
 //! `"selected"` commit intent. Its own `focused_index` is deliberately unused;
 //! two cursors would be a bug waiting for a mode switch.
 //!
-//! ## Inline completion is a real text mutation (Qt's, not a ghost label)
+//! ## Inline completion is a real text mutation (the toolkit's, not a ghost label)
 //!
 //! In inline mode a keystroke sets the field text to `prefix + suffix` and
 //! **selects the appended part** ([`apply_inline`]), so the next keystroke types
@@ -47,16 +46,14 @@
 //! selection and re-completes from `re`. A knob change never rewrites the field:
 //! the *readout* updates immediately, the text changes only when the user types.
 //!
-//! ## AI clients (§2 #7 + §2 #2 — the part Qt cannot do)
+//! ## AI clients (§2 #7 + §2 #2 — the part the toolkit cannot do)
 //!
-//! `QCompleter` answers `currentCompletion()` to C++ and nothing to anyone else.
-//! Here `comp_model` is a [`CompleterExternal`]: `query("prefix" | "filter" |
-//! "case" | "mode" | "completion_count" | "current" | "current_completion" |
-//! "inline" | "completion.<i>")` reads the whole completion, and
-//! `intervene` on the four knobs drives it — so an agent can ask "what would you
-//! complete `ren` to, matching case-sensitively, as an inline completion?"
-//! without touching the keyboard. The status rows paint the same values, so
-//! `scene/snapshot` and the pixels cannot disagree.
+//! completer answers `currentCompletion()` to C++ and nothing to anyone else. Here `comp_model` is a
+//! [`CompleterExternal`]: `query("prefix" | "filter" | "case" | "mode" | "completion_count" | "current" | "current_completion" | "inline" | "completion.<i>")` reads the whole completion, and `intervene` on the four knobs drives it
+//! — so an agent can ask "what would you complete `ren` to, matching
+//! case-sensitively, as an inline completion?" without touching the keyboard.
+//! The status rows paint the same values, so `scene/snapshot` and the pixels cannot
+//! disagree.
 
 use pinion_a11y::{
     AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, AutoComplete, ListOption,
@@ -202,10 +199,10 @@ fn sync_prefix() {
     use_model().set_prefix(&text);
 }
 
-/// Qt's `InlineCompletion`, as a real text mutation: replace the field text with
-/// `prefix + suffix` and **select the appended part**, so the next keystroke
-/// types over it (the field's type-to-replace path). A no-op when the mode does
-/// not complete inline, or when there is nothing to append.
+/// The toolkit's `InlineCompletion`, as a real text mutation: replace the field text with `prefix + suffix`
+/// and **select the appended part**, so the next keystroke types over it (the
+/// field's type-to-replace path). A no-op when the mode does not complete
+/// inline, or when there is nothing to append.
 fn apply_inline() {
     let model = use_model();
     let Some(suffix) = model.inline_completion() else {
@@ -569,9 +566,9 @@ impl WidgetCore for CompleterView {
         None
     }
 
-    /// The completer keyboard model. A shown popup reserves ArrowDown / ArrowUp
-    /// / Enter / Escape; inline mode reserves the arrows (they walk the
-    /// completions with no popup to walk, exactly as `QCompleter` does) and
+    /// The completer keyboard model. A shown popup reserves ArrowDown /
+    /// ArrowUp / Enter / Escape; inline mode reserves the arrows (they walk
+    /// the completions with no popup to walk, exactly as completer does) and
     /// Enter (accept). Everything else reaches the text field.
     fn apply_key(
         scene: &mut Scene,
@@ -875,7 +872,8 @@ mod tests {
                 "and the appended part is selected"
             );
             assert_eq!(use_model().prefix(), "r", "the prefix stays what was typed");
-            // The next keystroke types over the selection, exactly as Qt's does.
+            // The next keystroke types over the selection, exactly as the
+            // toolkit's does.
             type_text(&mut scene, "e");
             assert_eq!(use_model().prefix(), "re");
             assert_eq!(use_text_edit_state(INPUT_TAG).text(), "renderScene");

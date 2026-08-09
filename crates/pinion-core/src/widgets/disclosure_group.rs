@@ -10,8 +10,8 @@
 //! mirroring [`RadioGroup`](crate::widgets::radio_group::RadioGroup).
 //!
 //! Industry consensus treats single-open accordion exclusion as
-//! framework-owned (Material `ExpansionPanel` `accordion` mode, Qt
-//! `QToolBox`, `WinUI` `Expander` groups) — pinion matches via this
+//! framework-owned (Material `ExpansionPanel` `accordion` mode, the toolkit
+//! tool box, `WinUI` `Expander` groups) — pinion matches via this
 //! coordinator rather than an application loop calling
 //! [`Disclosure::set_expanded`] on the siblings.
 //!

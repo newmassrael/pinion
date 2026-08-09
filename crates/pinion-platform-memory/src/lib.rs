@@ -10,11 +10,10 @@
 //! exactly the wrong reading, that the arenas *are* the process.
 //!
 //! Reporting both makes the unattributed remainder visible as a subtraction
-//! rather than leaving it implied. Unreal does the same thing: `stat memory`
-//! shows the platform's numbers beside the allocator's. Qt 6.11 publishes
-//! neither — there is no process-memory API in Qt at all, and
-//! `QPixmapCache::cacheLimit()` is a budget you set rather than a measurement
-//! of anything.
+//! rather than leaving it implied. The engine does the same thing: `stat memory` shows
+//! the platform's numbers beside the allocator's. The toolkit 6.11 publishes
+//! neither — there is no process-memory API in the toolkit at all, and `cacheLimit()` is
+//! a budget you set rather than a measurement of anything.
 //!
 //! # Platform coverage
 //!

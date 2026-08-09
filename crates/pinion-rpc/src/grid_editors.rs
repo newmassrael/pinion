@@ -3,9 +3,9 @@
 //!
 //! # The gap this closes
 //!
-//! R1571 gave the grid Qt's `openPersistentEditor`, so N editors can be open at
-//! once. Two of the facts that follow are unreachable from anything else the
-//! wire already carries:
+//! R1571 gave the grid the toolkit's `openPersistentEditor`, so N editors can be open at once.
+//! Two of the facts that follow are unreachable from anything else the wire
+//! already carries:
 //!
 //! - An editor on a row **outside the painted window** is in no snapshot,
 //!   because it paints nothing. It is still open and still holds the user's
@@ -20,24 +20,22 @@
 //! editor and does not survive N: neither of the two facts above is derivable
 //! from the paint, so this is a *first* spelling rather than a third.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! `QAbstractItemViewPrivate::persistent` is a private `QSet<QWidget *>` and
-//! `indexEditorHash` is private beside it. The only public question is
-//! `QAbstractItemView::isPersistentEditorOpen(index)` — **one index at a
-//! time**, answering a bool. So a Qt view cannot be asked what it has open: you
-//! must already know the answer in order to ask the question, which makes "save
-//! every open editor" and "is anything unsaved" both unanswerable through the
-//! public API.
+//! `persistent` is a private `set<widget *>` and `indexEditorHash` is private beside it. The only public question
+//! is `isPersistentEditorOpen(index)` — **one index at a time**, answering a bool. So a toolkit view
+//! cannot be asked what it has open: you must already know the answer in order
+//! to ask the question, which makes "save every open editor" and "is anything
+//! unsaved" both unanswerable through the public API.
 //!
 //! Four things here are past that floor:
 //!
 //! - **The set is enumerable**, in one call, in canonical cell order.
-//! - **Focus is data.** In Qt, "which editor has the keyboard" means
-//!   `QApplication::focusWidget()` reverse-mapped through that private hash.
+//! - **Focus is data.** In the toolkit, "which editor has the keyboard" means
+//!   `focusWidget()` reverse-mapped through that private hash.
 //! - **Each editor's in-flight value is readable without focusing it**, and
 //!   `dirty` says whether it differs from what the editor opened with —
-//!   `QAbstractItemView` keeps no record of what `setEditorData` seeded, so
+//!   abstract item view keeps no record of what `setEditorData` seeded, so
 //!   there is nothing there to compare against.
 //! - **A malformed buffer is named** rather than shown as an absent value:
 //!   `value` is `null` exactly when `malformed` is `true`, which R1555's
@@ -77,17 +75,15 @@
 //!
 //! # What it does not answer, and why
 //!
-//! It is **read-only**, and the missing verb is `openPersistentEditor`. That is
-//! not an omission: opening needs a
-//! [`CellEdit`](pinion_core::CellEdit), which only the *model* produces and
-//! which it produces `None` for on a cell it will not edit (R1544) — so a
-//! framework method that opened an editor would have to invent an edit role the
-//! model never answered with, which is the exact state the type system here
-//! refuses to represent. Qt has the same division and pays for it the other
-//! way: `openPersistentEditor` is a view method that reaches the delegate
-//! *without* consulting `flags() & Qt::ItemIsEditable`, so it opens a live
-//! editor on a read-only cell and drops every write the user makes into it in
-//! silence.
+//! It is **read-only**, and the missing verb is `openPersistentEditor`. That is not an omission:
+//! opening needs a [`CellEdit`](pinion_core::CellEdit), which only the *model*
+//! produces and which it produces `None` for on a cell it will not edit (R1544) —
+//! so a framework method that opened an editor would have to invent an edit
+//! role the model never answered with, which is the exact state the type
+//! system here refuses to represent. The toolkit has the same division and
+//! pays for it the other way: `openPersistentEditor` is a view method that reaches the delegate
+//! *without* consulting `flags() & ItemIsEditable`, so it opens a live editor on a read-only cell and
+//! drops every write the user makes into it in silence.
 //!
 //! Closing and focusing need no model, and are reachable through the binding's
 //! own gestures; a framework verb for them is the named next slice.
@@ -119,15 +115,14 @@ pub struct GridEditorEntry {
     pub row: usize,
     /// The absolute column its cell is in.
     pub col: usize,
-    /// `"transient"` or `"persistent"`
-    /// ([`EditorPersistence`](pinion_core::widgets::grid_edit::EditorPersistence)):
-    /// whether a commit and an <kbd>Escape</kbd> close it. Qt's private
-    /// persistence set, published.
+    /// `"transient"` or `"persistent"` ([`EditorPersistence`](pinion_core::widgets::grid_edit::EditorPersistence)):
+    /// whether a commit and an <kbd>Escape</kbd> close it. The toolkit's
+    /// private persistence set, published.
     pub persistence: &'static str,
     /// The datum kind the cell holds (`CellKind::name`).
     pub kind: &'static str,
     /// The editor form it opened (`EditorForm::name`) — what
-    /// `QItemEditorFactory::createEditor` would have constructed.
+    /// `createEditor` would have constructed.
     pub form: &'static str,
     /// Whether this editor holds the keyboard, and so the shared inline field
     /// named by [`GridEditorsOutcome::field_tag`]. Exactly one entry can be
@@ -157,7 +152,7 @@ pub struct GridEditorsOutcome {
     /// focused text-buffered editor is typing into, so a client can drive it
     /// through the same `scene/*` text methods a standalone field takes.
     pub field_tag: &'static str,
-    /// How many editors are open. `QAbstractItemView` has no accessor for
+    /// How many editors are open. abstract item view has no accessor for
     /// this at all.
     pub count: usize,
     /// The cell whose editor holds the keyboard, or `null`.

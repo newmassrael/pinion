@@ -1108,5 +1108,68 @@ ok "this repo's tally passes its own selftest" \
    "$(report_phase_b_tally "$repo_root" | grep -c 'tally selftest: PASS')" \
    "1"
 
+# ---------------------------------------------------------------------------
+# R1611 — the reference-name ratchet
+# ---------------------------------------------------------------------------
+#
+# The gate exists because a directive with no measurement grew to 7,999
+# occurrences unseen. What has to be true of it is that it can FAIL: a ratchet
+# that cannot refuse is a report. Both refusal shapes are exercised against a
+# throwaway tree so no state of this repo's own leaks into the answer.
+
+ok "the ratchet's classifier passes its own tests" \
+   "$(python3 "$repo_root/tools/reference_names.py" --selftest | grep -c 'selftest: .* OK')" \
+   "1"
+
+ok "the migrator's classifier passes its own tests" \
+   "$(python3 "$repo_root/tools/reference_names_migrate.py" --selftest \
+      | grep -c 'selftest: .* OK')" \
+   "1"
+
+ok "this repo is at or under its own budget" \
+   "$(python3 "$repo_root/tools/reference_names.py" --check >/dev/null 2>&1; echo $?)" \
+   "0"
+
+ratchet_tmp="$(mktemp -d)"
+trap 'rm -rf "$ratchet_tmp"' EXIT
+git init -q "$ratchet_tmp/repo"
+mkdir -p "$ratchet_tmp/repo/tools" "$ratchet_tmp/repo/docs" \
+         "$ratchet_tmp/repo/docs/.atomic" "$ratchet_tmp/repo/vendor" \
+         "$ratchet_tmp/repo/crates/pinion-text-unicode/ucd"
+cp "$repo_root/tools/reference_names.py" "$ratchet_tmp/repo/tools/"
+printf 'clean prose\n' > "$ratchet_tmp/repo/a.rs"
+one_name="Q""t"; two_name="Blen""der"; three_name="Un""real"
+printf '// %s does one thing\n' "$one_name" > "$ratchet_tmp/repo/b.rs"
+git -C "$ratchet_tmp/repo" add -A >/dev/null
+python3 "$ratchet_tmp/repo/tools/reference_names.py" --write-budget >/dev/null
+
+ok "a budgeted tree passes" \
+   "$(python3 "$ratchet_tmp/repo/tools/reference_names.py" --check >/dev/null 2>&1; \
+      echo $?)" \
+   "0"
+
+printf '// %s does one thing\n// and %s another\n' \
+       "$one_name" "$two_name" > "$ratchet_tmp/repo/b.rs"
+ok "a budgeted file that GAINS a name is refused" \
+   "$(python3 "$ratchet_tmp/repo/tools/reference_names.py" --check >/dev/null 2>&1; \
+      echo $?)" \
+   "1"
+
+one_name="Q""t"; two_name="Blen""der"; three_name="Un""real"
+printf '// %s does one thing\n' "$one_name" > "$ratchet_tmp/repo/b.rs"
+printf '// %s appears here\n' "$three_name" > "$ratchet_tmp/repo/a.rs"
+git -C "$ratchet_tmp/repo" add -A >/dev/null
+ok "a clean file that gains its FIRST name is refused" \
+   "$(python3 "$ratchet_tmp/repo/tools/reference_names.py" --check >/dev/null 2>&1; \
+      echo $?)" \
+   "1"
+
+printf 'clean prose\n' > "$ratchet_tmp/repo/a.rs"
+printf '// nothing here now\n' > "$ratchet_tmp/repo/b.rs"
+ok "clearing a name is allowed to lower the count" \
+   "$(python3 "$ratchet_tmp/repo/tools/reference_names.py" --check >/dev/null 2>&1; \
+      echo $?)" \
+   "0"
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

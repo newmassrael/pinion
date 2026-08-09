@@ -3,14 +3,13 @@
 //!
 //! ## Role
 //!
-//! A **`DockPanel`** is the atomic unit of a multi-pane DCC / IDE /
-//! CAD layout (the Phase B → D north star surface). Each panel
-//! carries a header strip the user can grab + drag: dropping it onto
-//! another panel **docks** it there (split / swap, via the shared
-//! [`DockReorganizer`]), and dragging it out of the dock **tears it
-//! off** into a new floating window — the canonical pro-tool
-//! authoring affordance every Photoshop / Figma / Unreal Editor /
-//! `VSCode` panel system ships.
+//! A **`DockPanel`** is the atomic unit of a multi-pane DCC / IDE / CAD layout (the
+//! Phase B → D north star surface). Each panel carries a header strip the user
+//! can grab + drag: dropping it onto another panel **docks** it there (split /
+//! swap, via the shared [`DockReorganizer`]), and dragging it out of the dock **tears it
+//! off** into a new floating window — the canonical pro-tool authoring
+//! affordance every the raster editor / the design tool / the engine Editor /
+//! `the code editor` panel system ships.
 //!
 //! The topology composition (recursive split tree, [`DockTopology`] +
 //! the [`view_dock_surface`] walker) was lifted into this crate at the
@@ -101,15 +100,15 @@ use pinion_a11y::{AccessFocus, AccessNode, TabCell, tablist_tab_nodes};
 //
 // ## Design references
 //
-//  - `VSCode`: Activity bar (left) + Side bar (left or right) +
+//  - `the code editor`: Activity bar (left) + Side bar (left or right) +
 //    Editor (center) + Panel (bottom) + Status bar — fixed slots
 //    with draggable splits between them. The recursive Split/Leaf
 //    abstraction here generalizes to that shape via nested splits.
 //  - `IntelliJ`: Tool windows dock to Left / Right / Bottom / Top
 //    of the editor — same Split tree, different topology shape.
-//  - Photoshop: Side panels stack on left or right — N-leaf
+//  - the raster editor: Side panels stack on left or right — N-leaf
 //    horizontal split.
-//  - Unreal Editor: Free-form docking via nested splits + tabs.
+//  - the engine Editor: Free-form docking via nested splits + tabs.
 //
 // The recursive Split tree is the textbook canonical abstraction
 // every pro-tool authoring shell ships under the hood; the
@@ -267,7 +266,7 @@ pub enum DockNode {
     /// slot, exactly one of them visible at a time (the [`Self::Tabs::active`]
     /// index). The tabbed-docking leaf: dropping panel A onto panel B's
     /// centre ([`DockDropZone::Center`]) merges them into a `Tabs` well
-    /// the user clicks between, the VS Code / Unreal docking idiom.
+    /// the user clicks between, the VS Code / the engine docking idiom.
     ///
     /// ## Invariants (enforced by [`DockTopology::try_new`])
     ///
@@ -420,18 +419,17 @@ impl DockNode {
     }
 
     /// (R1201 §5.51) Structural equality IGNORING the fields a re-dock always
-    /// re-mints — a [`Self::Split`]'s stable `id` + `ratio` and a [`Self::Tabs`]
-    /// well's `id`. Two nodes have the same shape when they nest the same panels
-    /// the same way (same orientations, same left/right — top/bottom order, same
-    /// tab stacks + active). This is the redundancy metric for outer-dock
-    /// suppression ([`DockTopology::outer_dock_is_redundant`]): a dock whose
-    /// resulting tree has the SAME shape as the current one changes nothing —
-    /// only its split id + ratio would differ, both cosmetic — so it must be a
-    /// no-op (no misleading full-span preview, no resize). Ratio is excluded
-    /// because an outer dock always re-seeds the divider at
-    /// `OUTER_DOCK_NEW_FRAC`; the split/well ids because a reorganize always
-    /// mints fresh `reorg-*` ids. The VS Code / Qt ADS rule — a drop indicator
-    /// is offered only when the outcome differs from the current layout.
+    /// re-mints — a [`Self::Split`]'s stable `id` + `ratio` and a [`Self::Tabs`] well's `id`. Two nodes
+    /// have the same shape when they nest the same panels the same way (same
+    /// orientations, same left/right — top/bottom order, same tab stacks +
+    /// active). This is the redundancy metric for outer-dock suppression
+    /// ([`DockTopology::outer_dock_is_redundant`]): a dock whose resulting tree has the SAME shape as the current
+    /// one changes nothing — only its split id + ratio would differ, both
+    /// cosmetic — so it must be a no-op (no misleading full-span preview, no
+    /// resize). Ratio is excluded because an outer dock always re-seeds the
+    /// divider at `OUTER_DOCK_NEW_FRAC`; the split/well ids because a reorganize always mints
+    /// fresh `reorg-*` ids. The VS Code / the toolkit ADS rule — a drop indicator is
+    /// offered only when the outcome differs from the current layout.
     #[must_use]
     pub fn same_shape(&self, other: &DockNode) -> bool {
         match (self, other) {
@@ -1150,16 +1148,16 @@ impl DockTopology {
     }
 
     /// (R1156 §5.51) OUTER full-span dock: wrap the ENTIRE topology in a new
-    /// Split, placing a fresh leaf for `new_leaf_panel_id` on the `position` side
-    /// spanning the WHOLE dock area. Unlike [`Self::split_leaf_into`] (which
-    /// splits ONE leaf, so the new panel only spans that leaf's slot), this splits
-    /// the ROOT — the new panel runs the full width (a `Vertical` top/bottom row)
-    /// or full height (a `Horizontal` left/right column) across every existing
-    /// pane. This is the container-edge / "outer dock guide" gesture pro dockers
-    /// expose at the dock area's perimeter (VS Code edge zones, Qt ADS outer dock
-    /// areas, Visual Studio's outer guide arrows), and the path that restores a
-    /// full-width toolbar after its own slot collapsed: a per-leaf split could
-    /// only re-dock it inside ONE column, never as the full-width top row.
+    /// Split, placing a fresh leaf for `new_leaf_panel_id` on the `position` side spanning the WHOLE
+    /// dock area. Unlike [`Self::split_leaf_into`] (which splits ONE leaf, so the new panel only
+    /// spans that leaf's slot), this splits the ROOT — the new panel runs the
+    /// full width (a `Vertical` top/bottom row) or full height (a `Horizontal` left/right
+    /// column) across every existing pane. This is the container-edge / "outer
+    /// dock guide" gesture pro dockers expose at the dock area's perimeter (VS
+    /// Code edge zones, the toolkit ADS outer dock areas, Visual Studio's
+    /// outer guide arrows), and the path that restores a full-width toolbar
+    /// after its own slot collapsed: a per-leaf split could only re-dock it
+    /// inside ONE column, never as the full-width top row.
     ///
     /// `position == First` puts the new panel at the top (`Vertical`) / left
     /// (`Horizontal`); `Second` at the bottom / right. `ratio` is the new split's
@@ -1295,18 +1293,16 @@ impl DockTopology {
     ///    panel via [`DockReorganizer::dock_panel_outer`]) is an ADDITION, not a
     ///    rearrangement, so it keeps its full-span dock even against a lone base.
     ///
-    /// (R1348) The pointer path asks this at CLAIM time — the drag source answers
-    /// [`External::accepts_outer_dock`]
-    /// with it, so a redundant perimeter is never claimed and the cursor reaches the
-    /// panel beneath (pre-R1348 the claim stood and only the outcome died, leaving a
-    /// dead strip). The resolver ([`resolve_drop_checked`]) still maps a redundant
-    /// drop to a stay-put [`DropResolution::SnapBack`] as the fallback for a source
-    /// the router could not ask, and
-    /// [`DockReorganizer::dock_panel_outer`] no-ops it (RPC / §2 #2 parity). A
-    /// sole-pane `panel` (removal would empty the tree) is likewise redundant — it
-    /// already fills the whole area. This is the VS Code / Qt ADS invariant: an
-    /// outer drop indicator is offered only when the outcome differs from what is
-    /// already reachable.
+    /// (R1348) The pointer path asks this at CLAIM time — the drag source
+    /// answers [`External::accepts_outer_dock`] with it, so a redundant perimeter is never claimed and
+    /// the cursor reaches the panel beneath (pre-R1348 the claim stood and
+    /// only the outcome died, leaving a dead strip). The resolver ([`resolve_drop_checked`])
+    /// still maps a redundant drop to a stay-put [`DropResolution::SnapBack`] as the fallback for a
+    /// source the router could not ask, and [`DockReorganizer::dock_panel_outer`] no-ops it (RPC / §2 #2
+    /// parity). A sole-pane `panel` (removal would empty the tree) is likewise
+    /// redundant — it already fills the whole area. This is the VS Code / the
+    /// toolkit ADS invariant: an outer drop indicator is offered only when the
+    /// outcome differs from what is already reachable.
     #[must_use]
     pub fn outer_dock_is_redundant(&self, panel: &str, zone: DockDropZone) -> bool {
         match self.outer_dock_next(panel, zone, REDUNDANCY_PROBE_SPLIT_ID) {
@@ -2543,17 +2539,15 @@ pub fn resolve_drop(
 }
 
 /// (R1201 §5.51) [`resolve_drop`] with an OUTER-dock REDUNDANCY predicate — the
-/// SAME-window SSOT. `outer_redundant(edge)` answers "does the dragged `source`
-/// already occupy that full-span `edge`?" (the caller wires it to
-/// [`DockReorganizer::outer_dock_is_redundant`] against the live topology). When
-/// it does, a perimeter drop is a stay-put [`DropResolution::SnapBack`] instead
-/// of an [`DropResolution::OuterDock`]: dragging the right column to the right
-/// edge (or picking an edge-flush panel up and dropping it back) previews +
-/// resolves as no-move, not a resize to the thin `OUTER_DOCK_NEW_FRAC` band —
-/// the VS Code / Qt ADS rule that a drop indicator is offered only when the
-/// outcome differs. [`resolve_drop`] delegates here with an always-`false`
-/// predicate (the cross-window / test path), so preview == result still holds by
-/// construction on every path. See `docs/dock-drop-resolution.md`.
+/// SAME-window SSOT. `outer_redundant(edge)` answers "does the dragged `source` already occupy that
+/// full-span `edge`?" (the caller wires it to [`DockReorganizer::outer_dock_is_redundant`] against the live topology).
+/// When it does, a perimeter drop is a stay-put [`DropResolution::SnapBack`] instead of an [`DropResolution::OuterDock`]:
+/// dragging the right column to the right edge (or picking an edge-flush panel
+/// up and dropping it back) previews + resolves as no-move, not a resize to
+/// the thin `OUTER_DOCK_NEW_FRAC` band — the VS Code / the toolkit ADS rule that a drop
+/// indicator is offered only when the outcome differs. [`resolve_drop`] delegates here
+/// with an always-`false` predicate (the cross-window / test path), so preview ==
+/// result still holds by construction on every path. See `docs/dock-drop-resolution.md`.
 ///
 /// (R1348) The same-window pointer path normally settles this ONE LAYER UP: the
 /// router asks the drag source
@@ -2913,7 +2907,7 @@ pub fn resolve_dock_drop_tabbing(
 ///   dock-back is a trivial slot-fill.
 /// * [`Collapse`](Self::Collapse) — the leaf is REMOVED on float
 ///   ([`DockReorganizer::float_out_panel`]) so the siblings reclaim the space (the
-///   VS Code / Blender model: the slot vanishes, neighbours grow). The home anchor
+///   VS Code / the DCC model: the slot vanishes, neighbours grow). The home anchor
 ///   is captured first so a dock-back ([`DockReorganizer::restore_panel_home`])
 ///   restores the leaf next to its original sibling.
 ///
@@ -3535,13 +3529,14 @@ impl DockReorganizer {
         self.undock_tab_to_zone(panel, DockDropZone::Right)
     }
 
-    /// (R1163 §5.51) Undock a tabbed `panel` into a SPLIT at the given edge `zone`
-    /// — the drag-to-own-well-edge gesture (VS Code / Qt ADS: drag a tab to its own
-    /// group's edge to split it out; the centre stays a tab). Removes `panel` from
-    /// its well and splits it at `zone` relative to the well's sibling, so the two
-    /// end up side by side on the chosen side. A `Center` / non-edge `zone` is a
-    /// no-op (a centre drop on the own well stays a tab); a `panel` not in a well is
-    /// the "nothing to undock" no-op. The zone-aware peer of [`Self::undock_tab`].
+    /// (R1163 §5.51) Undock a tabbed `panel` into a SPLIT at the given edge `zone` —
+    /// the drag-to-own-well-edge gesture (VS Code / the toolkit ADS: drag a
+    /// tab to its own group's edge to split it out; the centre stays a tab).
+    /// Removes `panel` from its well and splits it at `zone` relative to the well's
+    /// sibling, so the two end up side by side on the chosen side. A `Center` /
+    /// non-edge `zone` is a no-op (a centre drop on the own well stays a tab); a
+    /// `panel` not in a well is the "nothing to undock" no-op. The zone-aware peer
+    /// of [`Self::undock_tab`].
     ///
     /// # Errors
     ///
@@ -4596,11 +4591,12 @@ impl External for TabWellExternal {
             DropResolution::OuterDock { edge } => {
                 let _ = self.reorganizer.dock_panel_outer(panel, edge);
             }
-            // (R1163/R1164) Over the tab's OWN well: an EDGE undocks it into a split
-            // at that edge (drag a tab to its own group's edge to split out — the VS
-            // Code / Qt ADS gesture); the CENTRE / dead-zone stays a tab (no move).
-            // `resolve_drop` CARRIES the banded self-slot `zone` (R1164), so the
-            // caller no longer re-classifies — the one classify lives in the SSOT.
+            // (R1163/R1164) Over the tab's OWN well: an EDGE undocks it into a
+            // split at that edge (drag a tab to its own group's edge to split
+            // out — the VS Code / the toolkit ADS gesture); the CENTRE /
+            // dead-zone stays a tab (no move). `resolve_drop` CARRIES the banded
+            // self-slot `zone` (R1164), so the caller no longer re-classifies —
+            // the one classify lives in the SSOT.
             DropResolution::SnapBack { zone } => {
                 if zone_split_geometry(zone).is_some() {
                     let _ = self.reorganizer.undock_tab_to_zone(panel, zone);
@@ -6748,12 +6744,12 @@ pub struct DockPanelExternal {
     /// hardcodes no convention.
     floating_window: Option<String>,
     /// (R1172 §5.16) Panel MOVE policy. `false` LOCKS the panel in place — a
-    /// header press starts no drag ([`begin_drag`](External::begin_drag) returns
-    /// `None`), so it cannot be reordered, docked elsewhere, or torn off. The fixed
-    /// toolbar / status-bar of a pro dock (Qt ADS "non-movable", VS Code's locked
-    /// panels). `true` (the default) is the freely-draggable panel. Pairs with
-    /// [`DockPanelStyle::drop_target`] `false` (cannot RECEIVE a dock) for a fully
-    /// locked region: this gates moving OUT, that gates docking IN.
+    /// header press starts no drag ([`begin_drag`](External::begin_drag) returns `None`),
+    /// so it cannot be reordered, docked elsewhere, or torn off. The fixed
+    /// toolbar / status-bar of a pro dock (the toolkit ADS "non-movable", VS
+    /// Code's locked panels). `true` (the default) is the freely-draggable panel.
+    /// Pairs with [`DockPanelStyle::drop_target`] `false` (cannot RECEIVE a dock) for a fully locked region:
+    /// this gates moving OUT, that gates docking IN.
     movable: bool,
     /// (R1172 §5.16) Panel FLOAT policy. `false` lets the panel be dragged + docked
     /// elsewhere but NEVER torn off into a floating window — a drag that escapes
@@ -7524,26 +7520,27 @@ impl External for DockPanelExternal {
         } else {
             update.over.clone()
         };
-        // R1110 §5.51 PR-36 — detach-on-ESCAPE, not detach-on-threshold. R1097/
-        // R1101 detached the instant the router called the press a drag, EVEN
-        // while the cursor was still over a same-window dock zone, so an in-dock
-        // reorder / split drag floated a follower and flickered and the drop
-        // preview oscillated. The textbook desktop-dock model (VS Code / Blender
-        // / a real browser tab: reorder WITHIN the tab bar, detach only when
-        // dragged OUT) floats only once the cursor leaves every same-window dock
-        // zone. So detach when the drag verdict lands AND the cursor is over no
-        // same-window drop target (`same_window_over` None = escaped this
-        // window's dock surface; a cross-window `over` counts as escaped too).
-        // While still over a zone the move stays docked and the `drag_to` below
-        // shows the reorganize / split preview, which the release then applies.
-        // `detached` is a one-way latch per gesture: once escaped it stays
-        // floating, so coming back over a zone shows the PR-33 redock preview
-        // (follow + preview coexist) rather than re-docking mid-drag. Consuming
-        // the router's verdict (rather than re-deriving distance) stays
-        // single-SSOT: the router measures from the real press point.
-        // R1172 §5.16 — a non-floatable panel never detaches: it shows the dock
-        // reorder preview while over a zone and simply snaps back off every zone (no
-        // float ghost, no Escaped chart transition). Only `floatable` panels detach.
+        // R1110 §5.51 PR-36 — detach-on-ESCAPE, not detach-on-threshold.
+        // R1097/ R1101 detached the instant the router called the press a
+        // drag, EVEN while the cursor was still over a same-window dock zone,
+        // so an in-dock reorder / split drag floated a follower and flickered
+        // and the drop preview oscillated. The textbook desktop-dock model (VS
+        // Code / the DCC / a real browser tab: reorder WITHIN the tab bar,
+        // detach only when dragged OUT) floats only once the cursor leaves
+        // every same-window dock zone. So detach when the drag verdict lands
+        // AND the cursor is over no same-window drop target (`same_window_over` None =
+        // escaped this window's dock surface; a cross-window `over` counts as
+        // escaped too). While still over a zone the move stays docked and the
+        // `drag_to` below shows the reorganize / split preview, which the release
+        // then applies. `detached` is a one-way latch per gesture: once escaped it
+        // stays floating, so coming back over a zone shows the PR-33 redock
+        // preview (follow + preview coexist) rather than re-docking mid-drag.
+        // Consuming the router's verdict (rather than re-deriving distance)
+        // stays single-SSOT: the router measures from the real press point.
+        // R1172 §5.16 — a non-floatable panel never detaches: it shows the
+        // dock reorder preview while over a zone and simply snaps back off
+        // every zone (no float ghost, no Escaped chart transition). Only `floatable`
+        // panels detach.
         if update.became_drag && same_window_over.is_none() && self.floatable {
             // R1129 §5.51.1 — drive the lifecycle `escaped` (docked → floating)
             // on the RISING edge of the detach latch, so the chart transitions
@@ -9049,11 +9046,12 @@ mod tests {
 
     #[test]
     fn r1323_a_coordinator_less_panel_still_snaps_back_on_a_self_release() {
-        // The other half of the contract: a release back on the panel ITSELF (a click,
-        // or a drag that never left its own slot) snaps back — the ratified desktop-dock
-        // rule (R1110/R1162: VS Code / Blender detach only once the drag leaves every
-        // dock zone). Non-tautological against the test above: same External, same
-        // gesture, only the release TARGET differs.
+        // The other half of the contract: a release back on the panel ITSELF
+        // (a click, or a drag that never left its own slot) snaps back — the
+        // ratified desktop-dock rule (R1110/R1162: VS Code / the DCC detach
+        // only once the drag leaves every dock zone). Non-tautological against
+        // the test above: same External, same gesture, only the release TARGET
+        // differs.
         let mut ext = DockPanelExternal::new("a");
         let _ = ext.begin_drag();
         ext.drag_release(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
@@ -13499,9 +13497,10 @@ mod reorganize_tests {
         use pinion_core::external::{DropPoint, External};
         let (topology, _reorg, mut well) = r1158_tab_well_fixture();
         let payload = well.begin_drag().expect("armed"); // tab 0 = "a"
-        // Release over "a" (the dragged tab IS the well's content = self) at its LEFT
-        // edge → undock "a" OUT of the well into a split (the VS Code / Qt gesture),
-        // NOT a self-drop no-op. The well collapses to its "b" sibling.
+        // Release over "a" (the dragged tab IS the well's content = self) at
+        // its LEFT edge → undock "a" OUT of the well into a split (the VS Code
+        // / the toolkit gesture), NOT a self-drop no-op. The well collapses to
+        // its "b" sibling.
         let over = DropPoint {
             tag: "a".into(),
             x_rel: 0.08,

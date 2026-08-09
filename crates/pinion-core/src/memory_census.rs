@@ -17,18 +17,18 @@
 //!
 //! A shell with three windows holds three paint-fragment arenas and three
 //! image arenas, and they can differ by orders of magnitude — a DCC viewport
-//! against a palette. So [`ArenaFootprint::window`] names the window a
-//! per-window arena belongs to, and is `None` for the shell-wide ones. Qt has
-//! no equivalent to attribute against, because it has no memory report at all.
+//! against a palette. So [`ArenaFootprint::window`] names the window a per-window arena belongs to,
+//! and is `None` for the shell-wide ones. The toolkit has no equivalent to
+//! attribute against, because it has no memory report at all.
 //!
 //! # The unattributed remainder
 //!
-//! [`MemoryCensus::process_rss_bytes`] is what the OS says the process is
-//! resident for. The arenas will never sum to it — the widget tree, the font
-//! collection, the GPU driver's own allocations and the binary itself are all
-//! in there — and stating both is what keeps the arena numbers from being read
-//! as a process total. Unreal's `stat memory` reports platform stats beside
-//! its allocator's; Qt reports neither.
+//! [`MemoryCensus::process_rss_bytes`] is what the OS says the process is resident for. The arenas will
+//! never sum to it — the widget tree, the font collection, the GPU driver's
+//! own allocations and the binary itself are all in there — and stating both
+//! is what keeps the arena numbers from being read as a process total. The
+//! engine's `stat memory` reports platform stats beside its allocator's; the toolkit
+//! reports neither.
 
 use crate::footprint::Footprint;
 
@@ -136,9 +136,9 @@ pub struct ArenaFootprint {
     /// The byte budget this arena evicts to stay under, or `None` when it is
     /// bounded by something other than bytes (or not at all).
     ///
-    /// `QPixmapCache::cacheLimit()` is the Qt equivalent and is the whole of
-    /// what Qt publishes; the number beside it — how much of the budget is in
-    /// use — has no Qt accessor at all.
+    /// `cacheLimit()` is the toolkit equivalent and is the whole of what the toolkit
+    /// publishes; the number beside it — how much of the budget is in use —
+    /// has no the toolkit accessor at all.
     pub budget_bytes: Option<u64>,
 }
 

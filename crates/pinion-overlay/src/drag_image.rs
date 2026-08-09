@@ -5,7 +5,7 @@
 //!
 //! When a user grabs an object and drags it (a dock panel header, a list row),
 //! a desktop UI floats a translucent **drag image** under the cursor — the
-//! immediate "I picked this up" feedback (VS Code / Blender / browser tabs).
+//! immediate "I picked this up" feedback (VS Code / the DCC / browser tabs).
 //! pinion lacked it: a dock-panel drag showed only the target zone highlight,
 //! nothing followed the cursor (the handoff's ① complaint).
 //!

@@ -202,21 +202,21 @@ fn walk_for_text(container: &pinion_core::scene::ContainerNode) -> Option<String
 /// R1543 §5.40 §5.39 — populate `nodes[*].access_key` from the mnemonics
 /// declared in the paint scene.
 ///
-/// The `accesskey` peer of [`enrich_names_from_scene`], and derived the same
-/// way and for the same reason: the mnemonic literal lives once, in the view
-/// function, and the AT announcement is read back out of the painted tree. A
-/// widget impl that had to *state* its own accelerator would be a second place
-/// for it to be written, and the two would drift the first time a label
-/// changed — which is exactly the state Qt is in, where the underline is
-/// re-parsed by the style on every paint and the shortcut is registered
-/// separately in `QShortcutMap`.
+/// The `accesskey` peer of [`enrich_names_from_scene`], and derived the same way and for the same reason:
+/// the mnemonic literal lives once, in the view function, and the AT
+/// announcement is read back out of the painted tree. A widget impl that had
+/// to *state* its own accelerator would be a second place for it to be
+/// written, and the two would drift the first time a label changed — which is
+/// exactly the state the toolkit is in, where the underline is re-parsed by
+/// the style on every paint and the shortcut is registered separately in
+/// shortcut map.
 ///
 /// Only the resolved target of each binding is stamped, so what an AT
 /// announces is what <kbd>Alt</kbd>+char actually activates — including the
-/// `QLabel::setBuddy` case, where the key is announced on the **field**, not on
+/// `setBuddy` case, where the key is announced on the **field**, not on
 /// the label carrying the ampersand. HTML `accesskey` behaves the same way
-/// (the attribute is on the labelled control), and Qt does not: its
-/// `QAccessible::Accelerator` is answered by the label, so a screen-reader user
+/// (the attribute is on the labelled control), and the toolkit does not: its
+/// `Accelerator` is answered by the label, so a screen-reader user
 /// is told the key by a node that is not the one the key operates.
 ///
 /// An **ambiguous** mnemonic is still announced. Two nodes claiming

@@ -638,14 +638,13 @@ fn floating_window_position(panel_id: &str) -> (i32, i32) {
     (160 + step * 44, 120 + step * 44)
 }
 
-/// (R1115 §5.51 §5.16 §5.41 PR-38) The floating `WindowSpec` a torn-off
-/// `panel_id` opens into, placed at outer position `pos`. The single
-/// construction site for the editor's two float paths (the `tear_off` toggle +
-/// the live follow) so they cannot drift. Declares `with_decorations(false)`:
-/// the editor owns a floating panel's chrome (the panel paints its own header),
-/// so the OS draws no redundant title bar over a torn-off DCC panel — the
-/// custom-chrome floating panel a self-hosted editor wants (Blender/Unreal show
-/// no OS title bar on a torn-off panel). Observable as `scene/windows`
+/// (R1115 §5.51 §5.16 §5.41 PR-38) The floating `WindowSpec` a torn-off `panel_id` opens into,
+/// placed at outer position `pos`. The single construction site for the editor's
+/// two float paths (the `tear_off` toggle + the live follow) so they cannot drift.
+/// Declares `with_decorations(false)`: the editor owns a floating panel's chrome (the panel paints
+/// its own header), so the OS draws no redundant title bar over a torn-off DCC
+/// panel — the custom-chrome floating panel a self-hosted editor wants (the
+/// DCC/the engine show no OS title bar on a torn-off panel). Observable as `scene/windows`
 /// `decorations:false`; the main window keeps the default `decorations:true`.
 fn floating_window_spec(panel_id: &str, pos: (i32, i32)) -> WindowSpec {
     // (R1319 §5.16 PR-52) A panel that was already renamed opens its floating window

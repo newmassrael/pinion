@@ -9,19 +9,20 @@
 //! screen-reader user learns "row 3, column 2 of 4, spanning 2 columns" — the
 //! information a sighted reader takes from the ruled grid.
 //!
-//! ## Qt has none of it
+//! ## the toolkit has none of it
 //!
-//! Not a smaller amount: none. The accessibility interface a `QTextEdit`
-//! implements is `QAccessibleTextInterface`, whose vocabulary is character
+//! Not a smaller amount: none. The accessibility interface a text edit
+//! implements is accessible text interface, whose vocabulary is character
 //! offsets, selections, ranges and text attributes, and which has **no method
 //! that reports block structure at all** — the wall R1551 hit for heading
-//! levels and R1559 for lists. Qt does have `QAccessibleTableInterface`, but it
-//! is implemented by `QTableView` / `QTreeView`, the item **views**; a
-//! `QTextTable` inside a document reaches `QTextDocumentLayout`, which draws
-//! its rules, and stops. So a Qt document's table is, to a screen reader, an
-//! undifferentiated run of paragraphs: the cell boundaries, the columns and
-//! above all the *merges* are invisible, and a merged cell silently shifts
-//! every following cell's apparent position with nothing to say so.
+//! levels and R1559 for lists. The toolkit does have accessible table
+//! interface, but it is implemented by table view / tree view, the item
+//! **views**; a text table inside a document reaches text document layout,
+//! which draws its rules, and stops. So a toolkit document's table is, to a
+//! screen reader, an undifferentiated run of paragraphs: the cell boundaries,
+//! the columns and above all the *merges* are invisible, and a merged cell
+//! silently shifts every following cell's apparent position with nothing to
+//! say so.
 //!
 //! ## Why a pass over the painted tree
 //!

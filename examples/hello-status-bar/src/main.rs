@@ -2,11 +2,11 @@
 //!
 //! ## What this demonstrates
 //!
-//! The bottom chrome of an editor shell (VS Code / `JetBrains` status bar):
-//! a reactive cursor-position segment (`Ln L, Col C`), clickable
-//! language-mode and encoding segments that cycle on click, and a
-//! message area. It rounds out the self-hosted-editor shell alongside
-//! the R912 command palette and the R909/R910 inspector.
+//! The bottom chrome of an editor shell (VS Code / `the IDE vendor` status bar): a reactive
+//! cursor-position segment (`Ln L, Col C`), clickable language-mode and encoding
+//! segments that cycle on click, and a message area. It rounds out the
+//! self-hosted-editor shell alongside the R912 command palette and the
+//! R909/R910 inspector.
 //!
 //! - A primary [`StatusBarExternal`] holds the cursor position, the
 //!   mode / encoding indices, and a message (the reactive-holder

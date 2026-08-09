@@ -29,7 +29,7 @@
 //!   [`pinion_rpc::process_registry`] — how many are open, which connections
 //!   own them, and how many notifications this process has written. §2 #7: an
 //!   agent learns who is listening to this app, over the wire, with no pixels.
-//!   Qt publishes no equivalent for `QLocalServer`, because nothing in Qt binds
+//!   the toolkit publishes no equivalent for local server, because nothing in the toolkit binds
 //!   a server-initiated write to a *named* stream in the first place.
 //!
 //! It is display-only (PR-51 `primary_surface() -> None`, as

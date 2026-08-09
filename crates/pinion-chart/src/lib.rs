@@ -97,104 +97,96 @@
 //! `examples/hello-scatter`'s brush strip drives it, so a numeric BRUSH in one
 //! widget dims the corresponding points in another.
 //!
-//! And (R1528) the crate's first non-linear **axis** — [`LineChart::y_log`] /
-//! [`ScatterChart::x_log`] and their `_base` twins (Qt's `QLogValueAxis`).
-//! Until then every axis was affine: [`LinearScale`] was the only mapping in
-//! the crate, so a latency series over `0.1 ms .. 1000 ms` put everything
-//! below 100 ms on the baseline. A log axis puts equal *ratios* on equal
-//! pixel spans. Three things follow from that and are worth knowing before
-//! using it: the auto-domain measures only the strictly positive samples and
-//! snaps to whole **decades**; each decade carries fainter unlabelled
-//! subdivisions (`.grid.minor.*`), without which evenly-spaced decade lines
+//! And (R1528) the crate's first non-linear **axis** — [`LineChart::y_log`] / [`ScatterChart::x_log`] and their
+//! `_base` twins (the toolkit's log value axis). Until then every axis was affine:
+//! [`LinearScale`] was the only mapping in the crate, so a latency series over `0.1 ms .. 1000 ms` put
+//! everything below 100 ms on the baseline. A log axis puts equal *ratios* on
+//! equal pixel spans. Three things follow from that and are worth knowing
+//! before using it: the auto-domain measures only the strictly positive
+//! samples and snaps to whole **decades**; each decade carries fainter
+//! unlabelled subdivisions (`.grid.minor.*`), without which evenly-spaced decade lines
 //! read as a linear axis; and a sample at or below zero has **no pixel**, so
-//! it draws no mark and is reported by [`LineChart::off_scale`] — the
-//! [`Mapped::unreadable`] stance applied to the axis rather than the input.
-//! The bar chart is deliberately excluded: a bar encodes magnitude by length
-//! from a zero baseline, and a log axis has no zero.
+//! it draws no mark and is reported by [`LineChart::off_scale`] — the [`Mapped::unreadable`] stance applied to the
+//! axis rather than the input. The bar chart is deliberately excluded: a bar
+//! encodes magnitude by length from a zero baseline, and a log axis has no
+//! zero.
 //!
-//! And (R1529) the third axis kind — [`LineChart::x_time`] /
-//! [`ScatterChart::x_time`] and their `y_` twins, plus
-//! [`Timeline::time_axis`] (Qt's `QDateTimeAxis`, d3's `scaleUtc`). Values on
-//! it are epoch **milliseconds**, UTC. Unlike the log axis this one is
-//! *affine* — equal durations occupy equal pixel spans, so it reuses
-//! [`LinearScale`] untouched — and everything that makes it a distinct kind
-//! is in its ticks and labels. Both were wrong before: [`nice_ticks`]'s
-//! `1 / 2 / 5 x 10^n` step is a **decimal** quantiser, and above a second
-//! time is mixed-radix, so a one-hour domain got gridlines at `00:06:40`;
-//! and the label compacted by magnitude, which at the giga scale has
-//! 27-hour resolution, so every tick of a sub-day axis rendered as the same
-//! string. [`time_ticks`] lands on clock and calendar boundaries and
-//! [`format_time_tick`] names each one by the finest field that
-//! distinguishes it, so the date appears where the axis crosses into a new
-//! day rather than on every label. Two things are worth knowing before using
-//! it: a lone value — a scrub header, an a11y readout — takes
-//! [`TickFormat::readout`] rather than the tick label, because a relative
-//! label out of its row is ambiguous; and the axis is UTC only, a local one
-//! needing a timezone database that would also make every axis test read the
-//! host's configuration.
+//! And (R1529) the third axis kind — [`LineChart::x_time`] / [`ScatterChart::x_time`] and their `y_` twins, plus
+//! [`Timeline::time_axis`] (the toolkit's date time axis, d3's `scaleUtc`). Values on it are epoch
+//! **milliseconds**, UTC. Unlike the log axis this one is *affine* — equal
+//! durations occupy equal pixel spans, so it reuses [`LinearScale`] untouched — and
+//! everything that makes it a distinct kind is in its ticks and labels. Both
+//! were wrong before: [`nice_ticks`]'s `1 / 2 / 5 x 10^n` step is a **decimal** quantiser, and above a
+//! second time is mixed-radix, so a one-hour domain got gridlines at `00:06:40`; and
+//! the label compacted by magnitude, which at the giga scale has 27-hour
+//! resolution, so every tick of a sub-day axis rendered as the same string.
+//! [`time_ticks`] lands on clock and calendar boundaries and [`format_time_tick`] names each one by
+//! the finest field that distinguishes it, so the date appears where the axis
+//! crosses into a new day rather than on every label. Two things are worth
+//! knowing before using it: a lone value — a scrub header, an a11y readout —
+//! takes [`TickFormat::readout`] rather than the tick label, because a relative label out of
+//! its row is ambiguous; and the axis is UTC only, a local one needing a
+//! timezone database that would also make every axis test read the host's
+//! configuration.
 //!
 //! And (R1545) the fourth axis kind, and the first that was already *drawn*
-//! before it was an axis — [`LineChart::x_category`] /
-//! [`ScatterChart::x_category`] and their `y_` twins, plus
-//! [`BarChart::x_window`] (Qt's `QBarCategoryAxis`, d3's `scaleBand`). The
-//! bar chart has had a categorical x since R1374, but as a private slot
-//! metric: `left + i * slot`, written out three times inside `bar.rs` for the
-//! bar box, its label and its click surface, reachable by no other chart and
-//! by no consumer. Making it an [`AxisKind`] arm gives it what the other
-//! three have — the shared tick set, the shared label format, and the domain
-//! pinning through which a [`PlotWindow`] wheel zoom and a category window
-//! both reach it — and gives every cartesian chart the ability to plot over
-//! named slots.
+//! before it was an axis — [`LineChart::x_category`] / [`ScatterChart::x_category`] and their `y_` twins, plus [`BarChart::x_window`] (the
+//! toolkit's bar category axis, d3's `scaleBand`). The bar chart has had a categorical
+//! x since R1374, but as a private slot metric: `left + i * slot`, written out three times
+//! inside `bar.rs` for the bar box, its label and its click surface, reachable by
+//! no other chart and by no consumer. Making it an [`AxisKind`] arm gives it what the
+//! other three have — the shared tick set, the shared label format, and the
+//! domain pinning through which a [`PlotWindow`] wheel zoom and a category window both
+//! reach it — and gives every cartesian chart the ability to plot over named
+//! slots.
 //!
 //! Three things follow and are worth knowing before using it. Sample `x`
-//! values are category **indices** (category `i` sits at `x = i`, occupying
-//! the band `i ± 0.5`), and one that names no slot has no pixel, so it is
-//! reported by [`LineChart::off_scale`] rather than drawn somewhere invented.
-//! [`CategoryScale::band`] publishes where a category is drawn, which Qt's
-//! axis cannot answer at all — a Qt bar's rect is computed inside the private
-//! series painter. And a window is resolved from names *before* it reaches a
-//! chart ([`Categories::window`] → [`CategoryWindow`]), where Qt's
-//! `setRange(QString, QString)` returns `void` and silently ignores a name
-//! that is not a category.
+//! values are category **indices** (category `i` sits at `x = i`, occupying the
+//! band `i ± 0.5`), and one that names no slot has no pixel, so it is reported by
+//! [`LineChart::off_scale`] rather than drawn somewhere invented. [`CategoryScale::band`] publishes where a
+//! category is drawn, which the toolkit's axis cannot answer at all — a
+//! toolkit bar's rect is computed inside the private series painter. And a
+//! window is resolved from names *before* it reaches a chart ([`Categories::window`] → [`CategoryWindow`]),
+//! where the toolkit's `setRange(string, string)` returns `void` and silently ignores a name that is not
+//! a category.
 //!
-//! And (R1553) the crate's first datum that is **not a point** — a
-//! [`Distribution`], drawn by [`BoxPlotChart`] (Qt's `QBoxPlotSeries`).
-//! Every value above resolves to one position; a distribution occupies a
-//! span of the value axis and carries interior landmarks, so one datum emits
-//! a box, a median, two whiskers, two caps and a mark per outlier — Tukey's
-//! schema (*Exploratory Data Analysis*, 1977), optionally notched after
-//! `McGill`, Tukey & Larsen (1978).
+//! And (R1553) the crate's first datum that is **not a point** — a [`Distribution`],
+//! drawn by [`BoxPlotChart`] (the toolkit's box plot series). Every value above resolves
+//! to one position; a distribution occupies a span of the value axis and
+//! carries interior landmarks, so one datum emits a box, a median, two
+//! whiskers, two caps and a mark per outlier — Tukey's schema (*Exploratory
+//! Data Analysis*, 1977), optionally notched after `McGill`, Tukey & Larsen (1978).
 //!
-//! Qt's `QBoxSet` is five doubles and `QtCharts` computes none of them (its
-//! own box-plot example ships a `findMedian()` helper in the *example*).
-//! Four things follow and are worth knowing before using this:
+//! The toolkit's box set is five doubles and `the toolkit's charting module` computes none of them (its
+//! own box-plot example ships a `findMedian()` helper in the *example*). Four things
+//! follow and are worth knowing before using this:
 //!
 //! * The summary is **derived**, and by a *named* definition —
 //!   [`QuantileMethod`] carries three standard ones (Tukey's hinges, Hyndman
 //!   & Fan types 7 and 6) that disagree for small `n`, so the method is part
 //!   of the value rather than a caller's comment. Handing in five
 //!   pre-computed numbers is still supported
-//!   ([`Distribution::from_summary`], Qt's contract) — with the ordering
-//!   *checked*, where `QBoxSet::setValue` accepts an upper quartile below the
+//!   ([`Distribution::from_summary`], the toolkit's contract) — with the ordering
+//!   *checked*, where `setValue` accepts an upper quartile below the
 //!   lower one and paints an inverted box in silence.
 //! * **Outliers exist.** The whiskers stop at Tukey's `k * IQR` fence and
-//!   each sample beyond it is its own addressable mark. `QBoxSet` has five
-//!   slots and no per-outlier geometry, so a Qt box plot cannot draw one at
+//!   each sample beyond it is its own addressable mark. box set has five
+//!   slots and no per-outlier geometry, so a toolkit box plot cannot draw one at
 //!   any setting — and that fence is the defining half of the form.
 //! * The **notch** ([`BoxPlotChart::notched`]) is drawn only where the
 //!   statistic exists: it is a function of the sample count, which a
 //!   pre-computed summary does not carry, so such a box keeps its plain
-//!   rectangle in the same chart. `QBoxSet` carries no `n` at all.
+//!   rectangle in the same chart. box set carries no `n` at all.
 //! * The value axis may be **logarithmic** ([`BoxPlotChart::y_log`]) —
 //!   legitimately, unlike [`BarChart`]'s, because a box plot encodes five
 //!   positions rather than a length from zero. A landmark the axis cannot
 //!   place draws nothing and is reported by [`BoxPlotChart::off_scale`].
 //!
-//! And (R1567) the second series type with extent — a [`Candle`], drawn by
-//! [`CandlestickChart`] (Qt's `QCandlestickSeries`). The paragraph that stood
-//! here said a candlestick would be the box plot's *second consumer*, "the
-//! same interval geometry over open / high / low / close". **Building one
-//! showed that was wrong, and the reason is the round.**
+//! And (R1567) the second series type with extent — a [`Candle`], drawn by [`CandlestickChart`]
+//! (the toolkit's candlestick series). The paragraph that stood here said a
+//! candlestick would be the box plot's *second consumer*, "the same interval
+//! geometry over open / high / low / close". **Building one showed that was
+//! wrong, and the reason is the round.**
 //!
 //! A [`Distribution`]'s five landmarks are totally ordered by construction.
 //! A candle has four, and only three order relations among them: `low` is
@@ -210,10 +202,10 @@
 //! Six things follow and are worth knowing before using it:
 //!
 //! * **The relations are checked and the refusal names the slot.**
-//!   `QCandlestickSet` is five `qreal`s with `void` setters, so a transposed
+//!   candlestick set is five `qreal`s with `void` setters, so a transposed
 //!   high and low, or an open outside the extremes, paints whatever geometry
 //!   it implies. [`Candle::new`] refuses each ([`CandleError`]).
-//! * **The direction is a value with three arms.** Qt has `increasingColor`
+//! * **The direction is a value with three arms.** the toolkit has `increasingColor`
 //!   and `decreasingColor` — paint properties on the *series* — and no
 //!   accessor on the set, and its documented rule is a strict `close > open`,
 //!   so a **doji** (the session that closed where it opened, the single
@@ -228,16 +220,16 @@
 //!   [`CandlestickChart::direction_contrast`] publishes the ratio.
 //! * **One datum, two readings of the x-axis** ([`SessionAxis`]). A candle
 //!   carries its own instant, so whether the axis is equal ordinal slots
-//!   (Qt's `QBarCategoryAxis` — how a price chart is read, and the weekend is
-//!   invisible) or real UTC time (Qt's `QDateTimeAxis` — where the weekend is
-//!   a gap) is a property of the chart. Qt reaches the two by attaching
+//!   (the toolkit's bar category axis — how a price chart is read, and the weekend is
+//!   invisible) or real UTC time (the toolkit's date time axis — where the weekend is
+//!   a gap) is a property of the chart. The toolkit reaches the two by attaching
 //!   different axis objects and supplying the category names as a **second
 //!   data source** unrelated to the sets' timestamps; here the slot names are
 //!   *derived* from the instants and the sessions sorted by them once, so the
 //!   readings cannot disagree. One [`CategoryWindow`] narrows both.
 //! * **The derived readings exist.** Body, range, the two shadows, the
 //!   signed change and the percent change (`None` where it does not exist)
-//!   are on the datum; `QCandlestickSet` exposes none, so every Qt consumer
+//!   are on the datum; candlestick set exposes none, so every the toolkit consumer
 //!   recomputes them.
 //! * **A slot the axis cannot place is REPORTED**
 //!   ([`CandlestickChart::off_scale`]) rather than pinned to a domain floor —
@@ -252,15 +244,14 @@
 //!
 //! # Where the data comes from (R1446)
 //!
-//! Every chart above takes a `Vec<Series>` the caller built. [`ModelMapper`]
-//! adds the other source: a [`CellTable`] — pinion's row-major
-//! [`CellValue`](pinion_core::CellValue) block, what every editable grid in
-//! the tree holds — projected into series by naming which [`Field`] is x and
-//! which are y (the `QtCharts` `Q*XYModelMapper` contract). That makes *which
-//! field is plotted* a runtime choice, and makes what the user edits the thing
-//! the chart draws. Unlike Qt's `QVariant::toReal()`, a cell that holds no
-//! number is reported ([`Mapped::unreadable`]) rather than plotted as zero.
-//! `examples/hello-model-chart` is the forcing consumer.
+//! Every chart above takes a `Vec<Series>` the caller built. [`ModelMapper`] adds the other
+//! source: a [`CellTable`] — pinion's row-major [`CellValue`](pinion_core::CellValue) block,
+//! what every editable grid in the tree holds — projected into series by
+//! naming which [`Field`] is x and which are y (the `the toolkit's charting module` `Q*XYModelMapper` contract). That makes
+//! *which field is plotted* a runtime choice, and makes what the user edits
+//! the thing the chart draws. Unlike the toolkit's `toReal()`, a cell that holds no
+//! number is reported ([`Mapped::unreadable`]) rather than plotted as zero. `examples/hello-model-chart` is the forcing
+//! consumer.
 //!
 //! # Two entry points — pick by who places the chart
 //!

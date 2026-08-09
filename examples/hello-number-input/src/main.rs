@@ -3,11 +3,11 @@
 // (WAI-ARIA, TextFieldExternal, ButtonExternal, SpinButton, …).
 #![allow(clippy::doc_markdown)]
 
-//! `hello-number-input` — R736 §5.38 §5.40 §5.50 **editable number input**
-//! (the typeable WAI-ARIA `spinbutton`: the HTML `<input type=number>` /
-//! GTK editable `SpinButton` / Qt `QSpinBox` form factor): a single-line
-//! numeric text field flanked by `−` / `+` stepper buttons. The user can
-//! either *type* a value directly or step it with the buttons / arrow keys.
+//! `hello-number-input` — R736 §5.38 §5.40 §5.50 **editable number input** (the typeable
+//! WAI-ARIA `spinbutton`: the HTML `<input type=number>` / GTK editable `SpinButton` / the toolkit spin box form
+//! factor): a single-line numeric text field flanked by `−` / `+` stepper
+//! buttons. The user can either *type* a value directly or step it with the
+//! buttons / arrow keys.
 //!
 //! ## 2nd consumer of the editable-field value-coordination pattern
 //!

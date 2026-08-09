@@ -3,16 +3,16 @@
 //!
 //! # Why a document is a column of blocks
 //!
-//! Qt's `QTextDocument` owns a private layout engine (`QTextDocumentLayout`)
-//! that stacks blocks and applies their margins itself, which is why a Qt
-//! block's indent is invisible to the widget layout around it: the two are
-//! different layout systems that meet only at a `QTextEdit`'s viewport.
+//! The toolkit's text document owns a private layout engine (text document
+//! layout) that stacks blocks and applies their margins itself, which is why a
+//! toolkit block's indent is invisible to the widget layout around it: the two
+//! are different layout systems that meet only at a text edit's viewport.
 //!
 //! Here a block IS a scene node. Its format lowers to the node's margin
-//! ([`TextNode::with_block`]), the ordinary flex pass stacks the column, and the
-//! result composes with everything else in the tree — a paragraph can sit beside
-//! a widget, inside a splitter, in a scroll — with no document-specific layout
-//! code at all, on **both** backends. A `QTextDocument` can do none of that.
+//! ([`TextNode::with_block`]), the ordinary flex pass stacks the column, and the result composes
+//! with everything else in the tree — a paragraph can sit beside a widget,
+//! inside a splitter, in a scroll — with no document-specific layout code at
+//! all, on **both** backends. A text document can do none of that.
 //!
 //! # One declaration, three consumers
 //!
@@ -49,11 +49,11 @@
 //! by its parent's gutter — CSS's own nesting, with no per-level arithmetic
 //! anywhere in this file.
 //!
-//! The marker is an ordinary [`TextNode`]. That is the whole reason the cell
-//! backend needs no list code, the shape cache measures markers like any other
-//! text, and `scene/text_lists` can publish where a bullet landed. Qt's
-//! `QTextDocumentLayout` draws its unordered markers as an ellipse or a
-//! rectangle, so in Qt a bullet is not text and none of that follows.
+//! The marker is an ordinary [`TextNode`]. That is the whole reason the cell backend
+//! needs no list code, the shape cache measures markers like any other text,
+//! and `scene/text_lists` can publish where a bullet landed. The toolkit's text document
+//! layout draws its unordered markers as an ellipse or a rectangle, so in the
+//! toolkit a bullet is not text and none of that follows.
 
 use pinion_core::composite_tag::DocumentTag;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, StyleRun, TextNode, TextRole};
@@ -68,10 +68,10 @@ use std::ops::Range;
 /// One paragraph of a document: its text, its block format, and its inline
 /// styling.
 ///
-/// The character style is `Option`: `None` inherits the document's base style,
-/// which is the common case and keeps a plain paragraph a one-field
-/// construction. That mirrors Qt, where a block's characters carry the
-/// document's default `QTextCharFormat` until something overrides them.
+/// The character style is `Option`: `None` inherits the document's base style, which
+/// is the common case and keeps a plain paragraph a one-field construction.
+/// That mirrors the toolkit, where a block's characters carry the document's
+/// default text char format until something overrides them.
 #[derive(Debug, Clone)]
 pub struct TextBlock {
     /// The paragraph's text. Hard breaks (`U+000A`) inside it stay inside it —
@@ -143,16 +143,16 @@ impl TextBlock {
         self
     }
 
-    /// R1559 builder: this paragraph is an item of a list (Qt
-    /// `QTextCursor::createList` / `QTextList::add`).
+    /// R1559 builder: this paragraph is an item of a list (the toolkit
+    /// `createList` / `add`).
     #[must_use]
     pub fn in_list(mut self, spec: ListSpec) -> Self {
         self.list = Some(spec);
         self
     }
 
-    /// R1560 builder: this paragraph is in a table cell (Qt
-    /// `QTextTable::cellAt(...).firstCursorPosition()`).
+    /// R1560 builder: this paragraph is in a table cell (the toolkit
+    /// `cellAt(...).firstCursorPosition()`).
     #[must_use]
     pub fn in_cell(mut self, spec: CellSpec) -> Self {
         self.cell = Some(spec);
@@ -454,7 +454,7 @@ fn cell_node(
 /// The CSS grid **line** a 0-based track index starts at.
 ///
 /// One function because the off-by-one is the seam between two numbering
-/// conventions — a table's addresses are 0-based (Qt `QTextTableCell::row()`)
+/// conventions — a table's addresses are 0-based (the toolkit `row()`)
 /// and CSS's grid lines are 1-based — and a conversion spelled at each of the
 /// four call sites is a conversion that can be forgotten at one of them.
 fn line(track: u32) -> u16 {
@@ -543,9 +543,9 @@ fn open_lists_for(
 /// One list item: its marker and its paragraph, side by side.
 ///
 /// The marker is real text in its own addressable node, which is what lets it
-/// be measured, copied, shaped, painted by the cell backend, and read back over
-/// the wire. Qt draws its unordered markers as an ellipse or a rectangle inside
-/// `QTextDocumentLayout`, so none of that is possible there.
+/// be measured, copied, shaped, painted by the cell backend, and read back
+/// over the wire. The toolkit draws its unordered markers as an ellipse or a
+/// rectangle inside text document layout, so none of that is possible there.
 fn item_row(
     tag: &str,
     i: usize,
@@ -558,12 +558,12 @@ fn item_row(
         TextNode::styled(
             placement.marker.clone(),
             Rect::new(0, 0, 0, 0),
-            // The item's own character style, as Qt's marker takes the block's
-            // char format — so a marker matches the size and colour of the
-            // text it belongs to. Two paragraph-level fields are dropped: the
-            // alignment, because a marker is end-aligned in its gutter by
-            // definition, and the text indent, which would push the marker
-            // inside its own box.
+            // The item's own character style, as the toolkit's marker takes
+            // the block's char format — so a marker matches the size and
+            // colour of the text it belongs to. Two paragraph-level fields are
+            // dropped: the alignment, because a marker is end-aligned in its
+            // gutter by definition, and the text indent, which would push the
+            // marker inside its own box.
             style
                 .clone()
                 .with_align(TextAlign::End)
@@ -1030,8 +1030,9 @@ mod tests {
         assert!(published.clamped());
     }
 
-    /// A multi-block cell is one box holding both paragraphs — Qt's cell is a
-    /// frame of blocks, and this is the flat-sequence spelling of that.
+    /// A multi-block cell is one box holding both paragraphs — the toolkit's
+    /// cell is a frame of blocks, and this is the flat-sequence spelling of
+    /// that.
     #[test]
     fn r1560_a_continuation_block_joins_the_same_cell_box() {
         let format = TableFormat::new(2);

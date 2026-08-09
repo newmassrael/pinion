@@ -368,8 +368,8 @@ fn build_title(
     } else {
         Color::TRANSPARENT
     };
-    // R1543 §5.39 — a title carrying Qt's `&` markup declares a mnemonic:
-    // `"&File"` paints `File` with an underlined `F` bound to Alt+F. Parsing
+    // R1543 §5.39 — a title carrying the toolkit's `&` markup declares a
+    // mnemonic: `"&File"` paints `File` with an underlined `F` bound to Alt+F. Parsing
     // here rather than in each binding is what makes EVERY menubar consumer
     // accelerator-capable without editing any of them; a title with no `&` is
     // byte-identical to the pre-R1543 node.
@@ -750,12 +750,12 @@ fn build_item(
             ),
         ));
     }
-    // R1543 §5.39 — a dropdown item's own mnemonic (`"&New"`). It exists only
-    // while the dropdown is painted, which is exactly AccessKit's stated
-    // `access_key` semantics ("for menu items, active only while the menu is
-    // active") and Qt's — and here it falls out of the registry being derived
-    // from the paint scene rather than from a registration that would have to
-    // be added and removed as menus open and close.
+    // R1543 §5.39 — a dropdown item's own mnemonic (`"&New"`). It exists only while
+    // the dropdown is painted, which is exactly AccessKit's stated `access_key`
+    // semantics ("for menu items, active only while the menu is active") and
+    // the toolkit's — and here it falls out of the registry being derived from
+    // the paint scene rather than from a registration that would have to be
+    // added and removed as menus open and close.
     children.push(Scene::Text(TextNode::mnemonic_styled(
         item.label,
         Rect::default(),

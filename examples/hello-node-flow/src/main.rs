@@ -20,7 +20,7 @@
 //!   framework's stack, not from anything here;
 //! * no branch machinery — [`NodeKind::control`] is one method, and the
 //!   taxonomy below overrides it exactly **once**, for `Branch`. A three-way
-//!   `Sequence` takes the provided default and writes nothing, where Unreal
+//!   `Sequence` takes the provided default and writes nothing, where the engine
 //!   5.8.1 needs a `UK2Node_ExecutionSequence` class and an
 //!   `FKCHandler_ExecutionSequence` compile handler for the same behaviour.
 //!
@@ -91,11 +91,11 @@ impl Val {
 
 /// A scenario step. `Reading` and `Budget` are **pure** — no control ports at
 /// all — so they never appear in a trace; they are pulled when something reads
-/// them, which is exactly Unreal's pure/impure split.
+/// them, which is exactly the engine's pure/impure split.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 enum Op {
     /// No control input, so it is an entry point — derivable rather than a
-    /// class to know (Unreal reaches the same set by testing for
+    /// class to know (the engine reaches the same set by testing for
     /// `UK2Node_Event` / `UK2Node_FunctionEntry`).
     Begin,
     /// One control in, one out, plus a value out: the ordinary statement.

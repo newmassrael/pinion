@@ -124,9 +124,9 @@ pub struct TextSnapshot {
     /// (§2 #7 scene-as-data) — `RichText` is introspectable without
     /// OCR'ing per-colour glyphs off a screenshot.
     pub runs: Vec<pinion_core::scene::StyleRun>,
-    /// R1551 §5.36 — the declared [`BlockFormat`](pinion_core::style::BlockFormat)
-    /// when this text is a document block (Qt `QTextBlockFormat`), `None` for an
-    /// ordinary label.
+    /// R1551 §5.36 — the declared [`BlockFormat`](pinion_core::style::BlockFormat) when
+    /// this text is a document block (the toolkit text block format), `None` for
+    /// an ordinary label.
     ///
     /// The declaration, not its lowering: the indents it states also become the
     /// node's layout margin, and a margin cannot be read back as a block format
@@ -135,7 +135,8 @@ pub struct TextSnapshot {
     /// needs the layout this surface deliberately does not carry.
     pub block: Option<pinion_core::style::BlockFormat>,
     /// R1559 §5.36 — where this paragraph sits in the document's LIST
-    /// structure (Qt `QTextList`), `None` for text that is not a list item.
+    /// structure (the toolkit text list), `None` for text that is not a list
+    /// item.
     ///
     /// The mirror image of [`Self::block`]: that is a declaration whose
     /// lowering is unrecoverable, this is a DERIVATION whose input is
@@ -146,7 +147,7 @@ pub struct TextSnapshot {
     /// folds the same field into one row per list.
     pub list: Option<pinion_core::text_list::ListPlacement>,
     /// R1560 §5.36 — where this paragraph sits in the document's TABLE
-    /// structure (Qt `QTextTable`), `None` for text outside a table.
+    /// structure (the toolkit text table), `None` for text outside a table.
     ///
     /// [`Self::list`]'s argument one dimension up: a paragraph painted in a
     /// grid area says nothing about which table it is in, which slot it got,

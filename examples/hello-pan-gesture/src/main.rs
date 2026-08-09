@@ -1,16 +1,14 @@
 //! R1434 §5.35 §5.15 — a native PAN gesture slides a map.
 //!
-//! A `MapViewport` [`External`] overrides [`External::pan_gesture`] — the Qt
-//! `QNativeGestureEvent` `PanNativeGesture` / winit `WindowEvent::PanGesture`
-//! peer — and accumulates the INCREMENTAL two-axis delta of an N-finger trackpad
-//! pan across the [`GesturePhase::Begin`]`..`[`End`](GesturePhase::End) arc:
-//! `offset += delta` per event, in logical pixels, with the platform's own sign
-//! (a native pan is direct manipulation — the content follows the fingers — so
-//! it is NOT sign-flipped the way a wheel scroll command is). The offset is
-//! clamped to the content bounds, the way a real map stops at the edge of its
-//! tiles, and — the whole point of the phase — on [`GesturePhase::Cancel`] the
-//! viewport DISCARDS the in-flight pan and snaps back to the offset it held when
-//! the gesture began.
+//! A `MapViewport` [`External`] overrides [`External::pan_gesture`] — the toolkit native gesture event `PanNativeGesture` / winit
+//! `WindowEvent::PanGesture` peer — and accumulates the INCREMENTAL two-axis delta of an N-finger
+//! trackpad pan across the [`GesturePhase::Begin`]`..`[`End`](GesturePhase::End) arc: `offset += delta` per
+//! event, in logical pixels, with the platform's own sign (a native pan is
+//! direct manipulation — the content follows the fingers — so it is NOT
+//! sign-flipped the way a wheel scroll command is). The offset is clamped to
+//! the content bounds, the way a real map stops at the edge of its tiles, and
+//! — the whole point of the phase — on [`GesturePhase::Cancel`] the viewport DISCARDS the
+//! in-flight pan and snaps back to the offset it held when the gesture began.
 //!
 //! winit surfaces `WindowEvent::PanGesture` only on iOS, so the
 //! `scene/pan_gesture` RPC is the AI-first driver (§2 #2): a headless client
@@ -153,7 +151,7 @@ struct MapViewport {
     events: u64,
     /// The anchor fraction of the last pan (`None` before the first).
     anchor: Option<(f32, f32)>,
-    /// The modifiers held on the last pan (the Qt-parity axis-lock bit).
+    /// The modifiers held on the last pan (the toolkit-parity axis-lock bit).
     modifiers: Modifiers,
 }
 

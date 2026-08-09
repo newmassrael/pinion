@@ -46,12 +46,11 @@ pub enum FocusError {
     /// the tag and the nearest ancestor that disabled it, so the caller learns
     /// what to act on instead of what to look up.
     ///
-    /// A strict refinement of [`Self::NotFocusable`] — the tag was already
-    /// being refused, since the §5.39 enumeration does not descend into a
-    /// disabled region. What is new is that the answer names the cause. Qt's
-    /// `QWidget::setFocus()` on a disabled widget returns `void` and does
-    /// nothing at all: the caller cannot distinguish "focused it" from
-    /// "refused it", let alone learn why.
+    /// A strict refinement of [`Self::NotFocusable`] — the tag was already being refused, since
+    /// the §5.39 enumeration does not descend into a disabled region. What is
+    /// new is that the answer names the cause. The toolkit's `setFocus()` on a disabled
+    /// widget returns `void` and does nothing at all: the caller cannot
+    /// distinguish "focused it" from "refused it", let alone learn why.
     Disabled {
         /// The refused tag.
         tag: String,

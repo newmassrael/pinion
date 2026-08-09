@@ -1064,7 +1064,7 @@ pub trait WidgetEventName: Sized {
     /// one an operator can act on, which is the whole subject of
     /// [`RefusalReason`](crate::external::RefusalReason).
     ///
-    /// Qt's floor: `QMetaObject::invokeMethod` with an unknown member answers
+    /// The toolkit's floor: `invokeMethod` with an unknown member answers
     /// `false` and, in a debug build, prints `No such method` to stderr — the
     /// meta-object holds every method's signature and the failure path
     /// enumerates none of them.

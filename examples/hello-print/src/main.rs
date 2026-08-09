@@ -1,6 +1,6 @@
 // R833 §3 §5.53 §5.15 — own-rendered print dialog.
 #![allow(rustdoc::private_intra_doc_links)]
-//! R833 — pinion paints its **own** print dialog (no native GTK / Qt
+//! R833 — pinion paints its **own** print dialog (no native GTK / the toolkit
 //! print dialog, §5.53) and submits through the [`pinion_core::print`]
 //! [`PrintBackend`] substrate: [`InMemoryPrintBackend`] for the headless
 //! demo (this CI box has no CUPS destination), `CupsPrintBackend`

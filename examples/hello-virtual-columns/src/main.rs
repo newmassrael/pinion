@@ -116,7 +116,7 @@ const STATUS_TAG: &str = "vcol_status";
 /// demo reads the per-frame **section**-request count from.
 const HEADER_STATUS_TAG: &str = "vcol_hstatus";
 /// R1547 — tag of the header **mark**-request readout: how many sections were
-/// asked for their `Qt::DecorationRole` this frame. Its own slot for the reason
+/// asked for their `DecorationRole` this frame. Its own slot for the reason
 /// R1530 gave the label count its own — a role that stopped being windowed
 /// would otherwise hide inside a neighbour's number.
 const HEADER_DECO_STATUS_TAG: &str = "vcol_hdstatus";
@@ -145,8 +145,8 @@ fn col_widths() -> Vec<u32> {
     (0..NCOLS).map(col_width).collect()
 }
 
-/// The label of **one column** — the R1530 per-section contract (Qt
-/// `headerData(section, Qt::Horizontal, Qt::DisplayRole)`), and the SSOT for
+/// The label of **one column** — the R1530 per-section contract (the toolkit
+/// `headerData(section, Horizontal, DisplayRole)`), and the SSOT for
 /// this example's column names.
 ///
 /// Generated rather than a literal array: 200 hand written labels would be
@@ -161,8 +161,8 @@ fn header_text(col: usize) -> String {
     format!("C{col:03}")
 }
 
-/// R1548 §5.27 — the **vertical** section axis's `Qt::DisplayRole`
-/// (`headerData(section, Qt::Vertical, Qt::DisplayRole)`), and the witness that
+/// R1548 §5.27 — the **vertical** section axis's `DisplayRole`
+/// (`headerData(section, Vertical, DisplayRole)`), and the witness that
 /// this axis is windowed: it counts every ask.
 ///
 /// `R` rather than a bare number so a `scene/snapshot` string cannot be
@@ -178,7 +178,7 @@ fn row_header_text(row: usize) -> String {
 /// cannot show that it is *asked* per section, only that it is answered.
 const MARKED_EVERY: usize = 10;
 
-/// R1547 §5.27 — the grid's **section**-axis `Qt::DecorationRole`.
+/// R1547 §5.27 — the grid's **section**-axis `DecorationRole`.
 ///
 /// Windowed like the label: over 200 columns showing five, this is asked five
 /// times. The mark means "Sampled", which the label `C137` does not say — so it
@@ -234,7 +234,7 @@ thread_local! {
     static HEADER_DECO_REQUESTS: Cell<usize> = const { Cell::new(0) };
 
     /// R1548 — how many **row** headers the grid asked for while building the
-    /// current frame (Qt `headerData(section, Qt::Vertical, …)`).
+    /// current frame (the toolkit `headerData(section, Vertical, …)`).
     ///
     /// Its own counter for the reason every other one is: this is the second
     /// section axis, and it is windowed by the ROW window where its neighbour
@@ -359,15 +359,14 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             cell: cell_text,
             columns: HeaderAxis {
                 label: header_text,
-                // R1547 — Qt `headerData(section, Qt::Horizontal,
-                // Qt::DecorationRole)`, windowed like the label beside it.
+                // R1547 — the toolkit `headerData(section, Horizontal,
+                // DecorationRole)`, windowed like the label beside it.
                 decoration: |col: usize| header_decoration(col, &theme),
             },
-            // R1548 — Qt `headerData(section, Qt::Vertical, Qt::DisplayRole)`:
-            // the second section axis, windowed by the ROW window exactly as
-            // its neighbour is by the column window.
-            // R1562 — `setCornerButtonEnabled(false)`: a column-windowing
-            // demo with a stub External has no selection to act on.
+            // R1548 — the toolkit `headerData(section, Vertical, DisplayRole)`: the second section axis, windowed by
+            // the ROW window exactly as its neighbour is by the column window.
+            // R1562 — `setCornerButtonEnabled(false)`: a column-windowing demo with a stub External has no
+            // selection to act on.
             rows: Some(RowHeaderAxis::inert(HeaderAxis::labelled(row_header_text))),
             decoration: no_decoration,
             edit: no_edit,
@@ -555,7 +554,7 @@ mod tests {
     struct Asked {
         cells: usize,
         sections: usize,
-        /// R1547 — how many sections were asked for their `Qt::DecorationRole`.
+        /// R1547 — how many sections were asked for their `DecorationRole`.
         marks: usize,
     }
 

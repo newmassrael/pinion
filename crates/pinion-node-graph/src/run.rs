@@ -14,7 +14,7 @@
 //! come from wherever they always came from — pulled through the data plane, on
 //! demand — and its **successor** comes from the control plane.
 //!
-//! Unreal splits the same way and says so on the predicate that does it:
+//! The engine splits the same way and says so on the predicate that does it:
 //! `FKismetCompilerContext::PinIsImportantForDependancies` returns
 //! `PinCategory != PC_Exec`, commented *"the execution wires do not form data
 //! dependencies, they are only important for final scheduling and that is
@@ -25,17 +25,17 @@
 //! A node may hand control to several outputs — that is a *sequence*, and it
 //! means "run the first to completion, **then** the next", not "run them
 //! concurrently". Completion is what needs remembering, so the pending work is
-//! a stack and the successors of one step are pushed in reverse. Unreal's
-//! sequence compiles to literally this: `push X1; goto A`, with `KCST_PushState`
-//! onto a runtime state stack.
+//! a stack and the successors of one step are pushed in reverse. The engine's
+//! sequence compiles to literally this: `push X1; goto A`, with `KCST_PushState` onto a runtime state
+//! stack.
 //!
 //! # What a pure node is
 //!
 //! A node with no control ports never appears in a trace. It is not skipped —
 //! it is *pulled*, by whoever reads its output, exactly as it always was. That
-//! is the same split Unreal draws between an impure node (has exec pins, runs
-//! when control reaches it, its results stored) and a pure one (no exec pins,
-//! re-evaluated at each use).
+//! is the same split the engine draws between an impure node (has exec pins,
+//! runs when control reaches it, its results stored) and a pure one (no exec
+//! pins, re-evaluated at each use).
 //!
 //! Because this crate's nodes are pure functions of their inputs
 //! ([`NodeKind::evaluate`] takes `&self` and returns values), a node that runs
@@ -54,11 +54,11 @@
 //! Control entering a group instance is entering **that instance**, so the
 //! walk carries a stack of levels, each holding the descent it is reading
 //! through and the return address it came in by. A group instance is not a
-//! computation and takes no turn of its own; entering one shows up in the trace
-//! as the first [`Step`] *inside* it, whose [`Step::instance`] names the
-//! instance node. Unreal has no equivalent because it has no instance: a macro
-//! is expanded by `FEdGraphUtilities::CloneGraph`, so its N uses are N copies of
-//! the nodes before anything runs.
+//! computation and takes no turn of its own; entering one shows up in the
+//! trace as the first [`Step`] *inside* it, whose [`Step::instance`] names the instance node.
+//! The engine has no equivalent because it has no instance: a macro is
+//! expanded by `FEdGraphUtilities::CloneGraph`, so its N uses are N copies of the nodes before anything
+//! runs.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -105,12 +105,10 @@ pub enum Stop {
     /// The step budget ran out with work still pending — which is what an
     /// execution loop with no exit looks like from inside.
     ///
-    /// Named rather than folded into [`Self::Halted`], because "it finished"
-    /// and "we stopped watching" are different facts. Unreal reaches the same
-    /// condition at run time, in a shipped build, by counting to
-    /// `GMaximumScriptLoopIterations` and raising
-    /// `EBlueprintExceptionType::InfiniteLoop`; the loop itself is nameable
-    /// here before anything runs, by
+    /// Named rather than folded into [`Self::Halted`], because "it finished" and "we
+    /// stopped watching" are different facts. The engine reaches the same
+    /// condition at run time, in a shipped build, by counting to `GMaximumScriptLoopIterations` and
+    /// raising `EBlueprintExceptionType::InfiniteLoop`; the loop itself is nameable here before anything runs, by
     /// [`Document::control_loops`](crate::Document::control_loops).
     BudgetExhausted,
 }
@@ -257,12 +255,11 @@ impl std::error::Error for RunError {}
 impl<K: NodeKind> Document<K> {
     /// Which nodes of `tree` control can *begin* at, ascending (R1599).
     ///
-    /// A node with at least one control output and **no control input at all**:
-    /// nothing can hand control to it, so if it runs, it runs first. That is a
-    /// property of the node's signature, which is what makes it derivable —
-    /// Unreal reaches the same set by node *class* (`UK2Node_Event`,
-    /// `UK2Node_FunctionEntry`), so there it is a list of types to know rather
-    /// than a question to ask.
+    /// A node with at least one control output and **no control input at
+    /// all**: nothing can hand control to it, so if it runs, it runs first.
+    /// That is a property of the node's signature, which is what makes it
+    /// derivable — the engine reaches the same set by node *class* (`UK2Node_Event`, `UK2Node_FunctionEntry`),
+    /// so there it is a list of types to know rather than a question to ask.
     ///
     /// A node whose control input is merely *unwired* is not an entry: it is
     /// unreachable, which is a different fact and one an editor reports

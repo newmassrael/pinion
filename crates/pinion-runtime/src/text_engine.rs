@@ -1007,14 +1007,14 @@ mod tests {
     /// asserted, and the sibling `measure_text_defers_for_ineligible_leaves`
     /// covers hard breaks / styled runs / decoration and stops short of it.
     ///
-    /// R1504 is what made that gap matter: it moved `ColumnLayout`'s default
-    /// alignment to `Center` (Qt's `QHeaderView` default), so EVERY header
-    /// label is now an aligned leaf and every one of them leaves this arm for
-    /// parley. That is the correct outcome — parley is the reference, and
-    /// R1505's pixel guard is what proves the alignment it applies is real —
-    /// but it is a behavioural consequence of R1504 that nothing recorded, and
-    /// a future relaxation of this predicate would silently paint header labels
-    /// flush left again.
+    /// R1504 is what made that gap matter: it moved `ColumnLayout`'s default alignment to
+    /// `Center` (the toolkit's header view default), so EVERY header label is now
+    /// an aligned leaf and every one of them leaves this arm for parley. That
+    /// is the correct outcome — parley is the reference, and R1505's pixel
+    /// guard is what proves the alignment it applies is real — but it is a
+    /// behavioural consequence of R1504 that nothing recorded, and a future
+    /// relaxation of this predicate would silently paint header labels flush
+    /// left again.
     ///
     /// Asserted on both arms, because eligibility is their shared SSOT: a split
     /// here is a leaf measured against one layout and painted from another.

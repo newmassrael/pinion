@@ -12,21 +12,21 @@
 //! shadow into `scene/mnemonics` would make that method stop being a function
 //! of the scene.
 //!
-//! ## Where this is more than Qt 6.11
+//! ## Where this is more than the toolkit 6.11
 //!
-//! 1. **It exists.** Qt's shortcut state lives in `QShortcutMap`, a private
-//!    header (`qshortcutmap_p.h`), and `QEvent::ShortcutOverride` is a
-//!    transient event delivered per press. So no Qt application — let alone an
+//! 1. **It exists.** the toolkit's shortcut state lives in shortcut map, a private
+//!    header (`qshortcutmap_p.h`), and `ShortcutOverride` is a
+//!    transient event delivered per press. So no the toolkit application — let alone an
 //!    external driver — can ask what <kbd>Alt</kbd>+<kbd>F</kbd> does right
 //!    now, and there is no moment at which the override is a readable fact.
 //! 2. **A shadow is attributed.** The row names the widget taking the chord,
-//!    where Qt's override is anonymous: `accept()` leaves no record of who
+//!    where the toolkit's override is anonymous: `accept()` leaves no record of who
 //!    accepted.
 //! 3. **A chord can be asked about before it is pressed.** `params.chord`
 //!    answers "would `Ctrl+S` collide" — the question a keymap editor must ask
-//!    to be usable, and the one `QKeySequenceEdit` cannot: it records the chord
+//!    to be usable, and the one key-sequence editor cannot: it records the chord
 //!    and the collision surfaces later, at dispatch, as
-//!    `QShortcutEvent::isAmbiguous()`.
+//!    `isAmbiguous()`.
 //! 4. **The probe's domain is published.** The `keybinding` layer is a
 //!    *function*, so its claims are discovered by calling it; `probed` states
 //!    the character range that was called rather than letting a list read as
@@ -205,8 +205,8 @@ pub fn resolve_chord_param(
 /// # Errors
 ///
 /// [`RpcError::invalid_params`] naming which part of the spelling failed, so a
-/// typo is a refusal rather than a silently different chord — Qt's
-/// `QKeySequence::fromString` substitutes `Qt::Key_unknown` and reports
+/// typo is a refusal rather than a silently different chord — the toolkit's
+/// `fromString` substitutes `Key_unknown` and reports
 /// nothing.
 pub fn parse_chord_param(params: Option<&Value>) -> Result<Option<Chord>, RpcError> {
     let Some(raw) = params.and_then(|p| p.get("chord")) else {
@@ -239,8 +239,8 @@ mod tests {
 
     #[test]
     fn a_shadow_is_attributed_not_merely_reported() {
-        // Qt's `ShortcutOverride` is anonymous: `accept()` leaves no record of
-        // who accepted, so "something took this key" is the most a Qt
+        // The toolkit's `ShortcutOverride` is anonymous: `accept()` leaves no record of who
+        // accepted, so "something took this key" is the most a toolkit
         // application could ever learn.
         let out = handle_scene_accelerators(
             &[

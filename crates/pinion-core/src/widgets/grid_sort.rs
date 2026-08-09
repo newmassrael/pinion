@@ -1,18 +1,18 @@
 //! R778 §5.27 §5.40 — **multi-column sort view-order proxy for a Model/View
 //! data grid at scale**.
 //!
-//! The grid analog of [`view_order`](crate::widgets::view_order): R775 / R777
-//! land a virtualized data grid (window an N-row × C-column dataset) with
-//! selection held by data index. This module adds the sort axis a data grid
-//! needs — a clicked column header sorts the whole grid — **without
-//! materializing the rendered rows**. The view windows over *view positions*
-//! `0..view_len`; each position resolves to a source row through the
-//! [`order`](GridSortState::order) permutation; the row builder paints the
-//! source row; the R777 [`VirtualSelectExternal`](crate::widgets::virtual_select)
-//! still holds a **source** index, so re-sorting moves a selected row's
-//! visual position while keeping it selected — selection ⊥ ordering, both
-//! data-indexed (the same decisive Model/View separation the 1-D list draws,
-//! mirroring Qt's `QSortFilterProxyModel` ⊥ `QItemSelectionModel`).
+//! The grid analog of [`view_order`](crate::widgets::view_order): R775 / R777 land a
+//! virtualized data grid (window an N-row × C-column dataset) with selection
+//! held by data index. This module adds the sort axis a data grid needs — a
+//! clicked column header sorts the whole grid — **without materializing the
+//! rendered rows**. The view windows over *view positions* `0..view_len`; each position
+//! resolves to a source row through the [`order`](GridSortState::order)
+//! permutation; the row builder paints the source row; the R777
+//! [`VirtualSelectExternal`](crate::widgets::virtual_select) still holds a **source** index, so
+//! re-sorting moves a selected row's visual position while keeping it selected
+//! — selection ⊥ ordering, both data-indexed (the same decisive Model/View
+//! separation the 1-D list draws, mirroring the toolkit's sort filter proxy
+//! model ⊥ item selection model).
 //!
 //! ## Why a peer of [`ViewOrderState`](crate::widgets::view_order::ViewOrderState), not a reuse
 //!
@@ -295,13 +295,12 @@ impl ColumnFacet {
 
 /// R997 §5.40 — a **conjunction (AND) of column facets** for a data grid at
 /// scale: a row passes iff it satisfies *every* facet. Generalizes the R783
-/// single exact-match facet (`GridFilter{col,value}` → one [`FilterOp::Eq`]
-/// facet) into the multi-facet, multi-operator filter a Wireshark / dlt-class
-/// viewer needs — substring on a name column AND a numeric `>=` on a score
-/// column AND an exact category — the Model/View-at-scale campaign's
-/// predicate-filter slice (Qt `QSortFilterProxyModel` per-column filters,
-/// `TanStack` `columnFilters`). An empty facet set matches everything, so
-/// callers hold the filter as `Option<GridFilter>` with `None` the canonical
+/// single exact-match facet (`GridFilter{col,value}` → one [`FilterOp::Eq`] facet) into the multi-facet,
+/// multi-operator filter a analyser / dlt-class viewer needs — substring on a
+/// name column AND a numeric `>=` on a score column AND an exact category — the
+/// Model/View-at-scale campaign's predicate-filter slice (the toolkit sort
+/// filter proxy model per-column filters, `TanStack` `columnFilters`). An empty facet set matches
+/// everything, so callers hold the filter as `Option<GridFilter>` with `None` the canonical
 /// unfiltered state.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GridFilter {
@@ -603,17 +602,15 @@ pub fn use_grid_sort(
 /// R779 §5.40 §5.52 — a reversible column-sort change of a shared
 /// [`GridSortState`]: the **third** [`UndoCommand`] consumer.
 ///
-/// The bespoke peer of [`SortFilterEdit`](crate::widgets::view_order::SortFilterEdit):
-/// both are `{ Rc<holder> + before/after value + label }` whose `redo`/`undo`
-/// restore the captured value through the holder's setter. They are kept as
-/// **separate typed commands** (not folded into one generic closure-edit)
-/// deliberately — the local convention, set by [`SignalEdit`](crate::undo::SignalEdit)
-/// (single `Signal`) vs `SortFilterEdit` (compound `ViewOrderState`), is one
-/// typed `UndoCommand` per holder (the `QUndoCommand`-per-command model): the
-/// reversal body is two trivial lines, so a generic closure-edit would erase
-/// the typed holder and add `Rc<dyn Fn>` indirection for no real saving. This
-/// command restores the single `Option<(col, bool)>` sort key via
-/// [`GridSortState::set_sort`].
+/// The bespoke peer of [`SortFilterEdit`](crate::widgets::view_order::SortFilterEdit): both
+/// are `{ Rc<holder> + before/after value + label }` whose `redo`/`undo` restore the captured value through the holder's
+/// setter. They are kept as **separate typed commands** (not folded into one
+/// generic closure-edit) deliberately — the local convention, set by
+/// [`SignalEdit`](crate::undo::SignalEdit) (single `Signal`) vs `SortFilterEdit` (compound `ViewOrderState`), is one
+/// typed `UndoCommand` per holder (the undo command-per-command model): the reversal
+/// body is two trivial lines, so a generic closure-edit would erase the typed
+/// holder and add `Rc<dyn Fn>` indirection for no real saving. This command restores
+/// the single `Option<(col, bool)>` sort key via [`GridSortState::set_sort`].
 pub struct GridSortEdit {
     state: Rc<GridSortState>,
     before: Option<(usize, bool)>,

@@ -6,14 +6,13 @@
 //! indices under a sort and a filter, without materializing the dataset.
 //!
 //! This is the canonical proxy-model layer every data grid has between its
-//! source rows and its view: Qt `QSortFilterProxyModel`, WPF
-//! `CollectionView`, `TanStack` Table's sorted/filtered row model. The view
-//! windows over *view positions* `0..view_len`; each position resolves to a
-//! source index through [`compute_order`]; the row builder paints the source
-//! row; selection (the R746 [`VirtualSelectExternal`](crate::widgets::virtual_select))
-//! still holds a **source** index, so re-sorting moves a selected row's
-//! visual position while keeping it selected — selection ⊥ ordering, both
-//! data-indexed.
+//! source rows and its view: the toolkit sort filter proxy model, WPF `CollectionView`, `TanStack`
+//! Table's sorted/filtered row model. The view windows over *view positions*
+//! `0..view_len`; each position resolves to a source index through [`compute_order`]; the row
+//! builder paints the source row; selection (the R746
+//! [`VirtualSelectExternal`](crate::widgets::virtual_select)) still holds a **source** index, so
+//! re-sorting moves a selected row's visual position while keeping it selected
+//! — selection ⊥ ordering, both data-indexed.
 //!
 //! ## One reactive source of truth ([`ViewOrderState`] + [`use_view_order`])
 //!

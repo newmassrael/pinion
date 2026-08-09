@@ -77,7 +77,7 @@ const OVERSCAN: usize = 3;
 /// the R1535 **decorated** one.
 const HEADERS: [&str; NCOLS] = ["Index", "Name", "Status", "Flag", "Load"];
 /// R1535 — the absolute index of the column whose cells answer the
-/// `Qt::DecorationRole` with a colour keyed to the row's status.
+/// `DecorationRole` with a colour keyed to the row's status.
 const STATUS_COL: usize = 2;
 /// R1536 — the absolute index of the **mark-only** column: no display text,
 /// so its mark is the cell's whole content and must carry its own meaning.
@@ -151,14 +151,14 @@ fn is_flagged(row: usize) -> bool {
 
 /// R1547 — what the `Index` column's header mark means. MEANINGFUL: the word
 /// "Index" does not say that the column is the table's key, so the mark is the
-/// only thing that does. This is the canonical header decoration — Qt's
-/// `headerData(section, Qt::Horizontal, Qt::DecorationRole)` exists for exactly
-/// the key / type / filter glyphs a professional grid puts in its header — and
-/// in Qt it would be silent to a screen reader, because
-/// `QAccessibleTableHeaderCell` names a section from its `DisplayRole` alone.
+/// only thing that does. This is the canonical header decoration — the
+/// toolkit's `headerData(section, Horizontal, DecorationRole)` exists for exactly the key / type / filter glyphs a
+/// professional grid puts in its header — and in the toolkit it would be
+/// silent to a screen reader, because accessible table header cell names a
+/// section from its `DisplayRole` alone.
 const KEY_MEANING: &str = "Primary key";
 
-/// R1547 §5.27 — the grid's **section**-axis `Qt::DecorationRole`: the mark
+/// R1547 §5.27 — the grid's **section**-axis `DecorationRole`: the mark
 /// drawn ahead of a column's label.
 ///
 /// Asked once per painted section, and the two cases it answers are the same
@@ -187,9 +187,9 @@ fn header_decoration(col: usize, theme: &Theme) -> Option<Decoration> {
     }
 }
 
-/// R1548 §5.27 — the **vertical** section axis's `Qt::DisplayRole`:
-/// `headerData(section, Qt::Vertical, Qt::DisplayRole)`, the 1-based row
-/// number Qt's own default `headerData` answers with.
+/// R1548 §5.27 — the **vertical** section axis's `DisplayRole`:
+/// `headerData(section, Vertical, DisplayRole)`, the 1-based row
+/// number the toolkit's own default `headerData` answers with.
 ///
 /// Asked with the row's **data** index, so a pinned row keeps its number
 /// wherever a sort puts it.
@@ -197,14 +197,14 @@ fn row_header_label(row: usize) -> String {
     (row + 1).to_string()
 }
 
-/// R1548 §5.27 — the vertical axis's `Qt::DecorationRole`: a mark on the pinned
+/// R1548 §5.27 — the vertical axis's `DecorationRole`: a mark on the pinned
 /// rows, and `None` on every other.
 ///
 /// The negative half is the point on this axis too — "pinned" must be able to
 /// be false, or the mark conveys nothing — and the `meaning` is **non-empty**,
 /// unlike the `Status` column's decorative swatch: nothing else in this grid
 /// says a row is pinned, so an AT that could not hear the mark would not hear
-/// the fact at all. Qt's `QAccessibleTableHeaderCell::text` answers from the
+/// the fact at all. The toolkit's `text` answers from the
 /// display role alone on both orientations, which is exactly this case.
 fn row_header_decoration(row: usize, theme: &Theme) -> Option<Decoration> {
     (row % PIN_EVERY == 0).then(|| Decoration::Swatch {
@@ -213,7 +213,7 @@ fn row_header_decoration(row: usize, theme: &Theme) -> Option<Decoration> {
     })
 }
 
-/// R1535 §5.27 — the grid's `Qt::DecorationRole`: a colour swatch on every
+/// R1535 §5.27 — the grid's `DecorationRole`: a colour swatch on every
 /// `Status` cell, keyed to that **row**'s status.
 ///
 /// This is the column R1532's delegate could not paint. A delegate belongs to a
@@ -244,7 +244,7 @@ fn cell_decoration(c: CellIndex, theme: &Theme) -> Option<Decoration> {
         // R1536 — MEANINGFUL. This column has no text at all, so the mark is
         // the only thing in the cell and carries the whole datum. Without a
         // meaning the column is, to a screen-reader user, five blank cells —
-        // which is exactly what a Qt `DecorationRole` column is, because Qt's
+        // which is exactly what a toolkit `DecorationRole` column is, because the toolkit's
         // decoration is appearance and its accessible text is a different role
         // the item view does not wire to it.
         FLAG_COL if is_flagged(c.row) => Some(Decoration::Swatch {
@@ -261,8 +261,8 @@ fn load_percent(row: usize) -> u32 {
     u32::try_from((row * 7) % 101).unwrap_or(0)
 }
 
-/// R1532 §5.27 — the `Load` column's paint delegate (Qt
-/// `QStyledItemDelegate::paint`): a proportionally filled track instead of a
+/// R1532 §5.27 — the `Load` column's paint delegate (the toolkit
+/// `paint`): a proportionally filled track instead of a
 /// label.
 ///
 /// This is the column a text-only grid cannot have, and the reason the
@@ -271,11 +271,11 @@ fn load_percent(row: usize) -> u32 {
 /// `hello-property-grid`'s `ranged_slider_cell` does.
 ///
 /// **The model's string is still painted.** A bar encodes the value in pixels
-/// and `scene/snapshot` reads text, so a delegate that dropped the label would
-/// make the column invisible to §2 #7 introspection and to a screen reader —
-/// the same reason Qt's `QProgressBar` carries `text()`. `c.text` is the
-/// model's own answer, so the number beside the bar cannot disagree with the
-/// number the bar is drawn from.
+/// and `scene/snapshot` reads text, so a delegate that dropped the label would make the
+/// column invisible to §2 #7 introspection and to a screen reader — the same
+/// reason the toolkit's progress bar carries `text()`. `c.text` is the model's own
+/// answer, so the number beside the bar cannot disagree with the number the
+/// bar is drawn from.
 fn load_bar(c: &CellRender<'_>) -> Scene {
     let pct = c.text.trim_end_matches('%').parse::<u32>().unwrap_or(0);
     let inner = c.width.saturating_sub(2 * c.style.cell_pad_x);
@@ -356,8 +356,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             resizable: false,
             frozen_cols: 0,
             row_style: None,
-            // R1532 — Qt `setItemDelegateForColumn`: one column paints as a
-            // gauge, every other takes the built-in text painter.
+            // R1532 — the toolkit `setItemDelegateForColumn`: one column paints as a gauge, every
+            // other takes the built-in text painter.
             delegate: Some(&|col| (col == LOAD_COL).then_some(&load_bar as CellPainter<'_>)),
             editing: None,
         },
@@ -368,27 +368,26 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             cell: cell_text,
             columns: HeaderAxis {
                 label: header_from_slice(&HEADERS),
-                // R1547 — Qt `headerData(section, Qt::Horizontal,
-                // Qt::DecorationRole)`: the same role on the section axis, so the
+                // R1547 — the toolkit `headerData(section, Horizontal,
+                // DecorationRole)`: the same role on the section axis, so the
                 // grid now answers a role on BOTH of its axes.
                 decoration: |col: usize| header_decoration(col, &theme),
             },
-            // R1548 — Qt `headerData(section, Qt::Vertical, …)`: the SECOND
-            // section axis, answering the same two roles as the first through
-            // the same type, so the grid cannot end up with a decorated column
-            // header and a mute row header.
-            // R1562 — `setCornerButtonEnabled(false)`: this grid is
-            // display-only (its External is a stub), so a select-all control
-            // would have nothing to select. A written decision, not an absence.
+            // R1548 — the toolkit `headerData(section, Vertical, …)`: the SECOND section axis, answering the
+            // same two roles as the first through the same type, so the grid
+            // cannot end up with a decorated column header and a mute row
+            // header. R1562 — `setCornerButtonEnabled(false)`: this grid is display-only (its External is
+            // a stub), so a select-all control would have nothing to select. A
+            // written decision, not an absence.
             rows: Some(RowHeaderAxis::inert(HeaderAxis {
                 label: row_header_label,
                 decoration: |row: usize| row_header_decoration(row, &theme),
             })),
-            // R1535 — Qt `data(index, Qt::DecorationRole)`: one column answers
-            // with a mark whose colour varies by row, which is the axis a
-            // per-column delegate cannot express.
+            // R1535 — the toolkit `data(index, DecorationRole)`: one column answers with a mark whose
+            // colour varies by row, which is the axis a per-column delegate
+            // cannot express.
             decoration: |c: CellIndex| cell_decoration(c, &theme),
-            // R1544 — Qt `flags()` without `Qt::ItemIsEditable` on every
+            // R1544 — the toolkit `flags()` without `ItemIsEditable` on every
             // index: this grid is display-only, and it now SAYS so — every
             // one of its cells reads as `aria-readonly` rather than staying
             // silent about whether it can be typed into.
@@ -633,11 +632,11 @@ mod tests {
     /// R1536 — this grid carries **both** arms of the decoration's meaning, and
     /// which arm a column takes is a property of the column, not a preference.
     ///
-    /// `Status` restates its own label, so its mark is decorative (`alt=""`).
-    /// `Flag` has no label at all, so its mark carries the whole datum and must
-    /// say so — a mark-only column with an empty meaning is a column of blank
-    /// cells to a screen-reader user, which is precisely what the same column
-    /// built on Qt's `DecorationRole` would be.
+    /// `Status` restates its own label, so its mark is decorative (`alt=""`). `Flag` has no
+    /// label at all, so its mark carries the whole datum and must say so — a
+    /// mark-only column with an empty meaning is a column of blank cells to a
+    /// screen-reader user, which is precisely what the same column built on
+    /// the toolkit's `DecorationRole` would be.
     #[test]
     fn r1536_the_mark_only_column_states_its_meaning() {
         let theme = pinion_core::theme::Theme::light();

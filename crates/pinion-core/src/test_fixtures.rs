@@ -560,8 +560,8 @@ pub const MULTI_FIXTURE_SCROLL_KEY: &str = "sb_state";
 /// was exactly "framework send silently no-ops on a Container root",
 /// and a bare-External fixture cannot catch it.
 /// R1549.2 §5.35 §5.38 §2 #6 — [`ButtonFixture`] whose button DECLARES a
-/// press-and-hold repeat cadence (`AutoRepeat`, Qt
-/// `QAbstractButton::setAutoRepeat`). Identical in every other respect,
+/// press-and-hold repeat cadence (`AutoRepeat`, the toolkit
+/// `setAutoRepeat`). Identical in every other respect,
 /// so a test that swaps it in isolates exactly one variable: whether the
 /// backend under test advances a held press.
 ///

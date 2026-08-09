@@ -15,7 +15,7 @@
 //!
 //! | Platform | Half-period | Reference |
 //! |---|---|---|
-//! | Chromium / Firefox / Safari (Web) | 530 ms | DOM spec leaves it to the UA; all three converged on 530 ms |
+//! | an embedded browser engine / Firefox / Safari (Web) | 530 ms | DOM spec leaves it to the UA; all three converged on 530 ms |
 //! | macOS (`NSTextView`) | 533 ms | `NSTextInsertionPointBlinkPeriodOn` default |
 //! | iOS (`UITextField`) | 600 ms | tighter UX heuristic; pinion matches the web default |
 //! | GTK (`gtk-cursor-blink-time`) | 1200 ms (full period = 2×600 ms) | settings-tunable |
@@ -86,7 +86,7 @@ pub struct CaretBlink {
 impl CaretBlink {
     /// Canonical caret blink half-period (one visible-or-hidden
     /// phase). See module docs for the cross-platform comparison
-    /// table; 530 ms matches the Chromium / Firefox / Safari /
+    /// table; 530 ms matches the embedded browser engine / Firefox / Safari /
     /// Windows-default UX and is the value pinion's web-app dogfood
     /// workload inherits from its host environment.
     pub const PERIOD_SECS: f32 = 0.530;

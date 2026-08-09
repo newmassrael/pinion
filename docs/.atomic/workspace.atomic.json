@@ -32502,6 +32502,52 @@
         "Two design decisions the partial migration settled and the next session should not re-derive. A SINK's value: Document::evaluate answers zero outputs for a node that declares none, so the reading node.<id>.value has always had for an Output node — the value flowing INTO it — is an application derivation over the crate's evaluator, not a crate behaviour. And a FRAME's membership: the crate's is Node::parent, maintained as a forest, while the example's was geometric (a centre inside a rect); the geometric test survives as the question the GESTURES ask (which nodes a fresh frame adopts), and parenthood becomes the fact, which is Blender's model."
       ]
     },
+    "R1611": {
+      "decision_summary": "R1611 - the reference-name directive gets a gate, and the framework crates get cleared. The directive arrived at the end of R1610, which zeroed its own output and registered the rest as debt; nothing measured the rest, so nobody could see it was 7,999 occurrences across 501 files. R1610's prescription - restate every sentence by hand - did not survive the measurement, which is R1571's lesson again: a prescription is a hypothesis until someone implements it. Five defects in the migrator were found by gates and tests rather than by reading, and the ratchet refused the very commit that added its own tests.",
+      "changes_bullets": [
+        "tools/reference_names.py: the ratchet. Counts every occurrence of another project's name in a tracked file, holds a per-file budget in docs/reference-names-budget.tsv, and refuses a rise or a first appearance. Counting on doubt is deliberate: an over-count is a budget someone has to look at, an under-count ships the name.",
+        "Four exclusions, each carrying the reason it cannot be cleared: the frozen decision ledger (unamendable by construction), vendored character data (not our prose), submodule worktrees, and the two tool files that must hold the terms to remove them.",
+        "tools/reference_names_migrate.py: the derived substitution. A toolkit class name is its own generic noun with a letter in front, so the capability claim survives and the vendor leaves. Comment lines only; URLs, markdown links, string literals and identifiers are reported for a human rather than guessed at.",
+        "Both hooks run the ratchet and its selftest; tools/test_hooks.sh gains negative controls for both refusal shapes, with fixture names assembled from pieces so the test of a detector is not exempt from it.",
+        "crates/ cleared 3,662 -> 436 and examples/ 912 -> 110 across 284 files."
+      ],
+      "verification_bullets": [
+        "cargo fmt --all --check, cargo clippy --workspace --all-targets --features pinion-runtime/vello, cargo doc --workspace --no-deps --document-private-items, cargo test --doc --workspace: all green after the sweep.",
+        "tools/test_hooks.sh: 113 assertions pass, including a budgeted tree passing, a budgeted file that gains a name refused, a clean file that gains its first name refused, and a cleared name allowed to lower the count.",
+        "reference_names.py --selftest: 14 classifier cases. reference_names_migrate.py --selftest: 24 cases, four of them full-pipeline.",
+        "Two negative controls run by hand against this repo, one per refusal shape, both refusing."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "tools/ 1,548 and docs/ 1,844 occurrences remain, budgeted per file rather than forgotten. The largest single block is the capability census, whose reference ids are DATA the completeness proof reads, so it needs a design (an opaque stable id with the readable mapping regenerated from the local reference trees) rather than an edit.",
+        "436 remain in crates/: 302 on non-comment lines (assertion strings and identifiers), the rest symbol paths inside markdown links and operator ids in prose. Each is an individual sentence, which is why the tool reports them instead of guessing.",
+        "The frozen ledger holds 1,435 that cannot be amended. Stated as an exclusion with its reason rather than counted as remaining work."
+      ],
+      "publishable_decision_summary": "R1611 - the reference-name directive gets a gate, and the framework crates get cleared. The directive arrived at the end of R1610, which zeroed its own output and registered the rest as debt; nothing measured the rest, so nobody could see it was 7,999 occurrences across 501 files. R1610's prescription - restate every sentence by hand - did not survive the measurement, which is R1571's lesson again: a prescription is a hypothesis until someone implements it. Five defects in the migrator were found by gates and tests rather than by reading, and the ratchet refused the very commit that added its own tests.",
+      "publishable_changes_bullets": [
+        "tools/reference_names.py: the ratchet. Counts every occurrence of another project's name in a tracked file, holds a per-file budget in docs/reference-names-budget.tsv, and refuses a rise or a first appearance. Counting on doubt is deliberate: an over-count is a budget someone has to look at, an under-count ships the name.",
+        "Four exclusions, each carrying the reason it cannot be cleared: the frozen decision ledger (unamendable by construction), vendored character data (not our prose), submodule worktrees, and the two tool files that must hold the terms to remove them.",
+        "tools/reference_names_migrate.py: the derived substitution. A toolkit class name is its own generic noun with a letter in front, so the capability claim survives and the vendor leaves. Comment lines only; URLs, markdown links, string literals and identifiers are reported for a human rather than guessed at.",
+        "Both hooks run the ratchet and its selftest; tools/test_hooks.sh gains negative controls for both refusal shapes, with fixture names assembled from pieces so the test of a detector is not exempt from it.",
+        "crates/ cleared 3,662 -> 436 and examples/ 912 -> 110 across 284 files."
+      ],
+      "publishable_verification_bullets": [
+        "cargo fmt --all --check, cargo clippy --workspace --all-targets --features pinion-runtime/vello, cargo doc --workspace --no-deps --document-private-items, cargo test --doc --workspace: all green after the sweep.",
+        "tools/test_hooks.sh: 113 assertions pass, including a budgeted tree passing, a budgeted file that gains a name refused, a clean file that gains its first name refused, and a cleared name allowed to lower the count.",
+        "reference_names.py --selftest: 14 classifier cases. reference_names_migrate.py --selftest: 24 cases, four of them full-pipeline.",
+        "Two negative controls run by hand against this repo, one per refusal shape, both refusing."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "tools/ 1,548 and docs/ 1,844 occurrences remain, budgeted per file rather than forgotten. The largest single block is the capability census, whose reference ids are DATA the completeness proof reads, so it needs a design (an opaque stable id with the readable mapping regenerated from the local reference trees) rather than an edit.",
+        "436 remain in crates/: 302 on non-comment lines (assertion strings and identifiers), the rest symbol paths inside markdown links and operator ids in prose. Each is an individual sentence, which is why the tool reports them instead of guessing.",
+        "The frozen ledger holds 1,435 that cannot be amended. Stated as an exclusion with its reason rather than counted as remaining work."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

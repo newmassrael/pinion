@@ -645,10 +645,11 @@ impl<V: WidgetCore> CoreShell<V> {
             &root_owner,
             std::rc::Rc::new(pinion_text::LayoutCacheMonospaceMetrics::new()),
         );
-        // R1453 §5.36 — the same edge for ARBITRARY text (Qt's `QFontMetrics`):
-        // seeded here for the same reason and under the same rule — a view fn
-        // that measures a string it is about to paint must reach the real face,
-        // and a slot read before its seed PANICS rather than being dropped.
+        // R1453 §5.36 — the same edge for ARBITRARY text (the toolkit's font
+        // metrics): seeded here for the same reason and under the same rule —
+        // a view fn that measures a string it is about to paint must reach the
+        // real face, and a slot read before its seed PANICS rather than being
+        // dropped.
         pinion_core::TEXT_METRICS.provide(
             &root_owner,
             std::rc::Rc::new(pinion_text::LayoutCacheTextMetrics::new()),
@@ -2318,8 +2319,8 @@ impl<V: WidgetCore> CoreShell<V> {
     /// R1569 §5.39 — what `chord` would do in `window_id` right now.
     ///
     /// The question a keymap editor asks before accepting a recording, and the
-    /// one Qt cannot answer before the user has already pressed the key.
-    /// Answers the claiming layer (`None` when the chord is free) and,
+    /// one the toolkit cannot answer before the user has already pressed the
+    /// key. Answers the claiming layer (`None` when the chord is free) and,
     /// separately, whether the focused widget is currently taking it — two
     /// facts rather than one, because a chord that IS declared and IS shadowed
     /// is a conflict that would still bite once focus moved on.
@@ -2356,8 +2357,8 @@ impl<V: WidgetCore> CoreShell<V> {
     /// a widget is the authority on its own sub-regions, so the router never
     /// parses a composite tag to decide a precedence.
     ///
-    /// Only the focused widget is asked (Qt's scope for
-    /// `QEvent::ShortcutOverride` too), which is what bounds the mechanism —
+    /// Only the focused widget is asked (the toolkit's scope for
+    /// `ShortcutOverride` too), which is what bounds the mechanism —
     /// at most one widget can shadow, and it is the one being typed into. An
     /// unresolvable or absent focus answers `None`, the safe direction: a
     /// widget that left the scene mid-keystroke cannot leave the window's
@@ -2387,7 +2388,7 @@ impl<V: WidgetCore> CoreShell<V> {
     ///    case-insensitively ([`Mnemonic::fold`]). This is why the accelerator
     ///    can never disagree with the underline the user is looking at: both
     ///    come from the same declaration in the same tree ([[introspection-from-paint-not-screen]]).
-    /// 2. **Focus** — Qt's `Qt::ShortcutFocusReason`. A composite paint tag
+    /// 2. **Focus** — the toolkit's `ShortcutFocusReason`. A composite paint tag
     ///    (`"menu#t0"`, a menubar title) is not itself a focus stop; its owner
     ///    is, so the fallback focuses the primary tag. That is what leaves the
     ///    menubar arrow-navigable after <kbd>Alt</kbd>+F opens a menu.
@@ -2395,19 +2396,20 @@ impl<V: WidgetCore> CoreShell<V> {
     ///    transition <kbd>Space</kbd> / <kbd>Enter</kbd> on the focused widget
     ///    reaches. A target whose chart has no such transition (a text field, a
     ///    disabled button) is simply not activated, which is precisely how a
-    ///    `QLabel::setBuddy` mnemonic ends up meaning *focus the field*
+    ///    `setBuddy` mnemonic ends up meaning *focus the field*
     ///    without a special case for it anywhere.
     ///
     /// # Ambiguity
     ///
-    /// Qt cycles through the claimants of a contested accelerator, reporting
-    /// the collision only on the event the user triggered. This cycles too —
-    /// so behaviour is never worse — but the collision is *also* a static
-    /// property of the scene ([`MnemonicBinding::ambiguous`](pinion_core::mnemonic::MnemonicBinding::ambiguous),
-    /// published by `scene/mnemonics`), so a window's conflicts can be asserted
-    /// before anyone types. The cursor remembers the *target tag* rather than an
-    /// index, so a scene that changes between presses resumes at the right
-    /// place instead of at a stale ordinal.
+    /// The toolkit cycles through the claimants of a contested accelerator,
+    /// reporting the collision only on the event the user triggered. This
+    /// cycles too — so behaviour is never worse — but the collision is *also*
+    /// a static property of the scene
+    /// ([`MnemonicBinding::ambiguous`](pinion_core::mnemonic::MnemonicBinding::ambiguous), published by
+    /// `scene/mnemonics`), so a window's conflicts can be asserted before anyone types. The
+    /// cursor remembers the *target tag* rather than an index, so a scene that
+    /// changes between presses resumes at the right place instead of at a
+    /// stale ordinal.
     ///
     /// # Claiming without acting
     ///
@@ -3010,12 +3012,12 @@ impl<V: WidgetCore> CoreShell<V> {
         router.set_pointer_pressure(pid, pressure, scene);
     }
 
-    /// R1429 §5.35 — set the pointer TILT for `pid` on `window_id`'s router (W3C
-    /// `PointerEvent.tiltX/tiltY` / Qt `QTabletEvent::xTilt/yTilt`), the
-    /// `scene/pointer_tilt` RPC seam. The value is stored and delivered to the
-    /// pointer's current move-target at once (a driven pen leaning in place), and
-    /// rides every subsequent `pointer_move` — the AI-first source that makes a
-    /// tilt-reactive surface exercisable headless, no tablet required (§2 #2).
+    /// R1429 §5.35 — set the pointer TILT for `pid` on `window_id`'s router (W3C `PointerEvent.tiltX/tiltY` /
+    /// the toolkit `xTilt/yTilt`), the `scene/pointer_tilt` RPC seam. The value is stored and delivered
+    /// to the pointer's current move-target at once (a driven pen leaning in
+    /// place), and rides every subsequent `pointer_move` — the AI-first source that makes
+    /// a tilt-reactive surface exercisable headless, no tablet required (§2
+    /// #2).
     pub fn set_pointer_tilt_for_window(
         &mut self,
         window_id: &str,
@@ -3028,20 +3030,17 @@ impl<V: WidgetCore> CoreShell<V> {
         router.set_pointer_tilt(pid, tilt_x, tilt_y, scene);
     }
 
-    /// R1430 §5.35 — set the pointer TWIST for `pid` on `window_id`'s router (W3C
-    /// `PointerEvent.twist` / Qt `QTabletEvent::rotation()`), the
-    /// `scene/pointer_twist` RPC seam — the AI-first source for a barrel-rotation
-    /// surface, exercisable headless with no art pen (§2 #2).
+    /// R1430 §5.35 — set the pointer TWIST for `pid` on `window_id`'s router (W3C `PointerEvent.twist` /
+    /// the toolkit `rotation()`), the `scene/pointer_twist` RPC seam — the AI-first source for a
+    /// barrel-rotation surface, exercisable headless with no art pen (§2 #2).
     pub fn set_pointer_twist_for_window(&mut self, window_id: &str, pid: PointerId, twist: f32) {
         let Self { scene, routers, .. } = self;
         let router = router_for(routers, window_id);
         router.set_pointer_twist(pid, twist, scene);
     }
 
-    /// R1430 §5.35 — set the pointer TANGENTIAL PRESSURE for `pid` on
-    /// `window_id`'s router (W3C `PointerEvent.tangentialPressure` / Qt
-    /// `QTabletEvent::tangentialPressure()`), the
-    /// `scene/pointer_tangential_pressure` RPC seam (§2 #2).
+    /// R1430 §5.35 — set the pointer TANGENTIAL PRESSURE for `pid` on `window_id`'s
+    /// router (W3C `PointerEvent.tangentialPressure` / the toolkit `tangentialPressure()`), the `scene/pointer_tangential_pressure` RPC seam (§2 #2).
     pub fn set_pointer_tangential_pressure_for_window(
         &mut self,
         window_id: &str,
@@ -3053,9 +3052,8 @@ impl<V: WidgetCore> CoreShell<V> {
         router.set_pointer_tangential_pressure(pid, tangential, scene);
     }
 
-    /// R1430 §5.35 — set the pointer HEIGHT for `pid` on `window_id`'s router (Qt
-    /// `QTabletEvent::z()` hover distance), the `scene/pointer_height` RPC seam
-    /// (§2 #2).
+    /// R1430 §5.35 — set the pointer HEIGHT for `pid` on `window_id`'s router (the
+    /// toolkit `z()` hover distance), the `scene/pointer_height` RPC seam (§2 #2).
     pub fn set_pointer_height_for_window(&mut self, window_id: &str, pid: PointerId, height: f32) {
         let Self { scene, routers, .. } = self;
         let router = router_for(routers, window_id);
@@ -3063,7 +3061,7 @@ impl<V: WidgetCore> CoreShell<V> {
     }
 
     /// R1431 §5.35 — set the pointer device KIND for `pid` on `window_id`'s
-    /// router (W3C `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()`),
+    /// router (W3C `PointerEvent.pointerType` / the toolkit `pointerType()`),
     /// the `scene/pointer_type` RPC seam — the AI-first source that lets a
     /// headless client present as a pen / eraser / touch, no device (§2 #2).
     pub fn set_pointer_kind_for_window(
@@ -3349,16 +3347,14 @@ impl<V: WidgetCore> CoreShell<V> {
     }
 
     /// R1432 §5.35 §5.15 — per-window native PINCH (magnify) gesture dispatch,
-    /// the Qt `QNativeGestureEvent` `ZoomNativeGesture` peer: offer the
-    /// incremental `magnification` + lifecycle `phase` to the
-    /// [`External`](pinion_core::external::External) under the cursor, carrying
-    /// the held `modifiers` (the shell's `ModifiersChanged` cache) like
-    /// [`Self::wheel_with_modifiers_for_window`]. Unlike the wheel there is NO
-    /// `WidgetCore::apply_wheel` GUI-side pre-hook and NO `Scene::Scroll`
-    /// fallback — a native gesture reaches only the hovered widget (Qt's
-    /// contract), so the one router leg is the whole dispatch. The borrow split
-    /// mirrors the wheel path (the External offer needs both the router and the
-    /// state scene). Returns `(DispatchTail, consumed)`.
+    /// the toolkit native gesture event `ZoomNativeGesture` peer: offer the incremental `magnification` +
+    /// lifecycle `phase` to the [`External`](pinion_core::external::External) under the
+    /// cursor, carrying the held `modifiers` (the shell's `ModifiersChanged` cache) like [`Self::wheel_with_modifiers_for_window`].
+    /// Unlike the wheel there is NO `WidgetCore::apply_wheel` GUI-side pre-hook and NO `Scene::Scroll` fallback
+    /// — a native gesture reaches only the hovered widget (the toolkit's
+    /// contract), so the one router leg is the whole dispatch. The borrow
+    /// split mirrors the wheel path (the External offer needs both the router
+    /// and the state scene). Returns `(DispatchTail, consumed)`.
     pub fn pinch_gesture_with_modifiers_for_window(
         &mut self,
         window_id: &str,
@@ -3392,14 +3388,12 @@ impl<V: WidgetCore> CoreShell<V> {
     }
 
     /// R1433 §5.35 — native ROTATION gesture into the addressed window, the
-    /// [`Self::pinch_gesture_with_modifiers_for_window`] sibling with `rotation`
-    /// (degrees) in place of `magnification`: the Qt `QNativeGestureEvent`
-    /// `RotateNativeGesture` peer. Offer the incremental `rotation` + lifecycle
-    /// `phase` to the [`External`](pinion_core::external::External) under the
-    /// cursor, carrying the held `modifiers`. Like the pinch there is NO
-    /// `WidgetCore::apply_wheel` GUI-side pre-hook and NO `Scene::Scroll`
-    /// fallback — a native gesture reaches only the hovered widget, so the one
-    /// router leg is the whole dispatch. Returns `(DispatchTail, consumed)`.
+    /// [`Self::pinch_gesture_with_modifiers_for_window`] sibling with `rotation` (degrees) in place of `magnification`: the toolkit native
+    /// gesture event `RotateNativeGesture` peer. Offer the incremental `rotation` + lifecycle `phase` to
+    /// the [`External`](pinion_core::external::External) under the cursor, carrying
+    /// the held `modifiers`. Like the pinch there is NO `WidgetCore::apply_wheel` GUI-side pre-hook and NO
+    /// `Scene::Scroll` fallback — a native gesture reaches only the hovered widget, so the
+    /// one router leg is the whole dispatch. Returns `(DispatchTail, consumed)`.
     pub fn rotation_gesture_with_modifiers_for_window(
         &mut self,
         window_id: &str,
@@ -3432,17 +3426,14 @@ impl<V: WidgetCore> CoreShell<V> {
         )
     }
 
-    /// R1434 §5.35 — native PAN gesture into the addressed window, the
-    /// [`Self::pinch_gesture_with_modifiers_for_window`] /
-    /// [`Self::rotation_gesture_with_modifiers_for_window`] sibling with a
-    /// two-dimensional `(delta_x, delta_y)` in logical pixels in place of a
-    /// single scalar: the Qt `QNativeGestureEvent` `PanNativeGesture` peer.
-    /// Offer the incremental delta + lifecycle `phase` to the
-    /// [`External`](pinion_core::external::External) under the cursor, carrying
-    /// the held `modifiers`. Like the pinch there is NO `WidgetCore::apply_wheel`
-    /// GUI-side pre-hook and NO `Scene::Scroll` fallback — a native gesture
-    /// reaches only the hovered widget, so the one router leg is the whole
-    /// dispatch. Returns `(DispatchTail, consumed)`.
+    /// R1434 §5.35 — native PAN gesture into the addressed window, the [`Self::pinch_gesture_with_modifiers_for_window`] /
+    /// [`Self::rotation_gesture_with_modifiers_for_window`] sibling with a two-dimensional `(delta_x, delta_y)` in logical pixels in place of
+    /// a single scalar: the toolkit native gesture event `PanNativeGesture` peer. Offer the
+    /// incremental delta + lifecycle `phase` to the
+    /// [`External`](pinion_core::external::External) under the cursor, carrying the
+    /// held `modifiers`. Like the pinch there is NO `WidgetCore::apply_wheel` GUI-side pre-hook and NO `Scene::Scroll`
+    /// fallback — a native gesture reaches only the hovered widget, so the one
+    /// router leg is the whole dispatch. Returns `(DispatchTail, consumed)`.
     pub fn pan_gesture_with_modifiers_for_window(
         &mut self,
         window_id: &str,
@@ -3479,13 +3470,12 @@ impl<V: WidgetCore> CoreShell<V> {
     }
 
     /// R1435 §5.35 — native SMART-ZOOM gesture into the addressed window, the
-    /// phase-less member of the gesture family (Qt `SmartZoomNativeGesture` /
-    /// winit `DoubleTapGesture`): one completed toggle delivered to the
-    /// [`External`](pinion_core::external::External) under the cursor, carrying
-    /// the held `modifiers`. No payload and no lifecycle — the cursor anchor is
-    /// what makes it "smart" (it selects the object to fit). Like its siblings
-    /// there is no GUI-side pre-hook and no `Scene::Scroll` fallback. Returns
-    /// `(DispatchTail, consumed)`.
+    /// phase-less member of the gesture family (the toolkit `SmartZoomNativeGesture` / winit `DoubleTapGesture`):
+    /// one completed toggle delivered to the
+    /// [`External`](pinion_core::external::External) under the cursor, carrying the
+    /// held `modifiers`. No payload and no lifecycle — the cursor anchor is what makes
+    /// it "smart" (it selects the object to fit). Like its siblings there is
+    /// no GUI-side pre-hook and no `Scene::Scroll` fallback. Returns `(DispatchTail, consumed)`.
     pub fn smart_zoom_gesture_with_modifiers_for_window(
         &mut self,
         window_id: &str,
@@ -7131,9 +7121,9 @@ mod mnemonic_tests {
 
     #[test]
     fn r1543_a_buddy_moves_focus_without_activating() {
-        // `QLabel::setBuddy`. The label is not the button, so nothing is
+        // `setBuddy`. The label is not the button, so nothing is
         // activated — but focus lands on the buddy, which is the entire
-        // semantic Qt's buddy pointer has.
+        // semantic the toolkit's buddy pointer has.
         let parsed = MnemonicLabel::parse("&Name:");
         let label = Scene::Container(
             ContainerNode::new(vec![Scene::Text(
@@ -7154,9 +7144,9 @@ mod mnemonic_tests {
 
     #[test]
     fn r1543_an_ambiguous_key_cycles_in_paint_order() {
-        // Qt's behaviour, matched: repeated presses walk the claimants. The
-        // difference is that here the collision is ALSO reportable statically
-        // — see `scene_mnemonics`'s `ambiguous`.
+        // The toolkit's behaviour, matched: repeated presses walk the
+        // claimants. The difference is that here the collision is ALSO
+        // reportable statically — see `scene_mnemonics`'s `ambiguous`.
         let scene = Scene::Container(ContainerNode::new(vec![
             labelled(BTN, "&Save"),
             labelled("other", "&Send"),

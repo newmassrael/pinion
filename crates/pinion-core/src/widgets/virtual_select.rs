@@ -11,14 +11,14 @@
 //! exist. Reusing it would require materializing all N leaves, defeating
 //! virtualization.
 //!
-//! So selection on a virtualized collection is held the way every real
-//! data grid holds it: as a **selected data index**, owned by a
-//! coordinator and decoupled from materialization. Selecting row 4 200 and
-//! scrolling away does not drop the selection (no leaf to lose it on); the
-//! view paints `selected == index` for the handful of *visible* rows. This
-//! is the canonical virtualized-selection model (Qt `QItemSelectionModel`
-//! over a `QAbstractItemModel`, Flutter `ListView` + a selection
-//! controller, web `aria-activedescendant` over windowed rows).
+//! So selection on a virtualized collection is held the way every real data
+//! grid holds it: as a **selected data index**, owned by a coordinator and
+//! decoupled from materialization. Selecting row 4 200 and scrolling away does
+//! not drop the selection (no leaf to lose it on); the view paints `selected == index` for the
+//! handful of *visible* rows. This is the canonical virtualized-selection
+//! model (the toolkit item selection model over a abstract item model, another
+//! retained-mode toolkit `ListView` + a selection controller, web `aria-activedescendant` over windowed
+//! rows).
 //!
 //! Like [`SpinButtonExternal`](crate::widgets::spin_button) and
 //! [`ProgressBarExternal`](crate::widgets::progress_bar) this widget owns
@@ -51,12 +51,12 @@ use crate::widgets::index_runs::IndexRuns;
 use crate::widgets::scroll::ScrollState;
 
 /// R780 §5.40 — selection cardinality policy for [`VirtualSelect`], the
-/// `QItemSelectionModel` `SelectionMode` analogue.
+/// item selection model `SelectionMode` analogue.
 ///
 /// `Single` (the default and every pre-R780 consumer) holds at most one
 /// row; `Multi` holds an arbitrary set with an `anchor` for range
 /// extension. The mode is fixed at construction — a list is built either
-/// single- or multi-select, exactly as `QAbstractItemView::setSelectionMode`
+/// single- or multi-select, exactly as `setSelectionMode`
 /// is a property of the view, not a per-interaction flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SelectionMode {
@@ -71,12 +71,11 @@ pub enum SelectionMode {
 /// R1563 §5.27 — what a press on a **horizontal header section** does, beyond
 /// whatever else the binding has wired to it.
 ///
-/// Qt reaches this through two independent connections to one `QHeaderView`:
-/// `sectionPressed` drives the view's column selection and `sectionClicked`
-/// drives `sortByColumn` when `setSortingEnabled(true)`. Nothing declares which
-/// a given header has, and a header can silently have both — so "does clicking
-/// this header select the column?" is a question about signal wiring rather
-/// than about the view.
+/// The toolkit reaches this through two independent connections to one header
+/// view: `sectionPressed` drives the view's column selection and `sectionClicked` drives `sortByColumn` when `setSortingEnabled(true)`.
+/// Nothing declares which a given header has, and a header can silently have
+/// both — so "does clicking this header select the column?" is a question
+/// about signal wiring rather than about the view.
 ///
 /// Here it is one declared value. [`Inert`](Self::Inert) is the default and
 /// every pre-R1563 grid: those headers are the sort control (R778), and a round
@@ -89,24 +88,24 @@ pub enum SectionPress {
     #[default]
     Inert,
     /// The section press selects the column through it, with the same
-    /// `Ctrl` / `Shift` chord vocabulary a cell press has (Qt
-    /// `QHeaderView::sectionPressed` → `QTableView::selectColumn`).
+    /// `Ctrl` / `Shift` chord vocabulary a cell press has (the toolkit
+    /// `sectionPressed` → `selectColumn`).
     Select,
 }
 
 /// R1562 §5.40 — how much of the model a selection covers: the tri-state a
-/// select-all control shows, and the value Qt's corner button does not have.
+/// select-all control shows, and the value the toolkit's corner button does
+/// not have.
 ///
-/// The three states of an HTML `<input type=checkbox>` — unchecked,
-/// `indeterminate`, checked — and of WAI-ARIA `aria-checked` (`false` /
-/// `"mixed"` / `true`). Qt's `QTableCornerButton` has **none** of them: it is a
-/// `QAbstractButton` that always runs `selectAll()`, so it cannot report what
-/// is selected and cannot take a full selection back.
+/// The three states of an HTML `<input type=checkbox>` — unchecked, `indeterminate`, checked — and of WAI-ARIA
+/// `aria-checked` (`false` / `"mixed"` / `true`). The toolkit's table corner button has **none** of
+/// them: it is a abstract button that always runs `selectAll()`, so it cannot report
+/// what is selected and cannot take a full selection back.
 ///
 /// Answered in O(1) from [`VirtualSelect::selected_count`] (a sum over runs
 /// since R1561) against the item count. The same question of a
-/// `QItemSelectionModel` is `selectedRows().size() == model->rowCount()`, which
-/// builds one `QModelIndex` per selected row to compare two integers.
+/// item selection model is `selectedRows().size() == model->rowCount()`, which
+/// builds one model index per selected row to compare two integers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SelectionExtent {
     /// Nothing is selected — and the answer for an **empty model** too, which
@@ -178,14 +177,12 @@ pub struct VirtualSelect {
     /// The selected **cells**, held as the bands they are made of (R1563).
     /// In `Single` mode this is kept at one row.
     ///
-    /// Was a `BTreeSet<usize>` until R1561, which is one node per selected
-    /// **row**: `Ctrl+A` over the 10 000-row `hello-multi-select` binding
-    /// allocated ten thousand of them and answered `query("selection")` with
-    /// 58 890 bytes of JSON in 14.3 ms, for a fact whose statement is
-    /// `[[0, 9999]]`. R1561 made it [`IndexRuns`]; R1563 gave it the column
-    /// axis Qt has had all along, without giving the run form up — see
-    /// [`CellSelection`] for the normal form and why a rectangle list could not
-    /// have one.
+    /// Was a `BTreeSet<usize>` until R1561, which is one node per selected **row**: `Ctrl+A` over
+    /// the 10 000-row `hello-multi-select` binding allocated ten thousand of them and answered
+    /// `query("selection")` with 58 890 bytes of JSON in 14.3 ms, for a fact whose statement is
+    /// `[[0, 9999]]`. R1561 made it [`IndexRuns`]; R1563 gave it the column axis the toolkit has
+    /// had all along, without giving the run form up — see [`CellSelection`] for the
+    /// normal form and why a rectangle list could not have one.
     cells: CellSelection,
     /// Range-extension origin — the row a `Shift`-extend grows from,
     /// unchanged while extending. Set by every plain move / toggle.
@@ -196,14 +193,14 @@ pub struct VirtualSelect {
     /// in play, which is every `Rows` grid.
     #[serde(default)]
     anchor_column: Option<usize>,
-    /// The active row (WAI-ARIA active descendant / `QItemSelectionModel`
+    /// The active row (WAI-ARIA active descendant / item selection model
     /// `currentIndex`): the keyboard-navigation reference and the
     /// `query("selected")` value. Coincides with the sole selected row in
     /// `Single` mode.
     cursor: Option<usize>,
     /// R1563 — the column half of the active cell. Together with
-    /// [`cursor`](Self::cursor) this is Qt's `currentIndex()`, which is a
-    /// `QModelIndex` and has always had both.
+    /// [`cursor`](Self::cursor) this is the toolkit's `currentIndex()`, which is a model index
+    /// and has always had both.
     #[serde(default)]
     cursor_column: Option<usize>,
     /// Total dataset size — the validity bound for any selection.
@@ -219,7 +216,7 @@ pub struct VirtualSelect {
     column_count: Option<usize>,
     /// Single- vs multi-select cardinality policy.
     mode: SelectionMode,
-    /// R1563 — what a press selects (Qt `setSelectionBehavior`).
+    /// R1563 — what a press selects (the toolkit `setSelectionBehavior`).
     #[serde(default)]
     behavior: SelectionBehavior,
 }
@@ -256,7 +253,7 @@ impl VirtualSelect {
         self
     }
 
-    /// R1563 — declare what a press selects (Qt `setSelectionBehavior`).
+    /// R1563 — declare what a press selects (the toolkit `setSelectionBehavior`).
     #[must_use]
     pub const fn with_behavior(mut self, behavior: SelectionBehavior) -> Self {
         self.behavior = behavior;
@@ -264,7 +261,7 @@ impl VirtualSelect {
     }
 
     /// The rows selected in **every** column, as the runs they are made of
-    /// (ascending, canonical) — Qt `QItemSelectionModel::selectedRows()`, and
+    /// (ascending, canonical) — the toolkit `selectedRows()`, and
     /// the whole of the selection in a `Rows` grid. Cardinality ≤ 1 in a
     /// `Single` model.
     ///
@@ -297,7 +294,7 @@ impl VirtualSelect {
     }
 
     /// R1563 — the column half of the active cell; together with
-    /// [`cursor`](Self::cursor) this is Qt's `currentIndex()`.
+    /// [`cursor`](Self::cursor) this is the toolkit's `currentIndex()`.
     #[must_use]
     pub fn cursor_column(&self) -> Option<usize> {
         self.cursor_column
@@ -315,11 +312,11 @@ impl VirtualSelect {
         self.cells.contains(row, col)
     }
 
-    /// R1561 — how many rows are selected: Qt's missing
-    /// `QItemSelectionModel::count()`.
+    /// R1561 — how many rows are selected: the toolkit's missing
+    /// `count()`.
     ///
-    /// `QItemSelectionModel` offers `hasSelection()` and nothing between that
-    /// bool and `selectedRows().size()`, which builds one `QModelIndex` per
+    /// item selection model offers `hasSelection()` and nothing between that
+    /// bool and `selectedRows().size()`, which builds one model index per
     /// selected row purely to read the list's length. Here it is a sum over
     /// [`IndexRuns::run_count`] runs, so a whole-model selection answers from
     /// one addition.
@@ -477,17 +474,18 @@ impl VirtualSelect {
     /// when every row is already selected. Returns `true` if it changed
     /// anything.
     ///
-    /// Qt's corner button is one-way — `QTableView`'s documented behaviour is
-    /// that clicking it "selects all cells in the view", with no second press
-    /// that takes it back — so a Qt user who select-alls by mistake clears by
-    /// clicking a cell, which also *selects that cell*. The toggle is what every
-    /// modern table's header checkbox does, and it is expressible here for one
-    /// reason: [`extent`](Self::extent) is O(1), so "is everything selected"
-    /// is a question the control can afford to ask on every press.
+    /// The toolkit's corner button is one-way — table view's documented
+    /// behaviour is that clicking it "selects all cells in the view", with no
+    /// second press that takes it back — so a toolkit user who select-alls by
+    /// mistake clears by clicking a cell, which also *selects that cell*. The
+    /// toggle is what every modern table's header checkbox does, and it is
+    /// expressible here for one reason: [`extent`](Self::extent) is O(1), so "is
+    /// everything selected" is a question the control can afford to ask on
+    /// every press.
     ///
     /// In a `Single` model [`select_all`](Self::select_all) refuses, and the
     /// extent can only reach [`All`](SelectionExtent::All) on a one-row model,
-    /// so this is a no-op — the same nothing `QAbstractItemView::selectAll`
+    /// so this is a no-op — the same nothing `selectAll`
     /// does under `SingleSelection`. A grid states whether it offers the
     /// control at all when it declares its band, so an inert one is a decision
     /// rather than a press that quietly achieves nothing.
@@ -588,7 +586,7 @@ impl VirtualSelect {
 
     /// R1563 — `Shift`-press on the cell `(row, col)`: replace the selection
     /// with the **rectangle** from the extension origin to it, leaving the
-    /// origin put. Qt's `QItemSelectionRange(anchor, current)`.
+    /// origin put. The toolkit's `item selection range(anchor, current)`.
     ///
     /// With no origin on both axes yet — the state a grid is in before its
     /// first cell press — it behaves as a plain
@@ -614,7 +612,7 @@ impl VirtualSelect {
     }
 
     /// R1563 — plain press on the header section for `col`: replace the
-    /// selection with that whole column. Qt `QTableView::selectColumn`.
+    /// selection with that whole column. The toolkit `selectColumn`.
     ///
     /// The rows are named as a run against the model's **current** height, and
     /// deliberately so: the row axis is the one this framework windows, and a
@@ -705,7 +703,7 @@ impl VirtualSelect {
         self.cells.column_extent(col, self.item_count)
     }
 
-    /// Qt `QItemSelectionModel::selectedColumns()` — the columns selected in
+    /// The toolkit `selectedColumns()` — the columns selected in
     /// every row. Empty when the grid has no column axis.
     #[must_use]
     pub fn column_selection(&self) -> IndexRuns {
@@ -836,20 +834,20 @@ impl VirtualSelectExternal {
     ///
     /// # Why the selection coordinator carries it
     ///
-    /// Qt splits these responsibilities across two objects: `QItemSelectionModel`
-    /// decides what a click selects, and `QAbstractItemView` decides what a
-    /// click *else* does — `edit(index, DoubleClicked, event)`. Here the
-    /// pointer wire has exactly one destination per paint tag, and for a
-    /// windowed grid that destination is this coordinator, so the view-level
-    /// hook is offered from here rather than invented as a second External the
-    /// cells could not address.
+    /// The toolkit splits these responsibilities across two objects: item
+    /// selection model decides what a click selects, and abstract item view
+    /// decides what a click *else* does — `edit(index, DoubleClicked, event)`. Here the pointer wire has
+    /// exactly one destination per paint tag, and for a windowed grid that
+    /// destination is this coordinator, so the view-level hook is offered from
+    /// here rather than invented as a second External the cells could not
+    /// address.
     ///
     /// # Why before the selection transition
     ///
-    /// Qt's `SelectedClicked` trigger means *a click on a cell that was
-    /// already selected* — the slow-rename gesture. Running the observer after
-    /// the transition would make every plain click look "already selected",
-    /// which is the difference between a rename gesture and an unusable one.
+    /// The toolkit's `SelectedClicked` trigger means *a click on a cell that was already
+    /// selected* — the slow-rename gesture. Running the observer after the
+    /// transition would make every plain click look "already selected", which
+    /// is the difference between a rename gesture and an unusable one.
     ///
     /// R1555 — **every** decoded sub-key is offered, not only a cell: a header
     /// (`h<col>`), a group (`g<n>`) and a step affordance
@@ -864,7 +862,7 @@ impl VirtualSelectExternal {
 
     /// Construct a **multi-select** coordinator (R780): `Shift`-range,
     /// `Ctrl`-toggle, and `Ctrl+A` select-all hold an arbitrary index set
-    /// with an `anchor` origin. The `QItemSelectionModel` `ExtendedSelection`
+    /// with an `anchor` origin. The item selection model `ExtendedSelection`
     /// analogue.
     #[must_use]
     pub fn new_multi(item_count: usize) -> Self {
@@ -885,7 +883,7 @@ impl VirtualSelectExternal {
         self
     }
 
-    /// R1563 — declare what a press selects (Qt `setSelectionBehavior`).
+    /// R1563 — declare what a press selects (the toolkit `setSelectionBehavior`).
     #[must_use]
     pub fn with_behavior(mut self, behavior: SelectionBehavior) -> Self {
         self.em.inner.behavior = behavior;
@@ -904,7 +902,7 @@ impl VirtualSelectExternal {
     }
 
     /// The active row (the `query("selected")` value, the
-    /// `QItemSelectionModel` `currentIndex`): the sole selected row in a
+    /// item selection model `currentIndex`): the sole selected row in a
     /// single-select model, the keyboard-navigation reference in a
     /// multi-select one. `None` when nothing is selected.
     #[must_use]
@@ -943,7 +941,7 @@ impl VirtualSelectExternal {
         self.em.inner.is_cell_selected(row, col)
     }
 
-    /// R1563 — the column half of the active cell (Qt `currentIndex()`).
+    /// R1563 — the column half of the active cell (the toolkit `currentIndex()`).
     #[must_use]
     pub fn cursor_column(&self) -> Option<usize> {
         self.em.inner.cursor_column()
@@ -963,7 +961,7 @@ impl VirtualSelectExternal {
         self.em.inner.column_extent(col)
     }
 
-    /// Qt `QItemSelectionModel::selectedColumns()` — the columns selected in
+    /// The toolkit `selectedColumns()` — the columns selected in
     /// every row.
     #[must_use]
     pub fn column_selection(&self) -> IndexRuns {
@@ -977,8 +975,8 @@ impl VirtualSelectExternal {
         self.em.inner.selection()
     }
 
-    /// R1561 — how many rows are selected, without building the list Qt has to
-    /// build to count them. See [`VirtualSelect::selected_count`].
+    /// R1561 — how many rows are selected, without building the list the
+    /// toolkit has to build to count them. See [`VirtualSelect::selected_count`].
     #[must_use]
     pub fn selected_count(&self) -> usize {
         self.em.inner.selected_count()
@@ -1188,21 +1186,21 @@ impl VirtualSelectExternal {
     ///
     /// - **list item** `"<row>"` — the windowed `vlist#<row>` row.
     /// - **grid cell** `"<row>_<col>"` — the windowed `vtbl#<row>_<col>`
-    ///   cell. Selecting any cell selects its row (the WAI-ARIA / Qt
-    ///   `QItemSelectionModel` `SelectRows` behaviour: the column is
+    ///   cell. Selecting any cell selects its row (the WAI-ARIA / the toolkit
+    ///   item selection model `SelectRows` behaviour: the column is
     ///   irrelevant to a single-row selection). A grid column-header click
     ///   arrives as `"h<col>"`, which has no leading row index and is
     ///   ignored here (sort is a separate axis, not this coordinator's).
-    /// - **row header** `"r<row>"` (R1562) — the vertical band's section, Qt
-    ///   `QHeaderView` with `sectionsClickable`. It reaches the transition
+    /// - **row header** `"r<row>"` (R1562) — the vertical band's section, the toolkit
+    ///   header view with `sectionsClickable`. It reaches the transition
     ///   above by *answering with its row*, so the chord vocabulary is one
-    ///   implementation rather than the two Qt keeps
-    ///   (`QHeaderView::mousePressEvent` → `selectRow` beside
-    ///   `QAbstractItemView::selectionCommand`). This is the only part of a row
+    ///   implementation rather than the two the toolkit keeps
+    ///   (`mousePressEvent` → `selectRow` beside
+    ///   `selectionCommand`). This is the only part of a row
     ///   that is always on screen — the band is pinned against the horizontal
     ///   scroll (R1548) — so on a wide grid it is the address a row *has* when
     ///   none of its cells is painted.
-    /// - **corner** `"c"` (R1562) — Qt's `QTableCornerButton`: addresses the
+    /// - **corner** `"c"` (R1562) — the toolkit's table corner button: addresses the
     ///   whole model, so it toggles the selection's extent instead of moving
     ///   to a row.
     ///
@@ -1219,17 +1217,17 @@ impl VirtualSelectExternal {
         };
         let parsed = crate::composite_tag::GridSendKey::parse(key);
         // R1544 — the view-level hook, offered before the selection moves so
-        // "was this cell already selected" is still answerable (Qt's
-        // `SelectedClicked`). R1555 — every decoded arm is offered; the observer
-        // matches the one it handles.
+        // "was this cell already selected" is still answerable (the toolkit's
+        // `SelectedClicked`). R1555 — every decoded arm is offered; the observer matches the
+        // one it handles.
         if let (Some(observe), Some(grid_key)) = (self.grid_gesture.as_ref(), parsed) {
             observe(grid_key, event_name, modifiers);
         }
         // R1562 — the corner addresses the whole model, so it has no row to
         // fall through to. Handled on the same activation edge every other
-        // address is, through the same modifier-blind path: Qt's corner button
-        // ignores modifiers too, and a chorded select-all has no meaning
-        // (`Ctrl`-toggling *every* row is `toggle_all` already).
+        // address is, through the same modifier-blind path: the toolkit's
+        // corner button ignores modifiers too, and a chorded select-all has no
+        // meaning (`Ctrl`-toggling *every* row is `toggle_all` already).
         if parsed == Some(crate::composite_tag::GridSendKey::Corner) {
             if crate::input::is_activation_event(event_name) {
                 self.toggle_all();
@@ -1258,9 +1256,9 @@ impl VirtualSelectExternal {
             return;
         };
         // R1563 — what a press on a *cell* selects is the grid's declared
-        // behaviour (Qt `setSelectionBehavior`). A row header carries no column
-        // and always selects its row: it is the address of a record, which is
-        // why the band exists. A bare list-item key has no column either.
+        // behaviour (the toolkit `setSelectionBehavior`). A row header carries no column and
+        // always selects its row: it is the address of a record, which is why
+        // the band exists. A bare list-item key has no column either.
         let axis = match (self.behavior(), parsed.and_then(GridSendKey::col)) {
             (SelectionBehavior::SelectItems, Some(col)) => PressAxis::Cell(index, col),
             (SelectionBehavior::SelectColumns, Some(col)) => PressAxis::Column(col),
@@ -1330,7 +1328,7 @@ impl VirtualSelectExternal {
     /// A grid with no column axis **refuses** (`Rejected`) rather than quietly
     /// doing nothing and answering with an unchanged selection — the caller
     /// asked for something this grid cannot do, and `Rejected` is the outcome
-    /// that says so. Qt's `QTableView::selectColumn` returns `void` and a call
+    /// that says so. The toolkit's `selectColumn` returns `void` and a call
     /// on a view with no model is simply lost. An out-of-range *index* is not
     /// that case: it is the same ignored-index contract the row verbs have had
     /// since R746, so it answers with the unchanged selection.
@@ -1434,7 +1432,7 @@ impl ExternalIntrospect for VirtualSelectExternal {
         // `item_count` — construction-fixed dataset size (query only).
         // `cells` — settable two-axis selection as a JSON array of bands
         //   (R1563; query + intervene). `selection` is its `All`-span band.
-        // `column_selection` — Qt `selectedColumns()` (R1563, query only).
+        // `column_selection` — the toolkit `selectedColumns()` (R1563, query only).
         // `column_count` — the model's width, `null` when this grid declared no
         //   column axis, in which case every cell / column path refuses. Query
         //   only: a width is what the grid IS, not a knob.
@@ -1501,9 +1499,9 @@ impl ExternalIntrospect for VirtualSelectExternal {
             // JSON array for the set.
             "selected" => Some(self.selected_value()),
             "selection" => Some(self.selection_value()),
-            // R1561 — the row count, answered from the runs. Qt has no such
-            // accessor: `QItemSelectionModel::selectedRows().size()` builds one
-            // `QModelIndex` per selected row to read the list's length.
+            // R1561 — the row count, answered from the runs. The toolkit has
+            // no such accessor: `selectedRows().size()` builds one model index per selected row to
+            // read the list's length.
             "selection_count" => Some(
                 i64::try_from(self.selected_count())
                     .map_or(IntrospectValue::Null, IntrospectValue::Int),
@@ -1685,11 +1683,11 @@ impl ExternalIntrospect for VirtualSelectExternal {
                 Ok(self.selection_value())
             }
             // R1562 — the corner control's verb, so the select-all affordance
-            // is drivable headlessly and not only by a click on its pixels
-            // (§2 #2: the RPC path is the primary one, not a mirror of the
-            // pointer path). Qt has no such verb — `selectAll()` is one-way,
-            // and taking a full selection back means calling `clearSelection()`
-            // after asking `selectedRows().size()` whether it is full.
+            // is drivable headlessly and not only by a click on its pixels (§2
+            // #2: the RPC path is the primary one, not a mirror of the pointer
+            // path). The toolkit has no such verb — `selectAll()` is one-way, and taking
+            // a full selection back means calling `clearSelection()` after asking `selectedRows().size()` whether
+            // it is full.
             "toggle_all" => {
                 self.toggle_all();
                 Ok(self.selection_value())
@@ -1815,10 +1813,10 @@ pub fn read_selection(intro: &dyn ExternalIntrospect) -> IndexRuns {
 
 /// R1563 — the same decode for any slot that carries a run set, named by path.
 ///
-/// The surface has two of them now — `selection` (rows selected as records) and
-/// `column_selection` (Qt `selectedColumns()`) — encoded by the one
-/// [`selection_to_value`]. A second copy of this four-line decode is how the
-/// two directions drift, which is the R743.1 rule this pair exists under.
+/// The surface has two of them now — `selection` (rows selected as records) and `column_selection`
+/// (the toolkit `selectedColumns()`) — encoded by the one [`selection_to_value`]. A second copy of this
+/// four-line decode is how the two directions drift, which is the R743.1 rule
+/// this pair exists under.
 #[must_use]
 pub fn read_selection_at(intro: &dyn ExternalIntrospect, path: &str) -> IndexRuns {
     match intro.query(path) {
@@ -2770,7 +2768,7 @@ mod tests {
     }
 
     /// R1562 — the corner control: what it shows, what it does, and that the
-    /// two are the same fact. Qt's corner button has neither.
+    /// two are the same fact. The toolkit's corner button has neither.
     #[test]
     fn r1562_the_corner_shows_what_it_will_do() {
         let mut s = VirtualSelectExternal::new_multi(10_000);
@@ -2780,8 +2778,8 @@ mod tests {
         assert_eq!(s.extent(), SelectionExtent::All);
         assert_eq!(s.selection(), &IndexRuns::run(0, 9_999));
         assert_eq!(s.selection().run_count(), 1, "select-all is ONE run");
-        // All -> a press takes it back. This is the leg Qt does not have:
-        // `selectAll()` is one-way.
+        // All -> a press takes it back. This is the leg the toolkit does not
+        // have: `selectAll()` is one-way.
         s.handle_send("c:PointerUp");
         assert_eq!(s.extent(), SelectionExtent::Empty);
         assert!(s.selection().is_empty());

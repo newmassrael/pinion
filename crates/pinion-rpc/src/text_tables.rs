@@ -10,29 +10,29 @@
 //! each holding its cells in flow order with the address each one was given and
 //! the box it was painted in.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has the concept and keeps every part of it in-process, and two of the
-//! facts here it does not have at all:
+//! The toolkit has the concept and keeps every part of it in-process, and two
+//! of the facts here it does not have at all:
 //!
 //! - **Enumeration.** There is no "what tables does this document have"
-//!   accessor. `QTextDocument` exposes `rootFrame()` and frame iteration, and
+//!   accessor. text document exposes `rootFrame()` and frame iteration, and
 //!   finding the tables means walking the frame tree `qobject_cast`-ing each
-//!   child to `QTextTable` yourself. Here the census IS the answer, and it is
+//!   child to text table yourself. Here the census IS the answer, and it is
 //!   answerable from outside the process.
-//! - **Addressing.** `QTextTableCell::row()` / `column()` / `rowSpan()` /
+//! - **Addressing.** `row()` / `column()` / `rowSpan()` /
 //!   `columnSpan()` are C++ calls on an object that only exists inside a
-//!   `QTextDocument`. None is reachable from a driver, a test harness or an
+//!   text document. None is reachable from a driver, a test harness or an
 //!   agent.
-//! - **A refused merge has no trace.** `QTextTable::mergeCells` returns `void`
+//! - **A refused merge has no trace.** `mergeCells` returns `void`
 //!   and silently does nothing when the rectangle is not a merge candidate, so
 //!   after the fact the request and the result are indistinguishable.
 //!   [`TextCellWire::declared_column_span`] and [`TextCellWire::clamped`]
 //!   publish both.
-//! - **A ragged table is not representable in Qt.** `insertRows` fills the
+//! - **A ragged table is not representable in the toolkit.** `insertRows` fills the
 //!   grid, so every slot has a cell whether the author wanted one or not.
 //!   [`TextTableWire::slack`] reports the slots nobody filled.
-//! - **Geometry.** A `QTextTable` is a `QTextFrame`, so its own rect is
+//! - **Geometry.** A text table is a text frame, so its own rect is
 //!   reachable through `frameBoundingRect`; a *cell*'s is not — it has to be
 //!   reconstructed from `firstCursorPosition()` and `blockBoundingRect`, a
 //!   second derivation free to disagree with the painter's. Every box here is
@@ -112,21 +112,21 @@ pub struct TextCellWire {
     pub tag: String,
     /// The paint tag of the row band this cell starts in.
     pub row_tag: String,
-    /// 0-based row — Qt `QTextTableCell::row()`.
+    /// 0-based row — the toolkit `row()`.
     pub row: u32,
-    /// 0-based column — Qt `QTextTableCell::column()`.
+    /// 0-based column — the toolkit `column()`.
     pub column: u32,
-    /// Rows covered, after clamping — Qt `QTextTableCell::rowSpan()`.
+    /// Rows covered, after clamping — the toolkit `rowSpan()`.
     pub row_span: u16,
-    /// Columns covered, after clamping — Qt `QTextTableCell::columnSpan()`.
+    /// Columns covered, after clamping — the toolkit `columnSpan()`.
     pub column_span: u16,
     /// The row span the author declared.
     pub declared_row_span: u16,
     /// The column span the author declared, which is what makes
     /// [`Self::clamped`] readable rather than merely assertable.
     pub declared_column_span: u16,
-    /// The declared column span did not fit and was reduced — the fact Qt's
-    /// `void mergeCells` throws away.
+    /// The declared column span did not fit and was reduced — the fact the
+    /// toolkit's `void mergeCells` throws away.
     pub clamped: bool,
     /// Which header band the address falls in: `none`, `column`, `row` or
     /// `corner`.
@@ -156,15 +156,15 @@ pub struct TextCellWire {
 pub struct TextTableWire {
     /// The table container's paint tag (`DocumentTag::table`).
     pub tag: String,
-    /// Rows the allocation needed — Qt `QTextTable::rows()`.
+    /// Rows the allocation needed — the toolkit `rows()`.
     pub rows: u32,
-    /// Columns the format declared — Qt `QTextTable::columns()`.
+    /// Columns the format declared — the toolkit `columns()`.
     pub columns: u32,
     /// How many cells the table holds; a multi-block cell counts once.
     pub cell_count: u32,
-    /// Leading header rows — Qt `QTextTableFormat::headerRowCount`.
+    /// Leading header rows — the toolkit `headerRowCount`.
     pub header_rows: u16,
-    /// Leading header columns — the axis Qt has no property for.
+    /// Leading header columns — the axis the toolkit has no property for.
     pub header_columns: u16,
     /// The column tracks, in CSS `grid-template-columns` spelling
     /// (`auto` / `120px` / `30%` / `1fr` / `min-content` / `max-content`), one
@@ -174,11 +174,11 @@ pub struct TextTableWire {
     /// has columns is padded before it reaches the layout, so what is
     /// published is what the tracks actually are.
     pub column_widths: Vec<String>,
-    /// Padding inside each cell, px — Qt `cellPadding`.
+    /// Padding inside each cell, px — the toolkit `cellPadding`.
     pub cell_padding_px: u32,
-    /// Gap between cells, px — Qt `cellSpacing`.
+    /// Gap between cells, px — the toolkit `cellSpacing`.
     pub cell_spacing_px: u32,
-    /// Rule width around each cell, px — Qt `QTextFrameFormat::border`.
+    /// Rule width around each cell, px — the toolkit `border`.
     pub border_px: u32,
     /// The table container's window-absolute left edge, or `null` before
     /// layout.
@@ -189,7 +189,7 @@ pub struct TextTableWire {
     pub width: Option<u32>,
     /// The table container's height.
     pub height: Option<u32>,
-    /// The slots no cell covers, in row-major order — a state `QTextTable`
+    /// The slots no cell covers, in row-major order — a state text table
     /// cannot be in.
     pub slack: Vec<GridSlotWire>,
     /// The cells, in flow order.
@@ -428,7 +428,8 @@ mod tests {
     }
 
     /// One row per table, one entry per cell, with the address and the painted
-    /// box together — the join Qt cannot make from outside the process.
+    /// box together — the join the toolkit cannot make from outside the
+    /// process.
     #[test]
     fn a_table_publishes_its_shape_and_every_cell() {
         let scene = painted(

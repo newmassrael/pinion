@@ -14,8 +14,8 @@
 //!
 //! The textbook model for an out-of-memory source is **server-side query
 //! parameters**: sort and filter are pushed *down to the source*, exactly like
-//! `SELECT … WHERE kind = ? ORDER BY ? LIMIT … OFFSET …` (or Unreal's Content
-//! Browser, or a file explorer over a network share). Changing either:
+//! `SELECT … WHERE kind = ? ORDER BY ? LIMIT … OFFSET …` (or the engine's Content Browser, or a file explorer over a network
+//! share). Changing either:
 //!
 //! - **re-queries the source** — a page fetched under one ordering is never
 //!   reused under another, so the page cache is keyed by the *full query*

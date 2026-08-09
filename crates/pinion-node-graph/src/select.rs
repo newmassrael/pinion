@@ -4,30 +4,29 @@
 //!
 //! The selection itself is **not here**, and that is deliberate: R1586 put it
 //! outside the document because two people looking at one graph have two
-//! selections and one document. What *is* here is the half that is a property of
-//! the graph — *given these nodes, which others are the ones you mean?* Blender
-//! spells that as six operators; four of them are questions about the graph and
-//! are this module, and the other two are questions about the **canvas** (see
-//! the end of these docs).
+//! selections and one document. What *is* here is the half that is a property
+//! of the graph — *given these nodes, which others are the ones you mean?* the
+//! DCC spells that as six operators; four of them are questions about the
+//! graph and are this module, and the other two are questions about the
+//! **canvas** (see the end of these docs).
 //!
-//! Every one of them is a **pure query**. Blender's are edits: they set the
-//! `SELECT` bit on `bNode` and carry `OPTYPE_UNDO`, because there the selection
-//! lives in the document — so "what would this select?" cannot be asked without
-//! selecting it, and every answer costs an undo step. Here the answer is a value
-//! ([`Grown`]) and the document is untouched, which is what makes the question
-//! previewable (§2 #3).
+//! Every one of them is a **pure query**. The DCC's are edits: they set the
+//! `SELECT` bit on `bNode` and carry `OPTYPE_UNDO`, because there the selection lives in the
+//! document — so "what would this select?" cannot be asked without selecting
+//! it, and every answer costs an undo step. Here the answer is a value ([`Grown`])
+//! and the document is untouched, which is what makes the question previewable
+//! (§2 #3).
 //!
 //! # The reach is a parameter, not a keystroke count
 //!
-//! The single largest difference. `NODE_OT_select_linked_to` walks
-//! `output_socket->directly_linked_sockets()` — **one hop** — and so does
-//! `NODE_OT_select_linked_from`. The question a person actually has is *what
-//! depends on this?*, which is the transitive closure, and Blender answers it by
-//! having you press the key until the picture stops changing, with nothing
-//! telling you when that has happened. [`Reach::Transitive`] is that question
-//! asked once, and [`Grown::added`] is what tells you it has been answered:
-//! growing again by the same transitive question adds nothing, which is a
-//! property this module's tests assert and Blender's mutating form cannot state.
+//! The single largest difference. `NODE_OT_select_linked_to` walks `output_socket->directly_linked_sockets()` — **one hop** — and so does
+//! `NODE_OT_select_linked_from`. The question a person actually has is *what depends on this?*, which
+//! is the transitive closure, and the DCC answers it by having you press the
+//! key until the picture stops changing, with nothing telling you when that
+//! has happened. [`Reach::Transitive`] is that question asked once, and [`Grown::added`] is what tells
+//! you it has been answered: growing again by the same transitive question
+//! adds nothing, which is a property this module's tests assert and the DCC's
+//! mutating form cannot state.
 //!
 //! # Two relations, and the reach means the same thing in both
 //!
@@ -61,7 +60,7 @@ use crate::model::{Document, Node, NodeBody, NodeId, NodeKind, TreeId};
 /// property of the *question* rather than of the relation being asked about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
-    /// One step. Blender's only mode for the link relation, and what its
+    /// One step. The DCC's only mode for the link relation, and what its
     /// `NODE_OT_select_linked_to` / `..._from` do per keypress.
     Direct,
     /// Every step, to the end. The question "what depends on this" asked once.
@@ -75,24 +74,24 @@ pub enum Reach {
 /// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grow {
-    /// Nodes the selection feeds. Blender's `NODE_OT_select_linked_to`.
+    /// Nodes the selection feeds. The DCC's `NODE_OT_select_linked_to`.
     ///
     /// A **muted** link is still followed: mutedness is about the value, and
     /// every structural derivation in this crate goes on seeing the wire
-    /// (R1586). Blender follows it too, so this is agreement rather than
+    /// (R1586). The DCC follows it too, so this is agreement rather than
     /// divergence — asserted, because it is the kind of agreement that is easy
     /// to break by accident.
     Downstream(Reach),
-    /// Nodes that feed the selection. Blender's `NODE_OT_select_linked_from`.
+    /// Nodes that feed the selection. The DCC's `NODE_OT_select_linked_from`.
     Upstream(Reach),
-    /// What the selected frames contain (R1589). No Blender analogue: selecting
-    /// a frame there selects nothing inside it, though dragging one moves
-    /// everything inside it.
+    /// What the selected frames contain (R1589). No the DCC analogue:
+    /// selecting a frame there selects nothing inside it, though dragging one
+    /// moves everything inside it.
     Contents(Reach),
     /// The frames containing the selection. The other direction of the same
     /// relation, which is the only reason it is here — see the module docs.
     Containers(Reach),
-    /// Nodes that are the same kind as something selected. Blender's
+    /// Nodes that are the same kind as something selected. The DCC's
     /// `NODE_OT_select_grouped(TYPE)`.
     ///
     /// Keyed on the whole selection rather than on one **active** node, because
@@ -101,11 +100,11 @@ pub enum Grow {
     /// node selected the two are the same question.
     SameKind,
     /// Nodes whose displayed name begins with the same prefix as something
-    /// selected — the run up to the first `.`, `-` or `_`. Blender's
+    /// selected — the run up to the first `.`, `-` or `_`. The DCC's
     /// `NODE_OT_select_grouped(PREFIX)`.
     NamePrefix,
     /// Nodes whose displayed name ends with the same suffix as something
-    /// selected — the run after the last `.`, `-` or `_`. Blender's
+    /// selected — the run after the last `.`, `-` or `_`. The DCC's
     /// `NODE_OT_select_grouped(SUFFIX)`.
     NameSuffix,
 }
@@ -117,7 +116,7 @@ pub struct Grown {
     pub selection: Vec<NodeId>,
     /// What this call added, ascending. Empty means the question had no answer
     /// the selection did not already hold — which is how a caller knows a
-    /// [`Reach::Transitive`] walk has reached the end, and what Blender's
+    /// [`Reach::Transitive`] walk has reached the end, and what the DCC's
     /// mutating form cannot report.
     pub added: Vec<NodeId>,
 }
@@ -138,9 +137,9 @@ pub enum SelectError {
     NoSuchTree(TreeId),
     /// The selection names a node that is not in that tree.
     ///
-    /// Refused rather than skipped: a selection holding an id the tree does not
-    /// have is a *stale* selection, and answering a question about it would
-    /// quietly answer a different question. Blender's operators skip.
+    /// Refused rather than skipped: a selection holding an id the tree does
+    /// not have is a *stale* selection, and answering a question about it
+    /// would quietly answer a different question. The DCC's operators skip.
     NoSuchNode {
         /// The tree that was searched.
         tree: TreeId,
@@ -163,7 +162,7 @@ impl fmt::Display for SelectError {
 impl std::error::Error for SelectError {}
 
 /// The delimiters a displayed name is split on for [`Grow::NamePrefix`] and
-/// [`Grow::NameSuffix`] — Blender's own set.
+/// [`Grow::NameSuffix`] — the DCC's own set.
 const AFFIX_DELIMITERS: [char; 3] = ['.', '-', '_'];
 
 /// Which end of a name an affix is taken from.
@@ -177,12 +176,11 @@ impl Affix {
     /// The affix of `name`, or `None` when it has no delimiter and so has no
     /// affix on this side.
     ///
-    /// Blender substitutes the WHOLE NAME for a missing suffix
-    /// (`node_select_grouped_name`, the `from_right && !(sep && suf_act)` arm),
-    /// which conflates "this node has no suffix" with "this node's suffix is its
-    /// entire name" — so there, whether the operator groups anything at all
-    /// depends on whether the node happened to be the first of its kind and thus
-    /// escaped a `.001` disambiguator.
+    /// The DCC substitutes the WHOLE NAME for a missing suffix (`node_select_grouped_name`, the `from_right && !(sep && suf_act)`
+    /// arm), which conflates "this node has no suffix" with "this node's
+    /// suffix is its entire name" — so there, whether the operator groups
+    /// anything at all depends on whether the node happened to be the first of
+    /// its kind and thus escaped a `.001` disambiguator.
     fn of(self, name: &str) -> Option<&str> {
         match self {
             Self::Prefix => name.split_once(AFFIX_DELIMITERS).map(|(head, _)| head),
@@ -195,8 +193,8 @@ impl<K: NodeKind> Document<K> {
     /// Grow `selection` in `tree` by one question, answering the new selection
     /// and what it added.
     ///
-    /// A **pure query**: nothing in the document changes. Blender's equivalents
-    /// set the `SELECT` bit and carry `OPTYPE_UNDO`.
+    /// A **pure query**: nothing in the document changes. The DCC's
+    /// equivalents set the `SELECT` bit and carry `OPTYPE_UNDO`.
     ///
     /// # Errors
     ///
@@ -229,7 +227,7 @@ impl<K: NodeKind> Document<K> {
     /// Every node of the same kind as `like`, in **evaluation order**, `like`
     /// included.
     ///
-    /// The substrate under Blender's `NODE_OT_select_same_type_step`, which
+    /// The substrate under the DCC's `NODE_OT_select_same_type_step`, which
     /// walks `toposort_left_to_right()` one position at a time. Publishing the
     /// run rather than the step is what lets a caller say *where* in it the
     /// cursor is — "3 of 7" — which that operator cannot, since it answers by
@@ -402,14 +400,14 @@ enum Match {
 /// called or what they are set to.
 ///
 /// [`NodeKind::name`]'s own contract: a stable identity token, never derived
-/// from a label. Blender compares `type_legacy`, which is the same idea.
+/// from a label. The DCC compares `type_legacy`, which is the same idea.
 ///
 /// **Two group instances are the same kind only when they instance the same
-/// definition**, where Blender gives every group node the one type `NODE_GROUP`.
-/// An instance's signature *is* its definition's interface, so two instances of
+/// definition**, where the DCC gives every group node the one type `NODE_GROUP`. An
+/// instance's signature *is* its definition's interface, so two instances of
 /// different definitions are not alike in any respect this model can see, and
-/// calling them one kind would grow a selection into nodes that have nothing to
-/// do with it.
+/// calling them one kind would grow a selection into nodes that have nothing
+/// to do with it.
 ///
 /// **Two delays are the same kind only when they hold the same type** (R1600),
 /// which is the same argument one step down: a delay's whole signature is

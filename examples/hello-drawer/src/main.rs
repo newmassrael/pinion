@@ -15,7 +15,7 @@
 //! Phase B widget-catalog entry. The edge-anchored navigation sheet
 //! every pro DCC / IDE / CAD tool ships (a left nav rail, a right
 //! inspector panel) — a direct step toward the northern-star
-//! "Unreal-class editor self-hosted in pinion". It validates the R693
+//! "the engine-class editor self-hosted in pinion". It validates the R693
 //! modal substrate as reusable across more than one widget
 //! (`[[abstraction-needs-second-consumer]]`): Dialog *centres* a panel,
 //! Drawer *edge-anchors* one, but both share the scrim + Tab trap +

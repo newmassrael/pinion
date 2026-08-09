@@ -1,61 +1,57 @@
 // R1450 §5.16 — example bindings tolerate looser doc-markdown lints than
 // substrate crates; the architectural narrative carries many proper-noun
-// identifiers (QHeaderView, ReorderModel, WAI-ARIA, …).
+// identifiers (header view, ReorderModel, WAI-ARIA, …).
 #![allow(clippy::doc_markdown)]
 
 //! `hello-column-reorder` — R1450 / R1451 §5.27 §5.40 §5.51 **a column carries
-//! its width and its place wherever its header is dragged**: Qt's
-//! `QHeaderView`, whole.
+//! its width and its place wherever its header is dragged**: the toolkit's
+//! header view, whole.
 //!
 //! ## The gap this closes
 //!
-//! R1450 added the axis Qt had and pinion did not — **section order**
-//! (`setSectionsMovable` / `moveSection` / `visualIndex` <-> `logicalIndex`) —
-//! as the 4th consumer of the lifted
-//! [`ReorderModel`](pinion_core::widgets::reorder::ReorderModel) (R743). R1451
-//! finishes the widget: Qt keys `sectionSize` / `isSectionHidden` by the **logical**
-//! section, so a resized or hidden column stays resized and hidden wherever it
-//! is dragged. pinion's width model (R785) indexed by *screen position*, and
-//! its visibility model (R990) lived in another binding entirely, so that
+//! R1450 added the axis the toolkit had and pinion did not — **section order**
+//! (`setSectionsMovable` / `moveSection` / `visualIndex` <-> `logicalIndex`) — as the 4th consumer of the lifted
+//! [`ReorderModel`](pinion_core::widgets::reorder::ReorderModel) (R743). R1451 finishes
+//! the widget: the toolkit keys `sectionSize` / `isSectionHidden` by the **logical** section, so a
+//! resized or hidden column stays resized and hidden wherever it is dragged.
+//! pinion's width model (R785) indexed by *screen position*, and its
+//! visibility model (R990) lived in another binding entirely, so that
 //! composition had no home and moving a column left its width behind.
 //!
 //! The home is [`ColumnLayout`], and this binding is its first consumer: the
 //! permutation, the sizes, the hidden flags, the derived geometry, and the
 //! `saveState` / `restoreState` round-trip all come from one model. What is
 //! left here is the column *names* and the keyboard *policy* — everything a
-//! `QHeaderView` does is the substrate's.
+//! header view does is the substrate's.
 //!
 //! ## Why the header strip is its own external (and matches the reference)
 //!
-//! In Qt a `QHeaderView` is a **separate widget** the view owns, not a band
-//! inside it — so modelling the header as its own external is the faithful
-//! shape, not a shortcut. It is also the shape the substrate needs:
-//! [`ReorderModel`](pinion_core::widgets::reorder::ReorderModel)'s drop
-//! classification reads the composite `#<visual>`
-//! subindex off the hovered tag, and the eager table's header cells are tagged
-//! `{tag}_ch{col}` (no subindex) because their click routes to the table's own
-//! sort. A strip whose cells ARE `colhdr#<visual>` gives the drag session real
+//! In the toolkit a header view is a **separate widget** the view owns, not a
+//! band inside it — so modelling the header as its own external is the
+//! faithful shape, not a shortcut. It is also the shape the substrate needs:
+//! [`ReorderModel`](pinion_core::widgets::reorder::ReorderModel)'s drop classification
+//! reads the composite `#<visual>` subindex off the hovered tag, and the eager table's
+//! header cells are tagged `{tag}_ch{col}` (no subindex) because their click routes to the
+//! table's own sort. A strip whose cells ARE `colhdr#<visual>` gives the drag session real
 //! per-section hit nodes, and the body below simply paints through the order.
 //!
 //! R1491 — those two tag shapes read as an either/or until this round, and one
 //! pinion header was accordingly either movable or sortable, never both, while
-//! Qt's is both at once (`setSectionsMovable` + `setSectionsClickable`). They
-//! are not alternatives: the subindex a drop classifier needs is also enough to
-//! name the section a *click* landed on, and what separates a click from a drag
-//! is not the tag but the release. So this strip now carries the sort indicator
-//! too (`sortIndicatorSection` / `sortIndicatorOrder` / `sortIndicatorShown`),
-//! keyed logically like the sizes and the hidden flags, and the arrow travels
-//! with its column instead of staying on a position.
+//! the toolkit's is both at once (`setSectionsMovable` + `setSectionsClickable`). They are not alternatives: the
+//! subindex a drop classifier needs is also enough to name the section a
+//! *click* landed on, and what separates a click from a drag is not the tag
+//! but the release. So this strip now carries the sort indicator too (`sortIndicatorSection` /
+//! `sortIndicatorOrder` / `sortIndicatorShown`), keyed logically like the sizes and the hidden flags, and the
+//! arrow travels with its column instead of staying on a position.
 //!
 //! R1496 — and the release that separates them is the router's, not this
 //! widget's. R1491 read the click off the drop commit ("the permutation came
 //! out unchanged"); R794 §5.51 already owns click-vs-drag and withholds the
-//! trailing `PointerUp` after a gesture that travelled, so the click arrives
-//! there ([`ColumnLayout::handle_send`]) and [`ColumnLayout::end_section_drag`]
-//! only commits the drop. That is also what lets Qt's two permissions be
-//! independent here: a header that opens no drag session
-//! ([`ColumnLayout::sections_movable`] off) is still sortable, which it could
-//! not be while its click was a by-product of a drag.
+//! trailing `PointerUp` after a gesture that travelled, so the click arrives there
+//! ([`ColumnLayout::handle_send`]) and [`ColumnLayout::end_section_drag`] only commits the drop. That is also what lets the
+//! toolkit's two permissions be independent here: a header that opens no drag
+//! session ([`ColumnLayout::sections_movable`] off) is still sortable, which it could not be while its
+//! click was a by-product of a drag.
 //!
 //! R1497 — and the per-section *label* inside each cell is tagged too
 //! (`colhdr_label#<visual>`), for the snapshot assertions and the a11y walk. That
@@ -84,17 +80,17 @@
 //! uniform strip "the width travelled with the column" and "the widths never
 //! moved at all" paint identical pixels.
 //!
-//! ## AI clients (§2 #7 + §2 #2 — where Qt cannot follow)
+//! ## AI clients (§2 #7 + §2 #2 — where the toolkit cannot follow)
 //!
-//! Qt persists a header layout as `QHeaderView::saveState()`, an **opaque
-//! versioned `QByteArray`**: an agent cannot read "which column is third now,
+//! The toolkit persists a header layout as `saveState()`, an **opaque
+//! versioned byte array**: an agent cannot read "which column is third now,
 //! and how wide is it" out of it, and cannot write one either without a live
-//! `QHeaderView`. Here the entire state is typed data both ways —
+//! header view. Here the entire state is typed data both ways —
 //! `query("state")` / `"order"` / `"sizes"` / `"hidden"` / `"placements"` /
 //! `"visual_index.<logical>"` / `"section_position.<logical>"` /
 //! `"logical_index_at.<x>"` read it; `invoke("move_section" |
 //! "swap_sections" | "resize_section" | "set_section_hidden", "<a>:<b>")`
-//! performs Qt's own section calls; and `intervene("state", {..})` is
+//! performs the toolkit's own section calls; and `intervene("state", {..})` is
 //! `restoreState` with every field legible. The keyboard reaches exactly the
 //! same model (`[` / `]` resize, `h` hides, arrows and Space/Escape drag), so
 //! neither door can do something the other cannot.
@@ -134,7 +130,7 @@ const WIN_W: u32 = 700;
 const WIN_H: u32 = 420;
 const THEME_TAG: &str = "app";
 
-/// The header strip (primary external) — the `QHeaderView`. Section cells paint
+/// The header strip (primary external) — the header view. Section cells paint
 /// as `colhdr#<visual>`, which is what gives the drag session per-section hit
 /// nodes.
 const HDR_TAG: &str = "colhdr";
@@ -190,12 +186,12 @@ fn cell_text(row: usize, logical: usize) -> &'static str {
 const SECTION_W: [u32; NCOLS] = [150, 90, 100, 130, 100];
 const GRID_X: u32 = 30;
 const GRID_Y: u32 = 90;
-/// R1506 — the header section geometry, which is `QHeaderView` knowledge and
-/// therefore [`pinion_widget_paint::column_header`]'s rather than this
-/// binding's. The insets, the arrow's reserved end and the label-box arithmetic
-/// moved there with [`view_header_cell`]: R1505's pixel guard was rendering its
-/// own copy of the label node, and a guard that renders a copy of the thing
-/// under test is testing the copy. Now the guard calls what this binding calls.
+/// R1506 — the header section geometry, which is header view knowledge and
+/// therefore [`pinion_widget_paint::column_header`]'s rather than this binding's. The insets, the arrow's
+/// reserved end and the label-box arithmetic moved there with [`view_header_cell`]: R1505's
+/// pixel guard was rendering its own copy of the label node, and a guard that
+/// renders a copy of the thing under test is testing the copy. Now the guard
+/// calls what this binding calls.
 const HDR_STYLE: ColumnHeaderStyle = ColumnHeaderStyle::new();
 const HDR_H: u32 = HDR_STYLE.height;
 const ROW_H: u32 = 34;
@@ -228,19 +224,19 @@ fn grid_text(role: ColorRole, theme: &Theme) -> TextStyle {
 /// The strings logical column `logical` is measured against: its header label
 /// and the first `rows` cells.
 ///
-/// R1454 — the header is always measured (Qt measures it too) and the body is
-/// **sampled**, because measuring every row of a grid each frame is what makes
-/// a content-fitted column expensive: a shape miss costs 18.5 us against a
-/// 118 ns cache hit, and a working set past the measurement cache's 256 slots
-/// re-shapes in full every frame.
+/// R1454 — the header is always measured (the toolkit measures it too) and the
+/// body is **sampled**, because measuring every row of a grid each frame is
+/// what makes a content-fitted column expensive: a shape miss costs 18.5 us
+/// against a 118 ns cache hit, and a working set past the measurement cache's
+/// 256 slots re-shapes in full every frame.
 fn column_strings(logical: usize, rows: usize) -> impl Iterator<Item = &'static str> {
     std::iter::once(HEADERS[logical])
         .chain((0..NROWS.min(rows)).map(move |r| cell_text(r, logical)))
 }
 
-/// R1452 — the per-logical-section content size hints: the peer of Qt's
-/// delegate `sizeHint`, which is where Qt gets them too (`QHeaderView` does not
-/// measure either).
+/// R1452 — the per-logical-section content size hints: the peer of the
+/// toolkit's delegate `sizeHint`, which is where the toolkit gets them too (header
+/// view does not measure either).
 ///
 /// R1453 — **exact**, and for any face: each string is measured in the very
 /// [`TextStyle`] the cell paints with, and the column takes the widest.
@@ -254,7 +250,7 @@ fn column_strings(logical: usize, rows: usize) -> impl Iterator<Item = &'static 
 ///
 /// R1454 — the body is sampled at the layout's
 /// [`resize_contents_precision`](ColumnLayout::resize_contents_precision)
-/// (Qt's `QHeaderView::resizeContentsPrecision`), so the per-frame working set
+/// (the toolkit's `resizeContentsPrecision`), so the per-frame working set
 /// is bounded no matter how many rows the grid has.
 ///
 /// All-or-nothing: if any string cannot be measured (headless, no provider)
@@ -286,12 +282,11 @@ fn section_tag(visual: usize) -> String {
     format!("{HDR_TAG}#{visual}")
 }
 
-/// The header strip external: the `QHeaderView`. R1451 — it owns the whole
-/// section layout through the lifted [`ColumnLayout`]: the permutation, the
-/// per-section sizes, and the hidden flags, plus the Qt index mapping and the
-/// `saveState` / `restoreState` round-trip. It holds no column *data* — the
-/// view projects the schema through
-/// [`ColumnLayout::visible_placements`].
+/// The header strip external: the header view. R1451 — it owns the whole
+/// section layout through the lifted [`ColumnLayout`]: the permutation, the per-section
+/// sizes, and the hidden flags, plus the toolkit index mapping and the `saveState` /
+/// `restoreState` round-trip. It holds no column *data* — the view projects the schema
+/// through [`ColumnLayout::visible_placements`].
 #[derive(Debug)]
 struct ColumnHeaderExternal {
     layout: Rc<ColumnLayout>,
@@ -308,7 +303,7 @@ impl ColumnHeaderExternal {
     }
 }
 
-/// The header this app declares, built once — everything a `QHeaderView`
+/// The header this app declares, built once — everything a header view
 /// consumer sets right after constructing one.
 ///
 /// It is a free function, not two copies inside the two `use_column_layout_with`
@@ -319,16 +314,16 @@ impl ColumnHeaderExternal {
 /// alone.
 fn boot_layout() -> ColumnLayout {
     let layout = ColumnLayout::new(SECTION_W.to_vec());
-    // R1491 — `ColumnLayout` boots with the indicator hidden, as Qt's
-    // `QHeaderView` does; a *sortable* view turns it on, which is where
-    // `QTableView::setSortingEnabled` puts the same decision. Leaving it to
+    // R1491 — `ColumnLayout` boots with the indicator hidden, as the toolkit's
+    // header view does; a *sortable* view turns it on, which is where
+    // `setSortingEnabled` puts the same decision. Leaving it to
     // the header's default would paint no arrow however the grid sorted.
     layout.set_sort_indicator_shown(true);
-    // R1496 — and the same `setSortingEnabled` is what turns Qt's
-    // `sectionsClickable` on, because a click that sorts nothing is not a
-    // click. `sectionsMovable` is this app's own affordance: the caption says
-    // "drag a header to move it", so it says so to the header too. Both default
-    // to `false`, as in Qt, which is why an app that wants them declares them.
+    // R1496 — and the same `setSortingEnabled` is what turns the toolkit's `sectionsClickable` on, because a
+    // click that sorts nothing is not a click. `sectionsMovable` is this app's own
+    // affordance: the caption says "drag a header to move it", so it says so
+    // to the header too. Both default to `false`, as in the toolkit, which is why
+    // an app that wants them declares them.
     layout.set_sections_clickable(true);
     layout.set_sections_movable(true);
     layout
@@ -434,8 +429,8 @@ impl ExternalIntrospect for ColumnHeaderExternal {
             // binding's, so this binding still has to refuse it — a read-only
             // path reported as unknown is the §2 #7 lie in the other direction.
             "labels" => Err(InterveneError::ReadOnly),
-            // `state` (Qt restoreState), `sizes`, `hidden`, `order`, and
-            // `focused_index` — all typed data rather than an opaque blob.
+            // `state` (the toolkit restoreState), `sizes`, `hidden`, `order`, and `focused_index` — all
+            // typed data rather than an opaque blob.
             other => self.layout.intervene(other, &value),
         }
     }
@@ -445,14 +440,14 @@ impl ExternalIntrospect for ColumnHeaderExternal {
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
-        // Qt's whole section vocabulary, all of it the model's; this binding
-        // adds no action of its own, which is the point of the lift.
+        // The toolkit's whole section vocabulary, all of it the model's; this
+        // binding adds no action of its own, which is the point of the lift.
         let out = self.layout.invoke(path, &args)?;
         // R1496 — except this one, which is not an action but a *policy*: what
         // a click means. The header reports WHICH section was clicked (`Null`
         // when the release was not one, or when the header is not clickable);
-        // deciding that it sorts is the view's call, exactly as Qt leaves it to
-        // whoever connects `sectionClicked` / `sortIndicatorChanged`.
+        // deciding that it sorts is the view's call, exactly as the toolkit
+        // leaves it to whoever connects `sectionClicked` / `sortIndicatorChanged`.
         //
         // It reads the value returned by its own delegation rather than a
         // latch, because the router discards the OUTER return on the real
@@ -472,24 +467,25 @@ impl ExternalIntrospect for ColumnHeaderExternal {
     }
 }
 
-/// R1498 — the header-wide sizing rules Qt's `saveState()` carries, grouped
+/// R1498 — the header-wide sizing rules the toolkit's `saveState()` carries, grouped
 /// because they are one kind of thing: a policy that belongs to the header
-/// rather than to a column, that the readout names, and that a keystroke moves.
+/// rather than to a column, that the readout names, and that a keystroke
+/// moves.
 ///
 /// Grouped rather than left flat for the reason the R1496 permissions are a
-/// pair: the state this view paints from is `Copy` and flat by construction,
-/// and a run of loose policy booleans in it stops saying which ones are read
-/// together. Qt has more of these (`highlightSelected`, `firstSectionMovable`),
-/// so this is where they land.
+/// pair: the state this view paints from is `Copy` and flat by construction, and
+/// a run of loose policy booleans in it stops saying which ones are read
+/// together. The toolkit has more of these (`highlightSelected`, `firstSectionMovable`), so this is where they
+/// land.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct LayoutRules {
-    /// R1494 — Qt's `cascadingSectionResizes`: whether the `[` / `]` gesture
-    /// takes its space from the following sections or from the row's width.
-    /// Painted, because the same keystroke does two visibly different things
-    /// depending on it.
+    /// R1494 — the toolkit's `cascadingSectionResizes`: whether the `[` / `]` gesture takes its
+    /// space from the following sections or from the row's width. Painted,
+    /// because the same keystroke does two visibly different things depending
+    /// on it.
     cascading: bool,
-    /// R1498 — Qt's `stretchLastSection`: whether the section painted last
-    /// absorbs the leftover viewport width. Painted for the same reason.
+    /// R1498 — the toolkit's `stretchLastSection`: whether the section painted last absorbs the
+    /// leftover viewport width. Painted for the same reason.
     stretch_last: bool,
 }
 
@@ -530,7 +526,7 @@ struct HeaderState {
     /// R1491 — `(logical, ascending)`: which section carries the sort arrow.
     /// **Logical**, so it names a column rather than a place on the strip.
     sort_indicator: Option<(usize, bool)>,
-    /// R1491 — whether the arrow is painted at all (Qt `sortIndicatorShown`).
+    /// R1491 — whether the arrow is painted at all (the toolkit `sortIndicatorShown`).
     sort_indicator_shown: bool,
     /// R1492 — the bounds every section size is clamped into. Painted in the
     /// readout because a clamp a reader cannot see the rule for looks like a
@@ -547,9 +543,8 @@ struct HeaderState {
     /// because a view that held both could disagree with itself (the reason
     /// `ColumnLayoutView` carries the placements and no width vector).
     section_sizes: [u32; NCOLS],
-    /// R1493 — Qt's `defaultSectionSize`: the size a section takes when nothing
-    /// else determined it, and the size `reset_default_section_size` returns
-    /// every shown section to.
+    /// R1493 — the toolkit's `defaultSectionSize`: the size a section takes when nothing else
+    /// determined it, and the size `reset_default_section_size` returns every shown section to.
     default_size: u32,
     /// R1498 — the header-wide sizing rules, grouped. See [`LayoutRules`].
     rules: LayoutRules,
@@ -561,8 +556,8 @@ struct HeaderState {
     /// readout names the modes, and naming the stored one over a section the
     /// header is stretching is the R1493 defect in the vocabulary next door.
     effective_modes: [SectionResizeMode; NCOLS],
-    /// R1496 — Qt's `sectionsMovable` / `sectionsClickable`: whether a drag on
-    /// the strip moves anything, and whether a press-release sorts.
+    /// R1496 — the toolkit's `sectionsMovable` / `sectionsClickable`: whether a drag on the strip moves
+    /// anything, and whether a press-release sorts.
     ///
     /// Painted for the R1492 reason the bounds are: a gesture that does nothing
     /// looks like a broken widget unless the rule that refused it is on screen.
@@ -573,8 +568,8 @@ struct HeaderState {
     /// [`section_sizes`](Self::section_sizes) is: a view that recomputed it
     /// could disagree with the surface an agent queries.
     alignments: [TextAlign; NCOLS],
-    /// R1504 — Qt's `defaultAlignment`, painted in the readout because a label
-    /// that moved needs a visible cause, the R1492 rule.
+    /// R1504 — the toolkit's `defaultAlignment`, painted in the readout because a label that
+    /// moved needs a visible cause, the R1492 rule.
     default_alignment: TextAlign,
     /// R1510 — the **effective** highlight of each logical section: what the
     /// strip paints, which is the published selection gated on the header's
@@ -584,10 +579,10 @@ struct HeaderState {
     /// reason [`alignments`](Self::alignments) is read: a view that resolved the
     /// gate itself could disagree with the surface an agent queries.
     highlights: [SectionSelection; NCOLS],
-    /// R1510 — Qt's `highlightSections`, painted in the readout so that a
-    /// selection which stops being dressed has a visible cause (the R1492 rule
-    /// again). The row above cannot supply it: an all-`none` row is what both a
-    /// revoked rule and an empty selection look like.
+    /// R1510 — the toolkit's `highlightSections`, painted in the readout so that a selection
+    /// which stops being dressed has a visible cause (the R1492 rule again).
+    /// The row above cannot supply it: an all-`none` row is what both a revoked
+    /// rule and an empty selection look like.
     highlight_rule: bool,
 }
 
@@ -605,7 +600,7 @@ impl Default for HeaderState {
             focused: None,
             grabbed: false,
             sort_indicator: None,
-            // The view enables it, as `QTableView::setSortingEnabled` does —
+            // The view enables it, as `setSortingEnabled` does —
             // this grid is sortable, so it is on from the first frame.
             sort_indicator_shown: true,
             bounds: (DEFAULT_MIN_COL_WIDTH, DEFAULT_MAX_COL_WIDTH),
@@ -616,12 +611,12 @@ impl Default for HeaderState {
             // This app declares both (`boot_layout`), so the boot posture the
             // first frame paints is the one the header will report.
             permissions: (true, true),
-            // Qt's horizontal-header default, which is what `ColumnLayout`
+            // The toolkit's horizontal-header default, which is what `ColumnLayout`
             // constructs with, so the first frame paints what the header
             // reports.
             alignments: [DEFAULT_HEADER_ALIGNMENT; NCOLS],
             default_alignment: DEFAULT_HEADER_ALIGNMENT,
-            // R1510 — Qt's default, which `ColumnLayout` also constructs with:
+            // R1510 — the toolkit's default, which `ColumnLayout` also constructs with:
             // nothing selected and no permission to dress it if it were.
             highlights: [SectionSelection::Unselected; NCOLS],
             highlight_rule: false,
@@ -693,9 +688,9 @@ impl HeaderState {
         }
     }
 
-    /// R1491 — the body row order the header's indicator implies: Qt's
-    /// `sortIndicatorChanged` → `sortByColumn` connection, written as a
-    /// projection rather than a second stored order.
+    /// R1491 — the body row order the header's indicator implies: the
+    /// toolkit's `sortIndicatorChanged` → `sortByColumn` connection, written as a projection rather than a
+    /// second stored order.
     ///
     /// The rows are sorted by the **logical** column the indicator names, so
     /// moving that column re-paints its arrow somewhere else and leaves the row
@@ -878,9 +873,9 @@ fn step_visual(visuals: &[usize], cursor: Option<usize>, delta: i64) -> Option<u
     visuals.get(usize::try_from(next).unwrap_or(0)).copied()
 }
 
-/// Qt `setSectionHidden` as a keyboard gesture. The cursor then steps off the
-/// section it just hid, because a cursor on an unpainted section has nothing to
-/// point at.
+/// The toolkit `setSectionHidden` as a keyboard gesture. The cursor then steps off the
+/// section it just hid, because a cursor on an unpainted section has nothing
+/// to point at.
 fn toggle_hidden_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
     let Some(logical) = logical_at(&*intro, cursor) else {
         return false;
@@ -911,9 +906,9 @@ fn toggle_hidden_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -
     true
 }
 
-/// R1452 — Qt `setSectionResizeMode`, cycled in place. The whole row re-sizes
-/// when a `Stretch` section joins or leaves it, which is why the model answers
-/// with the resulting widths.
+/// R1452 — the toolkit `setSectionResizeMode`, cycled in place. The whole row re-sizes when a `Stretch`
+/// section joins or leaves it, which is why the model answers with the
+/// resulting widths.
 fn cycle_mode_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
     let Some(logical) = logical_at(&*intro, cursor) else {
         return false;
@@ -927,15 +922,15 @@ fn cycle_mode_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> b
         .is_ok()
 }
 
-/// R1498 — Qt `setStretchLastSection`, toggled. A header-wide rule, so it takes
-/// no cursor: there is no section to aim it at, which is exactly what makes it
+/// R1498 — the toolkit `setStretchLastSection`, toggled. A header-wide rule, so it takes no
+/// cursor: there is no section to aim it at, which is exactly what makes it
 /// different from the `Stretch` mode `m` can put on one.
 fn toggle_stretch_last(intro: &mut dyn ExternalIntrospect) -> bool {
     toggle_bool_rule(intro, "stretch_last_section")
 }
 
-/// R1510 — Qt `setHighlightSections`, toggled in place. A header rule, so like
-/// `f` it needs no cursor.
+/// R1510 — the toolkit `setHighlightSections`, toggled in place. A header rule, so like `f` it
+/// needs no cursor.
 fn toggle_highlight_sections(intro: &mut dyn ExternalIntrospect) -> bool {
     toggle_bool_rule(intro, "highlight_sections")
 }
@@ -956,12 +951,12 @@ fn toggle_bool_rule(intro: &mut dyn ExternalIntrospect, path: &str) -> bool {
 /// R1510 — the selection this app publishes for the cursor's column, cycled
 /// none -> partial -> full -> none.
 ///
-/// This stands in for the cell picking a real grid would do: in Qt the selection
-/// comes from the view's selection model, and the coverage the header reads is
-/// derived from it (`sectionIntersectsSelection` / `isSectionSelected`). This
-/// binding has rows but no cell cursor, so the gesture names the coverage
-/// directly — the same three answers a derivation would produce, reached by the
-/// only affordance this example has.
+/// This stands in for the cell picking a real grid would do: in the toolkit
+/// the selection comes from the view's selection model, and the coverage the
+/// header reads is derived from it (`sectionIntersectsSelection` / `isSectionSelected`). This binding has rows but no
+/// cell cursor, so the gesture names the coverage directly — the same three
+/// answers a derivation would produce, reached by the only affordance this
+/// example has.
 ///
 /// Reads the PUBLISHED row rather than the effective one: cycling has to advance
 /// even while the rule is off, and the effective row reports `none` for every
@@ -991,8 +986,8 @@ fn cycle_selection_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>)
         .is_ok()
 }
 
-/// R1504 — Qt `setDefaultAlignment`, cycled in place. A header rule, so like
-/// `f` it needs no cursor.
+/// R1504 — the toolkit `setDefaultAlignment`, cycled in place. A header rule, so like `f` it
+/// needs no cursor.
 fn cycle_default_alignment(intro: &mut dyn ExternalIntrospect) -> bool {
     let now = match intro.query("default_alignment") {
         Some(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
@@ -1013,9 +1008,9 @@ fn cycle_default_alignment(intro: &mut dyn ExternalIntrospect) -> bool {
         .is_ok()
 }
 
-/// R1504 — the per-section exception, Qt's `headerData(TextAlignmentRole)`.
-/// Cycles the section under the cursor through the three and then back to
-/// `default`, which is the spelling that hands it to the header's rule.
+/// R1504 — the per-section exception, the toolkit's `headerData(TextAlignmentRole)`. Cycles the section
+/// under the cursor through the three and then back to `default`, which is the
+/// spelling that hands it to the header's rule.
 fn cycle_alignment_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
     let Some(visual) = cursor else { return false };
     let Some(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
@@ -1042,7 +1037,7 @@ fn cycle_alignment_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>)
         .is_ok()
 }
 
-/// Qt `resizeSection` — the size is keyed by the logical section, so a column
+/// The toolkit `resizeSection` — the size is keyed by the logical section, so a column
 /// widened here stays wide wherever it is dragged next.
 ///
 /// R1452 — but only where the mode says a USER may resize. `Fixed` is exactly
@@ -1050,14 +1045,12 @@ fn cycle_alignment_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>)
 /// `resize_section`, so the gate is the mode's own predicate rather than a
 /// second rule stated here.
 ///
-/// R1494 — and because this IS the user's resize, it goes through
-/// `interactive_resize_section`, the entry point Qt's `cascadingSectionResizes`
-/// governs. It used to call the programmatic `resize_section`, which the very
-/// doc above says is the one a `Fixed` section still accepts: this gesture was
-/// gated like an interactive resize while writing like a programmatic one.
-/// This binding has no pointer grabber (`column_resize_externals` lives in
-/// `hello-grid-hscroll`, over a `ColumnWidths` with no layout), so the keyboard
-/// is its interactive resize.
+/// R1494 — and because this IS the user's resize, it goes through `interactive_resize_section`, the
+/// entry point the toolkit's `cascadingSectionResizes` governs. It used to call the programmatic
+/// `resize_section`, which the very doc above says is the one a `Fixed` section still accepts:
+/// this gesture was gated like an interactive resize while writing like a
+/// programmatic one. This binding has no pointer grabber (`column_resize_externals` lives in `hello-grid-hscroll`,
+/// over a `ColumnWidths` with no layout), so the keyboard is its interactive resize.
 ///
 /// R1498 — gated on the **effective** mode. Under `stretchLastSection` the last
 /// painted section's set mode is still `Interactive` while its width comes from
@@ -1134,9 +1127,9 @@ fn section_cell(p: &SectionPlacement, state: &HeaderState, theme: &Theme) -> Sce
 }
 
 /// The strip that owns the sections. It carries the external's own tag and is
-/// the §5.39 Tab stop, so the keyboard model has something to focus — Qt's
-/// `QHeaderView` is one focusable widget whose sections are its parts, not five
-/// separate tab stops.
+/// the §5.39 Tab stop, so the keyboard model has something to focus — the
+/// toolkit's header view is one focusable widget whose sections are its parts,
+/// not five separate tab stops.
 fn header_strip(sections: Vec<Scene>, total_w: u32, theme: &Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(sections)
@@ -1508,22 +1501,22 @@ impl WidgetCore for ColumnReorderView {
                 cursor.is_some() && intro.invoke("grab", IntrospectValue::Null).is_ok()
             }
             "Escape" => grabbed && intro.invoke("grab_cancel", IntrospectValue::Null).is_ok(),
-            // Qt `setSectionHidden` — the column chooser as a keyboard gesture.
+            // The toolkit `setSectionHidden` — the column chooser as a keyboard gesture.
             "h" => toggle_hidden_at(intro, cursor),
-            // R1452 — Qt `setSectionResizeMode`, cycled in place.
+            // R1452 — the toolkit `setSectionResizeMode`, cycled in place.
             "m" => cycle_mode_at(intro, cursor),
-            // R1498 — Qt `setStretchLastSection`. A header rule rather than a
-            // per-section one, so unlike `m` and `h` it needs no cursor.
+            // R1498 — the toolkit `setStretchLastSection`. A header rule rather than a per-section
+            // one, so unlike `m` and `h` it needs no cursor.
             "f" => toggle_stretch_last(intro),
-            // R1504 — Qt `setDefaultAlignment` (header rule, no cursor) and the
-            // model's per-section exception (cursor, like `h` and `m`).
+            // R1504 — the toolkit `setDefaultAlignment` (header rule, no cursor) and the model's
+            // per-section exception (cursor, like `h` and `m`).
             "a" => cycle_default_alignment(intro),
             "A" => cycle_alignment_at(intro, cursor),
-            // R1510 — Qt `setHighlightSections` (header rule, no cursor) and the
+            // R1510 — the toolkit `setHighlightSections` (header rule, no cursor) and the
             // selection this app publishes for one column (cursor, like `A`).
             "H" => toggle_highlight_sections(intro),
             "s" => cycle_selection_at(intro, cursor),
-            // Qt `resizeSection`, gated by the mode (R1452).
+            // The toolkit `resizeSection`, gated by the mode (R1452).
             "]" | "[" => nudge_size_at(intro, cursor, key == "]"),
             _ => false,
         }
@@ -1945,8 +1938,9 @@ mod tests {
 
     #[test]
     fn r1451_the_whole_layout_round_trips_over_the_wire() {
-        // Qt's saveState / restoreState, except a client can read the state it
-        // is holding. Arrange a distinctive layout, save, drift, restore.
+        // The toolkit's saveState / restoreState, except a client can read the
+        // state it is holding. Arrange a distinctive layout, save, drift,
+        // restore.
         let mut scene = boot_scene();
         let arranged = after(&mut scene, |i| {
             i.invoke("resize_section", IntrospectValue::Text("3:220".into()))
@@ -2102,7 +2096,8 @@ mod tests {
     fn r1454_the_precision_bound_decides_how_many_rows_are_measured() {
         // R1454 — a content-fitted column samples the body rather than reading
         // all of it, because measuring every row each frame is what makes the
-        // policy expensive. The header is always measured (Qt measures it too).
+        // policy expensive. The header is always measured (the toolkit
+        // measures it too).
         let owner = Owner::new();
         pinion_core::TEXT_METRICS.provide(&owner, std::rc::Rc::new(CountingMetrics));
         let (all, one) = owner.run(|| {
@@ -2329,9 +2324,8 @@ mod tests {
 
     #[test]
     fn r1496_a_pinned_header_still_sorts() {
-        // Qt's two permissions are independent, and this is the shape that
-        // proves it end to end: `setSectionsMovable(false)` +
-        // `setSectionsClickable(true)` is the ordinary sortable table.
+        // The toolkit's two permissions are independent, and this is the shape
+        // that proves it end to end: `setSectionsMovable(false)` + `setSectionsClickable(true)` is the ordinary sortable table.
         let mut ext = fresh();
         ext.intervene("sections_movable", IntrospectValue::Bool(false))
             .expect("the permission is writable");
@@ -2496,8 +2490,8 @@ mod tests {
 
     #[test]
     fn r1491_hiding_the_arrow_leaves_the_rows_where_the_sort_put_them() {
-        // Qt's split: `sortIndicatorShown` is presentation, the section is
-        // state. Conflating them would re-shuffle the body on a view toggle.
+        // The toolkit's split: `sortIndicatorShown` is presentation, the section is state.
+        // Conflating them would re-shuffle the body on a view toggle.
         let mut scene = boot_scene();
         let shown = after(&mut scene, |i| {
             i.invoke("cycle_sort_indicator", IntrospectValue::Int(2))
@@ -2697,8 +2691,8 @@ mod tests {
 
     #[test]
     fn r1493_the_default_resets_the_row_and_the_readout_names_it() {
-        // Qt's `defaultSectionSize` / `resetDefaultSectionSize`, through the
-        // wire, with the readout naming the rule it applied.
+        // The toolkit's `defaultSectionSize` / `resetDefaultSectionSize`, through the wire, with the readout naming
+        // the rule it applied.
         let mut scene = boot_scene();
         assert!(
             layout_readout(&read_header_state(&scene))
@@ -2745,8 +2739,8 @@ mod tests {
 
     #[test]
     fn r1494_the_same_keystroke_reads_the_rule_the_readout_names() {
-        // The forcing consumer: `[` / `]` is this binding's interactive
-        // resize (it has no pointer grabber), so it is the gesture Qt's
+        // The forcing consumer: `[` / `]` is this binding's interactive resize
+        // (it has no pointer grabber), so it is the gesture the toolkit's
         // property governs. The same keystroke must do two visibly different
         // things depending on a rule the user can see.
         let mut scene = boot_scene();
@@ -2820,7 +2814,7 @@ mod tests {
     #[test]
     fn r1491_a_saved_layout_carries_the_sort_qt_s_savestate_carries() {
         // The gap this round closed: the snapshot claimed to be the peer of
-        // `QHeaderView::saveState()` while dropping a field it carries.
+        // `saveState()` while dropping a field it carries.
         let mut ext = fresh();
         ext.invoke("cycle_sort_indicator", IntrospectValue::Int(4))
             .expect("cycle is a known action");
@@ -2866,9 +2860,9 @@ mod tests {
         .expect("publish the viewport");
     }
 
-    /// R1504 — the `a` gesture is Qt's `setDefaultAlignment`, and the readout
-    /// names the rule for the R1492 reason: a label that moved with no visible
-    /// cause reads as a bug.
+    /// R1504 — the `a` gesture is the toolkit's `setDefaultAlignment`, and the readout names the
+    /// rule for the R1492 reason: a label that moved with no visible cause
+    /// reads as a bug.
     #[test]
     fn r1504_the_a_key_cycles_the_rule_and_the_readout_names_it() {
         let mut scene = boot_scene();
@@ -2903,8 +2897,8 @@ mod tests {
     }
 
     /// R1504 — the `A` gesture is the MODEL's per-section exception, and the
-    /// readout prints it beside the rule only while one exists. Qt keeps these
-    /// two in different objects, and so does this.
+    /// readout prints it beside the rule only while one exists. The toolkit
+    /// keeps these two in different objects, and so does this.
     #[test]
     fn r1504_the_shift_a_key_excepts_one_section_from_the_rule() {
         let mut scene = boot_scene();

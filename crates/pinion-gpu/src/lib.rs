@@ -17,7 +17,7 @@
 //! all. So for as long as the device came from `RenderContext`, pinion's
 //! `render_us` could only ever be **CPU submit cost** — the time spent
 //! *recording and handing work to the driver* — and the frame had no way
-//! to state the thing a pro tool states first (Unreal's `stat gpu`).
+//! to state the thing a pro tool states first (the engine's `stat gpu`).
 //!
 //! That is what the pro-tool-performance axis recorded as its largest
 //! remaining gap, and it was written down as an upstream blocker. It is

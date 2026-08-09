@@ -3,12 +3,12 @@
 // Lint scope note (mirrors hello-menu): WAI-ARIA / Material proper nouns
 // appear in doc prose (MenuBar, MenuBarExternal, …).
 #![allow(rustdoc::private_intra_doc_links)]
-//! R832 — the R805 [`MenuBar`](pinion_core::widgets::menu) substrate
-//! composed as **application chrome**: a persistent File / Edit / View
-//! menu bar whose commands drive a real document model, not a standalone
-//! menu-widget demo (that is [`hello-menu`]). This is the first
-//! menu-DRIVEN pinion application — the Qt / Flutter-class "application
-//! menu bar" Phase-B milestone.
+//! R832 — the R805 [`MenuBar`](pinion_core::widgets::menu) substrate composed as
+//! **application chrome**: a persistent File / Edit / View menu bar whose
+//! commands drive a real document model, not a standalone menu-widget demo
+//! (that is [`hello-menu`]). This is the first menu-DRIVEN pinion application — the
+//! toolkit / another retained-mode toolkit-class "application menu bar"
+//! Phase-B milestone.
 //!
 //! ## Composition
 //!
@@ -93,11 +93,11 @@ const STATUS_FONT_PX: u32 = 12;
 /// item activation (payload [`IntrospectValue::Text`] `"<menu>.<item>"`).
 const COMMAND_INTENT_TAG: &str = intent_tag!("menu", "command");
 
-/// Top-level menu titles. Index `m` becomes the title tagged `menu#t<m>`.
-/// R1543 §5.39 — the `&` marks each title's mnemonic (Qt's vocabulary): Alt+F
-/// opens File, Alt+E Edit, Alt+V View. The markers are resolved by
-/// `view_menu_bar`, so these constants are the ONE place the accelerator and
-/// the painted label are written; nothing else in this binding names a key.
+/// Top-level menu titles. Index `m` becomes the title tagged `menu#t<m>`. R1543 §5.39
+/// — the `&` marks each title's mnemonic (the toolkit's vocabulary): Alt+F
+/// opens File, Alt+E Edit, Alt+V View. The markers are resolved by `view_menu_bar`, so
+/// these constants are the ONE place the accelerator and the painted label are
+/// written; nothing else in this binding names a key.
 const MENU_TITLES: [&str; 3] = ["&File", "&Edit", "&View"];
 
 /// Document loaded by File -> Open Sample (3 lines).

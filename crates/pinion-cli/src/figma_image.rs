@@ -1,20 +1,20 @@
-//! R636 §5.7 — `pinion figma-fetch-image` sub-command.
+//! R636 §5.7 — `pinion the design tool-fetch-image` sub-command.
 //!
-//! Reference-PNG side of the Figma → pinion design-parity loop.
-//! Pre-R636 the workflow stalled after `figma-verify` JSON fetch —
-//! comparing pinion's `scene/screenshot` PNG against the original
-//! Figma rendering required manually opening Figma and exporting
-//! each frame. R636 automates the Figma side: one CLI call,
-//! per-node PNG saved to disk, ready for pixel-diff (R637+).
+//! Reference-PNG side of the design tool → pinion design-parity loop. Pre-R636
+//! the workflow stalled after `the design tool-verify` JSON fetch — comparing pinion's `scene/screenshot` PNG
+//! against the original the design tool rendering required manually opening
+//! the design tool and exporting each frame. R636 automates the design tool
+//! side: one CLI call, per-node PNG saved to disk, ready for pixel-diff
+//! (R637+).
 //!
-//! ## Two-step Figma API contract
+//! ## Two-step the design tool API contract
 //!
-//! Unlike the file endpoint (R634), Figma's image endpoint does not
+//! Unlike the file endpoint (R634), the design tool's image endpoint does not
 //! return PNG bytes directly. The flow is:
 //!
 //! 1. `GET /v1/images/:file_key?ids=:nodes&format=png&scale=:scale`
 //!    → JSON containing per-node S3 URLs (the URLs expire after ~30
-//!    minutes per Figma's documented contract)
+//!    minutes per the design tool's documented contract)
 //! 2. `GET <s3_url>` for each node → actual PNG bytes
 //!
 //! This sub-command implements both legs for a single node id and
@@ -23,13 +23,13 @@
 //! ## Wire shape
 //!
 //! ```text
-//! $ pinion figma-fetch-image FILE_KEY 51553:5180 --output /tmp/btn.png
+//! $ pinion the design tool-fetch-image FILE_KEY 51553:5180 --output /tmp/btn.png
 //! wrote 4827 bytes to /tmp/btn.png
 //! ```
 //!
 //! ## Format / scale
 //!
-//! - `--format png` (default) / `jpg` / `svg` / `pdf` per Figma
+//! - `--format png` (default) / `jpg` / `svg` / `pdf` per the design tool
 //!   `?format=` documentation
 //! - `--scale 1.0` (default) / `2.0` / `0.5` — multiplier on the
 //!   node's natural size; `2.0` for retina-density reference, `0.5`
@@ -46,42 +46,42 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-/// Arguments for the `figma-fetch-image` sub-command.
+/// Arguments for the `the design tool-fetch-image` sub-command.
 #[derive(Args)]
 pub struct FigmaImageArgs {
-    /// Figma file key — same URL slot as `figma-verify` (R634).
+    /// The design tool file key — same URL slot as `the design tool-verify` (R634).
     pub file_key: String,
 
-    /// Single Figma node id to export. Use the colon form
+    /// Single the design tool node id to export. Use the colon form
     /// (`51553:5180`), not the URL hyphen form (`51553-5180`).
     pub node_id: String,
 
     /// Output path for the PNG bytes. Required (unlike
-    /// `figma-verify` which defaults to stdout) because piping
+    /// `the design tool-verify` which defaults to stdout) because piping
     /// binary PNG to a terminal would corrupt the bytes.
     #[arg(short, long)]
     pub output: PathBuf,
 
     /// Multiplier on the node's natural size. `1.0` exports the
-    /// node at the same dimensions Figma displays; `2.0` doubles
-    /// for retina reference; `0.5` halves for thumbnails. Figma
+    /// node at the same dimensions the design tool displays; `2.0` doubles
+    /// for retina reference; `0.5` halves for thumbnails. The design tool
     /// caps the result at 16 megapixels per node.
     #[arg(long, default_value_t = 1.0)]
     pub scale: f32,
 
     /// Output format — `png` (default) / `jpg` / `svg` / `pdf` per
-    /// the Figma image-endpoint contract.
+    /// the design tool image-endpoint contract.
     #[arg(long, default_value = "png")]
     pub format: String,
 }
 
-/// R636 §5.7 — execute the `figma-fetch-image` sub-command.
+/// R636 §5.7 — execute the `the design tool-fetch-image` sub-command.
 ///
 /// # Errors
 ///
 /// - `FIGMA_TOKEN` env var not set (same contract as R634)
-/// - Figma image-list endpoint HTTP error
-/// - Figma response missing the requested node id in the `images`
+/// - the design tool image-list endpoint HTTP error
+/// - the design tool response missing the requested node id in the `images`
 ///   map (node id typo, or the node is invisible / un-exportable)
 /// - S3 PNG fetch HTTP error (URL expired — retry the whole
 ///   command, the URL TTL is ~30 minutes)
@@ -107,7 +107,7 @@ pub fn run(args: &FigmaImageArgs) -> Result<(), Box<dyn std::error::Error>> {
         .into_json()
         .map_err(|err| format!("Figma image-list response is not valid JSON: {err}"))?;
 
-    // The Figma contract reports per-call failures in a top-level
+    // The design tool contract reports per-call failures in a top-level
     // `err` field; non-null means the whole request failed even if
     // the HTTP status was 200. Surface verbatim so the user can
     // adjust their query.

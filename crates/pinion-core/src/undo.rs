@@ -1,13 +1,12 @@
-//! R748 §5.52 — **undo / redo command stack** (the `QUndoStack` /
-//! `QUndoCommand` peer).
+//! R748 §5.52 — **undo / redo command stack** (the undo stack /
+//! undo command peer).
 //!
-//! A reversible-edit history is the substrate every editor sits on: a
-//! linear stack of applied [`UndoCommand`]s plus a cursor splitting the
-//! *done* prefix from the *undone* suffix. `undo` moves the cursor back
-//! (replaying the inverse of the command it steps over); `redo` moves it
-//! forward (re-applying). Pushing a new command truncates the undone
-//! suffix — the textbook single-branch model of Qt's `QUndoStack`, Cocoa's
-//! `NSUndoManager`, and every word processor's Ctrl+Z.
+//! A reversible-edit history is the substrate every editor sits on: a linear
+//! stack of applied [`UndoCommand`]s plus a cursor splitting the *done* prefix from the
+//! *undone* suffix. `undo` moves the cursor back (replaying the inverse of the
+//! command it steps over); `redo` moves it forward (re-applying). Pushing a new
+//! command truncates the undone suffix — the textbook single-branch model of
+//! the toolkit's undo stack, Cocoa's `NSUndoManager`, and every word processor's Ctrl+Z.
 //!
 //! ## Shape (one reactive source of truth)
 //!
@@ -36,7 +35,7 @@
 //! the AI-first introspection contract needs, and heterogeneous edits (an
 //! `i64` `SignalEdit` interleaved with a structural multi-field edit in one
 //! Ctrl+Z timeline) already force trait-object erasure — so the
-//! `QUndoCommand` trait shape is both the minimal and the canonical choice.
+//! undo command trait shape is both the minimal and the canonical choice.
 //! The second consumer ([`SortFilterEdit`](crate::widgets::view_order) —
 //! a compound `(sort, filter)` edit that is *not* a [`SignalEdit`]) proves
 //! the trait earns its erasure.
@@ -53,7 +52,7 @@
 //!   consumer. Both were the additive, backward-compatible extensions the
 //!   original shape reserved ([[abstraction-needs-second-consumer]]).
 //! - **Optional capacity.** A bounded stack drops the oldest command from
-//!   the front when full (the `QUndoStack::setUndoLimit` model); the
+//!   the front when full (the `setUndoLimit` model); the
 //!   [`use_undo_stack`] hook builds an unbounded stack.
 
 use std::borrow::Cow;
@@ -70,11 +69,11 @@ use crate::external::{
 use crate::input::Modifiers;
 use crate::reactive::{Owner, Signal};
 
-/// A single reversible edit — the object-safe `QUndoCommand` peer.
+/// A single reversible edit — the object-safe undo command peer.
 ///
 /// [`redo`](Self::redo) applies the edit forward (it is also what
 /// `UndoStack::push` calls to *first* apply a freshly recorded command,
-/// matching `QUndoStack`); [`undo`](Self::undo) applies its inverse. Both
+/// matching undo stack); [`undo`](Self::undo) applies its inverse. Both
 /// must be idempotent with respect to repeated `undo`/`redo` cycling — the
 /// canonical implementation captures the `before`/`after` snapshots at
 /// record time and restores them verbatim (see [`SignalEdit`]).
@@ -90,7 +89,7 @@ pub trait UndoCommand {
     /// Apply the edit's inverse.
     fn undo(&self);
 
-    /// R796 §5.52 — coalescing downcast hook (the `QUndoCommand` `mergeWith`
+    /// R796 §5.52 — coalescing downcast hook (the undo command `mergeWith`
     /// support). Default `None`: this command never participates in merging.
     /// A command that overrides [`merge`](Self::merge) returns `Some(self)`
     /// so the command it folds into can recover its concrete type — the
@@ -100,14 +99,13 @@ pub trait UndoCommand {
         None
     }
 
-    /// R796 §5.52 — try to fold the freshly recorded `next` command into
-    /// `self` (the `QUndoCommand::mergeWith` peer). Return `true` when
-    /// absorbed: `next` is then discarded and `self` already updated to span
-    /// both edits, so the stack grows by zero and one Ctrl+Z reverses the
-    /// whole run (the textbook "typing collapses into one undo step").
-    /// Default: never merge — each [`record`](UndoStack::record) /
-    /// [`push_applied`](UndoStack::push_applied) is its own step.
-    /// Implementors recover `next`'s concrete type via [`as_any`](Self::as_any).
+    /// R796 §5.52 — try to fold the freshly recorded `next` command into `self` (the
+    /// `mergeWith` peer). Return `true` when absorbed: `next` is then discarded and `self`
+    /// already updated to span both edits, so the stack grows by zero and one
+    /// Ctrl+Z reverses the whole run (the textbook "typing collapses into one
+    /// undo step"). Default: never merge — each [`record`](UndoStack::record) /
+    /// [`push_applied`](UndoStack::push_applied) is its own step. Implementors recover
+    /// `next`'s concrete type via [`as_any`](Self::as_any).
     fn merge(&mut self, _next: &dyn UndoCommand) -> bool {
         false
     }
@@ -136,7 +134,7 @@ where
     /// Record an edit that moves `signal` to `after`, capturing the current
     /// value as the `before` snapshot. The edit is **not** applied here —
     /// [`UndoStack::record`] applies it (via [`redo`](UndoCommand::redo)),
-    /// so the stack is the single mutation path (`QUndoStack::push`
+    /// so the stack is the single mutation path (`push`
     /// semantics).
     #[must_use]
     pub fn to(signal: &Signal<T>, after: T, label: impl Into<Cow<'static, str>>) -> Self {
@@ -167,7 +165,7 @@ where
 }
 
 /// R903 §5.52 — a **compound** [`UndoCommand`] grouping N child edits into one
-/// reversible step (the `QUndoStack` macro the [`UndoStack::begin_macro`] /
+/// reversible step (the undo stack macro the [`UndoStack::begin_macro`] /
 /// [`UndoStack::end_macro`] pair folds a transaction into). `redo` replays the
 /// children in record order; `undo` replays their inverses in **reverse**
 /// order — the textbook nesting rule so an interleaved sequence (replace A,
@@ -199,7 +197,7 @@ impl UndoCommand for MacroCommand {
 }
 
 /// A linear undo / redo history of [`UndoCommand`]s with a cursor — the
-/// `QUndoStack` peer. Shared by `Rc` (see [`use_undo_stack`]); all methods
+/// undo stack peer. Shared by `Rc` (see [`use_undo_stack`]); all methods
 /// take `&self` (interior mutability) so the reducer, the view, and the
 /// [`UndoStackExternal`] drive the same instance.
 pub struct UndoStack {
@@ -218,7 +216,7 @@ pub struct UndoStack {
     revision: Signal<u64>,
     /// The [`use_undo_stack`] cache key, or `None` when constructed directly.
     tag: Option<&'static str>,
-    /// R903 §5.52 — **open macro transaction** buffer (the `QUndoStack`
+    /// R903 §5.52 — **open macro transaction** buffer (the undo stack
     /// `beginMacro`/`endMacro` peer). While a macro is open
     /// ([`macro_depth`](Self::macro_depth) `> 0`), every
     /// [`record`](Self::record) / [`push_applied`](Self::push_applied) appends
@@ -228,11 +226,11 @@ pub struct UndoStack {
     /// into one `MacroCommand` step. The first consumer is text find &
     /// replace's *Replace All* (one Ctrl+Z reverses every replacement).
     macro_buffer: RefCell<Vec<Box<dyn UndoCommand>>>,
-    /// R903 §5.52 — macro nesting depth. `begin_macro` increments,
-    /// `end_macro` decrements; the buffered edits commit as one step only
-    /// when it returns to `0`. Nested macros therefore flatten into the
-    /// outermost step (Qt nests them as separate sub-steps; pinion flattens —
-    /// the consumer-visible contract is identical for the single-level use).
+    /// R903 §5.52 — macro nesting depth. `begin_macro` increments, `end_macro` decrements; the
+    /// buffered edits commit as one step only when it returns to `0`. Nested
+    /// macros therefore flatten into the outermost step (the toolkit nests
+    /// them as separate sub-steps; pinion flattens — the consumer-visible
+    /// contract is identical for the single-level use).
     macro_depth: Cell<usize>,
     /// R903 §5.52 — label for the in-flight macro, captured at the outermost
     /// [`begin_macro`](Self::begin_macro) and applied to the folded
@@ -335,7 +333,7 @@ impl UndoStack {
         self.commit(Box::new(command), true);
     }
 
-    /// R903 §5.52 — open a **macro transaction** (the `QUndoStack::beginMacro`
+    /// R903 §5.52 — open a **macro transaction** (the `beginMacro`
     /// peer). Until the matching [`end_macro`](Self::end_macro), every
     /// [`record`](Self::record) / [`push_applied`](Self::push_applied) is
     /// buffered instead of landing on the timeline, so the constituent edits
@@ -355,17 +353,17 @@ impl UndoStack {
         self.macro_depth.set(self.macro_depth.get() + 1);
     }
 
-    /// R903 §5.52 — close the macro opened by [`begin_macro`](Self::begin_macro)
-    /// (the `QUndoStack::endMacro` peer). A no-op when no macro is open. When
-    /// the **outermost** macro closes, the buffered edits fold into one history
-    /// step: an empty buffer records nothing (an all-no-op macro leaves the
-    /// timeline untouched) and one or more fold into a `MacroCommand`
-    /// carrying the macro `label`. A single-child macro still wraps, so the
-    /// step reads as "Replace all" rather than the lone child's "Replace" — the
-    /// macro name is the introspectable truth of what the user did. Its `undo`
-    /// reverses the children in reverse order. The folded step is pushed
-    /// already-applied (the callers applied each child eagerly) and bumps the
-    /// revision once, so dependent views see exactly one transition.
+    /// R903 §5.52 — close the macro opened by [`begin_macro`](Self::begin_macro) (the
+    /// `endMacro` peer). A no-op when no macro is open. When the **outermost** macro
+    /// closes, the buffered edits fold into one history step: an empty buffer
+    /// records nothing (an all-no-op macro leaves the timeline untouched) and
+    /// one or more fold into a `MacroCommand` carrying the macro `label`. A single-child
+    /// macro still wraps, so the step reads as "Replace all" rather than the
+    /// lone child's "Replace" — the macro name is the introspectable truth of
+    /// what the user did. Its `undo` reverses the children in reverse order. The
+    /// folded step is pushed already-applied (the callers applied each child
+    /// eagerly) and bumps the revision once, so dependent views see exactly
+    /// one transition.
     pub fn end_macro(&self) {
         let depth = self.macro_depth.get();
         if depth == 0 {

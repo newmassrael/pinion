@@ -53,7 +53,7 @@
 //!   its own user action, hence its own dispatch frame — one request per
 //!   frame, which a single slot happens to survive.
 //! - *Handoff* closes A **and** opens B: a command palette or menu whose
-//!   destructive row hands off to a confirm dialog (Qt's menu action →
+//!   destructive row hands off to a confirm dialog (the toolkit's menu action →
 //!   [`QMessageBox::question`]; every toolkit ships it). That is one user
 //!   action by definition, so it is one dispatch frame with two edits,
 //!   and "express it in separate frames" has nothing to apply to.

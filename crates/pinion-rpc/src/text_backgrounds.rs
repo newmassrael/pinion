@@ -9,24 +9,24 @@
 //! is". This method publishes that consequence, from the same derivation the
 //! painter replays, so the answer and the pixels cannot disagree.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has the declaration — `QTextCharFormat::setBackground(QBrush)`, read back
+//! The toolkit has the declaration — `setBackground(brush)`, read back
 //! with `background()`. It has no peer for either half of what is below.
 //!
-//! - **Where it landed.** The rect Qt fills for a format range is computed
-//!   inside `QTextLayout::draw`, per glyph run, and is never stored or
-//!   returned; `QTextCharFormat` knows the brush and nothing about geometry.
-//!   To find it a Qt application re-derives it: `QTextLine::cursorToX` at each
+//! - **Where it landed.** The rect the toolkit fills for a format range is computed
+//!   inside `draw`, per glyph run, and is never stored or
+//!   returned; text char format knows the brush and nothing about geometry.
+//!   To find it a toolkit application re-derives it: `cursorToX` at each
 //!   end, the line's own `rect()` for the vertical extent, and its own handling
 //!   of a range that spans lines or reverses under bidi. That re-derivation is
 //!   a second implementation of the painter's, free to disagree with it — which
 //!   is exactly the class of bug an introspection surface exists to remove.
-//! - **Whether it reads.** Qt will paint any brush behind any pen and say
+//! - **Whether it reads.** the toolkit will paint any brush behind any pen and say
 //!   nothing. `contrast` is the WCAG 2.x ratio of the run's foreground against
 //!   the background actually painted under it, so "no highlight in this
 //!   application drops below 4.5:1" is a property a test can assert in one
-//!   call. Nothing in Qt computes it; the application is on its own.
+//!   call. Nothing in the toolkit computes it; the application is on its own.
 //!
 //! # Wire shape
 //!

@@ -1024,10 +1024,10 @@ fn r901_begin_edit_default_via_invoke_and_double_click() {
     });
 }
 
-/// R901 — beginning a *different* edit target commits the in-flight one
-/// first (the Qt item-view discipline), ACROSS kinds: a typed port default
-/// commits when a title rename opens. The single `apply_edit_commit` funnel
-/// routes each target to its field SSOT.
+/// R901 — beginning a *different* edit target commits the in-flight one first
+/// (the toolkit item-view discipline), ACROSS kinds: a typed port default
+/// commits when a title rename opens. The single `apply_edit_commit` funnel routes each target
+/// to its field SSOT.
 #[test]
 fn r901_begin_edit_migration_commits_in_flight_across_targets() {
     Owner::new().run(|| {
@@ -1426,7 +1426,7 @@ fn r918_panel_edit_a11y_hosts_textbox_under_row_not_card() {
 }
 
 /// R920 (audit) — a selection change commits an in-flight PANEL edit (the
-/// Unreal commit-on-selection-change): otherwise the field paints nowhere
+/// the engine commit-on-selection-change): otherwise the field paints nowhere
 /// while `query editing` still advertises it. A card edit is selection-
 /// independent and survives. Re-selecting the SAME node keeps the edit.
 #[test]
@@ -3464,7 +3464,7 @@ fn r851_a_new_edit_after_undo_truncates_the_redo_branch() {
         assert!(stack.undo(), "undo node b");
         assert!(stack.can_redo(), "b is redoable");
         assert!(coord.node_by_id(b).is_none());
-        // A fresh add truncates the redo branch (single-branch QUndoStack).
+        // A fresh add truncates the redo branch (single-branch undo stack).
         let c = coord.add_node(3).expect("Add");
         assert!(!stack.can_redo(), "the redo branch was dropped");
         assert_eq!(coord.node_count(), 6, "default 4 + a + c");
@@ -4845,7 +4845,7 @@ fn r878_begin_rename_migration_commits_the_in_flight_rename() {
         assert!(coord.begin_rename(NodeId(0)));
         use_text_edit_state(EDIT_TF_TAG).set_text("Albedo".to_owned());
         // Double-clicking node 1 while node 0's editor is open commits
-        // node 0's typed text first (the Qt item-view discipline).
+        // node 0's typed text first (the toolkit item-view discipline).
         assert!(coord.begin_rename(NodeId(1)));
         assert_eq!(
             coord.node_by_id(NodeId(0)).expect("present").title(),
@@ -6224,10 +6224,10 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
             "node 2 stayed put"
         );
         // ★R1596 — MEMBERSHIP DOES NOT MOVE. The editor re-derived it from the
-        // rectangle on every read, so widening the box silently adopted two more
-        // nodes and shrinking it abandoned them — what the frame *said* it held
-        // changed with nobody having edited membership at all. It is a stored
-        // relation now (`Node::parent`, R1589, Blender's model), so a resize
+        // rectangle on every read, so widening the box silently adopted two
+        // more nodes and shrinking it abandoned them — what the frame *said*
+        // it held changed with nobody having edited membership at all. It is a
+        // stored relation now (`Node::parent`, R1589, the DCC's model), so a resize
         // changes the box and nothing else, and joining is the explicit act
         // `attach` performs.
         assert_eq!(
@@ -6495,10 +6495,10 @@ fn r1236_dissolve_is_general_and_names_what_it_would_cut() {
     Owner::new().run(|| {
         let _ = boot_scene();
         let coord = coordinator();
-        // ★R1596 — dissolve WIDENED. The editor required exactly one wire in and
-        // one out and refused anything else; `Document::dissolve` (R1586) is the
-        // general form — Blender's `NODE_OT_delete_reconnect` — so the question
-        // worth asking is no longer *can it* but **does it lose anything**.
+        // ★R1596 — dissolve WIDENED. The editor required exactly one wire in
+        // and one out and refused anything else; `Document::dissolve` (R1586) is the general
+        // form — the DCC's `NODE_OT_delete_reconnect` — so the question worth asking is no longer
+        // *can it* but **does it lose anything**.
         //
         // node2 (Multiply) has two inputs and one output: it dissolves, and the
         // one downstream wire it cannot carry is NAMED rather than vanishing.
@@ -6520,10 +6520,10 @@ fn r1236_dissolve_is_general_and_names_what_it_would_cut() {
         assert!(coord.dissolve_node(NodeId(2)), "it dissolves");
         assert!(coord.node_by_id(NodeId(2)).is_none(), "the node is gone");
         assert!(use_undo().undo(), "one undo restores it");
-        // node0 (Texture) is a source: nothing flows into it, so its output has
-        // no input to be routed from and the wire leaving it is CUT — named,
-        // where `node_internal_relink` deletes it and returns void so nothing in
-        // Blender can be asked what a reconnect-delete is about to throw away.
+        // node0 (Texture) is a source: nothing flows into it, so its output
+        // has no input to be routed from and the wire leaving it is CUT —
+        // named, where `node_internal_relink` deletes it and returns void so nothing in the DCC
+        // can be asked what a reconnect-delete is about to throw away.
         assert!(
             !coord.dissolvable(NodeId(0)),
             "a source's dissolve is lossy"
@@ -8913,12 +8913,12 @@ fn r1262_edge_endpoint_variants_share_one_body() {
 
 /// R1592 — a card's far edge is PART OF THE CARD for an area selection.
 ///
-/// "Touching counts" has been this marquee's stated rule since R880 (Qt's
-/// rubber band and Unreal's share it) and nothing asserted it: a counterfactual
-/// that narrowed the extent by one unit on each far side passed
-/// `r880_node_marquee_select.py`, because a pointer-driven sweep in screen
-/// pixels cannot land on an exact graph-unit edge. The rule now has a name
-/// ([`card_span`]) and this is the test that can fail.
+/// "Touching counts" has been this marquee's stated rule since R880 (the
+/// toolkit's rubber band and the engine's share it) and nothing asserted it: a
+/// counterfactual that narrowed the extent by one unit on each far side passed
+/// `r880_node_marquee_select.py`, because a pointer-driven sweep in screen pixels cannot land on an
+/// exact graph-unit edge. The rule now has a name ([`card_span`]) and this is the test
+/// that can fail.
 #[test]
 fn r1592_a_sweep_that_grazes_a_cards_far_edge_takes_it() {
     let graph = graph_of(&[(0, 40, 70)], &[]);
@@ -8979,7 +8979,7 @@ fn r1598_swap_keeps_the_id_and_reports_what_it_cost() {
             "nothing was lost: {cost}"
         );
         assert_eq!(coord.edges().len(), before, "every wire survived");
-        // ★ The id survived, which is what Blender's swap cannot do.
+        // ★ The id survived, which is what the DCC's swap cannot do.
         assert_eq!(
             coord.query("node.2.op"),
             Some(IntrospectValue::Text("Add".to_owned())),

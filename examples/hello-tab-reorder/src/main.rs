@@ -23,7 +23,7 @@
 //! WAI-ARIA tablist tree.
 //!
 //! Reorderable tabs are the canonical IDE / DCC editor-tab affordance —
-//! the northern-star "Unreal-class editor self-hosted in pinion" wants
+//! the northern-star "the engine-class editor self-hosted in pinion" wants
 //! draggable document tabs — so this is a Phase-B catalog entry as much
 //! as a substrate test.
 //!
@@ -933,7 +933,7 @@ mod tests {
         ext.drag_to(&pl, Some(drop_at(3, 0.75)));
         ext.drag_release(&pl, Some(drop_at(3, 0.75)));
         // Dragging tab 0 changes the selection to the dragged tab (id 0)
-        // — VSCode/Chrome behaviour: the dragged tab becomes active.
+        // — the code editor/Chrome behaviour: the dragged tab becomes active.
         assert_eq!(ext.selected.get(), 0, "dragging a tab activates it");
     }
 

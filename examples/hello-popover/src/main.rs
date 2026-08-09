@@ -27,7 +27,7 @@
 //!    `IntrinsicAfterFirstPaint`. A popover / tooltip / inline panel
 //!    whose natural size is dictated by its painted content rather
 //!    than a designer-chosen frame is the textbook use case
-//!    (matches Qt `QToolTip::sizeHint`, GTK `GtkPopover` content
+//!    (matches the toolkit `sizeHint`, GTK `GtkPopover` content
 //!    sizing, macOS `NSPopover.contentSize`, web CSS
 //!    `width: max-content` on absolutely-positioned overlays).
 //!

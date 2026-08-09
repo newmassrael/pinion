@@ -1,5 +1,5 @@
 //! R1453 §5.36 — `TextMetrics`: the view-time "how wide is this string in this
-//! style" boundary. Qt's `QFontMetrics::horizontalAdvance` /
+//! style" boundary. The toolkit's `horizontalAdvance` /
 //! `boundingRect(text)`.
 //!
 //! # Why this exists
@@ -14,12 +14,11 @@
 //! forced into a monospace face to begin with (the R1452 content-hint
 //! caveat this retires).
 //!
-//! Qt puts this exact capability in `QFontMetrics`, and its item views lean on
-//! it: `QAbstractItemDelegate::sizeHint` measures the cell's text, which is how
-//! `QHeaderView::ResizeToContents` knows what "the content's size" is. So this
-//! is the seam that makes a content-fitted column possible for any face, and it
-//! is a *synchronous* answer — no measure-then-settle frame, unlike a
-//! layout-pass harvest.
+//! The toolkit puts this exact capability in font metrics, and its item views
+//! lean on it: `sizeHint` measures the cell's text, which is how `ResizeToContents` knows what "the
+//! content's size" is. So this is the seam that makes a content-fitted column
+//! possible for any face, and it is a *synchronous* answer — no
+//! measure-then-settle frame, unlike a layout-pass harvest.
 //!
 //! # Boundary, not implementation
 //!
@@ -35,8 +34,8 @@ use super::provider_slot::ProviderSlot;
 use crate::style::TextStyle;
 use std::rc::Rc;
 
-/// R1453 §5.36 — the measured extent of a laid-out string: Qt's
-/// `QFontMetrics::boundingRect(text)` as a size.
+/// R1453 §5.36 — the measured extent of a laid-out string: the toolkit's
+/// `boundingRect(text)` as a size.
 ///
 /// Both axes come from one measurement because both come from one shaping
 /// pass; a caller that wants only the advance reads [`width`](Self::width).
@@ -53,7 +52,7 @@ impl TextExtent {
         Self { width, height }
     }
 
-    /// The advance width — Qt's `horizontalAdvance`.
+    /// The advance width — the toolkit's `horizontalAdvance`.
     #[must_use]
     pub const fn width(self) -> u32 {
         self.width
@@ -74,7 +73,7 @@ impl TextExtent {
 /// the size, or the family.
 pub trait TextMetrics {
     /// Measure `text` in `style`, wrapping at `max_width` when given
-    /// (`None` measures the whole string on one line — Qt's
+    /// (`None` measures the whole string on one line — the toolkit's
     /// `horizontalAdvance`). `None` when no real face resolves.
     fn measure(&self, text: &str, style: &TextStyle, max_width: Option<u32>) -> Option<TextExtent>;
 }
@@ -120,7 +119,7 @@ pub static TEXT_METRICS: ProviderSlot<Rc<dyn TextMetrics>> =
 /// provider; `None` when called outside an `Owner` scope or when no shell
 /// seeded a real provider (headless).
 ///
-/// `max_width` wraps the measurement at that width (Qt's
+/// `max_width` wraps the measurement at that width (the toolkit's
 /// `boundingRect(rect, flags, text)`); `None` measures the string on one line
 /// (`horizontalAdvance`). The call a view fn makes when it needs the size of
 /// text it is about to paint:

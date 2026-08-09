@@ -3,11 +3,10 @@
 //!
 //! ## What was missing
 //!
-//! R1532 gave the virtualized grid a per-column **paint** delegate (Qt
-//! `QStyledItemDelegate::paint`) and R1535 / R1536 gave the model its
-//! decoration role. The other half of Qt's delegate — `createEditor`,
-//! `setEditorData`, `setModelData` — did not exist, so *the grid's cell path
-//! could not host an editor at all*.
+//! R1532 gave the virtualized grid a per-column **paint** delegate (the
+//! toolkit `paint`) and R1535 / R1536 gave the model its decoration role. The
+//! other half of the toolkit's delegate — `createEditor`, `setEditorData`, `setModelData` — did not exist, so
+//! *the grid's cell path could not host an editor at all*.
 //!
 //! The absence showed up the way an absent extension point always does: as
 //! workaround code. Four bindings in this tree edit cells — the data grid, the
@@ -25,12 +24,11 @@
 //!
 //! ## The decomposition
 //!
-//! Qt's, kept: the **model** owns the datum (is this cell editable, what does
-//! an editor open with, does the write succeed), the **delegate** owns the
-//! editor's appearance, and the **view** owns the latch and the triggers. This
-//! module is the view's third; the model's is
-//! [`CellEdit`] and `GridModel::edit`, and the
-//! delegate's is `VirtualTableData::editor`.
+//! The toolkit's, kept: the **model** owns the datum (is this cell editable,
+//! what does an editor open with, does the write succeed), the **delegate**
+//! owns the editor's appearance, and the **view** owns the latch and the
+//! triggers. This module is the view's third; the model's is [`CellEdit`] and `GridModel::edit`,
+//! and the delegate's is `VirtualTableData::editor`.
 //!
 //! It is a state substrate rather than paint for the same reason
 //! [`GridSortState`](crate::widgets::grid_sort::GridSortState) and
@@ -39,22 +37,22 @@
 //! through the same `Rc`, so the cell that paints an editor is the cell the
 //! keystrokes route to, by construction rather than by two agreeing copies.
 //!
-//! ## Past Qt 6.11
+//! ## Past the toolkit 6.11
 //!
 //! - **A rejected write keeps the editor open.**
-//!   `QAbstractItemDelegate::setModelData` returns `void` and
-//!   `QAbstractItemView::commitData` ignores what the model did, so a
+//!   `setModelData` returns `void` and
+//!   `commitData` ignores what the model did, so a
 //!   `setData` that returns `false` still closes the editor and the user's
 //!   typing is discarded with no feedback. [`GridEditState::commit_with`]
 //!   propagates the model's verdict: a refused write leaves the editor open
 //!   with the text intact, which is what a validating DCC grid needs and what
-//!   Qt cannot express.
-//! - **The editing state is data.** Qt has no public way to ask a view whether
+//!   the toolkit cannot express.
+//! - **The editing state is data.** the toolkit has no public way to ask a view whether
 //!   a *transient* editor is open (`isPersistentEditorOpen` covers only the
 //!   persistent kind), and the in-flight text lives inside an opaque
-//!   `QWidget`. Here the latch is a signal and the editor is scene nodes, so
+//!   widget. Here the latch is a signal and the editor is scene nodes, so
 //!   `scene/snapshot` and an `ExternalIntrospect` slot both see them (§2 #7).
-//! - **Every commit outcome is named** (R1555, [`CommitOutcome`]). Qt's
+//! - **Every commit outcome is named** (R1555, [`CommitOutcome`]). The toolkit's
 //!   `commitData` discards `setData`'s verdict, and its editors' validators mean
 //!   a malformed value never reaches the commit at all — so "that is not a
 //!   number" and "the model will not take 500" are the same event there, and
@@ -62,22 +60,20 @@
 //!
 //! ## R1555 — the editor a cell opens follows from its datum
 //!
-//! The delegate above is the **override** half of Qt's editing decomposition
-//! (`setItemDelegateForColumn`). The other half is
-//! `QItemEditorFactory`: a registry from the datum's type to an editor, which
-//! `QStyledItemDelegate` consults when no delegate overrides it. That half did
-//! not exist, so one inline text field was the built-in editor for all six
-//! [`CellKind`]s — including the two that refuse every keystroke and parse to
-//! nothing. [`CellKind::editor_form`] is the registry, [`EditorForm`] its
-//! answer, and this module's job is what follows from that answer: which buffer
-//! holds the in-flight value ([`EditBuffer`]), which gesture verbs the form
-//! accepts ([`toggle`](GridEditState::toggle) /
-//! [`select`](GridEditState::select) / [`step`](GridEditState::step)), and one
-//! commit arc that serves all five forms.
+//! The delegate above is the **override** half of the toolkit's editing
+//! decomposition (`setItemDelegateForColumn`). The other half is item editor factory: a registry from
+//! the datum's type to an editor, which styled item delegate consults when no
+//! delegate overrides it. That half did not exist, so one inline text field
+//! was the built-in editor for all six [`CellKind`]s — including the two that refuse
+//! every keystroke and parse to nothing. [`CellKind::editor_form`] is the registry, [`EditorForm`] its
+//! answer, and this module's job is what follows from that answer: which
+//! buffer holds the in-flight value ([`EditBuffer`]), which gesture verbs the form
+//! accepts ([`toggle`](GridEditState::toggle) / [`select`](GridEditState::select) /
+//! [`step`](GridEditState::step)), and one commit arc that serves all five forms.
 //!
 //! ## R1571 — an editor's persistence is a property of the editor
 //!
-//! R1544 and R1555 both closed with the same remaining item: Qt's
+//! R1544 and R1555 both closed with the same remaining item: the toolkit's
 //! `openPersistentEditor(index)` keeps N editors open at once, and this held
 //! one. R1555 also wrote down the prescription — widen
 //! [`use_text_edit_state`]'s `&'static str` key so a per-cell buffer can be
@@ -92,41 +88,42 @@
 //! `scene/memory` to see. An editor's buffer has to die with the editor, so the
 //! buffers belong to the **editor set**, not to the owner's cache.
 //!
-//! What the set needs instead follows from a fact about *this* framework rather
-//! than about Qt: there is exactly **one keyboard focus**. Qt can afford N live
-//! `QLineEdit`s because each editor is a real widget with its own focus; here
-//! only the editor that holds the keyboard can be typed into, so only it needs
-//! a live buffer. Every other open editor's in-flight text is **parked** in the
-//! latch ([`EditBuffer::Parked`]) and swapped back into the field when focus
-//! returns to it. One field tag, one focus stop, one composition target — the
-//! keystroke, IME and clipboard machinery is untouched — and the editor set is
-//! plain data that can be windowed, enumerated and published.
+//! What the set needs instead follows from a fact about *this* framework
+//! rather than about the toolkit: there is exactly **one keyboard focus**. The
+//! toolkit can afford N live line edits because each editor is a real widget
+//! with its own focus; here only the editor that holds the keyboard can be
+//! typed into, so only it needs a live buffer. Every other open editor's
+//! in-flight text is **parked** in the latch ([`EditBuffer::Parked`]) and swapped back into the
+//! field when focus returns to it. One field tag, one focus stop, one
+//! composition target — the keystroke, IME and clipboard machinery is
+//! untouched — and the editor set is plain data that can be windowed,
+//! enumerated and published.
 //!
-//! ### Past Qt 6.11
+//! ### Past the toolkit 6.11
 //!
-//! - **The set is enumerable.** `QAbstractItemViewPrivate::persistent` is a
-//!   private `QSet<QWidget *>` and the only public question is
-//!   `isPersistentEditorOpen(index)` — one index at a time, so a Qt view cannot
+//! - **The set is enumerable.** `persistent` is a
+//!   private `set<widget *>` and the only public question is
+//!   `isPersistentEditorOpen(index)` — one index at a time, so a toolkit view cannot
 //!   be asked *what* it has open; you must already know in order to ask.
 //!   [`GridEditState::editors`] answers with the whole set, and
 //!   `scene/grid_editors` puts it on the wire.
 //! - **Focus is data.** Which open editor has the keyboard is
-//!   [`OpenEditors::focused`]. In Qt it is `QApplication::focusWidget()`
+//!   [`OpenEditors::focused`]. In the toolkit it is `focusWidget()`
 //!   reverse-mapped through the private `indexEditorHash` — that is, not
 //!   answerable through any public API of the view.
 //! - **<kbd>Escape</kbd> reverts a persistent editor.**
-//!   `QStyledItemDelegate::eventFilter` emits `closeEditor(editor,
-//!   RevertModelCache)`, and `QAbstractItemView::closeEditor` early-returns for
-//!   a persistent editor — so in Qt <kbd>Escape</kbd> on one does **nothing at
+//!   `eventFilter` emits `closeEditor(editor,
+//!   RevertModelCache)`, and `closeEditor` early-returns for
+//!   a persistent editor — so in the toolkit <kbd>Escape</kbd> on one does **nothing at
 //!   all**, the typed text stays, and the original is unrecoverable.
 //!   [`GridEditState::cancel`] restores the seed and leaves the editor open.
 //! - **The cost is windowed.** A persistent editor outside the painted window
 //!   contributes no scene node and keeps its in-flight value.
-//!   `QAbstractItemView::updateEditorGeometries()` walks *every* editor on
+//!   `updateEditorGeometries()` walks *every* editor on
 //!   every scroll, so N persistent editors on a virtualized model are N live
 //!   widgets repositioned per scroll event whether or not one of them is on
 //!   screen.
-//! - **A cell has at most one editor, by construction.** Qt keeps an
+//! - **A cell has at most one editor, by construction.** the toolkit keeps an
 //!   index → widget hash and a separate persistence set, and `edit()` reuses
 //!   whatever the hash holds; here [`OpenEditors`] is keyed by the cell and
 //!   rejects a second entry for it, at construction and again on deserialize.
@@ -139,26 +136,25 @@ use crate::model_index::{CellIndex, GridExtent};
 use crate::reactive::{Owner, Signal};
 use crate::widgets::text_edit::use_text_edit_state;
 
-/// R1544 §5.27 — one reason an editor opens: Qt's
-/// `QAbstractItemView::EditTrigger`.
+/// R1544 §5.27 — one reason an editor opens: the toolkit's
+/// `EditTrigger`.
 ///
-/// Qt's `CurrentChanged` and `NoEditTriggers` are absent by construction
-/// rather than by omission: the first is not a discrete event a binding
-/// dispatches (it is the *absence* of a gate — a view that edits whatever the
-/// cursor lands on calls [`GridEditState::begin`] from its cursor move, which
-/// is what "no trigger gate" means), and the second is the empty set, spelled
-/// [`EditTriggers::NONE`].
+/// The toolkit's `CurrentChanged` and `NoEditTriggers` are absent by construction rather than by
+/// omission: the first is not a discrete event a binding dispatches (it is the
+/// *absence* of a gate — a view that edits whatever the cursor lands on calls
+/// [`GridEditState::begin`] from its cursor move, which is what "no trigger gate" means), and the
+/// second is the empty set, spelled [`EditTriggers::NONE`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EditTrigger {
-    /// A double-click on the cell (Qt `DoubleClicked`).
+    /// A double-click on the cell (the toolkit `DoubleClicked`).
     DoubleClicked,
-    /// A single click on an already-selected cell (Qt `SelectedClicked`) —
-    /// the slow-double-click rename gesture a file browser has.
+    /// A single click on an already-selected cell (the toolkit `SelectedClicked`) — the
+    /// slow-double-click rename gesture a file browser has.
     SelectedClicked,
-    /// The dedicated edit key on the current cell (Qt `EditKeyPressed`);
+    /// The dedicated edit key on the current cell (the toolkit `EditKeyPressed`);
     /// <kbd>F2</kbd> on every desktop platform.
     EditKeyPressed,
-    /// Any printable keystroke on the current cell (Qt `AnyKeyPressed`) — the
+    /// Any printable keystroke on the current cell (the toolkit `AnyKeyPressed`) — the
     /// spreadsheet type-to-replace gesture.
     AnyKeyPressed,
 }
@@ -198,8 +194,8 @@ impl EditTrigger {
     ];
 }
 
-/// R1544 §5.27 — which gestures open an editor: Qt's
-/// `QAbstractItemView::EditTriggers` flag set.
+/// R1544 §5.27 — which gestures open an editor: the toolkit's
+/// `EditTriggers` flag set.
 ///
 /// A set rather than a single mode because the gestures are independent — a
 /// grid that opens on <kbd>F2</kbd> and on double-click has said two things,
@@ -249,13 +245,13 @@ impl TryFrom<String> for EditTriggers {
 }
 
 impl EditTriggers {
-    /// No gesture opens an editor (Qt `NoEditTriggers`) — a read-only view.
-    /// The [`Default`], so a grid is not accidentally editable.
+    /// No gesture opens an editor (the toolkit `NoEditTriggers`) — a read-only view. The
+    /// [`Default`], so a grid is not accidentally editable.
     pub const NONE: Self = Self(0);
 
-    /// Qt's own default for `QAbstractItemView`: double-click, click on the
-    /// selected cell, and the edit key. Type-to-replace is **not** in it,
-    /// there or here — a grid whose arrow keys navigate cannot also treat
+    /// The toolkit's own default for abstract item view: double-click, click
+    /// on the selected cell, and the edit key. Type-to-replace is **not** in
+    /// it, there or here — a grid whose arrow keys navigate cannot also treat
     /// every letter as the start of an edit unless it says so.
     pub const DEFAULT: Self = Self(
         Self::bit(EditTrigger::DoubleClicked)
@@ -285,7 +281,7 @@ impl EditTriggers {
         self.0 & Self::bit(trigger) != 0
     }
 
-    /// Whether **no** gesture opens an editor — Qt's `NoEditTriggers` as a
+    /// Whether **no** gesture opens an editor — the toolkit's `NoEditTriggers` as a
     /// question rather than as a value to compare against.
     #[must_use]
     pub const fn is_empty(self) -> bool {
@@ -326,34 +322,33 @@ impl EditTriggers {
     }
 }
 
-/// R1544 §5.27 — where the cursor goes when an edit ends: Qt's
-/// `QAbstractItemDelegate::EndEditHint`.
+/// R1544 §5.27 — where the cursor goes when an edit ends: the toolkit's
+/// `EndEditHint`.
 ///
-/// Qt's `SubmitModelCache` / `RevertModelCache` are absent: they exist for
-/// `QDataWidgetMapper`'s buffered submit policy, which has no analogue here —
-/// [`GridEditState::commit_with`] writes through to the model at the moment of
-/// commit, so there is no cache to submit or revert. Shipping the arms would
-/// name two behaviours nothing implements.
+/// The toolkit's `SubmitModelCache` / `RevertModelCache` are absent: they exist for data widget mapper's
+/// buffered submit policy, which has no analogue here — [`GridEditState::commit_with`] writes through
+/// to the model at the moment of commit, so there is no cache to submit or
+/// revert. Shipping the arms would name two behaviours nothing implements.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, Hash)]
 pub enum EndEditHint {
-    /// Close the editor and leave the cursor where it is (Qt `NoHint`) —
+    /// Close the editor and leave the cursor where it is (the toolkit `NoHint`) —
     /// <kbd>Enter</kbd>.
     #[default]
     NoHint,
-    /// Open an editor on the next editable cell (Qt `EditNextItem`) —
+    /// Open an editor on the next editable cell (the toolkit `EditNextItem`) —
     /// <kbd>Tab</kbd>.
     EditNextItem,
-    /// Open an editor on the previous editable cell (Qt `EditPreviousItem`) —
+    /// Open an editor on the previous editable cell (the toolkit `EditPreviousItem`) —
     /// <kbd>Shift+Tab</kbd>.
     EditPreviousItem,
 }
 
 /// R1571 §5.27 — whether an editor survives a commit and an <kbd>Escape</kbd>:
-/// Qt's `QAbstractItemViewPrivate::persistent` membership.
+/// The toolkit's `persistent` membership.
 ///
 /// A **property of the editor**, which is what makes "a cell has at most one
-/// editor" true by construction. Qt models the same fact as a second
-/// collection — an index → widget hash plus a `QSet<QWidget *>` of the ones
+/// editor" true by construction. The toolkit models the same fact as a second
+/// collection — an index → widget hash plus a `set<widget *>` of the ones
 /// that survive — so the two can disagree about an editor that is in one and
 /// not the other, and `openPersistentEditor` on an index that already has a
 /// transient editor quietly *promotes* that widget by inserting it into the
@@ -361,12 +356,11 @@ pub enum EndEditHint {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EditorPersistence {
     /// Closed by a successful commit and by <kbd>Escape</kbd>, and replaced
-    /// when another cell opens one — Qt's default editor, the only kind an
-    /// [`EditTrigger`] opens. At most one is open at a time.
+    /// when another cell opens one — the toolkit's default editor, the only
+    /// kind an [`EditTrigger`] opens. At most one is open at a time.
     Transient,
-    /// Stays open across commits and <kbd>Escape</kbd> until
-    /// [`GridEditState::close_persistent`] — Qt's `openPersistentEditor`.
-    /// Any number may be open.
+    /// Stays open across commits and <kbd>Escape</kbd> until [`GridEditState::close_persistent`] — the
+    /// toolkit's `openPersistentEditor`. Any number may be open.
     Persistent,
 }
 
@@ -405,15 +399,16 @@ impl EditorPersistence {
 /// clipboard already act on. A toggle and a selector have no text at all, so
 /// for them the latch holds the value.
 ///
-/// Qt has the first split and states it nowhere: a `QLineEdit` editor's
-/// in-flight value is its text and a `QComboBox` editor's is its current index,
-/// and `setModelData` reaches each through a `qobject_cast` the delegate author
-/// has to get right. Here it is one exhaustive answer per form, so the latch
-/// cannot look for the value in the half that does not hold it.
+/// The toolkit has the first split and states it nowhere: a line edit editor's
+/// in-flight value is its text and a combo box editor's is its current index,
+/// and `setModelData` reaches each through a `qobject_cast` the delegate author has to get right.
+/// Here it is one exhaustive answer per form, so the latch cannot look for the
+/// value in the half that does not hold it.
 ///
 /// R1571 adds the second split, and it exists because this framework has one
-/// keyboard focus where Qt has one focusable widget per editor: a text-buffered
-/// editor that does **not** hold the field parks its text here instead.
+/// keyboard focus where the toolkit has one focusable widget per editor: a
+/// text-buffered editor that does **not** hold the field parks its text here
+/// instead.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum EditBuffer {
     /// The inline field's buffer is the authority — a text-buffered form
@@ -445,9 +440,10 @@ pub enum EditBuffer {
 /// match its form is not a state a caller can reach.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OpenEditor {
-    /// The cell the editor is open on (Qt: the view's editing `QModelIndex`).
+    /// The cell the editor is open on (the toolkit: the view's editing model
+    /// index).
     pub index: CellIndex,
-    /// The `Qt::EditRole` datum the editor was opened with — kept so a commit
+    /// The `EditRole` datum the editor was opened with — kept so a commit
     /// can tell an untouched editor from an edited one, and so a delegate's
     /// editor can render the original beside the in-flight value.
     seed: CellValue,
@@ -466,7 +462,7 @@ impl OpenEditor {
     }
 
     /// R1571 — whether a commit or an <kbd>Escape</kbd> closes this editor
-    /// (Qt: whether the view's private `persistent` set contains its widget).
+    /// (the toolkit: whether the view's private `persistent` set contains its widget).
     #[must_use]
     pub fn persistence(&self) -> EditorPersistence {
         self.persistence
@@ -498,8 +494,8 @@ impl OpenEditor {
         self.seed.kind()
     }
 
-    /// R1555 — which editor form is hosting this edit (Qt
-    /// `QItemEditorFactory`'s answer for the cell's datum).
+    /// R1555 — which editor form is hosting this edit (the toolkit
+    /// item editor factory's answer for the cell's datum).
     #[must_use]
     pub fn form(&self) -> EditorForm {
         self.seed.kind().editor_form()
@@ -518,14 +514,14 @@ impl OpenEditor {
 }
 
 /// R1571 §5.27 — every editor a grid has open, and which of them holds the
-/// keyboard: Qt's `indexEditorHash` and its `persistent` subset, as one value.
+/// keyboard: the toolkit's `indexEditorHash` and its `persistent` subset, as one value.
 ///
 /// # The invariants, and why they are the type's rather than the caller's
 ///
 /// 1. **At most one editor per cell**, sorted by [`CellIndex`] — so
 ///    [`OpenEditors::get`] is a decision rather than a first-match, and two
 ///    editors cannot end up racing for one cell's keystrokes.
-/// 2. **At most one [`EditorPersistence::Transient`] editor** — Qt maintains
+/// 2. **At most one [`EditorPersistence::Transient`] editor** — the toolkit maintains
 ///    this by having `edit()` close the previous one, which is a convention its
 ///    data structure does not hold it to.
 /// 3. **`focused` names a member, or nothing** — so "the focused editor" is
@@ -670,8 +666,8 @@ impl OpenEditors {
         Ok(Self { open, focused })
     }
 
-    /// How many editors are open — Qt has no accessor at all for this, since
-    /// the set it would count is private.
+    /// How many editors are open — the toolkit has no accessor at all for
+    /// this, since the set it would count is private.
     #[must_use]
     pub fn len(&self) -> usize {
         self.open.len()
@@ -683,9 +679,8 @@ impl OpenEditors {
         self.open.is_empty()
     }
 
-    /// The editor open on `index`, or `None` — Qt's `isPersistentEditorOpen`
-    /// generalized to both persistences, and answering with the editor rather
-    /// than with a bool.
+    /// The editor open on `index`, or `None` — the toolkit's `isPersistentEditorOpen` generalized to both
+    /// persistences, and answering with the editor rather than with a bool.
     #[must_use]
     pub fn get(&self, index: CellIndex) -> Option<&OpenEditor> {
         self.open
@@ -708,9 +703,9 @@ impl OpenEditors {
     /// The editors whose cells are in `rows` — the **window** a paint pass
     /// needs, so an editor outside it costs nothing to draw.
     ///
-    /// The property Qt cannot have: its persistent editors are `QWidget`s that
-    /// exist and are repositioned by `updateEditorGeometries()` whether or not
-    /// their row is on screen.
+    /// The property the toolkit cannot have: its persistent editors are
+    /// widgets that exist and are repositioned by `updateEditorGeometries()` whether or not their row
+    /// is on screen.
     pub fn in_rows(&self, rows: Range<usize>) -> impl Iterator<Item = &OpenEditor> {
         self.open
             .iter()
@@ -749,16 +744,16 @@ pub enum EditState {
     Value(CellValue),
 }
 
-/// R1555 §5.27 — what happened to a commit: Qt's `commitData` /
+/// R1555 §5.27 — what happened to a commit: the toolkit's `commitData` /
 /// `setModelData` pair, with the outcomes named.
 ///
-/// Qt's path answers nothing. `setModelData` returns `void`, `commitData`
-/// ignores what `setData` did, and the editor closes either way — so a rejected
-/// value and an accepted one are indistinguishable to the caller and the user's
-/// typing is gone in the rejected case. R1544 kept the editor open on a refusal;
-/// this names *why* a commit did not land, which is what lets a binding put a
-/// different message on screen for "that is not a number" than for "the model
-/// will not take 500".
+/// The toolkit's path answers nothing. `setModelData` returns `void`, `commitData` ignores what `setData`
+/// did, and the editor closes either way — so a rejected value and an accepted
+/// one are indistinguishable to the caller and the user's typing is gone in
+/// the rejected case. R1544 kept the editor open on a refusal; this names
+/// *why* a commit did not land, which is what lets a binding put a different
+/// message on screen for "that is not a number" than for "the model will not
+/// take 500".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommitOutcome {
     /// No editor was open — nothing was written and nothing closed.
@@ -766,9 +761,9 @@ pub enum CommitOutcome {
     /// The buffer does not hold a value of the cell's kind, so **the model was
     /// never asked**. The editor stays open holding the text.
     ///
-    /// Qt cannot reach this state and pays for it: the editor's own validator
-    /// keeps a malformed value from ever reaching `commitData`, which means the
-    /// committed value is silently not the one the user typed.
+    /// The toolkit cannot reach this state and pays for it: the editor's own
+    /// validator keeps a malformed value from ever reaching `commitData`, which means
+    /// the committed value is silently not the one the user typed.
     Malformed,
     /// The model refused a well-formed value. The editor stays open holding it,
     /// which is the only state the user can correct it from.
@@ -800,27 +795,26 @@ impl CommitOutcome {
     }
 }
 
-/// R1571 §5.27 — what [`GridEditState::open_persistent`] did: Qt's
+/// R1571 §5.27 — what [`GridEditState::open_persistent`] did: the toolkit's
 /// `openPersistentEditor`, which returns `void`.
 ///
 /// There is no failure arm, and its absence is the argument R1544 made about
 /// the transient path, now on this one: the call takes a [`CellEdit`], which
 /// only the model produces and which it produces `None` for on a cell it will
 /// not edit — so "a persistent editor open on a read-only cell" is not a state
-/// the types can express. Qt's `openPersistentEditor` reaches
-/// `QStyledItemDelegate::createEditor`, which consults `QItemEditorFactory` and
-/// **never looks at `flags() & Qt::ItemIsEditable`**: it opens a live editor on
+/// the types can express. The toolkit's `openPersistentEditor` reaches
+/// `createEditor`, which consults item editor factory and
+/// **never looks at `flags() & ItemIsEditable`**: it opens a live editor on
 /// a read-only cell, the user types into it, `setModelData` calls a `setData`
 /// that returns `false`, and nothing anywhere reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenOutcome {
     /// A new persistent editor opened on a cell that had none.
     Opened,
-    /// The cell's [`EditorPersistence::Transient`] editor was **promoted**,
-    /// keeping whatever the user had already typed into it. Qt reaches the same
-    /// end by a different route: `QAbstractItemViewPrivate::editor()` hands back
-    /// the widget already in its hash and `openPersistentEditor` inserts that
-    /// widget into the persistence set — an outcome it cannot report.
+    /// The cell's [`EditorPersistence::Transient`] editor was **promoted**, keeping whatever the user had
+    /// already typed into it. The toolkit reaches the same end by a different
+    /// route: `editor()` hands back the widget already in its hash and `openPersistentEditor` inserts
+    /// that widget into the persistence set — an outcome it cannot report.
     Promoted,
     /// The cell already had a persistent editor; nothing changed, and in
     /// particular its in-flight value was **not** reseeded from the model.
@@ -839,8 +833,8 @@ impl OpenOutcome {
     }
 }
 
-/// R1544 §5.27 — the grid's editing latch and trigger gate: the half of Qt's
-/// editing decomposition that belongs to `QAbstractItemView`.
+/// R1544 §5.27 — the grid's editing latch and trigger gate: the half of the
+/// toolkit's editing decomposition that belongs to abstract item view.
 ///
 /// Created once through [`use_grid_edit`] and shared by the binding's
 /// `External` (which mutates it) and the view / a11y tree (which read it)
@@ -848,10 +842,10 @@ impl OpenOutcome {
 /// pattern. Reading [`editors`](Self::editors) inside a view-fn auto-subscribes,
 /// so opening an editor repaints exactly like a scroll-offset change.
 ///
-/// R1571 — the latch became a **set** ([`OpenEditors`]), because Qt's
-/// `openPersistentEditor` keeps N editors open at once. The invariants that set
-/// maintains are stated on it; every verb below rebuilds it through one private
-/// publisher that re-checks all four.
+/// R1571 — the latch became a **set** ([`OpenEditors`]), because the toolkit's `openPersistentEditor` keeps
+/// N editors open at once. The invariants that set maintains are stated on it;
+/// every verb below rebuilds it through one private publisher that re-checks
+/// all four.
 ///
 /// The **focused** editor's in-flight text is **not** held here. It lives in the
 /// [`TextEditState`](crate::widgets::text_edit::TextEditState) of the inline
@@ -961,9 +955,9 @@ impl GridEditState {
         self.editors.get().contains(index)
     }
 
-    /// R1571 — whether a **persistent** editor is open on `index`: Qt's
-    /// `QAbstractItemView::isPersistentEditorOpen`, which is the only question
-    /// Qt's private editor set answers.
+    /// R1571 — whether a **persistent** editor is open on `index`: the toolkit's
+    /// `isPersistentEditorOpen`, which is the only question the toolkit's private editor set
+    /// answers.
     #[must_use]
     pub fn is_persistent_editor_open(&self, index: CellIndex) -> bool {
         self.editors
@@ -986,8 +980,8 @@ impl GridEditState {
         self.focused().map(|e| e.kind())
     }
 
-    /// R1555 — the focused editor's form (Qt `QItemEditorFactory`'s answer for
-    /// the cell's datum). `None` when nothing is focused.
+    /// R1555 — the focused editor's form (the toolkit item editor factory's
+    /// answer for the cell's datum). `None` when nothing is focused.
     #[must_use]
     pub fn form(&self) -> Option<EditorForm> {
         self.focused().map(|e| e.form())
@@ -1059,9 +1053,9 @@ impl GridEditState {
     /// Whether the in-flight value differs from what the editor opened with.
     /// `false` when nothing is open.
     ///
-    /// The question a close-without-commit path asks and Qt answers only by
-    /// re-reading the editor widget: `QAbstractItemView` keeps no record of
-    /// what `setEditorData` seeded, so a Qt view cannot distinguish an
+    /// The question a close-without-commit path asks and the toolkit answers
+    /// only by re-reading the editor widget: abstract item view keeps no
+    /// record of what `setEditorData` seeded, so a toolkit view cannot distinguish an
     /// untouched editor from one edited back to its original value.
     ///
     /// R1555 — a [`EditState::Malformed`] buffer counts as dirty. The user typed
@@ -1078,7 +1072,7 @@ impl GridEditState {
 
     /// R1571 — [`is_dirty`](Self::is_dirty) for a named cell. The question a
     /// binding asks of *every* open editor before closing a document, which is
-    /// unaskable in Qt for the reason above, N times over.
+    /// unaskable in the toolkit for the reason above, N times over.
     #[must_use]
     pub fn is_dirty_at(&self, index: CellIndex) -> bool {
         let editors = self.editors.get();
@@ -1098,23 +1092,23 @@ impl GridEditState {
         self.triggers.get()
     }
 
-    /// Replace the trigger set (Qt `setEditTriggers`).
+    /// Replace the trigger set (the toolkit `setEditTriggers`).
     pub fn set_triggers(&self, triggers: EditTriggers) {
         self.triggers.set(triggers);
     }
 
     /// Open an editor on `index` seeded from the model's `edit` answer,
-    /// unconditionally — Qt's `QAbstractItemView::edit(const QModelIndex&)`,
+    /// unconditionally — the toolkit's `edit(const model index&)`,
     /// the programmatic open that bypasses the trigger gate.
     ///
     /// Taking a [`CellEdit`] rather than an index alone is what makes "an
     /// editor open on a cell the model will not edit" unrepresentable: only
     /// the model can produce one, and it produces `None` for a read-only cell.
     ///
-    /// For a text-buffered form the field's buffer is seeded and fully selected,
-    /// so the first printable keystroke replaces it — the type-to-replace
-    /// behaviour Qt gets from `QLineEdit::selectAll` on editor focus, and the
-    /// reason [`EditTrigger::AnyKeyPressed`] needs no special seeding path.
+    /// For a text-buffered form the field's buffer is seeded and fully
+    /// selected, so the first printable keystroke replaces it — the
+    /// type-to-replace behaviour the toolkit gets from `selectAll` on editor focus,
+    /// and the reason [`EditTrigger::AnyKeyPressed`] needs no special seeding path.
     ///
     /// R1555 — which buffer is seeded follows from the datum's
     /// [`EditorForm`]. A toggle or a selector holds its in-flight value in the
@@ -1123,12 +1117,12 @@ impl GridEditState {
     ///
     /// R1571 — a cell that already has a **persistent** editor is *focused*
     /// rather than reopened, so a trigger on it does not discard what the user
-    /// has already typed there. Qt reaches the same behaviour through
-    /// `QAbstractItemViewPrivate::editor()`, which hands back the widget its
-    /// hash already holds instead of asking the delegate for a new one. Any
-    /// other transient editor is closed, discarding its buffer — this is what
-    /// it has always done, and a binding that wants Qt's commit-on-focus-out
-    /// runs that first (`blur_committing_field_extra`).
+    /// has already typed there. The toolkit reaches the same behaviour through
+    /// `editor()`, which hands back the widget its hash already holds instead of
+    /// asking the delegate for a new one. Any other transient editor is
+    /// closed, discarding its buffer — this is what it has always done, and a
+    /// binding that wants the toolkit's commit-on-focus-out runs that first
+    /// (`blur_committing_field_extra`).
     pub fn begin(&self, index: CellIndex, edit: &CellEdit) {
         if self.is_persistent_editor_open(index) {
             let _focused = self.focus_editor(index);
@@ -1196,15 +1190,15 @@ impl GridEditState {
         }
     }
 
-    /// R1571 §5.27 — open a **persistent** editor on `index`: Qt's
-    /// `QAbstractItemView::openPersistentEditor`.
+    /// R1571 §5.27 — open a **persistent** editor on `index`: the toolkit's
+    /// `openPersistentEditor`.
     ///
     /// It takes the keyboard, because that is what a caller opening an editor
-    /// means and because Qt's own `openPersistentEditor` shows the widget in a
-    /// state ready to receive input. Every other open editor keeps its
-    /// in-flight value, parked.
+    /// means and because the toolkit's own `openPersistentEditor` shows the widget in a state
+    /// ready to receive input. Every other open editor keeps its in-flight
+    /// value, parked.
     ///
-    /// See [`OpenOutcome`] for what the three answers mean and for what Qt
+    /// See [`OpenOutcome`] for what the three answers mean and for what the toolkit
     /// answers instead (`void`).
     pub fn open_persistent(&self, index: CellIndex, edit: &CellEdit) -> OpenOutcome {
         let prev = self.editors.get();
@@ -1253,13 +1247,13 @@ impl GridEditState {
     }
 
     /// R1571 §5.27 — close the editor on `index` whatever its persistence:
-    /// Qt's `QAbstractItemView::closePersistentEditor`, widened to the
+    /// The toolkit's `closePersistentEditor`, widened to the
     /// transient kind because "close this cell's editor" is one question.
     ///
-    /// Returns whether one was open. Its in-flight value is **discarded** — the
-    /// caller commits first if it wants it, which is the same order Qt's
-    /// `closePersistentEditor` imposes (it deletes the widget, taking the text
-    /// with it, and reports nothing).
+    /// Returns whether one was open. Its in-flight value is **discarded** —
+    /// the caller commits first if it wants it, which is the same order the
+    /// toolkit's `closePersistentEditor` imposes (it deletes the widget, taking the text with it,
+    /// and reports nothing).
     ///
     /// When the closed editor held the keyboard, focus moves to no editor
     /// rather than to an arbitrary survivor: which one a user meant next is not
@@ -1279,9 +1273,10 @@ impl GridEditState {
         true
     }
 
-    /// R1571 §5.27 — close every open editor, discarding every in-flight value.
-    /// The model-reset path: Qt destroys its editor widgets when the rows under
-    /// them go away, and reports nothing about what was lost.
+    /// R1571 §5.27 — close every open editor, discarding every in-flight
+    /// value. The model-reset path: the toolkit destroys its editor widgets
+    /// when the rows under them go away, and reports nothing about what was
+    /// lost.
     pub fn close_all(&self) {
         self.field.set_text(String::new());
         self.editors.set(OpenEditors::default());
@@ -1322,11 +1317,11 @@ impl GridEditState {
     ///
     /// # Why the toggle is in-flight and not a write-through
     ///
-    /// Qt's `QStyledItemDelegate::editorEvent` handles a check-state click by
-    /// calling `setModelData` **immediately**, so there is nothing to escape: a
-    /// mis-click on a Qt check column is already committed. Here the toggle
-    /// edits the latch, so <kbd>Escape</kbd> reverts it and <kbd>Enter</kbd>
-    /// commits it — the same arc every other form has.
+    /// The toolkit's `editorEvent` handles a check-state click by calling `setModelData`
+    /// **immediately**, so there is nothing to escape: a mis-click on a
+    /// toolkit check column is already committed. Here the toggle edits the
+    /// latch, so <kbd>Escape</kbd> reverts it and <kbd>Enter</kbd> commits it
+    /// — the same arc every other form has.
     #[must_use]
     pub fn toggle(&self) -> bool {
         let editors = self.editors.get();
@@ -1362,8 +1357,8 @@ impl GridEditState {
     ///
     /// Returns whether it selected — `false` when no editor is open, when the
     /// open editor is not a selector, and when `selected` is past the datum's
-    /// own option list. That last check is the past-Qt half:
-    /// `QComboBox::setCurrentIndex` accepts an out-of-range index by silently
+    /// own option list. That last check is the past-the toolkit half:
+    /// `setCurrentIndex` accepts an out-of-range index by silently
     /// clearing the selection, so a stale index there produces an empty combo
     /// rather than a rejected write.
     #[must_use]
@@ -1386,7 +1381,7 @@ impl GridEditState {
     }
 
     /// R1555 §5.27 — step an open [`EditorForm::Stepper`] editor's buffer by
-    /// `delta` steps: Qt `QAbstractSpinBox::stepBy`, reached from the editor's
+    /// `delta` steps: the toolkit `stepBy`, reached from the editor's
     /// up / down affordances.
     ///
     /// Returns whether it stepped — `false` when no editor is open, when the
@@ -1414,9 +1409,8 @@ impl GridEditState {
         true
     }
 
-    /// Open an editor on `index` **if** `trigger` is in the active set — Qt's
-    /// `QAbstractItemView::edit(index, trigger, event)`. Returns whether it
-    /// opened.
+    /// Open an editor on `index` **if** `trigger` is in the active set — the toolkit's
+    /// `edit(index, trigger, event)`. Returns whether it opened.
     #[must_use]
     pub fn begin_on(&self, trigger: EditTrigger, index: CellIndex, edit: &CellEdit) -> bool {
         if !self.triggers.get().contains(trigger) {
@@ -1426,20 +1420,20 @@ impl GridEditState {
         true
     }
 
-    /// Abandon the focused edit — <kbd>Escape</kbd>, Qt's
+    /// Abandon the focused edit — <kbd>Escape</kbd>, the toolkit's
     /// `closeEditor(editor, RevertModelCache)` on a write-through model.
     ///
     /// R1571 — what "abandon" means follows from the editor's persistence, and
-    /// this is where Qt's own decomposition breaks down. A **transient** editor
-    /// closes, discarding its in-flight text, as it always has. A
-    /// **persistent** one is *reverted to its seed and stays open*, because
-    /// closing it would be a second, undeclared way for `openPersistentEditor`
-    /// to be undone.
+    /// this is where the toolkit's own decomposition breaks down. A
+    /// **transient** editor closes, discarding its in-flight text, as it
+    /// always has. A **persistent** one is *reverted to its seed and stays
+    /// open*, because closing it would be a second, undeclared way for `openPersistentEditor` to
+    /// be undone.
     ///
-    /// Qt does neither: `QStyledItemDelegate::eventFilter` emits
+    /// The toolkit does neither: `eventFilter` emits
     /// `closeEditor(editor, RevertModelCache)`, and
-    /// `QAbstractItemView::closeEditor` checks `d->persistent.contains(editor)`
-    /// and **returns without touching it** — so <kbd>Escape</kbd> on a Qt
+    /// `closeEditor` checks `d->persistent.contains(editor)`
+    /// and **returns without touching it** — so <kbd>Escape</kbd> on a toolkit
     /// persistent editor does nothing at all, the typed text stays on screen,
     /// and the original value is unrecoverable from the view.
     pub fn cancel(&self) {
@@ -1465,11 +1459,11 @@ impl GridEditState {
     }
 
     /// Write the in-flight **value** back through `set` and, **if the model
-    /// accepts it**, close the editor. Qt's `commitData` + `setModelData`.
+    /// accepts it**, close the editor. The toolkit's `commitData` + `setModelData`.
     ///
-    /// Every outcome is named — see [`CommitOutcome`]. Qt's path answers
-    /// nothing: `setModelData` returns `void`, `commitData` ignores what
-    /// `setData` did, and the editor closes either way.
+    /// Every outcome is named — see [`CommitOutcome`]. The toolkit's path answers nothing:
+    /// `setModelData` returns `void`, `commitData` ignores what `setData` did, and the editor closes either
+    /// way.
     ///
     /// R1555 — `set` receives the **datum**, not the raw buffer. The framework
     /// parses once, through [`CellKind::parse`], which is the documented inverse
@@ -1486,17 +1480,17 @@ impl GridEditState {
         }
     }
 
-    /// R1571 — [`commit_with`](Self::commit_with) for a named cell, so an
-    /// editor that does not hold the keyboard can be written through without
-    /// being focused first. The "save every open editor" verb, which in Qt
-    /// means iterating a private hash you cannot reach.
+    /// R1571 — [`commit_with`](Self::commit_with) for a named cell, so an editor that
+    /// does not hold the keyboard can be written through without being focused
+    /// first. The "save every open editor" verb, which in the toolkit means
+    /// iterating a private hash you cannot reach.
     ///
-    /// A **transient** editor closes on a successful write, as it always has. A
-    /// **persistent** one stays open, and the committed value becomes its new
-    /// seed — so [`is_dirty_at`](Self::is_dirty_at) is `false` immediately
-    /// after. Qt leaves the widget's text alone and keeps no record of what the
-    /// editor was seeded with, so there is nothing there for a second commit to
-    /// compare against.
+    /// A **transient** editor closes on a successful write, as it always has.
+    /// A **persistent** one stays open, and the committed value becomes its
+    /// new seed — so [`is_dirty_at`](Self::is_dirty_at) is `false` immediately after. The
+    /// toolkit leaves the widget's text alone and keeps no record of what the
+    /// editor was seeded with, so there is nothing there for a second commit
+    /// to compare against.
     pub fn commit_at_with(
         &self,
         index: CellIndex,
@@ -1532,21 +1526,19 @@ impl GridEditState {
     }
 
     /// Honour an [`EndEditHint`] by opening an editor on the next / previous
-    /// **editable** cell after `from` — Qt's `closeEditor(editor, hint)` move
-    /// half, which walks with `moveCursor(MoveNext)` and edits if the landing
-    /// index is editable.
+    /// **editable** cell after `from` — the toolkit's `closeEditor(editor, hint)` move half, which walks
+    /// with `moveCursor(MoveNext)` and edits if the landing index is editable.
     ///
     /// Returns whether an editor opened. [`EndEditHint::NoHint`] always
     /// returns `false` — there is nothing to move to.
     ///
-    /// The walk is row-major over the **model** extent (not the painted
-    /// window — Qt moves through indices, and a grid windowing 5 of 200
+    /// The walk is row-major over the **model** extent (not the painted window
+    /// — the toolkit moves through indices, and a grid windowing 5 of 200
     /// columns must not stop at the window edge), and it **wraps**: past the
-    /// last cell it resumes at the first. Qt's `QTableView::moveCursor` stops
-    /// there instead; wrapping is the spreadsheet behaviour and it costs
-    /// nothing, because the walk is bounded by
-    /// [`GridExtent::cell_count`] and so terminates on a model with no
-    /// editable cell at all rather than spinning.
+    /// last cell it resumes at the first. The toolkit's `moveCursor` stops there
+    /// instead; wrapping is the spreadsheet behaviour and it costs nothing,
+    /// because the walk is bounded by [`GridExtent::cell_count`] and so terminates on a model with
+    /// no editable cell at all rather than spinning.
     pub fn advance(
         &self,
         from: CellIndex,
@@ -1584,10 +1576,10 @@ impl GridEditState {
     ///
     /// A helper here rather than in each binding because it is the seam that
     /// makes N editors cost what the window costs: an editor on a row that is
-    /// not painted contributes nothing to the scene, and Qt has no equivalent
-    /// at all — its persistent editors are `QWidget`s that exist and are
-    /// repositioned by `updateEditorGeometries()` on every scroll whether or
-    /// not their row is on screen.
+    /// not painted contributes nothing to the scene, and the toolkit has no
+    /// equivalent at all — its persistent editors are widgets that exist and
+    /// are repositioned by `updateEditorGeometries()` on every scroll whether or not their row is on
+    /// screen.
     ///
     /// An editor whose cell the model no longer edits is **dropped from the
     /// answer** rather than painted against a stale seed: a model can turn a
@@ -1626,7 +1618,7 @@ impl GridEditState {
 pub struct OpenCell {
     /// The editor itself — its index, seed, form, persistence and parked text.
     pub editor: OpenEditor,
-    /// The model's `Qt::EditRole` answer for that cell, re-asked this frame.
+    /// The model's `EditRole` answer for that cell, re-asked this frame.
     pub edit: CellEdit,
     /// Whether this editor holds the shared inline field, and so the caret,
     /// the selection and the IME preedit.
@@ -1851,7 +1843,7 @@ mod tests {
             state.begin(at, &text(CellKind::Int, "7"));
             use_text_edit_state("t.refuse").set_text("999".to_string());
             assert!(state.is_dirty(), "the buffer differs from the seed");
-            // This is the divergence from Qt: `setModelData` returns void, so
+            // This is the divergence from the toolkit: `setModelData` returns void, so
             // there a rejected value closes the editor and the typing is gone.
             assert_eq!(
                 state.commit_with(|_, _| false),
@@ -2010,7 +2002,8 @@ mod tests {
         with_owner(|| {
             let state = GridEditState::new("t.self");
             // One editable cell in the whole model: a full lap comes back to
-            // it, which is what Qt's Tab does in a single-editable-cell view.
+            // it, which is what the toolkit's Tab does in a
+            // single-editable-cell view.
             let only = CellIndex::new(1, 1);
             assert!(state.advance(
                 only,
@@ -2079,9 +2072,9 @@ mod tests {
             assert_eq!(state.state(), EditState::Value(CellValue::Bool(true)));
             assert!(state.is_dirty(), "flipped away from the seed");
 
-            // Past Qt: `editorEvent` calls `setModelData` on the click, so a
-            // mis-click on a Qt check column is already committed. Escape
-            // reverts here.
+            // Past the toolkit: `editorEvent` calls `setModelData` on the click, so a mis-click on
+            // a toolkit check column is already committed. Escape reverts
+            // here.
             state.cancel();
             assert_eq!(state.focused(), None);
             assert_eq!(state.state(), EditState::Closed);
@@ -2132,7 +2125,7 @@ mod tests {
                 "selecting preserves the domain — an option list is part of \
                  the value's identity"
             );
-            // Past Qt: `QComboBox::setCurrentIndex` accepts an out-of-range
+            // Past the toolkit: `setCurrentIndex` accepts an out-of-range
             // index by silently clearing the selection.
             assert!(!state.select(2), "past the end is refused, not cleared");
             assert!(!state.select(usize::MAX));
@@ -2171,8 +2164,8 @@ mod tests {
             assert!(state.step(-2));
             assert_eq!(state.state(), EditState::Value(CellValue::Int(40)));
 
-            // A half-typed buffer is not stepped from: Qt's spin box would step
-            // from whatever its validator last accepted.
+            // A half-typed buffer is not stepped from: the toolkit's spin box
+            // would step from whatever its validator last accepted.
             use_text_edit_state("t.step").set_text("4-".to_string());
             assert!(!state.step(1));
             assert_eq!(state.text(), "4-", "the user's text is left alone");
@@ -2368,7 +2361,7 @@ mod tests {
                 OpenOutcome::Opened
             );
             use_text_edit_state("t.p.escape").set_text("scribble".to_string());
-            // Past Qt: `QAbstractItemView::closeEditor` returns early for a
+            // Past the toolkit: `closeEditor` returns early for a
             // persistent editor, so Escape there does nothing at all and the
             // original value cannot be recovered from the view.
             state.cancel();
@@ -2471,8 +2464,8 @@ mod tests {
             assert_eq!(state.editors().len(), 2);
 
             // A trigger on a cell that already has a persistent editor focuses
-            // it rather than reseeding — Qt's `editor()` hands back the widget
-            // its hash already holds.
+            // it rather than reseeding — the toolkit's `editor()` hands back the
+            // widget its hash already holds.
             assert!(state.focus_editor(second));
             use_text_edit_state("t.p.replace").set_text("edited".to_string());
             assert!(state.focus_editor(kept));

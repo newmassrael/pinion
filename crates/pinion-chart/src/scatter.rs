@@ -251,7 +251,7 @@ impl ScatterChart {
     }
 
     /// Plot the **y**-axis logarithmically in base 10 (R1528) — the scatter
-    /// chart's leg of Qt's `QLogValueAxis`; see
+    /// chart's leg of the toolkit's log value axis; see
     /// [`LineChart::y_log`](crate::LineChart::y_log) for the whole contract.
     #[must_use]
     pub fn y_log(self) -> Self {

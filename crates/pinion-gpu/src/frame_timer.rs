@@ -87,7 +87,7 @@ impl GpuFrameClock {
 /// submits and moves on, and a later frame harvests the result when it
 /// happens to be ready. A harvested reading therefore describes a recent
 /// frame, not the one just painted. Every GPU profiler works this way
-/// (Unreal's `stat gpu` included); the alternative is not "fresher
+/// (the engine's `stat gpu` included); the alternative is not "fresher
 /// numbers" but "different numbers", because the measurement would have
 /// changed what it measured.
 ///

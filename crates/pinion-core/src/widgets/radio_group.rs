@@ -5,7 +5,7 @@
 //! had to call [`crate::widgets::radio::Radio::set_selected`] on
 //! the other Radios after one was activated). Industry consensus
 //! (HTML `<input type="radio" name="...">`, Material `RadioGroup`,
-//! `SwiftUI` `Picker`, Qt `QButtonGroup`) treats mutual exclusion as
+//! `SwiftUI` `Picker`, the toolkit button group) treats mutual exclusion as
 //! framework-owned; pinion now matches.
 //!
 //! `RadioGroup` owns N [`Radio`] instances and provides indexed

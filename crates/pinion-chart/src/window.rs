@@ -3,14 +3,12 @@
 //!
 //! ## What already existed, and what did not
 //!
-//! A window over the data has been here since the R1357 brush: [`Brush`]
-//! resolves a `(low, high)` fraction pair onto the data extent and a consumer
-//! re-domains the chart with it ([`LineChart::with_x_domain`]). But a brush is
-//! an **overview strip** — a second widget below the plot, dragged by two
-//! thumbs. Nothing could zoom or pan **the plot itself**, which is where
-//! `QtCharts` puts it (`QChart::zoomIn` / `scroll` / `zoomReset`, driven from
-//! `QChartView`) and where d3 puts it (`d3.zoom` on the plot area, then
-//! `transform.rescaleX`).
+//! A window over the data has been here since the R1357 brush: [`Brush`] resolves
+//! a `(low, high)` fraction pair onto the data extent and a consumer re-domains the
+//! chart with it ([`LineChart::with_x_domain`]). But a brush is an **overview strip** — a second
+//! widget below the plot, dragged by two thumbs. Nothing could zoom or pan
+//! **the plot itself**, which is where `the toolkit's charting module` puts it (`zoomIn` / `scroll` / `zoomReset`, driven
+//! from chart view) and where d3 puts it (`d3.zoom` on the plot area, then `transform.rescaleX`).
 //!
 //! The difference is not only which pixels take the gesture. A strip cannot
 //! zoom **about a point**: the reader's cursor is over the sample they care
@@ -220,8 +218,7 @@ impl PlotWindow {
         true
     }
 
-    /// Return to the full extent (`QtCharts`' `zoomReset`). `false` when it was
-    /// already full.
+    /// Return to the full extent (`the toolkit's charting module`' `zoomReset`). `false` when it was already full.
     pub fn reset(&mut self) -> bool {
         if self.is_full() {
             return false;

@@ -28,8 +28,8 @@
 //! * The tick at the period's end is the tick at its start, so a closed axis
 //!   must emit **one** of them or two labels stack at 12 o'clock.
 //!
-//! Qt's `QPolarChart` has none of this, and for a locatable reason: its
-//! angular axis is an ordinary `QValueAxis` — the same class a cartesian
+//! The toolkit's polar chart has none of this, and for a locatable reason: its
+//! angular axis is an ordinary value axis — the same class a cartesian
 //! x-axis uses — so periodicity is not modelled anywhere. A value outside
 //! the range behaves exactly as it does on a cartesian axis, and closing a
 //! radar loop is the caller's job (append the first point again, which puts
@@ -37,30 +37,30 @@
 //!
 //! # And the period cannot be inferred
 //!
-//! [`PolarChart`](crate::PolarChart) **requires** its angular axis rather
-//! than auto-scaling one from the data, which is the opposite of what every
-//! cartesian chart here does. The reason is that a period is a fact about
-//! the *quantity* — a compass has 360 degrees, a week has 7 days, a clock
-//! has 24 hours — and no sample reveals it. Qt auto-scales the angular axis
-//! like any other, so a wind rose whose samples happen to span `10 .. 350`
-//! silently gets a period of 340: every bearing then means something
-//! different, and adding one sample changes what all the others mean.
+//! [`PolarChart`](crate::PolarChart) **requires** its angular axis rather than
+//! auto-scaling one from the data, which is the opposite of what every
+//! cartesian chart here does. The reason is that a period is a fact about the
+//! *quantity* — a compass has 360 degrees, a week has 7 days, a clock has 24
+//! hours — and no sample reveals it. The toolkit auto-scales the angular axis
+//! like any other, so a wind rose whose samples happen to span `10 .. 350` silently
+//! gets a period of 340: every bearing then means something different, and
+//! adding one sample changes what all the others mean.
 //!
 //! # Which conventions are declarations here
 //!
-//! Qt hard-codes two: the angular minimum sits at 12 o'clock and values
-//! increase clockwise. That is the compass convention and it is the right
-//! default, so it is the default here — but a mathematician's polar plot
+//! The toolkit hard-codes two: the angular minimum sits at 12 o'clock and
+//! values increase clockwise. That is the compass convention and it is the
+//! right default, so it is the default here — but a mathematician's polar plot
 //! (zero at 3 o'clock, increasing counter-clockwise) is a normal form that
-//! `QPolarChart` cannot draw at all, so [`origin`](AngularScale::with_origin)
-//! and [`winding`](AngularScale::with_winding) are declarations.
+//! polar chart cannot draw at all, so [`origin`](AngularScale::with_origin) and
+//! [`winding`](AngularScale::with_winding) are declarations.
 //!
-//! A **sector** is the third thing Qt cannot do: `QPolarChart` is always a
-//! full circle, while a gauge over half a turn is an ordinary professional
-//! form. The sweep is therefore a declaration too — and it is what decides
-//! periodicity, by derivation rather than by a second flag: an axis wraps
-//! **iff its sweep closes the circle**, because wrapping a sector would fold
-//! data onto the gap it deliberately leaves.
+//! A **sector** is the third thing the toolkit cannot do: polar chart is
+//! always a full circle, while a gauge over half a turn is an ordinary
+//! professional form. The sweep is therefore a declaration too — and it is
+//! what decides periodicity, by derivation rather than by a second flag: an
+//! axis wraps **iff its sweep closes the circle**, because wrapping a sector
+//! would fold data onto the gap it deliberately leaves.
 
 use core::f32::consts::{PI, TAU};
 
@@ -78,11 +78,11 @@ const CLOSURE_EPSILON: f32 = 1e-5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Winding {
     /// Increasing values run clockwise — the compass convention, and what
-    /// `QPolarChart` hard-codes.
+    /// polar chart hard-codes.
     #[default]
     Clockwise,
     /// Increasing values run counter-clockwise — the mathematical
-    /// convention. `QPolarChart` cannot draw this.
+    /// convention. polar chart cannot draw this.
     CounterClockwise,
 }
 
@@ -123,7 +123,7 @@ pub struct AngularScale {
 }
 
 impl AngularScale {
-    /// A full-turn axis over `period`, in Qt's convention: `period.0` at 12
+    /// A full-turn axis over `period`, in the toolkit's convention: `period.0` at 12
     /// o'clock, increasing clockwise.
     ///
     /// A degenerate or non-finite period is widened to `0.0 ..= 1.0` rather
@@ -148,7 +148,7 @@ impl AngularScale {
 
     /// Move `period.0` to `origin` radians clockwise from 12 o'clock.
     ///
-    /// `QPolarChart` fixes this at 12 o'clock with no accessor.
+    /// polar chart fixes this at 12 o'clock with no accessor.
     #[must_use]
     pub const fn with_origin(mut self, origin: f32) -> Self {
         self.origin = origin;
@@ -171,7 +171,7 @@ impl AngularScale {
     /// so a value outside a sector's period is genuinely off-scale where the
     /// same value on a full turn is merely on the other side.
     ///
-    /// `QPolarChart` is always a full circle, so a gauge is not expressible
+    /// polar chart is always a full circle, so a gauge is not expressible
     /// there.
     #[must_use]
     pub const fn with_sweep(mut self, sweep: f32) -> Self {
@@ -249,8 +249,8 @@ impl AngularScale {
     /// Whether `value` needed wrapping to be placed — i.e. it lies outside
     /// the period and this axis carried it anyway.
     ///
-    /// The report a periodic axis owes its caller. Qt cannot answer it
-    /// because it does not place such a value at all, and a consumer that
+    /// The report a periodic axis owes its caller. The toolkit cannot answer
+    /// it because it does not place such a value at all, and a consumer that
     /// pre-wrapped its own data cannot tell either, having already destroyed
     /// the evidence.
     #[must_use]
@@ -348,8 +348,8 @@ mod tests {
     /// axis a value outside the period is the SAME PLACE as its wrapped
     /// twin, not a value the axis fails to reach.
     ///
-    /// Qt's angular axis is an ordinary `QValueAxis`, so 370 there behaves as
-    /// it would on a cartesian x-axis: out of range, not drawn.
+    /// The toolkit's angular axis is an ordinary value axis, so 370 there
+    /// behaves as it would on a cartesian x-axis: out of range, not drawn.
     #[test]
     fn r1568_a_closed_axis_places_a_value_outside_its_period() {
         let a = compass();
@@ -364,8 +364,8 @@ mod tests {
         let minus = a.angle(-350.0).expect("wrapped");
         assert!((ten - minus).abs() < 1e-5, "-350 is 10: {ten} vs {minus}");
 
-        // The wrap is REPORTED, which neither Qt nor a caller that pre-modded
-        // its own data can answer.
+        // The wrap is REPORTED, which neither the toolkit nor a caller that
+        // pre-modded its own data can answer.
         assert!(!a.wrapped(10.0));
         assert!(a.wrapped(370.0));
         assert!(a.wrapped(-350.0));
@@ -397,9 +397,9 @@ mod tests {
         assert!(compass().defines(370.0));
     }
 
-    /// ★ The compass convention is the default and it is Qt's — north at the
-    /// top, increasing clockwise — while the mathematical convention, which
-    /// `QPolarChart` cannot draw at all, is one call away.
+    /// ★ The compass convention is the default and it is the toolkit's — north
+    /// at the top, increasing clockwise — while the mathematical convention,
+    /// which polar chart cannot draw at all, is one call away.
     #[test]
     fn r1568_the_convention_is_a_declaration_not_a_hard_coded_frame() {
         let a = compass();

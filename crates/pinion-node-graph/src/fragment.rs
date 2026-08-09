@@ -10,42 +10,38 @@
 //! instance, the whole transitive closure of definitions it depends on. Lift
 //! only the nodes and you have copied a group instance that points at nothing.
 //!
-//! So a [`Fragment`] carries a whole [`Document`]: its root holds the copied
-//! nodes and its definitions hold that closure. That is not an implementation
-//! convenience — it is what makes a fragment answerable. Every question you can
-//! ask a document you can ask a fragment: what is in it, what does it depend on,
-//! does it satisfy the invariants, what would it evaluate to. Blender's clipboard
-//! is a `.blend` file written to the temp directory (`copybuffer_nodes.blend`,
-//! measured at `8cf50599`), so the only thing that can be done with it is a
-//! paste.
+//! So a [`Fragment`] carries a whole [`Document`]: its root holds the copied nodes and its
+//! definitions hold that closure. That is not an implementation convenience —
+//! it is what makes a fragment answerable. Every question you can ask a
+//! document you can ask a fragment: what is in it, what does it depend on,
+//! does it satisfy the invariants, what would it evaluate to. The DCC's
+//! clipboard is a `.blend` file written to the temp directory (`copybuffer_nodes.blend`, measured at
+//! `8cf50599`), so the only thing that can be done with it is a paste.
 //!
 //! # The cut is named
 //!
 //! A fragment also records the boundary it was cut from — the values that used
-//! to cross its edge, in the same producer-keyed form
-//! [`pinion_graph::group::InterfaceSocket`] uses for a group interface, because
-//! it is the same fact. Blender's `node_copy_local` copies a link only when both
-//! of its ends are selected and does not record the others in any form; a user
-//! who copies the middle of a chain is told nothing about the two wires that were
-//! severed.
+//! to cross its edge, in the same producer-keyed form [`pinion_graph::group::InterfaceSocket`] uses for a group
+//! interface, because it is the same fact. The DCC's `node_copy_local` copies a link only
+//! when both of its ends are selected and does not record the others in any
+//! form; a user who copies the middle of a chain is told nothing about the two
+//! wires that were severed.
 //!
-//! Recording them is also what lets a paste **restore** them
-//! ([`Crossings::KeepInbound`]). Blender has that as `keep_inputs`, a boolean on
-//! `NODE_OT_duplicate` — and *only* there: `NODE_OT_clipboard_paste` declares one
-//! property, `offset`, so pasting into the tree you copied from cannot re-feed
-//! the copies.
+//! Recording them is also what lets a paste **restore** them ([`Crossings::KeepInbound`]). The DCC
+//! has that as `keep_inputs`, a boolean on `NODE_OT_duplicate` — and *only* there: `NODE_OT_clipboard_paste` declares one
+//! property, `offset`, so pasting into the tree you copied from cannot re-feed the
+//! copies.
 //!
 //! # Why only the inbound crossings come back
 //!
-//! Blender has `keep_inputs` and no `keep_outputs`, and says nowhere why. The
-//! reason is a property of the model rather than a preference: an output may feed
-//! any number of consumers, so reproducing an **inbound** crossing adds a link
-//! and takes nothing away; an input takes at most one link, so reproducing an
+//! The DCC has `keep_inputs` and no `keep_outputs`, and says nowhere why. The reason is a property
+//! of the model rather than a preference: an output may feed any number of
+//! consumers, so reproducing an **inbound** crossing adds a link and takes
+//! nothing away; an input takes at most one link, so reproducing an
 //! **outbound** crossing would have to displace the link already feeding that
 //! consumer — the copy would steal the original's connection. So the outbound
-//! crossings are *published* ([`Fragment::outbound`]) rather than silently
-//! absent, and a caller that wants one anyway has [`Document::connect`], which
-//! reports the displacement.
+//! crossings are *published* ([`Fragment::outbound`]) rather than silently absent, and a caller
+//! that wants one anyway has [`Document::connect`], which reports the displacement.
 //!
 //! # Definitions are matched by content
 //!
@@ -54,20 +50,17 @@
 //! [`Definitions::Share`] matches each carried definition against the
 //! destination's and re-uses one when they agree.
 //!
-//! The match is by **content**, and it is **conservative**: it may fail to notice
-//! that two definitions are the same up to a renumbering (and then adds a
-//! duplicate), and it can never claim two different definitions are one. Blender
-//! errs the other way — `BKE_main_merge` keys candidate matches on the datablock
-//! **name**, and for two local IDs `are_ids_from_different_mains_matching`
-//! returns `true` on the name alone, so pasting a group called `Fresnel` into a
-//! file that already has an unrelated `Fresnel` silently rebinds the pasted
-//! instance to the wrong definition.
+//! The match is by **content**, and it is **conservative**: it may fail to
+//! notice that two definitions are the same up to a renumbering (and then adds
+//! a duplicate), and it can never claim two different definitions are one. The
+//! DCC errs the other way — `BKE_main_merge` keys candidate matches on the datablock
+//! **name**, and for two local IDs `are_ids_from_different_mains_matching` returns `true` on the name alone, so
+//! pasting a group called `Fresnel` into a file that already has an unrelated `Fresnel`
+//! silently rebinds the pasted instance to the wrong definition.
 //!
-//! [`Definitions::Fork`] is the other arm — a deep copy, Blender's
-//! `duplicate(linked=false)`. There it is a *user preference*
-//! (`U.dupflag & USER_DUP_NTREE`), so whether an edit propagates depends on a
-//! setting the person doing the edit cannot see from the gesture; here it is an
-//! argument.
+//! [`Definitions::Fork`] is the other arm — a deep copy, the DCC's `duplicate(linked=false)`. There it is a *user
+//! preference* (`U.dupflag & USER_DUP_NTREE`), so whether an edit propagates depends on a setting the
+//! person doing the edit cannot see from the gesture; here it is an argument.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -257,12 +250,12 @@ impl<K: NodeKind> Fragment<K> {
 /// What an insertion does with the crossings the fragment was cut from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Crossings {
-    /// Leave the copies fed only by what came with them. Blender's
+    /// Leave the copies fed only by what came with them. The DCC's
     /// `keep_inputs = false`, and the only thing its paste can do.
     Drop,
     /// Re-feed each copy from the socket that used to feed its original, where
     /// that socket is still present in the destination tree and still carries
-    /// the same type. Blender's `keep_inputs = true`.
+    /// the same type. The DCC's `keep_inputs = true`.
     ///
     /// Only the inbound crossings: see the module docs for why the outbound ones
     /// cannot come back.
@@ -272,12 +265,12 @@ pub enum Crossings {
 /// What an insertion does with the definitions the fragment carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Definitions {
-    /// Re-use a destination definition whose content agrees, so two instances of
-    /// one group stay two instances of one group. Blender's
-    /// `duplicate(linked=true)`, and what its paste does by name.
+    /// Re-use a destination definition whose content agrees, so two instances
+    /// of one group stay two instances of one group. The DCC's `duplicate(linked=true)`, and what
+    /// its paste does by name.
     Share,
     /// Add every carried definition as a new one, so the copies can be edited
-    /// without touching the originals. Blender's `duplicate(linked=false)`.
+    /// without touching the originals. The DCC's `duplicate(linked=false)`.
     Fork,
 }
 
@@ -514,10 +507,10 @@ impl<K: NodeKind> Document<K> {
     /// restored or not per `crossings`. Everything is decided before the first
     /// mutation, so a refusal leaves the document **untouched**.
     ///
-    /// Blender's paste does the opposite: `node_copy_local` reports an error for
-    /// a node it cannot place, skips it and its links, and carries on — so a
-    /// paste of five nodes containing one illegal group leaves four nodes and a
-    /// message in a report list.
+    /// The DCC's paste does the opposite: `node_copy_local` reports an error for a node it
+    /// cannot place, skips it and its links, and carries on — so a paste of
+    /// five nodes containing one illegal group leaves four nodes and a message
+    /// in a report list.
     ///
     /// # Guarantee
     ///
@@ -551,7 +544,7 @@ impl<K: NodeKind> Document<K> {
 
     /// Copy `selection` beside itself in the same tree.
     ///
-    /// Blender's `NODE_OT_duplicate`, which is exactly a cut and a paste that
+    /// The DCC's `NODE_OT_duplicate`, which is exactly a cut and a paste that
     /// never leave the tree: `offset` is `duplicate_move`'s translation,
     /// `crossings` its `keep_inputs`, and `definitions` its `linked`.
     ///
@@ -996,9 +989,9 @@ struct InsertPlan {
 ///
 /// A fragment preserves node ids, so a container that came along needs no
 /// remapping; one that did not is a reference to a node the fragment does not
-/// hold, and it is **named** rather than silently cleared. Blender's copy path
-/// (`node_copy_local`, then the parent recreation loop) calls `node_detach_node`
-/// in exactly this case and records nothing anywhere.
+/// hold, and it is **named** rather than silently cleared. The DCC's copy path
+/// (`node_copy_local`, then the parent recreation loop) calls `node_detach_node` in exactly this case and
+/// records nothing anywhere.
 fn copy_selection_into<K: NodeKind>(
     content: &mut Document<K>,
     host: &Tree<K>,

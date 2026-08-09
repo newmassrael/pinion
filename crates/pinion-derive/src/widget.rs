@@ -80,7 +80,7 @@
 //!   optional `state_flags(...)` clause; the macro derives a
 //!   single-node `WidgetA11y::access_node` body that matches the
 //!   `Button`-shaped widgets surveyed in the R642 audit
-//!   (`hello-button` / `figma-button-m3` / future `Slider` /
+//!   (`hello-button` / `the design tool-button-m3` / future `Slider` /
 //!   `TextInput`). No inherent `fn access_node` is required when the
 //!   declarative path is taken.
 //! - **Inherent path (escape hatch)** — omit `role` and provide
@@ -495,13 +495,12 @@ fn emit_initial_size_strategy_body(
 /// later reads). Absent → the trait default (empty) stands and the
 /// R1570.2 §5.16 — the `apply_key` body a `<strategy>` names, derived.
 ///
-/// `aria_activate` is `apply_aria_activate(scene, focused, key, Self::tag())`:
-/// Space / Enter activate the control when it holds focus, which is what
-/// WAI-ARIA asks of every operable role and what HTML and Qt both give without
-/// being asked. R1570.2's census found **25** bindings writing exactly that,
-/// byte for byte — mechanical wiring with no opinion in it, which is the
-/// [[three-site-internal-duplication-substrate-lift]] shape at eight times the
-/// threshold.
+/// `aria_activate` is `apply_aria_activate(scene, focused, key, Self::tag())`: Space / Enter activate the control when it holds focus, which
+/// is what WAI-ARIA asks of every operable role and what HTML and the toolkit
+/// both give without being asked. R1570.2's census found **25** bindings
+/// writing exactly that, byte for byte — mechanical wiring with no opinion in
+/// it, which is the [[three-site-internal-duplication-substrate-lift]] shape
+/// at eight times the threshold.
 ///
 /// Emitted as the whole trait method rather than as a body handed to the
 /// forwarding arm, because the two are alternatives: this one needs no

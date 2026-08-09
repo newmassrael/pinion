@@ -90,11 +90,10 @@ pub enum WheelDelta {
     Lines { dx: f32, dy: f32 },
 }
 
-/// (R51.186 §5.45 R55.C.2; crate-home moved here R877) Default
-/// line-height in logical pixels used to convert
-/// [`WheelDelta::Lines`] into pixel offsets. The 16-pixel value
-/// matches the W3C `WheelEvent` default (`devicePixelRatio == 1.0`)
-/// and Chromium / Firefox / Safari on every desktop platform.
+/// (R51.186 §5.45 R55.C.2; crate-home moved here R877) Default line-height in
+/// logical pixels used to convert [`WheelDelta::Lines`] into pixel offsets. The 16-pixel value
+/// matches the W3C `WheelEvent` default (`devicePixelRatio == 1.0`) and an embedded browser engine / Firefox
+/// / Safari on every desktop platform.
 ///
 /// R877 — this constant is part of the input-forwarding *contract*:
 /// [`External::wheel`](crate::external::External::wheel) hands `Lines`
@@ -109,8 +108,8 @@ pub enum WheelDelta {
 pub const LINE_HEIGHT_PX: f32 = 16.0;
 
 /// R1533 §5.45 §5.38 — whole-notch accumulator for a **stepped** wheel
-/// consumer: Qt's `QAbstractSliderPrivate::offset_accumulated` /
-/// `QAbstractSpinBoxPrivate::wheelDeltaRemainder`, stated once.
+/// consumer: the toolkit's `offset_accumulated` /
+/// `wheelDeltaRemainder`, stated once.
 ///
 /// [`External::wheel`](crate::external::External::wheel) hands out a
 /// *pixel* delta (`Lines` pre-scaled by [`LINE_HEIGHT_PX`]). A consumer
@@ -127,7 +126,8 @@ pub const LINE_HEIGHT_PX: f32 = 16.0;
 ///
 /// ## The consume verdict (stated here for every stepped consumer)
 ///
-/// A wheel handler answers three ways, and Qt's answers are the right ones:
+/// A wheel handler answers three ways, and the toolkit's answers are the right
+/// ones:
 ///
 /// * **banked** — [`Self::feed`] returned `0`, the motion so far is under one
 ///   notch. **Consume** (`true`). The wheel belongs to the widget the moment
@@ -161,7 +161,7 @@ impl WheelStepper {
     /// positive `delta_px` scrolls *downward*, so a value-increasing consumer
     /// negates.
     ///
-    /// A direction reversal drops the carry first (Qt's
+    /// A direction reversal drops the carry first (the toolkit's
     /// `offset_accumulated = 0` on a sign flip): a user who reverses the wheel
     /// expects the next notch to answer, not to first burn a carry banked the
     /// other way.
@@ -369,7 +369,7 @@ mod tests {
 
     // ─────────────────────────────────────────────────────────────────
     // R1533 §5.45 §5.38 — [`WheelStepper`], the whole-notch accumulator
-    // a stepped wheel consumer needs (Qt `offset_accumulated`).
+    // a stepped wheel consumer needs (the toolkit `offset_accumulated`).
     // ─────────────────────────────────────────────────────────────────
 
     #[test]
@@ -415,8 +415,9 @@ mod tests {
 
     #[test]
     fn r1533_direction_reversal_drops_the_carry() {
-        // Qt's sign-flip reset. Without it the first notch back the other way
-        // has to burn a carry banked in the direction the user just left.
+        // The toolkit's sign-flip reset. Without it the first notch back the
+        // other way has to burn a carry banked in the direction the user just
+        // left.
         let mut s = WheelStepper::new();
         assert_eq!(s.feed(LINE_HEIGHT_PX * 0.9), 0, "0.9 notches banked down");
         assert_eq!(

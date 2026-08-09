@@ -13,17 +13,17 @@
 //! ```text
 //! VirtualSelectExternal::new_multi(N)
 //!     .with_columns(NCOLS)                                // opens the column axis
-//!     .with_behavior(SelectionBehavior::SelectItems)      // Qt setSelectionBehavior
-//!     .with_section_press(SectionPress::Select)           // Qt sectionPressed
+//!     .with_behavior(SelectionBehavior::SelectItems)      // the toolkit setSelectionBehavior
+//!     .with_section_press(SectionPress::Select)           // the toolkit sectionPressed
 //! ```
 //!
-//! * **plain click on a cell** — select that one cell (Qt `SelectItems`,
+//! * **plain click on a cell** — select that one cell (the toolkit `SelectItems`,
 //!   where `hello-grid-multi-select` is `SelectRows`).
 //! * **`Ctrl`-click a cell** — flip that cell, leaving the rest alone.
 //! * **`Shift`-click a cell** — the **rectangle** from the extension origin to
-//!   it (Qt `QItemSelectionRange(anchor, current)`).
-//! * **click a COLUMN header** — select the whole column (Qt
-//!   `QHeaderView::sectionPressed` → `QTableView::selectColumn`), with the same
+//!   it (the toolkit `item selection range(anchor, current)`).
+//! * **click a COLUMN header** — select the whole column (the toolkit
+//!   `sectionPressed` → `selectColumn`), with the same
 //!   three chords. The address is `vtbl#h<col>`, and it reaches
 //!   `select_column` / `toggle_column` / `extend_to_column` because
 //!   `GridSendKey::col()` answers with its column — the derivation R1562 built
@@ -34,7 +34,7 @@
 //!
 //! ## What is new against the eager `hello-cell-select` (R953)
 //!
-//! That binding gave the **eager** `Table` coordinator Qt's `SelectItems`: an
+//! That binding gave the **eager** `Table` coordinator the toolkit's `SelectItems`: an
 //! anchor plus one rectangle. This is the windowed Model/View coordinator, and
 //! three things follow from that:
 //!
@@ -45,7 +45,7 @@
 //!    10 000 × 8 model is *one* band and eleven bytes on the wire, where an
 //!    eager rectangle is bounded by a model small enough to materialise;
 //! 3. the **column** is addressable at all — neither coordinator had that, and
-//!    Qt's third `SelectionBehavior` arm (`SelectColumns`) had no peer here
+//!    the toolkit's third `SelectionBehavior` arm (`SelectColumns`) had no peer here
 //!    until this round.
 //!
 //! ## What the model holds
@@ -59,21 +59,17 @@
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
-//! `scene/click` on `vtbl#h3` reports `cells = [{"rows": [[0, 9999]],
-//! "columns": [[3, 3]]}]` and `column_selection = [[3, 3]]` — Qt's
-//! `selectedColumns()`, which there costs one `QModelIndex` per row to
-//! compute. `Shift`-clicking `vtbl#h5` widens the span to `[[3, 5]]` in the
-//! same eleven bytes. `invoke("select_cell", [4, 2])` puts one cell in, and the
-//! row band shows *partial* — a tri-state Qt's `highlightSections` bool cannot
-//! express. See `tools/r1563_selection_has_two_axes.py`.
+//! `scene/click` on `vtbl#h3` reports `cells = [{"rows": [[0, 9999]], "columns": [[3, 3]]}]` and `column_selection = [[3, 3]]` — the toolkit's `selectedColumns()`, which there costs one
+//! model index per row to compute. `Shift`-clicking `vtbl#h5` widens the span to `[[3, 5]]` in
+//! the same eleven bytes. `invoke("select_cell", [4, 2])` puts one cell in, and the row band shows
+//! *partial* — a tri-state the toolkit's `highlightSections` bool cannot express. See `tools/r1563_selection_has_two_axes.py`.
 //!
 //! ## a11y
 //!
-//! [`windowed_grid_nodes_cells`]: `aria-selected` on the rendered
-//! `gridcell`s, on the `row`s selected as whole records, and on the
-//! `columnheader` of a column selected in every row. Qt has the cell accessor
-//! (`QAccessibleTableCell::isSelected`) and **no header one at all**, so a
-//! fully selected Qt column announces exactly as an unselected one.
+//! [`windowed_grid_nodes_cells`]: `aria-selected` on the rendered `gridcell`s, on the `row`s selected as whole records, and
+//! on the `columnheader` of a column selected in every row. The toolkit has the cell
+//! accessor (`isSelected`) and **no header one at all**, so a fully selected the
+//! toolkit column announces exactly as an unselected one.
 
 use pinion_a11y::{
     AccessNode, WidgetA11y, attach_corner_button, attach_row_headers, windowed_grid_nodes_cells,
@@ -154,8 +150,8 @@ const ALL_COLUMNS: u8 = 0xFF;
 struct CellSnapshot {
     /// Per-row selected-column bitmask, indexed by absolute data row.
     rows: [u8; N],
-    /// Per-column "selected in every row" — Qt `selectedColumns()`, read off
-    /// the coordinator's own O(bands) answer rather than recomputed here by
+    /// Per-column "selected in every row" — the toolkit `selectedColumns()`, read off the
+    /// coordinator's own O(bands) answer rather than recomputed here by
     /// scanning [`Self::rows`] ten thousand times per column.
     columns: [bool; NCOLS],
     /// Per-column "selected in **any** row" — what decides whether a header
@@ -411,10 +407,10 @@ impl WidgetCore for ColumnSelectView {
             VirtualSelectExternal::new_multi(N)
                 .with_columns(NCOLS)
                 .with_behavior(SelectionBehavior::SelectItems)
-                // Qt reaches this through two independent connections to one
-                // `QHeaderView` (`sectionPressed` → select, `sectionClicked` →
-                // sort) with nothing declaring which a given header has. This
-                // grid does not sort, so its sections select — and it says so.
+                // The toolkit reaches this through two independent connections
+                // to one header view (`sectionPressed` → select, `sectionClicked` → sort) with nothing
+                // declaring which a given header has. This grid does not sort,
+                // so its sections select — and it says so.
                 .with_section_press(SectionPress::Select),
         )
     }
@@ -449,11 +445,11 @@ impl WidgetCore for ColumnSelectView {
     }
 
     /// Keyboard selection stays on the **row** axis, delegated to the shared
-    /// `nav_select_key` controller: arrows move the active record, `Ctrl+A`
-    /// takes the model. A two-axis keyboard vocabulary (Qt's `Ctrl+Space` on a
-    /// cell, `Ctrl+Shift+Arrow` growing a rectangle) is a keyboard round, not
-    /// this one — stated here so the pointer and the keyboard are not silently
-    /// assumed to cover the same ground.
+    /// `nav_select_key` controller: arrows move the active record, `Ctrl+A` takes the model. A
+    /// two-axis keyboard vocabulary (the toolkit's `Ctrl+Space` on a cell, `Ctrl+Shift+Arrow` growing
+    /// a rectangle) is a keyboard round, not this one — stated here so the
+    /// pointer and the keyboard are not silently assumed to cover the same
+    /// ground.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -677,7 +673,7 @@ mod tests {
     }
 
     /// A partly selected row's band is neither of the two states a bool has —
-    /// the tri-state Qt's `highlightSections` cannot express.
+    /// the tri-state the toolkit's `highlightSections` cannot express.
     #[test]
     fn r1563_a_partly_selected_row_band_is_neither_state() {
         let theme = pinion_core::theme::Theme::light();

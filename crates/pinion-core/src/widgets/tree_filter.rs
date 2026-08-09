@@ -13,13 +13,13 @@
 //! `query("visible_at.<pos>")` reports the id the view paints at each
 //! filtered position — by construction, the same source of truth.
 //!
-//! This is the canonical proxy-model layer Qt's `QSortFilterProxyModel`
-//! (with `setRecursiveFilteringEnabled(true)`) provides for a tree, the
-//! hierarchical analogue of WPF `CollectionView` / `TanStack` Table's
-//! filtered row model. The *recursion* — path-to-match + auto-expand +
-//! sibling renumbering — is the [`flat_visible_filtered`](crate::widgets::tree_nav::flat_visible_filtered) SSOT in
-//! [`tree_nav`](crate::widgets::tree_nav); this module is the reactive
-//! coordinator + RPC adapter around it, mirroring
+//! This is the canonical proxy-model layer the toolkit's sort filter proxy
+//! model (with `setRecursiveFilteringEnabled(true)`) provides for a tree, the hierarchical analogue of WPF `CollectionView`
+//! / `TanStack` Table's filtered row model. The *recursion* — path-to-match +
+//! auto-expand + sibling renumbering — is the
+//! [`flat_visible_filtered`](crate::widgets::tree_nav::flat_visible_filtered) SSOT in
+//! [`tree_nav`](crate::widgets::tree_nav); this module is the reactive coordinator +
+//! RPC adapter around it, mirroring
 //! [`ViewOrderState`](crate::widgets::view_order::ViewOrderState).
 //!
 //! ## Why a peer of the sort proxies, not a reuse
@@ -63,7 +63,7 @@
 //! this proxy is **node-type agnostic**: it holds a
 //! `Box<dyn Fn(&str) -> Vec<VisibleRow>>` recompute closure that captures the
 //! consumer's retained tree `Signal` and applies its own matcher — a
-//! `QSortFilterProxyModel` holds a pointer to an abstract `sourceModel()`,
+//! sort filter proxy model holds a pointer to an abstract `sourceModel()`,
 //! not a concrete type. The caller bakes two policies into the closure: the
 //! **matcher** (a case-insensitive name search, a kind filter, a glob — like
 //! [`compute_order`](crate::widgets::view_order::compute_order)'s `pass`
@@ -73,7 +73,7 @@
 //! fully-expanded accept-all flattening). The proxy owns only the query
 //! Signal + the memo, so `pinion-core` carries no node-type generics — the
 //! coordinator is one concrete type regardless of the consumer's node type,
-//! exactly as `QSortFilterProxyModel` is one class over any `sourceModel()`.
+//! exactly as sort filter proxy model is one class over any `sourceModel()`.
 
 use std::rc::Rc;
 

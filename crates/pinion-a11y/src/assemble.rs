@@ -88,15 +88,14 @@ pub fn build_access_tree(
 /// R1554 §5.40 §5.39 — set [`AccessState::disabled`](crate::AccessState::disabled)
 /// on every node the §5.39 disabled cascade resolved as disabled.
 ///
-/// **Widening, not replacing** — the opposite of [`stamp_focus_flag`], and for a
-/// reason each way round. Focus has one bearer, so a claim the target does not
-/// name is wrong and is cleared. Disabledness has two independent sources: the
-/// scene's regions (this pass) and the widget's own state enum, which a binding
-/// projects through `AccessState::from_interaction` and which the scene knows
-/// nothing about. So the two are OR-ed. That is also Qt's rule — a
-/// `WA_ForceDisabled` child stays disabled when its parent is re-enabled — and
-/// it is the only combination that cannot announce an inert control as live:
-/// neither source can *deny* the other.
+/// **Widening, not replacing** — the opposite of [`stamp_focus_flag`], and for a reason each
+/// way round. Focus has one bearer, so a claim the target does not name is
+/// wrong and is cleared. Disabledness has two independent sources: the scene's
+/// regions (this pass) and the widget's own state enum, which a binding
+/// projects through `AccessState::from_interaction` and which the scene knows nothing about. So the two
+/// are OR-ed. That is also the toolkit's rule — a `WA_ForceDisabled` child stays disabled
+/// when its parent is re-enabled — and it is the only combination that cannot
+/// announce an inert control as live: neither source can *deny* the other.
 fn stamp_inherited_disabled(nodes: &mut [AccessNode], paint: &Scene) {
     let census = pinion_core::scene_disabled::disabled_census(paint);
     if census.is_empty() {
@@ -393,11 +392,10 @@ mod tests {
 
     #[test]
     fn r1554_the_stamp_widens_and_never_denies() {
-        // The opposite of `stamp_focus_flag`, deliberately. Disabledness has two
-        // independent sources — the scene's regions and the widget's own state
-        // enum, which the scene knows nothing about — so they are OR-ed. Qt's
-        // rule too: a `WA_ForceDisabled` child stays disabled when its parent is
-        // re-enabled.
+        // The opposite of `stamp_focus_flag`, deliberately. Disabledness has two independent
+        // sources — the scene's regions and the widget's own state enum, which
+        // the scene knows nothing about — so they are OR-ed. The toolkit's
+        // rule too: a `WA_ForceDisabled` child stays disabled when its parent is re-enabled.
         assert_eq!(
             disabled_flags(vec![
                 AccessNode::new("outer", AriaRole::Button).with_state(self_disabled()),

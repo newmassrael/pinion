@@ -1,14 +1,12 @@
 //! R1432 §5.35 §5.15 — a native PINCH (magnify) gesture zooms a viewport.
 //!
-//! A `PinchViewport` [`External`] overrides [`External::pinch_gesture`] — the Qt
-//! `QNativeGestureEvent` `ZoomNativeGesture` / macOS `magnify:` peer — and
-//! accumulates the INCREMENTAL magnification of a two-finger trackpad pinch
-//! across the [`GesturePhase::Begin`]`..`[`End`](GesturePhase::End) arc:
-//! `scale *= 1.0 + magnification` per event, clamped to a sane range. The whole
-//! point of the phase is the arc bracket — on [`GesturePhase::Cancel`] the
-//! viewport DISCARDS the in-flight zoom and reverts to the scale it held when
-//! the gesture began, exactly as a preview drops when the fingers lift without
-//! committing.
+//! A `PinchViewport` [`External`] overrides [`External::pinch_gesture`] — the toolkit native gesture event `ZoomNativeGesture` / macOS
+//! `magnify:` peer — and accumulates the INCREMENTAL magnification of a two-finger
+//! trackpad pinch across the [`GesturePhase::Begin`]`..`[`End`](GesturePhase::End) arc: `scale *= 1.0 + magnification` per
+//! event, clamped to a sane range. The whole point of the phase is the arc
+//! bracket — on [`GesturePhase::Cancel`] the viewport DISCARDS the in-flight zoom and reverts to
+//! the scale it held when the gesture began, exactly as a preview drops when
+//! the fingers lift without committing.
 //!
 //! winit surfaces `WindowEvent::PinchGesture` only on macOS / iOS, so the
 //! `scene/pinch_gesture` RPC is the AI-first driver (§2 #2): a headless client
@@ -132,7 +130,8 @@ struct PinchViewport {
     events: u64,
     /// The anchor fraction of the last pinch (`None` before the first).
     anchor: Option<(f32, f32)>,
-    /// The modifiers held on the last pinch (the Qt-parity `Ctrl`-fine-zoom bit).
+    /// The modifiers held on the last pinch (the toolkit-parity `Ctrl`-fine-zoom
+    /// bit).
     modifiers: Modifiers,
 }
 

@@ -2,13 +2,13 @@
 //!
 //! # Why this exists
 //!
-//! [`crate::WindowSpec::display`] lets a binding say *which monitor* a window's
-//! position is measured from, and that declaration needs an **id**. An agent
-//! driving the wire reads one from `scene/displays`; a binding driving its own
-//! UI — a "move panel to…" menu, a layout preset picker, a tear-off that opens
-//! on the monitor under the cursor — had nowhere to read one at all, which
-//! would leave in-process code below Qt (`QGuiApplication::screens()` is
-//! ordinary application API there) while the wire was past it.
+//! [`crate::WindowSpec::display`] lets a binding say *which monitor* a window's position is measured
+//! from, and that declaration needs an **id**. An agent driving the wire reads
+//! one from `scene/displays`; a binding driving its own UI — a "move panel to…" menu, a
+//! layout preset picker, a tear-off that opens on the monitor under the cursor
+//! — had nowhere to read one at all, which would leave in-process code below
+//! the toolkit (`screens()` is ordinary application API there) while the wire was past
+//! it.
 //!
 //! # Shape, and why it is a pull rather than a signal
 //!

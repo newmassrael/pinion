@@ -1,10 +1,10 @@
 //! R1567 — the datum whose middle landmarks are **deliberately unordered**.
 //!
 //! R1553 gave this crate its first datum with extent: a
-//! [`Distribution`](crate::Distribution) occupies a span of the value axis
-//! and carries interior landmarks. A [`Candle`] is the other datum of that
-//! shape — open / high / low / close over one trading session, the value Qt
-//! spells `QCandlestickSet`. The two look alike enough that this crate's own
+//! [`Distribution`](crate::Distribution) occupies a span of the value axis and carries
+//! interior landmarks. A [`Candle`] is the other datum of that shape — open / high
+//! / low / close over one trading session, the value the toolkit spells
+//! candlestick set. The two look alike enough that this crate's own
 //! documentation claimed the candlestick would be the box plot's *second
 //! consumer*.
 //!
@@ -34,25 +34,25 @@
 //! mapped through the value axis — and that is shared where it belongs, in
 //! the paint, not in the datum.
 //!
-//! # What Qt's `QCandlestickSet` cannot say
+//! # What the toolkit's candlestick set cannot say
 //!
 //! * **Nothing is checked.** It is five `qreal`s with `void` setters, so a
 //!   transposed high and low, an open outside the extremes, or a NaN close
 //!   all paint whatever geometry they imply. [`Candle::new`] refuses each and
 //!   names the slot ([`CandlePosition`]).
-//! * **The direction is not a value.** `QCandlestickSeries` carries
+//! * **The direction is not a value.** candlestick series carries
 //!   `increasingColor` and `decreasingColor` — two *paint* properties on the
 //!   series — and the set itself has no accessor at all, so a consumer that
 //!   wants to state the direction re-derives `close > open`, a second
 //!   implementation of the rule the painter already applied. Here
 //!   [`Candle::direction`] is the rule, asked once.
-//! * **A doji has no name.** Qt's documented rule is that the increasing
+//! * **A doji has no name.** the toolkit's documented rule is that the increasing
 //!   colour is used "when the close value is higher than the open value", so
 //!   a session that closed exactly where it opened — the *doji*, the single
 //!   most-read signal in the form — is silently painted as a losing session.
 //!   [`Direction::Doji`] is its own arm.
 //! * **The derived quantities are absent.** The body, the two shadows, the
-//!   range and the change are what a candle is read by, and `QCandlestickSet`
+//!   range and the change are what a candle is read by, and candlestick set
 //!   exposes none of them, so every consumer computes its own.
 
 use std::cmp::Ordering;
@@ -60,9 +60,9 @@ use std::fmt::Write as _;
 
 use crate::ticks::{format_axis_tick, format_time_stamp};
 
-/// Which of a candle's four values a message is about — the names of Qt's
-/// `QCandlestickSet` properties, so a refusal can say *which* slot broke the
-/// ordering.
+/// Which of a candle's four values a message is about — the names of the
+/// toolkit's candlestick set properties, so a refusal can say *which* slot
+/// broke the ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CandlePosition {
     /// The session's first traded price.
@@ -96,11 +96,11 @@ impl std::fmt::Display for CandlePosition {
 
 /// Which way a session went — the fact a candlestick chart exists to show.
 ///
-/// Three arms, where Qt has two colours and no accessor. `QCandlestickSeries`
-/// documents `increasingColor` as the brush used "when the close value is
-/// higher than the open value", which makes the comparison strict and leaves
-/// the equal case to the *other* branch: a Qt doji is painted as a losing
-/// session, and nothing in the API can be asked otherwise.
+/// Three arms, where the toolkit has two colours and no accessor. candlestick
+/// series documents `increasingColor` as the brush used "when the close value is higher than
+/// the open value", which makes the comparison strict and leaves the equal
+/// case to the *other* branch: a toolkit doji is painted as a losing session,
+/// and nothing in the API can be asked otherwise.
 ///
 /// The comparison is exact. A doji is defined by the tick data closing at the
 /// price it opened at, not by closing near it, and a tolerance would make the
@@ -108,7 +108,7 @@ impl std::fmt::Display for CandlePosition {
 /// [`QuantileMethod`](crate::QuantileMethod) makes for naming its definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    /// `close > open` — Qt's `increasingColor` case.
+    /// `close > open` — the toolkit's `increasingColor` case.
     Rising,
     /// `close < open`.
     Falling,
@@ -131,14 +131,13 @@ impl Direction {
     /// encoding.
     ///
     /// The traditional Japanese form draws a rising session hollow and a
-    /// falling one solid, and it predates colour entirely. Qt encodes the
-    /// direction in hue alone (`increasingColor` / `decreasingColor`), so a
-    /// reader with deuteranopia — or a monochrome print, or a screenshot run
-    /// through a grayscale pipeline — is handed a chart whose single most
-    /// important fact has been erased. Carrying the fill as a *declaration*
-    /// rather than a palette choice is what makes the redundancy checkable:
-    /// see [`CandlestickChart::direction_contrast`](crate::CandlestickChart::direction_contrast)
-    /// for the hue half.
+    /// falling one solid, and it predates colour entirely. The toolkit encodes
+    /// the direction in hue alone (`increasingColor` / `decreasingColor`), so a reader with deuteranopia —
+    /// or a monochrome print, or a screenshot run through a grayscale pipeline
+    /// — is handed a chart whose single most important fact has been erased.
+    /// Carrying the fill as a *declaration* rather than a palette choice is
+    /// what makes the redundancy checkable: see
+    /// [`CandlestickChart::direction_contrast`](crate::CandlestickChart::direction_contrast) for the hue half.
     ///
     /// A doji is solid, and its identity does not depend on that: its body
     /// has zero height, so it draws as a line whichever fill it is given.
@@ -195,8 +194,8 @@ impl BodyFill {
 /// Why a [`Candle`] could not be built.
 ///
 /// Every arm names the input that was wrong, because these are all *caller*
-/// errors and a caller cannot fix one it cannot locate. Qt reports none of
-/// them: `QCandlestickSet` accepts any five doubles in any relation.
+/// errors and a caller cannot fix one it cannot locate. The toolkit reports
+/// none of them: candlestick set accepts any five doubles in any relation.
 ///
 /// **No arm carries a non-finite number**, for the reason
 /// [`DistributionError`](crate::DistributionError) records: `NaN != NaN`, so
@@ -214,8 +213,8 @@ pub enum CandleError {
         /// Which slot it was.
         at: CandlePosition,
     },
-    /// `high` is below `low`: the two extremes are transposed. Qt paints the
-    /// resulting inverted wick in silence.
+    /// `high` is below `low`: the two extremes are transposed. The toolkit paints
+    /// the resulting inverted wick in silence.
     ExtremesInverted {
         /// The value given as the session low.
         low: f64,
@@ -282,7 +281,7 @@ impl Candle {
     /// [`CandleError::InstantNotFinite`] or [`CandleError::NotFinite`] naming
     /// the slot; [`CandleError::ExtremesInverted`] when `high < low`; and
     /// [`CandleError::OutsideExtremes`] naming the first of `open` / `close`
-    /// that lies outside them. `QCandlestickSet` performs none of these
+    /// that lies outside them. candlestick set performs none of these
     /// checks and paints the result.
     pub fn new(
         instant: f64,
@@ -414,7 +413,7 @@ impl Candle {
         self.high - self.low
     }
 
-    /// The upper shadow (Qt draws it as the upper half of the wick):
+    /// The upper shadow (the toolkit draws it as the upper half of the wick):
     /// `high - max(open, close)`. Non-negative by construction.
     #[must_use]
     pub fn upper_shadow(&self) -> f64 {
@@ -559,9 +558,10 @@ mod tests {
         assert!((down.change() + 4.0).abs() < 1e-12);
     }
 
-    /// ★ A doji is its own arm. Qt's documented rule uses a strict `>` for
-    /// the increasing colour, so a session that closed exactly where it
-    /// opened is painted as a losing one and nothing can be asked otherwise.
+    /// ★ A doji is its own arm. The toolkit's documented rule uses a strict
+    /// `>` for the increasing colour, so a session that closed exactly where
+    /// it opened is painted as a losing one and nothing can be asked
+    /// otherwise.
     ///
     /// The counterfactual is the pair either side: one tick up is `Rising`
     /// and one tick down is `Falling`, so `Doji` is not "anything near
@@ -596,7 +596,7 @@ mod tests {
     }
 
     /// ★ Every relation the type promises is refused when broken, and the
-    /// refusal NAMES the slot. `QCandlestickSet` has `void` setters and
+    /// refusal NAMES the slot. candlestick set has `void` setters and
     /// checks none of this.
     #[test]
     fn r1567_a_broken_relation_is_refused_by_slot() {
@@ -654,7 +654,7 @@ mod tests {
         assert!(Candle::new(DAY, 7.0, 7.0, 7.0, 7.0).is_ok());
     }
 
-    /// ★ The derived readings a `QCandlestickSet` makes every consumer
+    /// ★ The derived readings a candlestick set makes every consumer
     /// recompute, and their arithmetic identity: the two shadows and the body
     /// partition the range exactly.
     #[test]

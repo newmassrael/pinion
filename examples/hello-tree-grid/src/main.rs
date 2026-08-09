@@ -484,10 +484,9 @@ impl UndoCommand for TreeBatchDelete {
     }
 }
 
-/// R905 §5.52 — rename a set of selected nodes as **one** undo step. Each entry
-/// is `(id, old, new)`; `redo` sets `new`, `undo` restores `old` (both via
-/// [`find_node_mut`]). One command groups the batch — the rename is the Qt
-/// `setData`-on-many shape.
+/// R905 §5.52 — rename a set of selected nodes as **one** undo step. Each
+/// entry is `(id, old, new)`; `redo` sets `new`, `undo` restores `old` (both via [`find_node_mut`]). One command
+/// groups the batch — the rename is the toolkit `setData`-on-many shape.
 struct TreeBatchRename {
     nodes: Signal<Vec<OutlinerNode>>,
     renames: Vec<(String, String, String)>,

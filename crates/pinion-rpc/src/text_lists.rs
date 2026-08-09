@@ -9,30 +9,30 @@
 //! answers that: one row per list, each holding its items in order with the
 //! marker each one was given and where that marker was painted.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has the concept and keeps every part of it in-process:
+//! The toolkit has the concept and keeps every part of it in-process:
 //!
 //! - **Enumeration.** There is no "what lists does this document have"
-//!   accessor. `QTextDocument` exposes `rootFrame()` and block iteration, and
+//!   accessor. text document exposes `rootFrame()` and block iteration, and
 //!   finding the lists means walking every block calling
-//!   `QTextBlock::textList()` and de-duplicating the pointers yourself. Here
+//!   `textList()` and de-duplicating the pointers yourself. Here
 //!   the census IS the answer, and it is answerable from outside the process.
-//! - **Numbering.** `QTextList::itemNumber()` and `itemText()` are C++ calls
-//!   on an object that only exists inside a `QTextDocument`. Neither is
+//! - **Numbering.** `itemNumber()` and `itemText()` are C++ calls
+//!   on an object that only exists inside a text document. Neither is
 //!   reachable from a driver, a test harness or an agent.
-//! - **An unordered marker has no text at all.** Qt's `QTextDocumentLayout`
+//! - **An unordered marker has no text at all.** the toolkit's text document layout
 //!   draws `ListDisc` / `ListCircle` / `ListSquare` as an ellipse or a
 //!   rectangle, so `itemText()` has nothing to return for them and no accessor
 //!   anywhere reports what the reader is looking at. Every marker here is a
 //!   painted string with a tag and a box.
-//! - **Geometry.** Qt computes a marker's position inside
-//!   `QTextDocumentLayout::drawListItem` and discards it; there is no
-//!   per-marker accessor on `QAbstractTextDocumentLayout`. The R1546 rule
+//! - **Geometry.** the toolkit computes a marker's position inside
+//!   `drawListItem` and discards it; there is no
+//!   per-marker accessor on abstract text document layout. The R1546 rule
 //!   applies — the painted extent is published, so "did my marker land in its
 //!   gutter" is a question with an answer.
 //! - **The fallback is named.** An upper-roman item past 3999 has no roman
-//!   form; Qt answers `"?"`. CSS Counter Styles Level 3 says render through
+//!   form; the toolkit answers `"?"`. CSS Counter Styles Level 3 says render through
 //!   the fallback style, so it reads `4000.` here — and
 //!   [`TextListItemWire::rendered_as`] states which notation actually wrote
 //!   it, so `4000.` in a roman list is distinguishable from `4000.` in a
@@ -102,23 +102,23 @@ pub struct TextListWire {
     pub parent_tag: Option<String>,
     /// Nesting depth; `0` is a top-level list.
     pub level: u8,
-    /// The declared marker vocabulary — Qt `QTextListFormat::style()`.
+    /// The declared marker vocabulary — the toolkit `style()`.
     pub style: String,
-    /// The counter value of the first item — Qt `setStart`, HTML `<ol start>`.
+    /// The counter value of the first item — the toolkit `setStart`, HTML `<ol start>`.
     pub start: i32,
-    /// Text before each counter — Qt `numberPrefix()`.
+    /// Text before each counter — the toolkit `numberPrefix()`.
     pub number_prefix: String,
     /// Text after each counter, RESOLVED: the declared suffix, or the style's
     /// default when none was declared.
     pub number_suffix: String,
-    /// Whether [`Self::number_suffix`] came from the style rather than from a
-    /// declaration. Qt spells this distinction as a null `QString` versus an
-    /// empty one, which no serialization can carry.
+    /// Whether [`Self::number_suffix`] came from the style rather than from a declaration. The
+    /// toolkit spells this distinction as a null string versus an empty one,
+    /// which no serialization can carry.
     pub suffix_is_default: bool,
     /// The gutter each item reserves for its marker, and how far a list nested
-    /// in this one is inset — px, unlike Qt's `indent()` multiplier.
+    /// in this one is inset — px, unlike the toolkit's `indent()` multiplier.
     pub indent_px: u32,
-    /// How many items the list holds — Qt `QTextList::count()`.
+    /// How many items the list holds — the toolkit `count()`.
     pub count: u32,
     /// The list container's window-absolute box, or `null` before layout has
     /// placed it.
@@ -142,14 +142,14 @@ pub struct TextListItemWire {
     /// The painted marker's own paint tag, when the marker was painted as a
     /// node. `null` for an item whose marker some other composition drew.
     pub marker_tag: Option<String>,
-    /// 1-based position among the list's items — Qt `itemNumber() + 1`, and
-    /// what `aria-posinset` announces.
+    /// 1-based position among the list's items — the toolkit `itemNumber() + 1`, and what `aria-posinset`
+    /// announces.
     pub position: u32,
     /// The counter value the item was numbered with: the list's `start` plus
     /// its offset. Differs from [`Self::position`] exactly when `start` is not
     /// 1, which is the case a caller must be able to tell apart.
     pub ordinal: i32,
-    /// The marker as painted — Qt `itemText()`, which has no answer at all for
+    /// The marker as painted — the toolkit `itemText()`, which has no answer at all for
     /// the unordered styles.
     pub marker: String,
     /// The style whose notation produced [`Self::marker`], after the CSS range
@@ -375,8 +375,8 @@ mod tests {
         assert!(list.items.iter().all(|i| !i.fell_back));
     }
 
-    /// The painted marker's box is published — the thing Qt computes inside a
-    /// private layout and throws away.
+    /// The painted marker's box is published — the thing the toolkit computes
+    /// inside a private layout and throws away.
     #[test]
     fn a_markers_painted_box_is_published() {
         let scene = painted(&[("a", Some(0))], &ListFormat::bulleted());
@@ -402,9 +402,9 @@ mod tests {
         assert_eq!(collect_lists(&scene)[0].start, 5);
     }
 
-    /// The CSS fallback is REPORTED, so `4000.` in a roman list is
-    /// distinguishable from `4000.` in a decimal one — which Qt's `"?"`
-    /// discards and a bare marker string cannot express.
+    /// The CSS fallback is REPORTED, so `4000.` in a roman list is distinguishable
+    /// from `4000.` in a decimal one — which the toolkit's `"?"` discards and a bare
+    /// marker string cannot express.
     #[test]
     fn a_fallen_back_marker_names_the_notation_that_wrote_it() {
         let scene = painted(

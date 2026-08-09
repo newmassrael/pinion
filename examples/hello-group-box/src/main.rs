@@ -1,12 +1,12 @@
-//! `hello-group-box` — R1554 §5.39 §5.50 §5.40: Qt `QGroupBox`, and the
+//! `hello-group-box` — R1554 §5.39 §5.50 §5.40: the toolkit group box, and the
 //! **inherited-disabled** scene declaration it is the first consumer of.
 //!
-//! Three real checkboxes. The first is the group's title checkbox — Qt's
-//! `setCheckable(true)` gate — and the other two live inside the group's
-//! content region. Clearing the gate puts ONE flag
-//! ([`LayoutStyle::with_disabled`](pinion_core::style::LayoutStyle::with_disabled))
-//! on that region, and everything else follows from the §5.39 cascade with no
-//! further code in this binding:
+//! Three real checkboxes. The first is the group's title checkbox — the
+//! toolkit's `setCheckable(true)` gate — and the other two live inside the group's content
+//! region. Clearing the gate puts ONE flag
+//! ([`LayoutStyle::with_disabled`](pinion_core::style::LayoutStyle::with_disabled)) on that region, and
+//! everything else follows from the §5.39 cascade with no further code in this
+//! binding:
 //!
 //! * the two inner checkboxes leave the Tab order,
 //! * a click aimed at either of them resolves to the region instead,
@@ -14,18 +14,18 @@
 //!   `scene/access`,
 //! * their ink fades by the Material 3 disabled token — the same ink a
 //!   self-disabled checkbox gets from its own state layer,
-//! * `scene/disabled` answers **which** node disabled them, which Qt has no
+//! * `scene/disabled` answers **which** node disabled them, which the toolkit has no
 //!   accessor for at all,
 //! * `focus/set` on either answers `tag_disabled` naming the gate's region,
-//!   where Qt's `QWidget::setFocus()` is a silent no-op.
+//!   where the toolkit's `setFocus()` is a silent no-op.
 //!
 //! What this binding does NOT contain is the interesting part: no per-widget
 //! disabled bookkeeping, no Tab-order list, no `aria-disabled` plumbing, and no
 //! second copy of the fade. The gate is `checked`; the rest is derived.
 //!
 //! Keyboard: <kbd>Space</kbd> toggles the focused checkbox; <kbd>Alt</kbd>+`A`
-//! reaches the group through the `&` in its title (R1543), exactly as Qt's
-//! `QGroupBox` title mnemonic does.
+//! reaches the group through the `&` in its title (R1543), exactly as the
+//! toolkit's group box title mnemonic does.
 
 use pinion_a11y::{AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
@@ -94,7 +94,7 @@ fn view(state: &States, _frame: &Frame) -> Scene {
 
     let group = view_group_box(
         GROUP_TAG,
-        // Qt accepts the same `&` marker in a group-box title.
+        // The toolkit accepts the same `&` marker in a group-box title.
         "&Advanced",
         Some(GroupBoxCheck {
             checked: gated_on,
@@ -261,7 +261,7 @@ impl WidgetA11y for GroupBoxApp {
         out.push(
             AccessNode::new(GROUP_TAG, AriaRole::Group)
                 // ARIA: the gate is the control that governs the region, which
-                // is what `aria-controls` says. Qt's checkable QGroupBox
+                // is what `aria-controls` says. The toolkit's checkable group box
                 // publishes no such relation.
                 .with_name("Advanced"),
         );

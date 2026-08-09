@@ -40,14 +40,15 @@
 //! the checkbox, the slider and the table rows already share, so a switch's
 //! hover weight cannot drift from a checkbox's.
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has **no switch widget at all**. `QCheckBox` is the checkbox, and every
-//! Qt application that wants a switch either subclasses `QAbstractButton` and
-//! paints it (the recipe in Qt's own forums) or uses QML's `Switch`, which is a
-//! different toolkit. So this is not parity — it is the floor Qt does not have,
-//! and the twelve hand-rolled consumers here are the same tax a Qt codebase
-//! pays, made visible because they are all in one tree.
+//! The toolkit has **no switch widget at all**. check box is the checkbox, and
+//! every the toolkit application that wants a switch either subclasses
+//! abstract button and paints it (the recipe in the toolkit's own forums) or
+//! uses the toolkit's declarative language's `Switch`, which is a different
+//! toolkit. So this is not parity — it is the floor the toolkit does not have,
+//! and the twelve hand-rolled consumers here are the same tax a toolkit
+//! codebase pays, made visible because they are all in one tree.
 
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene};
 use pinion_core::style::{

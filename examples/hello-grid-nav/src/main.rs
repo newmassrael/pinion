@@ -13,7 +13,7 @@
 //! * selection model — the R746 [`VirtualSelectExternal`], an index-held
 //!   single-select coordinator. The *same* coordinator drives the list and
 //!   the grid: a grid cell click (`vtbl#<row>_<col>`) selects the **row**
-//!   (WAI-ARIA / Qt `QItemSelectionModel` `SelectRows`; the column is
+//!   (WAI-ARIA / the toolkit item selection model `SelectRows`; the column is
 //!   irrelevant to a row selection).
 //! * windowed body + frozen header — the R775
 //!   [`view_virtual_table`],
@@ -106,11 +106,11 @@ const OVERSCAN: usize = 3;
 const STATUS_H: u32 = 40;
 /// Column header labels. R1544 — `Index` is the **read-only** identity
 /// column, `Name` a free-text one and `Score` a bounded integer, so the
-/// grid's `Qt::EditRole` answer differs three ways across three columns.
+/// grid's `EditRole` answer differs three ways across three columns.
 const HEADERS: [&str; NCOLS] = ["Index", "Name", "Score"];
-/// R1544 — the identity column: [`edit_role`] answers `None` for it (Qt:
-/// `flags()` without `Qt::ItemIsEditable`), so no trigger opens an editor
-/// there and every one of its cells is `aria-readonly` to assistive tech.
+/// R1544 — the identity column: [`edit_role`] answers `None` for it (the toolkit: `flags()`
+/// without `ItemIsEditable`), so no trigger opens an editor there and every one of its
+/// cells is `aria-readonly` to assistive tech.
 const INDEX_COL: usize = 0;
 /// R1544 — the free-text column, edited through the built-in
 /// [`text_cell_editor`](pinion_widget_paint::table::text_cell_editor).
@@ -120,7 +120,7 @@ const NAME_COL: usize = 1;
 const SCORE_COL: usize = 2;
 /// R1544 — the `Score` column's inclusive upper bound. A commit past it is
 /// **refused by the model**, which keeps the editor open holding the typed
-/// text — the behaviour Qt's `void setModelData` cannot express.
+/// text — the behaviour the toolkit's `void setModelData` cannot express.
 const SCORE_MAX: i64 = 100;
 /// Paint-root + a11y `grid` tag, and the [`VirtualSelectExternal`] anchor
 /// (cell clicks on `vtbl#<id>_<col>` route here via the R51.42 composite
@@ -140,7 +140,7 @@ const EDIT_KEY: &str = "vtbl_edit";
 /// R1544 — cache key for the committed-cell overlay (the mutable half of an
 /// otherwise synthetic 10 000-row model).
 const OVERLAY_KEY: &str = "vtbl_overlay";
-/// R1544 — cache key for the **current cell** (Qt `currentIndex()`).
+/// R1544 — cache key for the **current cell** (the toolkit `currentIndex()`).
 const CURRENT_KEY: &str = "vtbl_current";
 
 /// R1544 — the projected widget state: the selected data-row index and the
@@ -164,9 +164,8 @@ fn table_style() -> TableStyle {
 ///
 /// The dataset stays a **function** of the index (10 000 rows are never
 /// materialized), and a commit records only the cells that were actually
-/// edited — which is what makes "editable at scale" mean anything. Qt's
-/// `QAbstractItemModel` is the same shape: `data()` computes, `setData()`
-/// records.
+/// edited — which is what makes "editable at scale" mean anything. The
+/// toolkit's abstract item model is the same shape: `data()` computes, `setData()` records.
 ///
 /// Keyed by the flat `row * NCOLS + col`, the same flattening
 /// [`GridEditState::advance`] walks, rather than by a `(row, col)` tuple —
@@ -178,13 +177,13 @@ fn use_overlay() -> Rc<Signal<BTreeMap<usize, String>>> {
         .cache(OVERLAY_KEY, || Signal::new(BTreeMap::new()))
 }
 
-/// R1544 — the **current cell**, Qt's `currentIndex()`.
+/// R1544 — the **current cell**, the toolkit's `currentIndex()`.
 ///
-/// A separate axis from the row *selection* the [`VirtualSelectExternal`]
-/// holds, exactly as in Qt: selection is what is highlighted, current is what
-/// the keyboard acts on — and an edit trigger acts on the current **cell**,
-/// which a row-only cursor cannot name. Moved by the arrow keys and by a
-/// cell click; `None` until the grid is first navigated or clicked.
+/// A separate axis from the row *selection* the [`VirtualSelectExternal`] holds, exactly as in the
+/// toolkit: selection is what is highlighted, current is what the keyboard
+/// acts on — and an edit trigger acts on the current **cell**, which a
+/// row-only cursor cannot name. Moved by the arrow keys and by a cell click;
+/// `None` until the grid is first navigated or clicked.
 fn use_current() -> Rc<Signal<Option<CellIndex>>> {
     Owner::current()
         .expect("use_current requires an active Owner scope")
@@ -208,7 +207,7 @@ fn generated_cell_text(c: CellIndex) -> String {
     }
 }
 
-/// R1544 — the model's `Qt::DisplayRole`: the committed value if this cell
+/// R1544 — the model's `DisplayRole`: the committed value if this cell
 /// has one, else the generated datum.
 fn cell_text(c: CellIndex, overlay: &BTreeMap<usize, String>) -> String {
     overlay
@@ -218,7 +217,7 @@ fn cell_text(c: CellIndex, overlay: &BTreeMap<usize, String>) -> String {
 }
 
 /// R1544 — which editor a column opens, or `None` when the column is not
-/// editable at all. The single place this grid states its `Qt::ItemIsEditable`
+/// editable at all. The single place this grid states its `ItemIsEditable`
 /// flag, so [`edit_role`] and [`commit_cell`] cannot disagree about it.
 fn column_kind(col: usize) -> Option<CellKind> {
     match col {
@@ -228,7 +227,7 @@ fn column_kind(col: usize) -> Option<CellKind> {
     }
 }
 
-/// R1544 §5.27 — the model's `Qt::EditRole`: what an editor opened on this
+/// R1544 §5.27 — the model's `EditRole`: what an editor opened on this
 /// cell is seeded with, and which editor to open. `None` **is** "not
 /// editable".
 ///
@@ -245,14 +244,13 @@ fn edit_role(c: CellIndex, overlay: &BTreeMap<usize, String>) -> Option<CellEdit
     kind.parse(&cell_text(c, overlay)).map(CellEdit::from)
 }
 
-/// R1544 §5.27 — the model's `setData(index, value, Qt::EditRole)`: parse the
+/// R1544 §5.27 — the model's `setData(index, value, EditRole)`: parse the
 /// editor buffer by the column's kind and record it, or **refuse**.
 ///
-/// Returns `false` for a malformed value and for a `Score` outside
-/// `0..=SCORE_MAX`. A refusal leaves the editor open holding what the user
-/// typed ([`GridEditState::commit_with`]), which is the only state they can
-/// correct it from — Qt's `setModelData` returns `void`, so there the editor
-/// closes and the typing is discarded.
+/// Returns `false` for a malformed value and for a `Score` outside `0..=SCORE_MAX`. A refusal
+/// leaves the editor open holding what the user typed ([`GridEditState::commit_with`]), which is the
+/// only state they can correct it from — the toolkit's `setModelData` returns `void`, so
+/// there the editor closes and the typing is discarded.
 fn commit_cell(index: CellIndex, value: &CellValue) -> bool {
     let Some(kind) = column_kind(index.col) else {
         return false;
@@ -281,16 +279,16 @@ fn commit_cell(index: CellIndex, value: &CellValue) -> bool {
     true
 }
 
-/// R1544 §5.27 — the `Score` column's **editor delegate** (Qt
-/// `QStyledItemDelegate::createEditor` + `setEditorData`): the inline field
+/// R1544 §5.27 — the `Score` column's **editor delegate** (the toolkit
+/// `createEditor` + `setEditorData`): the inline field
 /// with the column's accepted range spelled beside it.
 ///
 /// This is the editor a built-in one cannot be. `text_cell_editor` opens a
 /// field seeded from the model and nothing else, which is right for free
 /// text; a bounded column wants to say what its bound *is*, and saying it in
 /// the editor is the difference between a refused commit that teaches and one
-/// that merely rejects. Qt reaches the same place by returning a
-/// `QSpinBox` from `createEditor`.
+/// that merely rejects. The toolkit reaches the same place by returning a
+/// spin box from `createEditor`.
 ///
 /// It builds its own container rather than wrapping
 /// [`text_cell_editor`](pinion_widget_paint::table::text_cell_editor),
@@ -349,10 +347,10 @@ fn status_bar(
 ) -> Scene {
     let (mw, mh) = scroll.measured_viewport();
     let sel = selected.map_or_else(|| "none".to_string(), |i| i.to_string());
-    // R1544 — the editing latch as text, so `scene/snapshot` alone answers
-    // "which cell has an open editor and what is in it" (§2 #7). Qt has no
-    // public equivalent: `isPersistentEditorOpen` covers only the persistent
-    // kind, and a transient editor's buffer lives inside an opaque QWidget.
+    // R1544 — the editing latch as text, so `scene/snapshot` alone answers "which cell has
+    // an open editor and what is in it" (§2 #7). The toolkit has no public
+    // equivalent: `isPersistentEditorOpen` covers only the persistent kind, and a transient
+    // editor's buffer lives inside an opaque widget.
     let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
     let editing = edit.focused().map_or_else(
         || "none".to_string(),
@@ -415,9 +413,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // *transient* kind, so the answer holds at most one member;
     // `hello-cell-editors` is the consumer of the persistent half.
     let open_cells = edit_state.open_cells(0..N, |i| edit_role(i, &overlay));
-    // Qt `setItemDelegateForColumn`, editing half: the bounded column opens an
-    // editor that states its bound; every other column takes the built-in
-    // field.
+    // The toolkit `setItemDelegateForColumn`, editing half: the bounded column opens an editor that
+    // states its bound; every other column takes the built-in field.
     let pick_editor =
         |col: usize| (col == SCORE_COL).then_some(&score_editor as CellEditorPainter<'_>);
     let editing = (!open_cells.is_empty()).then(|| GridEditing {
@@ -455,8 +452,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             columns: HeaderAxis::labelled(header_from_slice(&HEADERS)),
             rows: no_row_header(),
             decoration: no_decoration,
-            // R1544 — Qt `data(index, Qt::EditRole)` fused with
-            // `flags() & Qt::ItemIsEditable`: the identity column answers
+            // R1544 — the toolkit `data(index, EditRole)` fused with
+            // `flags() & ItemIsEditable`: the identity column answers
             // `None`, which is what makes an editor on it unrepresentable
             // rather than merely unwired.
             edit: |c: CellIndex| edit_role(c, &overlay),
@@ -470,17 +467,17 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     )
 }
 
-/// R1544 — whether `key` is a single printable character, the class Qt's
-/// `AnyKeyPressed` trigger fires on. Named keys (`ArrowDown`, `F2`) are
-/// multi-codepoint, so length alone separates them.
+/// R1544 — whether `key` is a single printable character, the class the
+/// toolkit's `AnyKeyPressed` trigger fires on. Named keys (`ArrowDown`, `F2`) are multi-codepoint,
+/// so length alone separates them.
 fn is_printable(key: &str) -> bool {
     let mut chars = key.chars();
     matches!((chars.next(), chars.next()), (Some(c), None) if !c.is_control())
 }
 
 /// R1544 — the current cell, defaulting to the first cell so a keyboard user
-/// who has not clicked can still start editing (Qt seeds `currentIndex()` the
-/// same way when a view first takes focus).
+/// who has not clicked can still start editing (the toolkit seeds `currentIndex()` the same
+/// way when a view first takes focus).
 fn current_cell() -> CellIndex {
     use_current().get().unwrap_or(CellIndex::new(0, 0))
 }
@@ -527,8 +524,8 @@ fn begin_at_current(trigger: EditTrigger, forward: Option<(&mut Scene, &str, Mod
     if !edit.begin_on(trigger, at, &role) {
         return false;
     }
-    // Qt's editor is a child widget that takes focus; here the request is the
-    // binding's, because `edit_field_keymap`'s contract leaves *where focus
+    // The toolkit's editor is a child widget that takes focus; here the
+    // request is the binding's, because `edit_field_keymap`'s contract leaves *where focus
     // goes* a binding decision.
     pinion_core::focus_request::request(EDIT_FIELD_TAG);
     match forward {
@@ -536,7 +533,7 @@ fn begin_at_current(trigger: EditTrigger, forward: Option<(&mut Scene, &str, Mod
             // The editor just opened with its seed fully selected, so this
             // keystroke replaces it. A key the kind rejects (a letter into an
             // int column) leaves the seed intact and the editor stays open —
-            // Qt's `AnyKeyPressed` opens first and lets the editor filter. The
+            // the toolkit's `AnyKeyPressed` opens first and lets the editor filter. The
             // key is consumed either way: it opened an editor, so letting it
             // fall through to navigation would move the cursor as well.
             let _ = pinion_core::forward_key_to_field(scene, EDIT_FIELD_TAG, key, modifiers);
@@ -548,7 +545,7 @@ fn begin_at_current(trigger: EditTrigger, forward: Option<(&mut Scene, &str, Mod
 
 /// R1544 — the keyboard while an editor is open.
 ///
-/// <kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> are Qt's `EditNextItem` /
+/// <kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> are the toolkit's `EditNextItem` /
 /// `EditPreviousItem` end-edit hints: commit, then open an editor on the next
 /// **editable** cell. Everything else goes through the shared
 /// [`edit_field_keymap`] SSOT, which maps <kbd>Enter</kbd> to commit,
@@ -619,8 +616,9 @@ impl WidgetCore for GridNavView {
     /// (selecting the row); `apply_key` drives it from the keyboard.
     fn create_external() -> Box<dyn External> {
         let edit = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG);
-        // R1544 — Qt's own `QAbstractItemView` default plus type-to-replace,
-        // the spreadsheet gesture a grid with a current cell can offer.
+        // R1544 — the toolkit's own abstract item view default plus
+        // type-to-replace, the spreadsheet gesture a grid with a current cell
+        // can offer.
         edit.set_triggers(EditTriggers::DEFAULT.with(EditTrigger::AnyKeyPressed));
         let current = use_current();
         let overlay = use_overlay();
@@ -633,10 +631,10 @@ impl WidgetCore for GridNavView {
                     return;
                 };
                 let index = CellIndex::new(row, col);
-                // Qt's `SelectedClicked`: a plain click on the cell that was
+                // The toolkit's `SelectedClicked`: a plain click on the cell that was
                 // ALREADY current. The observer runs before the coordinator
-                // moves the selection, so `current` still holds the pre-click
-                // cell — which is the whole reason the hook is offered there.
+                // moves the selection, so `current` still holds the pre-click cell —
+                // which is the whole reason the hook is offered there.
                 let was_current = current.get() == Some(index);
                 let trigger = if event == "DoubleClick" {
                     EditTrigger::DoubleClicked
@@ -723,14 +721,14 @@ impl WidgetCore for GridNavView {
         }
         if focused == Some(TABLE_TAG) {
             match key {
-                // R1544 — the column half of the cursor. Qt's edit triggers
-                // act on `currentIndex()`, which is a CELL: a grid that could
-                // only move between rows had no index to open an editor on.
+                // R1544 — the column half of the cursor. The toolkit's edit
+                // triggers act on `currentIndex()`, which is a CELL: a grid that could only
+                // move between rows had no index to open an editor on.
                 "ArrowLeft" => return move_col(scene, -1),
                 "ArrowRight" => return move_col(scene, 1),
-                // Qt `EditKeyPressed` — F2 on every desktop platform.
+                // The toolkit `EditKeyPressed` — F2 on every desktop platform.
                 "F2" => return begin_at_current(EditTrigger::EditKeyPressed, None),
-                // Qt `AnyKeyPressed` — type-to-replace. The seed is fully
+                // The toolkit `AnyKeyPressed` — type-to-replace. The seed is fully
                 // selected on open, so forwarding the keystroke replaces it.
                 k if is_printable(k) && !modifiers.command_key() => {
                     return begin_at_current(
@@ -810,18 +808,18 @@ impl WidgetA11y for GridNavView {
             &window,
             *selected,
         );
-        // R1544 §5.40 — the same `edit` role the editors open from decides
-        // `aria-readonly`, so a screen-reader user learns the identity column
-        // is fixed instead of discovering it by typing into it. Qt says
-        // nothing here: `QAccessibleTableCell` builds its state from the
-        // view's selection, never from the model's `Qt::ItemIsEditable`.
+        // R1544 §5.40 — the same `edit` role the editors open from decides `aria-readonly`,
+        // so a screen-reader user learns the identity column is fixed instead
+        // of discovering it by typing into it. The toolkit says nothing here:
+        // accessible table cell builds its state from the view's selection,
+        // never from the model's `ItemIsEditable`.
         let overlay = use_overlay().get();
         mark_grid_editability(&mut nodes, TABLE_TAG, &window, 0..NCOLS, |c| {
             edit_role(c, &overlay).is_some()
         });
         // R1555 §5.40 — the open editor is announced with the role its form
-        // has, from the same latch the paint dispatches on. Qt reaches a role
-        // by accident of which widget its factory constructed.
+        // has, from the same latch the paint dispatches on. The toolkit
+        // reaches a role by accident of which widget its factory constructed.
         if let Some(open) = use_grid_edit(EDIT_KEY, EDIT_FIELD_TAG).focused() {
             pinion_a11y::attach_cell_editor(
                 &mut nodes,

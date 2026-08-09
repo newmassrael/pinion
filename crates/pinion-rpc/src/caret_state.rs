@@ -55,11 +55,10 @@
 //!
 //! ## `period_secs` constant
 //!
-//! Echoed back at the RPC surface so agents do not have to hard-code
-//! the cross-platform 530 ms blink period that pinion mirrors
-//! (Chromium / Firefox / Safari / Windows-default). Sourced verbatim
-//! from [`CaretBlink::PERIOD_SECS`] so a future tuning round
-//! propagates through the wire automatically.
+//! Echoed back at the RPC surface so agents do not have to hard-code the
+//! cross-platform 530 ms blink period that pinion mirrors (an embedded browser
+//! engine / Firefox / Safari / Windows-default). Sourced verbatim from [`CaretBlink::PERIOD_SECS`]
+//! so a future tuning round propagates through the wire automatically.
 
 use pinion_core::reactive::Owner;
 use pinion_core::widgets::caret_blink::CaretBlink;
@@ -88,7 +87,7 @@ pub struct CaretStateOutcome {
     pub enabled: bool,
     /// Canonical half-period of the blink in seconds. Sourced from
     /// [`CaretBlink::PERIOD_SECS`] (currently `0.530`, matching the
-    /// Chromium / Firefox / Safari / Windows default UX).
+    /// embedded browser engine / Firefox / Safari / Windows default UX).
     pub period_secs: f32,
 }
 

@@ -924,13 +924,12 @@ pub(crate) fn legend_row(
 /// merely re-spaced the scale's own stops would misreport exactly the case the
 /// diverging map exists to fix.
 ///
-/// Superior to a pixel-only colour-scale widget (the Qt `QCPColorScale` shape)
-/// in the way that matters here: the strip is a real continuous
-/// [`Gradient`], so it renders as a smooth ramp,
-/// AND its stops ride in the scene as data — an introspecting client reads the
-/// offsets and colours out of `scene/snapshot` and can verify a mark's fill
-/// against the published ramp without sampling a single pixel (§2 #7).
-/// Which way a [`color_bar`]'s VALUE axis runs (R1439).
+/// Superior to a pixel-only colour-scale widget (the toolkit CP color scale
+/// shape) in the way that matters here: the strip is a real continuous [`Gradient`],
+/// so it renders as a smooth ramp, AND its stops ride in the scene as data —
+/// an introspecting client reads the offsets and colours out of `scene/snapshot` and can
+/// verify a mark's fill against the published ramp without sampling a single
+/// pixel (§2 #7). Which way a [`color_bar`]'s VALUE axis runs (R1439).
 ///
 /// Not a cosmetic rotation. A horizontal bar's value axis runs left→right,
 /// which is also the direction [`Gradient::horizontal`] paints, so a stop's

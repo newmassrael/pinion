@@ -7,9 +7,9 @@
 //! [`LayoutStyle`](crate::style::LayoutStyle) carried four interaction
 //! declarations before this round — `pointer_transparent` (R705), `focusable`
 //! (R1020), `drop_target` (R1080), `cursor` (R1196) — and every one of them
-//! describes the node that carries it and nothing else. Qt's
+//! describes the node that carries it and nothing else. The toolkit's
 //! [`QWidget::setEnabled`] is the one that does not: a disabled widget makes
-//! its whole subtree non-interactive, which is why `QGroupBox` can gate a
+//! its whole subtree non-interactive, which is why group box can gate a
 //! panel of controls from one checkbox in its title and `<fieldset disabled>`
 //! can gate a form. pinion had no way to state it, and consequently no group
 //! container at all (`grep -rn GroupBox` over 29 crates and 206 examples
@@ -23,10 +23,9 @@
 //!
 //! ## The cascade is a derivation, not a write into the descendants
 //!
-//! Qt implements the same inheritance by **mutating** it: `setEnabled(false)`
-//! runs `QWidgetPrivate::setEnabled_helper` recursively, setting `WA_Disabled`
-//! on every descendant widget, and `setEnabled(true)` walks them again taking
-//! it back except where `WA_ForceDisabled` says the child disabled itself. That
+//! The toolkit implements the same inheritance by **mutating** it: `setEnabled(false)` runs
+//! `setEnabled_helper` recursively, setting `WA_Disabled` on every descendant widget, and `setEnabled(true)` walks them
+//! again taking it back except where `WA_ForceDisabled` says the child disabled itself. That
 //! is N copies of one fact, kept in step by remembering to re-run the helper —
 //! on reparenting, most of all.
 //!
@@ -62,7 +61,7 @@
 //!
 //! Four node kinds carry content the cascade cannot fade — an `Image`'s
 //! pixels, an `External`'s backend surface, an `ImmediateModeNode`'s driver
-//! output, a `TextGrid`'s buffer. Qt cannot grey a `QOpenGLWidget` either.
+//! output, a `TextGrid`'s buffer. The toolkit cannot grey a GL widget either.
 //! What the cascade does instead of guessing is **publish** it: the census
 //! reports each disabled node's [`DisabledInk`], so "declared disabled, ink
 //! unchanged" is a fact an agent reads rather than a surprise it discovers.
@@ -114,20 +113,18 @@ impl DisabledInk {
 
 /// One disabled node in a resolved paint scene, and *why* it is disabled.
 ///
-/// The `why` is the half Qt has no accessor for. `QWidget::isEnabled()` answers
-/// a bool; `isEnabledTo(ancestor)` answers a bool about an ancestor the caller
-/// must already have picked; `testAttribute(WA_ForceDisabled)` distinguishes
-/// self from inherited but names nobody. Which ancestor greyed a control is,
-/// in Qt, a `parentWidget()` walk in a debugger.
+/// The `why` is the half the toolkit has no accessor for. `isEnabled()` answers a bool;
+/// `isEnabledTo(ancestor)` answers a bool about an ancestor the caller must already have picked;
+/// `testAttribute(WA_ForceDisabled)` distinguishes self from inherited but names nobody. Which ancestor
+/// greyed a control is, in the toolkit, a `parentWidget()` walk in a debugger.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisabledNode {
     /// The disabled node's own tag. Untagged disabled nodes are not reported —
     /// they cannot be addressed, so a row for one would name nothing.
     pub tag: String,
-    /// The node carries its own
-    /// [`disabled`](crate::style::LayoutStyle::disabled) declaration — Qt's
-    /// `WA_ForceDisabled`. True and [`Self::declared_by`] `Some` together mean
-    /// a self-disabled node that also sits inside a disabled region, so
+    /// The node carries its own [`disabled`](crate::style::LayoutStyle::disabled)
+    /// declaration — the toolkit's `WA_ForceDisabled`. True and [`Self::declared_by`] `Some` together mean a
+    /// self-disabled node that also sits inside a disabled region, so
     /// re-enabling the region leaves this one disabled.
     pub self_declared: bool,
     /// The nearest **strict ancestor** that declared the region this node is

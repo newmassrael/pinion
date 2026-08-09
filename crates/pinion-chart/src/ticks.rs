@@ -3,7 +3,7 @@
 //! [`nice_ticks`] snaps the tick spacing to a human-friendly
 //! `1 / 2 / 5 x 10^n` step — the "nice numbers" quantiser Heckbert
 //! popularised (Graphics Gems, 1990) — but derives that step from the
-//! **raw** data extent, the way Qt's `QValueAxis::applyNiceNumbers` and
+//! **raw** data extent, the way the toolkit's `applyNiceNumbers` and
 //! d3's `ticks` do, rather than from Heckbert's *pre-rounded* range.
 //! Pre-rounding inflates the step (extent 11 rounds to 20, giving a step
 //! of 5 and stretching the axis to `0..15`); the raw extent keeps it
@@ -67,9 +67,9 @@ pub fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
         reason = "target is a small tick count; the f64 conversion is exact for any realistic value"
     )]
     let denom = (target - 1) as f64;
-    // Step from the RAW extent (Qt `applyNiceNumbers` / d3), not from a
-    // pre-rounded range: pre-rounding 11 -> 20 would inflate the step and
-    // stretch the axis to 0..15; the raw extent keeps it tight at 0..12.
+    // Step from the RAW extent (the toolkit `applyNiceNumbers` / d3), not from a pre-rounded
+    // range: pre-rounding 11 -> 20 would inflate the step and stretch the axis
+    // to 0..15; the raw extent keeps it tight at 0..12.
     let spacing = nice_step((hi - lo) / denom);
     if !spacing.is_finite() || spacing <= 0.0 {
         return vec![lo, hi];
@@ -269,7 +269,7 @@ fn log_exponent(value: f64, base: f64) -> f64 {
 
 /// Snap a positive data extent outward to whole powers of `base` — the log
 /// axis's [`nice_ticks`] equivalent, so the outer gridlines land on the plot
-/// edges (Qt's `applyNiceNumbers`, in the log domain).
+/// edges (the toolkit's `applyNiceNumbers`, in the log domain).
 ///
 /// A collapsed or out-of-contract extent yields the unit decade
 /// `(1, base)`, matching [`LogScale`](crate::LogScale)'s own fallback so the
@@ -724,8 +724,8 @@ pub enum TickFormat {
     /// Time axis — every label is the finest calendar field that
     /// distinguishes its tick ([`format_time_tick`]).
     Time,
-    /// Categorical axis — every label is the NAME of the slot its tick
-    /// indexes (Qt `QBarCategoryAxis`), so the format carries the list.
+    /// Categorical axis — every label is the NAME of the slot its tick indexes
+    /// (the toolkit bar category axis), so the format carries the list.
     Category(Categories),
 }
 

@@ -119,10 +119,10 @@ pub struct ButtonExternal {
     /// `view_button`'s focus-ring argument — the same External → query →
     /// view channel the hover posture already uses.
     focused: bool,
-    /// R1549 §5.35 — declared press-and-hold repeat cadence: Qt
-    /// `QAbstractButton::setAutoRepeat` + `setAutoRepeatDelay` +
+    /// R1549 §5.35 — declared press-and-hold repeat cadence: the toolkit
+    /// `setAutoRepeat` + `setAutoRepeatDelay` +
     /// `setAutoRepeatInterval` collapsed into one value. `None` — the
-    /// default, matching `QPushButton` — means one activation per press,
+    /// default, matching push button — means one activation per press,
     /// however long it is held.
     repeat: Option<AutoRepeat>,
 }
@@ -138,7 +138,7 @@ impl ButtonExternal {
     }
 
     /// R1549 §5.35 — opt this button into press-and-hold auto-repeat at
-    /// `repeat`'s cadence. The Qt `setAutoRepeat(true)` +
+    /// `repeat`'s cadence. The toolkit `setAutoRepeat(true)` +
     /// `setAutoRepeatDelay` + `setAutoRepeatInterval` triple as one call:
     /// there is no separate enable flag to disagree with the timings,
     /// because a declared cadence *is* the enable.
@@ -153,7 +153,7 @@ impl ButtonExternal {
     }
 
     /// The declared press-and-hold cadence, or `None` for a
-    /// fires-once-per-press button (Qt `autoRepeat()`).
+    /// fires-once-per-press button (the toolkit `autoRepeat()`).
     #[must_use]
     pub const fn auto_repeat_policy(&self) -> Option<AutoRepeat> {
         self.repeat
@@ -213,14 +213,12 @@ impl External for ButtonExternal {
         true
     }
 
-    /// R1549 §5.35 — the declared cadence, gated on the button actually
-    /// being held. Qt keeps `autoRepeat` and `isDown` as two facts and a
-    /// `QBasicTimer` bridging them; here the second fact is the
-    /// statechart's own [`ButtonState::Pressed`], so a repeat that
-    /// outlives its press has nowhere to live. A press that slid off the
-    /// widget is already `Hover` / `Idle` (R741 capture defers the leave
-    /// to the release), and a `Disabled` button answers `None` without a
-    /// disable hook.
+    /// R1549 §5.35 — the declared cadence, gated on the button actually being
+    /// held. The toolkit keeps `autoRepeat` and `isDown` as two facts and a basic timer
+    /// bridging them; here the second fact is the statechart's own [`ButtonState::Pressed`], so a
+    /// repeat that outlives its press has nowhere to live. A press that slid
+    /// off the widget is already `Hover` / `Idle` (R741 capture defers the leave to
+    /// the release), and a `Disabled` button answers `None` without a disable hook.
     fn auto_repeat(&self) -> Option<AutoRepeat> {
         matches!(self.state(), ButtonState::Pressed)
             .then_some(self.repeat)
@@ -431,10 +429,10 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // R1549 §5.35 §5.38 — `QAbstractButton::setAutoRepeat` peer.
+    // R1549 §5.35 §5.38 — `setAutoRepeat` peer.
     // ─────────────────────────────────────────────────────────────
 
-    /// `QPushButton`'s default: one activation per press, however long it
+    /// push button's default: one activation per press, however long it
     /// is held. A button that never declared a cadence answers `None`
     /// whether or not it is down.
     #[test]
@@ -446,9 +444,9 @@ mod tests {
         assert_eq!(b.auto_repeat(), None);
     }
 
-    /// The declared cadence IS the enable — there is no second `autoRepeat`
-    /// bool that could disagree with the timings, which is the pair Qt
-    /// keeps separate.
+    /// The declared cadence IS the enable — there is no second `autoRepeat` bool that
+    /// could disagree with the timings, which is the pair the toolkit keeps
+    /// separate.
     #[test]
     fn declared_cadence_is_the_enable() {
         let policy = AutoRepeat::new(0.25, 0.05);

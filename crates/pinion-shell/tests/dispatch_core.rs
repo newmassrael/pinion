@@ -2632,11 +2632,10 @@ mod r881_middle_gesture_paste_on_release {
 }
 
 mod r882_space_chord_pan {
-    //! R882 §5.35 §5.39 — the Space-hold pan chord at the `ShellCore`
-    //! tier (the Figma / Photoshop hand tool): while Space is held,
-    //! `mouse_pressed_for_window` routes the left press into the
-    //! router's pan channel instead of the widget press arc, and
-    //! `mouse_released_for_window` resolves by the *gesture in flight*
+    //! R882 §5.35 §5.39 — the Space-hold pan chord at the `ShellCore` tier (the design
+    //! tool / the raster editor hand tool): while Space is held, `mouse_pressed_for_window` routes
+    //! the left press into the router's pan channel instead of the widget
+    //! press arc, and `mouse_released_for_window` resolves by the *gesture in flight*
     //! (gesture-capture), not the chord's current state.
     //!
     //! Observability trick: the middle-button paste funnel is the

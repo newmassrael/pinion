@@ -1173,9 +1173,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     pub fn drain_deferred_inputs(&mut self, inputs: &[pinion_rpc::DeferredInput]) -> bool {
         let mut state_changed = false;
         for input in inputs {
-            // R1430 §5.35 §2 #6 — the Qt QTabletEvent scalar axes route through
-            // one dispatcher so this per-input match stays flat as the axis set
-            // grows; see `try_drain_pointer_axis`.
+            // R1430 §5.35 §2 #6 — the toolkit tablet event scalar axes route
+            // through one dispatcher so this per-input match stays flat as the
+            // axis set grows; see `try_drain_pointer_axis`.
             if let Some(changed) = self.try_drain_pointer_axis(input) {
                 state_changed |= changed;
                 continue;
@@ -1344,15 +1344,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         state_changed
     }
 
-    /// R1430 §5.35 §5.15 §2 #2 §2 #6 — dispatch the Qt `QTabletEvent` scalar axes
-    /// (pressure / tilt / twist / tangential / height) off the main per-input
-    /// match: `Some(changed)` when `input` is one of them, `None` otherwise (the
-    /// caller falls through to the general match). A terminal has no hardware pen,
-    /// but each axis is the AI-first out-of-band source (§2 #2): the value rides
-    /// the SAME `InputRouter` the Vello sibling drives (`set_pointer_*_for_window`),
-    /// so a tablet-reactive `External` sees identical delivery on both backends —
-    /// the §2 #6 parity `r1364_5_deferred_input_parity` enforces (it greps this
-    /// file for every `DeferredInput::Pointer*` variant, all named here).
+    /// R1430 §5.35 §5.15 §2 #2 §2 #6 — dispatch the toolkit tablet event
+    /// scalar axes (pressure / tilt / twist / tangential / height) off the
+    /// main per-input match: `Some(changed)` when `input` is one of them, `None` otherwise (the
+    /// caller falls through to the general match). A terminal has no hardware
+    /// pen, but each axis is the AI-first out-of-band source (§2 #2): the
+    /// value rides the SAME `InputRouter` the Vello sibling drives (`set_pointer_*_for_window`), so a
+    /// tablet-reactive `External` sees identical delivery on both backends — the §2
+    /// #6 parity `r1364_5_deferred_input_parity` enforces (it greps this file for every `DeferredInput::Pointer*` variant, all
+    /// named here).
     fn try_drain_pointer_axis(&mut self, input: &pinion_rpc::DeferredInput) -> Option<bool> {
         let changed = match *input {
             pinion_rpc::DeferredInput::PointerPressure { value } => {
@@ -1375,14 +1375,13 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     }
 
     /// R1433 §5.35 §5.15 §2 #2 §2 #6 — dispatch the native trackpad gestures
-    /// (Qt `QNativeGestureEvent`: pinch / rotation / pan) off the main per-input match:
-    /// `Some(changed)` when `input` is one of them, `None` otherwise (the caller
-    /// falls through to the general match). A terminal has no trackpad, but each
-    /// gesture is the AI-first out-of-band source (§2 #2): the value rides the
-    /// SAME `InputRouter` the Vello sibling drives, so a gesture-reactive
-    /// `External` sees identical delivery on both backends — the §2 #6 parity
-    /// `r1364_5_deferred_input_parity` enforces (it greps this file for every
-    /// `DeferredInput::*Gesture` variant, all named here).
+    /// (the toolkit native gesture event: pinch / rotation / pan) off the main
+    /// per-input match: `Some(changed)` when `input` is one of them, `None` otherwise (the caller
+    /// falls through to the general match). A terminal has no trackpad, but
+    /// each gesture is the AI-first out-of-band source (§2 #2): the value
+    /// rides the SAME `InputRouter` the Vello sibling drives, so a gesture-reactive `External`
+    /// sees identical delivery on both backends — the §2 #6 parity `r1364_5_deferred_input_parity`
+    /// enforces (it greps this file for every `DeferredInput::*Gesture` variant, all named here).
     fn try_drain_native_gesture(&mut self, input: &pinion_rpc::DeferredInput) -> Option<bool> {
         let changed = match *input {
             pinion_rpc::DeferredInput::PinchGesture {
@@ -1551,7 +1550,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
 
     /// R1430 §5.35 §2 #2 §2 #6 — the twist peer of
     /// [`Self::drain_pointer_pressure`]: deliver a driven pointer TWIST (W3C
-    /// `PointerEvent.twist` / Qt `QTabletEvent::rotation()`) to the terminal
+    /// `PointerEvent.twist` / the toolkit `rotation()`) to the terminal
     /// backend's router. Always returns `true` (repaint).
     fn drain_pointer_twist(&mut self, twist: f32) -> bool {
         self.core.set_pointer_twist_for_window(
@@ -1562,10 +1561,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         true
     }
 
-    /// R1430 §5.35 §2 #2 §2 #6 — the tangential-pressure peer of
-    /// [`Self::drain_pointer_pressure`]: deliver a driven airbrush finger-wheel
-    /// value (Qt `QTabletEvent::tangentialPressure()`) to the terminal backend's
-    /// router. Always returns `true`.
+    /// R1430 §5.35 §2 #2 §2 #6 — the tangential-pressure peer of [`Self::drain_pointer_pressure`]:
+    /// deliver a driven airbrush finger-wheel value (the toolkit `tangentialPressure()`) to the
+    /// terminal backend's router. Always returns `true`.
     fn drain_pointer_tangential_pressure(&mut self, tangential: f32) -> bool {
         self.core.set_pointer_tangential_pressure_for_window(
             pinion_runtime::DEFAULT_WINDOW,
@@ -1575,10 +1573,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         true
     }
 
-    /// R1430 §5.35 §2 #2 §2 #6 — the height peer of
-    /// [`Self::drain_pointer_pressure`]: deliver a driven pointer HEIGHT (Qt
-    /// `QTabletEvent::z()`) to the terminal backend's router. Always returns
-    /// `true`.
+    /// R1430 §5.35 §2 #2 §2 #6 — the height peer of [`Self::drain_pointer_pressure`]: deliver a driven
+    /// pointer HEIGHT (the toolkit `z()`) to the terminal backend's router.
+    /// Always returns `true`.
     fn drain_pointer_height(&mut self, height: f32) -> bool {
         self.core.set_pointer_height_for_window(
             pinion_runtime::DEFAULT_WINDOW,
@@ -1590,7 +1587,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
 
     /// R1431 §5.35 §2 #2 §2 #6 — the device-kind peer of
     /// [`Self::drain_pointer_pressure`]: deliver a driven pointer KIND (W3C
-    /// `PointerEvent.pointerType` / Qt `QTabletEvent::pointerType()`) to the
+    /// `PointerEvent.pointerType` / the toolkit `pointerType()`) to the
     /// terminal backend's router. Always returns `true`.
     fn drain_pointer_kind(&mut self, kind: pinion_core::PointerKind) -> bool {
         self.core.set_pointer_kind_for_window(
@@ -2404,7 +2401,7 @@ mod tests {
         );
 
         // Past the delay: the press re-activates, and the state machine
-        // ends the frame back in `Pressed` (Up then Down, Qt's arc).
+        // ends the frame back in `Pressed` (Up then Down, the toolkit's arc).
         core.tick_auto_repeat(policy.delay_secs());
         assert_eq!(
             *core.cached_state(),

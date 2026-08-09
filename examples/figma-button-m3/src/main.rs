@@ -1,8 +1,8 @@
-//! `figma-button-m3` — R640 §5.7 reactive Material 3 Filled Button.
+//! `the design tool-button-m3` — R640 §5.7 reactive Material 3 Filled Button.
 //!
 //! R635 landed the binding as a static one-frame snapshot: `read_state`
 //! always returned [`ButtonState::Idle`] and the view fn ignored its
-//! `state` argument, so the binary painted the same Figma Filled /
+//! `state` argument, so the binary painted the same the design tool Filled /
 //! Enabled rendering regardless of pointer events. R640 lifts the
 //! binding onto the [[abstraction-needs-second-consumer]] +
 //! [[ai-first-rpc-introspection-obligation]] reactive substrate
@@ -14,27 +14,27 @@
 //!   / `PointerLeave` / `PointerDown` / `PointerUp`) plus
 //!   `PointerCancel` for touch-revoke parity, so wiring `event_name`
 //!   1:1 with the SCXML transition names is the only widget-side step.
-//! - The [`view`] fn lerps the Figma `#675AA4` fill toward the Material
+//! - The [`view`] fn lerps the design tool `#675AA4` fill toward the Material
 //!   3 hover / pressed / disabled state-layer overlays. The hover
 //!   transition is spring-driven via the same `Owner::cache` +
 //!   `Animation` shape `hello-button` carries (R51.150 §5.22 +
 //!   R51.147 §5.28) — same per-binding owner-scoped cache, same
 //!   `SpringConfig::default()` timing, no thread-local global.
 //!
-//! ## Figma spec — verbatim from R635
+//! ## the design tool spec — verbatim from R635
 //!
-//! Re-creates the Material 3 "Filled / Enabled" Button variant from
-//! the Material 3 Design Kit Community Figma file (node `51553:5180`):
+//! Re-creates the Material 3 "Filled / Enabled" Button variant from the
+//! Material 3 Design Kit Community the design tool file (node `51553:5180`):
 //!
 //! - 109 × 40 px button rect
-//! - fill: `#675AA4` (M3 Primary; Figma `r=0.4039 g=0.3137 b=0.6431 a=1.0`)
+//! - fill: `#675AA4` (M3 Primary; the design tool `r=0.4039 g=0.3137 b=0.6431 a=1.0`)
 //! - `cornerRadius: 100` (fully rounded — M3 default for filled
 //!   buttons; clamped to `min(w, h) / 2 = 20` inside `paint_adapter`,
 //!   which is why the rendering is a pill, not a square; the R639
 //!   wire-up pinned this contract end-to-end)
 //! - HORIZONTAL auto-layout, padding L=16, R=16, T=10, B=10
 //! - label: `"Button"` Roboto Medium 14px white (leading + trailing
-//!   18×18 icon slots elided to placeholders — Figma `INSTANCE`
+//!   18×18 icon slots elided to placeholders — the design tool `INSTANCE`
 //!   nodes are external-component references that need a glyph /
 //!   svg substrate; tracked in the R660+ axis queue)
 //!
@@ -59,9 +59,9 @@
 //! Components Android reference.
 //!
 //! Endpoints stay raw `Color::rgb(...)` constants, not theme-resolved
-//! through [`pinion_core::theme`] — the binding is a Figma → pinion
+//! through [`pinion_core::theme`] — the binding is a design tool → pinion
 //! design-parity reproduction, not a themed widget. Themed variants
-//! are the `hello-button` arc; the Figma binding holds the line on
+//! are the `hello-button` arc; the design tool binding holds the line on
 //! spec fidelity.
 //!
 //! ## R640 scope vs deferred
@@ -80,7 +80,7 @@
 //!   that gap is its own sub-task, intentionally not bundled with
 //!   the M3 reactive lift to keep the diff focused.
 //! - Ripple animation overlay (M3 pressed touch ripple): needs the
-//!   §5.27 path-animation substrate; queued behind R660+ Figma axis.
+//!   §5.27 path-animation substrate; queued behind R660+ the design tool axis.
 //!
 //! ## R640 verification — [[center-only-pixel-sample-anti-pattern]]
 //!
@@ -93,7 +93,7 @@
 //! describe what they see on screen.
 //!
 //! ```sh
-//! PINION_SCREENSHOT=/tmp/pinion-btn.png cargo run -p figma-button-m3
+//! PINION_SCREENSHOT=/tmp/pinion-btn.png cargo run -p the design tool-button-m3
 //! python3 tools/demos/figma_button_m3_r640.py
 //! ```
 
@@ -108,7 +108,7 @@ use pinion_core::{Color, Frame, Scene};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 // R686.B §5.16 — M3 filled-button paint substrate. The state-layer
-// coefficient matrix moved here; this binding supplies its Figma
+// coefficient matrix moved here; this binding supplies its the design tool
 // design tokens via `ButtonColors::new` and keeps `button_fill_for`
 // as a thin adapter that injects the hover spring.
 use pinion_widget_paint::button::{
@@ -146,14 +146,14 @@ vello_renderer_impl!(FigmaButtonM3Renderer, FigmaButtonM3RendererError);
 const WIN_W: u32 = 320;
 const WIN_H: u32 = 160;
 
-/// Figma Filled / Enabled Button spec — exact transcription from the
+/// The design tool Filled / Enabled Button spec — exact transcription from the
 /// Material 3 Design Kit Community file (node `51553:5180`). Each
-/// `const` mirrors a single Figma field so a future spec drift
+/// `const` mirrors a single the design tool field so a future spec drift
 /// surfaces as a single-line diff here.
 const BTN_W: u32 = 109;
 const BTN_H: u32 = 40;
 const BTN_RADIUS: u32 = 100;
-// Figma color: r=0.4039 g=0.3137 b=0.6431 → (103, 80, 164) sRGB byte
+// The design tool color: r=0.4039 g=0.3137 b=0.6431 → (103, 80, 164) sRGB byte
 // per the standard 255× quantization R628 `quantize_unit_byte` uses
 // internally; the trio matches the M3 token `Primary` (#675AA4).
 const BTN_FILL: Color = Color::rgb(103, 80, 164);
@@ -161,7 +161,7 @@ const LABEL_FG: Color = Color::rgb(255, 255, 255);
 const LABEL_PX: u32 = 14;
 // Background canvas tone behind the button — neutral dark so the
 // `#675AA4` button contrasts visually during the inspection. Not a
-// Figma spec value; pinion-side framing only.
+// design tool spec value; pinion-side framing only.
 const CANVAS_BG: Color = Color::rgb(0x1F, 0x1F, 0x1F);
 
 // R686.B §5.16 — the M3 state-layer overlay weights (hover 0.08 /
@@ -178,14 +178,14 @@ const CANVAS_BG: Color = Color::rgb(0x1F, 0x1F, 0x1F);
 /// from colliding with any other cached value in the same scope.
 const HOVER_ANIM_KEY: &str = "figma_button_m3::hover_progress";
 
-/// (R686.B §5.16) The Figma design-token [`ButtonColors`] for this
+/// (R686.B §5.16) The design tool design-token [`ButtonColors`] for this
 /// binding: resting `#675AA4` Primary fill, `#FFFFFF` onPrimary state
 /// layer, disabled fade toward the dark canvas at the substrate's
 /// [`DISABLED_STATE_LAYER`] weight, white label in every state.
 ///
 /// Demonstrates the substrate's hard-coded-token path —
 /// [`ButtonColors::new`] takes explicit [`Color`]s rather than
-/// resolving from a `Theme`, so the Figma spec is reproduced
+/// resolving from a `Theme`, so the design tool spec is reproduced
 /// verbatim while the M3 overlay matrix lives in the substrate.
 fn figma_button_colors() -> ButtonColors {
     ButtonColors::new(
@@ -224,9 +224,9 @@ fn button_fill_for(state: ButtonState) -> Color {
 /// rule; the `WidgetCore::view` trait shim below dereferences the
 /// `&Frame` argument when forwarding.
 fn view(state: ButtonState, _frame: Frame) -> Scene {
-    // R686.B §5.16 — M3 filled button via the substrate. The Figma
+    // R686.B §5.16 — M3 filled button via the substrate. The design tool
     // design tokens flow through `figma_button_colors()`; the pill
-    // corner radius + dense padding + fixed 109×40 size are the Figma
+    // corner radius + dense padding + fixed 109×40 size are the design tool
     // spec geometry carried on `ButtonStyle`. The "figma_button_m3"
     // tag routes the InputRouter hit-test to the wrapped ButtonExternal.
     let button = view_button(
@@ -366,7 +366,7 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Scene structure — pins the Figma spec verbatim. R639 lesson
+    // Scene structure — pins the design tool spec verbatim. R639 lesson
     // ([[center-only-pixel-sample-anti-pattern]]) shows that
     // mutation of any of these fields can silently regress without
     // a typed test catching it; the scene-tree assertions are the

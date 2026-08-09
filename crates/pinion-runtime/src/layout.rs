@@ -3724,12 +3724,12 @@ mod tile_dashboard_measurement {
         LayoutCache::new()
     }
 
-    /// A Grafana-class dashboard is a fixed set of equal columns with cards
-    /// placed at `(col, row)` covering `(w, h)` of them. R1560 added CSS Grid
-    /// for a text table's rowspans; the tile-dashboard debt predicted that the
-    /// SAME layout holds a dashboard and asked for the prediction to be
-    /// **measured before a second layout kind is built**. This is that
-    /// measurement, and it is a test rather than a paragraph.
+    /// A dashboard tool-class dashboard is a fixed set of equal columns with
+    /// cards placed at `(col, row)` covering `(w, h)` of them. R1560 added CSS Grid for a
+    /// text table's rowspans; the tile-dashboard debt predicted that the SAME
+    /// layout holds a dashboard and asked for the prediction to be **measured
+    /// before a second layout kind is built**. This is that measurement, and
+    /// it is a test rather than a paragraph.
     #[test]
     fn r1607_twelve_equal_columns_place_spanning_cards_where_a_dashboard_wants_them() {
         let tile = |col: u16, row: u16, w: u16, h: u16| {

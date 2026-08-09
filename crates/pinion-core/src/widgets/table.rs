@@ -59,13 +59,13 @@ use crate::widgets::{IntentEmitter, WidgetTransition};
 
 /// R954 §5.38 §5.40 — re-exported where the eager [`Table`] names it.
 ///
-/// R1563 moved the definition to
-/// [`cell_selection`](crate::widgets::cell_selection), because a second
-/// coordinator ([`VirtualSelect`](crate::widgets::virtual_select::VirtualSelect))
-/// acquired the same axis and "what does a press select" is **one** concept —
-/// Qt spells it with one enum on `QAbstractItemView`, and two types here would
-/// be two vocabularies for one question that could then disagree about what
-/// `SelectItems` means. The re-export keeps every R954 consumer's spelling.
+/// R1563 moved the definition to [`cell_selection`](crate::widgets::cell_selection),
+/// because a second coordinator
+/// ([`VirtualSelect`](crate::widgets::virtual_select::VirtualSelect)) acquired the same
+/// axis and "what does a press select" is **one** concept — the toolkit spells
+/// it with one enum on abstract item view, and two types here would be two
+/// vocabularies for one question that could then disagree about what `SelectItems`
+/// means. The re-export keeps every R954 consumer's spelling.
 pub use crate::widgets::cell_selection::SelectionBehavior;
 
 /// Logical data grid with framework-owned single-row selection. See
@@ -118,17 +118,15 @@ pub struct Table {
     /// value (callers use [`Self::selected_rows`]). Mode is immutable
     /// after construction — the row [`Radio`] vector is sized once.
     multiselect: bool,
-    /// R952 §5.38 §5.40 — the pinned corner of a **cell range selection**
-    /// (`(row, col)` in **data** coords), or `None` when no rectangular
-    /// cell selection is active. The opposite corner is the roving cursor
-    /// (`focused_row` / `focused_col`), so the selected rectangle is the
-    /// bounding box of `cell_anchor` and the cursor — the spreadsheet /
-    /// Qt `QTableView` `SelectItems` model (cell range), distinct from the
-    /// `row_radios` row selection (`SelectRows`). A plain cursor move
-    /// collapses it (anchor follows the cursor → a single cell); a
-    /// `Shift`-move extends it (anchor pinned). Data-indexed like every
-    /// other selection here (R730), so a sort repositions the selected
-    /// cells without remapping the model.
+    /// R952 §5.38 §5.40 — the pinned corner of a **cell range selection** (`(row, col)`
+    /// in **data** coords), or `None` when no rectangular cell selection is
+    /// active. The opposite corner is the roving cursor (`focused_row` / `focused_col`), so the
+    /// selected rectangle is the bounding box of `cell_anchor` and the cursor — the
+    /// spreadsheet / the toolkit table view `SelectItems` model (cell range), distinct
+    /// from the `row_radios` row selection (`SelectRows`). A plain cursor move collapses it
+    /// (anchor follows the cursor → a single cell); a `Shift`-move extends it
+    /// (anchor pinned). Data-indexed like every other selection here (R730),
+    /// so a sort repositions the selected cells without remapping the model.
     cell_anchor: Option<(usize, usize)>,
     /// R954 §5.38 — what a pointer click selects (rows vs cells). `SelectRows`
     /// (via [`Self::new`] / [`Self::with_multiselect`]) washes the clicked
@@ -196,12 +194,11 @@ impl Table {
         }
     }
 
-    /// R954 §5.38 — construct a **cell-range** (`SelectItems`) table: a
-    /// pointer click selects the clicked cell (collapsing any rectangle) and
-    /// `Shift`+click extends the rectangle from the anchor, the spreadsheet /
-    /// Qt `SelectItems` model (`hello-cell-select`). The row [`Radio`] state
-    /// is never washed; pointer selection drives [`Self::select_cell`] /
-    /// [`Self::extend_cell`]. All rows start idle with no selection.
+    /// R954 §5.38 — construct a **cell-range** (`SelectItems`) table: a pointer click
+    /// selects the clicked cell (collapsing any rectangle) and `Shift`+click
+    /// extends the rectangle from the anchor, the spreadsheet / the toolkit
+    /// `SelectItems` model (`hello-cell-select`). The row [`Radio`] state is never washed; pointer selection
+    /// drives [`Self::select_cell`] / [`Self::extend_cell`]. All rows start idle with no selection.
     #[must_use]
     pub fn with_select_items(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
         let mut t = Self::new(headers, rows);
@@ -1084,17 +1081,16 @@ impl TableExternal {
         Ok(IntrospectValue::Bool(true))
     }
 
-    /// R1562 §5.27 §5.40 — a **row-header** press: Qt `QHeaderView`'s
-    /// `sectionPressed` on a `Qt::Vertical` header, which selects the line the
+    /// R1562 §5.27 §5.40 — a **row-header** press: the toolkit header view's
+    /// `sectionPressed` on a `Vertical` header, which selects the line the
     /// section names.
     ///
-    /// Whichever [`SelectionBehavior`] is in force, it reaches the *same model
-    /// verbs* a press in the row's body reaches — the row [`Radio`] arc under
-    /// `SelectRows`, the cell rectangle under `SelectItems` — rather than a
-    /// second selection implementation beside them. Qt keeps two
-    /// (`QHeaderView::mousePressEvent` → `QAbstractItemView::selectRow`, next to
-    /// `QAbstractItemView::mousePressEvent` → `selectionCommand`), which is why
-    /// a Qt header press and a Qt cell press can be made to disagree.
+    /// Whichever [`SelectionBehavior`] is in force, it reaches the *same model verbs* a press
+    /// in the row's body reaches — the row [`Radio`] arc under `SelectRows`, the cell
+    /// rectangle under `SelectItems` — rather than a second selection implementation
+    /// beside them. The toolkit keeps two (`mousePressEvent` → `selectRow`, next to `mousePressEvent` → `selectionCommand`),
+    /// which is why a toolkit header press and a toolkit cell press can be
+    /// made to disagree.
     ///
     /// Under `SelectItems` the line is the row's **whole rectangle** — anchor at
     /// its first column, cursor at its last — because a header names a row and
@@ -1123,8 +1119,8 @@ impl TableExternal {
         Ok(self.selection_outcome())
     }
 
-    /// R1562 §5.27 §5.40 — the corner control's action (Qt's
-    /// `QTableCornerButton`): select every row, or clear when every row is
+    /// R1562 §5.27 §5.40 — the corner control's action (the toolkit's
+    /// table corner button): select every row, or clear when every row is
     /// already selected.
     ///
     /// Driven through the ordinary activate edge per row rather than through
@@ -1137,8 +1133,8 @@ impl TableExternal {
     /// [`VirtualSelect::toggle_all`](crate::widgets::virtual_select::VirtualSelect::toggle_all),
     /// which is O(1) because R1561 holds the selection as runs).
     ///
-    /// A single-select `SelectRows` table cannot hold every row, so this is the
-    /// no-op `QAbstractItemView::selectAll` is under `SingleSelection`.
+    /// A single-select `SelectRows` table cannot hold every row, so this is the no-op
+    /// `selectAll` is under `SingleSelection`.
     fn toggle_all_rows(&mut self) {
         let rows = self.row_count();
         if self.selection_behavior() == SelectionBehavior::SelectItems {
@@ -1321,15 +1317,15 @@ impl ExternalIntrospect for TableExternal {
                         const { &[SchemaArg::index("visual", "rows")] },
                     ),
                     SchemaField::action("sort", "int"),
-                    // R952 §5.38 — cell range selection (the spreadsheet / Qt
-                    // `SelectItems` model, distinct from the `selected.<row>` row
-                    // selection). `cell_selection` reads the selected rectangle as
+                    // R952 §5.38 — cell range selection (the spreadsheet / the
+                    // toolkit `SelectItems` model, distinct from the `selected.<row>` row selection).
+                    // `cell_selection` reads the selected rectangle as
                     // "row0,col0,row1,col1" (data coords, inclusive) or `null`;
-                    // `cell_selection_count` is its cell area. `select-cell` (arg
-                    // "row,col") starts a single-cell selection at the cursor;
-                    // `extend-cell` (arg "row,col") grows the rectangle to that cell;
-                    // `clear-cell-selection` (arg `null`) drops it. The AI-first peer
-                    // of click / Shift+click / Shift+Arrow.
+                    // `cell_selection_count` is its cell area. `select-cell` (arg "row,col") starts a
+                    // single-cell selection at the cursor; `extend-cell` (arg "row,col")
+                    // grows the rectangle to that cell; `clear-cell-selection` (arg `null`) drops
+                    // it. The AI-first peer of click / Shift+click /
+                    // Shift+Arrow.
                     SchemaField::new("cell_selection", "string"),
                     SchemaField::new("cell_selection_count", "int"),
                     SchemaField::new("cell_selection_tsv", "string"),
@@ -2482,9 +2478,9 @@ mod tests {
         );
     }
 
-    /// R1562 §5.27 — under `SelectItems` a header names a ROW, so the press
-    /// selects that row's whole rectangle rather than one cell of it. Qt's
-    /// `selectRow` does the same; the point is that it happens here through the
+    /// R1562 §5.27 — under `SelectItems` a header names a ROW, so the press selects that
+    /// row's whole rectangle rather than one cell of it. The toolkit's `selectRow`
+    /// does the same; the point is that it happens here through the
     /// cell-rectangle verbs this surface already had.
     #[test]
     fn r1562_an_eager_band_press_selects_the_whole_row_rectangle() {

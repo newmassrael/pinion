@@ -38,8 +38,8 @@ pub struct Grouped {
     /// The collapse moves nodes into another tree, where a host-tree frame id
     /// means nothing — so a container that was not itself selected cannot come
     /// along. The instance takes the selection's place *inside* that frame
-    /// (Blender does the same, `gnode->parent = find_common_parent_node(...)`),
-    /// which is why this is a report rather than a refusal.
+    /// (the DCC does the same, `gnode->parent = find_common_parent_node(...)`), which is why this is a report rather than
+    /// a refusal.
     pub orphaned: Vec<Orphaned>,
 }
 
@@ -506,7 +506,7 @@ impl<K: NodeKind> Document<K> {
         let (renamed, nodes) = self.inline_body(tree, body, (origin_x, origin_y));
         // R1589 — the definition's own frames come along, so its forest is
         // rebuilt in the host's numbering and only its ROOTS are grafted onto
-        // whatever contained the instance. Blender assigns the group node's
+        // whatever contained the instance. The DCC assigns the group node's
         // parent to *every* copied node (`node_group.cc`, the `if
         // (group_node.parent)` loop), which overwrites the parent/child
         // relationships its own copy step had just recreated — so ungrouping a
@@ -701,7 +701,7 @@ pub struct PathEntry {
 
 /// Where in the document the user is editing.
 ///
-/// Blender calls this the tree path, and shows it as a breadcrumb. It is a
+/// The DCC calls this the tree path, and shows it as a breadcrumb. It is a
 /// property of the *view*, not of the document — two panes can be at different
 /// depths in one document — so it is a separate value rather than a field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -907,9 +907,9 @@ pub enum Violation {
         ///
         /// A cycle spoils every value below it, so "which nodes have no value"
         /// is a much larger set than "which nodes are the knot", and only the
-        /// second one can be acted on. Blender reports a bool for the tree
-        /// (`has_available_link_cycle`) and blames whichever *link* its toposort
-        /// happened to come out of order on.
+        /// second one can be acted on. The DCC reports a bool for the tree
+        /// (`has_available_link_cycle`) and blames whichever *link* its toposort happened to come out
+        /// of order on.
         nodes: Vec<NodeId>,
     },
     /// A group instance names a tree that is not in the document.
@@ -956,10 +956,10 @@ pub enum Violation {
     /// A tree's containment is not a forest: this node is inside itself,
     /// directly or through a chain of frames (R1589).
     ///
-    /// Unreachable through this crate's API — [`Document::set_parent`] refuses
-    /// it — and reachable through a document that arrived from a file or a peer,
-    /// which is what `validate` is for. Blender reaches it through its own
-    /// editor, because both of its guards are assertions.
+    /// Unreachable through this crate's API — [`Document::set_parent`] refuses it — and reachable
+    /// through a document that arrived from a file or a peer, which is what
+    /// `validate` is for. The DCC reaches it through its own editor, because both of
+    /// its guards are assertions.
     ContainmentCycle {
         /// The tree it is in.
         tree: TreeId,

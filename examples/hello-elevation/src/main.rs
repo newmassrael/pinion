@@ -3,11 +3,10 @@
 //!
 //! ## What this demonstrates
 //!
-//! `BoxStyle::shadows` (R710) carries a `Vec<BoxShadow>` painted behind
-//! a box — the CSS `box-shadow` / Flutter `List<BoxShadow>` model. Each
-//! `BoxShadow` (colour, offset, blur, spread) lowers to Vello's
-//! native blurred-rounded-rect primitive. This binding paints a
-//! **Material-style elevation gallery**:
+//! `BoxStyle::shadows` (R710) carries a `Vec<BoxShadow>` painted behind a box — the CSS `box-shadow` / another
+//! retained-mode toolkit `List<BoxShadow>` model. Each `BoxShadow` (colour, offset, blur, spread)
+//! lowers to Vello's native blurred-rounded-rect primitive. This binding
+//! paints a **Material-style elevation gallery**:
 //!
 //! * three static cards (`card_low` / `card_mid` / `card_high`) at
 //!   rising elevation levels, each casting a *key + ambient* shadow

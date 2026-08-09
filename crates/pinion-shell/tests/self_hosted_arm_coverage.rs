@@ -6,10 +6,10 @@
 //! is how much text the rule actually moves, because a predicate does not know
 //! how often it is asked.
 //!
-//! It moved a lot. R1504 set `ColumnLayout`'s default alignment to `Center`
-//! (Qt's `QHeaderView` default), and the arm requires `Start` — so in one round
-//! every header label in the workspace's header widget left the arm for parley.
-//! That is the CORRECT outcome, since parley is the reference and R1505's pixel
+//! It moved a lot. R1504 set `ColumnLayout`'s default alignment to `Center` (the toolkit's
+//! header view default), and the arm requires `Start` — so in one round every
+//! header label in the workspace's header widget left the arm for parley. That
+//! is the CORRECT outcome, since parley is the reference and R1505's pixel
 //! guard is what proves the alignment it applies is real. It is also a silent
 //! change in which engine paints production text, and nothing measured it.
 //!
@@ -145,9 +145,10 @@ fn the_arms_share_of_a_header_strip_is_a_function_of_the_declaration() {
 /// header label WAS the arm's — the R1505 defect (a declaration that does not
 /// reach the glyphs) in a second channel.
 ///
-/// `Start` is the load-bearing half of the fixture: under Qt's `Center` default
-/// these labels leave the arm over the alignment anyway, so the alignment has to
-/// be the one the arm accepts for the weight to be what decides.
+/// `Start` is the load-bearing half of the fixture: under the toolkit's `Center`
+/// default these labels leave the arm over the alignment anyway, so the
+/// alignment has to be the one the arm accepts for the weight to be what
+/// decides.
 #[test]
 fn a_weight_the_single_face_cannot_serve_leaves_the_arm() {
     let engine = engine();

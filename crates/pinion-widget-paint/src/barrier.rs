@@ -4,17 +4,15 @@
 //!
 //! ## Dismiss barrier vs modal scrim
 //!
-//! [`crate::scrim::scrim_backdrop`] is the *modal* backdrop: it **dims**
-//! (a translucent black fill) and **traps** (it is the full-window
-//! topmost hit target, swallowing every background interaction while a
-//! dialog / drawer is up). A dismiss barrier is its non-modal sibling —
-//! **invisible** ([`Color::TRANSPARENT`], no fill at all) and **passive**
-//! (its only job is to catch the *outside* click that dismisses the
-//! popup; the rest of the UI keeps painting and reading normally behind
-//! it). This is the desktop "popup grab" layer: `Qt::Popup`'s mouse
-//! grab, Flutter's transparent route barrier, and Jetpack Compose's
-//! focusable `Popup` are all this same full-window catch-the-outside
-//! rectangle.
+//! [`crate::scrim::scrim_backdrop`] is the *modal* backdrop: it **dims** (a translucent black fill) and
+//! **traps** (it is the full-window topmost hit target, swallowing every
+//! background interaction while a dialog / drawer is up). A dismiss barrier is
+//! its non-modal sibling — **invisible** ([`Color::TRANSPARENT`], no fill at all) and
+//! **passive** (its only job is to catch the *outside* click that dismisses
+//! the popup; the rest of the UI keeps painting and reading normally behind
+//! it). This is the desktop "popup grab" layer: `Popup`'s mouse grab, another
+//! retained-mode toolkit's transparent route barrier, and Jetpack Compose's
+//! focusable `Popup` are all this same full-window catch-the-outside rectangle.
 //!
 //! ## Why this module exists (R715 SSOT lift)
 //!

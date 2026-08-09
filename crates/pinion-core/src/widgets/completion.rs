@@ -1,33 +1,30 @@
 //! R1449 §5.27 §5.38 §5.40 — **the completion model** every typeahead needs:
 //! a prefix, a match rule, and a cursor over the candidates the rule accepts.
 //!
-//! Qt's `QCompleter` is the reference. It is deliberately *not* a widget — it
-//! attaches to a `QLineEdit` / `QTextEdit` / any input and answers three
-//! questions: which candidates match what has been typed
-//! (`setFilterMode` × `setCaseSensitivity`), which one is current
-//! (`currentCompletion`), and how the answer should be presented
-//! (`setCompletionMode`: a popup, an unfiltered popup, or completed inline).
-//! pinion had all three answers hard-coded, six times over: every typeahead in
-//! tree so far spells `label.to_lowercase().contains(&needle)` inline, so a
-//! prefix-only search, a case-sensitive one, or an inline completion was not
-//! *configurable* — it was unwritable without editing each consumer.
+//! The toolkit's completer is the reference. It is deliberately *not* a widget
+//! — it attaches to a line edit / text edit / any input and answers three
+//! questions: which candidates match what has been typed (`setFilterMode` × `setCaseSensitivity`), which
+//! one is current (`currentCompletion`), and how the answer should be presented (`setCompletionMode`: a popup,
+//! an unfiltered popup, or completed inline). pinion had all three answers
+//! hard-coded, six times over: every typeahead in tree so far spells `label.to_lowercase().contains(&needle)`
+//! inline, so a prefix-only search, a case-sensitive one, or an inline
+//! completion was not *configurable* — it was unwritable without editing each
+//! consumer.
 //!
 //! This module is that model, and only that model. It owns no paint, no popup,
 //! and no keyboard map: a binding decides where the candidates come from and
-//! what a commit does, exactly as `QCompleter` leaves `activated()` to its
+//! what a commit does, exactly as completer leaves `activated()` to its
 //! widget.
 //!
 //! ## Where pinion is better than the reference (§2 #7 + §2 #2)
 //!
-//! `QCompleter` exposes `currentCompletion()` and `completionCount()`, but the
-//! *list* an agent would need lives in a `QAbstractItemView` it must reach into,
-//! the inline completion lives in the widget's text selection, and the filter /
-//! case / mode knobs are C++ setters with no wire form at all. Here the whole
-//! model is scene-as-data: [`CompleterExternal`] answers `prefix`, `filter`,
-//! `case`, `mode`, `completion_count`, `current`, `current_completion`,
-//! `inline`, and `completion.<i>` over `scene/query`, and takes all four knobs
-//! back over `scene/intervene` — so an AI client reads and drives the same
-//! completion a human sees, in one vocabulary.
+//! completer exposes `currentCompletion()` and `completionCount()`, but the *list* an agent would need lives in
+//! a abstract item view it must reach into, the inline completion lives in the
+//! widget's text selection, and the filter / case / mode knobs are C++ setters
+//! with no wire form at all. Here the whole model is scene-as-data: [`CompleterExternal`]
+//! answers `prefix`, `filter`, `case`, `mode`, `completion_count`, `current`, `current_completion`, `inline`, and `completion.<i>` over `scene/query`, and
+//! takes all four knobs back over `scene/intervene` — so an AI client reads and drives the
+//! same completion a human sees, in one vocabulary.
 //!
 //! ## The one cursor rule (both popup shapes, no branch)
 //!
@@ -40,7 +37,7 @@
 //!
 //! ## Scope (honest boundaries)
 //!
-//! - **Flat candidates.** `QCompleter::splitPath` / `pathFromIndex` (tree /
+//! - **Flat candidates.** `splitPath` / `pathFromIndex` (tree /
 //!   filesystem path completion) are **not** here. That is a different source
 //!   model, not a different completion rule, and pinion has no consumer for it.
 //! - **Inline completion is prefix-shaped.** [`CompletionState::inline_completion`]
@@ -62,8 +59,8 @@ use crate::reactive::{Owner, Signal};
 use crate::widgets::order_memo::{OrderMemo, source_at_value};
 
 /// R1449 §5.38 — where in a candidate the typed prefix must appear
-/// (`QCompleter::setFilterMode`, i.e. `Qt::MatchStartsWith` /
-/// `Qt::MatchContains` / `Qt::MatchEndsWith`).
+/// (`setFilterMode`, i.e. `MatchStartsWith` /
+/// `MatchContains` / `MatchEndsWith`).
 ///
 /// An **empty** prefix is accepted by all three (every candidate starts with,
 /// contains, and ends with `""`) — the "nothing typed yet, offer everything"
@@ -107,7 +104,7 @@ impl CompletionFilter {
 }
 
 /// R1449 §5.38 — whether case matters when matching
-/// (`QCompleter::setCaseSensitivity`).
+/// (`setCaseSensitivity`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompletionCase {
     /// `"app"` does not match `"Apple"`.
@@ -140,7 +137,7 @@ impl CompletionCase {
 }
 
 /// R1449 §5.38 — how completions are presented
-/// (`QCompleter::setCompletionMode`).
+/// (`setCompletionMode`).
 ///
 /// The mode selects what [`CompletionState::completions`] contains and whether
 /// [`CompletionState::inline_completion`] answers; it never changes the match
@@ -306,7 +303,7 @@ pub struct CompletionState {
     tag: Option<&'static str>,
     /// The candidate strings, materialized once.
     candidates: Vec<String>,
-    /// The typed prefix (`QCompleter::setCompletionPrefix`).
+    /// The typed prefix (`setCompletionPrefix`).
     prefix: Signal<String>,
     /// Where the prefix must appear in a candidate.
     filter: Signal<CompletionFilter>,
@@ -420,14 +417,14 @@ impl CompletionState {
         })
     }
 
-    /// Number of displayed completions (`QCompleter::completionCount`).
+    /// Number of displayed completions (`completionCount`).
     #[must_use]
     pub fn completion_count(&self) -> usize {
         self.completions().len()
     }
 
     /// The cursor's position in the displayed list, or `None` when no candidate
-    /// accepts the prefix (`QCompleter::currentRow`).
+    /// accepts the prefix (`currentRow`).
     #[must_use]
     pub fn current_index(&self) -> Option<usize> {
         self.current.get()
@@ -440,7 +437,7 @@ impl CompletionState {
         self.completions().get(i).copied()
     }
 
-    /// The current candidate's text, or `None` (`QCompleter::currentCompletion`).
+    /// The current candidate's text, or `None` (`currentCompletion`).
     #[must_use]
     pub fn current_completion(&self) -> Option<String> {
         self.current_source().map(|s| self.candidate(s).to_string())
@@ -548,7 +545,7 @@ impl CompletionState {
         self.current_completion()
     }
 
-    /// Jump the cursor to displayed position `i` (`QCompleter::setCurrentRow`).
+    /// Jump the cursor to displayed position `i` (`setCurrentRow`).
     /// Out of range is a no-op returning `None`, never a panic.
     pub fn jump_to(&self, i: usize) -> Option<String> {
         if i < self.completions().len() {
@@ -581,7 +578,7 @@ pub fn use_completion(
 }
 
 /// R1449 §5.38 §2 #7 — the completion **coordinator** External: the wire
-/// surface `QCompleter` never had.
+/// surface completer never had.
 ///
 /// Like [`RowSearchExternal`](crate::widgets::row_search::RowSearchExternal) it
 /// owns no interaction statechart and emits no §5.20 intent — every mutation is

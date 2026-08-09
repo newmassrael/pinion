@@ -1,27 +1,26 @@
 //! `scene/disabled` — which controls are inert, and **which ancestor made them
 //! so** (R1554 §5.12 §5.39 §2 #2 §2 #7).
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has the property and not the question. `QWidget::isEnabled()` answers a
-//! bool about one widget. `isEnabledTo(ancestor)` answers a bool about an
-//! ancestor the caller has already picked — so it can confirm a guess, never
-//! produce one. `testAttribute(Qt::WA_ForceDisabled)` separates "disabled
-//! itself" from "disabled by a parent" but names no parent. Nothing in Qt's
-//! public API answers *which* ancestor greyed a control: that is a
-//! `parentWidget()` walk in a debugger, which is exactly the position an
-//! external driver cannot get into.
+//! The toolkit has the property and not the question. `isEnabled()` answers a bool about
+//! one widget. `isEnabledTo(ancestor)` answers a bool about an ancestor the caller has already
+//! picked — so it can confirm a guess, never produce one. `testAttribute(WA_ForceDisabled)` separates
+//! "disabled itself" from "disabled by a parent" but names no parent. Nothing
+//! in the toolkit's public API answers *which* ancestor greyed a control: that
+//! is a `parentWidget()` walk in a debugger, which is exactly the position an external
+//! driver cannot get into.
 //!
-//! Three things this answers that Qt's surface cannot:
+//! Three things this answers that the toolkit's surface cannot:
 //!
 //! - **The cause, by name.** Every row carries `declared_by`. An agent that
 //!   finds a button unresponsive learns the tag to click instead, in the same
 //!   round trip.
-//! - **The set, enumerated.** Qt has no way to ask a window "what is disabled
+//! - **The set, enumerated.** the toolkit has no way to ask a window "what is disabled
 //!   right now"; the answer exists only as a bool per widget, and a driver
 //!   would have to already know every widget to poll them all.
-//! - **Whether the ink followed.** A disabled `QOpenGLWidget` keeps drawing
-//!   whatever it draws, and Qt says nothing about that. `ink` states it, so an
+//! - **Whether the ink followed.** A disabled GL widget keeps drawing
+//!   whatever it draws, and the toolkit says nothing about that. `ink` states it, so an
 //!   agent comparing a screenshot against "this is disabled" knows in advance
 //!   which regions will look unchanged.
 //!
@@ -75,11 +74,12 @@ pub struct DisabledEntry {
     /// back. Untagged disabled nodes are absent: they cannot be addressed, so a
     /// row for one would name nothing.
     pub tag: String,
-    /// The node carries its own declaration (Qt `WA_ForceDisabled`). With
-    /// `declared_by` also set, re-enabling the region leaves this one disabled.
+    /// The node carries its own declaration (the toolkit `WA_ForceDisabled`). With `declared_by` also
+    /// set, re-enabling the region leaves this one disabled.
     pub self_declared: bool,
     /// The nearest ancestor that declared the region, or `null` when the node's
-    /// own declaration is the only one. **The column Qt has no accessor for.**
+    /// own declaration is the only one. **The column the toolkit has no
+    /// accessor for.**
     pub declared_by: Option<String>,
     /// What the disabled cascade did to this node's ink: `"faded"`, or
     /// `"opaque_content"` for a node whose pixels the framework does not author
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_member_names_the_ancestor_that_disabled_it() {
-        // The column Qt has no accessor for.
+        // The column the toolkit has no accessor for.
         let scene = Scene::Container(ContainerNode::new(vec![
             leaf("live"),
             region("group", vec![leaf("inner")]),
@@ -171,8 +171,8 @@ mod tests {
 
     #[test]
     fn a_self_disabled_node_inside_a_region_reports_both() {
-        // Qt's `WA_ForceDisabled` case: re-enabling `group` must leave `inner`
-        // disabled, and the wire is what tells an agent so BEFORE it tries.
+        // The toolkit's `WA_ForceDisabled` case: re-enabling `group` must leave `inner` disabled, and
+        // the wire is what tells an agent so BEFORE it tries.
         let scene = region("group", vec![region("inner", vec![])]);
         let value = handle_scene_disabled(Some(&scene)).expect("ok");
         let rows = value["disabled"].as_array().expect("array");

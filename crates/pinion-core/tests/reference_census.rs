@@ -1,12 +1,11 @@
 //! R1602 — the census verdicts this crate is responsible for, proven.
 //!
-//! The reference census (`tools/reference_census.py`, `docs/reference-census.json`)
-//! judges every node operator Blender and Unreal register. Three of those
-//! verdicts are `have` because of a capability that lives **here** rather than
-//! in `pinion-node-graph`: `NODE_OT_select_box`, `NODE_OT_select_circle` and
-//! `NODE_OT_select_lasso` test a region against the node's *drawn* rectangle,
-//! which R1590 measured as a fact about the painted surface and not about a
-//! node model — a model crate has no card geometry.
+//! The reference census (`tools/reference_census.py`, `docs/reference-census.json`) judges every node operator the DCC and the
+//! engine register. Three of those verdicts are `have` because of a capability
+//! that lives **here** rather than in `pinion-node-graph`: `NODE_OT_select_box`, `NODE_OT_select_circle` and `NODE_OT_select_lasso` test a region
+//! against the node's *drawn* rectangle, which R1590 measured as a fact about
+//! the painted surface and not about a node model — a model crate has no card
+//! geometry.
 //!
 //! So a proof is addressed `<crate>::<test>` in the pin, and this file answers
 //! for the rows addressed to `pinion-core`. The shape of the check is the same
@@ -158,9 +157,9 @@ fn canvas() -> Vec<Card> {
     ]
 }
 
-/// One selection policy for every shape. That is the point of the type: Blender
-/// has three operators and three implementations, so its box, circle and lasso
-/// are free to disagree about what "selected" means.
+/// One selection policy for every shape. That is the point of the type: the
+/// DCC has three operators and three implementations, so its box, circle and
+/// lasso are free to disagree about what "selected" means.
 fn selected(region: &Region, fit: RegionFit) -> Vec<&'static str> {
     canvas()
         .iter()
@@ -169,10 +168,10 @@ fn selected(region: &Region, fit: RegionFit) -> Vec<&'static str> {
         .collect()
 }
 
-/// Blender's box select. A marquee drawn in graph units, including the negative
-/// half of the plane the canvas pans into — and `RegionFit` is the axis Blender
-/// does not have: its box select takes whatever it touches, with no way to ask
-/// for the nodes fully inside.
+/// The DCC's box select. A marquee drawn in graph units, including the
+/// negative half of the plane the canvas pans into — and `RegionFit` is the axis the
+/// DCC does not have: its box select takes whatever it touches, with no way to
+/// ask for the nodes fully inside.
 #[test]
 fn blender_select_box() {
     let touching = Region::span(-320, -100, 0, 100);
@@ -198,10 +197,10 @@ fn blender_select_box() {
     );
 }
 
-/// Blender's circle select — a brush, so what it means is a disc rather than
-/// the square Blender's own `NODE_OT_select_box` would give for the same drag.
-/// The predicate is exact integer geometry, so the node whose corner is one unit
-/// outside the radius is not taken.
+/// The DCC's circle select — a brush, so what it means is a disc rather than
+/// the square the DCC's own `NODE_OT_select_box` would give for the same drag. The predicate is
+/// exact integer geometry, so the node whose corner is one unit outside the
+/// radius is not taken.
 #[test]
 fn blender_select_circle() {
     let brush = Region::circle(-10, -10, 80);
@@ -222,11 +221,12 @@ fn blender_select_circle() {
     assert_eq!(Region::circle(0, 0, 0).validate(), Err(RegionError::Empty));
 }
 
-/// Blender's lasso. Closed by derivation, so a caller never repeats the first
-/// point the way Blender's own buffer and Qt's `QPolygonF` both require; the
-/// interior is the even-odd rule, which is what a hand-drawn loop means; and a
-/// **degenerate** lasso is named rather than answered with an empty selection —
-/// there, "your lasso bounded nothing" and "nothing was there" are one value.
+/// The DCC's lasso. Closed by derivation, so a caller never repeats the first
+/// point the way the DCC's own buffer and the toolkit's polygon F both
+/// require; the interior is the even-odd rule, which is what a hand-drawn loop
+/// means; and a **degenerate** lasso is named rather than answered with an
+/// empty selection — there, "your lasso bounded nothing" and "nothing was
+/// there" are one value.
 #[test]
 fn blender_select_lasso() {
     let around_the_row = Region::lasso([(-320, -60), (320, -60), (320, 40), (-320, 40)]);

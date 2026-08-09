@@ -208,7 +208,7 @@ pub fn flat_visible<N: TreeNode>(nodes: &[N]) -> Vec<VisibleRow> {
 /// grid's [`GridFilter`](super::grid_sort::GridFilter) facet, completing the
 /// proxy family (list / grid / tree) the Model/View substrate windows over.
 ///
-/// The model is Qt's `QSortFilterProxyModel` with
+/// The model is the toolkit's sort filter proxy model with
 /// `setRecursiveFilteringEnabled(true)`: a node is kept **iff it matches
 /// `accepts`, or any of its descendants does** — the *path-to-match* policy
 /// every find-as-you-type tree converges on (a code editor's search tree,

@@ -34,11 +34,11 @@
 //! is checkable rather than claimed. `intervene` on `encoding` swaps
 //! sequential <-> diverging live, and the paint follows.
 //!
-//! ## Qt reference
+//! ## the toolkit reference
 //!
-//! Qt reaches this through `QXYSeries::setPointConfiguration` (per-point
+//! The toolkit reaches this through `setPointConfiguration` (per-point
 //! colour, index-keyed) and `Q3DTheme::ColorStyleRangeGradient` (colour by
-//! value), with a colour-scale axis widget in the `QCustomPlot` ecosystem. Two
+//! value), with a colour-scale axis widget in the custom plot ecosystem. Two
 //! things here go past that: the magnitude rides ON the point (no parallel
 //! array to fall out of step), and the bar is data — its gradient stops and
 //! tick values are in the scene, so an AI verifies the encoding without

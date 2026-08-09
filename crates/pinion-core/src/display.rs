@@ -41,57 +41,57 @@
 //! [`scale_factor`](Display::scale_factor), so logical is derivable *per
 //! display* — the direction that is well defined.
 //!
-//! # Where this is past Qt 6.11
+//! # Where this is past the toolkit 6.11
 //!
-//! Qt's `QScreen` is the floor: it enumerates, and it reports geometry, scale
-//! and refresh rate. Six things here are not parity, each checked against
-//! `qscreen.h` / `qguiapplication.h` / `qwidget.h`:
+//! The toolkit's screen is the floor: it enumerates, and it reports geometry,
+//! scale and refresh rate. Six things here are not parity, each checked
+//! against `qscreen.h` / `qguiapplication.h` / `qwidget.h`:
 //!
-//! 1. **A display has a stable address.** `QScreen` has no id accessor at all —
+//! 1. **A display has a stable address.** screen has no id accessor at all —
 //!    `name()` is platform text with no uniqueness guarantee (two identical
-//!    panels commonly report one string), so the only handle Qt gives you is
-//!    the `QScreen *` itself, which is `Q_DISABLE_COPY`, privately constructed,
-//!    and destroyed on `screenRemoved`. A Qt layout preset therefore cannot
+//!    panels commonly report one string), so the only handle the toolkit gives you is
+//!    the `screen *` itself, which is `Q_DISABLE_COPY`, privately constructed,
+//!    and destroyed on `screenRemoved`. A toolkit layout preset therefore cannot
 //!    *name* a display. [`DisplayId`] is unique inside its topology by
 //!    construction.
-//! 2. **The holes in the desktop are stated.** `QScreen::virtualGeometry()` is
+//! 2. **The holes in the desktop are stated.** `virtualGeometry()` is
 //!    the *bounding rectangle* of the screens; for any arrangement that is not
-//!    itself a rectangle it contains points that are on no screen, and Qt has
+//!    itself a rectangle it contains points that are on no screen, and the toolkit has
 //!    no accessor that says so. [`DisplayTopology::is_gap_free`] does, off the
 //!    same union computation that answers everything else here.
-//! 3. **Placement is answerable before it happens.** Every Qt screen query
-//!    takes a *point* (`QGuiApplication::screenAt`,
-//!    `QScreen::virtualSiblingAt`) — there is no rectangle-level question in
-//!    the API, so each Qt application that restores a window geometry
+//! 3. **Placement is answerable before it happens.** Every the toolkit screen query
+//!    takes a *point* (`screenAt`,
+//!    `virtualSiblingAt`) — there is no rectangle-level question in
+//!    the API, so each the toolkit application that restores a window geometry
 //!    hand-rolls its own clamp, which is precisely why so many of them come
 //!    back off-screen. [`DisplayTopology::resolve`] answers with the home
 //!    display, every display the rectangle touches, how many of its pixels are
 //!    visible, and where it would have to move.
 //! 4. **A saved layout is data, and it survives the desk changing.**
-//!    `QWidget::saveGeometry()` answers a `QByteArray` — an opaque, versioned,
+//!    `saveGeometry()` answers a byte array — an opaque, versioned,
 //!    absolute blob that cannot be read, diffed or edited. An [`Anchor`] is a
 //!    display id plus an offset *within* that display, so one preset means the
 //!    same thing after the monitors are rearranged, and when the named display
 //!    is gone the substitution is **named** rather than silently performed.
-//! 5. **Absence is stated, not zeroed.** `QScreen::refreshRate()` returns
+//! 5. **Absence is stated, not zeroed.** `refreshRate()` returns
 //!    `qreal`, so a platform that does not know reports `0` —
 //!    indistinguishable from an answer. [`Display::refresh_mhz`] is an
 //!    `Option`, which is also what the substrate underneath reports.
 //! 6. **The desk reaches the wire.** `scene/displays` publishes all of it, so
 //!    an agent driving the application headlessly knows what it is driving on.
-//!    No Qt application can be asked about its screens from outside its
+//!    No the toolkit application can be asked about its screens from outside its
 //!    process.
 //!
 //! # What this module deliberately does not model
 //!
-//! A display's **usable region** — Qt's `QScreen::availableGeometry()`, the
-//! bounds minus panels and docks. It is absent because nothing underneath
-//! reports it: winit's `MonitorHandle` has no work-area accessor, and EWMH's
-//! `_NET_WORKAREA` is one rectangle for the whole *desktop* rather than one per
-//! monitor (Qt's X11 plugin intersects it with each screen's geometry and calls
-//! the result available). Modelling a field the supply cannot fill would put a
-//! permanent `None` on every display on every platform. It is the next slice of
-//! this axis, and it is a *platform probe*, not geometry.
+//! A display's **usable region** — the toolkit's `availableGeometry()`, the bounds minus panels
+//! and docks. It is absent because nothing underneath reports it: winit's `MonitorHandle`
+//! has no work-area accessor, and EWMH's `_NET_WORKAREA` is one rectangle for the whole
+//! *desktop* rather than one per monitor (the toolkit's X11 plugin intersects
+//! it with each screen's geometry and calls the result available). Modelling a
+//! field the supply cannot fill would put a permanent `None` on every display on
+//! every platform. It is the next slice of this axis, and it is a *platform
+//! probe*, not geometry.
 
 use std::collections::BTreeMap;
 
@@ -501,7 +501,7 @@ impl Display {
 ///
 /// An **empty** topology is an ordinary value, not an error: a headless or
 /// surfaceless session genuinely has no displays, and every derivation here is
-/// total on it. Qt models the same state as `QGuiApplication::primaryScreen()`
+/// total on it. The toolkit models the same state as `primaryScreen()`
 /// answering `nullptr`, which is the shape that produces the crash rather than
 /// the answer.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
@@ -599,8 +599,8 @@ impl DisplayTopology {
         self.displays.iter().find(|d| d.id == *id)
     }
 
-    /// The primary display, or `None` on a headless desk. Qt
-    /// `QGuiApplication::primaryScreen`.
+    /// The primary display, or `None` on a headless desk. The toolkit
+    /// `primaryScreen`.
     #[must_use]
     pub fn primary(&self) -> Option<&Display> {
         self.displays.iter().find(|d| d.primary)
@@ -618,11 +618,11 @@ impl DisplayTopology {
         self.primary().or_else(|| self.displays.first())
     }
 
-    /// The smallest rectangle containing every display. Qt
-    /// `QScreen::virtualGeometry`.
+    /// The smallest rectangle containing every display. The toolkit
+    /// `virtualGeometry`.
     ///
     /// A point inside it is **not** necessarily on a display — see
-    /// [`is_gap_free`](Self::is_gap_free), the question Qt cannot ask.
+    /// [`is_gap_free`](Self::is_gap_free), the question the toolkit cannot ask.
     #[must_use]
     pub fn bounding_box(&self) -> Option<DisplayRect> {
         self.displays
@@ -645,19 +645,19 @@ impl DisplayTopology {
     /// with a deliberate gap. Vacuously `true` for a headless desk — an empty
     /// union equals an empty bounding box.
     ///
-    /// This is what makes "is `(x, y)` on a display?" and "is `(x, y)` inside
-    /// the virtual desktop?" *different questions*, a distinction Qt's API has
-    /// no way to express — which is why Qt code routinely uses
-    /// `virtualGeometry()` containment as a visibility test and is wrong on
-    /// every L-shaped desk.
+    /// This is what makes "is `(x, y)` on a display?" and "is `(x, y)` inside the
+    /// virtual desktop?" *different questions*, a distinction the toolkit's
+    /// API has no way to express — which is why the toolkit code routinely
+    /// uses `virtualGeometry()` containment as a visibility test and is wrong on every
+    /// L-shaped desk.
     #[must_use]
     pub fn is_gap_free(&self) -> bool {
         self.bounding_box()
             .is_none_or(|bb| bb.area() == self.covered_px())
     }
 
-    /// The display containing `(x, y)`, or `None`. Qt
-    /// `QGuiApplication::screenAt`.
+    /// The display containing `(x, y)`, or `None`. The toolkit
+    /// `screenAt`.
     ///
     /// Overlapping displays (a mirrored pair) resolve to the first in
     /// enumeration order, deterministically.
@@ -668,9 +668,9 @@ impl DisplayTopology {
 
     /// Where would a window with these physical bounds actually be?
     ///
-    /// The question Qt's API cannot be asked — see the module doc. Total: a
-    /// rectangle on no display, an empty one, or a headless desk all produce a
-    /// [`Placement`] rather than an error.
+    /// The question the toolkit's API cannot be asked — see the module doc.
+    /// Total: a rectangle on no display, an empty one, or a headless desk all
+    /// produce a [`Placement`] rather than an error.
     #[must_use]
     pub fn resolve(&self, rect: DisplayRect) -> Placement {
         let mut covering = Vec::new();
@@ -738,10 +738,10 @@ impl DisplayTopology {
     ///
     /// This is the module's whole point for a layout preset: the preset says
     /// *which monitor* and *how far in*, and this says where that is today.
-    /// When the named display is gone the answer is [`Anchored::Substituted`] —
-    /// the window still opens somewhere a person can reach it, and the fact
-    /// that it was moved is **in the answer**, which is the half Qt's
-    /// `restoreGeometry` cannot report.
+    /// When the named display is gone the answer is [`Anchored::Substituted`] — the window still
+    /// opens somewhere a person can reach it, and the fact that it was moved
+    /// is **in the answer**, which is the half the toolkit's `restoreGeometry` cannot
+    /// report.
     #[must_use]
     pub fn anchor(&self, anchor: &Anchor) -> Anchored {
         if let Some(display) = self.get(&anchor.display) {
@@ -833,8 +833,8 @@ impl Placement {
 ///
 /// The offset is in that display's *logical* pixels, so a preset written on a
 /// 1x monitor puts the window the same visible distance in when it is restored
-/// onto a 2x one. An absolute virtual-desktop coordinate — which is all Qt's
-/// `saveGeometry` blob holds — means something different the moment the
+/// onto a 2x one. An absolute virtual-desktop coordinate — which is all the
+/// toolkit's `saveGeometry` blob holds — means something different the moment the
 /// monitors are rearranged, and means nothing at all once one is unplugged.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Anchor {
@@ -1224,8 +1224,8 @@ mod tests {
         assert_eq!(desk.covered_px(), 1000 * 1000 + 500 * 400);
         assert!(!desk.is_gap_free());
         // The hole is a real place: inside the bounding box, on no display.
-        // This is the exact case where Qt code using `virtualGeometry()`
-        // containment as a visibility test is wrong.
+        // This is the exact case where the toolkit code using `virtualGeometry()` containment
+        // as a visibility test is wrong.
         assert!(bb.contains(1200, 800));
         assert!(desk.display_at(1200, 800).is_none());
         assert_eq!(bb.area() - desk.covered_px(), 500 * 600, "the hole's area");

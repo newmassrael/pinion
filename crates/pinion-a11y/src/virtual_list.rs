@@ -130,13 +130,12 @@ pub fn windowed_list_nodes_selected(
 /// rows scrolled out of the window have no node this frame, exactly as the
 /// single-select peer (the set survives in the coordinator).
 ///
-/// R1561 — `is_selected` answers membership for one **absolute** data-row
-/// index, asked once per **rendered** item. It was a `&BTreeSet<usize>` that
-/// every caller built over the window each frame, purely so this could ask
-/// `contains` about the ~20 rows in it. The question this axis asks is nothing
-/// but membership (Qt's `QItemSelectionModel::isSelected`), so it takes the
-/// question rather than a container that can answer it — the grid peer
-/// [`windowed_grid_nodes_multiselected`](crate::virtual_grid::windowed_grid_nodes_multiselected)
+/// R1561 — `is_selected` answers membership for one **absolute** data-row index, asked
+/// once per **rendered** item. It was a `&BTreeSet<usize>` that every caller built over the
+/// window each frame, purely so this could ask `contains` about the ~20 rows in it.
+/// The question this axis asks is nothing but membership (the toolkit's `isSelected`),
+/// so it takes the question rather than a container that can answer it — the
+/// grid peer [`windowed_grid_nodes_multiselected`](crate::virtual_grid::windowed_grid_nodes_multiselected)
 /// took the same turn.
 #[must_use]
 pub fn windowed_list_nodes_multiselected(

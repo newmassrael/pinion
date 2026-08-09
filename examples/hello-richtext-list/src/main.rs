@@ -1,6 +1,6 @@
 //! `hello-richtext-list` — R1559 §5.36 consumer of the **list**: a document
-//! whose items are numbered by their place among their siblings (Qt
-//! `QTextList`).
+//! whose items are numbered by their place among their siblings (the toolkit
+//! text list).
 //!
 //! ## What this demonstrates
 //!
@@ -17,8 +17,8 @@
 //!   the author wrote changes for the steps that follow, and every one of them
 //!   renumbers. That is the whole feature, visible in one click;
 //! * a second list in `upper-roman` starting at 3999, where the second item is
-//!   4000 — a value Roman numerals have **no standard form for**. Qt's
-//!   `QTextList::itemText()` answers `"?"` there and the number is gone; CSS
+//!   4000 — a value Roman numerals have **no standard form for**. The toolkit's
+//!   `itemText()` answers `"?"` there and the number is gone; CSS
 //!   Counter Styles Level 3 says render through the fallback style, so it
 //!   reads `4000.` and `scene/text_lists` names `Decimal` as the notation that
 //!   wrote it.
@@ -26,16 +26,16 @@
 //! ## Verification (substrate-first)
 //!
 //! * `scene/text_lists` publishes each list with its items in order, their
-//!   markers, their ordinals and where each marker was painted — a census Qt
-//!   has no accessor for at all (finding a `QTextDocument`'s lists means
+//!   markers, their ordinals and where each marker was painted — a census the toolkit
+//!   has no accessor for at all (finding a text document's lists means
 //!   walking every block and de-duplicating `textList()` pointers, in-process);
 //! * `scene/snapshot` carries the same derivation on each paragraph node, so
 //!   the two introspection channels check each other rather than restating one
 //!   derivation;
 //! * `scene/access` carries the WAI-ARIA `list` / `listitem` structure with
-//!   `aria-posinset` / `aria-setsize` / `aria-level`. Qt's
-//!   `QAccessibleTextInterface` has no method that reports block structure at
-//!   all, so a Qt document's lists are invisible to a screen reader — and its
+//!   `aria-posinset` / `aria-setsize` / `aria-level`. The toolkit's
+//!   accessible text interface has no method that reports block structure at
+//!   all, so a toolkit document's lists are invisible to a screen reader — and its
 //!   bullets are painted geometry, so an unordered item does not even begin
 //!   with a character an AT could read;
 //! * this crate's own tests lay out and paint the SAME scene through the
@@ -432,8 +432,9 @@ mod tests {
     }
 
     /// The CSS range fallback, in the painted document: 3999 is a Roman
-    /// numeral and 4000 is not, so 4000 is written in the fallback notation and
-    /// the placement names it. Qt answers `"?"` and loses the value.
+    /// numeral and 4000 is not, so 4000 is written in the fallback notation
+    /// and the placement names it. The toolkit answers `"?"` and loses the
+    /// value.
     #[test]
     fn r1559_a_value_past_the_roman_range_falls_back_to_decimal() {
         let scene = scene_for(false);
@@ -500,9 +501,9 @@ mod tests {
         assert!(marker_width > 0, "the marker's painted box is published");
     }
 
-    /// R1559 §5.40 — the structure reaches assistive technology: `list`,
-    /// `listitem`, and "N of M at level L". Qt's text a11y interface reports no
-    /// block structure at all, so this half simply does not exist there.
+    /// R1559 §5.40 — the structure reaches assistive technology: `list`, `listitem`, and
+    /// "N of M at level L". The toolkit's text a11y interface reports no block
+    /// structure at all, so this half simply does not exist there.
     #[test]
     fn r1559_the_lists_reach_assistive_technology() {
         let scene = scene_for(false);
@@ -538,11 +539,11 @@ mod tests {
     /// R1559 §2#6 — the SAME scene, painted through the terminal backend, puts
     /// the same markers on screen.
     ///
-    /// Asserted here rather than only in `pinion-tui`'s own tests because what
-    /// is claimed is a property of the DERIVATION: a marker is ordinary text,
-    /// so the cell backend needed no list code to draw one. If a bullet were
-    /// painted geometry — as Qt's is — there would be nothing for a terminal
-    /// to put in the cell.
+    /// Asserted here rather than only in `pinion-tui`'s own tests because what is
+    /// claimed is a property of the DERIVATION: a marker is ordinary text, so
+    /// the cell backend needed no list code to draw one. If a bullet were
+    /// painted geometry — as the toolkit's is — there would be nothing for a
+    /// terminal to put in the cell.
     #[test]
     fn r1559_the_same_markers_reach_the_terminal_backend() {
         let scene = laid_out(false);

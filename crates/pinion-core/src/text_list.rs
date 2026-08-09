@@ -1,5 +1,5 @@
 //! R1559 §5.36 §5.40 — the **list** format and the numbering derived from it
-//! (Qt `QTextList` / `QTextListFormat`; CSS Counter Styles Level 3).
+//! (the toolkit text list / text list format; CSS Counter Styles Level 3).
 //!
 //! # What a list is, and why it cannot be hand-composed
 //!
@@ -15,34 +15,34 @@
 //! blocks are items and at what depth; the marker each one shows is computed
 //! from that ([`crate::text_list::number_blocks`]).
 //!
-//! # Against Qt 6.11
+//! # Against the toolkit 6.11
 //!
-//! Qt has the same concept and reaches it through a different door:
-//! `QTextList` is a `QTextBlockGroup` **owned by a `QTextDocument`**, so a list
+//! The toolkit has the same concept and reaches it through a different door:
+//! text list is a text block group **owned by a text document**, so a list
 //! cannot exist outside a document, membership is by object identity, and
-//! `QTextList::itemNumber()` / `itemText()` are in-process C++ calls on that
+//! `itemNumber()` / `itemText()` are in-process C++ calls on that
 //! object. Four things here go past it:
 //!
 //! * **The counter styles have RANGES, and outside them a marker falls back**
 //!   rather than becoming a question mark. Roman numerals have no standard
 //!   form past 3999 — a fact about the notation, not about any toolkit — so
-//!   Qt's `itemText()` answers `"?"` there and the reader loses the number
+//!   the toolkit's `itemText()` answers `"?"` there and the reader loses the number
 //!   entirely. CSS Counter Styles Level 3 says a counter style outside its
 //!   range renders through its *fallback* style, and predefined
 //!   alphabetic/roman styles fall back to `decimal`. So item 4000 of an
-//!   upper-roman list reads `4000.` here and `?.` in Qt, and
+//!   upper-roman list reads `4000.` here and `?.` in the toolkit, and
 //!   [`RenderedMarker::rendered_as`] names which style actually produced the
 //!   text.
-//! * **A bullet is text.** Qt's `QTextDocumentLayout` draws `ListDisc` /
+//! * **A bullet is text.** the toolkit's text document layout draws `ListDisc` /
 //!   `ListCircle` / `ListSquare` as painted geometry — an ellipse or a
-//!   rectangle — so no Qt API answers what an unordered item's marker looks
+//!   rectangle — so no the toolkit API answers what an unordered item's marker looks
 //!   like, it does not participate in text layout, and it cannot be copied,
 //!   searched or announced. Here every style renders to a string
 //!   ([`ListStyle::render`]), so one code path draws every marker, on both
 //!   backends (§2 #6), and the terminal is not a special case.
-//! * **The suffix's default is a property of the STYLE.** Qt keeps
-//!   `numberSuffix()` as a `QString` whose null state means "use the default",
-//!   which is a distinction a `QString` cannot show a reader.
+//! * **The suffix's default is a property of the STYLE.** the toolkit keeps
+//!   `numberSuffix()` as a string whose null state means "use the default",
+//!   which is a distinction a string cannot show a reader.
 //!   [`ListFormat::number_suffix`] is an `Option`, and what `None` resolves to
 //!   is [`ListStyle::default_suffix`] — `"."` after a number, nothing after a
 //!   bullet.
@@ -58,7 +58,7 @@
 //! list is [`number_blocks`]'s. This module owns the vocabulary and the
 //! per-value rendering.
 
-/// The marker vocabulary of a list — Qt `QTextListFormat::Style`, whose eight
+/// The marker vocabulary of a list — the toolkit `Style`, whose eight
 /// arms are exactly CSS's `disc` / `circle` / `square` / `decimal` /
 /// `lower-alpha` / `upper-alpha` / `lower-roman` / `upper-roman`.
 ///
@@ -144,10 +144,10 @@ impl ListStyle {
 
     /// The glyph an unordered style shows, or `None` for an ordered one.
     ///
-    /// The characters are CSS Counter Styles Level 3's own: `disc` is
-    /// `U+2022`, `circle` is `U+25E6`, `square` is `U+25AA`. Qt draws these
-    /// three as geometry inside `QTextDocumentLayout` instead, which is why a
-    /// Qt bullet has no string form to return here.
+    /// The characters are CSS Counter Styles Level 3's own: `disc` is `U+2022`, `circle` is
+    /// `U+25E6`, `square` is `U+25AA`. The toolkit draws these three as geometry inside text
+    /// document layout instead, which is why a toolkit bullet has no string
+    /// form to return here.
     #[must_use]
     pub const fn bullet(self) -> Option<&'static str> {
         match self {
@@ -263,7 +263,7 @@ impl ListStyle {
 /// `value` in the bijective base-26 sequence starting at `first` (`a` or `A`).
 ///
 /// Bijective, not positional: there is no zero digit, so 26 is `z` and 27 is
-/// `aa` rather than `ba`. That is CSS's `alphabetic` system and Qt's
+/// `aa` rather than `ba`. That is CSS's `alphabetic` system and the toolkit's
 /// `ListLowerAlpha` alike; a positional base-26 would make item 26 read `ba`.
 fn alphabetic(value: i32, first: u8) -> String {
     debug_assert!(value >= 1, "the alphabetic range starts at 1");
@@ -301,11 +301,11 @@ fn roman(value: i32) -> String {
 /// `<ul>` and `<ol>`, and the width the marker is laid out in.
 pub const DEFAULT_INDENT_PX: u32 = 40;
 
-/// A list's declared format — Qt `QTextListFormat`.
+/// A list's declared format — the toolkit text list format.
 ///
 /// # This is the list's identity
 ///
-/// Qt identifies a list by object: two `QTextList`s are different lists
+/// The toolkit identifies a list by object: two text lists are different lists
 /// because they are different objects, whatever they declare. Here a list is a
 /// *run* of consecutive item blocks at one depth, and this format is what
 /// tells one run from the next — changing the style, the start, the affixes or
@@ -318,27 +318,27 @@ pub const DEFAULT_INDENT_PX: u32 = 40;
 /// elements. See [`number_blocks`] for the whole grouping rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ListFormat {
-    /// The marker vocabulary. Qt `setStyle`.
+    /// The marker vocabulary. The toolkit `setStyle`.
     pub style: ListStyle,
-    /// The counter value of the list's first item. Qt `setStart` (Qt 6.6+),
-    /// HTML `<ol start>`.
+    /// The counter value of the list's first item. The toolkit `setStart` (the
+    /// toolkit 6.6+), HTML `<ol start>`.
     ///
     /// Signed, and free to be zero or negative: `decimal` represents those and
     /// the styles that do not fall back to it, so a list can be numbered from
     /// `0` without the type refusing what CSS allows.
     pub start: i32,
-    /// Text before the counter. Qt `setNumberPrefix`.
+    /// Text before the counter. The toolkit `setNumberPrefix`.
     pub number_prefix: String,
     /// Text after the counter, or `None` for [`ListStyle::default_suffix`].
     ///
-    /// `Some(String::new())` is a real answer distinct from `None` — "no
-    /// suffix" rather than "the style's". Qt spells the same distinction as a
-    /// null `QString` versus an empty one, which is invisible in a debugger
-    /// and in any serialization.
+    /// `Some(String::new())` is a real answer distinct from `None` — "no suffix" rather than "the
+    /// style's". The toolkit spells the same distinction as a null string
+    /// versus an empty one, which is invisible in a debugger and in any
+    /// serialization.
     pub number_suffix: Option<String>,
     /// The width of the gutter the marker is laid out in, and the distance a
-    /// nested list is inset by. Qt `setIndent`, in units of
-    /// `QTextDocument::indentWidth`; px here, for the reason
+    /// nested list is inset by. The toolkit `setIndent`, in units of
+    /// `indentWidth`; px here, for the reason
     /// [`crate::style::BlockFormat`] gives — one unit, so a number read off a
     /// format says what it measures.
     pub indent_px: u32,
@@ -454,10 +454,9 @@ impl Default for ListFormat {
 /// A marker, and the style that actually produced it.
 ///
 /// The pair rather than the string, because they differ exactly where a reader
-/// needs to know: an upper-roman list's item 4000 shows `4000.`, and without
-/// [`Self::rendered_as`] that is indistinguishable from a list that declared
-/// `decimal`. Qt has no way to report it — its `itemText()` answers `"?"` and
-/// says nothing about why.
+/// needs to know: an upper-roman list's item 4000 shows `4000.`, and without [`Self::rendered_as`]
+/// that is indistinguishable from a list that declared `decimal`. The toolkit has no
+/// way to report it — its `itemText()` answers `"?"` and says nothing about why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedMarker {
     /// The marker as painted: prefix, counter, suffix.
@@ -486,20 +485,20 @@ pub struct ListPlacement {
     /// The paint tag of the list this one is nested inside, or `None` at the
     /// top level.
     pub parent_list_tag: Option<String>,
-    /// Nesting depth: `0` is a top-level list. Qt's `QTextListFormat::indent`
+    /// Nesting depth: `0` is a top-level list. The toolkit's `indent`
     /// counts from 1 and doubles as the indent multiplier; these are separate
     /// here ([`ListFormat::indent_px`] carries the distance).
     pub level: u8,
     /// The counter value this item was numbered with —
     /// [`ListFormat::start`] plus its offset in the list.
     pub ordinal: i32,
-    /// 1-based position among the list's items (Qt `itemNumber() + 1`), which
-    /// is what `aria-posinset` reports.
+    /// 1-based position among the list's items (the toolkit `itemNumber() + 1`), which is
+    /// what `aria-posinset` reports.
     pub position: u32,
-    /// How many items the list has (Qt `count()`), which is what
+    /// How many items the list has (the toolkit `count()`), which is what
     /// `aria-setsize` reports.
     pub count: u32,
-    /// The marker as painted (Qt `itemText()`, which has no answer for the
+    /// The marker as painted (the toolkit `itemText()`, which has no answer for the
     /// unordered styles).
     pub marker: String,
     /// The style that produced [`Self::marker`], after the CSS range fallback.
@@ -538,7 +537,8 @@ impl ListSpec {
     }
 }
 
-/// One list the numbering discovered — the object Qt calls a `QTextList`.
+/// One list the numbering discovered — the object the toolkit calls a text
+/// list.
 ///
 /// Reported beside the per-item placements because a list has facts that are
 /// not any item's: its extent, its depth, and which list encloses it. A
@@ -805,8 +805,8 @@ mod tests {
         assert!(ListStyle::Disc.render(i32::MIN).is_some());
     }
 
-    /// CSS's fallback rule, which is what Qt's `"?"` gives up: the number
-    /// survives, and the report says which notation wrote it.
+    /// CSS's fallback rule, which is what the toolkit's `"?"` gives up: the
+    /// number survives, and the report says which notation wrote it.
     #[test]
     fn an_out_of_range_value_falls_back_to_decimal() {
         let fmt = ListFormat::new(ListStyle::UpperRoman);

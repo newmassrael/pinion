@@ -27,7 +27,7 @@
 //!
 //! The save flow is the other half of "Open a file" (R788). Every pro
 //! tool's `File → Save As` routes through one own-rendered picker — a
-//! direct step toward the northern-star "Unreal-class editor self-hosted
+//! direct step toward the northern-star "the engine-class editor self-hosted
 //! in pinion". Because the picker is a pinion scene (not a native window
 //! pinion does not own — invisible to `scene/query`, unverifiable on a
 //! headless Linux box, see `[[native-menu-macos-windows-only-verify]]`),

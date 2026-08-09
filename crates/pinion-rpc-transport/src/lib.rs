@@ -430,10 +430,10 @@ impl TransportControl {
     ///
     /// A timer-polled accept loop cannot satisfy any of those, because it
     /// wakes on the clock rather than on arrivals; that is precisely the
-    /// defect this counter was introduced to pin (see `accept_loop`).
-    /// Qt's `QLocalServer` publishes no equivalent — the readiness wait lives
-    /// in `QSocketNotifier` inside the event loop, where a consumer cannot
-    /// see it at all.
+    /// defect this counter was introduced to pin (see `accept_loop`). The toolkit's
+    /// local server publishes no equivalent — the readiness wait lives in
+    /// socket notifier inside the event loop, where a consumer cannot see it
+    /// at all.
     #[must_use]
     pub fn accept_wakeups(&self) -> u64 {
         self.wakeups.load(Ordering::Relaxed)

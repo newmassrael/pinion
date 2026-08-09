@@ -1,13 +1,13 @@
 //! R1586 — what would flow through a node that is not doing its job.
 //!
 //! One derivation, two consumers. A node can be taken out of the graph's
-//! meaning without being taken out of the graph ([`Document::set_bypassed`]), or
-//! taken out of the structure altogether ([`Document::dissolve`]) — and the
-//! *same* routing decides both, so "what does bypassing this do" and "what will
-//! deleting it leave behind" cannot give different answers. Blender unifies
-//! these too, and says so in its own operator description: "Remove nodes and
-//! reconnect nodes **as if deletion was muted**". What is chosen differently
-//! here is the rule underneath, and what is reported when it cannot be applied.
+//! meaning without being taken out of the graph ([`Document::set_bypassed`]), or taken out of the
+//! structure altogether ([`Document::dissolve`]) — and the *same* routing decides both, so
+//! "what does bypassing this do" and "what will deleting it leave behind"
+//! cannot give different answers. The DCC unifies these too, and says so in
+//! its own operator description: "Remove nodes and reconnect nodes **as if
+//! deletion was muted**". What is chosen differently here is the rule
+//! underneath, and what is reported when it cannot be applied.
 //!
 //! # The rule
 //!
@@ -26,26 +26,25 @@
 //! intact is a better answer than one that is rewritten. A signature with no
 //! conversions in it ranks exactly as it did before that question existed.
 //!
-//! Blender instead scores every input against every output through a static
-//! table of socket-type pairs (`get_internal_link_type_priority`) and breaks
-//! ties by **whether the input happens to be wired**. That last clause is the
-//! reason the rule is worth restating: under it, unplugging one port can change
-//! which value comes out of a *different* port of the same bypassed node. A
-//! `Mix(Base, Blend, Factor)` with only `Blend` wired passes `Blend` through;
-//! wire `Base` as well and the same node now passes `Base`. Here the answer to
-//! "what does bypassing this node do" is stable under every edit that does not
-//! change the node's own signature — and `Base` either way, because it is
-//! first.
+//! The DCC instead scores every input against every output through a static
+//! table of socket-type pairs (`get_internal_link_type_priority`) and breaks ties by **whether the input
+//! happens to be wired**. That last clause is the reason the rule is worth
+//! restating: under it, unplugging one port can change which value comes out
+//! of a *different* port of the same bypassed node. A `Mix(Base, Blend, Factor)` with only `Blend` wired
+//! passes `Blend` through; wire `Base` as well and the same node now passes `Base`. Here
+//! the answer to "what does bypassing this node do" is stable under every edit
+//! that does not change the node's own signature — and `Base` either way, because
+//! it is first.
 //!
 //! # Where the two consumers must differ, and where that is said
 //!
 //! A bypassed node passes its routed input's value on even when nothing is
-//! wired to that input, because an unwired port still has its declared default.
-//! A *dissolved* node cannot: there is no link to redirect, so the downstream
-//! link is removed and the port it fed falls back to its own default instead.
-//! The two therefore agree on every value whenever the routed inputs are wired,
-//! and the places they cannot agree are exactly the links reported in
-//! [`Rewired::severed`]. Blender removes the same links and reports nothing at
+//! wired to that input, because an unwired port still has its declared
+//! default. A *dissolved* node cannot: there is no link to redirect, so the
+//! downstream link is removed and the port it fed falls back to its own
+//! default instead. The two therefore agree on every value whenever the routed
+//! inputs are wired, and the places they cannot agree are exactly the links
+//! reported in [`Rewired::severed`]. The DCC removes the same links and reports nothing at
 //! all — `node_internal_relink` returns `void`.
 
 use crate::model::{
@@ -84,10 +83,10 @@ impl Route {
 
 /// What a node would pass through if it were not computing.
 ///
-/// Derived from the node's signature at the moment it is asked for. There is no
-/// stored copy to go stale — Blender materialises this into
-/// `node->runtime->internal_links` and keeps a tree-update pass whose job is to
-/// notice when the stored answer has stopped matching the derived one.
+/// Derived from the node's signature at the moment it is asked for. There is
+/// no stored copy to go stale — the DCC materialises this into `node->runtime->internal_links` and keeps a
+/// tree-update pass whose job is to notice when the stored answer has stopped
+/// matching the derived one.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Passthrough {
     routes: Vec<Route>,
@@ -106,9 +105,9 @@ impl Passthrough {
     /// type. While the node is bypassed these carry nothing, and whatever they
     /// fed falls back to its own default.
     ///
-    /// Named rather than merely absent from [`Self::routes`]: a value
-    /// disappearing is the thing an author most needs told, and it is precisely
-    /// what Blender's derivation drops on the floor.
+    /// Named rather than merely absent from [`Self::routes`]: a value disappearing is the
+    /// thing an author most needs told, and it is precisely what the DCC's
+    /// derivation drops on the floor.
     #[must_use]
     pub fn dropped_outputs(&self) -> &[u32] {
         &self.dropped_outputs
@@ -152,7 +151,7 @@ pub struct Bridge {
     pub to: Socket,
     /// Whether the bridge is muted, which it is when *either* of the two links
     /// it replaces was: a value that was being stopped must go on being
-    /// stopped. Blender propagates the upstream link's flag onto the surviving
+    /// stopped. The DCC propagates the upstream link's flag onto the surviving
     /// one for the same reason.
     pub muted: bool,
 }
@@ -165,7 +164,7 @@ pub struct Rewired {
     /// Downstream links removed because no value reached them — the output they
     /// left by had no route, or the input that route names was not wired.
     ///
-    /// This is the difference between bypassing and dissolving, named. Blender
+    /// This is the difference between bypassing and dissolving, named. The DCC
     /// removes exactly these links and reports nothing.
     pub severed: Vec<Link>,
     /// Every link that touched the node and is now gone, the severed ones
@@ -204,20 +203,19 @@ impl<K: NodeKind> Document<K> {
         //
         // R1593 — "the types agree" is the taxonomy's directed relation, the
         // same one a link is judged by, and it is asked in the direction the
-        // value travels: out of the INPUT, into the OUTPUT. Blender answers this
-        // one from a third table (`get_internal_link_type_priority`), unrelated
-        // to either the one that validates a link or the one that converts a
-        // value, so what a muted node passes through there can disagree with
-        // what a wire in the same position would have carried.
-        // R1599 — "the types agree" widened to "what leaves one may enter the
-        // other", which is the same question once a port may carry CONTROL.
-        // The rule does not change and does not need to: a bypassed node is the
-        // identity as far as its signature allows, so control now passes
-        // through a bypassed node exactly as a value does, and a control output
-        // can be fed only by a control input because `crossing` refuses the
-        // mixed pair. Unreal's muted-node equivalent has no such unification —
-        // `get_internal_link_type_priority` is a table over data socket types
-        // and exec is simply not in it.
+        // value travels: out of the INPUT, into the OUTPUT. The DCC answers
+        // this one from a third table (`get_internal_link_type_priority`), unrelated to either the one that
+        // validates a link or the one that converts a value, so what a muted
+        // node passes through there can disagree with what a wire in the same
+        // position would have carried. R1599 — "the types agree" widened to
+        // "what leaves one may enter the other", which is the same question
+        // once a port may carry CONTROL. The rule does not change and does not
+        // need to: a bypassed node is the identity as far as its signature
+        // allows, so control now passes through a bypassed node exactly as a
+        // value does, and a control output can be fed only by a control input
+        // because `crossing` refuses the mixed pair. The engine's muted-node
+        // equivalent has no such unification — `get_internal_link_type_priority` is a table over data socket
+        // types and exec is simply not in it.
         let eligible = |input: &crate::model::Port<K::Type, K::Value>, out: &KindPort<K>| {
             input.passthrough && crossing::<K>(input, out).is_allowed()
         };
@@ -269,7 +267,7 @@ impl<K: NodeKind> Document<K> {
 
     /// Remove `node`, reconnecting what flowed through it.
     ///
-    /// Blender's `NODE_OT_delete_reconnect`; the general form of the
+    /// The DCC's `NODE_OT_delete_reconnect`; the general form of the
     /// "delete a reroute knot and keep the wire" gesture, which is the
     /// one-in-one-out special case of this.
     ///
@@ -294,7 +292,7 @@ impl<K: NodeKind> Document<K> {
     /// Unwire `node`, reconnecting what flowed through it, and leave it where
     /// it is.
     ///
-    /// Blender's `NODE_OT_links_detach` and the drag half of
+    /// The DCC's `NODE_OT_links_detach` and the drag half of
     /// `NODE_OT_move_detach_links`: pull a node out of the flow it is sitting
     /// in, without deleting it. The same derivation and the same report as
     /// [`Self::dissolve`] — the node simply stays, wired to nothing.

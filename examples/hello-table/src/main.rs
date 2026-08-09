@@ -108,7 +108,7 @@ const PRIMARY_TAG: &str = "table";
 const HEADERS: [&str; 4] = ["Widget", "Round", "Status", "Role"];
 
 /// R1536 §5.27 — the absolute index of the `Status` column, the one that
-/// answers the `Qt::DecorationRole` with an **icon**.
+/// answers the `DecorationRole` with an **icon**.
 const STATUS_COL: usize = 2;
 /// R1536 — side of the registered status icons, in device-independent pixels.
 /// Small on purpose: this is a decoded RGBA buffer, not a file, and the
@@ -141,7 +141,7 @@ fn disc_icon(color: pinion_core::style::Color) -> DecodedImage {
     DecodedImage::from_rgba8(ICON_SIDE, ICON_SIDE, px).expect("a full RGBA buffer")
 }
 
-/// R1536 §5.27 — the grid's `Qt::DecorationRole`, the **icon** arm: a status
+/// R1536 §5.27 — the grid's `DecorationRole`, the **icon** arm: a status
 /// disc beside the status word.
 ///
 /// `meaning` is empty — DECORATIVE. The icon restates the label in the same
@@ -169,7 +169,7 @@ fn cell_decoration(c: CellIndex) -> Option<Decoration> {
 const ICON_KEY: &str = "memory://column-key";
 const KEY_MEANING: &str = "Primary key";
 
-/// R1547 §5.27 — the grid's **section**-axis `Qt::DecorationRole`, the icon arm
+/// R1547 §5.27 — the grid's **section**-axis `DecorationRole`, the icon arm
 /// on the header: a key glyph on the identifying column.
 ///
 /// The EAGER surface's proof that the role reaches both axes and both arms. It
@@ -184,8 +184,8 @@ fn header_decoration(col: usize) -> Option<Decoration> {
     })
 }
 
-/// R1548 §5.27 — the **vertical** section axis's `Qt::DisplayRole`
-/// (`headerData(section, Qt::Vertical, Qt::DisplayRole)`): Qt's own default,
+/// R1548 §5.27 — the **vertical** section axis's `DisplayRole`
+/// (`headerData(section, Vertical, DisplayRole)`): the toolkit's own default,
 /// the 1-based row number.
 ///
 /// Asked with the row's DATA index, so a sort carries each number with its row.
@@ -193,7 +193,7 @@ fn row_header_label(row: usize) -> String {
     (row + 1).to_string()
 }
 
-/// R1548 §5.27 — the vertical axis's `Qt::DecorationRole`, the icon arm: a
+/// R1548 §5.27 — the vertical axis's `DecorationRole`, the icon arm: a
 /// pin glyph on the one row that is pinned.
 ///
 /// Present so the **eager** surface answers both section roles on both axes.
@@ -209,8 +209,8 @@ fn row_header_decoration(row: usize) -> Option<Decoration> {
 
 /// R1548 — the `memory://` source of the pin glyph, what it means, and which
 /// row carries it. MEANINGFUL: nothing else in this table says a row is
-/// pinned, so the mark is the only thing that does — and in Qt it would be
-/// silent, because `QAccessibleTableHeaderCell::text` reads the display role
+/// pinned, so the mark is the only thing that does — and in the toolkit it would be
+/// silent, because `text` reads the display role
 /// alone on both orientations.
 const ICON_PIN: &str = "memory://row-pin";
 const PIN_MEANING: &str = "Pinned";
@@ -437,26 +437,25 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
             headers: &HEADERS,
             rows: &rows,
             row_ids: &state.order,
-            // R1536 — Qt `data(index, Qt::DecorationRole)`, the icon arm.
+            // R1536 — the toolkit `data(index, DecorationRole)`, the icon arm.
             decoration: Some(&cell_decoration),
-            // R1547 — the same role on the SECTION axis, Qt
-            // `headerData(section, Qt::Horizontal, Qt::DecorationRole)`.
+            // R1547 — the same role on the SECTION axis, the toolkit
+            // `headerData(section, Horizontal, DecorationRole)`.
             header_decoration: Some(&header_decoration),
-            // R1548 — Qt `headerData(section, Qt::Vertical, …)`: the eager
-            // surface answers the SECOND section axis too, through the same
-            // `HeaderAxis` type the virtualized grid uses.
-            // R1562 — the eager surface's band, its sections pressable
-            // through the same `send_cell` arc a cell press drives. The corner
-            // is `setCornerButtonEnabled(false)`: this table is single-select
-            // (R953 — one selection model per example).
+            // R1548 — the toolkit `headerData(section, Vertical, …)`: the eager surface answers the SECOND
+            // section axis too, through the same `HeaderAxis` type the virtualized grid
+            // uses. R1562 — the eager surface's band, its sections pressable
+            // through the same `send_cell` arc a cell press drives. The corner is `setCornerButtonEnabled(false)`:
+            // this table is single-select (R953 — one selection model per
+            // example).
             row_headers: Some(RowHeaderAxis::inert(HeaderAxis {
                 label: &row_header_label,
                 decoration: &row_header_decoration,
             })),
         },
         // Single-row selection only; the spreadsheet cell range selection is
-        // the dedicated `hello-cell-select` grid's model (R953 — one selection
-        // model per example, Excel / Qt `SelectRows` vs `SelectItems`).
+        // the dedicated `hello-cell-select` grid's model (R953 — one selection model per
+        // example, Excel / the toolkit `SelectRows` vs `SelectItems`).
         TableSelection {
             rows: &row_selected,
             cells: None,

@@ -1910,8 +1910,9 @@ fn r1429_scene_pointer_tilt_requires_numeric_axes() {
 
 #[test]
 fn r1430_scene_pointer_scalar_axes_enqueue_their_variants() {
-    // The remaining Qt QTabletEvent scalar axes each enqueue one positionless
-    // variant carrying the decoded value (the router does the range folding).
+    // The remaining the toolkit tablet event scalar axes each enqueue one
+    // positionless variant carrying the decoded value (the router does the
+    // range folding).
     for (method, key, sent) in [
         ("scene/pointer_twist", "twist", 90.0_f64),
         ("scene/pointer_tangential_pressure", "tangential", -0.5),
@@ -3864,8 +3865,8 @@ fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
     );
     assert_eq!(dec.get("underline"), Some(&Value::String("single".into())));
     assert_eq!(dec.get("strikethrough"), Some(&Value::Bool(false)));
-    // `null` rather than absent: the underline colour is always ANSWERED, and
-    // `null` is the answer "it tracks the text colour" (Qt's default).
+    // `null` rather than absent: the underline colour is always ANSWERED, and `null`
+    // is the answer "it tracks the text colour" (the toolkit's default).
     assert_eq!(dec.get("underline_color"), Some(&Value::Null));
     assert_eq!(
         style.get("overflow"),

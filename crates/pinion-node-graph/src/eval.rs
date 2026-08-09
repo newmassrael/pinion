@@ -288,8 +288,8 @@ impl<K: NodeKind> Evaluator<'_, K> {
         // R1594 — the other half of one rule: an authored value is what a port
         // carries when nothing else supplies one. For an input that means no
         // link; for an output it means the kind produced nothing there, which
-        // is what makes a SOURCE node's constant this same mechanism instead of
-        // a second one. Blender's Value node reads its own output socket in
+        // is what makes a SOURCE node's constant this same mechanism instead
+        // of a second one. The DCC's Value node reads its own output socket in
         // per-node C code, so there the fact is a node type's private
         // arrangement rather than a rule.
         if !bypassed
@@ -422,10 +422,9 @@ impl<K: NodeKind> Evaluator<'_, K> {
 
 /// One level of the descent: **where** a reading is being taken.
 ///
-/// Named `Descent` and not `Frame`: R1589 gave this crate a
-/// [`NodeBody::Frame`], and a word that means a stack level in one module and a
-/// canvas container in another is the exact confusion R1586 spent a round
-/// untangling in Blender's own vocabulary.
+/// Named `Descent` and not `Frame`: R1589 gave this crate a [`NodeBody::Frame`], and a word that means
+/// a stack level in one module and a canvas container in another is the exact
+/// confusion R1586 spent a round untangling in the DCC's own vocabulary.
 ///
 /// Public since R1600, because it is what
 /// [`Document::run`](crate::Document::run) and
