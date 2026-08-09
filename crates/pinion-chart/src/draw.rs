@@ -12,6 +12,7 @@
 //! Every primitive takes the tag the caller assigns, so the chart's §2 #7
 //! introspection ownership stays with the chart builder, not here.
 
+use crate::interpolate::Interpolation;
 use pinion_core::Scene;
 use pinion_core::scene::{
     BoxNode, ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
@@ -57,6 +58,42 @@ pub(crate) fn plot_rect(rect: Rect, margin: Margin) -> (f32, f32, f32, f32) {
     let (x0, y0) = (area.x, area.y);
     let (x1, y1) = (area.x + area.w, area.y + area.h);
     (to_f32(x0), to_f32(x1), to_f32(y0), to_f32(y1))
+}
+
+/// R1625 — a stroked path that joins its points under `kind`.
+///
+/// [`Interpolation::Linear`] gives the identical node
+/// [`stroke_path`] does, so a chart that never asks for a curve pays nothing
+/// and its scene is byte-unchanged. Anything else emits real cubic commands —
+/// R1623's vocabulary — rather than a densely sampled polyline, so the scene
+/// still says "a curve through these samples" to anyone reading it.
+///
+/// The bounding box comes from the CURVE rather than from the points: a
+/// smooth interpolation may leave the box its samples span, and a node rect
+/// that did not know that would clip the very excursion
+/// [`crate::interpolate::overshoot`] exists to report.
+pub(crate) fn curve_stroke_path(
+    points: &[(f32, f32)],
+    kind: Interpolation,
+    stroke: Stroke,
+    tag: String,
+) -> Scene {
+    if kind == Interpolation::Linear {
+        return stroke_path(points, stroke, tag);
+    }
+    let absolute_commands = crate::interpolate::commands(points, kind);
+    let Some(b) = pinion_core::path_data::bounds(&absolute_commands) else {
+        return stroke_path(points, stroke, tag);
+    };
+    let bbox = bbox_of(&[(b.min_x, b.min_y), (b.max_x, b.max_y)], stroke.width);
+    let (ox, oy) = (to_f32(bbox.x), to_f32(bbox.y));
+    let rebased_points: Vec<(f32, f32)> = points.iter().map(|&(x, y)| (x - ox, y - oy)).collect();
+    let commands = crate::interpolate::commands(&rebased_points, kind);
+    Scene::Path(
+        PathNode::new(bbox, commands, PathStyle::stroked(stroke))
+            .with_tag(tag)
+            .with_layout(absolute(bbox)),
+    )
 }
 
 /// A stroked polyline path from plot-space points.

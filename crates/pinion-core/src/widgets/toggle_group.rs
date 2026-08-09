@@ -47,6 +47,13 @@ pub fn boot_toggle(on: bool) -> ToggleExternal {
 /// `Scene::Container([primary, ...extras])`, and the input router's
 /// depth-first walk dispatches each pill click by tag.
 ///
+/// **For the binding's FIRST toggle group only.** A binding with a second
+/// group wants [`toggles`]: this one drops `tags[0]` because that tag is
+/// already the primary external, and calling it on a second group instead
+/// produces a chip that is painted, focusable, announced to assistive
+/// technology — and wired to nothing. R1625 built exactly that and the demo
+/// caught it, which is why the two forms are now named apart.
+///
 /// # Panics
 /// Panics if `boot.len() < tags.len()` (every tag needs a boot default).
 #[must_use]
@@ -55,9 +62,27 @@ pub fn extra_toggles(tags: &[&'static str], boot: &[bool]) -> Vec<ExtraExternal>
         boot.len() >= tags.len(),
         "every segment tag needs a boot default"
     );
+    let Some((_, rest)) = tags.split_first() else {
+        return Vec::new();
+    };
+    toggles(rest, &boot[1..])
+}
+
+/// R1625 — an [`ExtraExternal`] for **every** tag, seeded from `boot`.
+///
+/// The form a second toggle group needs, where no tag is the primary
+/// external. [`extra_toggles`] is this with the first tag dropped.
+///
+/// # Panics
+/// Panics if `boot.len() < tags.len()` (every tag needs a boot default).
+#[must_use]
+pub fn toggles(tags: &[&'static str], boot: &[bool]) -> Vec<ExtraExternal> {
+    assert!(
+        boot.len() >= tags.len(),
+        "every segment tag needs a boot default"
+    );
     tags.iter()
         .enumerate()
-        .skip(1)
         .map(|(i, tag)| ExtraExternal::new(*tag, Box::new(boot_toggle(boot[i]))))
         .collect()
 }
@@ -257,5 +282,27 @@ mod tests {
         assert!(!apply_key(&mut scene, None, "Space", &TAGS));
         assert!(!apply_key(&mut scene, Some("sibling"), "ArrowRight", &TAGS));
         assert_eq!(focus_request::drain(), None, "no focus request emitted");
+    }
+    /// R1625 — the two builders differ by exactly one tag, and the
+    /// difference is the whole reason both exist. Nothing checked it before,
+    /// which is how a second toggle group ended up with a dead chip.
+    #[test]
+    fn r1625_toggles_keeps_every_tag_and_extra_toggles_drops_the_primary() {
+        const TAGS: [&str; 3] = ["a", "b", "c"];
+        const BOOT: [bool; 3] = [true, false, true];
+        let all = toggles(&TAGS, &BOOT);
+        assert_eq!(all.len(), TAGS.len(), "every tag gets an external");
+        let extras = extra_toggles(&TAGS, &BOOT);
+        assert_eq!(
+            extras.len(),
+            TAGS.len() - 1,
+            "the primary tag is already the widget's own external",
+        );
+        assert_eq!(toggles(&[], &[]).len(), 0);
+        assert_eq!(
+            extra_toggles(&[], &[]).len(),
+            0,
+            "and an empty group is empty"
+        );
     }
 }

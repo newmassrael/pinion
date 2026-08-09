@@ -307,6 +307,7 @@ mod color_scale;
 mod distribution;
 mod donut;
 mod draw;
+mod interpolate;
 mod line;
 mod model;
 mod palette;
@@ -338,6 +339,7 @@ pub use distribution::{
     SummaryPosition, distribution_bounds, positive_distribution_bounds,
 };
 pub use donut::{DonutChart, Slice};
+pub use interpolate::{CurveSegment, Interpolation, Overshoot, curve, is_graph, overshoot};
 pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;

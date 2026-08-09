@@ -95,8 +95,18 @@ use pinion_core::style::{Color, Stroke, StrokeCap};
 use crate::color_scale::{ColorScale, ValueEncoding};
 use crate::draw::{
     CalloutRow, MUTED_ALPHA, absolute, area_path, area_path_along_x, box_node, callout,
-    fill_parent, legend_band_color_bar, marker_node, stroke_path,
+    curve_stroke_path, fill_parent, legend_band_color_bar, marker_node, stroke_path,
 };
+use crate::interpolate::{Interpolation, Overshoot};
+
+/// R1625 — a data-space value as the `f32` the interpolation works in.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the overshoot report is a geometric question, answered in the coordinate space the curve is built in"
+)]
+fn narrow(v: f64) -> f32 {
+    v as f32
+}
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
@@ -131,6 +141,8 @@ pub struct LineChart {
     select_x_range: Option<(f64, f64)>,
     color: ValueEncoding,
     kinds: AxisKinds,
+    /// R1625 — how consecutive samples are joined.
+    interpolation: Interpolation,
     tag_prefix: String,
 }
 
@@ -146,6 +158,7 @@ impl LineChart {
             y_domain: None,
             fill_area: false,
             stacked: false,
+            interpolation: Interpolation::default(),
             inspect: None,
             legend_tags: None,
             rescale_to_visible: false,
@@ -256,6 +269,64 @@ impl LineChart {
     /// it. Here [`Series::points`] keeps what was measured and the stacking is
     /// the chart's ([`crate::stack`], usable on its own).
     ///
+    /// R1625 — how consecutive samples are joined. See [`Interpolation`].
+    ///
+    /// The default is straight segments, which is the only join that draws no
+    /// value the data lacks; [`Interpolation::Monotone`] is the smooth one
+    /// that keeps that property, and
+    /// [`overshoot`](Self::overshoot) reports the excursions when it does not.
+    #[must_use]
+    pub const fn interpolation(mut self, kind: Interpolation) -> Self {
+        self.interpolation = kind;
+        self
+    }
+
+    /// The interpolation this chart draws with.
+    #[must_use]
+    pub const fn interpolation_kind(&self) -> Interpolation {
+        self.interpolation
+    }
+
+    /// R1625 — every place this chart's curve leaves the range its own
+    /// samples span, as `(series index, the excursion)`.
+    ///
+    /// The question a smooth line chart owes its reader: **did it draw a
+    /// value that was never measured?** A spline through a plateau followed
+    /// by a rise dips below the plateau, so a chart of a quantity that cannot
+    /// be negative paints one anyway, and nothing in the picture says so. The
+    /// reference toolkit's spline series has one method, no choice of it, and
+    /// no report at all.
+    ///
+    /// Computed in DATA space and depending on nothing but the samples and
+    /// the interpolation, so a consumer can caption the excursion — or refuse
+    /// the interpolation — without laying the chart out. That is the same
+    /// contract [`CandlestickChart::off_scale`](crate::CandlestickChart::off_scale)
+    /// has, for the same reason.
+    ///
+    /// Empty whenever [`Interpolation::may_overshoot`] is false, which
+    /// `pinion_chart::interpolate`'s own tests hold it to.
+    #[must_use]
+    pub fn overshoot(&self) -> Vec<(usize, Overshoot)> {
+        let mut out = Vec::new();
+        for (i, series) in self.series.iter().enumerate() {
+            if !series.visible {
+                continue;
+            }
+            let pts: Vec<(f32, f32)> = series
+                .points
+                .iter()
+                .filter(|p| p.x.is_finite() && p.y.is_finite())
+                .map(|p| (narrow(p.x), narrow(p.y)))
+                .collect();
+            out.extend(
+                crate::interpolate::overshoot(&pts, self.interpolation)
+                    .into_iter()
+                    .map(|o| (i, o)),
+            );
+        }
+        out
+    }
+
     /// Implies [`filled`](Self::filled): a stack of bare polylines shows the
     /// cumulative totals and hides the bands, which is not what stacking is
     /// for. The lines are still drawn, along each band's top edge.
@@ -863,8 +934,9 @@ impl LineChart {
             if any_encoded {
                 out.extend(self.encoded_segments(&pts, &encoded, line_color, width, i));
             } else {
-                out.push(stroke_path(
+                out.push(curve_stroke_path(
                     &pts,
+                    self.interpolation,
                     Stroke::new(line_color, width).with_cap(StrokeCap::Round),
                     format!("{}.series.{i}", self.tag_prefix),
                 ));
@@ -886,8 +958,9 @@ impl LineChart {
                             format!("{}.focus.area.{i}", self.tag_prefix),
                         ));
                     }
-                    out.push(stroke_path(
+                    out.push(curve_stroke_path(
                         &focus,
+                        self.interpolation,
                         Stroke::new(color, width).with_cap(StrokeCap::Round),
                         format!("{}.focus.series.{i}", self.tag_prefix),
                     ));
@@ -2710,5 +2783,98 @@ mod tests {
             !readout.contains("h 0"),
             "the off-scale sample is never named: {readout}"
         );
+    }
+    /// R1625 — the interpolation reaches the painted series path, and a
+    /// straight chart's scene is byte-unchanged.
+    #[test]
+    fn r1625_the_interpolation_reaches_the_painted_series() {
+        let style = ChartStyle::default();
+        let pts: Vec<DataPoint> = (0..6)
+            .map(|i| DataPoint::new(f64::from(i), f64::from(i * i)))
+            .collect();
+        let chart = |kind| {
+            LineChart::new(vec![Series::new("s", pts.clone())])
+                .interpolation(kind)
+                .build(Rect::new(0, 0, 400, 300), &style)
+        };
+        let straight = chart(Interpolation::Linear);
+        let Some(Scene::Path(flat)) = find(&straight, "chart.series.0") else {
+            panic!("the straight series is a path");
+        };
+        assert!(
+            flat.commands
+                .iter()
+                .all(|c| !matches!(c, PathCommand::CurveTo { .. })),
+            "linear draws line segments",
+        );
+
+        for kind in [Interpolation::Monotone, Interpolation::CatmullRom] {
+            let scene = chart(kind);
+            let Some(Scene::Path(curved)) = find(&scene, "chart.series.0") else {
+                panic!("{kind:?} series is a path");
+            };
+            let cubic_count = curved
+                .commands
+                .iter()
+                .filter(|c| matches!(c, PathCommand::CurveTo { .. }))
+                .count();
+            assert_eq!(cubic_count, pts.len() - 1, "{kind:?}: one cubic per gap");
+            assert!(
+                !curved
+                    .commands
+                    .iter()
+                    .any(|c| matches!(c, PathCommand::LineTo(_))),
+                "{kind:?} emits cubics, not a sampled polyline",
+            );
+        }
+        assert_eq!(
+            LineChart::new(Vec::new()).interpolation_kind(),
+            Interpolation::Linear,
+            "straight by default — the join that invents nothing",
+        );
+    }
+
+    /// R1625 — the chart REPORTS a curve that left its data, in data space,
+    /// without being laid out.
+    #[test]
+    fn r1625_a_chart_reports_the_values_its_curve_invented() {
+        // A plateau then a jump: the case every spline overshoots.
+        let pts = vec![
+            DataPoint::new(0.0, 0.0),
+            DataPoint::new(1.0, 0.0),
+            DataPoint::new(2.0, 0.0),
+            DataPoint::new(3.0, 100.0),
+        ];
+        let of = |kind| {
+            LineChart::new(vec![Series::new("q", pts.clone())])
+                .interpolation(kind)
+                .overshoot()
+        };
+        assert!(
+            of(Interpolation::Linear).is_empty(),
+            "straight invents nothing"
+        );
+        assert!(
+            of(Interpolation::Monotone).is_empty(),
+            "the monotone curve invents nothing either",
+        );
+        let smooth = of(Interpolation::CatmullRom);
+        assert!(
+            !smooth.is_empty(),
+            "the smooth curve dips below the plateau"
+        );
+        let (series, first) = smooth[0];
+        assert_eq!(series, 0, "the report names the series");
+        assert!(first.beyond > 0.0, "and how far it went: {first:?}");
+        assert!(
+            smooth.iter().any(|(_, o)| !o.above && o.extreme < 0.0),
+            "a quantity that cannot be negative was drawn negative: {smooth:?}",
+        );
+
+        // A hidden series contributes nothing to the report.
+        let hidden = LineChart::new(vec![Series::new("q", pts.clone()).with_visible(false)])
+            .interpolation(Interpolation::CatmullRom)
+            .overshoot();
+        assert!(hidden.is_empty(), "a hidden series draws nothing to report");
     }
 }

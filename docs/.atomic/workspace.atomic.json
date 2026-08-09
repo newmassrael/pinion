@@ -33000,6 +33000,68 @@
         "no chart publishes its marks to assistive tech — its own debt file"
       ]
     },
+    "R1625": {
+      "decision_summary": "R1625 a smooth line says what it invented: pinion_chart::Interpolation plus LineChart::interpolation and LineChart::overshoot make the spline a declared choice and publish every segment whose curve leaves the range its own samples span",
+      "changes_bullets": [
+        "pinion_chart::interpolate — Interpolation {Linear, Monotone, CatmullRom}",
+        "Fritsch-Carlson monotone tangents; curve / commands / is_graph / overshoot",
+        "may_overshoot is a declaration the tests hold to the geometry",
+        "draw::curve_stroke_path emits real cubics, bbox from the curve",
+        "LineChart::interpolation / interpolation_kind / overshoot",
+        "toggle_group::toggles — the form a SECOND toggle group needs",
+        "hello-series-toggle gains two interpolation chips and a live report",
+        "tools/demos/r1625_the_curve_says_what_it_invented.py",
+        "tally: dataviz re-judged 92 -> 95 (R1622 + R1624 + R1625)"
+      ],
+      "verification_bullets": [
+        "13 interpolate tests, 2 line tests, 3 binding tests, 1 substrate test",
+        "monotone asserted non-overshooting over 40 pseudo-random shapes",
+        "7 counterfactuals, 7 caught, from a verified-green baseline",
+        "CF-6 PASSED first: a dead chip the demo caught and no unit test could",
+        "the blast-radius sweep caught a second defect: arrow keys left the group",
+        "demo PASS (catmull-rom leaves 14 segments, worst by 42.46); r1379 re-passes",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "impact_refs": [
+        "5.28",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "the chart residue's last buildable item is the violin",
+        "3D surface charting waits on the Phase C renderer (external)",
+        "no chart publishes its marks to assistive tech — its own debt file"
+      ],
+      "publishable_decision_summary": "R1625 a smooth line says what it invented: pinion_chart::Interpolation plus LineChart::interpolation and LineChart::overshoot make the spline a declared choice and publish every segment whose curve leaves the range its own samples span",
+      "publishable_changes_bullets": [
+        "pinion_chart::interpolate — Interpolation {Linear, Monotone, CatmullRom}",
+        "Fritsch-Carlson monotone tangents; curve / commands / is_graph / overshoot",
+        "may_overshoot is a declaration the tests hold to the geometry",
+        "draw::curve_stroke_path emits real cubics, bbox from the curve",
+        "LineChart::interpolation / interpolation_kind / overshoot",
+        "toggle_group::toggles — the form a SECOND toggle group needs",
+        "hello-series-toggle gains two interpolation chips and a live report",
+        "tools/demos/r1625_the_curve_says_what_it_invented.py",
+        "tally: dataviz re-judged 92 -> 95 (R1622 + R1624 + R1625)"
+      ],
+      "publishable_verification_bullets": [
+        "13 interpolate tests, 2 line tests, 3 binding tests, 1 substrate test",
+        "monotone asserted non-overshooting over 40 pseudo-random shapes",
+        "7 counterfactuals, 7 caught, from a verified-green baseline",
+        "CF-6 PASSED first: a dead chip the demo caught and no unit test could",
+        "the blast-radius sweep caught a second defect: arrow keys left the group",
+        "demo PASS (catmull-rom leaves 14 segments, worst by 42.46); r1379 re-passes",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the chart residue's last buildable item is the violin",
+        "3D surface charting waits on the Phase C renderer (external)",
+        "no chart publishes its marks to assistive tech — its own debt file"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

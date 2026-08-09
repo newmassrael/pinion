@@ -1273,9 +1273,39 @@ AXES = [
         #     vertex is painted geometry.
         #   * The polar chart has no cross-filter leg and no legend
         #     interaction, where the cartesian charts have both.
-        "judged_at": 1568,
-        "completion": 92,
-        "evidence_snapshot": {"example-name": 28, "round-axis": 7},
+        #
+        # R1625 re-judged 92 -> 95, and the tool demanded it: `round-axis`
+        # went 7 -> 9 across R1622, R1624 and R1625, past the band.
+        #
+        # +3, and the arithmetic is the R1568 list above, which those three
+        # rounds worked straight down. Of its FIVE named series items,
+        # stacked area closed at R1622, the OHLC bar at R1624 and the spline
+        # at R1625 — and each closed past what the audit asked for. Stacking
+        # is a crate derivation rather than an application's running sum. The
+        # bar is a MARK on the chart that already exists, so it shares the
+        # sort, both axis readings, the log axis, the window and the inspect
+        # readout; the reference has no bar series at all. The spline arrives
+        # with `overshoot`, which answers the question a smooth chart owes its
+        # reader — did it draw a value that was never measured — where the
+        # reference's spline series has one method and no report.
+        #
+        # It is not more because the R1622 audit corrected three of this
+        # list's own entries and the corrections do not all pay: the category
+        # axis WAS already present (`TickFormat::Category`), label thinning
+        # exists in part, and local time is an external dependency (a
+        # timezone database) rather than a gap. Those move the denominator,
+        # not the numerator. Still open and buildable: the violin, the polar
+        # chart's missing cross-filter leg and legend interaction, drag pan /
+        # rubber-band zoom, the y-window and the plot zoom's second consumer.
+        # 3D-surface waits on a 3D renderer and is Phase C's.
+        #
+        # PER-MARK a11y left this axis at R1622: measured, the whole crate has
+        # no `AccessNode` anywhere, so it is one accessibility question rather
+        # than three chart-shaped ones, and it now has its own debt file. An
+        # axis should not be judged short for a defect that is not its own.
+        "judged_at": 1625,
+        "completion": 95,
+        "evidence_snapshot": {"example-name": 28, "round-axis": 9},
     },
     {
         "key": "text",
