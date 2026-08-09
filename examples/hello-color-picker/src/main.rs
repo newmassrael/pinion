@@ -39,6 +39,7 @@
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
+use pinion_core::marks::MarkSet;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, Gradient, JustifyContent, LayoutStyle,
@@ -182,6 +183,13 @@ fn sv_thumb_ring(left: u32, top: u32, size: u32, border: Color) -> Scene {
     )
 }
 
+/// R1618 — the two reasons the saturation/value pad looks the way it does, and
+/// they live in DIFFERENT externals: the base colour is the hue slider's, the
+/// thumb is this pad's own. Named once so the paint and the wire agree by
+/// construction rather than by two matching string literals.
+const MARK_HUE_BASE: &str = "hue_base";
+const MARK_SV_THUMB: &str = "sv_thumb";
+
 /// view-fn (§6.3): pure sync mapping the composite picker state to a
 /// `Scene`. `state = (sv_interaction, saturation, value, hue)`.
 #[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
@@ -225,6 +233,21 @@ fn view(state: PickerState, _frame: &Frame) -> Scene {
             inner,
         ])
         .with_tag(SV_TAG)
+        // R1618 — the pad is where two externals MEET, and until now nothing
+        // could say so. Its base fill is the hue the HUE slider holds; its
+        // thumb is the saturation and value the SV pad holds. A client asking
+        // "why is this pad this colour" got half an answer from either
+        // external and had to compose the other half itself — which means
+        // re-implementing the framework's composition on the client side.
+        //
+        // Declared base-first, so the last reason is the one nearest the
+        // pixels a person is looking at: the same last-wins order every mark
+        // set resolves in.
+        .with_marks(
+            MarkSet::whole()
+                .because(MARK_HUE_BASE)
+                .because(MARK_SV_THUMB),
+        )
         .with_aria_label("Saturation and brightness")
         // Base = the fully-saturated, full-value hue; the overlays
         // carve saturation (white) and value (black) out of it.
@@ -710,5 +733,67 @@ mod tests {
     fn view_contains_composite_paint_root_tag() {
         let scene = rendered((ColorAreaState::Idle, 1.0, 1.0, 0.0));
         assert!(scene.contains_tag(SV_TAG));
+    }
+
+    /// R1618 — the pad publishes WHY it is that colour, and a counterfactual
+    /// found that nothing but the demo checked it.
+    ///
+    /// Two of this round's ten counterfactuals passed against the whole Rust
+    /// suite: deleting the container arm that carries this publication, and
+    /// swapping the two reasons' declaration order. Both are the round's
+    /// subject, and both were covered only by a demo that runs a subprocess —
+    /// which is to say, not by the gate a round is judged at.
+    ///
+    /// The order is asserted as an ORDER, not as a set, because declaration
+    /// order IS the resolution rule: the last reason is the one a painter
+    /// obeyed where two overlap, so writing them the other way round is a
+    /// behaviour change and not a formatting choice.
+    #[test]
+    fn r1618_the_pad_publishes_both_externals_reasons_in_order() {
+        use pinion_core::marks::{MarksLookup, domain};
+        use pinion_core::reactive::Owner;
+
+        Owner::new().run(|| {
+            let scene = view((ColorAreaState::Idle, 0.6, 0.4, 0.25), &Frame::new());
+            let MarksLookup::Published(runs) = scene.marks_for_tag(SV_TAG) else {
+                panic!("the pad is where two externals meet and must say so");
+            };
+            assert_eq!(
+                runs.domain(),
+                domain::NODE,
+                "a uniformly painted node counts ITSELF; a byte or character \
+                 domain here would hand a client a plausible wrong index space",
+            );
+            let names: Vec<&str> = runs.runs().iter().map(|r| r.name).collect();
+            assert_eq!(
+                names,
+                vec![MARK_HUE_BASE, MARK_SV_THUMB],
+                "both reasons, base first — the LAST declared is what the \
+                 painter obeyed",
+            );
+            assert_eq!(
+                runs.names_at(0),
+                names,
+                "and the stack at the one position is that same order",
+            );
+            for run in runs.runs() {
+                assert_eq!(
+                    (run.start, run.end),
+                    (0, 1),
+                    "a node-domain run covers the one position there is",
+                );
+            }
+            // The hue bar beside it is a container that was never asked, and
+            // it answers with its CHANNEL rather than with silence — because
+            // for a container the primary answer is still "the attribution of
+            // what is in me belongs to my children", which is where a caller
+            // should look next. A leaf box with no children has no such
+            // redirection to offer, so an unasked one is `Silent`. Two
+            // different negatives because there are two different facts.
+            assert_eq!(
+                scene.marks_for_tag(HUE_TAG),
+                MarksLookup::NoChannel(pinion_core::marks::MarksChannel::Structural),
+            );
+        });
     }
 }

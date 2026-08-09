@@ -210,6 +210,14 @@ impl SceneNodeKind {
     /// [`StyleRun`]s and [`TextGrid`](Self::TextGrid) through its
     /// [`marks`](TextGridNode::marks). The other eight are each a different
     /// reason, not a shared shrug — see [`MarksChannel`].
+    ///
+    /// R1618 — the three [`Uniform`](MarksChannel::Uniform) kinds now ANSWER
+    /// as well, and the channel is why: "the node itself is the run" was
+    /// always a statement about the shape of the attribution, not about its
+    /// absence. A box, a path and an image each publish their reasons over
+    /// [`domain::NODE`](crate::marks::domain::NODE), where the only index is
+    /// the node. What separates them from `Carries` is that a caller never
+    /// chooses a position — not that there is nothing to say.
     #[must_use]
     pub const fn marks_channel(self) -> MarksChannel {
         match self {
@@ -738,6 +746,28 @@ impl Scene {
             Scene::TextGrid(n) => n.marks.as_ref().map_or(MarksLookup::Silent, |set| {
                 MarksLookup::Published(MarkedRuns::from(set))
             }),
+            // R1618 — a box paints from one declaration, so its whole self is
+            // the run and the reasons are read at index 0. The lookup is the
+            // same shape as the two above on purpose: one vocabulary, one
+            // overlap rule, one wire form, whether the attribution is
+            // positional or whole-node.
+            Scene::Box(n) => n.marks.as_ref().map_or(MarksLookup::Silent, |set| {
+                MarksLookup::Published(MarkedRuns::from(set))
+            }),
+            Scene::Path(n) => n.marks.as_ref().map_or(MarksLookup::Silent, |set| {
+                MarksLookup::Published(MarkedRuns::from(set))
+            }),
+            Scene::Image(n) => n.marks.as_ref().map_or(MarksLookup::Silent, |set| {
+                MarksLookup::Published(MarkedRuns::from(set))
+            }),
+            // R1618 — a container answers for its OWN fill when it has been
+            // asked to. It stays `Structural` because that describes where the
+            // attribution of its CONTENT lives; a container that was never
+            // asked falls through to that answer below, so nothing changes for
+            // the containers that only hold children.
+            Scene::Container(ContainerNode {
+                marks: Some(set), ..
+            }) => MarksLookup::Published(MarkedRuns::from(set)),
             other => MarksLookup::NoChannel(other.node_kind().marks_channel()),
         }
     }
@@ -2203,6 +2233,27 @@ pub struct BoxNode {
     pub style: BoxStyle,
     pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
+    /// R1618 §5.36 §2 #7 — **why this rectangle looks the way it does**, as
+    /// named reasons over [`domain::NODE`](crate::marks::domain::NODE).
+    ///
+    /// R1615 gave content made of many parts a way to say which run decided
+    /// each part. A box has no parts — its
+    /// [`MarksChannel`](crate::marks::MarksChannel::Uniform) is `Uniform`,
+    /// "the node itself *is* the run" — and that was read as having nothing to
+    /// say. It is the opposite: a grid row, a selected cell, a dimmed port and
+    /// a highlighted group header are all one filled rectangle whose colour is
+    /// a **composition** — selected, and hovered, and inside a collapsed
+    /// group — and those facts routinely live in different externals, so the
+    /// composed answer belongs to no single oracle. The view is where the
+    /// composition happens, so the view publishes it here.
+    ///
+    /// `None` is a box that declares nothing — every box built before this
+    /// field existed. Distinct from `Some(empty)`, which is a box that
+    /// publishes the channel and had no reason to give this frame: the first
+    /// says nobody looked, the second says somebody looked and there was
+    /// nothing. Collapsing them would make "this row is plain" and "this
+    /// binding never reports" one answer.
+    pub marks: Option<crate::marks::MarkSet>,
 }
 
 impl BoxNode {
@@ -2214,7 +2265,27 @@ impl BoxNode {
             style,
             layout: LayoutStyle::new(),
             tag: None,
+            marks: None,
         }
+    }
+
+    /// R1618 — publish **why** this box looks the way it does.
+    ///
+    /// Takes the whole set rather than one reason at a time, because the set's
+    /// declaration ORDER is load-bearing — it is what decides which reason a
+    /// painter obeyed where two overlap — and a per-call-site `push` would
+    /// scatter that order across the view. Build it with
+    /// [`MarkSet::whole`](crate::marks::MarkSet::whole) and
+    /// [`because`](crate::marks::MarkSet::because), in the order the painter
+    /// resolves them.
+    ///
+    /// An EMPTY set is a real declaration and is kept as one: it says this box
+    /// reports its reasons and had none this frame, which is what makes "plain
+    /// row" distinguishable from "binding that never reports".
+    #[must_use]
+    pub fn with_marks(mut self, marks: crate::marks::MarkSet) -> Self {
+        self.marks = Some(marks);
+        self
     }
 
     /// Solid-fill shorthand: `rect` + a fill `Color`, no border, no
@@ -3043,6 +3114,11 @@ pub struct PathNode {
     pub style: PathStyle,
     pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
+    /// R1618 §5.36 §2 #7 — **why this node looks the way it does**, as named
+    /// reasons over [`domain::NODE`](crate::marks::domain::NODE). See
+    /// [`BoxNode::marks`] for why a node with no interior still has something
+    /// to say, and why `None` and `Some(empty)` are different answers.
+    pub marks: Option<crate::marks::MarkSet>,
 }
 
 impl PathNode {
@@ -3055,7 +3131,16 @@ impl PathNode {
             style,
             layout: LayoutStyle::new(),
             tag: None,
+            marks: None,
         }
+    }
+
+    /// R1618 — publish **why** this node looks the way it does. See
+    /// [`BoxNode::with_marks`].
+    #[must_use]
+    pub fn with_marks(mut self, marks: crate::marks::MarkSet) -> Self {
+        self.marks = Some(marks);
+        self
     }
 
     /// Empty path with a bounding box only — primarily a fixture for
@@ -3107,6 +3192,11 @@ pub struct ImageNode {
     pub style: ImageStyle,
     pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
+    /// R1618 §5.36 §2 #7 — **why this node looks the way it does**, as named
+    /// reasons over [`domain::NODE`](crate::marks::domain::NODE). See
+    /// [`BoxNode::marks`] for why a node with no interior still has something
+    /// to say, and why `None` and `Some(empty)` are different answers.
+    pub marks: Option<crate::marks::MarkSet>,
 }
 
 impl ImageNode {
@@ -3127,7 +3217,16 @@ impl ImageNode {
             style,
             layout: LayoutStyle::new(),
             tag: None,
+            marks: None,
         }
+    }
+
+    /// R1618 — publish **why** this node looks the way it does. See
+    /// [`BoxNode::with_marks`].
+    #[must_use]
+    pub fn with_marks(mut self, marks: crate::marks::MarkSet) -> Self {
+        self.marks = Some(marks);
+        self
     }
 
     /// Attach a §5.20 intent tag to this node (builder form).
@@ -3226,6 +3325,21 @@ pub struct ContainerNode {
     /// scene dumps differ depending on whether they were taken
     /// before / after a paint walk.
     pub paint_hash: Cell<Option<u64>>,
+    /// R1618 §5.36 §2 #7 — why this container's OWN fill looks the way it
+    /// does, as named reasons over
+    /// [`domain::NODE`](crate::marks::domain::NODE).
+    ///
+    /// A container is [`Structural`](crate::marks::MarksChannel::Structural)
+    /// because the attribution of its CONTENT belongs to its children. That is
+    /// a different question from why its own `BoxStyle` is the colour it is —
+    /// and a container that paints one is painting uniformly, exactly as a
+    /// [`BoxNode`] does. The colour picker's saturation/value pad is the
+    /// forcing case: its base fill is the hue from ONE external while its
+    /// thumb comes from ANOTHER, so the container is precisely where the two
+    /// meet and nothing below it could say so.
+    ///
+    /// `None` / `Some(empty)` carry [`BoxNode::marks`]'s distinction.
+    pub marks: Option<crate::marks::MarkSet>,
 }
 
 impl ContainerNode {
@@ -3240,7 +3354,17 @@ impl ContainerNode {
             aria_label: None,
             no_primary_head: false,
             paint_hash: Cell::new(None),
+            marks: None,
         }
+    }
+
+    /// R1618 — publish **why this container's own fill** looks the way it
+    /// does. See [`BoxNode::with_marks`], and [`Self::marks`] for why a
+    /// structural node still has a uniform paint to attribute.
+    #[must_use]
+    pub fn with_marks(mut self, marks: crate::marks::MarkSet) -> Self {
+        self.marks = Some(marks);
+        self
     }
 
     /// (R1307 PR-51 §5.45) Mark this container as having **no distinguished
@@ -7725,7 +7849,27 @@ mod tests {
                 .is_some_and(|holder| holder.find_with_tag("inner").is_some());
             let opaque = scene.find_external_with_tag(TAG).is_some()
                 || scene.find_immediate_with_tag(TAG).is_some();
-            let expected = if answer == MarksLookup::Silent {
+            // R1618 — the Carries/Uniform split is no longer "one of them
+            // answers and the other does not": a box publishes too. What
+            // separates them is WHICH INDEX SPACE the kind attributes in, and
+            // that is observed by asking the kind to publish one reason
+            // through its own API and reading the domain back. The fixture is
+            // a fourth independent statement (it builds nodes; it does not
+            // read `marks_channel`), so the declaration is still held to a
+            // behaviour rather than to itself.
+            let published_domain =
+                crate::test_fixtures::marked_scene_of_kind(kind, TAG).map(|marked| {
+                    match marked.marks_for_tag(TAG) {
+                        MarksLookup::Published(runs) => runs.domain().to_owned(),
+                        other => panic!(
+                            "{} was asked to publish and answered {other:?}",
+                            kind.name()
+                        ),
+                    }
+                });
+            let expected = if published_domain.as_deref() == Some(crate::marks::domain::NODE) {
+                MarksChannel::Uniform
+            } else if published_domain.is_some() {
                 MarksChannel::Carries
             } else if descends {
                 MarksChannel::Structural
@@ -7742,9 +7886,23 @@ mod tests {
                 kind.marks_channel(),
             );
             // ...and the answer carries the declaration, so the wire and the
-            // census cannot say different things about the same node.
-            if expected != MarksChannel::Carries {
-                assert_eq!(answer, MarksLookup::NoChannel(expected), "{}", kind.name());
+            // census cannot say different things about the same node. Only the
+            // two channels that have NOTHING to publish report themselves in
+            // the lookup; a kind that can publish answers `Silent` when it has
+            // not, which is a different fact from having no channel at all.
+            match expected {
+                MarksChannel::Structural | MarksChannel::Opaque => {
+                    assert_eq!(answer, MarksLookup::NoChannel(expected), "{}", kind.name());
+                }
+                MarksChannel::Carries | MarksChannel::Uniform => {
+                    assert_eq!(
+                        answer,
+                        MarksLookup::Silent,
+                        "{} can publish, so an unmarked node of that kind is SILENT — \
+                         'nobody said' rather than 'there is no channel'",
+                        kind.name(),
+                    );
+                }
             }
         }
     }
@@ -7851,12 +8009,30 @@ mod tests {
             Scene::TextGrid(TextGridNode::new(CellMetric::DEFAULT).with_tag("dump")),
         ]));
         assert_eq!(scene.marks_for_tag("nobody"), MarksLookup::NoSuchTag);
+        // R1618 — a box that was never asked to publish is SILENT, not
+        // channel-less. R1615 read `Uniform` as "nothing to attribute" and
+        // this assertion said so; the channel always meant "the node itself is
+        // the run", and a grid row whose colour is selected-and-hovered has
+        // plenty to say. The distinction that survives is the one that matters:
+        // `Silent` is nobody said, `Published(empty)` is somebody looked and
+        // there was nothing.
         assert_eq!(
             scene.marks_for_tag("plain"),
-            MarksLookup::NoChannel(MarksChannel::Uniform),
-            "a Box is a real node that has nothing to attribute"
+            MarksLookup::Silent,
+            "a box that publishes nothing is a box nobody asked, not a box with \
+             no channel"
         );
         assert_eq!(scene.marks_for_tag("dump"), MarksLookup::Silent);
+        // The kinds that genuinely have no channel still say which kind of
+        // nothing it is — that half of R1615 is unchanged.
+        let opaque = Scene::Container(ContainerNode::new(vec![Scene::External(
+            crate::scene::ExternalNode::new(Box::new(crate::external::StubExternal))
+                .with_tag("escape"),
+        )]));
+        assert_eq!(
+            opaque.marks_for_tag("escape"),
+            MarksLookup::NoChannel(MarksChannel::Opaque),
+        );
     }
 
     #[test]

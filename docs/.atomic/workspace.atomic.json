@@ -86618,6 +86618,88 @@
         "diverged arm live; the judgment is a pure function, so nothing waits on it."
       ]
     },
+    "Round 1618": {
+      "decision_summary": "R1618 — a node that paints from one declaration still says why.\n\n`debt-assembled-state-is-published-by-one-binding` recorded that R1615 closed the mechanism and only coverage remained. Measured, that was wrong in the way that matters: the mechanism reached `Text` and `TextGrid` alone. Everything the other ten bindings assemble — a grid row, a selected cell, a dimmed port, a colour pad — is a filled rectangle, whose marks channel is `Uniform`, and R1615's own doc read `Uniform` as having nothing to attribute. The coverage could not be paid without extending the mechanism, which is why it had not been.\n\nIT IS THE OPPOSITE. \"The node itself IS the run\" was always a statement about the SHAPE of the attribution, not about its absence. A rectangle's colour is routinely a composition — selected, and hovered, and inside a group the user collapsed — and those facts live in different externals, so the composed answer belongs to no single oracle. `domain::NODE` is that index space: one position, the node. Stating it as a DOMAIN rather than as a second list is the whole design: the declaration order, the last-wins overlap rule, the positional query and the wire form stay ONE mechanism rather than two that could disagree. A caller writes `MarkSet::whole().because(name)` and never an index, because a `[0, 0)` run covers nothing and would publish a reason that answers no question.\n\nTHE CENSUS WAS COUNTING A DIFFERENT QUESTION. The debt asks whether a widget's APPEARANCE is a function of several externals; the tool counted whether a file READS several anywhere in its source. Both directions of divergence were measured rather than argued: `hello-row-dissect` reads its second external inside `apply_access_action`, which runs after the picture and cannot decide it, while `hello-grouped-grid` and `hello-grouped-list` read two in `read_state` and then paint with `view(state.selected, frame)`, dropping one. What makes this decidable rather than a judgment call is STRUCTURAL: `WidgetCore::view(state, frame)` is handed no `&Scene` at all, so a view cannot read an external, and every path from an external to the picture therefore runs through `read_state`. Reads are now bucketed by the function body they sit in, with call following to a FIXPOINT rather than one level — the binding this census exists for reaches its second external through `read_state -> read_brush -> brush()`, so a one-level scan dropped the subject of the debt out of its own population, and its own selftest caught that. Every read outside the path is REPORTED under the function it sits in rather than dropped. 11 -> 6, with the whole-file count printed beside it because the difference is the finding.\n\nA VERDICT IS NOW A THING WITH A PROOF. The debt allowed two answers for an assembling binding: publish it, or record why it need not — the second only with a proof, because a verdict nobody checked is the shape this census exists to replace. Four bindings carry one. The two grouped ones because their roving cursor steers the keyboard and the accessibility tree and is never painted; `hello-selection-toolbar` and `settings-panel` because their assembly is SPATIAL — two widgets side by side rather than one node decided by several. Each proof is behavioural and lives in that binding's own tests: hold one external still, vary the other, assert the painted subtree is byte-identical, with a negative control asserting the other direction DOES move. So a binding that starts painting the second contribution fails its own proof and owes the publication. The tool refuses a verdict whose named test is absent, and refuses one for a binding that no longer assembles. ASSEMBLE 6, PUBLISH 2, VERDICT 4, OPEN 0 — and OPEN 0 is an exit code rather than a number somebody reads.\n\nTHE FORCING CONSUMER IS THE HONEST ONE. The colour picker's saturation/value pad takes its BASE colour from the hue slider and its THUMB from itself: one painted node genuinely a function of two externals. A client asking why it is that colour got half an answer from either and had to compose the other half, which means reimplementing the framework's composition on the client side.\n\nTHAT PAD ALSO FORCED THE SHARPEST FINDING: it is a CONTAINER, and a container paints its own `BoxStyle`. `Structural`'s doc claimed such a node \"paints nothing of its own\", which is false for the commonest shape in any UI — a panel with a background. So a container now publishes the reasons for its OWN fill while its children carry their own, and the channel goes on describing where the CONTENT's attribution lives. No enum arm was added; a doc that was wrong was corrected.\n\nTWO OF R1615's TESTS BECAME FALSE AND WERE REPAIRED WITHOUT LOSING THEIR TEETH. The channel derivation keyed `Carries` off \"this kind answers Silent\", which a box now does too; it keys off WHICH INDEX SPACE the kind publishes in, read by asking each kind to publish one reason through its own real API — a fourth independent statement that never reads `marks_channel`. And a plain box is now `Silent` rather than `NoChannel`: nobody asked, which stays distinct from having no channel at all.\n\nTHE GATE CAUGHT THE AUTHOR THREE TIMES, which is where the round's remaining content is. A const declaration inserted between an `#[allow]` and the fn it applied to silently detached it, and clippy reported the two lints that attribute had been suppressing. The settings-panel proof's first draft asserted on the font slider, which the default section does not paint, so `find_with_tag` answered `None` — the tags are now read out of the painted scene rather than assumed. And the grouped bindings' negative control failed on CORRECT code, because source row 3 sits in a collapsed group; the control now searches for a selection that moves the picture instead of picking one, which is the difference between a control that proves the test bites and one that encodes a guess.",
+      "changes_bullets": [
+        "pinion-core marks: domain::NODE, MarkSet::whole / because / reasons",
+        "BoxNode, PathNode, ImageNode, ContainerNode gain marks + with_marks",
+        "Scene::marks_for_tag answers for all four, one vocabulary and one rule",
+        "MarksChannel::Uniform documented as WHOLE-node attribution, not absence",
+        "Structural's \"paints nothing of its own\" corrected: a container has a fill",
+        "test_fixtures::marked_scene_of_kind -- each kind publishes through its own API",
+        "hello-color-picker: the SV pad publishes hue_base + sv_thumb",
+        "assembled_state.py: reads bucketed by function, call following to a fixpoint",
+        "assembled_state.py: VERDICTS with proofs, and OPEN/UNPROVEN/STALE exit 1",
+        "four verdict proofs, behavioural, in the bindings' own tests",
+        "tools/demos/r1618_a_node_says_why_it_is_that_colour.py (new)"
+      ],
+      "verification_bullets": [
+        "4 new marks tests, 2 repaired R1615 tests, 4 verdict proofs in 4 bindings",
+        "census: ASSEMBLE 6, PUBLISH 2, VERDICT 4, OPEN 0; selftest 4 new cases",
+        "10 counterfactuals through tools/counterfactual.py under ONE unscoped gate",
+        "the gate runs the Rust suites AND the census selftest AND the census,",
+        "because four counterfactuals break a tool no cargo test can see",
+        "Demo r1618: 33 assertions over nine sections against a real window",
+        "r1615, r1613 and r709 demos re-pass unchanged: the wire only grew",
+        "cargo check --workspace, fmt --all, clippy -D pedantic on 7 crates green"
+      ],
+      "impact_refs": [
+        "5.36",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "the debt is ADVANCED, not closed: OPEN is 0 today because four bindings",
+        "carry proven verdicts, and a verdict is a claim about what a binding paints",
+        "NOW. Each is held by a behavioural test that fails when that changes, which",
+        "is the strongest form available -- but it is coverage held by proofs rather",
+        "than coverage paid.",
+        "the picture-path scoping is text, not a parse: the enclosing function is the",
+        "nearest preceding `fn`. Right for every shape in this tree, and the general",
+        "fix is the same Rust-parser this project has wanted since R1527.",
+        "a read whose tag argument is a variable is still UNRESOLVED (16 bindings),",
+        "unchanged from R1615 and reported rather than dropped."
+      ],
+      "publishable_decision_summary": "R1618 — a node that paints from one declaration still says why.\n\n`debt-assembled-state-is-published-by-one-binding` recorded that R1615 closed the mechanism and only coverage remained. Measured, that was wrong in the way that matters: the mechanism reached `Text` and `TextGrid` alone. Everything the other ten bindings assemble — a grid row, a selected cell, a dimmed port, a colour pad — is a filled rectangle, whose marks channel is `Uniform`, and R1615's own doc read `Uniform` as having nothing to attribute. The coverage could not be paid without extending the mechanism, which is why it had not been.\n\nIT IS THE OPPOSITE. \"The node itself IS the run\" was always a statement about the SHAPE of the attribution, not about its absence. A rectangle's colour is routinely a composition — selected, and hovered, and inside a group the user collapsed — and those facts live in different externals, so the composed answer belongs to no single oracle. `domain::NODE` is that index space: one position, the node. Stating it as a DOMAIN rather than as a second list is the whole design: the declaration order, the last-wins overlap rule, the positional query and the wire form stay ONE mechanism rather than two that could disagree. A caller writes `MarkSet::whole().because(name)` and never an index, because a `[0, 0)` run covers nothing and would publish a reason that answers no question.\n\nTHE CENSUS WAS COUNTING A DIFFERENT QUESTION. The debt asks whether a widget's APPEARANCE is a function of several externals; the tool counted whether a file READS several anywhere in its source. Both directions of divergence were measured rather than argued: `hello-row-dissect` reads its second external inside `apply_access_action`, which runs after the picture and cannot decide it, while `hello-grouped-grid` and `hello-grouped-list` read two in `read_state` and then paint with `view(state.selected, frame)`, dropping one. What makes this decidable rather than a judgment call is STRUCTURAL: `WidgetCore::view(state, frame)` is handed no `&Scene` at all, so a view cannot read an external, and every path from an external to the picture therefore runs through `read_state`. Reads are now bucketed by the function body they sit in, with call following to a FIXPOINT rather than one level — the binding this census exists for reaches its second external through `read_state -> read_brush -> brush()`, so a one-level scan dropped the subject of the debt out of its own population, and its own selftest caught that. Every read outside the path is REPORTED under the function it sits in rather than dropped. 11 -> 6, with the whole-file count printed beside it because the difference is the finding.\n\nA VERDICT IS NOW A THING WITH A PROOF. The debt allowed two answers for an assembling binding: publish it, or record why it need not — the second only with a proof, because a verdict nobody checked is the shape this census exists to replace. Four bindings carry one. The two grouped ones because their roving cursor steers the keyboard and the accessibility tree and is never painted; `hello-selection-toolbar` and `settings-panel` because their assembly is SPATIAL — two widgets side by side rather than one node decided by several. Each proof is behavioural and lives in that binding's own tests: hold one external still, vary the other, assert the painted subtree is byte-identical, with a negative control asserting the other direction DOES move. So a binding that starts painting the second contribution fails its own proof and owes the publication. The tool refuses a verdict whose named test is absent, and refuses one for a binding that no longer assembles. ASSEMBLE 6, PUBLISH 2, VERDICT 4, OPEN 0 — and OPEN 0 is an exit code rather than a number somebody reads.\n\nTHE FORCING CONSUMER IS THE HONEST ONE. The colour picker's saturation/value pad takes its BASE colour from the hue slider and its THUMB from itself: one painted node genuinely a function of two externals. A client asking why it is that colour got half an answer from either and had to compose the other half, which means reimplementing the framework's composition on the client side.\n\nTHAT PAD ALSO FORCED THE SHARPEST FINDING: it is a CONTAINER, and a container paints its own `BoxStyle`. `Structural`'s doc claimed such a node \"paints nothing of its own\", which is false for the commonest shape in any UI — a panel with a background. So a container now publishes the reasons for its OWN fill while its children carry their own, and the channel goes on describing where the CONTENT's attribution lives. No enum arm was added; a doc that was wrong was corrected.\n\nTWO OF R1615's TESTS BECAME FALSE AND WERE REPAIRED WITHOUT LOSING THEIR TEETH. The channel derivation keyed `Carries` off \"this kind answers Silent\", which a box now does too; it keys off WHICH INDEX SPACE the kind publishes in, read by asking each kind to publish one reason through its own real API — a fourth independent statement that never reads `marks_channel`. And a plain box is now `Silent` rather than `NoChannel`: nobody asked, which stays distinct from having no channel at all.\n\nTHE GATE CAUGHT THE AUTHOR THREE TIMES, which is where the round's remaining content is. A const declaration inserted between an `#[allow]` and the fn it applied to silently detached it, and clippy reported the two lints that attribute had been suppressing. The settings-panel proof's first draft asserted on the font slider, which the default section does not paint, so `find_with_tag` answered `None` — the tags are now read out of the painted scene rather than assumed. And the grouped bindings' negative control failed on CORRECT code, because source row 3 sits in a collapsed group; the control now searches for a selection that moves the picture instead of picking one, which is the difference between a control that proves the test bites and one that encodes a guess.",
+      "publishable_changes_bullets": [
+        "pinion-core marks: domain::NODE, MarkSet::whole / because / reasons",
+        "BoxNode, PathNode, ImageNode, ContainerNode gain marks + with_marks",
+        "Scene::marks_for_tag answers for all four, one vocabulary and one rule",
+        "MarksChannel::Uniform documented as WHOLE-node attribution, not absence",
+        "Structural's \"paints nothing of its own\" corrected: a container has a fill",
+        "test_fixtures::marked_scene_of_kind -- each kind publishes through its own API",
+        "hello-color-picker: the SV pad publishes hue_base + sv_thumb",
+        "assembled_state.py: reads bucketed by function, call following to a fixpoint",
+        "assembled_state.py: VERDICTS with proofs, and OPEN/UNPROVEN/STALE exit 1",
+        "four verdict proofs, behavioural, in the bindings' own tests",
+        "tools/demos/r1618_a_node_says_why_it_is_that_colour.py (new)"
+      ],
+      "publishable_verification_bullets": [
+        "4 new marks tests, 2 repaired R1615 tests, 4 verdict proofs in 4 bindings",
+        "census: ASSEMBLE 6, PUBLISH 2, VERDICT 4, OPEN 0; selftest 4 new cases",
+        "10 counterfactuals through tools/counterfactual.py under ONE unscoped gate",
+        "the gate runs the Rust suites AND the census selftest AND the census,",
+        "because four counterfactuals break a tool no cargo test can see",
+        "Demo r1618: 33 assertions over nine sections against a real window",
+        "r1615, r1613 and r709 demos re-pass unchanged: the wire only grew",
+        "cargo check --workspace, fmt --all, clippy -D pedantic on 7 crates green"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the debt is ADVANCED, not closed: OPEN is 0 today because four bindings",
+        "carry proven verdicts, and a verdict is a claim about what a binding paints",
+        "NOW. Each is held by a behavioural test that fails when that changes, which",
+        "is the strongest form available -- but it is coverage held by proofs rather",
+        "than coverage paid.",
+        "the picture-path scoping is text, not a parse: the enclosing function is the",
+        "nearest preceding `fn`. Right for every shape in this tree, and the general",
+        "fix is the same Rust-parser this project has wanted since R1527.",
+        "a read whose tag argument is a variable is still UNRESOLVED (16 bindings),",
+        "unchanged from R1615 and reported rather than dropped."
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

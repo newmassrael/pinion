@@ -1203,4 +1203,74 @@ mod tests {
             assert_eq!(actions.active_descendant.as_deref(), Some("actions#1"));
         });
     }
+
+    /// R1618 — the verdict `tools/assembled_state.py` records for this binding,
+    /// proved rather than asserted.
+    ///
+    /// `read_state` assembles TWO roving-focus externals, so the census counts
+    /// this binding as assembling. No single painted node is a function of
+    /// both: the list's roving focus decides the list rows and the toolbar's
+    /// decides the toolbar items. The composition is a LAYOUT — two widgets
+    /// side by side — rather than one appearance decided by several facts, and
+    /// that is a legitimate reason not to publish an assembly.
+    ///
+    /// Proved by disjointness, which is stronger than "the whole view
+    /// changes": vary one external's contribution and the OTHER's subtree is
+    /// byte-identical, in both directions. A binding that started tinting its
+    /// rows by the toolbar's focus would fail here and would owe the
+    /// publication.
+    #[test]
+    fn r1618_each_external_decides_a_disjoint_part_of_the_picture() {
+        use pinion_core::reactive::Owner;
+        Owner::new().run(|| {
+            let frame = Frame::new();
+            let paint =
+                |st: SelState| <SelectionToolbarView as pinion_core::WidgetCore>::view(st, &frame);
+            let subtree = |scene: &Scene, tag: &str| {
+                format!("{:?}", scene.find_with_tag(tag).expect("painted"))
+            };
+            let base = SelState {
+                row_focus: 0,
+                list_focused: true,
+                actions_focus: 0,
+                actions_focused: false,
+            };
+            let base_scene = paint(base);
+
+            // Move the TOOLBAR's focus: the list must not move.
+            let toolbar_moved = paint(SelState {
+                actions_focus: 2,
+                actions_focused: true,
+                ..base
+            });
+            assert_eq!(
+                subtree(&toolbar_moved, LIST_TAG),
+                subtree(&base_scene, LIST_TAG),
+                "the toolbar's roving focus reached the list — that is one node \
+                 decided by two externals, and it owes a published assembly",
+            );
+            assert_ne!(
+                subtree(&toolbar_moved, ACTIONS_TAG),
+                subtree(&base_scene, ACTIONS_TAG),
+                "...and it DID decide its own part, so the check above is not \
+                 passing because nothing is painted",
+            );
+
+            // Move the LIST's focus: the toolbar must not move.
+            let list_moved = paint(SelState {
+                row_focus: 3,
+                ..base
+            });
+            assert_eq!(
+                subtree(&list_moved, ACTIONS_TAG),
+                subtree(&base_scene, ACTIONS_TAG),
+                "the list's roving focus reached the toolbar",
+            );
+            assert_ne!(
+                subtree(&list_moved, LIST_TAG),
+                subtree(&base_scene, LIST_TAG),
+                "...and it DID decide its own part",
+            );
+        });
+    }
 }

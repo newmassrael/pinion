@@ -76,6 +76,25 @@ pub mod domain {
     /// content — the same units [`StyleRun`](crate::scene::StyleRun) indexes,
     /// so a named run and the mark derived from it address identically.
     pub const UTF8_BYTE: &str = "utf8_byte";
+
+    /// R1618 — **the node itself**, of which there is exactly one, so the only
+    /// index is `0`.
+    ///
+    /// A node that paints from one declaration has no interior to attribute:
+    /// its
+    /// [`MarksChannel`](crate::marks::MarksChannel::Uniform) doc puts it as
+    /// "the node itself *is* the run". That is not the same as having nothing
+    /// to say. A grid row is a filled rectangle, and *why* it is that colour —
+    /// selected, and hovered, and inside a group the user collapsed — is a
+    /// composition of facts living in different externals, which is exactly the
+    /// question no single oracle can answer.
+    ///
+    /// Stating it as a domain rather than as a separate list is deliberate: the
+    /// declaration order, the last-wins overlap rule, the positional query and
+    /// the wire shape are then **one** mechanism rather than two that could
+    /// disagree. A caller uses [`MarkSet::whole`](super::MarkSet::whole) and never
+    /// writes an index.
+    pub const NODE: &str = "node";
 }
 
 /// A named run of positions, `[start, end)`.
@@ -207,6 +226,50 @@ impl MarkSet {
     #[must_use]
     pub fn marking(self, name: impl Into<String>, start: usize, end: usize) -> Self {
         self.with(Mark::new(name, start, end))
+    }
+
+    /// R1618 — an empty set over [`domain::NODE`]: the index space of a node
+    /// that paints from one declaration, where the only position is the node.
+    ///
+    /// Build it up with [`because`](Self::because) and never write an index.
+    #[must_use]
+    pub fn whole() -> Self {
+        Self::over(domain::NODE)
+    }
+
+    /// R1618 — declare that this node looks the way it does because of `name`,
+    /// after everything already declared.
+    ///
+    /// The [`domain::NODE`] spelling of [`marking`](Self::marking), and the
+    /// only builder a uniform node's caller should need: a run over a
+    /// one-position space is `[0, 1)` and writing that out at each call site
+    /// would be three chances to write `[0, 0)` — an empty run, which covers
+    /// nothing and would silently publish a reason that answers no question.
+    ///
+    /// Overlap resolves exactly as it does everywhere else: everything
+    /// declared covers the one position, in declaration order, and the last one
+    /// is what a painter obeyed. So [`names_at(0)`](Self::names_at) is the
+    /// whole stack of reasons, innermost last.
+    #[must_use]
+    pub fn because(self, name: impl Into<String>) -> Self {
+        self.marking(name, 0, 1)
+    }
+
+    /// R1618 — the reasons this node looks the way it does, in declaration
+    /// order, for a set over [`domain::NODE`].
+    ///
+    /// `names_at(0)` spelled once, so a caller of a uniform node's marks never
+    /// has to know that the index it is not allowed to choose is `0`.
+    /// Answers empty for a set over any other domain, which is the honest
+    /// reading: those indices count something else, and position `0` of that
+    /// something is not "the node".
+    #[must_use]
+    pub fn reasons(&self) -> Vec<&str> {
+        if self.domain() == domain::NODE {
+            self.names_at(0)
+        } else {
+            Vec::new()
+        }
     }
 
     /// Declare `mark` last, in place.
@@ -721,5 +784,73 @@ mod tests {
             seen.push(word);
         }
         assert_eq!(seen.len(), 4);
+    }
+
+    // --- R1618: the node itself is the run --------------------------------
+
+    #[test]
+    fn r1618_a_uniform_node_stacks_its_reasons_in_declaration_order() {
+        // A grid row is one rectangle whose colour is a composition. The
+        // reasons stack exactly as positional marks do, and the LAST is the
+        // one a painter obeyed — one rule for both shapes, which is the whole
+        // argument for reusing the set rather than inventing a second list.
+        let set = MarkSet::whole()
+            .because("group_expanded")
+            .because("selected")
+            .because("hovered");
+        assert_eq!(set.domain(), domain::NODE);
+        assert_eq!(
+            set.reasons(),
+            vec!["group_expanded", "selected", "hovered"],
+            "declaration order, innermost last",
+        );
+        assert_eq!(set.names_at(0), set.reasons(), "reasons IS names_at(0)");
+        assert_eq!(
+            set.at(0).next_back().map(Mark::name),
+            Some("hovered"),
+            "the last declared is what the painter obeyed",
+        );
+    }
+
+    #[test]
+    fn r1618_a_reason_covers_the_node_and_nothing_else() {
+        // `because` writes [0, 1). A `[0, 0)` run would cover nothing and
+        // publish a reason that answers no question — which is the mistake the
+        // builder exists to make unwritable.
+        let set = MarkSet::whole().because("selected");
+        assert_eq!(set.names_at(0), vec!["selected"]);
+        assert!(
+            set.names_at(1).is_empty(),
+            "there is no position 1: a uniform node is one place",
+        );
+        let mark = set.get("selected").expect("declared");
+        assert_eq!((mark.start(), mark.end()), (0, 1));
+    }
+
+    #[test]
+    fn r1618_reasons_are_empty_for_a_set_that_counts_something_else() {
+        // A byte-domain set's position 0 is the first BYTE, not "the node".
+        // Answering with it would hand a caller a plausible wrong answer, the
+        // exact failure the domain exists to prevent.
+        let bytes = MarkSet::over(domain::BYTE).marking("header", 0, 4);
+        assert_eq!(
+            bytes.names_at(0),
+            vec!["header"],
+            "as a byte set, it answers"
+        );
+        assert!(
+            bytes.reasons().is_empty(),
+            "but it is not a node set, so it has no reasons",
+        );
+    }
+
+    #[test]
+    fn r1618_an_empty_whole_set_is_a_declaration_not_a_shrug() {
+        // "Somebody looked and there was nothing" — distinct from a node that
+        // was never asked, which is what the node's `Option` carries.
+        let set = MarkSet::whole();
+        assert_eq!(set.domain(), domain::NODE);
+        assert!(set.is_empty());
+        assert!(set.reasons().is_empty());
     }
 }

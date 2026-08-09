@@ -651,4 +651,73 @@ mod tests {
             assert_eq!(af_none.active_descendant, None);
         });
     }
+
+    /// R1618 — the verdict `tools/assembled_state.py` records for this binding,
+    /// proved rather than asserted.
+    ///
+    /// `read_state` reads TWO externals, so the census counts this binding as
+    /// assembling. Its picture is a function of ONE of them: the roving cursor
+    /// steers the keyboard and the accessibility tree and is never painted.
+    /// That is a legitimate reason not to publish an assembly — there is no
+    /// assembled VISUAL fact — and the debt allows it only with a proof.
+    ///
+    /// The proof is behavioural: hold the selection still, move the cursor
+    /// through every position including absent, and the painted scene is
+    /// byte-identical every time. A binding that started painting its cursor
+    /// would fail here and would then owe the publication.
+    #[test]
+    fn r1618_the_second_external_does_not_decide_the_picture() {
+        // The view reaches `use_scroll_state`, which needs a scope.
+        Owner::new().run(|| {
+            let frame = Frame::new();
+            let selected = Some(2);
+            let baseline = format!(
+                "{:?}",
+                <GroupedListView as pinion_core::WidgetCore>::view(
+                    ListState {
+                        selected,
+                        cursor: None
+                    },
+                    &frame,
+                )
+            );
+            for cursor in [None, Some(0), Some(1), Some(5), Some(usize::MAX)] {
+                let painted = format!(
+                    "{:?}",
+                    <GroupedListView as pinion_core::WidgetCore>::view(
+                        ListState { selected, cursor },
+                        &frame,
+                    )
+                );
+                assert_eq!(
+                    painted, baseline,
+                    "cursor {cursor:?} changed the picture — this binding now has an \
+                 assembled visual fact and owes it a publication",
+                );
+            }
+            // NEGATIVE CONTROL, and it caught the first draft: a test that only
+            // shows the cursor changing nothing would pass just as well on a view
+            // that paints NOTHING. So some selection must move the picture — and
+            // it is SEARCHED for rather than assumed, because the first draft
+            // picked source row 3, which this arrangement does not show (its group
+            // is collapsed), and the control failed on a correct view.
+            let moves = (0..24).any(|i| {
+                format!(
+                    "{:?}",
+                    <GroupedListView as pinion_core::WidgetCore>::view(
+                        ListState {
+                            selected: Some(i),
+                            cursor: None
+                        },
+                        &frame,
+                    )
+                ) != baseline
+            });
+            assert!(
+                moves,
+                "no selection changes the picture — the view paints \
+                        neither external and this proof is vacuous"
+            );
+        });
+    }
 }

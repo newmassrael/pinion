@@ -1587,4 +1587,79 @@ mod persisted_shape {
             PERSISTED_SHAPE_HISTORY,
         );
     }
+
+    /// R1618 — the verdict `tools/assembled_state.py` records for this binding,
+    /// proved rather than asserted.
+    ///
+    /// `read_state` assembles a text field, a nav rail, a theme toggle, a font
+    /// slider and a notification list, so the census counts this binding as
+    /// assembling. No single painted node is a function of more than one of
+    /// them: each settings row is one widget painted from its own external, so
+    /// the composition is a LAYOUT rather than an appearance decided by
+    /// several facts — which is a legitimate reason not to publish an
+    /// assembly.
+    ///
+    /// Proved by disjointness in both directions rather than by "the view
+    /// changed": move the theme toggle and the font slider's subtree is
+    /// byte-identical, and vice versa. Each half carries its own negative
+    /// control, so the check cannot pass because nothing is painted.
+    #[test]
+    fn r1618_each_external_decides_a_disjoint_part_of_the_picture() {
+        use super::*;
+        use pinion_core::reactive::Owner;
+        Owner::new().run(|| {
+            let frame = Frame::new();
+            let base: RootState = (
+                TextFieldState::Idle,
+                0,
+                NavRadioStates::default(),
+                ToggleState::Idle,
+                false,
+                SliderState::Idle,
+                0.0,
+                [CheckboxState::Idle; NOTIFICATION_COUNT],
+                [false; NOTIFICATION_COUNT],
+            );
+            let paint = |st: RootState| view(st, &frame);
+            let subtree = |scene: &Scene, tag: &str| {
+                format!("{:?}", scene.find_with_tag(tag).expect("painted"))
+            };
+            let base_scene = paint(base);
+
+            // The pair is chosen from what the DEFAULT section actually
+            // paints — the nav rail and the theme toggle. The first draft used
+            // the font slider, which lives in a section this state does not
+            // show, so `find_with_tag` answered `None` and the proof would
+            // have been about a node that is not there.
+            let mut toggled = base;
+            toggled.4 = true;
+            let toggled_scene = paint(toggled);
+            assert_eq!(
+                subtree(&toggled_scene, NAV_TAG),
+                subtree(&base_scene, NAV_TAG),
+                "the theme toggle's external reached the nav rail — that is one \
+                 node decided by two, and it owes a published assembly",
+            );
+            assert_ne!(
+                subtree(&toggled_scene, THEME_TOGGLE_TAG),
+                subtree(&base_scene, THEME_TOGGLE_TAG),
+                "...and it DID decide its own row, so the check above is not \
+                 passing because nothing is painted",
+            );
+
+            let mut roved = base;
+            roved.2.states[1] = RadioState::Hover;
+            let roved_scene = paint(roved);
+            assert_eq!(
+                subtree(&roved_scene, THEME_TOGGLE_TAG),
+                subtree(&base_scene, THEME_TOGGLE_TAG),
+                "the nav rail's external reached the theme toggle",
+            );
+            assert_ne!(
+                subtree(&roved_scene, NAV_TAG),
+                subtree(&base_scene, NAV_TAG),
+                "...and it DID decide its own part",
+            );
+        });
+    }
 }

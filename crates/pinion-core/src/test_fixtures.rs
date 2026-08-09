@@ -378,6 +378,51 @@ pub fn tagged_scene_of_kind(kind: SceneNodeKind, tag: &'static str) -> Scene {
     }
 }
 
+/// R1618 — a node of `kind` that has been asked to publish ONE reason for its
+/// own appearance, or `None` when nothing on that kind can be asked.
+///
+/// The independent statement of "how is this kind attributed", built by calling
+/// each node type's real API rather than by reading
+/// [`SceneNodeKind::marks_channel`](crate::scene::SceneNodeKind::marks_channel).
+/// A kind that attributes POSITIONS is asked through the thing that carries its
+/// content — a named [`StyleRun`](crate::scene::StyleRun) for text, a run over
+/// the displayed buffer for a grid — and a kind that attributes ITSELF is asked
+/// through `with_marks` over
+/// [`domain::NODE`](crate::marks::domain::NODE). The DOMAIN that comes back is
+/// therefore an observation, and a test can hold the declaration to it.
+///
+/// Exhaustive on purpose: a new node kind must say here how it is attributed,
+/// or admit that it cannot be.
+#[must_use]
+pub fn marked_scene_of_kind(kind: SceneNodeKind, tag: &'static str) -> Option<Scene> {
+    use crate::marks::{MarkSet, domain};
+    let reason = |set: MarkSet| set.because("reason");
+    Some(match tagged_scene_of_kind(kind, tag) {
+        // Positional: the run is part of the CONTENT, so it is declared where
+        // the content is and its indices count the content.
+        Scene::Text(n) => {
+            let end = u32::try_from(n.content.len()).unwrap_or(u32::MAX);
+            Scene::Text(n.with_runs(vec![
+                crate::scene::StyleRun::new(0, end, crate::style::TextStyle::new()).named("reason"),
+            ]))
+        }
+        Scene::TextGrid(mut n) => {
+            n.marks = Some(MarkSet::over(domain::BYTE).marking("reason", 0, 1));
+            Scene::TextGrid(n)
+        }
+        // Whole-node: there is no interior, so the caller never picks a place.
+        Scene::Box(n) => Scene::Box(n.with_marks(reason(MarkSet::whole()))),
+        Scene::Path(n) => Scene::Path(n.with_marks(reason(MarkSet::whole()))),
+        Scene::Image(n) => Scene::Image(n.with_marks(reason(MarkSet::whole()))),
+        // Nothing to ask: these carry no attribution of their own.
+        Scene::Container(_)
+        | Scene::Scroll(_)
+        | Scene::Effect(_)
+        | Scene::External(_)
+        | Scene::ImmediateModeNode(_) => return None,
+    })
+}
+
 /// R1615 — a node of `kind` holding `child`, or `None` when that kind has no
 /// child slot at all.
 ///
