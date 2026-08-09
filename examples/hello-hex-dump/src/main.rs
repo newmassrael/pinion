@@ -74,14 +74,14 @@ use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::hex_dump::{self, ByteSelection, Cell, HexLayout};
+use pinion_core::widgets::hex_dump::{ByteSelection, Cell, HexLayout, Mark, MarkSet};
 use pinion_core::widgets::range_slider::RangeSliderExternal;
 use pinion_core::{
-    CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermCell, TermColor,
-    WidgetCore,
+    CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermColor, WidgetCore,
 };
 use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_widget_paint::hex_dump::{HexPalette, MarkInk, view_hex_dump};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloHexDumpRenderer, HelloHexDumpRendererError);
@@ -251,6 +251,16 @@ fn selected_bytes(low: f32, high: f32) -> (usize, usize) {
 
 // --- Cell colours ----------------------------------------------------------
 
+/// The names the two gestures declare their byte runs under.
+///
+/// R1613 — the dump's paint is `pinion_widget_paint::hex_dump::view_hex_dump`
+/// now, and what this example still owns is these two names and the colour
+/// each maps to. The marks carry no colour, so `MarkSet::names_at(byte)`
+/// answers *why* a byte is lit with the run's own name rather than with an
+/// ink a reader has to reverse-engineer.
+const MARK_FIELD: &str = "field";
+const MARK_SELECTION: &str = "selection";
+
 /// The three resolved cell colours the dump paints with — resolved from the
 /// theme in `view`, or hand-set in tests.
 #[derive(Debug, Clone, Copy)]
@@ -264,86 +274,63 @@ struct CellColors {
     on_highlight: TermColor,
 }
 
-/// A blank (space) cell in the default fg/bg — the between-field padding.
-fn blank_cell() -> TermCell {
-    TermCell::new(" ", TermColor::Default, TermColor::Default)
-}
+impl CellColors {
+    /// The unmarked cells' palette — the crate's roles, tinted by this app.
+    fn palette(self) -> HexPalette {
+        HexPalette::plain().with_muted(self.muted)
+    }
 
-/// The ascii glyph + its default (non-highlight) foreground for a byte: the
-/// printable char itself in the default fg, or a `.` in the muted tint.
-fn ascii_glyph(byte: u8, colors: &CellColors) -> (String, TermColor) {
-    if (0x20..0x7f).contains(&byte) {
-        ((byte as char).to_string(), TermColor::Default)
-    } else {
-        (".".to_owned(), colors.muted)
+    /// How each declared mark is drawn. The `field` brush fills; the drag
+    /// `selection` reverse-videos and says nothing about colour, so a byte in
+    /// both keeps the fill AND reverses.
+    fn ink(self, name: &str) -> MarkInk {
+        match name {
+            MARK_FIELD => MarkInk::filled(self.on_highlight, self.highlight),
+            MARK_SELECTION => MarkInk::reversed(),
+            _ => MarkInk::none(),
+        }
     }
 }
 
-/// One hex digit (`0-9a-f`) as a `String`.
-fn hex_digit(nibble: u8) -> String {
-    hex_dump::hex_digit(nibble).to_string()
+/// The runs the two orthogonal gestures mark: the overview brush's field
+/// `[lo, hi)` and, when there is one, the drag selection.
+///
+/// Declared brush-first so the selection wins where they overlap — one
+/// direction for every visual channel, which is the rule `MarkSet` states.
+fn marks(brush: core::ops::Range<usize>, selection: Option<(usize, usize)>) -> MarkSet {
+    let mut set = MarkSet::new().marking(MARK_FIELD, brush.start, brush.end);
+    if let Some((start, end)) = selection {
+        set.push(Mark::new(MARK_SELECTION, start, end));
+    }
+    set
 }
 
 /// Build the hex-dump [`GridBuffer`]. Two orthogonal visual channels ride each
-/// byte's three cells (two hex digits + its ascii glyph): the `brush_sel`
-/// (`lo..hi`) fills the background (R1400 field highlight), and `reverse_sel`
-/// (`start..end`) reverse-videos the cells (R1402 drag selection). A byte can
-/// be in both — the accent background reversed — since the two selections are
-/// independent gestures (the minimap field vs the direct byte selection).
+/// byte's three cells (two hex digits + its ascii glyph): the `field` mark
+/// (`lo..hi`) fills the background (R1400 field highlight), and the
+/// `selection` mark (`start..end`) reverse-videos the cells (R1402 drag
+/// selection). A byte can be in both — the accent background reversed — since
+/// the two selections are independent gestures (the minimap field vs the
+/// direct byte selection).
+///
+/// R1613 — the cell assembly is the crate's. What used to be here was a
+/// 55-line second statement of a layout `HexLayout` already knew, including a
+/// real defect: the offset column was formatted to a fixed eight hex digits
+/// and then truncated to `offset_digits`, so any narrower offset field printed
+/// `0000` on every row.
 fn hex_dump_buffer(
     bytes: &[u8],
     brush_sel: core::ops::Range<usize>,
     reverse_sel: Option<(usize, usize)>,
     colors: &CellColors,
 ) -> GridBuffer {
-    let mut buf = GridBuffer::new(
-        u16::try_from(TOTAL_COLS).unwrap_or(0),
-        u16::try_from(ROWS).unwrap_or(0),
-    );
-    for r in 0..ROWS {
-        let base = r * BYTES_PER_ROW;
-        let mut cells = vec![blank_cell(); TOTAL_COLS];
-
-        // Offset column: the row's start offset as 8 hex digits.
-        let offset = format!("{base:08x}");
-        for (i, ch) in offset.chars().take(LAYOUT.offset_digits()).enumerate() {
-            cells[i] = TermCell::new(ch.to_string(), colors.muted, TermColor::Default);
-        }
-
-        // The 16 bytes: hex pair + ascii glyph, each carrying the brush fill
-        // (background) and/or the drag-selection (reverse video).
-        for j in 0..BYTES_PER_ROW {
-            let idx = base + j;
-            let Some(&byte) = bytes.get(idx) else { break };
-            let brushed = brush_sel.contains(&idx);
-            let reversed = reverse_sel.is_some_and(|(s, e)| (s..e).contains(&idx));
-            let attrs = CellAttrs::empty().with_reverse(reversed);
-            let (hex_fg, hl_bg) = if brushed {
-                (colors.on_highlight, colors.highlight)
-            } else {
-                (TermColor::Default, TermColor::Default)
-            };
-
-            let hc = hex_col(j);
-            cells[hc] = TermCell::new(hex_digit(byte >> 4), hex_fg, hl_bg).with_attrs(attrs);
-            cells[hc + 1] = TermCell::new(hex_digit(byte), hex_fg, hl_bg).with_attrs(attrs);
-
-            let (glyph, glyph_fg) = ascii_glyph(byte, colors);
-            let (ink, fill) = if brushed {
-                (colors.on_highlight, colors.highlight)
-            } else {
-                (glyph_fg, TermColor::Default)
-            };
-            cells[ascii_col(j)] = TermCell::new(glyph, ink, fill).with_attrs(attrs);
-        }
-
-        // The ascii-gutter bars.
-        cells[LAYOUT.ascii_bar_left()] = TermCell::new("|", colors.muted, TermColor::Default);
-        cells[LAYOUT.ascii_bar_right()] = TermCell::new("|", colors.muted, TermColor::Default);
-
-        buf = buf.with_row(u16::try_from(r).unwrap_or(0), cells);
-    }
-    buf
+    view_hex_dump(
+        &LAYOUT,
+        bytes,
+        &marks(brush_sel, reverse_sel),
+        &colors.palette(),
+        |name| colors.ink(name),
+    )
 }
 
 /// The overview strip's track — the byte-offset minimap, aligned under the
@@ -636,6 +623,8 @@ impl ExternalIntrospect for HexDumpOracle {
                     SchemaField::new("byte_at_cell", "string"),
                     SchemaField::new("select_range", "string"),
                     SchemaField::new("byte_window", "string"),
+                    // R1613 — why a byte is lit: the named runs covering it.
+                    SchemaField::new("marks_at", "string"),
                     // The router's pointer press / release symbolic events.
                     SchemaField::new("send", "string"),
                 ]
@@ -735,6 +724,50 @@ impl ExternalIntrospect for HexDumpOracle {
                     let (low, high) = parse_pair(s).ok_or(InvokeError::TypeMismatch)?;
                     let (lo, hi) = selected_bytes(low, high);
                     Ok(IntrospectValue::Text(format!("{lo},{hi}")))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R1613 — WHY a byte is drawn the way it is: the names of the runs
+            // covering it, innermost last, joined by `,` (or "none").
+            //
+            // The field run belongs to the sibling brush external rather than
+            // to this one, so the caller names it: the args are
+            // `"byte,lo,hi"`, where `lo,hi` is what `byte_window` answered for
+            // the current brush. Composing the two is the honest shape — this
+            // oracle owns the selection and nothing else — and what it
+            // demonstrates is `MarkSet::names_at`: the mark stack answers with
+            // NAMES, where a list of coloured ranges has only a colour left by
+            // the time anyone asks.
+            "marks_at" => match args {
+                IntrospectValue::Text(ref s) => {
+                    let mut parts = s.split(',').map(str::trim);
+                    let byte: usize = parts
+                        .next()
+                        .and_then(|p| p.parse().ok())
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    let lo: usize = parts
+                        .next()
+                        .and_then(|p| p.parse().ok())
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    let hi: usize = parts
+                        .next()
+                        .and_then(|p| p.parse().ok())
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    if parts.next().is_some() {
+                        return Err(InvokeError::TypeMismatch);
+                    }
+                    if byte >= SAMPLE_LEN {
+                        return Err(InvokeError::rejected(format!(
+                            "no byte {byte} in this buffer (it holds {SAMPLE_LEN})"
+                        )));
+                    }
+                    let set = marks(lo..hi, self.range());
+                    let names = set.names_at(byte);
+                    Ok(IntrospectValue::Text(if names.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        names.join(",")
+                    }))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1036,6 +1069,71 @@ mod tests {
         assert_eq!(buf.cell(c(hex_col(7)), 0).unwrap().bg, TermColor::Default);
         assert_eq!(buf.cell(c(ascii_col(7)), 0).unwrap().bg, TermColor::Default);
         assert_eq!(buf.cell(c(hex_col(12)), 0).unwrap().bg, TermColor::Default);
+    }
+
+    #[test]
+    fn a_byte_says_which_runs_lit_it() {
+        // ★ R1613 — the query a list of coloured ranges cannot answer. Two
+        // gestures mark the same buffer; a byte in both reports BOTH names, in
+        // the order that decided the paint, and the last one is the one the
+        // painter obeyed.
+        let mut o = HexDumpOracle::new();
+        o.invoke("select_range", IntrospectValue::Text("10,20".into()))
+            .expect("select");
+        // Field = bytes 8..16, from the brush; selection = 10..20, this
+        // oracle's own.
+        let mut names = |byte: usize| match o
+            .invoke("marks_at", IntrospectValue::Text(format!("{byte},8,16")))
+            .expect("marks_at")
+        {
+            IntrospectValue::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        };
+        assert_eq!(names(9), "field", "in the brush window only");
+        assert_eq!(names(12), "field,selection", "in both, selection last");
+        assert_eq!(names(18), "selection", "in the drag only");
+        assert_eq!(names(40), "none", "in neither");
+
+        // The paint agrees with the query: byte 12 is filled AND reversed,
+        // byte 9 filled only, byte 18 reversed only.
+        let colors = test_colors();
+        let buf = hex_dump_buffer(&sample(), 8..16, Some((10, 20)), &colors);
+        let hex = |b: usize| {
+            buf.cell(
+                c(hex_col(b % BYTES_PER_ROW)),
+                u16::try_from(b / BYTES_PER_ROW).unwrap(),
+            )
+            .unwrap()
+            .clone()
+        };
+        assert_eq!(hex(12).bg, colors.highlight);
+        assert!(hex(12).attrs.reverse);
+        assert_eq!(hex(9).bg, colors.highlight);
+        assert!(!hex(9).attrs.reverse);
+        assert_eq!(hex(18).bg, TermColor::Default);
+        assert!(hex(18).attrs.reverse);
+    }
+
+    #[test]
+    fn marks_at_rejects_what_it_cannot_answer() {
+        let mut o = HexDumpOracle::new();
+        assert!(matches!(
+            o.invoke("marks_at", IntrospectValue::Text("0,8".into())),
+            Err(InvokeError::TypeMismatch)
+        ));
+        assert!(matches!(
+            o.invoke("marks_at", IntrospectValue::Text("0,8,16,24".into())),
+            Err(InvokeError::TypeMismatch)
+        ));
+        assert!(matches!(
+            o.invoke("marks_at", IntrospectValue::Int(3)),
+            Err(InvokeError::TypeMismatch)
+        ));
+        let past = o.invoke("marks_at", IntrospectValue::Text("999,0,8".into()));
+        assert!(
+            matches!(past, Err(InvokeError::Rejected { .. })),
+            "a byte outside the buffer is rejected with a reason, got {past:?}"
+        );
     }
 
     #[test]

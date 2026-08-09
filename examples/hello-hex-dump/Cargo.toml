@@ -16,6 +16,9 @@ path = "src/main.rs"
 # R1400 — the byte-range Brush substrate (R1394) this is the fifth consumer of.
 pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R1613 — the dump's paint: `view_hex_dump` walks the same `HexLayout` the
+# pointer hit-tests, so this binding owns colour and nothing else.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 # R1407 — the `use_app_clipboard` platform bridge for the Ctrl/Cmd+C copy of the
 # selected bytes (the third consumer of the lifted `selection_copy_payload`).
 pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }

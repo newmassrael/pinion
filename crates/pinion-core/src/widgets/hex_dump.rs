@@ -141,7 +141,51 @@ pub enum Region {
     Outside,
 }
 
+/// What a painter has to decide about a cell.
+///
+/// [`Region`] answers *what a cell is*, which is the hit-test's question and
+/// grows over time — it is `#[non_exhaustive]` for exactly that reason. A
+/// painter's question is narrower and closed: which of a fixed set of roles
+/// does this cell take its ink from.
+///
+/// **Splitting them is what keeps a new region from going unpainted.** A
+/// painter matching `Region` directly would need a `_` arm, and a `_` arm
+/// silently absorbs the next variant — the failure recorded in
+/// `debt-node-body-arm-is-weaker-than-a-type`. Here [`Region::role`] is an
+/// exhaustive match *inside this module*, so a new region cannot compile
+/// without saying which role it paints as, and this enum is deliberately NOT
+/// `#[non_exhaustive]`, so adding a role breaks every painter loudly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CellRole {
+    /// A digit of the row's offset field.
+    Offset,
+    /// A hex digit of a byte.
+    Hex,
+    /// A byte's ascii glyph.
+    Ascii,
+    /// A gutter bar.
+    Bar,
+    /// A cell that shows nothing.
+    Blank,
+}
+
 impl Region {
+    /// Which ink role this cell takes.
+    ///
+    /// The one place [`Region`] is collapsed for painting; see [`CellRole`]
+    /// for why the collapse is a named step rather than a `_` arm in every
+    /// painter.
+    #[must_use]
+    pub const fn role(&self) -> CellRole {
+        match self {
+            Self::Offset { .. } => CellRole::Offset,
+            Self::Hex { .. } => CellRole::Hex,
+            Self::Ascii { .. } => CellRole::Ascii,
+            Self::Bar => CellRole::Bar,
+            Self::Padding | Self::Outside => CellRole::Blank,
+        }
+    }
+
     /// The byte this cell shows, if it shows one.
     ///
     /// The convenience the old hand-written hit-test answered *instead* of the
@@ -334,13 +378,39 @@ impl HexLayout {
         ))
     }
 
+    /// How many columns one whole group of hex digits occupies.
+    ///
+    /// Three per byte — two digits and the space after them — plus the one
+    /// extra space that separates this group from the next. It is what makes
+    /// the inverse a division instead of a search.
+    #[must_use]
+    const fn group_stride(&self) -> usize {
+        self.group * 3 + 1
+    }
+
     /// What `cell` is.
     ///
     /// **The only place a cell is read**, which is what keeps the forward and
     /// the reverse map from drifting: `hex_cell` and `ascii_cell` are checked
     /// against this by a round-trip property rather than by inspection.
+    ///
+    /// ## Constant time, because paint calls it once per cell
+    ///
+    /// This started as a scan of the row's bytes, which is fine for a
+    /// hit-test — a pointer asks about one cell — and quadratic for the thing
+    /// that came next. A painter that renders the dump by *asking what each
+    /// cell is* walks `total_cols * rows` cells, so a scan makes the whole
+    /// render `cells * bytes_per_row`, and a dump wide enough to be worth
+    /// paging is exactly where that bites.
+    ///
+    /// So the inverse is closed form. Every group of hex digits occupies a
+    /// fixed stride of columns, so the group is a division and the byte
+    /// inside it is another; the remainder mod three says high digit, low
+    /// digit, or the space after the pair. The
+    /// `the_closed_form_inverse_agrees_with_a_scan` property holds it to the
+    /// scan it replaced, cell for cell, over every layout shape.
     #[must_use]
-    pub fn region_at(&self, cell: Cell) -> Region {
+    pub const fn region_at(&self, cell: Cell) -> Region {
         if cell.row >= self.rows() || cell.col >= self.total_cols() {
             return Region::Outside;
         }
@@ -356,24 +426,35 @@ impl HexLayout {
         }
         // How many bytes this row actually has — a short final row's tail is
         // padding rather than a byte nobody can click.
-        let in_row = (self.len - row_start).min(self.bytes_per_row);
-        for index in 0..in_row {
-            let hex = self.hex_col(index);
-            if cell.col == hex {
-                return Region::Hex {
-                    byte: row_start + index,
-                    nibble: Nibble::High,
-                };
-            }
-            if cell.col == hex + 1 {
-                return Region::Hex {
-                    byte: row_start + index,
-                    nibble: Nibble::Low,
-                };
-            }
-            if cell.col == self.ascii_col(index) {
+        let in_row = if self.len - row_start < self.bytes_per_row {
+            self.len - row_start
+        } else {
+            self.bytes_per_row
+        };
+        if cell.col >= self.ascii_start() && cell.col < self.ascii_bar_right() {
+            let index = cell.col - self.ascii_start();
+            if index < in_row {
                 return Region::Ascii {
                     byte: row_start + index,
+                };
+            }
+            return Region::Padding;
+        }
+        if cell.col >= self.hex_start() && cell.col < self.hex_end() {
+            let rel = cell.col - self.hex_start();
+            let group = rel / self.group_stride();
+            let within = rel % self.group_stride();
+            let index = group * self.group + within / 3;
+            // `within / 3 == self.group` is the extra space between groups, and
+            // `within % 3 == 2` is the space after a pair; both are padding.
+            if within / 3 < self.group && within % 3 < 2 && index < in_row {
+                return Region::Hex {
+                    byte: row_start + index,
+                    nibble: if within % 3 == 0 {
+                        Nibble::High
+                    } else {
+                        Nibble::Low
+                    },
                 };
             }
         }
@@ -382,8 +463,63 @@ impl HexLayout {
 
     /// The byte `cell` shows, if any — the hit-test a pointer resolves.
     #[must_use]
-    pub fn byte_at(&self, cell: Cell) -> Option<usize> {
+    pub const fn byte_at(&self, cell: Cell) -> Option<usize> {
         self.region_at(cell).byte()
+    }
+
+    /// The character `cell` shows.
+    ///
+    /// **The dump's glyphs, derived from the same [`Self::region_at`] the
+    /// hit-test uses** — so what is drawn and what answers a pointer cannot be
+    /// two facts. A painter is then a walk over the grid asking this, and the
+    /// only thing left for the application is colour.
+    ///
+    /// A cell showing nothing — padding, or a byte past the end of `bytes` —
+    /// is a space. `Outside` is a space too, which is what lets a caller paint
+    /// a grid larger than the layout without a bounds test of its own.
+    ///
+    /// ## The offset field is derived, not truncated
+    ///
+    /// The offset digits are computed from the row's own start, most
+    /// significant first, at whatever width [`Self::offset_digits`] declares.
+    /// The example this replaced formatted the offset to a **fixed eight**
+    /// digits and then took the first `offset_digits` of that string, so any
+    /// width below eight printed the leading zeros of an eight-digit number —
+    /// a four-digit offset column read `0000` on every row. An offset wider
+    /// than the field shows its low digits, as a fixed-width field must.
+    #[must_use]
+    pub fn glyph_at(&self, bytes: &[u8], cell: Cell) -> char {
+        match self.region_at(cell) {
+            Region::Offset { at, digit } => self.offset_digit(at, digit),
+            Region::Hex { byte, nibble } => bytes
+                .get(byte)
+                .map_or(' ', |value| hex_digit(nibble.of(*value))),
+            Region::Ascii { byte } => bytes.get(byte).map_or(' ', |value| ascii_glyph(*value)),
+            Region::Bar => '|',
+            Region::Padding | Region::Outside => ' ',
+        }
+    }
+
+    /// Digit `digit` of the offset `at`, most significant first, in a field of
+    /// [`Self::offset_digits`] digits.
+    ///
+    /// A digit past the field's width is a space rather than a panic, so a
+    /// [`Region::Offset`] a caller built by hand cannot crash a paint.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the mask bounds the value to 0..=15 one line above the cast, \
+                  so the u8 is exact; `u8::try_from` is not const"
+    )]
+    pub const fn offset_digit(&self, at: usize, digit: usize) -> char {
+        if digit >= self.offset_digits {
+            return ' ';
+        }
+        let shift = 4 * (self.offset_digits - 1 - digit);
+        if shift >= usize::BITS as usize {
+            return '0';
+        }
+        hex_digit(((at >> shift) & 0x0f) as u8)
     }
 
     /// The byte range a `[low, high]` pair of buffer fractions covers.
@@ -579,6 +715,193 @@ impl ByteSelection {
 impl fmt::Display for ByteSelection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}..{}", self.start, self.end)
+    }
+}
+
+/// A named run of bytes, `[start, end)`.
+///
+/// The thing an inspector actually has: not "these bytes are blue" but "these
+/// bytes are the length field". The name is the point — it is what a caller
+/// keys colour off, what an assistant reads back over the wire, and what
+/// [`MarkSet::names_at`] answers with when someone asks *why* a byte is lit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    name: String,
+    start: usize,
+    end: usize,
+}
+
+impl Mark {
+    /// A mark called `name` over `[start, end)`. An inverted or empty range is
+    /// stored as it was ordered, then reports [`Mark::is_empty`].
+    #[must_use]
+    pub fn new(name: impl Into<String>, start: usize, end: usize) -> Self {
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        Self {
+            name: name.into(),
+            start,
+            end,
+        }
+    }
+
+    /// The mark over the bytes a [`ByteSelection`] holds.
+    #[must_use]
+    pub fn of_selection(name: impl Into<String>, selection: ByteSelection) -> Self {
+        Self::new(name, selection.start(), selection.end())
+    }
+
+    /// What this run is called.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// First marked byte.
+    #[must_use]
+    pub const fn start(&self) -> usize {
+        self.start
+    }
+
+    /// One past the last marked byte.
+    #[must_use]
+    pub const fn end(&self) -> usize {
+        self.end
+    }
+
+    /// How many bytes the run covers.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    /// Whether the run covers no bytes.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.start >= self.end
+    }
+
+    /// Whether `byte` is in the run.
+    #[must_use]
+    pub const fn contains(&self, byte: usize) -> bool {
+        self.start <= byte && byte < self.end
+    }
+}
+
+/// The marks over one buffer, in declaration order.
+///
+/// ## Overlap resolves in ONE direction, and the direction is queryable
+///
+/// Marks overlap constantly — a packet's length field is inside its header is
+/// inside the frame — so a byte can carry several, and something has to decide
+/// which one a painter obeys. Two decisions are made here and both are
+/// deliberate.
+///
+/// **Declaration order, later wins, for every visual channel alike.** A caller
+/// that declares the frame, then the header, then the field gets the field on
+/// top, which is the order it wrote them in. The reference for this is a
+/// mature toolkit's list of range decorations over a text layout, and it is
+/// worth naming what is different: there the ordering is *split by channel* —
+/// a later range's background overpaints an earlier one, while a later range's
+/// foreground is suppressed wherever an earlier one already drew text, so
+/// background is last-wins and foreground is first-wins **in the same loop**.
+/// Two directions in one list is a rule nobody can hold, and it is not written
+/// down anywhere in that interface. One direction, stated, is the choice here.
+///
+/// **A mark carries a name and no colour.** The same reference's range
+/// decoration is `(start, length, format)` — the format *is* the colour, so
+/// the run has no identity apart from how it looks, and once the list is built
+/// there is no way to ask which entries cover a position: the list is stored
+/// and re-scanned by whoever wants to know. [`MarkSet::names_at`] is that
+/// question, answered.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MarkSet {
+    marks: Vec<Mark>,
+}
+
+impl MarkSet {
+    /// No marks.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { marks: Vec::new() }
+    }
+
+    /// The same set with `mark` declared after everything already in it — so
+    /// it wins wherever it overlaps.
+    #[must_use]
+    pub fn with(mut self, mark: Mark) -> Self {
+        self.marks.push(mark);
+        self
+    }
+
+    /// The same set with a mark called `name` over `[start, end)` declared
+    /// last. The builder for the common case.
+    #[must_use]
+    pub fn marking(self, name: impl Into<String>, start: usize, end: usize) -> Self {
+        self.with(Mark::new(name, start, end))
+    }
+
+    /// Declare `mark` last, in place.
+    pub fn push(&mut self, mark: Mark) {
+        self.marks.push(mark);
+    }
+
+    /// The marks, in declaration order.
+    pub fn iter(&self) -> impl Iterator<Item = &Mark> {
+        self.marks.iter()
+    }
+
+    /// How many marks are declared.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.marks.len()
+    }
+
+    /// Whether nothing is marked.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.marks.is_empty()
+    }
+
+    /// The mark by that name, if one is declared. The last, if a name is
+    /// declared twice — the same rule overlap follows.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&Mark> {
+        self.marks.iter().rev().find(|mark| mark.name == name)
+    }
+
+    /// Every mark covering `byte`, in declaration order.
+    ///
+    /// **Why a byte looks the way it does.** A painter obeys the last of
+    /// these; a reader — a person, or an assistant over the wire — gets the
+    /// whole stack, so "the length field, inside the header, inside the frame"
+    /// is answerable rather than inferred from a colour.
+    #[must_use]
+    pub fn at(&self, byte: usize) -> impl DoubleEndedIterator<Item = &Mark> {
+        self.marks.iter().filter(move |mark| mark.contains(byte))
+    }
+
+    /// The names covering `byte`, in declaration order.
+    #[must_use]
+    pub fn names_at(&self, byte: usize) -> Vec<&str> {
+        self.at(byte).map(Mark::name).collect()
+    }
+
+    /// The mark a painter obeys at `byte` — the last declared one covering it.
+    #[must_use]
+    pub fn top_at(&self, byte: usize) -> Option<&Mark> {
+        self.at(byte).next_back()
+    }
+}
+
+impl FromIterator<Mark> for MarkSet {
+    fn from_iter<I: IntoIterator<Item = Mark>>(iter: I) -> Self {
+        Self {
+            marks: iter.into_iter().collect(),
+        }
     }
 }
 
@@ -849,5 +1172,308 @@ mod tests {
             'b',
             "a whole byte gives one digit rather than two characters or a panic"
         );
+    }
+
+    /// The implementation `region_at` replaced: a scan of the row's bytes,
+    /// asking each in turn whether it owns the column. It is the reference the
+    /// closed form is held to, kept here rather than deleted because a
+    /// rewritten inverse with no witness is a rewritten inverse nobody checked.
+    fn region_at_by_scan(layout: &HexLayout, cell: Cell) -> Region {
+        if cell.row >= layout.rows() || cell.col >= layout.total_cols() {
+            return Region::Outside;
+        }
+        let row_start = cell.row * layout.bytes_per_row();
+        if cell.col < layout.offset_digits() {
+            return Region::Offset {
+                at: row_start,
+                digit: cell.col,
+            };
+        }
+        if cell.col == layout.ascii_bar_left() || cell.col == layout.ascii_bar_right() {
+            return Region::Bar;
+        }
+        let in_row = (layout.len() - row_start).min(layout.bytes_per_row());
+        for index in 0..in_row {
+            let hex = layout.hex_col(index);
+            if cell.col == hex {
+                return Region::Hex {
+                    byte: row_start + index,
+                    nibble: Nibble::High,
+                };
+            }
+            if cell.col == hex + 1 {
+                return Region::Hex {
+                    byte: row_start + index,
+                    nibble: Nibble::Low,
+                };
+            }
+            if cell.col == layout.ascii_col(index) {
+                return Region::Ascii {
+                    byte: row_start + index,
+                };
+            }
+        }
+        Region::Padding
+    }
+
+    #[test]
+    fn the_closed_form_inverse_agrees_with_a_scan() {
+        // Every cell of every layout shape, plus a margin past both edges so
+        // the `Outside` boundary is compared too.
+        for layout in layouts() {
+            for row in 0..layout.rows() + 2 {
+                for col in 0..layout.total_cols() + 2 {
+                    let cell = Cell::new(col, row);
+                    assert_eq!(
+                        layout.region_at(cell),
+                        region_at_by_scan(&layout, cell),
+                        "{layout:?} at {cell}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn classifying_a_cell_is_constant_time_in_the_row_width() {
+        // ★ The reason the inverse was rewritten. A painter asks what EVERY
+        // cell is, so an inverse that scans the row makes a render cost
+        // `cells * bytes_per_row`.
+        //
+        // The assertion is a wall clock, which is only defensible because the
+        // two costs are not close: at 2^24 bytes a row, a scan reaching the
+        // last byte of the row does ~1.7e7 comparisons, and 64 of those probes
+        // is ~1.1e9 -- seconds even in release, tens of seconds unoptimised.
+        // The closed form does 64 divisions. The ceiling below is ~4 orders of
+        // magnitude above what the closed form costs and at least an order
+        // BELOW what the scan costs, so neither a loaded machine nor a fast one
+        // moves the verdict.
+        let wide = HexLayout::new(1 << 25)
+            .with_bytes_per_row(1 << 24)
+            .with_group(1 << 24);
+        let last = wide.hex_col(wide.bytes_per_row() - 1);
+        let start = std::time::Instant::now();
+        let mut bytes_seen = 0usize;
+        for probe in 0..64 {
+            let cell = Cell::new(last - probe * 3, 1);
+            let region = wide.region_at(cell);
+            assert_eq!(
+                region,
+                Region::Hex {
+                    byte: wide.bytes_per_row() * 2 - 1 - probe,
+                    nibble: Nibble::High,
+                },
+                "the far end of a very wide row still classifies exactly"
+            );
+            bytes_seen += 1;
+        }
+        assert_eq!(bytes_seen, 64);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "64 classifications at 2^24 bytes a row took {elapsed:?}; a scanning \
+             inverse is what that means"
+        );
+    }
+
+    #[test]
+    fn the_offset_field_is_derived_at_its_declared_width() {
+        // ★ The defect this closes. `hello-hex-dump` formatted the row offset
+        // to a FIXED eight hex digits and then took the first `offset_digits`
+        // characters of that string, so a four-digit offset column printed the
+        // leading zeros of an eight-digit number -- `0000` on every row,
+        // including the rows that are not at offset zero.
+        let narrow = HexLayout::new(0x2000)
+            .with_bytes_per_row(16)
+            .with_offset_digits(4);
+        let bytes = vec![0u8; 0x2000];
+        let row = 0x123; // byte offset 0x1230
+        let digits: String = (0..4)
+            .map(|d| narrow.glyph_at(&bytes, Cell::new(d, row)))
+            .collect();
+        assert_eq!(
+            digits, "1230",
+            "the row's own offset, at the declared width"
+        );
+
+        // What the string-truncation it replaces would have produced.
+        let truncated: String = format!("{:08x}", row * 16).chars().take(4).collect();
+        assert_eq!(truncated, "0000");
+        assert_ne!(digits, truncated, "the derivation is not the truncation");
+
+        // The classic width is unchanged.
+        let classic = HexLayout::new(128);
+        let wide: String = (0..8)
+            .map(|d| classic.glyph_at(&bytes, Cell::new(d, 2)))
+            .collect();
+        assert_eq!(wide, "00000020");
+
+        // A field narrower than the offset shows its low digits, as a
+        // fixed-width field must -- not a panic and not a truncation to zero.
+        let tiny = HexLayout::new(0x2000)
+            .with_bytes_per_row(16)
+            .with_offset_digits(2);
+        let low: String = (0..2)
+            .map(|d| tiny.glyph_at(&bytes, Cell::new(d, row)))
+            .collect();
+        assert_eq!(low, "30");
+    }
+
+    #[test]
+    fn every_cell_shows_the_glyph_its_region_names() {
+        // ★ Paint and hit-test read ONE fact: the character a cell shows is
+        // derived from the same `region_at` that answers a pointer, so a cell
+        // that draws a byte is a cell that selects that byte.
+        let bytes: Vec<u8> = (0..=255u8).collect();
+        for layout in layouts() {
+            let bytes = &bytes[..layout.len().min(bytes.len())];
+            for row in 0..layout.rows() {
+                for col in 0..layout.total_cols() {
+                    let cell = Cell::new(col, row);
+                    let glyph = layout.glyph_at(bytes, cell);
+                    match layout.region_at(cell) {
+                        Region::Hex { byte, nibble } => {
+                            let value = bytes.get(byte).copied();
+                            assert_eq!(
+                                glyph,
+                                value.map_or(' ', |v| hex_digit(nibble.of(v))),
+                                "{layout:?} {cell} draws its own byte's nibble"
+                            );
+                            assert_eq!(layout.byte_at(cell), Some(byte));
+                        }
+                        Region::Ascii { byte } => {
+                            let value = bytes.get(byte).copied();
+                            assert_eq!(glyph, value.map_or(' ', ascii_glyph));
+                            assert_eq!(layout.byte_at(cell), Some(byte));
+                        }
+                        Region::Bar => {
+                            assert_eq!(glyph, '|');
+                            assert_eq!(layout.byte_at(cell), None);
+                        }
+                        Region::Offset { at, digit } => {
+                            assert_eq!(glyph, layout.offset_digit(at, digit));
+                            assert_eq!(layout.byte_at(cell), None);
+                        }
+                        Region::Padding | Region::Outside => {
+                            assert_eq!(glyph, ' ');
+                            assert_eq!(layout.byte_at(cell), None);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_glyph_outside_the_grid_is_a_space_rather_than_a_panic() {
+        let layout = HexLayout::new(32);
+        let bytes = [0u8; 32];
+        assert_eq!(layout.glyph_at(&bytes, Cell::new(0, 99)), ' ');
+        assert_eq!(layout.glyph_at(&bytes, Cell::new(9_999, 0)), ' ');
+        // A buffer shorter than the layout claims: the tail is blank, not a
+        // stale byte and not an index panic.
+        assert_eq!(
+            layout.glyph_at(&[1, 2, 3], Cell::new(layout.ascii_col(9), 0)),
+            ' '
+        );
+    }
+
+    #[test]
+    fn overlapping_marks_resolve_in_declaration_order_last_wins() {
+        // ★ ONE direction, unlike the split the reference interface has.
+        let marks = MarkSet::new()
+            .marking("frame", 0, 64)
+            .marking("header", 0, 16)
+            .marking("length", 4, 8);
+        assert_eq!(marks.len(), 3);
+        assert_eq!(marks.names_at(5), vec!["frame", "header", "length"]);
+        assert_eq!(marks.top_at(5).map(Mark::name), Some("length"));
+        assert_eq!(marks.names_at(12), vec!["frame", "header"]);
+        assert_eq!(marks.top_at(12).map(Mark::name), Some("header"));
+        assert_eq!(marks.names_at(40), vec!["frame"]);
+        assert_eq!(marks.top_at(40).map(Mark::name), Some("frame"));
+        assert!(marks.names_at(100).is_empty());
+        assert_eq!(marks.top_at(100), None);
+    }
+
+    #[test]
+    fn a_byte_says_why_it_is_lit() {
+        // ★ The query the reference's range-decoration list has no form of:
+        // the whole stack covering a byte, in the order that decided it.
+        // A colour cannot answer this -- two marks that resolve to the same
+        // ink are indistinguishable once drawn.
+        let marks = MarkSet::new()
+            .marking("frame", 0, 64)
+            .marking("header", 0, 16)
+            .marking("length", 4, 8);
+        let why = marks.names_at(6);
+        assert_eq!(why, vec!["frame", "header", "length"]);
+        assert_eq!(
+            why.last().copied(),
+            Some("length"),
+            "the last of the stack is the one paint obeys"
+        );
+
+        // Model of the split-direction rule: background takes the LAST range
+        // covering a byte, foreground the FIRST. Two marks, two answers, and
+        // no way to ask which run a byte belongs to.
+        let ranges = [("frame", 0usize, 64usize), ("length", 4, 8)];
+        let covering = |byte: usize| -> Vec<&str> {
+            ranges
+                .iter()
+                .filter(|(_, s, e)| (*s..*e).contains(&byte))
+                .map(|(n, _, _)| *n)
+                .collect()
+        };
+        let split = covering(6);
+        assert_eq!(split.first().copied(), Some("frame"), "foreground: first");
+        assert_eq!(split.last().copied(), Some("length"), "background: last");
+        assert_ne!(
+            split.first(),
+            split.last(),
+            "the two channels of one byte come from DIFFERENT runs -- which is \
+             the rule this module refuses"
+        );
+        let ours = MarkSet::new()
+            .marking("frame", 0, 64)
+            .marking("length", 4, 8);
+        assert_eq!(
+            ours.top_at(6).map(Mark::name),
+            Some("length"),
+            "here both channels come from the same run, and it is nameable"
+        );
+    }
+
+    #[test]
+    fn a_mark_is_a_run_and_says_so() {
+        let mark = Mark::new("payload", 8, 24);
+        assert_eq!(mark.name(), "payload");
+        assert_eq!((mark.start(), mark.end(), mark.len()), (8, 24, 16));
+        assert!(mark.contains(8));
+        assert!(mark.contains(23));
+        assert!(!mark.contains(24));
+        assert!(!mark.is_empty());
+        // An inverted range is ordered rather than rejected -- a drag runs
+        // either way and the run is the same run.
+        assert_eq!(Mark::new("x", 9, 3), Mark::new("x", 3, 9));
+        assert!(Mark::new("empty", 5, 5).is_empty());
+        // A selection is a run with a focus; a mark is the run.
+        let selection = ByteSelection::drag(11, 4);
+        let of_sel = Mark::of_selection("selection", selection);
+        assert_eq!((of_sel.start(), of_sel.end()), (4, 12));
+    }
+
+    #[test]
+    fn a_mark_set_is_queryable_by_name_and_collectable() {
+        let marks: MarkSet = [Mark::new("a", 0, 4), Mark::new("b", 4, 8)]
+            .into_iter()
+            .collect();
+        assert_eq!(marks.get("b").map(Mark::start), Some(4));
+        assert_eq!(marks.get("missing"), None);
+        assert!(MarkSet::new().is_empty());
+        // A name declared twice resolves the way overlap does: the last one.
+        let shadowed = MarkSet::new().marking("f", 0, 4).marking("f", 8, 12);
+        assert_eq!(shadowed.get("f").map(Mark::start), Some(8));
+        assert_eq!(shadowed.iter().count(), 2);
     }
 }

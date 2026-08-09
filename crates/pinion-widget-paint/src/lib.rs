@@ -94,6 +94,7 @@ pub mod file_browser;
 pub mod glyph;
 pub mod group_box;
 pub mod group_header;
+pub mod hex_dump;
 pub mod listbox;
 pub mod menu;
 pub mod popup;

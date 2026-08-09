@@ -2919,6 +2919,7 @@ dependencies = [
  "pinion-gpu",
  "pinion-platform-clipboard",
  "pinion-shell",
+ "pinion-widget-paint",
  "vello",
 ]
 
