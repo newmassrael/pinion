@@ -3,7 +3,7 @@
 //!
 //! Phase B widget-catalog entry — the contextual "what does this do?"
 //! label every pro DCC / IDE / CAD tool attaches to its icon buttons,
-//! and a direct step toward the northern-star "the engine-class editor
+//! and a direct step toward the northern-star "engine-class editor
 //! self-hosted in pinion" (every toolbar glyph carries one).
 //!
 //! ## Descriptive-class, not interactive (the WAI-ARIA classification)

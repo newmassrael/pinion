@@ -356,6 +356,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1451 §5.27 §2#7 §2#2 — QHeaderView section state: size, order, hidden",
+        "R1451 §5.27 §2#7 §2#2 — header view section state: size, order, hidden",
         body,
     ))

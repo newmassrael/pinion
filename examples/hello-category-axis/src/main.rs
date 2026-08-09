@@ -450,7 +450,7 @@ fn caption(state: &WindowState) -> String {
             );
         return format!(
             "{detail} — the range was NOT applied, so all {} months are shown. \
-             Qt's setRange(QString, QString) returns void: this request would \
+             the toolkit's setRange(string, string) returns void: this request would \
              have been ignored with nothing said.",
             MONTHS.len()
         );

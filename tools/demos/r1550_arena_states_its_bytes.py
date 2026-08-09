@@ -204,7 +204,7 @@ def body() -> None:
         # This is the toolkit's `cacheLimit()` — with the number the toolkit has no
         # accessor for, beside it.
         img = one(cen, IMAGES, "main")
-        assert_eq(img["budget_bytes"], 10 * 1024 * 1024, "QPixmapCache's own default")
+        assert_eq(img["budget_bytes"], 10 * 1024 * 1024, "pixmap cache's own default")
         assert img["bytes"] <= img["budget_bytes"], "and the arena is inside it"
         # The arenas bounded by something other than bytes say so with null,
         # rather than publishing a fictitious ceiling.

@@ -1,15 +1,15 @@
 [package]
-name = "figma-button-m3"
+name = "design-button-m3"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R640 §5.7 — reactive Material 3 Filled Button binding. R635 captured the Figma node `51553:5180` (109×40 px, #675AA4 fill, 100 px radius, Roboto Medium 14 px white label) as a static one-frame snapshot; R640 lifts the widget onto the SCXML reactive substrate (`ButtonExternal` introspect + spring-driven hover state-layer overlay) so pointer events visibly drive the Material 3 state matrix."
+description = "R640 §5.7 — reactive Material 3 Filled Button binding. R635 captured the design tool node `51553:5180` (109×40 px, #675AA4 fill, 100 px radius, Roboto Medium 14 px white label) as a static one-frame snapshot; R640 lifts the widget onto the SCXML reactive substrate (`ButtonExternal` introspect + spring-driven hover state-layer overlay) so pointer events visibly drive the Material 3 state matrix."
 publish = false
 
 [[bin]]
-name = "figma-button-m3"
+name = "design-button-m3"
 path = "src/main.rs"
 
 [dependencies]

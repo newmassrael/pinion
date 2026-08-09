@@ -105,7 +105,7 @@ const BIB_BLOCK: usize = 3;
 const H1_TEXT: &str = "Chapter One";
 const BODY_TEXT: &str = "A paragraph states its own block format: how far it is indented, how much \
      air it wants above and below, and where its first line begins.";
-const QUOTE_TEXT: &str = "Every length here is one unit. Qt's block indent is not.";
+const QUOTE_TEXT: &str = "Every length here is one unit. The toolkit's block indent is not.";
 const BIB_TEXT: &str =
     "Bringhurst, Robert. The Elements of Typographic Style. Hartley & Marks, 2004.";
 const H2_TEXT: &str = "On indentation";

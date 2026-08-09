@@ -207,7 +207,6 @@ fn neutral_offset() -> f64 {
 
 /// Publishes the encoding, its domain, and both maps' answers, so a client
 /// verifies the value->colour claim without a pixel.
-///
 struct ValueScatterOracle {
     diverging: Option<Rc<EncodingState>>,
 }

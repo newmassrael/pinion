@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1007 §5.27 §5.40 master-detail row dissection: pick a structured row up top, read its payload exploded into a recursive field tree below (Wireshark packet-detail / dlt message-detail). The new substrate dissect_row transduces a serde_json::Value into a DissectNode tree; the mature tree-nav + tree-paint machinery windows / collapses / navigates it. Master + detail rows are pointer-clickable via two TreeRowClickExternal routers; the RowDissectionExternal drives select/toggle/expand/collapse and introspects every visible node (name/value/kind/depth) without a pixel."
+description = "R1007 §5.27 §5.40 master-detail row dissection: pick a structured row up top, read its payload exploded into a recursive field tree below (the analyser packet-detail / dlt message-detail). The new substrate dissect_row transduces a serde_json::Value into a DissectNode tree; the mature tree-nav + tree-paint machinery windows / collapses / navigates it. Master + detail rows are pointer-clickable via two TreeRowClickExternal routers; the RowDissectionExternal drives select/toggle/expand/collapse and introspects every visible node (name/value/kind/depth) without a pixel."
 publish = false
 
 [[bin]]

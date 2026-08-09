@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1545 category-axis consumer — the forcing consumer for pinion-chart's Categories / CategoryScale, the crate's fourth axis kind (Qt QBarCategoryAxis). Twelve monthly buckets are drawn twice from ONE axis: as a BarChart whose bands, labels, click surfaces and hit-test all come from it, and as a LineChart::x_category over the same slots. The window is set the way Qt sets it — by category NAME — but resolved before it can reach a chart, so an unknown or duplicated name is reported instead of silently ignored, and the categories actually in view are readable back over RPC, which Qt's axis cannot answer at all."
+description = "R1545 category-axis consumer — the forcing consumer for pinion-chart's Categories / CategoryScale, the crate's fourth axis kind (the toolkit bar category axis). Twelve monthly buckets are drawn twice from ONE axis: as a BarChart whose bands, labels, click surfaces and hit-test all come from it, and as a LineChart::x_category over the same slots. The window is set the way the toolkit sets it — by category NAME — but resolved before it can reach a chart, so an unknown or duplicated name is reported instead of silently ignored, and the categories actually in view are readable back over RPC, which the toolkit's axis cannot answer at all."
 publish = false
 
 [lints]

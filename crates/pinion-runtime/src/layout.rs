@@ -3724,8 +3724,9 @@ mod tile_dashboard_measurement {
         LayoutCache::new()
     }
 
-    /// A dashboard tool-class dashboard is a fixed set of equal columns with
-    /// cards placed at `(col, row)` covering `(w, h)` of them. R1560 added CSS Grid for a
+    /// A dashboard of the class a monitoring tool draws is a fixed set of
+    /// equal columns with cards placed at `(col, row)` covering `(w, h)` of
+    /// them. R1560 added CSS Grid for a
     /// text table's rowspans; the tile-dashboard debt predicted that the SAME
     /// layout holds a dashboard and asked for the prediction to be **measured
     /// before a second layout kind is built**. This is that measurement, and

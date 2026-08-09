@@ -195,7 +195,7 @@ def body() -> None:
 
         tf.intervene("/external/default_alignment", "Center")
         wait_until(lambda: _node_aligns(tf) == ["Center"] * NCOLS,
-                   desc="…and back to Qt's default")
+                   desc="…and back to the toolkit's default")
         assert_eq(_node_aligns(tf), ["Center"] * NCOLS)                           # 16
 
         # ── (D) the model's exception reaches exactly one node ─────── the
@@ -229,7 +229,7 @@ def body() -> None:
         # ── (F) restore drops the exception, and the nodes show it ───
         saved = _h(tf, "state")
         assert "section_alignments" not in saved, \
-            "Qt's saveState carries the rule, never the model's exceptions"       # 22
+            "the toolkit's saveState carries the rule, never the model's exceptions"       # 22
         tf.intervene("/external/default_alignment", "Start")
         wait_until(lambda: _h(tf, "default_alignment") == "Start",
                    desc="the rule is moved away before restoring")

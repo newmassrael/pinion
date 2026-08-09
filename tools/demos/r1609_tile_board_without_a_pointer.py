@@ -109,7 +109,7 @@ def body() -> None:
             q(tf, "current"),
             "throughput",
             "A: a fresh board already has a current card, so a Tab into it can "
-            "act immediately — Qt needs a subwindow activated first",
+            "act immediately — the toolkit needs a subwindow activated first",
         )
         assert_eq(q(tf, "editing"), "", "A: and no edit session is open yet")
         assert_eq(q(tf, "handle"), "", "A: nothing is grabbed")
@@ -124,7 +124,7 @@ def body() -> None:
             "TopLeft:NwseResize TopRight:NeswResize BottomLeft:NeswResize "
             "BottomRight:NwseResize",
             "B: ★ eight handles, and each one's CURSOR is derived from which "
-            "axes it moves — Qt writes the same four cursors as literal values "
+            "axes it moves — the toolkit writes the same four cursors as literal values "
             "in nine private `operationMap.insert` rows, and no caller can "
             "enumerate them because the enum lives in a `_p.h`",
         )
@@ -168,14 +168,14 @@ def body() -> None:
             q(tf, "editing"),
             "topology",
             "E: the first editing chord opened a session — no menu round trip, "
-            "which is the only way into Qt's interactive mode",
+            "which is the only way into the toolkit's interactive mode",
         )
         assert chord(tf, "Escape"), "E: Escape is the board's"
         assert_eq(
             q(tf, "tiles"),
             SEED,
             "E: ★ Escape restored the cards the session DISPLACED as well as the "
-            "one being edited. Qt stores `oldGeometry` and never reads it back — "
+            "one being edited. The toolkit stores `oldGeometry` and never reads it back — "
             "Escape, Return and Enter share one `leaveInteractiveMode()` arm there",
         )
         assert_eq(q(tf, "editing"), "", "E: and the session closed")
@@ -324,8 +324,8 @@ def body() -> None:
             region.get("live"),
             "polite",
             "K: ★ declared as `aria-live`, which is why it is READABLE at all. "
-            "Qt's QAccessibleAnnouncementEvent is fired and leaves no trace, and "
-            "no widget in qtbase/src/widgets fires one anyway",
+            "the toolkit's accessible announcement event is fired and leaves no trace, and "
+            "no widget in the toolkit's widget module/src/widgets fires one anyway",
         )
         assert_eq(
             (region.get("value") or {}).get("text"),
@@ -353,7 +353,7 @@ def body() -> None:
             "card.topology",
             "L: ★ the roving current card reaches an AT as "
             "`aria-activedescendant`, so a screen reader says which card the "
-            "keyboard will act on. Qt's interactive mode is private, so nothing "
+            "keyboard will act on. The toolkit's interactive mode is private, so nothing "
             "there can tell an AT which subwindow the arrows would move",
         )
         selected = [

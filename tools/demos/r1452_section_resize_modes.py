@@ -124,7 +124,7 @@ def body() -> None:
         wait_until(lambda: _h(tf, "available_width") == AVAILABLE_W,
                    desc="the view published its viewport")                          # 1
         assert_eq(_h(tf, "resize_modes"), ["interactive"] * NCOLS,
-                  "boot: Qt's default policy, everywhere")                          # 2
+                  "boot: the toolkit's default policy, everywhere")                          # 2
 
         hints = _h(tf, "content_widths")
         assert_eq(len(hints), NCOLS, "one content hint per section")                # 3
@@ -233,7 +233,7 @@ def body() -> None:
         # ── (F) the modes round-trip, and an older snapshot restores ───
         saved = _h(tf, "state")
         assert_eq(saved["modes"], ["stretch"] + ["interactive"] * 4,
-                  "saveState carries the policy, as Qt's does")                     # 35
+                  "saveState carries the policy, as the toolkit's does")                     # 35
         tf.invoke("/external/set_all_resize_modes", "fixed")
         wait_until(lambda: _h(tf, "resize_modes") == ["fixed"] * NCOLS, desc="drift")
         tf.intervene("/external/state", saved)
@@ -275,6 +275,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1452 §5.27 §2#7 §2#2 — QHeaderView section resize modes",
+        "R1452 §5.27 §2#7 §2#2 — header view section resize modes",
         body,
     ))

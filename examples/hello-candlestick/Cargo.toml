@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1567 candlestick consumer — the forcing consumer for pinion-chart's Candle, the datum whose two middle landmarks are deliberately unordered (Qt QCandlestickSeries). A session's open and close are ordered against the extremes and NOT against each other, which is what a candlestick chart exists to show and what a totally-ordered five-landmark summary cannot hold. The direction is a value with three arms including the doji Qt has no name for, and it is encoded twice — hue AND hollow-vs-solid body — so it survives a colour-blind reader. One datum reads two ways on the x-axis: equal ordinal sessions or real UTC time, from one declaration, where Qt needs a second data source of category names unrelated to the sets' timestamps."
+description = "R1567 candlestick consumer — the forcing consumer for pinion-chart's Candle, the datum whose two middle landmarks are deliberately unordered (the toolkit candlestick series). A session's open and close are ordered against the extremes and NOT against each other, which is what a candlestick chart exists to show and what a totally-ordered five-landmark summary cannot hold. The direction is a value with three arms including the doji the toolkit has no name for, and it is encoded twice — hue AND hollow-vs-solid body — so it survives a colour-blind reader. One datum reads two ways on the x-axis: equal ordinal sessions or real UTC time, from one declaration, where the toolkit needs a second data source of category names unrelated to the sets' timestamps."
 publish = false
 
 [lints]

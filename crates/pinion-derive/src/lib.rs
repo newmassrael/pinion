@@ -173,7 +173,7 @@ fn expand_widget_tag(input: &DeriveInput) -> syn::Result<TokenStream2> {
 /// [`WidgetTag`] derive macro for variant-ident → tag-string
 /// conversion at compile time. Inserts `_` before every uppercase
 /// ASCII letter after the first character (so `MainBtn` →
-/// `main_btn`, `FigmaButtonM3` → `figma_button_m3`); ASCII digits
+/// `main_btn`, `DesignButtonM3` → `design_button_m3`); ASCII digits
 /// are treated as lowercase letters (no `_` before them) per the
 /// pinion tag convention. Non-ASCII input would be a misuse — tag
 /// idents are always ASCII `PascalCase` per

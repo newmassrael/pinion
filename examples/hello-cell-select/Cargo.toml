@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R953 §5.38 cell range selection grid — the dedicated consumer of the R952 Table SelectItems API (anchor + extent rectangle over a single TableExternal at the composite paint root 'grid'); the spreadsheet / Qt QTableView SelectItems model: arrows collapse the selection to the cursor cell, Shift+arrows extend the rectangle, Escape clears; per-cell aria-selected; bordered accent overlay; no row selection, no sort (one selection model per example vs hello-table's SelectRows)"
+description = "R953 §5.38 cell range selection grid — the dedicated consumer of the R952 Table SelectItems API (anchor + extent rectangle over a single TableExternal at the composite paint root 'grid'); the spreadsheet / the toolkit table view SelectItems model: arrows collapse the selection to the cursor cell, Shift+arrows extend the rectangle, Escape clears; per-cell aria-selected; bordered accent overlay; no row selection, no sort (one selection model per example vs hello-table's SelectRows)"
 publish = false
 
 [[bin]]

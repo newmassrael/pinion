@@ -215,7 +215,7 @@ def body() -> None:
                 "Flagged",
                 f"row {r}'s mark-only cell is named by its MARK — its text is "
                 f"empty, so without the meaning this cell is silent, which is "
-                f"exactly what the same column built on Qt's DecorationRole is",
+                f"exactly what the same column built on the toolkit's DecorationRole is",
             )
         for r in unflagged[:3]:
             assert_eq(
@@ -292,7 +292,7 @@ def body() -> None:
 
 
 def icon_arm() -> None:
-    """(G) The `QIcon` arm, driven on `hello-table` (the eager grid).
+    """(G) The icon arm, driven on `hello-table` (the eager grid).
 
     Two things at once, both of which R1536 added: the decoration role reaches
     the EAGER `view_table` (until now only the virtualized grid answered it, so

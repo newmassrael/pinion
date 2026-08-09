@@ -3,7 +3,7 @@
 //! # Why this module exists
 //!
 //! "Wrap this selection in a re-usable node" is the single largest capability
-//! a node editor has — the DCC's node groups, the engine Blueprint's
+//! a node editor has — the DCC's node groups, the engine visual script's
 //! collapse-to- function, a compositor's macro. It looks like an editor
 //! gesture and is not: the gesture is a keystroke, and everything that decides
 //! whether the gesture is *legal*, and what the resulting node's sockets
@@ -661,7 +661,7 @@ mod tests {
         let inside = vec![true, false, false, true];
         assert!(
             dcc_would_accept(&links, &inside),
-            "the fixture must be one Blender's one-hop rule ACCEPTS, \
+            "the fixture must be one the DCC's one-hop rule ACCEPTS, \
              or it proves nothing about the difference"
         );
         let refusal = Boundary::derive(4, &links, &[0, 3]).unwrap_err();

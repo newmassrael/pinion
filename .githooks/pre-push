@@ -102,7 +102,7 @@ if ! python3 "$repo_root/tools/test_binding_focus.py" >&2; then
 fi
 
 # R1601 — the reference census. The node-graph campaign's coverage claim is a
-# count of what Blender and Unreal can do, and that count was a hand-written
+# count of what the DCC and the engine can do, and that count was a hand-written
 # grep that was measurably wrong in BOTH directions: it missed 25 core operators
 # (every Python one, including the whole zone family) and counted 11 macros —
 # compositions of other operators — as capabilities. `--check-pin` needs no

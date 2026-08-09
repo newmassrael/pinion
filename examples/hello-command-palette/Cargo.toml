@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R912 §5.38 §5.22 command palette — a fuzzy-filtered command search (the VS Code / Unreal Ctrl+P editor pattern): type a query, the command list filters by subsequence-scored fuzzy match, Arrow/click selects, Enter executes. Fresh editor-core widget composing a primary External + the R910 send-wire select + a pure fuzzy matcher; fully RPC-introspectable."
+description = "R912 §5.38 §5.22 command palette — a fuzzy-filtered command search (the VS Code / the engine Ctrl+P editor pattern): type a query, the command list filters by subsequence-scored fuzzy match, Arrow/click selects, Enter executes. Fresh editor-core widget composing a primary External + the R910 send-wire select + a pure fuzzy matcher; fully RPC-introspectable."
 publish = false
 
 [[bin]]

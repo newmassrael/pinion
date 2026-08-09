@@ -75,7 +75,7 @@ const FAB_TAGS: [&str; N] = ["fab_small", "fab_standard", "fab_large", "fab_exte
 const CAPTIONS: [&str; N] = ["Small", "Standard", "Large", "Extended"];
 /// Explicit accessible names (the action each FAB performs) — an icon-only
 /// FAB has no text to enrich from, so these are authoritative.
-const NAMES: [&str; N] = ["Add", "Edit", "Create", "Compose"];
+const NAMES: [&str; N] = ["Add", "Edit", "Create", "another declarative toolkit"];
 
 /// Per-variant FAB edge size (square; the extended FAB's width is fixed
 /// wider to hold its label, see [`fab_size`]).
@@ -90,7 +90,7 @@ const FONTS: [u32; N] = [18, 24, 36, 16];
 /// FAB icon (a stand-in "add" glyph, ASCII so no font-coverage risk) and
 /// the extended FAB's icon + label.
 const ICON: &str = "+";
-const EXTENDED_LABEL: &str = "+  Compose";
+const EXTENDED_LABEL: &str = "+  another declarative toolkit";
 
 /// Cached projection: one [`ButtonState`] per FAB.
 type FabStates = [ButtonState; N];

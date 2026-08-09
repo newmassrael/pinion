@@ -47,7 +47,6 @@
 //! helper too (5-of-5 framework substrate maturity). The Rule-of-Three
 //! carry from R659 is repaid in the round after surface — every R51.42
 //! composite-tag invoke arm in the workspace shares one parser.
-//!
 
 use crate::external::InvokeError;
 use crate::input::Modifiers;

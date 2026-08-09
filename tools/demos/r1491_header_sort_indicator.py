@@ -171,7 +171,7 @@ def body() -> None:
         assert_eq(_h(tf, "sort_indicator_section"), None,
                   "and no section carries the indicator")                           # 2
         assert_eq(_h(tf, "sort_indicator_order"), "none",
-                  "Qt's two getters agree with the compound string")                # 3
+                  "the toolkit's two getters agree with the compound string")                # 3
         # The view enabled sorting; `ColumnLayout` itself boots this false, as the
         # toolkit's header view does, so this asserts the binding made the
         # call.
@@ -347,6 +347,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1491 §5.27 §5.40 §2#7 — QHeaderView sort indicator: click, move, save",
+        "R1491 §5.27 §5.40 §2#7 — header view sort indicator: click, move, save",
         body,
     ))

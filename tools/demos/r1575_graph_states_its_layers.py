@@ -24,15 +24,15 @@ What this script checks, and why each check discriminates:
   BOTH and requires that exactly the links the model calls missing are the
   paths carrying the dashed rhythm — two readings of one fact, which is the
   only way a drawing is checkable without pixels.
-* **PAST the toolkit 6.11 (1): the dash is readable at all.** `style.stroke.dash` is
+* **PAST THE 6.11 FLOOR (1): the dash is readable at all.** `style.stroke.dash` is
   `null` for a solid stroke and `{on, off, offset, period}` otherwise. A pen
   is an argument to a paint call and lives nowhere afterwards: nothing can ask
   a canvas scene which of its edges are dashed, so the same question in the toolkit
   is answerable only by rasterizing and looking.
-* **PAST the toolkit 6.11 (2): the two unmatched kinds are told apart as DATA.** Missing
+* **PAST THE 6.11 FLOOR (2): the two unmatched kinds are told apart as DATA.** Missing
   and drift differ in rhythm AND in ink, and the script asserts the rhythms are
   different values rather than merely both non-null.
-* **PAST the toolkit 6.11 (3): the animation is drivable and canonical.** `flow` is
+* **PAST THE 6.11 FLOOR (3): the animation is drivable and canonical.** `flow` is
   stepped over the wire, read back off the model AND off every dashed path's
   `offset`, and driven one full period to land back where it started. The toolkit's
   `dashOffset` is a `qreal` on a pen driven by a timer that no external
@@ -161,7 +161,7 @@ def run(tf: RpcSubprocess) -> None:
         a, b = link.split(">")
         assert_eq(tf.invoke("/external/link_kind", f"{a},{b}"), "drift", f"{link} kind")
 
-    # ---- 2. PAST the toolkit: the paint publishes its dash, and it agrees
+    # ---- 2. PAST THE FLOOR: the paint publishes its dash, and it agrees
     # ----
     painted = link_paths(tf)
     assert_eq(
@@ -189,7 +189,7 @@ def run(tf: RpcSubprocess) -> None:
         f"missing rhythm {missing_rhythm} vs drift {drift_rhythm}"
     )
 
-    # ---- 3. PAST the toolkit: the animation is data, and it is canonical ----
+    # ---- 3. PAST THE FLOOR: the animation is data, and it is canonical ----
     period = int(q(tf, "flow_period"))
     assert_eq(int(q(tf, "flow")), 0, "the flow starts unshifted")
     tf.intervene("/external/flow", 3)
@@ -244,8 +244,8 @@ def run(tf: RpcSubprocess) -> None:
     value = str(node.get("value") or "")
     for link in MISSING:
         assert link in value, (
-            "PAST QT: the accessible value names the MISSING link by name — the "
-            "reading a sighted user gets from the dash. A QPen's dash reaches "
+            "PAST THE FLOOR: the accessible value names the MISSING link by name — the "
+            "reading a sighted user gets from the dash. A pen's dash reaches "
             f"the screen and nothing else: {value!r}"
         )
     for link in DRIFT:

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- pinion §5.38 §5.39 R1569 — KeySequenceEdit widget statechart
-     (Qt `QKeySequenceEdit`).
+     (the toolkit key-sequence editor).
 
      The widget a keymap-preferences pane is built from: it displays a
      chord sequence and, while RECORDING, takes every keystroke away
@@ -24,17 +24,17 @@
            discarded and the previous one kept.
          * `blur` -> `idle` with `keysequence.captured` raised. The toolkit's
            `focusOutEvent` calls `finishEditing()`, so focus loss
-           ACCEPTING what was typed is Qt's behaviour and is kept.
+           ACCEPTING what was typed is the toolkit's behaviour and is kept.
 
      - **disabled**: absorbing class until `enable` arrives. A disabled
        widget claims no chord, for the same reason a read-only
-       `QLineEdit` declines `ShortcutOverride`: a widget that will not
+       line edit declines `ShortcutOverride`: a widget that will not
        act on the key must not stop the accelerator that would have.
 
-     Why `record` is an EXPLICIT event, where Qt has none:
+     Why `record` is an EXPLICIT event, where the toolkit has none:
 
-     Qt starts recording on focus-in and stops only on focus-out or a
-     1-second release timer. That leaves a Qt keymap editor with no way
+     the toolkit starts recording on focus-in and stops only on focus-out or a
+     1-second release timer. That leaves a toolkit keymap editor with no way
      to stop grabbing while it still has focus, and no way to start
      deliberately — so a user who tabs into the field and then presses
      the application's Save shortcut silently overwrites the binding
@@ -43,7 +43,7 @@
      every real keymap editor (KDE `KKeySequenceWidget`, and the
      record-button pattern in VS Code / IntelliJ) does instead.
 
-     `cancel` likewise has no Qt counterpart: `QKeySequenceEdit` cannot
+     `cancel` likewise has no toolkit counterpart: key-sequence editor cannot
      abandon an in-flight recording, because the release timer commits
      whatever arrived.
 

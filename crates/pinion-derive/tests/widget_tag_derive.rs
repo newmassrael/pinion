@@ -1,10 +1,10 @@
 //! R650 §5.16 — substrate-only fixture for `#[derive(WidgetTag)]`.
 //!
 //! Pins the `PascalCase` → `snake_case` converter contract (including
-//! the digit-as-lowercase-letter convention `FigmaButtonM3 →
-//! figma_button_m3`), the round-trip between `as_tag` and `from_tag`,
+//! the digit-as-lowercase-letter convention `DesignButtonM3 →
+//! design_button_m3`), the round-trip between `as_tag` and `from_tag`,
 //! and the unknown-tag rejection. R650 walked back the single-tag
-//! binding adoption (`hello-button` + `the design tool-button-m3` Tags enums)
+//! binding adoption (`hello-button` + `design-button-m3` Tags enums)
 //! per [[abstraction-needs-second-consumer]]; the substrate itself
 //! stays land per [[textbook-long-term-correct]] for the composite
 //! widget consumer. Without this fixture the substrate would be
@@ -12,7 +12,7 @@
 //! live here.
 //!
 //! Cross-ref: R644 originally placed these assertions inside the
-//! `hello-button` + `the design tool-button-m3` test modules; that placement
+//! `hello-button` + `design-button-m3` test modules; that placement
 //! coupled substrate test coverage to binding adoption, which made
 //! the R650 walk-back leave the trait wholly untested. This file is
 //! the correct home — the derive macro is what is being verified, so
@@ -30,7 +30,7 @@ enum SingleTag {
 enum MultiTag {
     MainBtn,
     ScrollBar,
-    FigmaButtonM3,
+    DesignButtonM3,
 }
 
 #[test]
@@ -50,8 +50,8 @@ fn pascal_to_snake_case_basic() {
 fn pascal_to_snake_case_digit_no_underscore() {
     // ASCII digits are treated as lowercase letters per the converter
     // contract — `M3` becomes `m3`, NOT `m_3`. A regression here would
-    // silently rename the design tool-button-m3 binding's wire-tag.
-    assert_eq!(MultiTag::FigmaButtonM3.as_tag(), "figma_button_m3");
+    // silently rename design-button-m3 binding's wire-tag.
+    assert_eq!(MultiTag::DesignButtonM3.as_tag(), "design_button_m3");
 }
 
 #[test]
@@ -59,8 +59,8 @@ fn from_tag_inverse_for_every_variant() {
     assert_eq!(MultiTag::from_tag("main_btn"), Some(MultiTag::MainBtn));
     assert_eq!(MultiTag::from_tag("scroll_bar"), Some(MultiTag::ScrollBar));
     assert_eq!(
-        MultiTag::from_tag("figma_button_m3"),
-        Some(MultiTag::FigmaButtonM3),
+        MultiTag::from_tag("design_button_m3"),
+        Some(MultiTag::DesignButtonM3),
     );
 }
 

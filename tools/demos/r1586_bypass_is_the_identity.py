@@ -154,8 +154,8 @@ def body() -> None:
         assert_eq(
             swatch["dropped"],
             "0",
-            "A: PAST BLENDER — the output that would carry NOTHING is named. "
-            "Blender produces no internal link for it and node_internal_relink "
+            "A: PAST the DCC — the output that would carry NOTHING is named. "
+            "the DCC produces no internal link for it and node_internal_relink "
             "then deletes the downstream wire, returning void",
         )
         assert_eq(swatch["identity"], "false", "A: nothing passed is not the identity")
@@ -174,7 +174,7 @@ def body() -> None:
         assert_eq(
             through(tf, FADE)["routes"],
             "0<-0",
-            "B: PAST BLENDER — the routing is DERIVED, not stored. Blender keeps "
+            "B: PAST the DCC — the routing is DERIVED, not stored. The DCC keeps "
             "it in node->runtime->internal_links with a tree-update pass to "
             "notice when the stored copy has gone stale",
         )
@@ -195,8 +195,8 @@ def body() -> None:
         assert_eq(
             through(tf, MIX)["routes"],
             "0<-0",
-            "C: PAST BLENDER — unwiring the Base did NOT re-route the output. "
-            "Blender's linked-tie-break would now pick the Blend, so unplugging "
+            "C: PAST the DCC — unwiring the Base did NOT re-route the output. "
+            "the DCC's linked-tie-break would now pick the Blend, so unplugging "
             "one port changes which value leaves by another",
         )
         assert_eq(inv(tf, "bypass", str(MIX)), "3=true", "C: bypass it now")
@@ -215,8 +215,8 @@ def body() -> None:
         assert_eq(
             inv(tf, "node_value", str(FADE)),
             "0,0,0",
-            "D: PAST BLENDER — a muted LINK stops the value, where a muted NODE "
-            "passes one through. Blender calls both 'mute' (NODE_LINK_MUTED, "
+            "D: PAST the DCC — a muted LINK stops the value, where a muted NODE "
+            "passes one through. The DCC calls both 'mute' (NODE_LINK_MUTED, "
             "NODE_MUTED), so one word names two opposite behaviours there",
         )
         assert_eq(inv(tf, "mute_link", str(L_MIX)), "unmuted", "D: and it comes back")
@@ -263,7 +263,7 @@ def body() -> None:
             "120,75,140",
             "F: with the wire GONE the Factor port falls back to its own 50%, "
             "which a bypass cannot produce — the honest limit, and `severed` is "
-            "where it is stated. Blender removes the same wire in silence",
+            "where it is stated. The DCC removes the same wire in silence",
         )
 
         # ── (G) a detach rewires and leaves the node ────────────────────────
@@ -311,8 +311,8 @@ def body() -> None:
         assert_eq(
             looks["bypassed"],
             "false",
-            "H: PAST BLENDER — the bypass is a DIFFERENT FIELD from the looks. "
-            "Blender keeps NODE_COLLAPSED, NODE_PREVIEW, NODE_SELECT and "
+            "H: PAST the DCC — the bypass is a DIFFERENT FIELD from the looks. "
+            "the DCC keeps NODE_COLLAPSED, NODE_PREVIEW, NODE_SELECT and "
             "NODE_MUTED in one flag integer, so which bits its evaluator may "
             "read is stated nowhere in its model",
         )
@@ -347,7 +347,7 @@ def body() -> None:
         assert_eq(
             inv(tf, "node_ports", "6"),
             "in:Ceiling:amount(off),Amount:amount|out:Amount:amount,Clipped:amount(off)",
-            "H2: the DECLARATION is published beside the ports — Blender's own "
+            "H2: the DECLARATION is published beside the ports — the DCC's own "
             "no_mute_links is private to the socket declaration and is set by "
             "no node type in its tree",
         )

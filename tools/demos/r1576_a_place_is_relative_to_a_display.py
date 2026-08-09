@@ -24,24 +24,24 @@ What this script checks, and why each check discriminates:
   display's `logical_size` against its own bounds and scale, and — the sum
   check the analyzer-class discipline asks for — `visible_px + offscreen_px ==
   total_px` on every probe.
-* **PAST the toolkit 6.11 (1): a rectangle can be resolved before it is used.** A toolkit
+* **PAST THE 6.11 FLOOR (1): a rectangle can be resolved before it is used.** A toolkit
   screen query takes a *point* (`screenAt`, `virtualSiblingAt`); there is no
   rectangle-level question in the API, which is why a toolkit application that
   restores a geometry hand-rolls its own clamp. The `probe` parameter answers
   with the home display, every display touched, the pixels that are on a
   display, and where the window would have to move to be wholly visible.
-* **PAST the toolkit 6.11 (2): the substitution is named.** A preset asks for a display
+* **PAST THE 6.11 FLOOR (2): the substitution is named.** A preset asks for a display
   that is not attached. `scene/windows` reports `anchored.kind ==
   "substituted"` with **both** the declared id and the one used.
   `restoreGeometry` answers a bare `bool`.
-* **PAST the toolkit 6.11 (3): a display has an address at all.** screen has no id
+* **PAST THE 6.11 FLOOR (3): a display has an address at all.** screen has no id
   accessor — `name()` is platform text with no uniqueness guarantee — so a toolkit
   preset cannot name a monitor. The ids here are unique by construction, which
   the script asserts over whatever the host actually has.
-* **PAST the toolkit 6.11 (4): absence is stated.** A display whose refresh rate the
+* **PAST THE 6.11 FLOOR (4): absence is stated.** A display whose refresh rate the
   platform did not report answers `null`, never a plausible `0`.
   `refreshRate()` returns `qreal`.
-* **PAST the toolkit 6.11 (5): the desk reaches the wire.** `screens()`
+* **PAST THE 6.11 FLOOR (5): the desk reaches the wire.** `screens()`
   is in-process C++; no external client can ask a running the toolkit application what
   it is displaying on.
 * **The declaration and the report cannot drift.** The panel's placement is
@@ -147,7 +147,7 @@ def run(tf: RpcSubprocess) -> None:
             desk["gap_free"],
             desk["covered_px"] == bb_area,
             "gap_free IS 'the union fills the bounding box' — the two must agree, "
-            "and this is the distinction Qt's virtualGeometry() cannot express",
+            "and this is the distinction the toolkit's virtualGeometry() cannot express",
         )
         # Every display is inside the bounding box, and contributes to it.
         for d in desk["displays"]:
@@ -158,7 +158,7 @@ def run(tf: RpcSubprocess) -> None:
 
     for d in desk["displays"]:
         assert d["scale"] > 0, f"{d['id']} reports a usable scale"
-        # PAST the toolkit: absence is stated. `refreshRate()` is a `qreal`, so
+        # PAST THE FLOOR: absence is stated. `refreshRate()` is a `qreal`, so
         # "unknown" is indistinguishable from a real 0 there.
         assert d["refresh_mhz"] is None or d["refresh_mhz"] > 0, (
             f"{d['id']} reports a refresh rate or null, never a plausible 0"
@@ -190,7 +190,7 @@ def run(tf: RpcSubprocess) -> None:
             f"{key} must be absent when nothing asked — a null would read as an answer"
         )
 
-    # ---- 4. PAST the toolkit: resolving a RECTANGLE
+    # ---- 4. PAST THE FLOOR: resolving a RECTANGLE
     # ------------------------------
     if ids:
         home = desk["displays"][0]
@@ -224,7 +224,7 @@ def run(tf: RpcSubprocess) -> None:
     if ids:
         assert far["suggestion"] is not None, (
             "★and the framework says where it would have to move — the answer every "
-            "Qt application hand-rolls because the API has no rectangle question"
+            "the toolkit application hand-rolls because the API has no rectangle question"
         )
         back = displays(
             tf,
@@ -280,7 +280,7 @@ def run(tf: RpcSubprocess) -> None:
         "'declares a place that resolves to nothing'",
     )
 
-    # ---- 7. PAST the toolkit: a place relative to a NAMED display
+    # ---- 7. PAST THE FLOOR: a place relative to a NAMED display
     # -----------------
     if ids:
         summary = tf.invoke("/external/apply", "primary")
@@ -313,7 +313,7 @@ def run(tf: RpcSubprocess) -> None:
         )["placement"]
         assert_eq(landed["home"], anchored["display"], "and the window lands on that display")
 
-    # ---- 8. PAST the toolkit: the substitution is NAMED
+    # ---- 8. PAST THE FLOOR: the substitution is NAMED
     # ---------------------------
     summary = tf.invoke("/external/apply", "external")
     print(f"[demo] preset external -> {summary}")
@@ -411,8 +411,8 @@ def run(tf: RpcSubprocess) -> None:
     assert_eq(
         [s for s in str(q(tf, "preset_names")).split(",") if s],
         PRESETS,
-        "a layout preset is DATA a client can enumerate — Qt's saveGeometry is an "
-        "opaque QByteArray that cannot be read, diffed or edited",
+        "a layout preset is DATA a client can enumerate — the toolkit's saveGeometry is an "
+        "opaque byte array that cannot be read, diffed or edited",
     )
 
     # ---- 15. the desk reaches assistive technology ------------------------

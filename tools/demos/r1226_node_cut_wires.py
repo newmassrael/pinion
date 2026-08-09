@@ -2,7 +2,7 @@
 """R1226 §5.38 §5.52 — node-graph wire KNIFE (`cut_wires`).
 
 The node editor could disconnect wires one at a time (`remove_edge` / grab-a-wire
-+ Delete) but had no fast multi-wire cut — the Blueprint / material-editor knife
++ Delete) but had no fast multi-wire cut — the visual script / material-editor knife
 that slices through a bundle of wires in one stroke. R1226 adds it as the §2
 AI-first primary path (`cut_wires "x1,y1,x2,y2"`, graph units): every wire the
 straight cut segment crosses is deleted as ONE undoable step, and the verb
@@ -71,7 +71,7 @@ def cut(tf: RpcSubprocess, spec: str) -> str:
 
 def undo_depth(tf: RpcSubprocess) -> int:
     """The undoable depth (`index`): 0 = nothing to undo. (Distinct from
-    `count`, the total entries, which a QUndoStack keeps for redo.)"""
+    `count`, the total entries, which a undo stack keeps for redo.)"""
     return tf.query(f"{UNDO}/index")
 
 

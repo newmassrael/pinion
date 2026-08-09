@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1568 polar consumer — the forcing consumer for pinion-chart's AngularScale and PolarChart, the crate's first non-cartesian coordinate system (Qt QPolarChart). An angular axis is PERIODIC: a bearing outside the period is the same place as its wrapped twin rather than a value the axis fails to reach, a series closes on itself by derivation instead of by a duplicated datum, and the tick at the end of the period is the tick at its start. Qt models the angular axis with an ordinary QValueAxis, so it has none of that, hard-codes 12-o'clock and clockwise, is always a full circle, and auto-scales a period that no sample reveals."
+description = "R1568 polar consumer — the forcing consumer for pinion-chart's AngularScale and PolarChart, the crate's first non-cartesian coordinate system (the toolkit polar chart). An angular axis is PERIODIC: a bearing outside the period is the same place as its wrapped twin rather than a value the axis fails to reach, a series closes on itself by derivation instead of by a duplicated datum, and the tick at the end of the period is the tick at its start. The toolkit models the angular axis with an ordinary value axis, so it has none of that, hard-codes 12-o'clock and clockwise, is always a full circle, and auto-scales a period that no sample reveals."
 publish = false
 
 [lints]

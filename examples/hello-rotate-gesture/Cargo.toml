@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1433 §5.35 §5.15 — a native rotation gesture spins a gizmo. A widget that overrides External::rotation_gesture accumulates the incremental degrees of a two-finger trackpad twist (Qt QNativeGestureEvent RotateNativeGesture) across the GesturePhase Begin..End arc, and discards the in-flight rotation on Cancel. winit exposes RotationGesture only on macOS/iOS, so the scene/rotation_gesture RPC is the AI-first driver (§2 #2): a headless client rotates the gizmo with no trackpad, drivable + introspectable."
+description = "R1433 §5.35 §5.15 — a native rotation gesture spins a gizmo. A widget that overrides External::rotation_gesture accumulates the incremental degrees of a two-finger trackpad twist (the toolkit native gesture event RotateNativeGesture) across the GesturePhase Begin..End arc, and discards the in-flight rotation on Cancel. winit exposes RotationGesture only on macOS/iOS, so the scene/rotation_gesture RPC is the AI-first driver (§2 #2): a headless client rotates the gizmo with no trackpad, drivable + introspectable."
 publish = false
 
 [[bin]]

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1456 §5.16 §5.39 — modal HANDOFF: a modal command menu whose destructive row closes itself and opens a confirm dialog from ONE user action (Qt's menu action -> QMessageBox::question). Two modal-scope edits in a single dispatch frame, the shape a single-slot mailbox could not express."
+description = "R1456 §5.16 §5.39 — modal HANDOFF: a modal command menu whose destructive row closes itself and opens a confirm dialog from ONE user action (the toolkit's menu action -> question). Two modal-scope edits in a single dispatch frame, the shape a single-slot mailbox could not express."
 publish = false
 
 [[bin]]

@@ -208,8 +208,8 @@ def body() -> None:
             "B: a counter is followed by a full stop by default",
         )
         assert steps["suffix_is_default"], (
-            "B: and the wire says the default is where it came from — Qt spells "
-            "that distinction as a null QString, which no serialization carries"
+            "B: and the wire says the default is where it came from — the toolkit spells "
+            "that distinction as a null string, which no serialization carries"
         )
         assert_eq(parts["number_suffix"], "", "B: a bullet is not")
         assert parts["suffix_is_default"], "B: also by default"
@@ -223,7 +223,7 @@ def body() -> None:
         assert_eq(
             before[PART_A],
             BULLET,
-            "C: a bullet is TEXT here — in Qt it is a painted ellipse with no "
+            "C: a bullet is TEXT here — in the toolkit it is a painted ellipse with no "
             "accessor at all",
         )
         assert_eq(before[PART_B], BULLET)
@@ -236,7 +236,7 @@ def body() -> None:
         assert_eq(
             last["marker"],
             "4000.",
-            "D: one past the roman range — the number survives, where Qt's "
+            "D: one past the roman range — the number survives, where the toolkit's "
             "itemText() answers '?' and it does not",
         )
         assert_eq(last["ordinal"], ROMAN_START + 1, "D: the counter is unaffected")

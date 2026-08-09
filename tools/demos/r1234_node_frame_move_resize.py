@@ -3,7 +3,7 @@
 
 R1227 shipped comment frames with a read-only rect (a frame sized to its
 selection at creation). R1234 makes the rect writable over the §5.12 plane
-(§2 #2, no pixels), with the two canonical Blueprint gestures:
+(§2 #2, no pixels), with the two canonical visual script gestures:
 
   * `intervene frame.<id>.x` / `frame.<id>.y` MOVE the frame AND every node it
     currently contains by the same delta, as ONE undo step ("Move frame"). The

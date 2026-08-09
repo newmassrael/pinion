@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1599 §5.38 §5.52 — a Blueprint-class CONTROL graph composed from pinion-node-graph: a node declares which of its ports carry control, the two planes obey opposite link laws, a control cycle is a loop rather than a defect, and the execution ORDER is derived. What is absent is the argument — no scheduler, no cycle test and no law lives here, because the framework owns them."
+description = "R1599 §5.38 §5.52 — a visual script-class CONTROL graph composed from pinion-node-graph: a node declares which of its ports carry control, the two planes obey opposite link laws, a control cycle is a loop rather than a defect, and the execution ORDER is derived. What is absent is the argument — no scheduler, no cycle test and no law lives here, because the framework owns them."
 publish = false
 
 [[bin]]

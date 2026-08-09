@@ -375,7 +375,7 @@ mod tests {
             assert_eq!(
                 member.declared_by.as_deref(),
                 Some(REGION_TAG),
-                "each names the node to act on — the column Qt lacks",
+                "each names the node to act on — the column the toolkit lacks",
             );
         }
     }

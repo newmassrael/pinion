@@ -46,7 +46,7 @@
 //!   binary (the R637 hook in [`crate::run`]) — first-paint scene
 //!   rendered + written to `<path>` + process exits, no winit window
 //!   opened.
-//! - Future R638+ `pinion the design tool-diff` CLI calling the substrate
+//! - Future R638+ `pinion design-diff` CLI calling the substrate
 //!   directly to render scene fragments for byte-golden comparison.
 //! - Future `scene/screenshot` RPC wiring — the live `AppShell` already
 //!   owns a wgpu `Device` / `Queue`; a follow-up round can plumb

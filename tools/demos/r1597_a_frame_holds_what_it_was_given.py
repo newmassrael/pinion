@@ -12,12 +12,12 @@ What this script checks, and why each check discriminates:
   in this frame" from geometry on every read, so widening the box silently
   adopted nodes and shrinking it abandoned them — what the frame *said* it held
   changed with nobody having edited membership. It is `Node::parent` now (R1589,
-  the DCC's `bNode::parent`), so a resize changes the box and nothing else. The
+  the DCC's `node::parent`), so a resize changes the box and nothing else. The
   script widens a frame until it geometrically covers every node, ASSERTS that
   it does, and only then asserts `contains` did not move — the covering is
   checked first, so the claim cannot pass by accident.
 * **PAST the DCC: `attach` / `detach` are answers, not just acts.** Both are
-  census operators (`NODE_OT_attach` / `NODE_OT_detach`) whose model layer landed
+  census operators (`attach` / `detach`) whose model layer landed
   at R1589 with no gesture to reach it. Each answers the CSV of nodes whose frame
   actually changed; the DCC's operators report only whether the operator ran, so
   "it moved three nodes" and "it moved none" are the same answer there.
@@ -28,7 +28,7 @@ What this script checks, and why each check discriminates:
   walks every node in the tree comparing pointers.
 * **`detach` is ONE LEVEL, proven against a NEST.** A node in `Outer > Inner`
   lands in `Outer`, so detaching composes and the all-the-way form is a repeat.
-  `NODE_OT_detach` clears the parent outright, so only the second is reachable
+  `detach` clears the parent outright, so only the second is reachable
   there.
 * **A dissolve says what it would COST before you run it.** `dissolvable.<id>`
   widened from a shape test ("exactly one wire in and one out") to
@@ -171,7 +171,7 @@ def body() -> None:
         assert_eq(
             q(tf, f"node.{every[0]}.parent"),
             frame,
-            "D: * one level -- Blender's NODE_OT_detach clears the parent outright",
+            "D: * one level -- the DCC's detach clears the parent outright",
         )
         # Repeat and it reaches the canvas, which is what composing means.
         select(tf, [every[0]])

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1554 §5.39 §5.50: Qt QGroupBox — a titled frame whose title checkbox makes its whole subtree inert, the first consumer of the inherited-disabled scene declaration"
+description = "R1554 §5.39 §5.50: the toolkit group box — a titled frame whose title checkbox makes its whole subtree inert, the first consumer of the inherited-disabled scene declaration"
 publish = false
 
 [[bin]]

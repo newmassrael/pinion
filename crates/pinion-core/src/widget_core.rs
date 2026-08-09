@@ -1144,7 +1144,7 @@ pub trait WidgetTag: Sized + 'static {
     /// `#[derive(WidgetTag)]` macro
     /// generates this by `PascalCase` → `snake_case` conversion on
     /// the variant ident (`MainBtn` → `"main_btn"`,
-    /// `FigmaButtonM3` → `"figma_button_m3"`).
+    /// `DesignButtonM3` → `"design_button_m3"`).
     fn as_tag(&self) -> &'static str;
 
     /// Parse `tag` back to the corresponding variant. Returns

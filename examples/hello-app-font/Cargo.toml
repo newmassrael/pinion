@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1448 §5.36 — an application ships its own face (Qt QFontDatabase::addApplicationFont parity) and renders its font-source state as introspectable data"
+description = "R1448 §5.36 — an application ships its own face (the toolkit addApplicationFont parity) and renders its font-source state as introspectable data"
 publish = false
 
 [[bin]]

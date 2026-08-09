@@ -137,9 +137,9 @@ def body() -> None:
         assert_eq(
             moved["unexposed"],
             "in0:Base",
-            "B: PAST BLENDER — the value now comes from inside, so the port "
+            "B: PAST the DCC — the value now comes from inside, so the port "
             "that carried it is gone rather than left describing nothing. "
-            "Blender's insert only ever appends",
+            "the DCC's insert only ever appends",
         )
         assert_eq(moved["exposed"], "", "B: and nothing new crosses")
         assert_eq(moved["others"], "0", "B: this definition has one instance")
@@ -190,7 +190,7 @@ def body() -> None:
             inv(tf, "node_value", "6"),
             SEEDED,
             "C: THE CLAIM, the other way — a node that leaves a group keeps "
-            "its wiring. Blender's Separate/Move copies the nodes out, deletes "
+            "its wiring. The DCC's Separate/Move copies the nodes out, deletes "
             "them from the group and reconnects nothing, so this value is lost",
         )
         assert_eq(q(tf, "valid"), "ok", "C: the round trip broke nothing")
@@ -203,7 +203,7 @@ def body() -> None:
         assert_eq(
             shared["exposed"],
             "",
-            "D: PAST BLENDER — the base already crosses at port 0, so the "
+            "D: PAST the DCC — the base already crosses at port 0, so the "
             "moved node reads THAT port. build_node_set_interface walks only "
             "the moved node's sockets and would add a second one for the "
             "same value",
@@ -259,7 +259,7 @@ def body() -> None:
             chained,
             "E: THE CLAIM at full strength — the moved node is fed by what fed "
             "the group and feeds what the group fed, so the result is the same "
-            "value. Blender's Separate/Move reconnects NOTHING: the sources "
+            "value. The DCC's Separate/Move reconnects NOTHING: the sources "
             "would be left dangling and this would answer with nothing at all",
         )
         assert_eq(q(tf, "valid"), "ok", "E: and the document is coherent")
@@ -280,7 +280,7 @@ def body() -> None:
         assert_eq(
             cost["others"],
             "1",
-            "F: PAST BLENDER — a definition is SHARED, so this edit reached "
+            "F: PAST the DCC — a definition is SHARED, so this edit reached "
             "an instance the user did not name. node_group_insert_exec "
             "appends to the shared group and reports nothing",
         )
@@ -321,8 +321,8 @@ def body() -> None:
         assert_eq(
             inv(tf, "node_value", "7"),
             untouched,
-            "G: PAST BLENDER — the instance nobody named is unchanged to the "
-            "byte. Blender needs a separate make-single-user step first",
+            "G: PAST the DCC — the instance nobody named is unchanged to the "
+            "byte. The DCC needs a separate make-single-user step first",
         )
         assert_eq(inv(tf, "node_value", "6"), SEEDED, "G: and the edited one still holds")
         assert_eq(q(tf, "valid"), "ok", "G: both definitions are coherent")
@@ -335,8 +335,8 @@ def body() -> None:
             "H: a group cannot be moved inside itself"
         )
         assert "not inside a group" in refused(tf, "group_separate", ""), (
-            "H: separate needs a tree above, which is Blender's own rule "
-            "(ED_node_tree_get(snode, 1)); the refusal says so"
+            "H: separate needs a tree above, which is the DCC's own rule "
+            "(tree_get(snode, 1)); the refusal says so"
         )
         assert_eq(q(tf, "valid"), "ok", "H: no refusal left a mark")
 

@@ -11652,8 +11652,8 @@ mod r1362_window_control_sink_seeding_tests {
             // Exactly what a binding does at wiring time.
             let wc = crate::use_window_control_sink();
             let rp = pinion_core::use_repaint_sink();
-            let qt = pinion_core::use_quit_sink();
-            RESOLVED.with(|slot| *slot.borrow_mut() = Some((wc, rp, qt)));
+            let quit_sink = pinion_core::use_quit_sink();
+            RESOLVED.with(|slot| *slot.borrow_mut() = Some((wc, rp, quit_sink)));
             vec![ExtraExternal {
                 tag: EXTRA_TAG.into(),
                 handle: Box::new(ButtonExternal::new()),
@@ -11693,7 +11693,7 @@ mod r1362_window_control_sink_seeding_tests {
             pinion_core::QUIT_SINK.provide(owner, seed_quit);
         });
 
-        let (wc, rp, qt) = RESOLVED
+        let (wc, rp, quit_sink) = RESOLVED
             .with(|slot| slot.borrow_mut().take())
             .expect("create_extra_externals must have run during construction");
 
@@ -11702,7 +11702,7 @@ mod r1362_window_control_sink_seeding_tests {
         // see nothing — the exact silent failure.
         wc.request_window_control("main", WindowControl::Close);
         rp.request_repaint();
-        qt.request_quit();
+        quit_sink.request_quit();
 
         assert_eq!(
             *sink.0.lock().expect("poisoned"),
@@ -11829,13 +11829,13 @@ mod r1362_window_control_sink_seeding_tests {
     fn an_unseeded_shell_boots_and_its_factory_hooks_resolve_without_panicking() {
         RESOLVED.with(|slot| *slot.borrow_mut() = None);
         let _sc = ShellCore::<SinkCapturingFixture>::new();
-        let (wc, rp, qt) = RESOLVED
+        let (wc, rp, quit_sink) = RESOLVED
             .with(|slot| slot.borrow_mut().take())
             .expect("create_extra_externals must have run during construction");
         // Must not panic — the Null objects absorb all three.
         wc.request_window_control("main", WindowControl::Close);
         rp.request_repaint();
-        qt.request_quit();
+        quit_sink.request_quit();
     }
 }
 

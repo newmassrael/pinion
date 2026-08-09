@@ -35,15 +35,15 @@ What this script checks, and why each check discriminates:
 * **A run READS the machine and a tick MOVES it.** Four runs leave the
   registers where they were; one tick does not. That split is what keeps a
   tick's outcome a function of the document and the registers rather than of
-  the walk — the engine takes the other road, where state is a Blueprint *variable*
+  the walk — the engine takes the other road, where state is a visual script *variable*
   written by an execution wire, so which value a read sees depends on where
   control happened to go.
 * **The trace changes between ticks with no edit at all**, which is the whole
   point: the same graph terminates once the world has moved.
 * **Control descends into a group instance and comes back out**, and the steps
   inside are attributed to the instance. The engine has no equivalent because it
-  has no instance: `FKismetCompilerContext` expands a macro by calling
-  `FEdGraphUtilities::CloneGraph`, so its N uses are N copies before anything
+  has no instance: compiler context expands a macro by calling
+  `graph utilities::CloneGraph`, so its N uses are N copies before anything
   runs.
 * **Flattening the instances collides ids across trees** — asserted, not
   described, because it is the argument for having the instance-keyed reading.
@@ -119,7 +119,7 @@ def body() -> None:
         assert_eq(
             q(tf, "delays"),
             str(ELAPSED),
-            "A: one register, and it is enumerable — Blender's simulation state "
+            "A: one register, and it is enumerable — the DCC's simulation state "
             "lives in a private Map on the modifier with no accessor at all",
         )
         assert_eq(
@@ -232,7 +232,7 @@ def body() -> None:
         assert_eq(
             q(tf, "entered"),
             INSIDE,
-            "E: control crossed a group boundary. Unreal has no instance to "
+            "E: control crossed a group boundary. The engine has no instance to "
             "name here: a macro is EXPANDED by cloning its graph, so its N uses "
             "are N copies of the nodes before anything runs",
         )

@@ -3,7 +3,7 @@
 //!
 //! Phase B widget-catalog entry — the contextual "what does this do?"
 //! popup every pro DCC / IDE / CAD tool attaches to its icon buttons,
-//! a direct step toward the northern-star "the engine-class editor
+//! a direct step toward the northern-star "engine-class editor
 //! self-hosted in pinion".
 //!
 //! ## Chrome, not behaviour

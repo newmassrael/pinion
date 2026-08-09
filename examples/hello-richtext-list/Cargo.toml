@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1559 §5.36 list consumer — a document whose items are numbered by their place among their siblings (Qt QTextList): automatic renumbering on insertion, nesting that restarts without interrupting its parent, CSS counter-style range fallback, markers painted as real text on both backends, published by scene/text_lists and announced as a WAI-ARIA list"
+description = "R1559 §5.36 list consumer — a document whose items are numbered by their place among their siblings (the toolkit text list): automatic renumbering on insertion, nesting that restarts without interrupting its parent, CSS counter-style range fallback, markers painted as real text on both backends, published by scene/text_lists and announced as a WAI-ARIA list"
 publish = false
 
 [[bin]]

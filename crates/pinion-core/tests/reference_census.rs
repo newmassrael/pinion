@@ -1,11 +1,12 @@
 //! R1602 — the census verdicts this crate is responsible for, proven.
 //!
-//! The reference census (`tools/reference_census.py`, `docs/reference-census.json`) judges every node operator the DCC and the
+//! The reference census (`tools/reference_census.py`,
+//! `docs/reference-census.json`) judges every node operator the DCC and the
 //! engine register. Three of those verdicts are `have` because of a capability
-//! that lives **here** rather than in `pinion-node-graph`: `NODE_OT_select_box`, `NODE_OT_select_circle` and `NODE_OT_select_lasso` test a region
-//! against the node's *drawn* rectangle, which R1590 measured as a fact about
-//! the painted surface and not about a node model — a model crate has no card
-//! geometry.
+//! that lives **here** rather than in `pinion-node-graph`: `select_box`,
+//! `select_circle` and `select_lasso` test a region against the node's *drawn*
+//! rectangle, which R1590 measured as a fact about the painted surface and not
+//! about a node model — a model crate has no card geometry.
 //!
 //! So a proof is addressed `<crate>::<test>` in the pin, and this file answers
 //! for the rows addressed to `pinion-core`. The shape of the check is the same
@@ -198,9 +199,9 @@ fn dcc_select_box() {
 }
 
 /// The DCC's circle select — a brush, so what it means is a disc rather than
-/// the square the DCC's own `NODE_OT_select_box` would give for the same drag. The predicate is
-/// exact integer geometry, so the node whose corner is one unit outside the
-/// radius is not taken.
+/// the square the DCC's own `select_box` would give for the same drag. The
+/// predicate is exact integer geometry, so the node whose corner is one unit
+/// outside the radius is not taken.
 #[test]
 fn dcc_select_circle() {
     let brush = Region::circle(-10, -10, 80);
@@ -222,7 +223,7 @@ fn dcc_select_circle() {
 }
 
 /// The DCC's lasso. Closed by derivation, so a caller never repeats the first
-/// point the way the DCC's own buffer and the toolkit's polygon F both
+/// point the way the DCC's own buffer and the toolkit's polygon both
 /// require; the interior is the even-odd rule, which is what a hand-drawn loop
 /// means; and a **degenerate** lasso is named rather than answered with an
 /// empty selection — there, "your lasso bounded nothing" and "nothing was

@@ -3,9 +3,9 @@
 //! A **mnemonic** is one character of a widget's *visible label*, marked in
 //! the label source with `&`, that activates that widget from anywhere in the
 //! window via <kbd>Alt</kbd>+char and is drawn underlined so it can be
-//! discovered without documentation. Every desktop toolkit has one; the toolkit spells
-//! it `&File` / [`QKeySequence::mnemonic`] / [`QLabel::setBuddy`], GTK spells
-//! it `_File`, Win32 spells it `&File`, and HTML spells it `accesskey`.
+//! discovered without documentation. Every desktop toolkit has one; the
+//! toolkit spells it `&File` / `mnemonic` / `setBuddy`, GTK spells it `_File`,
+//! Win32 spells it `&File`, and HTML spells it `accesskey`.
 //!
 //! Before R1543 pinion had **none of it**. The `menu` module deferred
 //! "accelerator / mnemonic keys" as an axis awaiting a real consumer, and what
@@ -64,9 +64,6 @@
 //! toolkit-is-the-floor-not-the-target]] makes the *existence* of a feature
 //! the toolkit's floor and leaves its *shape* a fresh choice each time, and
 //! here the fresh choice is that the toolkit's shape is already right.
-//!
-//! [`QKeySequence::mnemonic`]: https://doc.qt.io/qt-6/qkeysequence.html
-//! [`QLabel::setBuddy`]: https://doc.qt.io/qt-6/qlabel.html
 
 use std::borrow::Cow;
 use std::collections::HashMap;

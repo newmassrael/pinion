@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1598 §5.38 §5.52 §2 #2 — a node changes what it IS, not which node it is.
 
-the DCC's `NODE_OT_swap_node` (`scripts/startup/bl_operators/node.py`) creates a
+the DCC's `swap_node` (`scripts/startup/bl_operators/node.py`) creates a
 NEW node and deletes the old one, so the swapped node's identity dies with it and
 every reference to it dies too: a selection, a saved layout, an undo record, an
 agent holding the id. `Document::set_kind` changes the body in place, so the id

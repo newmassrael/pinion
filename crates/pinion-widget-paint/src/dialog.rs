@@ -3,7 +3,7 @@
 //!
 //! Phase B widget-catalog entry — the confirm / form / alert dialog
 //! every pro DCC / IDE / CAD tool ships, and a direct step toward the
-//! northern-star "the engine-class editor self-hosted in pinion" (every
+//! northern-star "engine-class editor self-hosted in pinion" (every
 //! editor command that needs confirmation routes through one).
 //!
 //! ## Chrome, not behaviour

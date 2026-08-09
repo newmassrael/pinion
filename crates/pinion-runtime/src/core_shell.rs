@@ -7073,7 +7073,11 @@ mod mnemonic_tests {
         // transition Space on the focused button would have driven.
         let (mut core, mut focus) = shell_painting(labelled(BTN, "&Test"));
         let tail = core.dispatch_mnemonic('t', &mut focus).expect("claimed");
-        assert_eq!(focus.focused(), Some(BTN), "Qt's ShortcutFocusReason");
+        assert_eq!(
+            focus.focused(),
+            Some(BTN),
+            "the toolkit's ShortcutFocusReason"
+        );
         // The button's `KeyboardActivate` is an INTERNAL transition — it emits
         // a click intent without flipping the visible state, exactly as Space
         // on the focused button does. Asserting the intent is asserting that

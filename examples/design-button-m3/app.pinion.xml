@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  R635 §5.7 — figma-button-m3 renderer manifest. Emits a
-  `FigmaButtonM3Renderer` Vello-backed struct via the canonical
+  R635 §5.7 — design-button-m3 renderer manifest. Emits a
+  `DesignButtonM3Renderer` Vello-backed struct via the canonical
   pinion-forge renderer template. `aa` attribute omitted → defaults
   to Area per R46.2.1 (UI-canonical mode; Vello/Xilem documented
   default). Same shape as ai-introspect-demo / hello-* renderers —
@@ -9,5 +9,5 @@
 -->
 <pinion xmlns="https://pinion.dev/dsl/v1"
         kind="renderer"
-        name="FigmaButtonM3Renderer"
+        name="DesignButtonM3Renderer"
         backend="vello"/>

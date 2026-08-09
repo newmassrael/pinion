@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1555 §5.27 the cell-editor factory (Qt QItemEditorFactory): one grid column per CellKind, every editor the framework's own built-in — a text field, a spin stepper, a checkbox, a selector and a colour swatch — chosen by the datum's type rather than by the column, with the commit outcome named."
+description = "R1555 §5.27 the cell-editor factory (the toolkit item editor factory): one grid column per CellKind, every editor the framework's own built-in — a text field, a spin stepper, a checkbox, a selector and a colour swatch — chosen by the datum's type rather than by the column, with the commit outcome named."
 publish = false
 
 [[bin]]

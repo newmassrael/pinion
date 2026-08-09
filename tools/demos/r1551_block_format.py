@@ -166,14 +166,14 @@ def body() -> None:
                 "space_below_px": 0,
                 "heading_level": 0,
             },
-            "A: every paragraph of a document HAS a block format, as in Qt — "
+            "A: every paragraph of a document HAS a block format, as in the toolkit — "
             "and declaring one invents no indents",
         )
         assert_eq(
             plain["style"]["text_indent"],
             {"amount_px": INDENT_PX, "hanging": False, "each_line": False},
             "A: its text indent is declared with both CSS keywords, which "
-            "Qt's bare qreal `textIndent` has no spelling for",
+            "the toolkit's bare qreal `textIndent` has no spelling for",
         )
         chip = find_by_tag(snap, TOGGLE_TAG)
         assert chip is not None, "A: the mode chip is painted"

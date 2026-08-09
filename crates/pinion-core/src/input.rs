@@ -1559,7 +1559,7 @@ mod tests {
         );
         assert!(
             (r.accel() - 1.0).abs() < 1e-6,
-            "a plain Qt button does not accelerate",
+            "a plain the toolkit button does not accelerate",
         );
     }
 

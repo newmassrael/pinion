@@ -165,7 +165,7 @@ def _main(tf: RpcSubprocess) -> None:
                desc="the strip paints")
     # ── (A) the rule is readable, and it is the toolkit's ───────────────────
     assert_eq(_h(tf, "highlight_sections"), False,
-              "Qt's default, and what a header with no selection input did")   # 1
+              "the toolkit's default, and what a header with no selection input did")   # 1
     assert_eq(_h(tf, "selections"), NONE_ROW,
               "nothing has been published, so nothing is selected")            # 2
     assert_eq(_h(tf, "highlights"), NONE_ROW,
@@ -202,14 +202,14 @@ def _main(tf: RpcSubprocess) -> None:
     # unlike R1504's alignment, which the tree cannot show at all.
     fills_before = [_cell_fill(tf, v) for v in range(NCOLS)]
     assert_eq(_label_style(tf, 1)["font_weight"], WEIGHT_BOLD,
-              "a partially-selected section bolds its label (Qt State_On)")    # 12
+              "a partially-selected section bolds its label (the toolkit State_On)")    # 12
     assert_eq(_label_style(tf, 2)["font_weight"], WEIGHT_BOLD,
               "and so does a fully-covered one — coverage implies intersection") # 13
     assert_eq(_label_style(tf, 0)["font_weight"], WEIGHT_NORMAL,
               "an unselected section does not")                                # 14
     accent = _label_style(tf, 2)["fg_color"]
     assert accent != _label_style(tf, 1)["fg_color"], \
-        "only FULL coverage accents the label (Qt State_Sunken): " \
+        "only FULL coverage accents the label (the toolkit State_Sunken): " \
         f"{accent} vs {_label_style(tf, 1)['fg_color']}"                       # 15
     assert_eq(_label_style(tf, 1)["fg_color"], _label_style(tf, 0)["fg_color"],
               "a partial highlight leaves the colour alone")                   # 16
@@ -242,7 +242,7 @@ def _main(tf: RpcSubprocess) -> None:
     # ── (E) saved state carries the rule, not the selection ────────
     saved = _h(tf, "state")
     assert_eq(saved["highlight_sections"], True,
-              "the rule is in the snapshot, as Qt's `highlightSelected` is")   # 23
+              "the rule is in the snapshot, as the toolkit's `highlightSelected` is")   # 23
     for absent in ("selections", "selection", "highlights"):
         assert absent not in saved, \
             f"{absent!r} must not be in a header snapshot: {sorted(saved)}"    # 24-26
@@ -264,7 +264,7 @@ def _main(tf: RpcSubprocess) -> None:
                desc="the older shape restores")
     assert_eq(_h(tf, "highlights"), NONE_ROW,
               "absent describes a header that had no selection input at all, "
-              "and Qt starts in the same place — unlike sections_movable")     # 28
+              "and the toolkit starts in the same place — unlike sections_movable")     # 28
     assert "| highlight off" in _readout(tf), \
         f"and the readout says so: {_readout(tf)}"                             # 29
     assert_eq(_h(tf, "selections"), published,
@@ -355,7 +355,7 @@ def _main(tf: RpcSubprocess) -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1510 §5.27 §2#2 §2#7 — QHeaderView highlightSections: the header "
+        "R1510 §5.27 §2#2 §2#7 — header view highlightSections: the header "
         "dresses the sections the selection reaches",
         body,
     ))

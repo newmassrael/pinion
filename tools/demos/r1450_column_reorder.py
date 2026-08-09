@@ -238,6 +238,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1450 §5.51 §2#7 — QHeaderView movable sections: drag, move, restore",
+        "R1450 §5.51 §2#7 — header view movable sections: drag, move, restore",
         body,
     ))

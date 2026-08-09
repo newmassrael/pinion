@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R998 §5.40 per-row style rules at scale: a 10,000-row virtualized data-grid whose rows paint by declarative coloring rules (Wireshark/dlt-class). Each rule is a GridFilter predicate -> a tint; first match wins; AI-first invoke add_rule \"<filter>;<bg>;<fg>\". Reuses the R997 GridFilter; selection > rule > zebra precedence; no new windowing substrate."
+description = "R998 §5.40 per-row style rules at scale: a 10,000-row virtualized data-grid whose rows paint by declarative coloring rules (the analyser/dlt-class). Each rule is a GridFilter predicate -> a tint; first match wins; AI-first invoke add_rule \"<filter>;<bg>;<fg>\". Reuses the R997 GridFilter; selection > rule > zebra precedence; no new windowing substrate."
 publish = false
 
 [[bin]]

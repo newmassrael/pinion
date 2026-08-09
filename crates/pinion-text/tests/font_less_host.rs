@@ -122,7 +122,7 @@ fn font_less_host_shapes_and_reports() {
     let line_count = cache.layout("shape me", &plain, None).lines().count();
     assert!(
         line_count >= 1,
-        "text shapes on a font-less host and yields a line box, as in Qt",
+        "text shapes on a font-less host and yields a line box, as in the toolkit",
     );
 
     // --- Beyond the toolkit: the condition is data, not a stderr warning. ---
@@ -156,7 +156,7 @@ fn font_less_host_shapes_and_reports() {
     assert!(
         !families.is_empty(),
         "registering a real font reports the families it made selectable — \
-         Qt returns an opaque id and needs a second call",
+         the toolkit returns an opaque id and needs a second call",
     );
     assert_eq!(
         cache.application_font_families(),
@@ -413,7 +413,7 @@ fn r1472_declared_default_makes_unset_styles_shape_the_application_face() {
         (after_register - hangul_unshapeable).abs() < f32::EPSILON,
         "registering a Hangul face does not change what an UNSET family means: \
          before={hangul_unshapeable} after={after_register}. This is the half \
-         of the Qt pair pinion already had, and on its own it leaves the \
+         of the toolkit pair pinion already had, and on its own it leaves the \
          glyphs in memory and off the screen",
     );
 

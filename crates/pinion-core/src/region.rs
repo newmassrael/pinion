@@ -5,17 +5,18 @@
 //! Selecting by dragging a shape over what is drawn is one gesture that every
 //! canvas has: a node editor's marquee and lasso, a timeline's range, a
 //! chart's brush, a diagram editor's rubber band. The framework had exactly
-//! one of the shapes — [`Scene::hit_test_region`](crate::scene::Scene::hit_test_region) takes a
+//! one of the shapes —
+//! [`Scene::hit_test_region`](crate::scene::Scene::hit_test_region) takes a
 //! rectangle — and exactly one of the two things you can mean by "covered":
 //! *touches*. R1590 measured the absence from the other end, against the DCC's
-//! `NODE_OT_select_circle` and `NODE_OT_select_lasso`, and recorded that those are not node-graph capabilities at
-//! all: they test a region against `node->runtime->draw_bounds`, the **drawn** rectangle, which is a
-//! question for the layer that knows what was painted where. This is that
-//! layer.
+//! `select_circle` and `select_lasso`, and recorded that those are not
+//! node-graph capabilities at all: they test a region against
+//! `node->runtime->draw_bounds`, the **drawn** rectangle, which is a question
+//! for the layer that knows what was painted where. This is that layer.
 //!
 //! # A value, not a pen
 //!
-//! The toolkit's floor is `items(const painter path &, ItemSelectionMode)` and its polygon F overload, so arbitrary-shape
+//! The toolkit's floor is `items(const painter path &, ItemSelectionMode)` and its polygon overload, so arbitrary-shape
 //! queries exist there. What is different here is that a [`Region`] is a **value**
 //! — comparable, copyable, with no interior state — and therefore expressible
 //! on a wire: `scene/locate` takes one, so something with no pointer at all can ask what
@@ -111,7 +112,7 @@ pub enum Region {
         /// Bottom-right, inclusive.
         max: Point,
     },
-    /// A disc. The DCC's `NODE_OT_select_circle`, and the shape a brush tool
+    /// A disc. The DCC's `select_circle`, and the shape a brush tool
     /// paints a selection with.
     Circle {
         /// Centre.
@@ -120,7 +121,7 @@ pub enum Region {
         radius: u32,
     },
     /// A closed polygon, in the order it was drawn. The DCC's
-    /// `NODE_OT_select_lasso`.
+    /// `select_lasso`.
     ///
     /// **Closed by derivation**: the last vertex joins the first, so a caller
     /// never repeats a point to close the loop — the way the toolkit's polygon
@@ -138,7 +139,7 @@ pub enum Region {
 pub enum RegionError {
     /// A lasso with fewer than three vertices, which bounds no area.
     ///
-    /// Named rather than answered with an empty result. The toolkit's `items(polygon F, ..)`
+    /// Named rather than answered with an empty result. The toolkit's `items(<polygon>, ..)`
     /// returns a list, which has no channel for this — so there, "your lasso
     /// was degenerate" and "nothing is there" are the same value.
     LassoTooShort {
@@ -523,7 +524,7 @@ mod tests {
     use super::{Point, Region, RegionError, RegionFit};
     use crate::scene::Rect;
 
-    /// The DCC's `NODE_OT_select_circle` rule, over these types: a rect is
+    /// The DCC's `select_circle` rule, over these types: a rect is
     /// selected when the disc intersects it (`BLI_rctf_isect_circle` against
     /// `node->runtime->draw_bounds`). Present so the agreement is asserted
     /// rather than assumed — the divergence is the FIT, not the geometry.
@@ -554,8 +555,8 @@ mod tests {
         assert!(disc.covers(straddling, RegionFit::Intersects));
         assert!(
             !disc.covers(straddling, RegionFit::Contains),
-            "PAST QT — the fit is an argument. Qt takes it from \
-             QGraphicsView::rubberBandSelectionMode, a VIEW property, so two \
+            "PAST THE FLOOR — the fit is an argument. The toolkit takes it from \
+             rubberBandSelectionMode, a VIEW property, so two \
              selections in one view cannot mean different things"
         );
         let swallowed = Rect::new(45, 45, 6, 6);
@@ -706,8 +707,8 @@ mod tests {
         assert_eq!(
             Region::lasso([(0, 0), (10, 10)]).validate(),
             Err(RegionError::LassoTooShort { vertices: 2 }),
-            "PAST QT — QGraphicsScene::items(QPolygonF, ..) answers with a \
-             QList, which has no channel for this: a degenerate lasso and an \
+            "PAST THE FLOOR — items(<polygon>, ..) answers with a \
+             list, which has no channel for this: a degenerate lasso and an \
              empty surface are the same value there"
         );
         assert_eq!(Region::circle(0, 0, 0).validate(), Err(RegionError::Empty));

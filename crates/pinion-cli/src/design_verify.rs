@@ -1,4 +1,4 @@
-//! R634 §5.7 — `pinion the design tool-verify` sub-command.
+//! R634 §5.7 — `pinion design-verify` sub-command.
 //!
 //! Fetches a design tool file's full node tree via the official REST
 //! API and emits the response JSON to stdout (or `--output`
@@ -19,15 +19,14 @@
 //!
 //! ## Authentication
 //!
-//! Token comes from the `FIGMA_TOKEN` environment variable. Use a
-//! Personal Access Token with the **File content** read scope only
-//! (the design tool.com → Settings → Personal access tokens). The CLI never
-//! writes the token to disk or includes it in the dump output.
+//! Token comes from the environment variable [`design_api::TOKEN_ENV`] names.
+//! Use a Personal Access Token with the **File content** read scope only. The
+//! CLI never writes the token to disk or includes it in the dump output.
 //!
 //! ## Wire shape
 //!
 //! ```text
-//! $ FIGMA_TOKEN=figd_... pinion the design tool-verify <FILE_KEY>
+//! $ <TOKEN_ENV>=figd_... pinion design-verify <FILE_KEY>
 //! { "name": "...", "document": { "id": "0:0", "type": "DOCUMENT",
 //!   "children": [ { "id": "1:2", "type": "CANVAS", ... } ] }, ... }
 //! ```
@@ -36,22 +35,23 @@
 //! and the file name in a design tool URL:
 //!
 //! ```text
-//! https://www.figma.com/design/AbCdEfGhIj/My-Design?node-id=...
-//!                              ^^^^^^^^^^^^
-//!                              FILE_KEY
+//! <service>/design/AbCdEfGhIj/My-Design?node-id=...
+//!            ^^^^^^^^^^^^
+//!            FILE_KEY
 //! ```
 
 use std::path::PathBuf;
 
+use crate::design_api;
+
 use clap::Args;
 
-/// Arguments for the `the design tool-verify` sub-command.
+/// Arguments for the `design-verify` sub-command.
 #[derive(Args)]
-pub struct FigmaVerifyArgs {
+pub struct DesignVerifyArgs {
     /// The design tool file key — the URL path segment between `/design/`
-    /// (or `/file/`) and the file name. Example: for
-    /// `https://www.figma.com/design/AbCdEfGhIj/My-Design`, pass
-    /// `AbCdEfGhIj`.
+    /// (or `/file/`) and the file name. For the example URL
+    /// [`design_api::FILE_URL_EXAMPLE`] holds, that is `AbCdEfGhIj`.
     pub file_key: String,
 
     /// Optional output path for the dumped JSON. Defaults to
@@ -69,29 +69,39 @@ pub struct FigmaVerifyArgs {
     pub ids: Option<String>,
 }
 
-/// R634 §5.7 — execute the `the design tool-verify` sub-command.
+/// R634 §5.7 — execute the `design-verify` sub-command.
 ///
 /// # Errors
 ///
-/// - `FIGMA_TOKEN` environment variable not set (the only auth
+/// - the auth token environment variable not set (the only auth
 ///   source — the CLI deliberately does not read from a config
 ///   file to avoid accidentally committing a token).
 /// - the design tool API HTTP error (4xx / 5xx) — the response body is
 ///   echoed to stderr for debugging.
 /// - I/O error writing to `--output` path.
 /// - JSON serialization error pretty-printing the response.
-pub fn run(args: &FigmaVerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let token = std::env::var("FIGMA_TOKEN").map_err(|_| {
-        "FIGMA_TOKEN environment variable not set; \
-         export FIGMA_TOKEN=<personal access token> first \
-         (figma.com → Settings → Personal access tokens, \
-         File content read scope)"
-    })?;
+pub fn run(args: &DesignVerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
+    // A person reaching for this has the file OPEN, so the thing under their
+    // cursor is the URL, not the key inside it. Pasting the whole URL used to
+    // reach the service as a file key and come back as a flat 404; saying
+    // which segment to take is the difference between a dead end and a fix.
+    if args.file_key.contains("://") || args.file_key.contains('/') {
+        return Err(format!(
+            "`{}` looks like a URL, not a file key. The key is the path \
+             segment between `/design/` (or `/file/`) and the file name: in \
+             `{}` it is `AbCdEfGhIj`.",
+            args.file_key,
+            design_api::FILE_URL_EXAMPLE,
+        )
+        .into());
+    }
 
-    // R634 §5.7 — the design tool official REST API endpoint. The
-    // documentation lives at `the design tool.com/developers/api#files-endpoints`; the response shape is the full DocumentNode
-    // tree with every FRAME / GROUP / RECTANGLE / TEXT / VECTOR / etc. typed.
-    let mut url = format!("https://api.figma.com/v1/files/{}", args.file_key);
+    let token = design_api::token()?;
+
+    // R634 §5.7 — the design service's own files endpoint. The response shape
+    // is the full document-node tree with every FRAME / GROUP / RECTANGLE /
+    // TEXT / VECTOR / etc. typed.
+    let mut url = format!("{}/files/{}", design_api::API_HOST, args.file_key);
     if let Some(ids) = args.ids.as_deref() {
         // The `ids` query parameter restricts the response to the
         // listed subtree ids — useful for large UI kit files where
@@ -101,13 +111,13 @@ pub fn run(args: &FigmaVerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let response = ureq::get(&url)
-        .set("X-Figma-Token", &token)
+        .set(design_api::TOKEN_HEADER, &token)
         .call()
-        .map_err(|err| format!("Figma API request failed: {err}"))?;
+        .map_err(|err| format!("design API request failed: {err}"))?;
 
     let json: serde_json::Value = response
         .into_json()
-        .map_err(|err| format!("Figma API response is not valid JSON: {err}"))?;
+        .map_err(|err| format!("design API response is not valid JSON: {err}"))?;
 
     let pretty = serde_json::to_string_pretty(&json)
         .map_err(|err| format!("JSON pretty-print failed: {err}"))?;

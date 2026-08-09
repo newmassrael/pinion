@@ -1452,7 +1452,11 @@ mod tests {
         m.activate_title(0);
         assert_eq!(m.open_menu(), Some(0));
         m.activate_title(0);
-        assert_eq!(m.open_menu(), None, "Alt+F twice closes, as Qt does");
+        assert_eq!(
+            m.open_menu(),
+            None,
+            "Alt+F twice closes, as the toolkit does"
+        );
     }
 
     #[test]

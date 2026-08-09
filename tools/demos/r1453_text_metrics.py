@@ -182,7 +182,7 @@ def body() -> None:
 
         # ── (D) R1454 — the measurement is bounded, and says so ───────
         assert_eq(_h(tf, "resize_contents_precision"), 1000,
-                  "Qt's default row-sampling bound")                                # 44
+                  "the toolkit's default row-sampling bound")                                # 44
         # R1504 — the header's glyph extent is no longer readable (see the note
         # in section A), so the expectation is stated as the floor a precision
         # of 1 cannot go below: the FIRST ROW, which still paints unsized. The
@@ -225,6 +225,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1453 §5.36 §2#7 — QFontMetrics parity: a view fn measures its own text",
+        "R1453 §5.36 §2#7 — font metrics parity: a view fn measures its own text",
         body,
     ))

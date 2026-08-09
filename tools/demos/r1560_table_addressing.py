@@ -309,7 +309,7 @@ def body() -> None:
         assert_eq(
             [(s["row"], s["column"]) for s in table["slack"]],
             [(4, 2)],
-            "G: the week has no topic for Thursday — a state QTextTable "
+            "G: the week has no topic for Thursday — a state text table "
             "cannot be in, because insertRows fills its grid",
         )
 
@@ -431,7 +431,7 @@ def body() -> None:
         assert_eq(
             note["clamped"],
             True,
-            "K: with the difference NAMED — Qt's mergeCells returns void, so a "
+            "K: with the difference NAMED — the toolkit's mergeCells returns void, so a "
             "refused merge leaves no trace at all",
         )
         assert_eq(

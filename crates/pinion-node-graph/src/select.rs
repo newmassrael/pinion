@@ -11,22 +11,24 @@
 //! **canvas** (see the end of these docs).
 //!
 //! Every one of them is a **pure query**. The DCC's are edits: they set the
-//! `SELECT` bit on `bNode` and carry `OPTYPE_UNDO`, because there the selection lives in the
-//! document — so "what would this select?" cannot be asked without selecting
-//! it, and every answer costs an undo step. Here the answer is a value ([`Grown`])
-//! and the document is untouched, which is what makes the question previewable
-//! (§2 #3).
+//! `SELECT` bit on node and carry `OPTYPE_UNDO`, because there the selection
+//! lives in the document — so "what would this select?" cannot be asked
+//! without selecting it, and every answer costs an undo step. Here the answer
+//! is a value ([`Grown`]) and the document is untouched, which is what makes
+//! the question previewable (§2 #3).
 //!
 //! # The reach is a parameter, not a keystroke count
 //!
-//! The single largest difference. `NODE_OT_select_linked_to` walks `output_socket->directly_linked_sockets()` — **one hop** — and so does
-//! `NODE_OT_select_linked_from`. The question a person actually has is *what depends on this?*, which
-//! is the transitive closure, and the DCC answers it by having you press the
-//! key until the picture stops changing, with nothing telling you when that
-//! has happened. [`Reach::Transitive`] is that question asked once, and [`Grown::added`] is what tells
-//! you it has been answered: growing again by the same transitive question
-//! adds nothing, which is a property this module's tests assert and the DCC's
-//! mutating form cannot state.
+//! The single largest difference. `select_linked_to` walks
+//! `output_socket->directly_linked_sockets()` — **one hop** — and so does
+//! `select_linked_from`. The question a person actually has is *what depends
+//! on this?*, which is the transitive closure, and the DCC answers it by
+//! having you press the key until the picture stops changing, with nothing
+//! telling you when that has happened. [`Reach::Transitive`] is that question
+//! asked once, and [`Grown::added`] is what tells you it has been answered:
+//! growing again by the same transitive question adds nothing, which is a
+//! property this module's tests assert and the DCC's mutating form cannot
+//! state.
 //!
 //! # Two relations, and the reach means the same thing in both
 //!
@@ -38,16 +40,16 @@
 //!
 //! # What is NOT here, and where it belongs
 //!
-//! `NODE_OT_select_circle` and `NODE_OT_select_lasso` test a region against
+//! `select_circle` and `select_lasso` test a region against
 //! `node->runtime->draw_bounds` — the **drawn** rectangle. R1589 already
 //! recorded that a node's extent is the application's and not this crate's,
 //! because a model crate has no card geometry; measured here, those two
 //! operators are that same fact and not a node-graph capability at all. Their
 //! home is the layer that already knows what was painted where — a region test
-//! over tagged scene rectangles, which would serve a timeline, a chart brush and
-//! a diagram editor as well as this. Deliberately not smuggled in behind a
-//! `Fn(NodeId) -> Rect` argument, which would put the caller's own loop inside a
-//! crate that cannot check it.
+//! over tagged scene rectangles, which would serve a timeline, a chart brush
+//! and a diagram editor as well as this. Deliberately not smuggled in behind a
+//! `Fn(NodeId) -> Rect` argument, which would put the caller's own loop inside
+//! a crate that cannot check it.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
@@ -61,7 +63,7 @@ use crate::model::{Document, Node, NodeBody, NodeId, NodeKind, TreeId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
     /// One step. The DCC's only mode for the link relation, and what its
-    /// `NODE_OT_select_linked_to` / `..._from` do per keypress.
+    /// `select_linked_to` / `..._from` do per keypress.
     Direct,
     /// Every step, to the end. The question "what depends on this" asked once.
     Transitive,
@@ -74,7 +76,7 @@ pub enum Reach {
 /// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grow {
-    /// Nodes the selection feeds. The DCC's `NODE_OT_select_linked_to`.
+    /// Nodes the selection feeds. The DCC's `select_linked_to`.
     ///
     /// A **muted** link is still followed: mutedness is about the value, and
     /// every structural derivation in this crate goes on seeing the wire
@@ -82,7 +84,7 @@ pub enum Grow {
     /// divergence — asserted, because it is the kind of agreement that is easy
     /// to break by accident.
     Downstream(Reach),
-    /// Nodes that feed the selection. The DCC's `NODE_OT_select_linked_from`.
+    /// Nodes that feed the selection. The DCC's `select_linked_from`.
     Upstream(Reach),
     /// What the selected frames contain (R1589). A DCC analogue:
     /// selecting a frame there selects nothing inside it, though dragging one
@@ -92,7 +94,7 @@ pub enum Grow {
     /// relation, which is the only reason it is here — see the module docs.
     Containers(Reach),
     /// Nodes that are the same kind as something selected. The DCC's
-    /// `NODE_OT_select_grouped(TYPE)`.
+    /// `select_grouped(TYPE)`.
     ///
     /// Keyed on the whole selection rather than on one **active** node, because
     /// this crate has no notion of an active node — a selection is the
@@ -101,11 +103,11 @@ pub enum Grow {
     SameKind,
     /// Nodes whose displayed name begins with the same prefix as something
     /// selected — the run up to the first `.`, `-` or `_`. The DCC's
-    /// `NODE_OT_select_grouped(PREFIX)`.
+    /// `select_grouped(PREFIX)`.
     NamePrefix,
     /// Nodes whose displayed name ends with the same suffix as something
     /// selected — the run after the last `.`, `-` or `_`. The DCC's
-    /// `NODE_OT_select_grouped(SUFFIX)`.
+    /// `select_grouped(SUFFIX)`.
     NameSuffix,
 }
 
@@ -227,7 +229,7 @@ impl<K: NodeKind> Document<K> {
     /// Every node of the same kind as `like`, in **evaluation order**, `like`
     /// included.
     ///
-    /// The substrate under the DCC's `NODE_OT_select_same_type_step`, which
+    /// The substrate under the DCC's `select_same_type_step`, which
     /// walks `toposort_left_to_right()` one position at a time. Publishing the
     /// run rather than the step is what lets a caller say *where* in it the
     /// cursor is — "3 of 7" — which that operator cannot, since it answers by

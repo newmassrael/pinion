@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1434 §5.35 §5.15 — a native pan gesture slides a map. A widget that overrides External::pan_gesture accumulates the incremental two-axis delta of an N-finger trackpad pan (Qt QNativeGestureEvent PanNativeGesture) across the GesturePhase Begin..End arc, clamps it to the content bounds, and discards the in-flight pan on Cancel. winit exposes PanGesture only on iOS, so the scene/pan_gesture RPC is the AI-first driver (§2 #2): a headless client slides the map with no trackpad, drivable + introspectable."
+description = "R1434 §5.35 §5.15 — a native pan gesture slides a map. A widget that overrides External::pan_gesture accumulates the incremental two-axis delta of an N-finger trackpad pan (the toolkit native gesture event PanNativeGesture) across the GesturePhase Begin..End arc, clamps it to the content bounds, and discards the in-flight pan on Cancel. winit exposes PanGesture only on iOS, so the scene/pan_gesture RPC is the AI-first driver (§2 #2): a headless client slides the map with no trackpad, drivable + introspectable."
 publish = false
 
 [[bin]]

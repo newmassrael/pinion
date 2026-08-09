@@ -260,6 +260,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1449 §5.38 §2#7 — QCompleter parity: filter x case x completion mode",
+        "R1449 §5.38 §2#7 — completer parity: filter x case x completion mode",
         body,
     ))

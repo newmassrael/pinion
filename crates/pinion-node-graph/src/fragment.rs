@@ -27,9 +27,10 @@
 //! form; a user who copies the middle of a chain is told nothing about the two
 //! wires that were severed.
 //!
-//! Recording them is also what lets a paste **restore** them ([`Crossings::KeepInbound`]). The DCC
-//! has that as `keep_inputs`, a boolean on `NODE_OT_duplicate` — and *only* there: `NODE_OT_clipboard_paste` declares one
-//! property, `offset`, so pasting into the tree you copied from cannot re-feed the
+//! Recording them is also what lets a paste **restore** them
+//! ([`Crossings::KeepInbound`]). The DCC has that as `keep_inputs`, a boolean
+//! on `duplicate` — and *only* there: `clipboard_paste` declares one property,
+//! `offset`, so pasting into the tree you copied from cannot re-feed the
 //! copies.
 //!
 //! # Why only the inbound crossings come back
@@ -544,7 +545,7 @@ impl<K: NodeKind> Document<K> {
 
     /// Copy `selection` beside itself in the same tree.
     ///
-    /// The DCC's `NODE_OT_duplicate`, which is exactly a cut and a paste that
+    /// The DCC's `duplicate`, which is exactly a cut and a paste that
     /// never leave the tree: `offset` is `duplicate_move`'s translation,
     /// `crossings` its `keep_inputs`, and `definitions` its `linked`.
     ///

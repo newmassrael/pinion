@@ -11,7 +11,7 @@
 //! Phase B widget-catalog entry. A classic editor format toolbar —
 //! Bold / Italic / Underline toggle buttons next to Undo / Redo
 //! command buttons — the control strip every pro DCC / IDE / CAD tool
-//! ships, and a direct step toward the northern-star "the engine-class
+//! ships, and a direct step toward the northern-star "engine-class
 //! editor self-hosted in pinion".
 //!
 //! ## Two control classes, one container

@@ -33,7 +33,7 @@ each check discriminates:
 * **The two spellings really are different**, shown rather than asserted: the
   scope reaches a method that takes no path at all, and the path prefix
   reaches a `path` method — each with the other spelling doing nothing.
-* **PAST the toolkit**: meta-object publishes a method's name, parameter types and
+* **PAST THE FLOOR**: meta-object publishes a method's name, parameter types and
   return type; there is no notion of a window-scoped introspection call at
   all, so nothing there can be asked what a call is addressed to, and a toolkit
   application cannot be interrogated over a wire in the first place.

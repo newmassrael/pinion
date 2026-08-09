@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1577 §5.38 §5.52 — a Blender-class node system COMPOSED from pinion-node-graph rather than hand-rolled: re-usable group definitions, instances, a derived interface, a nested edit path, and evaluation that descends. The point is what is absent — no model, no boundary derivation, no cycle test and no evaluator live here, because the framework owns them. Its length is the argument."
+description = "R1577 §5.38 §5.52 — a DCC-class node system COMPOSED from pinion-node-graph rather than hand-rolled: re-usable group definitions, instances, a derived interface, a nested edit path, and evaluation that descends. The point is what is absent — no model, no boundary derivation, no cycle test and no evaluator live here, because the framework owns them. Its length is the argument."
 publish = false
 
 [[bin]]

@@ -3442,7 +3442,7 @@ fn dissolving_an_interface_node_severs_and_says_so() {
 /// A DCC node type that registers `internally_linked_input`, reduced to the
 /// shape its callback computes.
 ///
-/// Censused from `~/the DCC-ref` at `8cf50599`:
+/// Censused from the DCC reference tree at `8cf50599`:
 /// `grep -rln "ntype.internally_linked_input = " source/the DCC/` answers
 /// **eleven** node types, and between them their callbacks compute exactly
 /// **three** things. Holding the census as a TABLE rather than a paragraph is
@@ -4715,7 +4715,7 @@ fn one_hop_is_blenders_answer_and_the_closure_is_the_question() {
     assert_eq!(
         closure.added,
         vec![c.mid, c.tail, c.aside],
-        "PAST BLENDER — the branch and the far end in ONE call, where the reach \
+        "PAST the DCC — the branch and the far end in ONE call, where the reach \
          is a keypress count"
     );
     // The property that makes the answer knowable: asking again adds nothing.
@@ -4928,7 +4928,7 @@ fn two_instances_of_different_definitions_are_not_one_kind() {
     let grown = f.document.grow(ROOT, &[one.node], Grow::SameKind).unwrap();
     assert!(
         !grown.selection.contains(&twin),
-        "PAST BLENDER — every group node there is `type_legacy == NODE_GROUP`, \
+        "PAST the DCC — every group node there is `type_legacy == NODE_GROUP`, \
          so grouping by type sweeps in instances of unrelated definitions. An \
          instance's signature IS its definition's interface, so two instances \
          of different definitions are alike in nothing this model can see"
@@ -4989,7 +4989,7 @@ fn an_affix_that_is_not_there_offers_no_criterion() {
     let from_plain = f.document.grow(ROOT, &[f.sink], Grow::NameSuffix).unwrap();
     assert!(
         !from_plain.changed(),
-        "PAST BLENDER — `node_select_grouped_name` substitutes the WHOLE NAME \
+        "PAST the DCC — `node_select_grouped_name` substitutes the WHOLE NAME \
          for a missing suffix, which conflates 'this node has no suffix' with \
          'its suffix is its entire name'"
     );
@@ -5015,7 +5015,7 @@ fn an_affix_that_is_not_there_offers_no_criterion() {
 fn the_affix_is_read_off_the_name_that_is_painted() {
     let mut f = fixture();
     // No label, so the displayed name is the body's own — which is what a node
-    // header shows. The DCC groups on `bNode::name`, the datablock id
+    // header shows. The DCC groups on `node::name`, the datablock id
     // (`Mix.001`), which is not what its own header draws.
     assert_eq!(
         f.document
@@ -5064,7 +5064,7 @@ fn the_same_kind_run_is_in_evaluation_order_and_says_where_you_are() {
     assert_eq!(
         run.iter().position(|&id| id == far),
         Some(1),
-        "PAST BLENDER — the RUN is published, so an editor can say `2 of 2`. \
+        "PAST the DCC — the RUN is published, so an editor can say `2 of 2`. \
          select_same_type_step answers by moving the active node and \
          reports only whether it moved"
     );
@@ -5921,8 +5921,9 @@ fn a_port_carries_the_link_then_the_authored_value_then_the_kinds_own() {
         Some(LVal::Vector([1, 2, 3])),
         "and a link beats both — the authored value is HIDDEN, not discarded"
     );
-    // Unwire and it is still there, which is the Blueprint/the DCC behaviour
-    // this crate's `Port::default` doc already claimed for the kind's value.
+    // Unwire and it is still there, which is the visual script/the DCC
+    // behaviour this crate's `Port::default` doc already claimed for the
+    // kind's value.
     let link = f.document.tree(ROOT).unwrap().links()[0].id;
     f.document.disconnect(ROOT, link).unwrap();
     assert_eq!(
@@ -7138,7 +7139,7 @@ fn r1598_a_lone_port_lands_wherever_it_fits() {
     // type: a side with exactly one port has no position worth preserving and
     // no name that means anything beside a name it is the only one of, so it
     // takes the first port that will have it. The DCC gates the same behaviour
-    // on `old_node.bl_idname == "NodeReroute"`, so there it is one type's
+    // on `old_node.idname == "NodeReroute"`, so there it is one type's
     // privilege.
     //
     // `Measure` is Text -> Number, one port each side. Swapping it for `Gate`
@@ -7199,13 +7200,13 @@ fn r1598_a_lone_port_lands_wherever_it_fits() {
 /// when read. Everything else is on the control plane.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 enum Flo {
-    /// No control input, so it is an entry. Blueprint's Event node.
+    /// No control input, so it is an entry. visual script's Event node.
     Start,
     /// One in, one out: the ordinary statement.
     Step(String),
-    /// One in, N out — Blueprint's `Sequence`, and it overrides NOTHING.
+    /// One in, N out — visual script's `Sequence`, and it overrides NOTHING.
     Sequence(usize),
-    /// One in, two out, choosing by its data input. Blueprint's `Branch`.
+    /// One in, two out, choosing by its data input. visual script's `Branch`.
     Branch,
     /// One in, none out.
     End,
@@ -7235,8 +7236,8 @@ impl NodeKind for Flo {
         match self {
             Self::Start | Self::Const(_) => Vec::new(),
             Self::Step(_) | Self::Sequence(_) | Self::End => vec![Port::control("In")],
-            // The control input FIRST and the datum second, which is Blueprint's
-            // own layout for Branch (Exec, then Condition).
+            // The control input FIRST and the datum second, which is visual
+            // script's own layout for Branch (Exec, then Condition).
             Self::Branch => vec![Port::control("In"), Port::new("Condition", Ty::Number)],
             Self::Tally => vec![Port::new("A", Ty::Number), Port::new("B", Ty::Number)],
         }
@@ -7288,8 +7289,9 @@ impl NodeKind for Flo {
     }
 }
 
-/// The engine's connection response, `UEdGraphSchema_K2::CanCreateConnection` at 5.8.1 (`EdGraphSchema_K2.cpp`), the two lines that
-/// decide which end gives way:
+/// The engine's connection response, `graph schema K 2::CanCreateConnection`
+/// at 5.8.1 (`graph schema K 2.cpp`), the two lines that decide which end
+/// gives way:
 ///
 /// ```text
 /// bBreakExistingDueToExecOutput = IsExecPin(*OutputPin) && OutputPin->LinkedTo.Num() > 0;
@@ -7604,13 +7606,13 @@ fn r1599_a_control_cycle_is_a_loop_and_a_value_cycle_is_still_refused() {
     );
 }
 
-/// The engine's `FKismetCompilerContext::PinIsImportantForDependancies`
-/// (`KismetCompiler.h`, 5.8.1), commented *"the execution wires do not form
+/// The engine's `compiler context::PinIsImportantForDependancies`
+/// (`compiler.h`, 5.8.1), commented *"the execution wires do not form
 /// data dependencies, they are only important for final scheduling and that is
 /// handled thru gotos"*:
 ///
 /// ```text
-/// return Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec;
+/// return Pin->PinType.PinCategory != graph schema K 2::PC_Exec;
 /// ```
 fn engine_pin_forms_a_dependency(is_exec: bool) -> bool {
     !is_exec
@@ -7737,8 +7739,8 @@ fn r1599_entry_points_are_derived_from_the_signature() {
 
     // `a`'s control input is UNWIRED, which makes it unreachable rather than
     // an entry — a different fact, and one an editor reports differently. The
-    // engine reaches the same set by node CLASS (UK2Node_Event,
-    // UK2Node_FunctionEntry), so there it is a list of types to know rather
+    // engine reaches the same set by node CLASS (event node,
+    // function entry node), so there it is a list of types to know rather
     // than a question to ask.
     assert!(document.tree(ROOT).unwrap().links().is_empty());
     assert_eq!(document.entry_points(ROOT), vec![start]);
@@ -7799,9 +7801,10 @@ fn r1599_a_run_is_an_order_and_a_pure_node_is_not_in_it() {
 
 #[test]
 fn r1599_a_sequence_runs_each_branch_to_completion_and_needs_no_code() {
-    // Blueprint's Sequence, and `Flo::Sequence` overrides NOTHING: the provided
-    // `NodeKind::control` default hands control to every control output in port
-    // order, and the stack is what makes "in order" mean "to completion".
+    // visual script's Sequence, and `Flo::Sequence` overrides NOTHING: the
+    // provided `NodeKind::control` default hands control to every control
+    // output in port order, and the stack is what makes "in order" mean "to
+    // completion".
     let Flow2 {
         mut document,
         start,
@@ -8124,7 +8127,7 @@ fn r1599_control_to_control_is_the_one_pair_with_no_type_question() {
 // Every claim about the DCC and the engine below is stated as a HELPER
 // reproducing its rule over this crate's types, so a divergence is ASSERTED
 // rather than described — the discipline R1577 and R1584 set. The DCC facts
-// are from `~/the DCC-ref` at `8cf50599`; the engine facts from a 5.8.1 tree.
+// are from the DCC reference tree at `8cf50599`; the engine facts from a 5.8.1 tree.
 
 /// Build `[Const(seed)] -> Tally.A`, `Delay -> Tally.B`, `Tally -> Delay`: a
 /// value cycle closed **through a delay**, which is the whole point.
@@ -8944,22 +8947,23 @@ fn delay_of(document: &Document<Flo>) -> NodeId {
         .expect("the fixture has one")
 }
 
-/// The engine's recursion guard, `FindMacroCycle` in `KismetCompiler.cpp` at 5.8.1, reproduced exactly —
-/// including that it **returns on its first macro-instance child** instead of
-/// continuing the loop:
+/// The engine's recursion guard, `FindMacroCycle` in `compiler.cpp` at 5.8.1,
+/// reproduced exactly — including that it **returns on its first
+/// macro-instance child** instead of continuing the loop:
 ///
 /// ```text
 /// for (const the graph node* ChildNode : MacroGraph->Nodes) {
-///   if (const UK2Node_MacroInstance* MacroInstanceNode = Cast<...>(ChildNode)) {
-///     UEdGraph* InnerMacroGraph = MacroInstanceNode->GetMacroGraph();
+///   if (const macro instance node* MacroInstanceNode = Cast<...>(ChildNode)) {
+///     graph* InnerMacroGraph = MacroInstanceNode->GetMacroGraph();
 ///     if (VisitedMacroGraphs.Contains(InnerMacroGraph->GraphGuid)) { return true; }
 ///     else { return FindMacroCycle(MacroInstanceNode, VisitedMacroGraphs, CurrentPath); }
 ///   }
 /// }
 /// ```
 ///
-/// A macro is expanded by cloning its graph, so a cycle there cannot terminate;
-/// this is the whole of what stands between a Blueprint and that.
+/// A macro is expanded by cloning its graph, so a cycle there cannot
+/// terminate; this is the whole of what stands between a visual script and
+/// that.
 #[expect(
     clippy::never_loop,
     reason = "the lint is CORRECT and that is the point: The engine returns on its \

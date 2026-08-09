@@ -559,7 +559,7 @@ impl WidgetCore for CompleterView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-completer (R1449 §5.38 QCompleter parity)"
+        "pinion hello-completer (R1449 §5.38 completer parity)"
     }
 
     fn keybinding(_key: &str) -> Option<()> {

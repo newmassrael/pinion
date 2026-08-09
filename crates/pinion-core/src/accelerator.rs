@@ -10,8 +10,8 @@
 //! Every toolkit needs the escape hatch, because the extreme case is real: a
 //! text field must keep the letter `d` even in a window where `d` is a
 //! shortcut, and a *key-sequence editor* must be able to record
-//! <kbd>Alt</kbd>+<kbd>F</kbd> in a window whose File menu claims it. The toolkit
-//! spells the hatch [`QEvent::ShortcutOverride`] — an event delivered to the
+//! <kbd>Alt</kbd>+<kbd>F</kbd> in a window whose File menu claims it. The
+//! toolkit spells the hatch `ShortcutOverride` — an event delivered to the
 //! focus widget before shortcut processing, which the widget `accept()`s to
 //! claim the key.
 //!
@@ -50,12 +50,12 @@
 //!
 //! ## Spelling
 //!
-//! [`Chord::portable`] renders Qt's [`QKeySequence::PortableText`] vocabulary
-//! (`Ctrl` / `Alt` / `Shift` / `Meta`) in a fixed order, and [`Chord::parse`]
-//! reads it back. The round trip is a **guarantee** here and is not one in the toolkit:
-//! `fromString` maps an unrecognised name to `Key_unknown`
-//! and reports nothing, so `key sequence("Ctrl+Frobnicate")` is a silently
-//! wrong shortcut. [`ChordParseError`] names which part failed instead.
+//! [`Chord::portable`] renders the toolkit's `PortableText` vocabulary (`Ctrl`
+//! / `Alt` / `Shift` / `Meta`) in a fixed order, and [`Chord::parse`] reads it
+//! back. The round trip is a **guarantee** here and is not one in the toolkit:
+//! `fromString` maps an unrecognised name to `Key_unknown` and reports
+//! nothing, so `key sequence("Ctrl+Frobnicate")` is a silently wrong shortcut.
+//! [`ChordParseError`] names which part failed instead.
 //!
 //! The modifier *order* is fixed here rather than borrowed: the toolkit's
 //! lives in a private table in `qkeysequence.cpp`, so there is nothing to be compatible with
@@ -72,9 +72,6 @@
 //! across layouts, which needs W3C's `KeyboardEvent.code` (`"KeyK"`). This framework's key wire
 //! carries `key` and not `code`, so that axis is absent upstream of this type
 //! rather than declined by it.
-//!
-//! [`QEvent::ShortcutOverride`]: https://doc.qt.io/qt-6/qevent.html
-//! [`QKeySequence::PortableText`]: https://doc.qt.io/qt-6/qkeysequence.html
 
 use std::fmt;
 
@@ -194,12 +191,10 @@ impl Chord {
         self.modifiers.command_key()
     }
 
-    /// Qt's [`QKeySequence::PortableText`] spelling — `"Ctrl+Shift+P"`.
+    /// The toolkit's `PortableText` spelling — `"Ctrl+Shift+P"`.
     ///
     /// Round-trips through [`Chord::parse`] for every chord this type can
     /// hold, which is the property the toolkit does not have.
-    ///
-    /// [`QKeySequence::PortableText`]: https://doc.qt.io/qt-6/qkeysequence.html
     #[must_use]
     pub fn portable(&self) -> String {
         let mut out = String::new();

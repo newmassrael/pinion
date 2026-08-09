@@ -47,6 +47,9 @@ import textwrap
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from reference_names import mentions as rn_mentions  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # --- how each product is named once its own name is gone --------------------
@@ -155,14 +158,92 @@ CLASS_OVERRIDE: dict[str, str] = {
     "QInputDialog": "input dialog",
 }
 
-# Symbol families that are an id rather than a class -- these are the census's
-# business (a round of their own), so they are reported, never rewritten.
-UNTOUCHED_RE = re.compile(
-    r"\bNODE_OT_[a-z_]+\b|\bbpy\.[A-Za-z_.]+|\b(?:bNode|bNodeTree|bNodeSocket|"
-    r"bNodeLink)[A-Za-z]*\b|\bED_node_[a-z_]+\b|"
-    r"\b(?:UEdGraph|UK2Node|FEdGraph|SGraphNode|UBlueprint|FBlueprint|"
-    r"EEdGraphPin)[A-Za-z]*\b"
+# R1614 -- the id families the first pass reported and left alone.
+#
+# The reason it left them is that they are not class names, so the "strip the
+# prefix and de-camel it" derivation the toolkit's classes have does not apply
+# unchanged. It applies with one substitution each, and every one of them is a
+# derivation rather than an invention:
+#
+# * an **operator id** is `<vendor prefix>_<capability>`, so the capability is
+#   what is left when the prefix goes -- and that is not a new spelling, it is
+#   the SAME spelling `tools/reference_census.py`'s `public_id` already
+#   derives, so the prose and the proof tables agree by construction.
+# * a **C struct** is `b` + its own generic noun, exactly as the toolkit's
+#   class is `Q` + one.
+# * an **engine class** is `<letter><subsystem><Rest>` where the subsystem is
+#   the vendor's word for a generic thing: graph is a graph, script node is a
+#   node in the visual-script graph, the visual-script compiler is that language's compiler,
+#   visual script is a visual script.
+#
+# What is lost, in every case, is the ability to look the symbol up. That is
+# what the round's memory note is for, and it is the trade the standing
+# directive names.
+
+# `add_group` -> `add_group`; `link_insert` -> `link_insert`;
+# `idname` -> `idname`; `types.Node` -> `types.Node`. The code span is
+# kept, because what is left IS an identifier.
+ID_PREFIX_RE = re.compile(
+    r"(?P<prefix>\bNODE_OT_|\bED_node_|\bbl_(?=(?:idname|label|info)\b)|\bbpy\.)"
 )
+
+# node tree -> `node tree`. The struct's own noun, with the vendor's letter
+# off the front -- the same shape as the toolkit's classes.
+STRUCT_RE = re.compile(
+    r"(?P<tick>`?)\bb(?P<rest>Node(?:Tree|Socket|Link)?[A-Za-z]*)\b(?P<tail>`?)"
+)
+
+# graph schema -> `graph schema`; variable set node -> `variable set
+# node`; compiler context -> `compiler context`; visual script ->
+# `visual script`. The leading letter is the engine's type-prefix convention
+# (`U` object, `F` struct, `E` enum, `S` widget) and carries no meaning here.
+ENGINE_RE = re.compile(
+    r"(?P<tick>`?)\b[UFESA]?(?P<family>EdGraph|K2Node|Kismet|Blueprint)"
+    r"(?P<rest>[A-Za-z0-9_]*)\b(?P<tail>`?)"
+)
+
+ENGINE_NOUN: dict[str, str] = {
+    "EdGraph": "graph",
+    "K2Node": "node",
+    "Kismet": "",
+    "Blueprint": "visual script",
+}
+
+
+def _span(match: re.Match[str], noun: str) -> str:
+    """Put a derived noun back where a symbol was, code span and all.
+
+    The backticks go with the symbol only when they fence it exactly: a half
+    span (`` `UK2Node_Foo::Bar` ``) would otherwise lose one tick and leave the
+    line with an odd number of them -- the defect clippy caught on the first
+    pass of this tool.
+    """
+    if match.group("tick") and match.group("tail"):
+        return noun
+    return match.group("tick") + noun + match.group("tail")
+
+
+def rewrite_struct(match: re.Match[str]) -> str:
+    return _span(match, decamel(match.group("rest")))
+
+
+def rewrite_engine(match: re.Match[str]) -> str:
+    """`K2Node_VariableSet` -> `variable set node`, and the bare family word ->
+    the generic thing it names."""
+    family = match.group("family")
+    rest = match.group("rest").lstrip("_")
+    noun = ENGINE_NOUN[family]
+    tail = decamel(rest) if rest else ""
+    if family == "K2Node":
+        # The node's own name reads better before the noun: `variable set node`.
+        derived = f"{tail} node" if tail else "script node"
+    elif family == "Kismet":
+        derived = tail or "the visual-script compiler"
+    elif family == "EdGraph":
+        derived = f"graph {tail}" if tail else "graph"
+    else:
+        derived = f"{noun} {tail}".strip() if tail else noun
+    return _span(match, derived)
 
 # A URL, a markdown link label, or a link-reference definition. None of the
 # three survives word substitution, and a paragraph holding one must not be
@@ -285,6 +366,9 @@ DOUBLE_QUOTE = '"' * 3
 SINGLE_QUOTE = "'" * 3
 
 
+IN_STRINGS = False
+
+
 def prose_mask(lines: list[str], suffix: str) -> list[bool]:
     """Which lines of a file are prose this tool may rewrite.
 
@@ -301,6 +385,23 @@ def prose_mask(lines: list[str], suffix: str) -> list[bool]:
       line. Whole rows are prose here and nothing is re-flowed, a row being a
       line by definition.
     """
+    if IN_STRINGS:
+        # R1614 -- the opt-in that reaches an assertion's LABEL.
+        #
+        # The default mask refuses every string literal, and the reason it gives
+        # is sound for the general case: a literal may be a payload an assertion
+        # compares against, so rewriting one changes what a test asserts rather
+        # than what it says. But the population left after the comment pass is
+        # almost entirely labels -- the third argument of `assert_eq`, the
+        # sentence in an `expect` -- and a label is printed on failure and
+        # compared to nothing.
+        #
+        # What makes the difference safe is not a cleverer classifier. It is
+        # that the JUDGE exists: a rewritten payload fails its own test, and a
+        # rewritten demo string fails its own demo. So this is opt-in per file
+        # and the caller runs those tests. It is never on by default, because a
+        # file nobody runs would be rewritten with nothing watching.
+        return [True] * len(lines)
     if suffix == ".md":
         mask: list[bool] = []
         fenced = False
@@ -378,12 +479,166 @@ def strip_symbol_path(line: str) -> str:
 ALLOW_PATHS: tuple[str, ...] = ("QName::",)
 
 
+def workspace_packages() -> set[str]:
+    """Every package name this workspace builds.
+
+    R1614 -- a package name is an IDENTIFIER wearing a string literal's
+    clothes, and `--in-strings` rewrote one: `figma-button-m3` in a demo's
+    sweep list became `design tool-button-m3`, with a space, and cargo refused
+    it. The demo caught it, which is the judge working -- and a class this
+    cheap to close should not need the judge twice.
+
+    Read from the workspace manifest rather than from `cargo metadata`, which
+    would make this tool need a toolchain to rewrite a comment.
+    """
+    names: set[str] = set()
+    for manifest in ROOT.glob("*/*/Cargo.toml"):
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            if line.startswith("name"):
+                _, _, value = line.partition("=")
+                names.add(value.strip().strip('"'))
+                break
+    return {n for n in names if n}
+
+
+PACKAGE_NAMES = workspace_packages()
+
+
+def guard_packages(line: str) -> tuple[str, list[str]]:
+    """Hide every workspace package name in `line` behind a placeholder.
+
+    Returns the masked line and what was hidden, so the caller can put them
+    back untouched after the substitutions have run.
+    """
+    hidden: list[str] = []
+    for name in sorted(PACKAGE_NAMES, key=len, reverse=True):
+        if name in line:
+            token = f"\x02{len(hidden)}\x02"
+            line = line.replace(name, token)
+            hidden.append(name)
+    return line, hidden
+
+
+def unguard_packages(line: str, hidden: list[str]) -> str:
+    for index, name in enumerate(hidden):
+        line = line.replace(f"\x02{index}\x02", name)
+    return line
+
+
 def rewrite_line(line: str) -> str:
+    line, hidden = guard_packages(line)
     out = strip_symbol_path(line)
+    out = ENGINE_RE.sub(rewrite_engine, out)
+    out = STRUCT_RE.sub(rewrite_struct, out)
+    out = ID_PREFIX_RE.sub("", out)
     out = CLASS_RE.sub(rewrite_class, out)
     out = PRODUCT_RE.sub(rewrite_product, out)
     out = CASED_RE.sub(rewrite_cased, out)
-    return fix_caps(out)
+    return unguard_packages(fix_caps(out), hidden)
+
+
+def has_name(body: str) -> bool:
+    """Whether this line holds anything this tool knows how to rewrite."""
+    # `SYMBOL_PATH_RE` has to be here too: the class and product patterns both
+    # refuse a name followed by `::`, so a line holding ONLY `DecorationRole`
+    # matched neither and was skipped.
+    return bool(
+        CLASS_RE.search(body)
+        or PRODUCT_RE.search(body)
+        or SYMBOL_PATH_RE.search(body)
+        or CASED_RE.search(body)
+        or ENGINE_RE.search(body)
+        or STRUCT_RE.search(body)
+        or ID_PREFIX_RE.search(body)
+    )
+
+
+# R1614 -- a link whose TARGET is the vendor's documentation site.
+#
+# The first pass refused any line holding a URL, and it was right to: a host
+# name is not prose and substituting inside one produced `doc.the toolkit.io`.
+# But refusing them left the citation in place, which is the thing the
+# directive is about. A link is not reworded -- it is REMOVED, and what it
+# was citing goes to the round's memory note, which is where the standing
+# prescription says the source belongs.
+LINK_DEF_RE = re.compile(r"^(?P<lead>.*?)\[(?P<label>[^\]]+)\]:\s*(?P<url>\S+)\s*$")
+INLINE_LINK_RE = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<url>[^)]*)\)")
+
+
+def _vendor_url(url: str) -> bool:
+    """Whether a URL's HOST names a reference project.
+
+    Only the host: a path segment can hold an ordinary word that happens to
+    collide, and a link to our own repository is not a citation of anyone.
+    """
+    host = re.sub(r"^[a-z+]+://", "", url).split("/", 1)[0]
+    return bool(rn_mentions(host))
+
+
+def _blank_comment(line: str) -> bool:
+    """A comment marker with nothing after it."""
+    return line.strip() in ("//!", "///", "//", "#")
+
+
+def unlink_vendor_docs(lines: list[str], mask: list[bool]) -> list[str]:
+    """Drop link definitions pointing at a vendor's docs, and unlink their uses.
+
+    Two passes, because a definition and its label are on different lines: the
+    definitions go first and record which labels are now dangling, then every
+    use of a dangling label loses its brackets. A dangling rustdoc link is a
+    hard error under `-D warnings`, so leaving one behind would be caught --
+    but caught at the commit gate rather than here, and this tool's job is to
+    hand the gate something that compiles.
+    """
+    dangling: set[str] = set()
+    out: list[str] = []
+    trimmed: list[str] = []
+    for index, line in enumerate(lines):
+        body = line.rstrip("\n")
+        match = LINK_DEF_RE.match(body)
+        if mask[index] and match and _vendor_url(match.group("url")):
+            dangling.add(match.group("label"))
+            continue  # the whole line goes
+        out.append(line)
+    # A link definition sits at the end of its doc block behind a blank comment
+    # line that exists only to separate it, so taking the definition can end
+    # the block on an empty `//!`. Only a TRAILING one is dropped: the blank
+    # before a definition that SURVIVES is load-bearing, because a link
+    # reference glued to the paragraph above it stops being a definition at all
+    # -- which is how this rule was found, as two broken rustdoc links.
+    for index, line in enumerate(out):
+        if (
+            _blank_comment(line)
+            and trimmed
+            and _blank_comment(trimmed[-1]) is False
+            and comment_prefix(trimmed[-1], "") is not None
+            and (index + 1 >= len(out) or comment_prefix(out[index + 1], "") is None)
+        ):
+            continue
+        trimmed.append(line)
+    out = trimmed
+    if not dangling:
+        result = out
+    else:
+        result = []
+        for line in out:
+            body = line.rstrip("\n")
+            for label in dangling:
+                body = body.replace(f"[{label}]", label)
+            result.append(body + ("\n" if line.endswith("\n") else ""))
+    # An INLINE link to a vendor's docs keeps its label and loses its target.
+    final: list[str] = []
+    for index, line in enumerate(result):
+        if index < len(mask) and not mask[index]:
+            final.append(line)
+            continue
+        body = line.rstrip("\n")
+        body = INLINE_LINK_RE.sub(
+            lambda m: m.group("label") if _vendor_url(m.group("url")) else m.group(0),
+            body,
+        )
+        final.append(body + ("\n" if line.endswith("\n") else ""))
+    return final
 
 
 CASES: list[tuple[str, str]] = [
@@ -439,14 +694,38 @@ FILE_CASES: list[tuple[list[str], list[str]]] = [
         ["/// mid-line. Qt keys them.\n"],
         ["/// mid-line. The toolkit keys them.\n"],
     ),
+    # R1614 -- a link to a vendor's docs is REMOVED rather than reworded. The
+    # definition line goes whole; the label it defined loses its brackets so no
+    # rustdoc link dangles; and the name inside the label is then an ordinary
+    # symbol the class pass can read.
     (
-        ["//! [`QEvent::X`]: https://doc.qt.io/qt-6/qevent.html\n"],
-        ["//! [`QEvent::X`]: https://doc.qt.io/qt-6/qevent.html\n"],
+        ["//! spells it [`QEvent::X`] here.\n",
+         "//! [`QEvent::X`]: https://doc.qt.io/qt-6/qevent.html\n"],
+        ["//! spells it `X` here.\n"],
     ),
     (
         ["//! see [the Qt docs](https://doc.qt.io/) for it\n"],
-        ["//! see [the Qt docs](https://doc.qt.io/) for it\n"],
+        ["//! see the toolkit docs for it\n"],
     ),
+    (
+        ["//! see [our own notes](https://github.com/x/y) for it\n"],
+        ["//! see [our own notes](https://github.com/x/y) for it\n"],
+    ),
+    # The id families R1614 taught it. Each is a derivation: the capability
+    # left when a vendor prefix goes, or the generic noun a type-prefix hides.
+    (["// what the DCC's NODE_OT_delete_reconnect does\n"],
+     ["// what the DCC's delete_reconnect does\n"]),
+    (["// `bNodeTree` holds the links\n"], ["// node tree holds the links\n"]),
+    (["// `UEdGraphSchema` decides\n"], ["// graph schema decides\n"]),
+    (["// `UK2Node_VariableSet` writes it\n"],
+     ["// variable set node writes it\n"]),
+    (["// FKismetCompilerContext walks it\n"],
+     ["// compiler context walks it\n"]),
+    (["// a Blueprint graph\n"], ["// a visual script graph\n"]),
+    # R1614 -- a workspace package name is an identifier, not prose, wherever
+    # it appears. `--in-strings` rewrote one into a name with a SPACE in it and
+    # cargo refused to build; the demo caught it and this closes the class.
+
     (
         ["//! needs more. A\n", "//! Wireshark viewer does.\n"],
         ["//! needs more. An\n", "//! analyser viewer does.\n"],
@@ -455,8 +734,16 @@ FILE_CASES: list[tuple[list[str], list[str]]] = [
 
 
 def run_pipeline(lines: list[str], suffix: str) -> list[str]:
-    """Substitute then capitalise, the way `migrate` does, minus the re-flow."""
+    """Unlink, substitute, then capitalise, the way `migrate` does, minus the
+    re-flow.
+
+    R1614 -- the unlink pass is here because it was NOT, and the two cases
+    asserting that a vendor doc link is left alone went on passing after the
+    pass that removes them landed. A selftest that runs a different pipeline
+    than the tool is a selftest of nothing.
+    """
     out = list(lines)
+    out = unlink_vendor_docs(out, prose_mask(out, suffix))
     mask = prose_mask(out, suffix)
     dirty = []
     for index, line in enumerate(out):
@@ -507,6 +794,38 @@ MASK_CASES: list[tuple[str, list[str], list[bool]]] = [
 ]
 
 
+def selftest_packages() -> int:
+    """The package guard, against a package whose NAME holds a vendor token.
+
+    R1614 -- no package in this workspace is named that way any more, which is
+    exactly why this test injects one: a fixture built from the current
+    manifest cannot tell the guard from its absence, and the round's first
+    draft of this case did not. The defect it models is real: `--in-strings`
+    rewrote `figma-button-m3` in a demo's sweep list into a name with a SPACE
+    and cargo refused to build.
+    """
+    global PACKAGE_NAMES  # noqa: PLW0603 -- the table under test
+    saved = PACKAGE_NAMES
+    failures = 0
+    try:
+        PACKAGE_NAMES = saved | {"figma-button-m3"}
+        cases = [
+            ('    "figma-button-m3",', '    "figma-button-m3",'),
+            ('# figma-button-m3 is built with Qt',
+             '# figma-button-m3 is built with the toolkit'),
+        ]
+        for given, want in cases:
+            got = rewrite_line(given)
+            if got != want:
+                failures += 1
+                print("  FAIL package guard")
+                print(f"    got  {got!r}")
+                print(f"    want {want!r}")
+    finally:
+        PACKAGE_NAMES = saved
+    return failures
+
+
 def selftest_masks() -> int:
     failures = 0
     for suffix, given, want in MASK_CASES:
@@ -519,7 +838,7 @@ def selftest_masks() -> int:
 
 
 def selftest() -> int:
-    failures = selftest_masks()
+    failures = selftest_masks() + selftest_packages()
     for given, want_lines in FILE_CASES:
         suffix = ".py" if given[0].lstrip().startswith("#") else ".rs"
         got_lines = run_pipeline(given, suffix)
@@ -539,7 +858,7 @@ def selftest() -> int:
         return 1
     print(
         f"migrate selftest: "
-        f"{len(CASES) + len(FILE_CASES) + len(MASK_CASES) + 1} cases OK"
+        f"{len(CASES) + len(FILE_CASES) + len(MASK_CASES) + 3} cases OK"
     )
     return 0
 
@@ -583,11 +902,18 @@ def rewrap(lines: list[str], first: int, last: int, suffix: str) -> list[str] | 
     # A `code span` is one word to the wrapper. Splitting `set_filter "a&b"`
     # across two lines leaves an unterminated span, and rustdoc then reads the
     # next bullet as a continuation of it -- which is how this was found.
+    # R1614 -- the placeholder is PADDED to the span's own width. It was three
+    # characters standing in for eighteen, so the wrapper measured a line that
+    # was not the line, and every paragraph holding a code span came out over
+    # the margin by the difference. Nothing failed: no lint measures a comment,
+    # so the only witness is a reader, and the first pass of this tool had none.
     spans: list[str] = []
 
     def hide(match: re.Match[str]) -> str:
-        spans.append(match.group(0))
-        return f"\x00{len(spans) - 1}\x00"
+        span = match.group(0)
+        spans.append(span)
+        token = f"\x00{len(spans) - 1}\x00"
+        return token + "\x01" * max(0, len(span) - len(token))
 
     joined = re.sub(r"`[^`]*`", hide, joined)
     wrapped = textwrap.wrap(
@@ -597,7 +923,7 @@ def rewrap(lines: list[str], first: int, last: int, suffix: str) -> list[str] | 
         break_on_hyphens=False,
     )
     wrapped = [
-        re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], line)
+        re.sub(r"\x00(\d+)\x00\x01*", lambda m: spans[int(m.group(1))], line)
         for line in wrapped
     ]
     # Never grow the paragraph past what it was plus the room the longer noun
@@ -713,16 +1039,18 @@ def migrate(paths: list[Path], apply: bool) -> tuple[int, int, list[str]]:
         suffix = path.suffix
         lines = text.splitlines(keepends=True)
         mask = prose_mask(lines, suffix)
+        unlinked = unlink_vendor_docs(lines, mask)
+        if unlinked != lines:
+            lines = unlinked
+            mask = prose_mask(lines, suffix)
+            changed += 1
+            dropped_links = True
+        else:
+            dropped_links = False
         dirty: list[int] = []
         for index, line in enumerate(lines):
             body = line.rstrip("\n")
-            if UNTOUCHED_RE.search(body):
-                skipped.append(f"{path.relative_to(ROOT)}:{index + 1}: reference id")
-            # `SYMBOL_PATH_RE` has to be in the trigger too: both of the
-            # other two refuse a name followed by `::`, so a line holding
-            # ONLY `DecorationRole` matched neither and was skipped.
-            if not (CLASS_RE.search(body) or PRODUCT_RE.search(body)
-                    or SYMBOL_PATH_RE.search(body) or CASED_RE.search(body)):
+            if not has_name(body):
                 continue
             # A URL spells the vendor inside a host name, and a rustdoc link
             # label has to keep matching its definition line. Both are whole
@@ -763,6 +1091,11 @@ def migrate(paths: list[Path], apply: bool) -> tuple[int, int, list[str]]:
         # article an earlier pass left behind, so the repair counts as a change
         # in its own right. Gating the write on `dirty` alone computed the fix
         # and threw it away.
+        # The mask is recomputed here because the passes above SPLICE: a
+        # re-flowed paragraph and a removed link definition both change the
+        # line count, and indexing a stale mask threw `IndexError` the first
+        # time a file lost a line.
+        mask = prose_mask(lines, suffix)
         repaired = False
         for index, line in enumerate(lines):
             if not mask[index]:
@@ -777,7 +1110,7 @@ def migrate(paths: list[Path], apply: bool) -> tuple[int, int, list[str]]:
                 repaired = True
                 changed += 1
 
-        if dirty or repaired:
+        if dirty or repaired or dropped_links:
             touched += 1
             if apply:
                 path.write_text("".join(lines), encoding="utf-8")
@@ -801,10 +1134,19 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--selftest", action="store_true")
+    parser.add_argument(
+        "--in-strings",
+        action="store_true",
+        help="also rewrite inside string literals; the caller MUST run the "
+             "tests and demos of every file passed",
+    )
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
+
+    if args.in_strings:
+        globals()["IN_STRINGS"] = True
 
     paths = files_under(args.targets or ["crates"])
     touched, changed, skipped = migrate(paths, apply=args.apply)

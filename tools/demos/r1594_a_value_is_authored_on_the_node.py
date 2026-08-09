@@ -8,7 +8,7 @@ other node's. `pinion-node-graph` had nowhere to put that, because `Port::defaul
 is derived from the kind — so this example had to carry each source's constant
 as a payload inside its own taxonomy (`Swatch([i64; 3])`), where nothing could
 ever edit it. The DCC keeps exactly what was missing, as
-`bNodeSocket::default_value`, per socket per node.
+`node socket::default_value`, per socket per node.
 
 `Node::values` is that, and the rule the evaluator applies is **one sentence
 covering both sides**: an authored value is what a port carries when nothing
@@ -140,8 +140,8 @@ def body() -> None:
         assert_eq(
             inv(tf, "node_value", "6"),
             "128,128,128",
-            "B: PAST BLENDER — it rests where the KIND declares, by the same "
-            "rule an input's pin default is reached. Blender's Value node gets "
+            "B: PAST the DCC — it rests where the KIND declares, by the same "
+            "rule an input's pin default is reached. The DCC's Value node gets "
             "its constant from per-node C code reading its own output socket, "
             "so a node type that forgets simply has none",
         )
@@ -222,15 +222,15 @@ def body() -> None:
         refused(tf, "set_value", f"{LEVEL}.in0=5")
         assert "no port in0" in str(q(tf, "last_refusal")), q(tf, "last_refusal")
         assert "has 0" in str(q(tf, "last_refusal")), (
-            "D: PAST BLENDER — a port that is not there is refused BY NAME, "
-            "with the arity. Blender writes a socket's default_value through "
+            "D: PAST the DCC — a port that is not there is refused BY NAME, "
+            "with the arity. The DCC writes a socket's default_value through "
             "RNA with no such gate"
         )
         refused(tf, "set_value", f"{LEVEL}.out0=1,2,3")
         refusal = str(q(tf, "last_refusal"))
         assert "Amount" in refusal and "Colour" in refusal, (
-            f"D: PAST BLENDER — the TYPE is checked and both are named: "
-            f"{refusal!r}. Blender gets this free from a different C struct "
+            f"D: PAST the DCC — the TYPE is checked and both are named: "
+            f"{refusal!r}. The DCC gets this free from a different C struct "
             f"per socket type; here the taxonomy answers value_type"
         )
         refused(tf, "set_value", "99.out0=1")

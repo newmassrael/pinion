@@ -17,23 +17,23 @@ that ran past north (372 degrees), and a five-facet radar.
 
 What this script checks, and why each check discriminates:
 
-* **PAST the toolkit 6.11 (1): the trace closes BY DERIVATION.** The series path's own
+* **PAST THE 6.11 FLOOR (1): the trace closes BY DERIVATION.** The series path's own
   command list is read: five samples and a `Close` on a full turn. A toolkit radar
   gets that final segment by appending the first point a second time, which
   puts a duplicate in the data the model does not contain. The counterfactual
   is the sector chip, where the same samples do not close.
-* **PAST the toolkit 6.11 (2): an out-of-period bearing is PLACED, and reported.** 372
+* **PAST THE 6.11 FLOOR (2): an out-of-period bearing is PLACED, and reported.** 372
   degrees is a bearing of 12, so the mark is drawn — and it lands on the same
   pixel a 12-degree reading would. The toolkit's angular axis is an ordinary
   value axis, so there it is simply out of range and nothing is drawn. The
   caption carries the report, which is a thing only an axis that placed the
   value can say.
-* **PAST the toolkit 6.11 (3): a SECTOR, which polar chart cannot draw at all.** Half
+* **PAST THE 6.11 FLOOR (3): a SECTOR, which polar chart cannot draw at all.** Half
   a turn opens the loop, drops the out-of-period sample to genuinely
   off-scale, and removes the rim — a full circle there would claim angles the
   axis does not carry. Wrapping is therefore a property of the SWEEP and not
   of the value.
-* **PAST the toolkit 6.11 (4): the winding is a declaration.** polar chart hard-codes
+* **PAST THE 6.11 FLOOR (4): the winding is a declaration.** polar chart hard-codes
   clockwise. The chip mirrors the plot, read as pixel positions rather than as
   a flag.
 * **The seam is labelled once.** The tick at the end of a closed period is the
@@ -202,11 +202,11 @@ def body() -> None:
             "axis is a real value axis, not a decoration",
         )
 
-        # ── (B) PAST the toolkit: the trace closes by derivation
+        # ── (B) PAST THE FLOOR: the trace closes by derivation
         # ──────────────
         assert closes(snap, "chart.series.0"), (
-            "PAST QT: the segment from the last sample back to the first is "
-            "the AXIS's doing. A Qt radar gets it by appending the first "
+            "PAST THE FLOOR: the segment from the last sample back to the first is "
+            "the AXIS's doing. A toolkit radar gets it by appending the first "
             "point again, putting a duplicate in the data the model lacks"
         )
         assert_eq(
@@ -215,13 +215,13 @@ def body() -> None:
             "five samples and a Close, with nothing repeated",
         )
 
-        # ── (C) PAST the toolkit: an out-of-period bearing is PLACED
+        # ── (C) PAST THE FLOOR: an out-of-period bearing is PLACED
         # ──────────
         wrapped = rect(snap, f"chart.point.0.{WRAPPED_INDEX}")
         assert wrapped is not None, (
-            f"PAST QT: {WRAPPED_BEARING:.0f} degrees is a bearing of 12, so "
-            "the reading is drawn. Qt's angular axis is an ordinary "
-            "QValueAxis, so there it is out of range and draws nothing"
+            f"PAST THE FLOOR: {WRAPPED_BEARING:.0f} degrees is a bearing of 12, so "
+            "the reading is drawn. The toolkit's angular axis is an ordinary "
+            "value axis, so there it is out of range and draws nothing"
         )
         # And it lands where a 12-degree bearing lands: just clockwise of the
         # 0-degree sample, on the same side of the vertical.
@@ -249,7 +249,7 @@ def body() -> None:
             "so no two angular labels stack",
         )
 
-        # ── (E) PAST the toolkit: a sector, which polar chart cannot draw
+        # ── (E) PAST THE FLOOR: a sector, which polar chart cannot draw
         # ─────
         toggle(tf, SECTOR_TAG)
         snap = snapshot(tf)
@@ -274,7 +274,7 @@ def body() -> None:
         assert "0 wrapped, 1 off-scale" in text, text
         toggle(tf, SECTOR_TAG)
 
-        # ── (F) PAST the toolkit: the winding is a declaration
+        # ── (F) PAST THE FLOOR: the winding is a declaration
         # ────────────────
         snap = snapshot(tf)
         east_cw = centre(rect(snap, "chart.point.0.1"))
@@ -283,8 +283,8 @@ def body() -> None:
         snap = snapshot(tf)
         east_ccw = centre(rect(snap, "chart.point.0.1"))
         assert east_cw[0] > east_ccw[0] + 20, (
-            "PAST QT: the 90-degree bearing sits at 3 o'clock clockwise and "
-            f"at 9 o'clock the other way. QPolarChart hard-codes the first: "
+            "PAST THE FLOOR: the 90-degree bearing sits at 3 o'clock clockwise and "
+            f"at 9 o'clock the other way. polar chart hard-codes the first: "
             f"{east_cw} vs {east_ccw}"
         )
         assert "increase counter-clockwise" in caption(snap), caption(snap)
@@ -363,9 +363,9 @@ def body() -> None:
         assert_eq(
             status.get("name"),
             caption(snap),
-            "PAST QT: a screen reader is told the SAME sweep, winding and "
-            "out-of-period report a sighted reader sees. QtCharts draws into "
-            "a QGraphicsScene and implements no accessibility interface",
+            "PAST THE FLOOR: a screen reader is told the SAME sweep, winding and "
+            "out-of-period report a sighted reader sees. The toolkit's charting module draws into "
+            "a canvas scene and implements no accessibility interface",
         )
         name = status.get("name") or ""
         assert "Half turn" in name, name

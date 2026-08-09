@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1551 §5.36 block-format consumer — a document of paragraphs each declaring its own BlockFormat (Qt QTextBlockFormat): indents, spacing, first-line/hanging text-indent and heading level, lowered to the ordinary layout box, honoured by both the Vello and the terminal backend, published by scene/text_blocks and announced as a heading outline"
+description = "R1551 §5.36 block-format consumer — a document of paragraphs each declaring its own BlockFormat (the toolkit text block format): indents, spacing, first-line/hanging text-indent and heading level, lowered to the ordinary layout box, honoured by both the Vello and the terminal backend, published by scene/text_blocks and announced as a heading outline"
 publish = false
 
 [[bin]]

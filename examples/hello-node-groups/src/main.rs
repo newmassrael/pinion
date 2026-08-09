@@ -1333,8 +1333,8 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::new("last_rewire", "string"),
                     // R1589 — the containment forest, whole. Neither the DCC
                     // nor the toolkit has an accessor for "what contains what
-                    // right now": `bNode::parent` is one pointer per node, so the relation
-                    // exists only as something you reassemble.
+                    // right now": `node::parent` is one pointer per node, so
+                    // the relation exists only as something you reassemble.
                     SchemaField::new("frames", "string"),
                     // Argument-taking reads.
                     SchemaField::action("node_kind", "string"),
@@ -1963,7 +1963,7 @@ impl GroupsOracle {
     /// R1590 — the run of nodes that do what this one does, in evaluation
     /// order, with the subject's place in it.
     ///
-    /// "3 of 7" is the fact `NODE_OT_select_same_type_step` cannot answer: it
+    /// "3 of 7" is the fact `select_same_type_step` cannot answer: it
     /// reports by moving the active node and says only whether it moved.
     fn same_kind_read(&self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         let state = self.bound()?;
@@ -2154,9 +2154,10 @@ impl GroupsOracle {
     /// Inward it is named by the argument, because the user is looking at the
     /// host tree and pointing at a group. Outward it is the edit path's own
     /// last step — the user is inside the group, so the group they are inside
-    /// IS the boundary — which is the same place the DCC reads it from (`snode->edittree`
-    /// against `ED_node_tree_get(snode, 1)`), and refusing at the root is its "Not inside node group".
-    /// R1586 — the verbs that change how a node or a wire takes part.
+    /// IS the boundary — which is the same place the DCC reads it from
+    /// (`snode->edittree` against `tree_get(snode, 1)`), and refusing at the
+    /// root is its "Not inside node group". R1586 — the verbs that change how
+    /// a node or a wire takes part.
     ///
     /// `bypass` and `mute_link` change what the graph *means*; `collapse` and
     /// `hide_ports` change only what it looks like; `dissolve` and `detach`

@@ -8,7 +8,7 @@ the boundary is a signature — R1577 built that. A **frame** contains a region 
 *canvas*: its members stay exactly where they are, they compute exactly as
 before, and the boundary means nothing to the evaluator at all. Without it the
 commonest thing anyone does to a large graph — fence off eight nodes and call
-them "decode" — has nowhere to be recorded. A census of `~/the DCC-ref` at
+them "decode" — has nowhere to be recorded. A census of the DCC reference tree at
 `8cf50599` names eight operators for it (`attach`, `detach`, `join`,
 `join_named`, `join_nodes`, `parent_set`, `translate_attach`,
 `translate_attach_remove_on_cancel`) and this crate had **no concept of it at
@@ -20,9 +20,9 @@ What this script checks, and why each check discriminates:
   be a frame, and nothing may contain itself. Both are asserted by driving the
   refusals over the wire and reading the graph back afterwards.
 * **PAST the DCC (1): the cycle is REFUSED, and the refusal names the chain.**
-  the DCC declares the same `bNode *parent` and states both rules as
+  the DCC declares the same `node *parent` and states both rules as
   `BLI_assert` inside `node_attach_node` — compiled out of the build it ships.
-  Worse, its own `NODE_OT_parent_set` calls `node_detach_node` FIRST, so by the
+  Worse, its own `parent_set` calls `node_detach_node` FIRST, so by the
   time the assert runs the chain it would have walked is already cleared: the
   guard cannot fire even in a debug build. Nothing there then terminates, since
   `node_is_parent_and_child` and `get_sorted_node_parents` both walk `parent` to
@@ -153,8 +153,8 @@ def body() -> None:
         assert_eq(
             q(tf, "frames"),
             f"{frame}={BASE},{BLEND},{LEVEL}",
-            "B: PAST BLENDER — the forest is enumerable in one read, where "
-            "`bNode::parent` is one pointer per node and the relation has no "
+            "B: PAST the DCC — the forest is enumerable in one read, where "
+            "`node::parent` is one pointer per node and the relation has no "
             "accessor at all",
         )
         assert_eq(
@@ -209,7 +209,7 @@ def body() -> None:
             moved.split(":")[1],
             str(inner),
             "E: only the OUTERMOST selected node is attached — `base` keeps the "
-            "container that is itself moving. Blender computes this three "
+            "container that is itself moving. The DCC computes this three "
             "times: node_join_attach_recursive, node_detach_recursive (two "
             "recursive functions over two structs with identical fields) and "
             "again in the transform code",
@@ -224,8 +224,8 @@ def body() -> None:
         reason = refused(tf, "reparent", f"{frame}>{inner}")
         assert "inside itself" in reason, f"F: {reason!r}"
         assert f"{frame} contains" in reason, (
-            f"F: PAST BLENDER — the refusal NAMES the chain: {reason!r}. "
-            "Blender asserts this and its own NODE_OT_parent_set detaches "
+            f"F: PAST the DCC — the refusal NAMES the chain: {reason!r}. "
+            "the DCC asserts this and its own parent_set detaches "
             "first, clearing the very chain the assert walks"
         )
         assert_eq(
@@ -237,7 +237,7 @@ def body() -> None:
         assert "cannot be inside itself" in reason, f"F: {reason!r}"
         reason = refused(tf, "reparent", f"{BASE}>{MIX}")
         assert "is not a frame" in reason, (
-            f"F: PAST BLENDER — Blender states this one as BLI_assert too: {reason!r}"
+            f"F: PAST the DCC — the DCC states this one as BLI_assert too: {reason!r}"
         )
         assert_eq(q(tf, "valid"), "ok", "F: and the document is still a forest")
 
@@ -247,8 +247,8 @@ def body() -> None:
         assert_eq(
             where(tf, BASE)["ancestry"],
             f"{frame},{third}",
-            "G: PAST BLENDER — out of `inner`, still inside the two fences the "
-            "gesture did not touch. NODE_OT_detach clears the parent outright, "
+            "G: PAST the DCC — out of `inner`, still inside the two fences the "
+            "gesture did not touch. detach clears the parent outright, "
             "so only the all-the-way form is reachable there",
         )
         inv(tf, "reparent", f"{BASE}>-")
@@ -296,8 +296,8 @@ def body() -> None:
         assert_eq(
             out["reframed"],
             str(copy),
-            "J: PAST BLENDER — the copy went back inside the fence its original "
-            "is in. Blender's copy path looks the parent up in the copy map, "
+            "J: PAST the DCC — the copy went back inside the fence its original "
+            "is in. The DCC's copy path looks the parent up in the copy map, "
             "does not find it because the frame was not selected, and calls "
             "node_detach_node with no record anywhere",
         )
@@ -329,7 +329,7 @@ def body() -> None:
             assert_eq(
                 where(tf, node)["parent"],
                 str(inner),
-                "L: grafted onto whatever contained the instance. Blender "
+                "L: grafted onto whatever contained the instance. The DCC "
                 "assigns the group node's parent to EVERY copied node, which "
                 "overwrites the relationships its own copy step just recreated",
             )
@@ -342,7 +342,7 @@ def body() -> None:
         assert_eq(
             where(tf, back[0])["ancestry"],
             ",".join(deep[:-1]),
-            "M: PAST BLENDER — only the containment the deletion destroyed is "
+            "M: PAST the DCC — only the containment the deletion destroyed is "
             "destroyed. node_unlink_attached clears the child's parent "
             "outright, putting it on the canvas while its outer fence is still "
             "there",
@@ -398,7 +398,7 @@ def body() -> None:
         assert_eq(
             pasted["reframed"],
             "",
-            "N: PAST BLENDER — pasted into ANOTHER tree, the copy joins no "
+            "N: PAST the DCC — pasted into ANOTHER tree, the copy joins no "
             "frame even though the number it remembers names a frame right "
             "here. That is the hazard BKE_main_merge walks into by matching "
             "datablocks on their NAME",

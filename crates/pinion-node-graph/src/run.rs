@@ -15,7 +15,7 @@
 //! demand — and its **successor** comes from the control plane.
 //!
 //! The engine splits the same way and says so on the predicate that does it:
-//! `FKismetCompilerContext::PinIsImportantForDependancies` returns
+//! `compiler context::PinIsImportantForDependancies` returns
 //! `PinCategory != PC_Exec`, commented *"the execution wires do not form data
 //! dependencies, they are only important for final scheduling and that is
 //! handled thru gotos"*.
@@ -55,10 +55,10 @@
 //! walk carries a stack of levels, each holding the descent it is reading
 //! through and the return address it came in by. A group instance is not a
 //! computation and takes no turn of its own; entering one shows up in the
-//! trace as the first [`Step`] *inside* it, whose [`Step::instance`] names the instance node.
-//! The engine has no equivalent because it has no instance: a macro is
-//! expanded by `FEdGraphUtilities::CloneGraph`, so its N uses are N copies of the nodes before anything
-//! runs.
+//! trace as the first [`Step`] *inside* it, whose [`Step::instance`] names the
+//! instance node. The engine has no equivalent because it has no instance: a
+//! macro is expanded by `graph utilities::CloneGraph`, so its N uses are N
+//! copies of the nodes before anything runs.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -105,10 +105,12 @@ pub enum Stop {
     /// The step budget ran out with work still pending — which is what an
     /// execution loop with no exit looks like from inside.
     ///
-    /// Named rather than folded into [`Self::Halted`], because "it finished" and "we
-    /// stopped watching" are different facts. The engine reaches the same
-    /// condition at run time, in a shipped build, by counting to `GMaximumScriptLoopIterations` and
-    /// raising `EBlueprintExceptionType::InfiniteLoop`; the loop itself is nameable here before anything runs, by
+    /// Named rather than folded into [`Self::Halted`], because "it finished"
+    /// and "we stopped watching" are different facts. The engine reaches the
+    /// same condition at run time, in a shipped build, by counting to
+    /// `GMaximumScriptLoopIterations` and raising
+    /// `visual script exception type::InfiniteLoop`; the loop itself is
+    /// nameable here before anything runs, by
     /// [`Document::control_loops`](crate::Document::control_loops).
     BudgetExhausted,
 }
@@ -258,8 +260,9 @@ impl<K: NodeKind> Document<K> {
     /// A node with at least one control output and **no control input at
     /// all**: nothing can hand control to it, so if it runs, it runs first.
     /// That is a property of the node's signature, which is what makes it
-    /// derivable — the engine reaches the same set by node *class* (`UK2Node_Event`, `UK2Node_FunctionEntry`),
-    /// so there it is a list of types to know rather than a question to ask.
+    /// derivable — the engine reaches the same set by node *class* (event
+    /// node, function entry node), so there it is a list of types to know
+    /// rather than a question to ask.
     ///
     /// A node whose control input is merely *unwired* is not an entry: it is
     /// unreachable, which is a different fact and one an editor reports

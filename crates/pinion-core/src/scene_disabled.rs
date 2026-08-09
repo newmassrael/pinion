@@ -8,7 +8,7 @@
 //! declarations before this round — `pointer_transparent` (R705), `focusable`
 //! (R1020), `drop_target` (R1080), `cursor` (R1196) — and every one of them
 //! describes the node that carries it and nothing else. The toolkit's
-//! [`QWidget::setEnabled`] is the one that does not: a disabled widget makes
+//! `setEnabled` is the one that does not: a disabled widget makes
 //! its whole subtree non-interactive, which is why group box can gate a
 //! panel of controls from one checkbox in its title and `<fieldset disabled>`
 //! can gate a form. pinion had no way to state it, and consequently no group
@@ -66,7 +66,6 @@
 //! reports each disabled node's [`DisabledInk`], so "declared disabled, ink
 //! unchanged" is a fact an agent reads rather than a surprise it discovers.
 //!
-//! [`QWidget::setEnabled`]: https://doc.qt.io/qt-6/qwidget.html#enabled-prop
 //! [`LayoutStyle::resolved_disabled`]: crate::style::LayoutStyle::resolved_disabled
 
 use crate::Scene;
@@ -671,7 +670,7 @@ mod tests {
         assert_eq!(
             middle.declared_by.as_deref(),
             Some("outer"),
-            "AND sits in one — Qt's WA_ForceDisabled case, both halves reported",
+            "AND sits in one — the toolkit's WA_ForceDisabled case, both halves reported",
         );
     }
 

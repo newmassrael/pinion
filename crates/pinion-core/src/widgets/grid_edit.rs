@@ -1797,7 +1797,7 @@ mod tests {
             let at = CellIndex::new(0, 0);
             assert!(
                 !state.begin_on(EditTrigger::AnyKeyPressed, at, &edit),
-                "type-to-replace is not in Qt's default set"
+                "type-to-replace is not in the toolkit's default set"
             );
             assert_eq!(state.focused(), None, "a refused trigger opens nothing");
             assert!(state.begin_on(EditTrigger::DoubleClicked, at, &edit));
@@ -1813,7 +1813,7 @@ mod tests {
                     state.begin(at, &edit);
                     state.focused().is_some()
                 },
-                "the programmatic open bypasses the gate (Qt `edit(index)`)"
+                "the programmatic open bypasses the gate (the toolkit `edit(index)`)"
             );
         });
     }
@@ -1901,7 +1901,7 @@ mod tests {
             use_text_edit_state("t.dirty").set_text("abc".to_string());
             assert!(
                 !state.is_dirty(),
-                "edited back to the original is not dirty — Qt cannot tell"
+                "edited back to the original is not dirty — the toolkit cannot tell"
             );
         });
     }
@@ -2192,7 +2192,7 @@ mod tests {
                 !asked,
                 "the model is not asked to store something that is not a value \
                  of its cell's kind — and the outcome says WHICH failure it was, \
-                 where Qt's validator makes this state unreachable at the price \
+                 where the toolkit's validator makes this state unreachable at the price \
                  of committing a value the user did not type"
             );
             assert!(state.is_dirty(), "a malformed buffer is unsaved work");
@@ -2260,7 +2260,7 @@ mod tests {
                     written,
                     Some(seed),
                     "{kind:?} — an untouched open-and-commit does not change \
-                     the datum (Qt's default double editor rounds to 2 decimals)"
+                     the datum (the toolkit's default double editor rounds to 2 decimals)"
                 );
                 assert_eq!(state.focused(), None);
             }
@@ -2339,11 +2339,11 @@ mod tests {
             assert_eq!(written, Some(CellValue::Text("typed".into())));
             assert!(
                 state.is_persistent_editor_open(at),
-                "Qt's persistent editor survives commitData, and so does this one"
+                "the toolkit's persistent editor survives commitData, and so does this one"
             );
             assert!(
                 !state.is_dirty_at(at),
-                "the committed value is the new seed — Qt keeps no seed at all, \
+                "the committed value is the new seed — the toolkit keeps no seed at all, \
                  so a second commit there has nothing to compare against"
             );
             assert_eq!(state.text_at(at).as_deref(), Some("typed"));
@@ -2491,7 +2491,7 @@ mod tests {
             assert_eq!(
                 state.open_persistent(at, &text(CellKind::Text, "seed")),
                 OpenOutcome::Promoted,
-                "Qt reaches the same end by inserting the existing widget into \
+                "the toolkit reaches the same end by inserting the existing widget into \
                  its persistence set — an outcome `void` cannot report"
             );
             assert!(state.is_persistent_editor_open(at));
@@ -2530,7 +2530,7 @@ mod tests {
                     true
                 }),
                 CommitOutcome::Committed(a),
-                "the 'save every open editor' verb — a private hash in Qt"
+                "the 'save every open editor' verb — a private hash in the toolkit"
             );
             assert_eq!(written, vec![(a, CellValue::Int(41))]);
             assert!(state.is_focused(b), "committing a is not focusing a");
@@ -2571,7 +2571,7 @@ mod tests {
                     .collect::<Vec<_>>(),
                 vec![0, 4],
                 "an editor outside the painted rows costs the paint nothing — \
-                 Qt repositions every persistent editor on every scroll"
+                 the toolkit repositions every persistent editor on every scroll"
             );
             assert!(window.iter().filter(|c| c.focused).count() <= 1);
             // The model turning a cell read-only under an open editor: the

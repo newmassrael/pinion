@@ -3776,7 +3776,7 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine)
 }
 
 /// Emit one Vello glyph run per parley [`GlyphRun`](pinion_text::parley::GlyphRun)
-/// shaped from `t.content` + `t.style` (R47.3 §5.36 + R47.6 the design tool-fidelity wire).
+/// shaped from `t.content` + `t.style` (R47.3 §5.36 + R47.6 design-tool-fidelity wire).
 ///
 /// The text origin is `(t.rect.x, t.rect.y)`; `t.rect.w > 0` wraps at
 /// that pixel width, `w == 0` flows on a single unbounded line.

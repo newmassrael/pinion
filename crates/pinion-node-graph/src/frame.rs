@@ -11,17 +11,19 @@
 //! actually does to a big graph — put a fence round eight nodes and call it
 //! "decode" — has nowhere to be recorded.
 //!
-//! The relation itself is one nullable field ([`Node::parent`]). What makes it worth a
-//! module is that it is a **forest**, and a forest is a thing that can be
-//! broken: a parent that is not a container, a parent that is not there, a
+//! The relation itself is one nullable field ([`Node::parent`]). What makes it
+//! worth a module is that it is a **forest**, and a forest is a thing that can
+//! be broken: a parent that is not a container, a parent that is not there, a
 //! node that contains itself. The DCC declares the same field and states both
-//! of its rules as `BLI_assert` — `node_attach_node` asserts `parent.is_frame()` and `!node_is_parent_and_child(parent, node)` — which are compiled out of
-//! the build it ships. Worse, its own `NODE_OT_parent_set` **detaches before it attaches**, so
-//! by the time that second assert runs the chain it would have walked is
-//! already cleared: select a frame's own container along with it, press
-//! <kbd>Ctrl</kbd>+<kbd>P</kbd>, and the two nodes contain each other in a
-//! debug build too. Nothing in the DCC then terminates — `node_is_parent_and_child` and `get_sorted_node_parents` both walk
-//! `parent` to `nullptr`.
+//! of its rules as `BLI_assert` — `node_attach_node` asserts
+//! `parent.is_frame()` and `!node_is_parent_and_child(parent, node)` — which
+//! are compiled out of the build it ships. Worse, its own `parent_set`
+//! **detaches before it attaches**, so by the time that second assert runs the
+//! chain it would have walked is already cleared: select a frame's own
+//! container along with it, press <kbd>Ctrl</kbd>+<kbd>P</kbd>, and the two
+//! nodes contain each other in a debug build too. Nothing in the DCC then
+//! terminates — `node_is_parent_and_child` and `get_sorted_node_parents` both
+//! walk `parent` to `nullptr`.
 //!
 //! So here the two rules are checked, the refusal **names the chain**, and
 //! [`Document::validate`] reports a forest that arrived broken from a file.
@@ -144,8 +146,8 @@ impl<K: NodeKind> Document<K> {
     /// Put `node` inside `parent`, or take it out of everything (`None`),
     /// answering where it was.
     ///
-    /// The one mutator of the forest. The DCC's `NODE_OT_parent_set` and the
-    /// model half of its `NODE_OT_attach`.
+    /// The one mutator of the forest. The DCC's `parent_set` and the
+    /// model half of its `attach`.
     ///
     /// # Errors
     ///
@@ -306,9 +308,10 @@ impl<K: NodeKind> Document<K> {
 
     /// Put `selection` in a new frame and answer it.
     ///
-    /// The DCC's `NODE_OT_join`. The frame lands at the selection's centre, and **inside
-    /// whatever already contained all of it** ([`Self::common_frame`]), so framing part of a
-    /// pipeline does not lift it out of the pipeline.
+    /// The DCC's `join`. The frame lands at the selection's centre, and
+    /// **inside whatever already contained all of it**
+    /// ([`Self::common_frame`]), so framing part of a pipeline does not lift
+    /// it out of the pipeline.
     ///
     /// # Errors
     ///
@@ -354,11 +357,11 @@ impl<K: NodeKind> Document<K> {
     /// Take `selection` out of the frames immediately containing it, answering
     /// the nodes that moved.
     ///
-    /// **One level**, so a node in `Outer > Inner` lands in `Outer`. That is what "out of its
-    /// frame" means, it composes (repeat to leave the next one), and the
-    /// all-the-way form is [`Self::set_parent`] with `None`. The DCC's `NODE_OT_detach` clears the parent
-    /// outright, so only the second of those two behaviours is reachable
-    /// there.
+    /// **One level**, so a node in `Outer > Inner` lands in `Outer`. That is
+    /// what "out of its frame" means, it composes (repeat to leave the next
+    /// one), and the all-the-way form is [`Self::set_parent`] with `None`. The
+    /// DCC's `detach` clears the parent outright, so only the second of those
+    /// two behaviours is reachable there.
     ///
     /// Acts on [`Self::outermost`]: a selected node inside another selected node
     /// keeps its container, because that container is itself moving and taking

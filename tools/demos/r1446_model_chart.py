@@ -177,7 +177,7 @@ def body() -> None:
         assert_eq(
             series_vertices(snap, 0),
             0,
-            "the text column draws NOTHING — no zeros are invented (Qt draws a flat line here)",
+            "the text column draws NOTHING — no zeros are invented (the toolkit draws a flat line here)",
         )
         assert_eq(series_vertices(snap, 1), NROWS, "the real measure is unaffected")
         assert "Month: 8 text cells, not a measure" in status_of(snap), (

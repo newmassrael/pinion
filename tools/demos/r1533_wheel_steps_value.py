@@ -291,7 +291,7 @@ def range_slider_is_untouched() -> None:
     """(H) NEGATIVE CONTROL.
 
     `RangeSliderExternal` shares the slider's SCXML and its normalised value
-    domain, and deliberately gets no wheel hook this round (Qt has no
+    domain, and deliberately gets no wheel hook this round (the toolkit has no
     two-thumb slider, so there is no `wheelEvent` to mirror and no answer to
     "which thumb does a notch move"). It is the control that fails if the
     wheel were wired somewhere shared instead of per widget.

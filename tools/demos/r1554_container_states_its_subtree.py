@@ -323,8 +323,8 @@ def body() -> None:
         assert_eq(
             gate_node.get("controls"),
             REGION,
-            "and it publishes WHAT it governs (ARIA aria-controls; Qt's "
-            "checkable QGroupBox publishes no such relation)",
+            "and it publishes WHAT it governs (ARIA aria-controls; the toolkit's "
+            "checkable group box publishes no such relation)",
         )
         for m in MEMBERS:
             node = access_node_by_tag(access, m)

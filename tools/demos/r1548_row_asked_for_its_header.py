@@ -302,8 +302,8 @@ def both_roles() -> None:
                 headers[row_header_tag(VT, row)].get("name"),
                 want,
                 f"row {row} announces its painted number, with the mark's "
-                f"MEANING ahead of it when it has one — in Qt that glyph is "
-                f"silent, because QAccessibleTableHeaderCell names a section "
+                f"MEANING ahead of it when it has one — in the toolkit that glyph is "
+                f"silent, because accessible table header cell names a section "
                 f"from its DisplayRole alone on both orientations",
             )
         assert pinned, "premise: the window holds at least one pinned row"
@@ -487,8 +487,8 @@ def eager_surface() -> None:
 def declined() -> None:
     """(F) The negative control, on `hello-grid-nav`.
 
-    **This is the assertion Qt cannot make.** A Qt model that does not answer
-    `Qt::Vertical` still gets a header view: `QTableView` paints blank sections
+    **This is the assertion the toolkit cannot make.** A toolkit model that does not answer
+    `Vertical` still gets a header view: table view paints blank sections
     that occupy their width, and no observation distinguishes that from rows
     with genuinely empty names. Here declining the axis is `no_row_header()`,
     and what it produces is *nothing* — no band, no corner, no section, and no
@@ -506,7 +506,7 @@ def declined() -> None:
         assert_eq(marked_sections(ns, NAV), [], "no row mark")
         assert by_tag(ns, corner_tag(NAV)) is None, (
             "and no corner — a declined axis leaves no trace in the scene, "
-            "where Qt would leave an empty strip nothing can report on"
+            "where the toolkit would leave an empty strip nothing can report on"
         )
         a11y = access(tf)
         assert_eq(

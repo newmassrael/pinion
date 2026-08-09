@@ -355,7 +355,9 @@ mod tests {
         let a = compass();
         assert!(a.closes());
         let ten = a.angle(10.0).expect("in period");
-        let three_seventy = a.angle(370.0).expect("PAST QT: wrapped, not dropped");
+        let three_seventy = a
+            .angle(370.0)
+            .expect("PAST THE FLOOR: wrapped, not dropped");
         assert!(
             (ten - three_seventy).abs() < 1e-5,
             "370 degrees is 10 degrees: {ten} vs {three_seventy}"

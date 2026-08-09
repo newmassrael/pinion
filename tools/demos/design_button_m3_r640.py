@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R640 §5.7 — the design tool-button-m3 reactive lift dogfood (§5.49 R59).
+"""R640 §5.7 — design-button-m3 reactive lift dogfood (§5.49 R59).
 
 R635 landed the design tool → pinion binding as a static one-frame snapshot:
 the SCXML `ButtonExternal` was wrapped, but `read_state` was clamped to
@@ -11,7 +11,7 @@ demo is its AI-first self-verification harness per
 Verification arc, mirroring the pre-R640 baseline `hello-button` covers
 through the same RPC primitives:
 
-  1. spawn the design tool-button-m3
+  1. spawn design-button-m3
   2. baseline `scene/query "/external/state"` → `"Idle"`
   3. synthesise full Idle → Hover → Pressed → Hover (activate) cycle
      via `scene/invoke "/external/send"`:
@@ -57,7 +57,7 @@ from rpc_verify import (
 
 
 # The design tool spec constants — duplicate of the Rust-side `const`s in
-# `examples/the design tool-button-m3/src/main.rs`. Kept here verbatim so the
+# `examples/design-button-m3/src/main.rs`. Kept here verbatim so the
 # 9-point sampler indexes the same pixel positions the spec carries.
 WIN_W, WIN_H = 320, 160
 BTN_W, BTN_H = 109, 40
@@ -66,17 +66,17 @@ CANVAS_BG = (0x1F, 0x1F, 0x1F, 255)  # neutral dark
 
 
 def capture_idle_screenshot() -> Path:
-    """Run figma-button-m3 with `PINION_SCREENSHOT=<tmp>` to bypass winit
+    """Run design-button-m3 with `PINION_SCREENSHOT=<tmp>` to bypass winit
     and write the initial Idle paint scene as RGBA8 PNG. Returns the
     captured path; the file lives in `tempfile.gettempdir()` so CI
     cleanup picks it up.
     """
     out = Path(tempfile.mkdtemp(prefix="pinion-r640-")) / "btn.png"
-    binary = WORKSPACE_ROOT / "target" / "release" / "figma-button-m3"
+    binary = WORKSPACE_ROOT / "target" / "release" / "design-button-m3"
     if binary.exists():
         cmd = [str(binary)]
     else:
-        cmd = ["cargo", "run", "-p", "figma-button-m3", "--quiet", "--release"]
+        cmd = ["cargo", "run", "-p", "design-button-m3", "--quiet", "--release"]
     env = os.environ.copy()
     env["PINION_SCREENSHOT"] = str(out)
     res = subprocess.run(
@@ -194,7 +194,7 @@ def body() -> None:
     verify_idle_pixels()
 
     # ── Phase 2 — RPC-driven state machine introspection ─────────
-    with RpcSubprocess("figma-button-m3") as btn:
+    with RpcSubprocess("design-button-m3") as btn:
         initial = btn.query("/external/state")
         assert_eq(initial, "Idle", "initial /external/state")
 
@@ -244,4 +244,4 @@ def body() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(run_demo("figma-button-m3 reactive lift", body))
+    sys.exit(run_demo("design-button-m3 reactive lift", body))

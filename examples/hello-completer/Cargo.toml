@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1449 §5.27 §5.38 §5.40 completer attached to a plain text input — Qt QCompleter parity (filter mode x case sensitivity x popup/unfiltered-popup/inline completion) over the pinion_core::widgets::completion model, with the whole completion readable and drivable as scene-as-data"
+description = "R1449 §5.27 §5.38 §5.40 completer attached to a plain text input — the toolkit completer parity (filter mode x case sensitivity x popup/unfiltered-popup/inline completion) over the pinion_core::widgets::completion model, with the whole completion readable and drivable as scene-as-data"
 publish = false
 
 [[bin]]

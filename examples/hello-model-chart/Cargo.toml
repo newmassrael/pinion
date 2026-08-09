@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1446 Phase-B dataviz consumer — a chart plots the field the user points it at. The forcing consumer for pinion_chart::ModelMapper (the QtCharts Q*XYModelMapper contract over pinion's typed CellValue cell model): a records table feeds a LineChart through a mapper whose x field is a radio-chip choice and whose y fields are toggle chips, so WHICH column is plotted is a runtime decision. Points the y axis at a Text column and the chart plots nothing and says why, where Qt's QVariant::toReal() would draw a flat line on zero. Cell values are writable over RPC (scene/intervene /records/value.R.C), so an agent puts data in and the chart follows."
+description = "R1446 Phase-B dataviz consumer — a chart plots the field the user points it at. The forcing consumer for pinion_chart::ModelMapper (the toolkit charting module Q*XYModelMapper contract over pinion's typed CellValue cell model): a records table feeds a LineChart through a mapper whose x field is a radio-chip choice and whose y fields are toggle chips, so WHICH column is plotted is a runtime decision. Points the y axis at a Text column and the chart plots nothing and says why, where the toolkit's toReal() would draw a flat line on zero. Cell values are writable over RPC (scene/intervene /records/value.R.C), so an agent puts data in and the chart follows."
 publish = false
 
 [[bin]]

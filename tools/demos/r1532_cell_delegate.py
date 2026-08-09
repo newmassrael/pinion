@@ -250,7 +250,7 @@ def body() -> None:
                 f"row {row}'s bar is labelled with the model's own value — a "
                 f"bar encodes in pixels, so a delegate that dropped the label "
                 f"would make the column invisible to §2 #7 and to a screen "
-                f"reader (the reason Qt's QProgressBar carries text())",
+                f"reader (the reason the toolkit's progress bar carries text())",
             )
 
         # ── (F) it survives virtualization ───────────────────────────

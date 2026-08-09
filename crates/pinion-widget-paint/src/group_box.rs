@@ -390,7 +390,7 @@ mod tests {
         let scene = app(None, &Theme::default());
         assert!(
             disabled_census(&scene).is_empty(),
-            "Qt's setCheckable(false) default: a titled frame and no gate",
+            "the toolkit's setCheckable(false) default: a titled frame and no gate",
         );
         assert_eq!(fill_of(find(&scene, "threshold")), CONTROL, "full ink");
     }
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(
             legend.mnemonic.as_ref().map(|m| m.key),
             Some('A'),
-            "Qt accepts the same `&` in a group-box title",
+            "the toolkit accepts the same `&` in a group-box title",
         );
     }
 
@@ -527,7 +527,10 @@ mod tests {
         let scene = view_group_box("g", "Section", None, &theme, &style, content());
         let mut borders = 0_u32;
         count(&scene, &mut borders);
-        assert_eq!(borders, 0, "Qt setFlat(true) draws the top line alone");
+        assert_eq!(
+            borders, 0,
+            "the toolkit setFlat(true) draws the top line alone"
+        );
     }
 
     #[test]
@@ -657,7 +660,7 @@ mod tests {
         assert_eq!(
             hit.segments,
             vec![GroupBoxTag::content("g")],
-            "the press stops at the region — Qt hands such an event to the parent",
+            "the press stops at the region — the toolkit hands such an event to the parent",
         );
     }
 }

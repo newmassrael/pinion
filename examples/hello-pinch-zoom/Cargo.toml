@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1432 §5.35 §5.15 — a native pinch (magnify) gesture zooms a viewport. A widget that overrides External::pinch_gesture accumulates the incremental magnification of a two-finger trackpad pinch (Qt QNativeGestureEvent ZoomNativeGesture) across the GesturePhase Begin..End arc, and discards the in-flight zoom on Cancel. winit exposes PinchGesture only on macOS/iOS, so the scene/pinch_gesture RPC is the AI-first driver (§2 #2): a headless client zooms the viewport with no trackpad, drivable + introspectable."
+description = "R1432 §5.35 §5.15 — a native pinch (magnify) gesture zooms a viewport. A widget that overrides External::pinch_gesture accumulates the incremental magnification of a two-finger trackpad pinch (the toolkit native gesture event ZoomNativeGesture) across the GesturePhase Begin..End arc, and discards the in-flight zoom on Cancel. winit exposes PinchGesture only on macOS/iOS, so the scene/pinch_gesture RPC is the AI-first driver (§2 #2): a headless client zooms the viewport with no trackpad, drivable + introspectable."
 publish = false
 
 [[bin]]

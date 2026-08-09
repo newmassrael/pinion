@@ -12,7 +12,7 @@ pinion-core = { path = "../pinion-core", version = "0.0.1" }
 pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
 pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
 
-# R634 §5.7 — the design tool-verify sub-command. clap drives the CLI shape;
+# R634 §5.7 — design-verify sub-command. clap drives the CLI shape;
 # ureq fetches the design tool REST API responses (sync — no tokio runtime
 # at the CLI boundary per §6.3); serde / serde_json deserialize
 # the node-tree JSON for downstream Scene mapping (R635+).
@@ -20,7 +20,7 @@ clap = { workspace = true }
 ureq = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# R638 §5.7 — `the design tool-diff` PNG decode + Lanczos3 resize for dim
+# R638 §5.7 — `design-diff` PNG decode + Lanczos3 resize for dim
 # alignment between pinion render output (R637) and the design tool reference
 # (R636). PNG-only feature set keeps the CLI binary lean.
 image = { workspace = true }

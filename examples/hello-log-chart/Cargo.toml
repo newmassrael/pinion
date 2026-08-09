@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1528 logarithmic-axis chart consumer — the forcing consumer for pinion-chart's LogScale / ValueScale, the crate's first non-affine axis (Qt QLogValueAxis). Three latency-percentile series spanning four decades share one plot: on the linear axis every sub-millisecond sample is pinned to the baseline, and one toggle switches the value axis to log, where equal ratios occupy equal pixel spans. The dataset carries a zero sample on purpose — a log axis has no pixel for it, so it draws no mark and is REPORTED in the caption rather than placed on the baseline where it would be indistinguishable from a real sample at the domain floor."
+description = "R1528 logarithmic-axis chart consumer — the forcing consumer for pinion-chart's LogScale / ValueScale, the crate's first non-affine axis (the toolkit log value axis). Three latency-percentile series spanning four decades share one plot: on the linear axis every sub-millisecond sample is pinned to the baseline, and one toggle switches the value axis to log, where equal ratios occupy equal pixel spans. The dataset carries a zero sample on purpose — a log axis has no pixel for it, so it draws no mark and is REPORTED in the caption rather than placed on the baseline where it would be indistinguishable from a real sample at the domain floor."
 publish = false
 
 [lints]

@@ -23,7 +23,7 @@
 //! WAI-ARIA tablist tree.
 //!
 //! Reorderable tabs are the canonical IDE / DCC editor-tab affordance —
-//! the northern-star "the engine-class editor self-hosted in pinion" wants
+//! the northern-star "engine-class editor self-hosted in pinion" wants
 //! draggable document tabs — so this is a Phase-B catalog entry as much
 //! as a substrate test.
 //!

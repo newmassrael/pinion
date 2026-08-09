@@ -1,5 +1,5 @@
-//! `pinion-node-graph` — the mechanism of a DCC/Blueprint-class node system,
-//! with the taxonomy left to the application (R1577, Phase B).
+//! `pinion-node-graph` — the mechanism of a DCC/visual script-class node
+//! system, with the taxonomy left to the application (R1577, Phase B).
 //!
 //! # Why this crate exists
 //!

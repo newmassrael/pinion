@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1560 §5.36 table consumer — a document whose cells are addressed by their place in the flow (Qt QTextTable): automatic re-addressing when a cell is inserted, a span clamped to the free run and named, a ragged table's slack published, header bands derived from the address, laid out on a real CSS Grid, published by scene/text_tables and announced as a WAI-ARIA table"
+description = "R1560 §5.36 table consumer — a document whose cells are addressed by their place in the flow (the toolkit text table): automatic re-addressing when a cell is inserted, a span clamped to the free run and named, a ragged table's slack published, header bands derived from the address, laid out on a real CSS Grid, published by scene/text_tables and announced as a WAI-ARIA table"
 publish = false
 
 [[bin]]

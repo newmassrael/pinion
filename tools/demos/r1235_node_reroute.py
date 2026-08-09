@@ -2,7 +2,7 @@
 """R1235 §5.38 §5.52 — node-graph REROUTE node (wire splice).
 
 A dense graph reads better when a long wire is bent around obstacles. R1235 adds
-the Blueprint / material-editor "reroute" (knot): splice a typed 1-in / 1-out
+the visual script / material-editor "reroute" (knot): splice a typed 1-in / 1-out
 passthrough into an edge so it routes A -> R -> B instead of A -> B, then drag R
 to route the wire. All AI-first over the §5.12 plane (§2 #2), no pixels:
 

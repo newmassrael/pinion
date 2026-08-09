@@ -229,8 +229,8 @@ def narrow_grid() -> None:
             headers[header_tag(VT, KEY_COL)].get("name"),
             f"{KEY_MEANING} {VT_HEADERS[KEY_COL]}",
             "the MEANINGFUL mark joins the header's accessible name ahead of "
-            "the label — in Qt this glyph is silent, because "
-            "QAccessibleTableHeaderCell names a section from its DisplayRole "
+            "the label — in the toolkit this glyph is silent, because "
+            "accessible table header cell names a section from its DisplayRole "
             "alone",
         )
         assert_eq(

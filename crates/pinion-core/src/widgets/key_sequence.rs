@@ -1,5 +1,5 @@
 //! R1569 §5.38 §5.39 §5.20 — `KeySequenceEdit`: the field a keyboard shortcut
-//! is *recorded* into (Qt [`QKeySequenceEdit`]).
+//! is *recorded* into (the toolkit key-sequence editor).
 //!
 //! This is the widget every keymap-preferences pane is built from, and the one
 //! widget whose entire job is to **not** let the window's shortcuts fire: a
@@ -47,8 +47,6 @@
 //! calls `finishEditing()` in the toolkit. Neither is a capability, so neither is worth
 //! diverging on ([[the toolkit-is-the-floor-not-the-target]] leaves the *shape* a fresh
 //! choice, and here the toolkit's shape is already right).
-//!
-//! [`QKeySequenceEdit`]: https://doc.qt.io/qt-6/qkeysequenceedit.html
 
 #[allow(
     non_snake_case,

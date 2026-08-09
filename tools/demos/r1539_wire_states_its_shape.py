@@ -302,7 +302,7 @@ def body() -> None:
                 errs,
                 [],
                 f"D: {method} conforms to the published {ty}. THIS is the "
-                f"assertion Qt's meta-object never makes — moc describes the "
+                f"assertion the toolkit's meta-object never makes — moc describes the "
                 f"declaration and nothing checks the answer against it",
             )
 

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1608 Phase-B plane-C consumer — a Grafana-class tile dashboard over the R1560 CSS Grid. Cards live on twelve Fr(1.0) columns at (col,row,w,h); a press-drag snaps to grid cells and moves the card, displacing whatever it lands on downward, and every displacement is NAMED. The arrangement is pinion_core::widgets::tile_grid::TileGrid, so the whole layout is one serializable value an agent can read and edit over the wire — scene/query /external/layout returns it as JSON and scene/invoke drives move_to / resize / compact with no pixel."
+description = "R1608 Phase-B plane-C consumer — a monitoring-tool-class tile dashboard over the R1560 CSS Grid. Cards live on twelve Fr(1.0) columns at (col,row,w,h); a press-drag snaps to grid cells and moves the card, displacing whatever it lands on downward, and every displacement is NAMED. The arrangement is pinion_core::widgets::tile_grid::TileGrid, so the whole layout is one serializable value an agent can read and edit over the wire — scene/query /external/layout returns it as JSON and scene/invoke drives move_to / resize / compact with no pixel."
 publish = false
 
 [[bin]]

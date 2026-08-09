@@ -1,4 +1,4 @@
-//! R638 §5.7 — `pinion the design tool-diff` sub-command.
+//! R638 §5.7 — `pinion design-diff` sub-command.
 //!
 //! Pixel-diff side of the design tool → pinion design-parity loop. Pre-R638
 //! the workflow stopped after R637 saved the pinion-rendered PNG —
@@ -11,7 +11,7 @@
 //! ## Wire shape
 //!
 //! ```text
-//! $ pinion the design tool-diff /tmp/pinion-btn.png /tmp/the design tool-btn-ref.png \
+//! $ pinion design-diff /tmp/pinion-btn.png /tmp/design-ref-btn.png \
 //!     --resize b-to-a -o /tmp/btn-diff.png
 //! image-a: 320 x 160 RGBA
 //! image-b: 218 x 80 RGBA (resized to 320 x 160 via Lanczos3)
@@ -89,15 +89,15 @@ impl std::str::FromStr for ResizeMode {
     }
 }
 
-/// Arguments for the `the design tool-diff` sub-command.
+/// Arguments for the `design-diff` sub-command.
 #[derive(Args)]
-pub struct FigmaDiffArgs {
+pub struct DesignDiffArgs {
     /// First image (canonical: pinion output from R637
     /// `PINION_SCREENSHOT=...`).
     pub image_a: PathBuf,
 
     /// Second image (canonical: the design tool reference from R636
-    /// `pinion the design tool-fetch-image`).
+    /// `pinion design-fetch-image`).
     pub image_b: PathBuf,
 
     /// Output path for the diff visualization PNG. When omitted only
@@ -131,7 +131,7 @@ pub struct DiffMetrics {
     pub exact_match_count: u64,
 }
 
-/// R638 §5.7 — execute the `the design tool-diff` sub-command.
+/// R638 §5.7 — execute the `design-diff` sub-command.
 ///
 /// # Errors
 ///
@@ -139,7 +139,7 @@ pub struct DiffMetrics {
 /// - Dimension mismatch when `--resize` is omitted
 /// - I/O / encode error on the diff PNG output (when `--output`
 ///   is supplied)
-pub fn run(args: &FigmaDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: &DesignDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     let img_a = decode_rgba8(&args.image_a)?;
     let img_b = decode_rgba8(&args.image_b)?;
     eprintln!("image-a: {} x {} RGBA", img_a.width(), img_a.height());
@@ -304,7 +304,7 @@ fn render_diff_visualization(image_a: &RgbaImage, image_b: &RgbaImage) -> RgbIma
 /// `u64`; the lint is correct in principle but irrelevant here —
 /// our denominator is `width * height` and our numerator is
 /// `sum_of_abs_deltas ≤ 255 * pixel_count`. For an 8K × 8K image
-/// (well past the design tool-diff use case) those land at ~6.7e7 and
+/// (well past the design-diff use case) those land at ~6.7e7 and
 /// ~1.7e10 respectively, both ≪ 2^53 ≈ 9e15 f64 mantissa ceiling.
 /// One helper keeps the allow + rationale in a single spot rather
 /// than 5 inline annotations.

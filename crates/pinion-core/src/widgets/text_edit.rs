@@ -1863,7 +1863,7 @@ impl TextEditState {
     }
 
     /// R769 §5.36 §5.22 — merge a per-field style transform over the byte
-    /// range `[start, end)` (Qt `mergeCharFormat`): the toolbar "toggle
+    /// range `[start, end)` (the toolkit's `mergeCharFormat`): the toolbar "toggle
     /// **bold** / *italic* over the selection while keeping its colour"
     /// primitive. Each affected byte's other styling is preserved; only
     /// the field(s) `mutate` touches change. Covered bytes transform
@@ -3741,7 +3741,7 @@ fn overlay_style_run(runs: &mut Vec<StyleRun>, new: StyleRun) {
 }
 
 /// R769 §5.36 §5.22 — merge a per-field style transform over the byte
-/// range `[start, end)` (Qt `QTextCursor::mergeCharFormat` semantics):
+/// range `[start, end)` (the toolkit's text-cursor `mergeCharFormat`):
 /// every byte keeps its other styling and only the field(s) `mutate`
 /// touches change. A byte already covered by a run has `mutate` applied
 /// to *that run's* resolved style; an uncovered byte resolves against

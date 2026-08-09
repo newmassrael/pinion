@@ -138,7 +138,7 @@ def body() -> None:
         assert f"{BASE} -> {MIX} -> {FADE} -> {OUT}" in bypass, (
             "B: and NAMES the walk that leaves the selection and returns. No "
             "unselected node here has both an input from the selection and an "
-            "output to it, so Blender's one-hop test accepts this selection "
+            "output to it, so the DCC's one-hop test accepts this selection "
             f"and builds a cyclic tree: {bypass!r}"
         )
         assert_eq(q(tf, "trees"), 1, "B: a refused collapse built no definition")
@@ -210,7 +210,7 @@ def body() -> None:
         recursion = refused(tf, "instantiate", str(definition))
         assert "nest a group inside itself" in recursion, f"G: {recursion!r}"
         assert str(definition) in recursion, (
-            "G: and the chain is NAMED. Blender reports one flat sentence for "
+            "G: and the chain is NAMED. The DCC reports one flat sentence for "
             f"a direct self-nest and for one four groups deep: {recursion!r}"
         )
         assert_eq(q(tf, "nodes"), 3, "G: nothing was placed")

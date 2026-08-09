@@ -329,6 +329,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1493 §5.27 §2#7 — QHeaderView defaultSectionSize + the effective plural",
+        "R1493 §5.27 §2#7 — header view defaultSectionSize + the effective plural",
         body,
     ))

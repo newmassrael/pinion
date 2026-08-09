@@ -1439,7 +1439,7 @@ impl WidgetCore for ColumnReorderView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-column-reorder (R1451 §5.27 QHeaderView section layout)"
+        "pinion hello-column-reorder (R1451 §5.27 header view section layout)"
     }
 
     fn keybinding(_key: &str) -> Option<()> {
@@ -2525,7 +2525,7 @@ mod tests {
 
         let bounded = after(&mut scene, |i| {
             i.intervene("max_section_size", IntrospectValue::Int(130))
-                .expect("Qt's setMaximumSectionSize has a wire peer");
+                .expect("the toolkit's setMaximumSectionSize has a wire peer");
         });
         assert_eq!(bounded.bounds, (DEFAULT_MIN_COL_WIDTH, 130));
         assert_eq!(
@@ -2704,7 +2704,7 @@ mod tests {
             i.invoke("set_section_hidden", IntrospectValue::Text("2:true".into()))
                 .expect("set_section_hidden is a known action");
             i.intervene("default_section_size", IntrospectValue::Int(70))
-                .expect("Qt's setDefaultSectionSize has a wire peer");
+                .expect("the toolkit's setDefaultSectionSize has a wire peer");
         });
         assert_eq!(hidden_kept.default_size, 70);
         assert_eq!(
@@ -2745,7 +2745,7 @@ mod tests {
         // things depending on a rule the user can see.
         let mut scene = boot_scene();
         let boot = read_header_state(&scene);
-        assert!(!boot.rules.cascading, "off by default, as in Qt");
+        assert!(!boot.rules.cascading, "off by default, as in the toolkit");
         assert!(
             layout_readout(&boot).contains("| cascade off |"),
             "and the readout says so: {}",
@@ -2778,7 +2778,7 @@ mod tests {
         let mut scene = boot_scene();
         let on = after(&mut scene, |i| {
             i.intervene("cascading_section_resizes", IntrospectValue::Bool(true))
-                .expect("Qt's property has a wire peer");
+                .expect("the toolkit's property has a wire peer");
         });
         assert!(on.rules.cascading);
         assert!(
@@ -2870,7 +2870,7 @@ mod tests {
         assert_eq!(
             boot.default_alignment,
             TextAlign::Center,
-            "Qt centres a horizontal header"
+            "the toolkit centres a horizontal header"
         );
         assert!(
             layout_readout(&boot).contains("| align C"),
@@ -2949,7 +2949,10 @@ mod tests {
     fn r1498_the_f_key_fills_the_row_and_the_readout_names_the_rule() {
         let mut scene = boot_scene();
         let boot = after(&mut scene, publish_viewport);
-        assert!(!boot.rules.stretch_last, "off by default, as in Qt");
+        assert!(
+            !boot.rules.stretch_last,
+            "off by default, as in the toolkit"
+        );
         assert!(
             layout_readout(&boot).contains("| stretch-last off |"),
             "and the readout says so: {}",

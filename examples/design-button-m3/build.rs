@@ -1,4 +1,4 @@
-//! R635 §5.7 pinion-forge codegen entrypoint for the design tool-button-m3.
+//! R635 §5.7 pinion-forge codegen entrypoint for design-button-m3.
 //!
 //! Mirrors the hello-button / ai-introspect-demo build.rs shape:
 //! compile `app.pinion.xml` → `$OUT_DIR/app.rs` which main.rs pulls

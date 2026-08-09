@@ -9,10 +9,10 @@ re-typed each round, and it has been **wrong three times in recorded ways**
 * R1587.1 — *one name, two spellings*: `no_mute_links` is read under that name
   and set through a builder called `no_muted_links`, so a field census reported
   **zero** users where there are 42.
-* R1589 — *one spelling, two meanings*: `NODE_OT_detach` (from a frame) and
-  `NODE_OT_links_detach` (a wire) are both "detach", so an operator we had for
+* R1589 — *one spelling, two meanings*: `detach` (from a frame) and
+  `links_detach` (a wire) are both "detach", so an operator we had for
   one was counted as covering the other.
-* R1598 — *the name is not where the implementation is*: `NODE_OT_swap_node`
+* R1598 — *the name is not where the implementation is*: `swap_node`
   appears in `space_node/*.cc` only as a **string argument**, and is really a
   Python operator.
 
@@ -26,16 +26,16 @@ the rule was right and nobody had written the computation.
 
 | mechanism                | how it is written                                 |
 |--------------------------|---------------------------------------------------|
-| `cpp`                    | `<any>->idname = "NODE_OT_x"`, or `= __func__`     |
-| `macro`                  | `WM_operatortype_append_macro("NODE_OT_x", ...)`   |
+| `cpp`                    | `<any>->idname = "x"`, or `= __func__`     |
+| `macro`                  | `WM_operatortype_append_macro("x", ...)`   |
 | `cpp-template`           | a `socket_items` maker, registering per accessor   |
 | `cpp-template-instance`  | the id one such maker registers, in `operator_idnames` |
-| `python-core`            | `bl_idname = "node.x"` under `scripts/startup/`     |
+| `python-core`            | `idname = "node.x"` under `scripts/startup/`     |
 | `python-addon`           | the same, anywhere else                            |
 
 The distinction is not bookkeeping. A **macro** is a composition of other
-operators (`NODE_OT_translate_attach` is `TRANSFORM_OT_translate` then
-`NODE_OT_attach`), so counting one as a missing capability is a *false gap* —
+operators (`translate_attach` is `TRANSFORM_OT_translate` then
+`attach`), so counting one as a missing capability is a *false gap* —
 the error R1577 already recorded for the DCC's 429 registered node types. An
 **addon** operator is not the DCC's node system at all. And an **instance** is
 the mirror: 69 ids that are four behaviours, so counting them would put one
@@ -44,7 +44,7 @@ capability in the denominator sixty-nine times.
 ## R1605 — and reading C++ as text is not enough, so the residue is measured
 
 Three registrations were missed at once, each a different failure, and all three
-were found by asking the census to account for **every** `NODE_OT_` token rather
+were found by asking the census to account for **every** `` token rather
 than to find the ones it knew how to find:
 
 * `operator_type->idname = "…"` — the receiver is not always called `ot`, so a
@@ -64,7 +64,7 @@ side carries the same check as [`unreal_command_residue`]. Comments are removed
 before matching ([`read_cxx`]), so a documented-but-absent virtual cannot be
 counted.
 
-**the engine's peer unit is not a node class.** `UK2Node_*` is content (113 of them,
+**the engine's peer unit is not a node class.** `script node*` is content (113 of them,
 the analogue of the DCC's registered node types); the surface that answers "what
 can this editor DO" is a `TCommands<T>` subclass — and there is **not one of
 them**. See R1605 below.
@@ -74,13 +74,13 @@ them**. See R1605 below.
 R1603 read `FGraphEditorCommandsImpl` and nothing else, so the census measured
 the *generic* node canvas and read every per-editor graph command as zero.
 the engine ships at least nine graph-editor command classes: the generic one plus
-the Blueprint, material, animation, sound-cue, sound-class and behaviour-tree
+the visual script, material, animation, sound-cue, sound-class and behaviour-tree
 editors' own. `MaterialEditorActions.h` alone declares 68, and a material graph
 is half of what this axis is named for.
 
 Two measurement corrections came with reading them:
 
-* **The unit is the `TCommands` CLASS, not the header.** `BlueprintEditorCommands.h`
+* **The unit is the `TCommands` CLASS, not the header.** `visual script editor commands.h`
   holds three classes and only one of them is the graph's;
   `BehaviorTreeEditorCommands.h` holds three. R1603's single list happened to be
   one class per file, so the difference was invisible.
@@ -184,10 +184,10 @@ VERDICTS = {
 #: only one is blind to whole capability classes rather than merely incomplete.
 #:
 #: R1593 (a link may convert) and R1594 (a value is authored on a socket) each
-#: closed something a node substrate cannot host a material or Blueprint graph
-#: without. Both are `UEdGraphSchema` virtuals in the engine
+#: closed something a node substrate cannot host a material or visual script graph
+#: without. Both are graph schema virtuals in the engine
 #: (`CreateAutomaticConversionNodeAndConnections`, `TrySetDefaultValue`) and
-#: `bNodeType` / `bNodeTreeType` callbacks in the DCC — and **neither is an
+#: node type / node tree type callbacks in the DCC — and **neither is an
 #: operator**, so the R1601 census read both as zero and the coverage judged on
 #: top of it was overstated by exactly the amount nobody could see.
 #:
@@ -390,7 +390,7 @@ class Census:
 #: of the text that are prose, and to MEASURE the residue instead of assuming it
 #: away — see [`residue`].
 #:
-#: Measured on `EdGraphSchema.h` / `EdGraphNode.h` at the pinned revision:
+#: Measured on `graph schema.h` / `graph node.h` at the pinned revision:
 #: stripping changes neither header's virtual count, so today it corrects
 #: nothing. It is here because "the reference happens not to document a virtual
 #: it does not declare" is luck, and a census that depends on luck is the thing
@@ -436,7 +436,7 @@ def walk(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
 
 #: R1605 — the receiver is NOT always called `ot`.
 #:
-#: `NODE_OT_new_compositor_sequencer_node_group` writes
+#: `new_compositor_sequencer_node_group` writes
 #: `operator_type->idname = "…"`, and a regex that hard-codes `ot->` reported it
 #: as unregistered. That is [[debt-DCC-census-by-field-name]] exactly — a
 #: census keyed on a *variable name* — recurring inside the tool built to end it.
@@ -446,7 +446,7 @@ CPP_MACRO = re.compile(r'WM_operatortype_append_macro\(\s*"(NODE_OT_[a-z_0-9]+)"
 #:
 #: Found by the closing audit, and it is the *fourth* instance in one round of
 #: the same failure: a census that accepts exactly one spelling. `node_wrangler`
-#: writes `bl_idname = 'node.nw_swap_links'`, and six operators were invisible.
+#: writes `idname = 'node.nw_swap_links'`, and six operators were invisible.
 #:
 #: All six are addon operators, so the coverage number does not move — but that
 #: is luck, not a bound. A `scripts/startup/` operator written with single quotes
@@ -456,7 +456,7 @@ PY_IDNAME = re.compile(r"""bl_idname\s*=\s*(['"])node\.([a-z_0-9]+)\1""")
 
 #: R1605 — and sometimes the string is not in the source at all.
 #:
-#: `NODE_OT_deactivate_viewer` writes `ot->idname = __func__`, so its id exists
+#: `deactivate_viewer` writes `ot->idname = __func__`, so its id exists
 #: only after the compiler substitutes the enclosing function's name. **No
 #: text census can read that** without knowing what `__func__` means, which is
 #: the sharpest available answer to "is reading C++ as text good enough": not by
@@ -467,8 +467,8 @@ CPP_IDNAME_FUNC = re.compile(
 
 #: A registration FUNCTION's own symbol, which is not an operator id.
 #:
-#: `void NODE_OT_collapse_toggle(wmOperatorType *ot)` sets
-#: `ot->idname = "NODE_OT_hide_toggle"` — the function is named after a command
+#: `void collapse_toggle(wmOperatorType *ot)` sets
+#: `ot->idname = "hide_toggle"` — the function is named after a command
 #: the user sees and registers an operator with a different id. Counting the
 #: symbol would have invented an operator that does not exist, which is the
 #: `absent`-side twin of the error R1601 corrected.
@@ -479,7 +479,7 @@ CPP_OPERATOR_FUNCTION = re.compile(r"\bvoid\s+(NODE_OT_[a-z_0-9]+)\s*\(\s*wmOper
 #:
 #: `NOD_socket_items_ops.hh` declares four `template<typename Accessor>` makers
 #: that call `WM_operatortype_append` with the idname taken from the accessor, so
-#: **no registration site anywhere writes `ot->idname = "NODE_OT_…"`**. The names
+#: **no registration site anywhere writes `ot->idname = "…"`**. The names
 #: live as `static constexpr StringRefNull` members of a per-accessor
 #: `struct operator_idnames`, in `source/the DCC/nodes/` rather than in
 #: `editors/space_node/` — a different directory, a different spelling, and 69
@@ -510,8 +510,8 @@ CPP_ANY_IDNAME = re.compile(r"\bNODE_OT_[a-z_0-9]+")
 
 #: R1605.1 — the Python side's residue, the peer of [`unreal_command_residue`].
 #:
-#: A `bl_idname` whose value is not a quoted literal is **unreadable by any text
-#: census**: `bl_idname = ANIM_KS_LOCATION_ID` names an operator only after the
+#: A `idname` whose value is not a quoted literal is **unreadable by any text
+#: census**: `idname = ANIM_KS_LOCATION_ID` names an operator only after the
 #: module is imported. Measured at the pinned revision: 14, all of them keying
 #: sets, addon preferences and key configurations — no node operator among them.
 #: That is a fact about today's tree, not a property of the mechanism, so the
@@ -528,7 +528,7 @@ def census_blender(root: Path) -> tuple[dict[str, Operator], list[str]]:
     is the R1598 attribution error stated as a rule instead of a hazard.
     """
     found: dict[str, Operator] = {}
-    #: Function symbols named `NODE_OT_*` — not operator ids. See
+    #: Function symbols named `*` — not operator ids. See
     #: [`CPP_OPERATOR_FUNCTION`].
     symbols: set[str] = set()
 
@@ -569,7 +569,7 @@ def census_blender(root: Path) -> tuple[dict[str, Operator], list[str]]:
     for name, member, where in blender_hooks(root):
         add(f"{name}::{member}", name, where)
 
-    # ★ The completeness claim, computed rather than asserted. Every `NODE_OT_*`
+    # ★ The completeness claim, computed rather than asserted. Every `*`
     # token the C++ contains is exactly one of:
     #
     #   * an id assigned at a registration site (`cpp` / `macro`),
@@ -1119,7 +1119,7 @@ def report(census: Census, pin: dict, strict: bool) -> int:
 # pushed artifact. The mapping below is what makes the census publishable, and
 # it is a rename rather than an encoding: an operator id is
 # `<vendor prefix>_<capability>` and the capability half is already the generic
-# name, so `NODE_OT_add_group` becomes `add_group` and nothing is lost. Hashing
+# name, so `add_group` becomes `add_group` and nothing is lost. Hashing
 # the ids would have been the other option and it would have made the census
 # unreadable by the people who maintain it.
 PUBLIC_TREE = {"blender": "dcc", "unreal": "engine"}

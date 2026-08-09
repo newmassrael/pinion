@@ -532,7 +532,7 @@ mod tests {
         assert_eq!(s.auto_repeat(), None);
     }
 
-    /// PAST the toolkit: a held arrow that can no longer move the value stops
+    /// PAST THE FLOOR: a held arrow that can no longer move the value stops
     /// declaring a cadence. abstract spin box keeps its 10 Hz timer
     /// running against a value pinned at `maximum()` for as long as the
     /// user holds — here the hold goes quiet, which is also what lets the

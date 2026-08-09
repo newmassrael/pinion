@@ -125,7 +125,7 @@ fn the_arms_share_of_a_header_strip_is_a_function_of_the_declaration() {
     assert_eq!(
         (served, declined),
         (0, HEADERS.len()),
-        "under Qt's Center default the arm paints NONE of the five labels",
+        "under the toolkit's Center default the arm paints NONE of the five labels",
     );
 
     let (served, declined) = census(&header_strip(TextAlign::Start, None), &engine);

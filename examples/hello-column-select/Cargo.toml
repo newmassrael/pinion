@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1563 §5.40 a selection with two axes: a 10,000-row by 8-column virtualized data-grid whose selection is a set of CELLS. A column header selects the column through it (Qt QHeaderView::sectionPressed), a cell press selects one cell (Qt SelectItems), Shift extends a rectangle, and the selection is held as canonical BANDS so the whole model is one band and eleven bytes on the wire."
+description = "R1563 §5.40 a selection with two axes: a 10,000-row by 8-column virtualized data-grid whose selection is a set of CELLS. A column header selects the column through it (the toolkit sectionPressed), a cell press selects one cell (the toolkit SelectItems), Shift extends a rectangle, and the selection is held as canonical BANDS so the whole model is one band and eleven bytes on the wire."
 publish = false
 
 [[bin]]

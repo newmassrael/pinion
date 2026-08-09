@@ -2,7 +2,8 @@
 """R1608 §5.21 — a tile dashboard is a value, and every gesture is a verb.
 
 R1607 built `TileGrid` and measured that the R1560 CSS Grid already holds a
-the dashboard tool-class dashboard, then deliberately stopped without a consumer -- so it
+dashboard of the class a monitoring tool draws, then deliberately stopped
+without a consumer -- so it
 could not answer whether the reflow's *locality* holds under a real pointer.
 This demo is that answer, over the wire.
 
@@ -119,7 +120,7 @@ def body() -> None:
         assert_eq(
             inv(tf, "move_to", "topology,0,0"),
             "throughput:0>2, latency:1>3, alarms:2>4",
-            "C: ★ Grafana reflows silently; every displaced card is named here, "
+            "C: ★ the dashboard tool reflows silently; every displaced card is named here, "
             "and `alarms` moved because a card that was itself pushed landed on it",
         )
         assert_eq(q(tf, "last_reflow"), "throughput:0>2, latency:1>3, alarms:2>4",
@@ -177,7 +178,7 @@ def body() -> None:
         assert_eq(q(tf, "tile_count"), 4, "H: four left")
         gapped = q(tf, "tiles")
         assert "@0,0" not in gapped.split()[0], (
-            "H: ★ the gap STAYS — Grafana would have closed it as a side effect "
+            "H: ★ the gap STAYS — the dashboard tool would have closed it as a side effect "
             f"of the removal, which makes the inverse not a removal. Got {gapped}"
         )
         tidied = inv(tf, "compact", 0)

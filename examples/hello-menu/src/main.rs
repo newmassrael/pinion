@@ -11,7 +11,7 @@
 //! Phase B widget-catalog entry. A classic editor menubar
 //! (`File` / `Edit` / `View`) with floating command dropdowns — the
 //! primitive every pro DCC / IDE / CAD tool ships, and a direct step
-//! toward the northern-star "the engine-class editor self-hosted in
+//! toward the northern-star "engine-class editor self-hosted in
 //! pinion".
 //!
 //! ## Command-class, not selection

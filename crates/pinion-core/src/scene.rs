@@ -2195,8 +2195,9 @@ pub fn capture_surface(tag: impl Into<Cow<'static, str>>, rect: Rect, focusable:
 /// The styled-run substrate (`RichText` / `Text.rich`): a [`TextNode`]
 /// carries a `style` that applies to the whole string *plus* an
 /// ordered list of `StyleRun`s, each fully restyling the bytes in
-/// `[start, end)`. This is the Qt `QTextLayout::FormatRange` / Flutter
-/// `TextSpan`-list model: each run carries a **fully resolved**
+/// `[start, end)`. This is the toolkit's text-layout `FormatRange` model
+/// and another retained-mode toolkit's `TextSpan` list: each run carries a
+/// **fully resolved**
 /// [`TextStyle`] (not a partial override), so a run is unambiguous and
 /// the cache key (`pinion-text::LayoutCache`) stays a value comparison.
 ///
@@ -5905,7 +5906,7 @@ mod tests {
         assert_eq!(
             inside,
             ["small"],
-            "the large box is only touched, and PAST QT this is a per-query              argument rather than QGraphicsView::rubberBandSelectionMode"
+            "the large box is only touched, and PAST THE FLOOR this is a per-query              argument rather than rubberBandSelectionMode"
         );
     }
 

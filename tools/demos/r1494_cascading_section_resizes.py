@@ -142,7 +142,7 @@ def body() -> None:
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
         assert_eq(_h(tf, "cascading_section_resizes"), False,
-                  "off by default, as in Qt")                                    # 1
+                  "off by default, as in the toolkit")                                    # 1
         assert_eq(_h(tf, "visible_total"), BOOT_TOTAL, "the boot row")           # 2
         assert_eq(_h(tf, "available_width"), AVAILABLE_W, "and its viewport")    # 3
 
@@ -224,7 +224,7 @@ def body() -> None:
         assert_eq(tf.invoke("/external/resize_section", "0:300"), 300,
                   "the programmatic resize applies")                             # 26
         assert_eq(_h(tf, "sizes"), [300, 90, 100, 130, 100],
-                  "and does NOT cascade, rule on or not — Qt's own split")       # 27
+                  "and does NOT cascade, rule on or not — the toolkit's own split")       # 27
         assert_eq(_h(tf, "visible_total"), 720, "so this one does grow the row")  # 28
         assert_action_refused(
             lambda: tf.invoke("/external/interactive_resize_section", "9:200"),
@@ -286,7 +286,7 @@ def body() -> None:
         # The saveState peer carries it, so a restore replays the rule.
         saved = _h(tf, "state")
         assert_eq(saved["cascading_section_resizes"], True,
-                  "the snapshot carries Qt's property")                          # 38
+                  "the snapshot carries the toolkit's property")                          # 38
         _reset(tf, cascading=False)
         assert_eq(_h(tf, "cascading_section_resizes"), False, "a header without it")  # 39
         tf.intervene("/external/state", saved)
@@ -297,6 +297,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1494 §5.27 §2#7 — QHeaderView cascadingSectionResizes: who pays for a resize",
+        "R1494 §5.27 §2#7 — header view cascadingSectionResizes: who pays for a resize",
         body,
     ))

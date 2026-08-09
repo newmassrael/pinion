@@ -2630,8 +2630,8 @@ impl Decoration {
 
 /// R1532 §5.27 — the built-in painter: a left-aligned label in the row's
 /// foreground colour, preceded (R1535) by the cell's
-/// [`Qt::DecorationRole`](Decoration) mark when it has one. Qt's
-/// styled item delegate, which paints exactly these two roles.
+/// [`DecorationRole`](Decoration) mark when it has one. The same two roles
+/// the toolkit's styled item delegate paints, and no more.
 ///
 /// The tag is the composite hit-test tag (`"<root>#<row>_<col>"`); the
 /// keyboard-focus ring is the shell's job (R694 `paint_focus_ring` over the
@@ -5673,12 +5673,12 @@ mod tests {
         assert_eq!(
             asks.0.get(),
             painted,
-            "one `Qt::DisplayRole` ask per painted row (table is {VT_N} rows)",
+            "one `DisplayRole` ask per painted row (table is {VT_N} rows)",
         );
         assert_eq!(
             asks.1.get(),
             painted,
-            "and one `Qt::DecorationRole` ask — an equality, not a bound: \
+            "and one `DecorationRole` ask — an equality, not a bound: \
              'asks for what it paints' is what the contract says",
         );
     }
@@ -5716,7 +5716,7 @@ mod tests {
         assert_eq!(
             cell_access_name(&scene, &GridTag::row_header("vtbl", marked)).as_deref(),
             Some(format!("Pinned R{marked}").as_str()),
-            "the mark's meaning precedes the row's label — Qt answers a header \
+            "the mark's meaning precedes the row's label — the toolkit answers a header \
              cell's name from the display role alone, so this fact would be \
              unhearable there",
         );

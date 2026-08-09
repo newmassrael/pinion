@@ -36,25 +36,25 @@ use crate::model::{Document, NodeId, NodeKind, TreeId, yes};
 #[allow(clippy::struct_excessive_bools)]
 pub struct Appearance {
     /// Drawn small, with only its wired ports showing. The DCC's
-    /// `NODE_OT_collapse_toggle`.
+    /// `collapse_toggle`.
     #[serde(default)]
     pub collapsed: bool,
-    /// Unwired ports are not drawn. The DCC's `NODE_OT_hide_socket_toggle`,
+    /// Unwired ports are not drawn. The DCC's `hide_socket_toggle`,
     /// whose own description is "Toggle unused node socket display".
     #[serde(default)]
     pub hide_unused_ports: bool,
     /// Whether the node's own controls are shown. What a control *is* belongs
     /// to the application; whether it is on screen travels with the node. The
-    /// DCC's `NODE_OT_options_toggle`.
+    /// DCC's `options_toggle`.
     #[serde(default = "yes")]
     pub show_options: bool,
     /// Whether the node's preview is shown. The DCC's
-    /// `NODE_OT_preview_toggle`.
+    /// `preview_toggle`.
     #[serde(default)]
     pub show_preview: bool,
     /// An authored width in the application's own units — the units `x` and
-    /// `y` are already in — or `None` for whatever width the application gives a
-    /// node of this kind. The DCC's `NODE_OT_resize`.
+    /// `y` are already in — or `None` for whatever width the application gives
+    /// a node of this kind. The DCC's `resize`.
     #[serde(default)]
     pub width: Option<u32>,
     /// An authored height, in the same units, or `None` for the height the
@@ -68,9 +68,9 @@ pub struct Appearance {
     /// which is exactly the case R1589 recorded as the reason this field was
     /// missing.
     ///
-    /// The DCC carries both on every node (`bNode::width`, `bNode::height`) with no such distinction,
-    /// and its `NODE_OT_resize` is horizontal-only for ordinary nodes by convention rather
-    /// than by anything in the model.
+    /// The DCC carries both on every node (`node::width`, `node::height`) with
+    /// no such distinction, and its `resize` is horizontal-only for ordinary
+    /// nodes by convention rather than by anything in the model.
     ///
     /// [`NodeBody::Frame`]: crate::NodeBody::Frame
     #[serde(default)]

@@ -1,7 +1,7 @@
 //! R1607 §5.21 — **a dashboard's tiles are a value**, and the layout it needs
 //! already existed.
 //!
-//! The analyzer-tool audit's plane-C gap was a dashboard tool-class tile
+//! The analyzer-tool audit's plane-C gap was a monitoring-tool-class tile
 //! dashboard: independent cards on a fixed column grid, dragged, snapped and
 //! resized, with the arrangement saved under a name. pinion's docking is the
 //! toolkit's dock widget model — a splitter tree with tabs and tear-off — and
@@ -1222,7 +1222,7 @@ mod tests {
         assert_eq!(
             names,
             vec!["header", "left"],
-            "★ Grafana reflows silently; every tile that moved is named here"
+            "★ the dashboard tool reflows silently; every tile that moved is named here"
         );
         assert_eq!(grid.tile(&TileId::new("tall")).unwrap().row, 0);
         assert_eq!(grid.tile(&TileId::new("header")).unwrap().row, 2);

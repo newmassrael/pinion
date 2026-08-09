@@ -128,13 +128,13 @@ def body() -> None:
         assert_eq(
             tf.query("/external/behavior"),
             "items",
-            "a press selects a cell (Qt SelectionBehavior::SelectItems)",
+            "a press selects a cell (the toolkit SelectionBehavior::SelectItems)",
         )
         assert_eq(
             tf.query("/external/section_press"),
             "select",
             "and a header-section press selects its column — DECLARED, where "
-            "Qt leaves it to whoever connected sectionPressed",
+            "the toolkit leaves it to whoever connected sectionPressed",
         )
         assert_eq(cells(tf), [], "nothing selected at boot")
         assert_eq(tf.query("/external/cell_count"), 0, "no cells")
@@ -157,7 +157,7 @@ def body() -> None:
         assert_eq(
             tf.query("/external/column_selection"),
             [[3, 3]],
-            "Qt selectedColumns(), which there costs one QModelIndex per row",
+            "the toolkit selectedColumns(), which there costs one model index per row",
         )
         assert wire_bytes(got) <= MAX_BAND_BYTES, (
             f"a whole column must cost at most {MAX_BAND_BYTES} bytes, "
@@ -199,7 +199,7 @@ def body() -> None:
         assert_eq(
             tf.query("/external/selection"),
             [],
-            "its row is not selected — Qt SelectRows would have taken all eight",
+            "its row is not selected — the toolkit SelectRows would have taken all eight",
         )
 
         # ── (E) Shift on a cell is a rectangle ───────────────────────
@@ -207,7 +207,7 @@ def body() -> None:
         assert_eq(
             cells(tf),
             [{"rows": [[2, 5]], "columns": [[1, 4]]}],
-            "the rectangle from the extension origin (Qt QItemSelectionRange)",
+            "the rectangle from the extension origin (the toolkit item selection range)",
         )
         assert_eq(tf.query("/external/cell_count"), 4 * 4, "four rows by four columns")
         assert_eq(tf.query("/external/band_count"), 1, "one column set, so one band")
@@ -284,7 +284,7 @@ def body() -> None:
         assert named != record, (
             "...and it is a DIFFERENT VALUE. Add a ninth column and the first "
             "still covers the record while the second does not — the demotion "
-            "Qt performs silently"
+            "the toolkit performs silently"
         )
         assert_eq(
             tf.query("/external/selection"),
@@ -297,7 +297,7 @@ def body() -> None:
         access = tf.request("scene/access").result
         head = access_node_by_tag(access, f"{TABLE_TAG}_ch1")
         assert head is not None, "the selected column's header is in the AT tree"
-        assert_eq(head.get("selected"), True, "and it is aria-selected — Qt has no such state")
+        assert_eq(head.get("selected"), True, "and it is aria-selected — the toolkit has no such state")
         other = access_node_by_tag(access, f"{TABLE_TAG}_ch2")
         assert other is not None, "its neighbour is there too"
         assert_eq(other.get("selected"), False, "and is not")
@@ -358,7 +358,7 @@ def body() -> None:
         else:
             raise AssertionError(
                 "selecting a column on a grid that has none must REFUSE — "
-                "Qt's selectColumn returns void and the call is simply lost"
+                "the toolkit's selectColumn returns void and the call is simply lost"
             )
         assert_eq(row_tf.query("/external/cells"), [], "and nothing moved")
 

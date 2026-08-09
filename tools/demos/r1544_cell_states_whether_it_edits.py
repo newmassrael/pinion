@@ -227,7 +227,7 @@ def body() -> None:
         snap = wait_snap(
             tf,
             lambda s: has_editor(s, 0, NAME_COL),
-            desc="a printable key opens the editor (Qt AnyKeyPressed)",
+            desc="a printable key opens the editor (the toolkit AnyKeyPressed)",
             viewport=WIN,
         )
         assert_eq(
@@ -287,7 +287,7 @@ def body() -> None:
         tf.key(path=TABLE_TAG, name="Enter")
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert has_editor(snap, 2, SCORE_COL), (
-            "the model refused 500, so the editor is STILL OPEN — Qt's void "
+            "the model refused 500, so the editor is STILL OPEN — the toolkit's void "
             "setModelData cannot express this and closes anyway"
         )
         assert_eq(
@@ -392,7 +392,7 @@ def body() -> None:
         )
         back = editing_field(snap)
         assert back is not None and back.startswith("3_2 "), (
-            f"Qt EditPreviousItem lands on row 3's Score, got {back!r}"
+            f"the toolkit EditPreviousItem lands on row 3's Score, got {back!r}"
         )
         tf.key(path=TABLE_TAG, name="Escape")
 

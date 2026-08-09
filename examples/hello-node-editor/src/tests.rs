@@ -6496,9 +6496,9 @@ fn r1236_dissolve_is_general_and_names_what_it_would_cut() {
         let _ = boot_scene();
         let coord = coordinator();
         // ★R1596 — dissolve WIDENED. The editor required exactly one wire in
-        // and one out and refused anything else; `Document::dissolve` (R1586) is the general
-        // form — the DCC's `NODE_OT_delete_reconnect` — so the question worth asking is no longer
-        // *can it* but **does it lose anything**.
+        // and one out and refused anything else; `Document::dissolve` (R1586)
+        // is the general form — the DCC's `delete_reconnect` — so the question
+        // worth asking is no longer *can it* but **does it lose anything**.
         //
         // node2 (Multiply) has two inputs and one output: it dissolves, and the
         // one downstream wire it cannot carry is NAMED rather than vanishing.

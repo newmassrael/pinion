@@ -25,7 +25,7 @@ What this script checks, and why each check discriminates:
   the same way, and it answers with both types as well as the verdict.
 * **PAST the DCC (1): legality and the conversion are ONE declaration.** the DCC
   keeps them apart in three places that can disagree — `validate_link` (a
-  `bNodeTreeType` C function pointer that says whether a wire may exist),
+  node tree type C function pointer that says whether a wire may exist),
   `DataTypeConversions` (a global `Map<(from, to), ConversionFunctions>` holding
   the actual conversion) and `get_internal_link_type_priority` (a static
   socket-type table used when a node is muted). Asserted here by driving the
@@ -173,8 +173,8 @@ def body() -> None:
         assert_eq(
             inv(tf, "conversion", f"{LEVEL}.0>{FADE}.0"),
             "amount->colour converted",
-            "A: PAST BLENDER — the conversion is ASKABLE, and it says the value "
-            "would be CHANGED. Blender's validate_link is a C function pointer "
+            "A: PAST the DCC — the conversion is ASKABLE, and it says the value "
+            "would be CHANGED. The DCC's validate_link is a C function pointer "
             "on the tree type with no accessor, and whether the value would "
             "change lives in a different table again",
         )
@@ -211,9 +211,9 @@ def body() -> None:
         assert_eq(
             inv(tf, "node_value", str(FADE)),
             BROADCAST_OF_25,
-            "C: PAST BLENDER — the value ARRIVED converted. Legality and the "
+            "C: PAST the DCC — the value ARRIVED converted. Legality and the "
             "conversion are one declaration, so a wire this crate accepts is a "
-            "wire it can carry a value along; Blender's shader validate_link "
+            "wire it can carry a value along; the DCC's shader validate_link "
             "returns true for pairs its conversion table has no entry for",
         )
         assert_eq(
@@ -229,7 +229,7 @@ def body() -> None:
         assert_eq(
             q(tf, "nodes"),
             6,
-            "C: PAST BLENDER — showing the conversion cost NO node. Blender "
+            "C: PAST the DCC — showing the conversion cost NO node. The DCC "
             "materialises an implicit_conversion node into the tree, so seeing "
             "the fact changes the graph you are looking at",
         )
@@ -267,8 +267,8 @@ def body() -> None:
         assert_eq(
             tint["routes"],
             "0<-0",
-            "F: PAST BLENDER — its only pass-through goes through the lattice's "
-            "broadcast. Blender answers this from a THIRD table "
+            "F: PAST the DCC — its only pass-through goes through the lattice's "
+            "broadcast. The DCC answers this from a THIRD table "
             "(get_internal_link_type_priority), unrelated to the one that "
             "validates a wire and to the one that converts a value",
         )

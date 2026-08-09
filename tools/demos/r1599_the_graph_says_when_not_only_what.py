@@ -125,7 +125,7 @@ def body() -> None:
         assert_eq(
             flows[str(OVER)],
             "vv>v",
-            "A: and a pure node has no control port at all — Unreal's impure/"
+            "A: and a pure node has no control port at all — the engine's impure/"
             "pure split, here readable off the signature",
         )
         assert_eq(
@@ -167,7 +167,7 @@ def body() -> None:
         assert_eq(
             q(tf, "stop"),
             "budget_exhausted",
-            "C: and WHY it stopped is a value. Unreal reaches this condition at "
+            "C: and WHY it stopped is a value. The engine reaches this condition at "
             "run time, in a shipped build, as an InfiniteLoop exception",
         )
         assert_eq(
@@ -234,7 +234,7 @@ def body() -> None:
             f"linked, displacing node {BEGIN}.0->node {FORK}.0",
             "F: THE INVERSION. Begin already had a successor, and a control "
             "output has exactly one — so the first gave way, and it is NAMED. "
-            "Unreal displaces here too and returns a bare bool",
+            "the engine displaces here too and returns a bare bool",
         )
         assert_eq(q(tf, "links"), 11, "F: one went as one came")
         assert_eq(

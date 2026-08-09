@@ -192,7 +192,7 @@ members = [
     "examples/hello-theme",
     "examples/forge-counter",
     "examples/ai-introspect-demo",
-    "examples/figma-button-m3",
+    "examples/design-button-m3",
     "examples/todomvc",
     "examples/settings-panel",
     "examples/hello-popover",
@@ -318,7 +318,7 @@ rustix = { version = "1.1", features = ["event"] }
 # #[derive(Subcommand)] sub-command routing. Sync (no tokio).
 clap = { version = "4", features = ["derive"] }
 
-# R634 §5.7 — pinion-cli HTTP transport for the Figma REST API
+# R634 §5.7 — pinion-cli HTTP transport for the design service REST API
 # fetch + image export. ureq is a sync blocking client (no
 # tokio runtime — pinion-cli stays sync per §6.3 framework
 # boundary) with a tiny dep footprint; the `json` feature pulls
@@ -409,7 +409,7 @@ ratatui = "0.29"
 # avoids breakage when ratatui upgrades its crossterm pin.
 crossterm = "0.28"
 
-# R638 §5.7 — `pinion figma-diff` CLI image decode + resize. Pulled
+# R638 §5.7 — `pinion design-diff` CLI image decode + resize. Pulled
 # via `image` (not via `imageproc` which would force a full nalgebra
 # transitive); decode is the only operation the diff substrate needs
 # (encode of the diff PNG goes through the already-pinned `png`
@@ -417,7 +417,7 @@ crossterm = "0.28"
 # `default-features = false` drops every codec but PNG to keep the
 # CLI binary lean. SSIM gradient via `imageproc` deferred to a
 # follow-up round only if MAE / max-delta prove insufficient for the
-# Figma → pinion design-parity feedback loop (YAGNI per CLAUDE.md).
+# design tool → pinion design-parity feedback loop (YAGNI per CLAUDE.md).
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # R637 §5.16 §5.7 — PNG encoder for the headless screenshot substrate.
@@ -426,7 +426,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # compile cost is the encoder itself + `miniz_oxide` (zlib). Used by
 # `pinion-shell::headless_screenshot::HeadlessScreenshot::render_to_png`
 # to write RGBA8 framebuffer bytes (post-wgpu-readback) as a Web-grade
-# 8-bit-per-channel PNG file. R638 (`pinion figma-diff`) will pull
+# 8-bit-per-channel PNG file. R638 (`pinion design-diff`) will pull
 # `image` proper for decode + diff arithmetic; this round stays at the
 # minimum surface (encode only).
 png = "0.17"

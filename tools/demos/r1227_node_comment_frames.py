@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R1227 §5.38 §5.52 — node-graph COMMENT FRAMES.
 
-A big graph needs grouping + labels to stay readable — the Blueprint / material-
+A big graph needs grouping + labels to stay readable — the visual script / material-
 editor "comment box". R1227 adds it as a new annotation entity (behind the nodes,
 owning no graph semantics): frame the current node selection into a titled,
 translucent rectangle. All AI-first over the §5.12 plane (§2 #2), no pixels:

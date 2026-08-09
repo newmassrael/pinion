@@ -168,7 +168,7 @@ pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
 /// # Errors
 ///
 /// [`RegionError`] for a shape that bounds no area, so a two-point lasso is told apart
-/// from an empty surface. The toolkit's `items(polygon F, ..)` answers both with an empty list.
+/// from an empty surface. The toolkit's `items(<polygon>, ..)` answers both with an empty list.
 pub fn locate_shape(
     scene: &Scene,
     region: &Region,
@@ -482,8 +482,8 @@ mod tests {
         assert_eq!(out.shape, "circle");
         assert_eq!(
             out.fit, "contains",
-            "PAST QT — the mode a selection used is part of its answer. Qt takes \
-             it from QGraphicsView::rubberBandSelectionMode, a view property \
+            "PAST THE FLOOR — the mode a selection used is part of its answer. The toolkit takes \
+             it from rubberBandSelectionMode, a view property \
              that nothing records per selection"
         );
         assert!(out.paths.iter().any(|p| p.ends_with("/near")));

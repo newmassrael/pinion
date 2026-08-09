@@ -544,11 +544,13 @@ fn engine_editor_proofs() -> Vec<Proof> {
 /// from a per-node override — so this one pastes three at once and asserts both
 /// halves: where the group landed, and that its shape survived.
 ///
-/// ★ Past the engine 5.8: the anchor is a **value on the fragment** (`Fragment::origin`), so
-/// a client can ask a copied graph where it considers itself to be. The
-/// engine's clipboard is a text blob (`FEdGraphUtilities::ExportNodesToText`) holding absolute node positions,
-/// and the averaging that turns it into a paste location lives inside `FBlueprintEditor::PasteNodesHere` — so
-/// nothing can ask the payload anything.
+/// ★ Past the engine 5.8: the anchor is a **value on the fragment**
+/// (`Fragment::origin`), so a client can ask a copied graph where it considers
+/// itself to be. The engine's clipboard is a text blob
+/// (`graph utilities::ExportNodesToText`) holding absolute node positions, and
+/// the averaging that turns it into a paste location lives inside
+/// `visual script editor::PasteNodesHere` — so nothing can ask the payload
+/// anything.
 #[test]
 fn engine_material_editor_matertial_paste_here() {
     let mut document: Document<Op> = Document::new("root");
@@ -733,10 +735,10 @@ fn engine_schema_hook_proofs() -> Vec<Proof> {
 ///
 /// Two shapes, because a reference has two kinds of name. An **operator** is a
 /// bare identifier — snake case under a fixed prefix in the DCC, Pascal case
-/// in the engine. A **hook** is `Owner::member`, and its owner is stripped down to what
-/// distinguishes it: a leading `b` or `U`, a leading `EdGraph` and a trailing `Type`
-/// are all the reference's own naming furniture, so `the tree type` and `the graph node` become `node_tree` and
-/// `node`.
+/// in the engine. A **hook** is `Owner::member`, and its owner is stripped
+/// down to what distinguishes it: a leading `b` or `U`, a leading graph and a
+/// trailing `Type` are all the reference's own naming furniture, so
+/// `the tree type` and `the graph node` become `node_tree` and `node`.
 fn proof_name(tree: &str, operator: &str) -> String {
     if let Some((owner, member)) = operator.split_once("::") {
         // R1612 — the owner arrives already reduced to this stem, so the four
@@ -2444,10 +2446,10 @@ fn engine_graph_editor_show_all_pins() {
     assert_eq!(ports.outputs, vec![0]);
 }
 
-/// The engine promotes a selection to a re-usable function on the Blueprint.
-/// Same boundary, read as a definition that outlives the place it came from:
-/// the proof deletes the original instance and instantiates the definition
-/// again.
+/// The engine promotes a selection to a re-usable function on the visual
+/// script. Same boundary, read as a definition that outlives the place it came
+/// from: the proof deletes the original instance and instantiates the
+/// definition again.
 #[test]
 fn engine_graph_editor_promote_selection_to_function() {
     let mut chain = chain();

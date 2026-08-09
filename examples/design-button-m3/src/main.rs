@@ -1,4 +1,4 @@
-//! `the design tool-button-m3` — R640 §5.7 reactive Material 3 Filled Button.
+//! `design-button-m3` — R640 §5.7 reactive Material 3 Filled Button.
 //!
 //! R635 landed the binding as a static one-frame snapshot: `read_state`
 //! always returned [`ButtonState::Idle`] and the view fn ignored its
@@ -86,15 +86,15 @@
 //!
 //! Unit tests cover the colour math at each state plus the scene
 //! structure (`corner_radius`, tag, layout). The companion
-//! `tools/demos/figma_button_m3_r640.py` script drives the pointer
+//! `tools/demos/design_button_m3_r640.py` script drives the pointer
 //! transition arc via JSON-RPC (`scene/click` + `scene/query`) and
 //! asserts the observable state machine cycle, satisfying the
 //! AI-first introspection obligation without asking the user to
 //! describe what they see on screen.
 //!
 //! ```sh
-//! PINION_SCREENSHOT=/tmp/pinion-btn.png cargo run -p the design tool-button-m3
-//! python3 tools/demos/figma_button_m3_r640.py
+//! PINION_SCREENSHOT=/tmp/pinion-btn.png cargo run -p design-button-m3
+//! python3 tools/demos/design_button_m3_r640.py
 //! ```
 
 #[cfg(test)]
@@ -120,9 +120,9 @@ use pinion_widget_paint::button::{
 #[cfg(test)]
 use pinion_widget_paint::button::m3_button_fill;
 
-// R650 §5.16 — single-tag binding uses the `"figma_button_m3"`
+// R650 §5.16 — single-tag binding uses the `"design_button_m3"`
 // literal directly per [[abstraction-needs-second-consumer]]. The
-// R644 `enum Tags { FigmaButtonM3 }` + `#[derive(WidgetTag)]`
+// R644 `enum Tags { DesignButtonM3 }` + `#[derive(WidgetTag)]`
 // adoption was a single-consumer rehearsal — the derive's value is
 // at composite-widget scale (multiple coordinated tags in one
 // binary), not for a binding with one tag. The substrate
@@ -131,15 +131,15 @@ use pinion_widget_paint::button::m3_button_fill;
 // substrate-only coverage moved to
 // `crates/pinion-derive/tests/widget_tag_derive.rs`.
 
-// pinion-forge codegen output. Defines `pub struct FigmaButtonM3Renderer`
-// + `pub enum FigmaButtonM3RendererError` plus the Vello-backed
+// pinion-forge codegen output. Defines `pub struct DesignButtonM3Renderer`
+// + `pub enum DesignButtonM3RendererError` plus the Vello-backed
 // async `new` / sync `render` / sync `resize` methods.
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 // R51.30 — bridge the inherent renderer methods into the
 // `pinion_shell::VelloRenderer` trait so the generic `AppShell<V>`
 // can construct + render + resize.
-vello_renderer_impl!(FigmaButtonM3Renderer, FigmaButtonM3RendererError);
+vello_renderer_impl!(DesignButtonM3Renderer, DesignButtonM3RendererError);
 
 // Window slightly larger than the button itself so the surrounding
 // canvas has breathing room for the design-parity inspection.
@@ -176,7 +176,7 @@ const CANVAS_BG: Color = Color::rgb(0x1F, 0x1F, 0x1F);
 /// driven by `pinion_widget_paint::button::use_hover_progress`. The
 /// unique `&'static str` keeps the spring's owner-scoped cache slot
 /// from colliding with any other cached value in the same scope.
-const HOVER_ANIM_KEY: &str = "figma_button_m3::hover_progress";
+const HOVER_ANIM_KEY: &str = "design_button_m3::hover_progress";
 
 /// (R686.B §5.16) The design tool design-token [`ButtonColors`] for this
 /// binding: resting `#675AA4` Primary fill, `#FFFFFF` onPrimary state
@@ -187,7 +187,7 @@ const HOVER_ANIM_KEY: &str = "figma_button_m3::hover_progress";
 /// [`ButtonColors::new`] takes explicit [`Color`]s rather than
 /// resolving from a `Theme`, so the design tool spec is reproduced
 /// verbatim while the M3 overlay matrix lives in the substrate.
-fn figma_button_colors() -> ButtonColors {
+fn design_button_colors() -> ButtonColors {
     ButtonColors::new(
         BTN_FILL,
         LABEL_FG,
@@ -208,7 +208,7 @@ fn figma_button_colors() -> ButtonColors {
 #[cfg(test)]
 fn button_fill_for(state: ButtonState) -> Color {
     m3_button_fill(
-        &figma_button_colors(),
+        &design_button_colors(),
         state,
         use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY),
     )
@@ -225,16 +225,16 @@ fn button_fill_for(state: ButtonState) -> Color {
 /// `&Frame` argument when forwarding.
 fn view(state: ButtonState, _frame: Frame) -> Scene {
     // R686.B §5.16 — M3 filled button via the substrate. The design tool
-    // design tokens flow through `figma_button_colors()`; the pill
+    // design tokens flow through `design_button_colors()`; the pill
     // corner radius + dense padding + fixed 109×40 size are the design tool
-    // spec geometry carried on `ButtonStyle`. The "figma_button_m3"
+    // spec geometry carried on `ButtonStyle`. The "design_button_m3"
     // tag routes the InputRouter hit-test to the wrapped ButtonExternal.
     let button = view_button(
         "Button",
         state,
         use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY),
-        &figma_button_colors(),
-        &ButtonStyle::m3_default("figma_button_m3")
+        &design_button_colors(),
+        &ButtonStyle::m3_default("design_button_m3")
             .with_size(Size::px(BTN_W, BTN_H))
             .with_corner_radius(BTN_RADIUS)
             .with_padding(Rect::new(16, 10, 16, 10))
@@ -261,7 +261,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
 /// [`view`]) remain as inherent `fn` items the macro forwards into.
 ///
 /// Per the R51.30 shell contract every method is associated (`fn`,
-/// not `&self`) so the shell instantiates `AppShell<FigmaButtonView>`
+/// not `&self`) so the shell instantiates `AppShell<DesignButtonView>`
 /// without holding a value of this type.
 ///
 /// [`create_external`]: pinion_core::WidgetCore::create_external
@@ -270,11 +270,11 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
 /// [`read_state`]: pinion_core::WidgetCore::read_state
 /// [`event_name`]: pinion_core::WidgetCore::event_name
 #[widget(
-    tag = "figma_button_m3",
+    tag = "design_button_m3",
     state = ButtonState,
     event = ButtonEvent,
-    title = "Figma Material 3 Filled Button (R643 §5.16 #[widget])",
-    renderer = FigmaButtonM3Renderer,
+    title = "Design-tool Material 3 Filled Button (R643 §5.16 #[widget])",
+    renderer = DesignButtonM3Renderer,
     initial_size = (WIN_W, WIN_H),
     external = ButtonExternal::new,
     role = Button,
@@ -285,11 +285,11 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
     ),
     state_name_derive,
 )]
-struct FigmaButtonView;
+struct DesignButtonView;
 
-impl FigmaButtonView {
+impl DesignButtonView {
     /// R642 inherent forward for `WidgetCore::view`. The macro emits
-    /// the trait method as `<FigmaButtonView>::view(state, *frame)` —
+    /// the trait method as `<DesignButtonView>::view(state, *frame)` —
     /// the free `view(...)` fn below already takes `Frame` by value, so
     /// this stub is a 1:1 passthrough.
     fn view(state: ButtonState, frame: Frame) -> Scene {
@@ -298,7 +298,7 @@ impl FigmaButtonView {
 }
 
 fn main() {
-    pinion_shell::run::<FigmaButtonView>();
+    pinion_shell::run::<DesignButtonView>();
 }
 
 #[cfg(test)]
@@ -327,7 +327,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn r640_idle_fill_is_raw_figma_primary() {
+    fn r640_idle_fill_is_the_captured_primary() {
         // Hover progress = 0 at Idle steady state — the lerp endpoint
         // collapses to BTN_FILL exactly.
         let fill = with_owner(|| button_fill_for(ButtonState::Idle));
@@ -376,31 +376,31 @@ mod tests {
     #[test]
     fn r640_view_carries_widget_tag() {
         // R55.G.22 §5.49 — paint scene must carry `WidgetCore::tag()`
-        // so AI-side `{path: "figma_button_m3"}` input routing
+        // so AI-side `{path: "design_button_m3"}` input routing
         // resolves. Shared helper wraps `view` in an `Owner::new()`
         // scope and asserts `Scene::contains_tag`.
-        pinion_core::test_fixtures::assert_widget_view_carries_tag::<FigmaButtonView>(
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<DesignButtonView>(
             ButtonState::Idle,
             &Frame::new(),
         );
     }
 
     #[test]
-    fn r640_view_carries_figma_corner_radius() {
+    fn r640_view_carries_the_captured_corner_radius() {
         // [[center-only-pixel-sample-anti-pattern]] (R639) — the
         // `corner_radius = 100` field MUST reach the painted scene.
         // R635 set it on the style, R639 wired it through
         // paint_adapter; this test pins the upstream half so a future
         // refactor cannot silently drop the spec value.
         let scene = with_owner(|| view(ButtonState::Idle, Frame::new()));
-        let button = find_button(&scene).expect("view must contain figma_button_m3 tag");
+        let button = find_button(&scene).expect("view must contain design_button_m3 tag");
         assert_eq!(button.style.corner_radius, BTN_RADIUS);
     }
 
     #[test]
-    fn r640_view_carries_figma_size() {
+    fn r640_view_carries_the_captured_size() {
         let scene = with_owner(|| view(ButtonState::Idle, Frame::new()));
-        let button = find_button(&scene).expect("view must contain figma_button_m3 tag");
+        let button = find_button(&scene).expect("view must contain design_button_m3 tag");
         let size = button.layout.size;
         assert_eq!(size, Size::px(BTN_W, BTN_H));
     }
@@ -427,11 +427,11 @@ mod tests {
         }
     }
 
-    /// Depth-first walk for the `figma_button_m3` container.
+    /// Depth-first walk for the `design_button_m3` container.
     fn find_button(scene: &Scene) -> Option<&ContainerNode> {
         match scene {
             Scene::Container(node) => {
-                if node.tag.as_deref() == Some("figma_button_m3") {
+                if node.tag.as_deref() == Some("design_button_m3") {
                     return Some(node);
                 }
                 node.children.iter().find_map(find_button)
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn r640_access_idle_has_no_state_flags() {
-        let nodes = FigmaButtonView::access_node(&ButtonState::Idle, None);
+        let nodes = DesignButtonView::access_node(&ButtonState::Idle, None);
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].role, AriaRole::Button);
         assert!(!nodes[0].state.focused);
@@ -459,29 +459,29 @@ mod tests {
 
     #[test]
     fn r640_access_hover_sets_hovered_flag() {
-        let nodes = FigmaButtonView::access_node(&ButtonState::Hover, None);
+        let nodes = DesignButtonView::access_node(&ButtonState::Hover, None);
         assert!(nodes[0].state.hovered);
         assert!(!nodes[0].state.pressed);
     }
 
     #[test]
     fn r640_access_pressed_sets_pressed_flag() {
-        let nodes = FigmaButtonView::access_node(&ButtonState::Pressed, None);
+        let nodes = DesignButtonView::access_node(&ButtonState::Pressed, None);
         assert!(nodes[0].state.pressed);
         assert!(!nodes[0].state.hovered);
     }
 
     #[test]
     fn r640_access_disabled_sets_disabled_flag() {
-        let nodes = FigmaButtonView::access_node(&ButtonState::Disabled, None);
+        let nodes = DesignButtonView::access_node(&ButtonState::Disabled, None);
         assert!(nodes[0].state.disabled);
     }
 
     #[test]
     fn r640_access_focused_tag_sets_focused_flag() {
-        let nodes = FigmaButtonView::access_node(
+        let nodes = DesignButtonView::access_node(
             &ButtonState::Idle,
-            Some(<FigmaButtonView as WidgetCore>::tag()),
+            Some(<DesignButtonView as WidgetCore>::tag()),
         );
         assert!(nodes[0].state.focused);
     }
@@ -506,7 +506,7 @@ mod tests {
             (ButtonEvent::Enable, "Enable"),
         ] {
             assert_eq!(
-                <FigmaButtonView as WidgetCore>::event_name(event),
+                <DesignButtonView as WidgetCore>::event_name(event),
                 name,
                 "event_name({event:?}) drift"
             );
@@ -557,17 +557,17 @@ mod tests {
     #[test]
     fn r650_widget_tag_literal_pin() {
         // R650 §5.16 — pin the binding-side tag literal directly.
-        // R644 routed this through `Tags::FigmaButtonM3.as_tag()`
+        // R644 routed this through `Tags::DesignButtonM3.as_tag()`
         // which was walked back per
         // [[abstraction-needs-second-consumer]]; the substrate
         // round-trip (including the `M3` → `m3` no-underscore
         // digit-as-lowercase-letter convention) now lives at
         // `crates/pinion-derive/tests/widget_tag_derive.rs`. This pin
         // guards the binary-local contract: `WidgetCore::tag()` must
-        // resolve to the same `"figma_button_m3"` literal the paint
+        // resolve to the same `"design_button_m3"` literal the paint
         // scene's `.with_tag(...)` emits, otherwise hit-tested events
         // would never reach the wrapped `ButtonExternal`.
-        assert_eq!(<FigmaButtonView as WidgetCore>::tag(), "figma_button_m3");
+        assert_eq!(<DesignButtonView as WidgetCore>::tag(), "design_button_m3");
     }
 
     #[test]
@@ -576,7 +576,7 @@ mod tests {
             ButtonExternal::new(),
         )));
         assert_eq!(
-            <FigmaButtonView as WidgetCore>::read_state(&scene),
+            <DesignButtonView as WidgetCore>::read_state(&scene),
             ButtonState::Idle,
         );
     }

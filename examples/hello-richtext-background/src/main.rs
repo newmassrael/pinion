@@ -173,7 +173,7 @@ fn view(state: ToggleState, unreadable: bool, _frame: &Frame) -> Scene {
     let accent = theme.resolve(ColorRole::Accent);
 
     let title = Scene::Text(TextNode::styled(
-        "Run background (QTextCharFormat::setBackground)",
+        "Run background (setBackground)",
         Rect::default(),
         TextStyle::new()
             .with_size_px(TITLE_FONT_PX)

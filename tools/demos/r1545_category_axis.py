@@ -28,14 +28,14 @@ What this script checks, and why each check discriminates:
 * **The window widens what it keeps.** Three of twelve categories in the same
   pixels must be more than twice as wide, which is the reason a window is worth
   having rather than a filter.
-* **PAST the toolkit 6.11 (1): an unresolvable name is REPORTED.** the toolkit's
+* **PAST THE 6.11 FLOOR (1): an unresolvable name is REPORTED.** the toolkit's
   `setRange(string, string)` returns `void`; a name that is
   not a category leaves the axis silently unwindowed, indistinguishable from a
   range that happened to be full. Here the action channel answers the failure,
   `error` carries it, and the caption states it. The counterfactual is in the
   same section: a name that DOES resolve answers the empty string, so this is
   not a surface that always complains.
-* **PAST the toolkit 6.11 (2): the categories in view are readable.** `visible` answers
+* **PAST THE 6.11 FLOOR (2): the categories in view are readable.** `visible` answers
   how many slots the live window shows. The toolkit reports `count()` — every category,
   whatever the range is — and the min/max NAMES it was set to, never what is on
   screen.
@@ -239,8 +239,8 @@ def body() -> None:
         assert_eq(
             int(tf.query(VISIBLE_PATH)),
             3,
-            "PAST QT: how many categories are actually on screen. "
-            "QBarCategoryAxis::count() answers 12 whatever the range is",
+            "PAST THE FLOOR: how many categories are actually on screen. "
+            "count() answers 12 whatever the range is",
         )
 
         # ── (D) a window WIDENS what it keeps ────────────────────────
@@ -260,14 +260,14 @@ def body() -> None:
             "and the caption reports the chart's OWN visible_categories()",
         )
 
-        # ── (E) PAST the toolkit: an unresolvable name is reported
+        # ── (E) PAST THE FLOOR: an unresolvable name is reported
         # ────────────
         answer = set_range(tf, "Smarch", "Jun")
         assert_eq(
             answer,
             'no category named "Smarch"',
             "the action channel answers WHICH endpoint did not resolve. "
-            "Qt's setRange returns void and this request would be a no-op "
+            "the toolkit's setRange returns void and this request would be a no-op "
             "the caller cannot detect",
         )
         assert_eq(tf.query(ERROR_PATH), answer, "and the field carries the same text")

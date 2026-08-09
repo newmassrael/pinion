@@ -1,11 +1,12 @@
 //! Changing what a node IS, without changing which node it is (R1598).
 //!
-//! The DCC's `NODE_OT_swap_node`, and the shape is where this diverges: there the operator
-//! **creates a new node and deletes the old one** (`bl_operators/node.py`), so the swapped node's
-//! identity dies with it. Every reference to it dies too — a selection, a
-//! saved layout, an agent holding the id, an undo record. Here the node keeps
-//! its [`NodeId`] and only its body changes, which is what makes a swap an *edit*
-//! rather than a replace-and-hope.
+//! The DCC's `swap_node`, and the shape is where this diverges: there the
+//! operator **creates a new node and deletes the old one**
+//! (`bl_operators/node.py`), so the swapped node's identity dies with it.
+//! Every reference to it dies too — a selection, a saved layout, an agent
+//! holding the id, an undo record. Here the node keeps its [`NodeId`] and only
+//! its body changes, which is what makes a swap an *edit* rather than a
+//! replace-and-hope.
 //!
 //! The hard part is not the body: it is that a kind DECLARES its ports
 //! (R1594), so changing the kind changes the signature, and every link and
@@ -151,7 +152,7 @@ impl Correspondence {
         // anything beside a name it is the only one of — so "wherever it fits"
         // is the honest answer rather than a guess, which is why this is not
         // done when there are several to tell apart. The DCC reaches the same
-        // behaviour by testing `old_node.bl_idname == "NodeReroute"`, so there
+        // behaviour by testing `old_node.idname == "NodeReroute"`, so there
         // it is one node TYPE's privilege; here it falls out of the arity, and
         // every single-port kind gets it.
         if old.len() == 1 && !taken.contains_key(&0) {
@@ -174,11 +175,11 @@ impl Correspondence {
 impl<K: NodeKind> Document<K> {
     /// Change what `node` IS, keeping which node it is.
     ///
-    /// The DCC's `NODE_OT_swap_node`. The node's [`NodeId`], its position, its label, its
-    /// appearance and its place in the frame forest all survive, because the
-    /// node is not replaced — only its body is. That is the whole difference
-    /// from the reference, where the operator creates a new node and deletes
-    /// the old one, so every reference to it dies.
+    /// The DCC's `swap_node`. The node's [`NodeId`], its position, its label,
+    /// its appearance and its place in the frame forest all survive, because
+    /// the node is not replaced — only its body is. That is the whole
+    /// difference from the reference, where the operator creates a new node
+    /// and deletes the old one, so every reference to it dies.
     ///
     /// A kind declares its ports, so the signature changes underneath the
     /// node's links and its authored values. Both are re-examined against the

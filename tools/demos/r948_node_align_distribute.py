@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R948 §5.52 §5.38 — node-graph align / distribute, over RPC.
 
-Every professional node editor (the engine Blueprint, the DCC, the design tool, draw.io) can
+Every professional node editor (the engine visual script, the DCC, the design tool, draw.io) can
 align a multi-node selection to a common edge / centre and distribute it with
 even spacing. R948 adds the AI-first peer of an align toolbar:
 

@@ -157,9 +157,9 @@ def body() -> None:
         assert_eq(h[0]["fires"], 0, "no repeat yet")
         # The cadence values are `f32` widened to `f64` on the wire, so they
         # are compared to a tolerance, not for bit equality.
-        assert near(h[0]["delay_secs"], DELAY), "Qt AUTO_REPEAT_DELAY (300 ms)"
-        assert near(h[0]["interval_secs"], INTERVAL), "Qt AUTO_REPEAT_INTERVAL (100 ms)"
-        assert near(h[0]["accel"], 1.0), "un-accelerated, as QPushButton is"
+        assert near(h[0]["delay_secs"], DELAY), "the toolkit AUTO_REPEAT_DELAY (300 ms)"
+        assert near(h[0]["interval_secs"], INTERVAL), "the toolkit AUTO_REPEAT_INTERVAL (100 ms)"
+        assert near(h[0]["accel"], 1.0), "un-accelerated, as push button is"
         assert near(h[0]["min_interval_secs"], INTERVAL), "no ramp, so no floor below it"
         assert near(h[0]["next_fire_in_secs"], DELAY), (
             f"the whole delay is still ahead: {h[0]['next_fire_in_secs']}"
@@ -199,7 +199,7 @@ def body() -> None:
         assert_eq(val(tf), 7.0, "five seconds after release: nothing fired")
         assert_eq(holds(tf), [], "and nothing came back")
 
-        # ── PAST the toolkit: a held arrow at its bound stops repeating
+        # ── PAST THE FLOOR: a held arrow at its bound stops repeating
         # ───────────
         tf.pointer_leave()
         hold_down(tf, INC)

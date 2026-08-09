@@ -21,7 +21,7 @@ This demo dogfoods that invariant directly:
         PointerLeave → Idle
   4. lifecycle: Disable → Disabled, Enable → Idle
 
-Same shape `figma_button_m3_r640.py` runs on the design tool-button-m3
+Same shape `design_button_m3_r640.py` runs on design-button-m3
 binding — both wire the same `ButtonExternal` substrate, so the wire
 contract for state names + events is identical.
 

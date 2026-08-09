@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R780 §5.40 multi-select index model: a 10,000-row flex-viewport (AutoSizer) virtualized list whose Shift+Arrow extends a contiguous range, Ctrl+A selects all, and Ctrl+Space toggles the active row. Extends R746 VirtualSelect into a Qt QItemSelectionModel ExtendedSelection coordinator (selection set + anchor), with aria-multiselectable + per-row aria-selected."
+description = "R780 §5.40 multi-select index model: a 10,000-row flex-viewport (AutoSizer) virtualized list whose Shift+Arrow extends a contiguous range, Ctrl+A selects all, and Ctrl+Space toggles the active row. Extends R746 VirtualSelect into a toolkit item selection model ExtendedSelection coordinator (selection set + anchor), with aria-multiselectable + per-row aria-selected."
 publish = false
 
 [[bin]]

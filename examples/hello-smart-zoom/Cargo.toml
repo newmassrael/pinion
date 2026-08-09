@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1435 §5.35 §5.15 — a native smart-zoom gesture fits the block under the finger. A widget that overrides External::smart_zoom_gesture toggles a document page between fit-to-page and zoom-to-block (Qt QNativeGestureEvent SmartZoomNativeGesture / macOS smartMagnify / winit DoubleTapGesture), the family's phase-less member: one completed toggle, no arc, and the cursor anchor is what selects which block fills the view. winit exposes DoubleTapGesture only on macOS/iOS, so the scene/smart_zoom_gesture RPC is the AI-first driver (§2 #2)."
+description = "R1435 §5.35 §5.15 — a native smart-zoom gesture fits the block under the finger. A widget that overrides External::smart_zoom_gesture toggles a document page between fit-to-page and zoom-to-block (the toolkit native gesture event SmartZoomNativeGesture / macOS smartMagnify / winit DoubleTapGesture), the family's phase-less member: one completed toggle, no arc, and the cursor anchor is what selects which block fills the view. winit exposes DoubleTapGesture only on macOS/iOS, so the scene/smart_zoom_gesture RPC is the AI-first driver (§2 #2)."
 publish = false
 
 [[bin]]

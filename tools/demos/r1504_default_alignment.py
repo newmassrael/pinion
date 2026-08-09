@@ -139,7 +139,7 @@ def body() -> None:
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
         assert_eq(_h(tf, "default_alignment"), "Center",
-                  "Qt centres a horizontal header")                              # 1
+                  "the toolkit centres a horizontal header")                              # 1
         assert_eq(_h(tf, "alignments"), ["Center"] * NCOLS,
                   "and with no exceptions every section follows it")              # 2
         assert_eq(_h(tf, "section_alignment.0"), "Center")                        # 3
@@ -232,7 +232,7 @@ def body() -> None:
         assert_eq(saved["default_alignment"], "Center",
                   "the header's rule is in the snapshot")                         # 28
         assert "section_alignments" not in saved, \
-            "and the model's exceptions are not, as in Qt"                        # 29
+            "and the model's exceptions are not, as in the toolkit"                        # 29
 
         tf.intervene("/external/state", saved)
         wait_until(lambda: _h(tf, "order")[0] == 2, desc="the state restores")
@@ -274,7 +274,7 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1504 §5.27 §2#7 — QHeaderView defaultAlignment: the header says "
+        "R1504 §5.27 §2#7 — header view defaultAlignment: the header says "
         "where its labels sit",
         body,
     ))

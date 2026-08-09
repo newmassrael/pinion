@@ -139,7 +139,7 @@ def body() -> None:
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
         assert_eq(_h(tf, "stretch_last_section"), False,
-                  "off by default, as in Qt")                                    # 1
+                  "off by default, as in the toolkit")                                    # 1
         assert_eq(_h(tf, "available_width"), AVAILABLE_W, "the strip's width")   # 2
         assert_eq(_h(tf, "visible_total"), BOOT_TOTAL,
                   "and the row is narrower than it")                             # 3
@@ -199,7 +199,7 @@ def body() -> None:
         tf.invoke("/external/set_resize_mode", "4:fixed")
         wait_until(lambda: _h(tf, "resize_mode.4") == "fixed", desc="Owner is fixed")
         assert_eq(_h(tf, "section_sizes")[4], 100 + LEFTOVER,
-                  "a Fixed last section is filled anyway — Qt's own words")      # 18
+                  "a Fixed last section is filled anyway — the toolkit's own words")      # 18
         assert_eq(_h(tf, "effective_resize_mode.4"), "stretch",
                   "the mode the header APPLIES")                                 # 19
         assert_eq(_h(tf, "resize_mode.4"), "fixed",
@@ -274,7 +274,7 @@ def body() -> None:
         wait_until(lambda: _h(tf, "stretch_last_section"), desc="on again")
         saved = _h(tf, "state")
         assert_eq(saved["stretch_last_section"], True,
-                  "the snapshot carries Qt's property")                          # 38
+                  "the snapshot carries the toolkit's property")                          # 38
         assert_eq(saved["sizes"], BOOT_W,
                   "and the widths it carries are the stored ones")               # 39
         _reset(tf)
@@ -332,7 +332,7 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1498 §5.27 §2#7 — QHeaderView stretchLastSection: the row fills its "
+        "R1498 §5.27 §2#7 — header view stretchLastSection: the row fills its "
         "viewport",
         body,
     ))

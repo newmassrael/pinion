@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(
             row("bool")["role"],
             "checkbox",
-            "Qt's default factory hands a two-item combo box for a bool, so \
+            "the toolkit's default factory hands a two-item combo box for a bool, so \
              that is what its AT announces"
         );
         assert_eq!(row("choice")["form"], "selector");

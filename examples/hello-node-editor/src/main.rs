@@ -474,11 +474,11 @@ const PORT_SIZE: i32 = 12;
 const BODY_PAD: i32 = 10;
 
 /// R1243 — a reroute knot's diameter (logical px). A reroute node
-/// ([`NodeGeometry::is_reroute`]) is a wire-routing passthrough, not a compute op,
-/// so it paints as this compact circular dot instead of a full card: no header,
-/// port rows, or inline editors. Its width == height == this, and both its ports
-/// anchor at its centre ([`knot_center`]) — the wire passes straight through the
-/// dot (the Blueprint / material-editor reroute look).
+/// ([`NodeGeometry::is_reroute`]) is a wire-routing passthrough, not a compute
+/// op, so it paints as this compact circular dot instead of a full card: no
+/// header, port rows, or inline editors. Its width == height == this, and both
+/// its ports anchor at its centre ([`knot_center`]) — the wire passes straight
+/// through the dot (the visual script / material-editor reroute look).
 const KNOT_SIZE: i32 = 18;
 
 /// R1227 — comment-frame geometry. `FRAME_PAD` is the margin an
@@ -650,8 +650,8 @@ impl PortType {
         }
     }
 
-    /// R1599 — the ink for a port that carries no value. Blueprint draws its
-    /// execution pins as plain white arrows for the same reason: the pin's
+    /// R1599 — the ink for a port that carries no value. visual script draws
+    /// its execution pins as plain white arrows for the same reason: the pin's
     /// colour is the type's, and control has none.
     const CONTROL_INK: Color = Color::rgb(0xF2, 0xF2, 0xF2);
 
@@ -1095,8 +1095,8 @@ fn frame_node(graph: &Graph, id: FrameId) -> Option<&Node<MaterialOp>> {
 /// every read, so a frame silently adopted a node dragged over it and
 /// abandoned one dragged out, and a resize changed what the frame *said* it
 /// held with nobody having edited membership. R1589 made containment a stored
-/// relation the document maintains, which is the DCC's `bNode::parent` and the reason `NODE_OT_join`
-/// exists there as an explicit act.
+/// relation the document maintains, which is the DCC's `node::parent` and the
+/// reason `join` exists there as an explicit act.
 fn frame_members(graph: &Graph, id: FrameId) -> Vec<Node<MaterialOp>> {
     let Some(tree) = graph.tree(TREE) else {
         return Vec::new();
@@ -1422,8 +1422,9 @@ fn node_bounds<'a>(
 /// Membership itself is **not** this: a node belongs to the frame its
 /// `Node::parent` names, which the crate maintains as a forest. This is the
 /// geometric question the *gestures* ask — which nodes a fresh frame should
-/// adopt, and which one a dragged node lands in — the Blueprint rule that a node
-/// belongs to the frame it sits in even if its card overhangs the border.
+/// adopt, and which one a dragged node lands in — the visual script rule that
+/// a node belongs to the frame it sits in even if its card overhangs the
+/// border.
 fn frame_contains(frame: &Node<MaterialOp>, n: &Node<MaterialOp>) -> bool {
     // R1243 — each axis uses the node's own extent, so a compact reroute knot's
     // centre is where its dot actually is.
@@ -1633,7 +1634,7 @@ fn port_row_top(row: usize) -> i32 {
 
 /// R1243 — the centre of a reroute knot in graph units: both its input and its
 /// output port anchor here, so a wire passes straight through the dot (the
-/// Blueprint reroute look). A reroute's `width()` and `height()` are both
+/// visual script reroute look). A reroute's `width()` and `height()` are both
 /// [`KNOT_SIZE`], so this is the geometric centre of the painted dot.
 fn knot_center(node: &Node<MaterialOp>) -> (i32, i32) {
     (node.x + node.width() / 2, node.y + node.height() / 2)
@@ -3839,14 +3840,15 @@ impl NodeGraphExternal {
     }
 
     /// R1235 — splice a **reroute node** into edge `edge_id`: a typed 1-in /
-    /// 1-out passthrough dropped at the wire's midpoint so the connection routes
-    /// `A -> R -> B` instead of `A -> B` (the Blueprint / material-editor
-    /// "reroute" knot — bend a wire around for readability, then drag `R` to
-    /// route it). The reroute adopts the wire's [`PortType`] on BOTH ports, so
-    /// `A -> R` and `R -> B` are assignable exactly when `A -> B` was — the
-    /// splice never weakens type-safety. ONE undoable [`GraphEdit`]: the original
-    /// edge is removed and the node + its two edges are added together, so a
-    /// single `Ctrl`+`Z` undoes the whole reroute. `None` for an unknown edge id.
+    /// 1-out passthrough dropped at the wire's midpoint so the connection
+    /// routes `A -> R -> B` instead of `A -> B` (the visual script /
+    /// material-editor "reroute" knot — bend a wire around for readability,
+    /// then drag `R` to route it). The reroute adopts the wire's [`PortType`]
+    /// on BOTH ports, so `A -> R` and `R -> B` are assignable exactly when
+    /// `A -> B` was — the splice never weakens type-safety. ONE undoable
+    /// [`GraphEdit`]: the original edge is removed and the node + its two
+    /// edges are added together, so a single `Ctrl`+`Z` undoes the whole
+    /// reroute. `None` for an unknown edge id.
     fn add_reroute(&self, edge_id: EdgeId) -> Option<NodeId> {
         let graph = self.graph();
         let wire = *edge(&graph, edge_id)?;
@@ -4119,21 +4121,22 @@ impl NodeGraphExternal {
 
     /// R1227 — frame the current node selection: the bounding box of the
     /// selected nodes grown by [`FRAME_PAD`] on every side (plus
-    /// [`FRAME_HEADER_H`] on top for the title strip), titled `"Comment N"`. The
-    /// canonical Blueprint "comment the selection" create (the RPC `add_frame`
-    /// verb + the future `C` gesture funnel here). Undoable. `None` when no node
-    /// is selected (a frame with nothing to annotate is not created). The node
-    /// selection is untouched — frames are a separate annotation axis, not part
-    /// of [`Selection`].
+    /// [`FRAME_HEADER_H`] on top for the title strip), titled `"Comment N"`.
+    /// The canonical visual script "comment the selection" create (the RPC
+    /// `add_frame` verb + the future `C` gesture funnel here). Undoable.
+    /// `None` when no node is selected (a frame with nothing to annotate is
+    /// not created). The node selection is untouched — frames are a separate
+    /// annotation axis, not part of [`Selection`].
     ///
-    /// R1596 — membership becomes a **fact** here ([`Document::enframe`], which writes each
-    /// member's [`Node::parent`]) where the editor re-derived it from the rectangle on
-    /// every read. That is the DCC's model (`NODE_OT_join`) and it is what makes a member
-    /// survive a resize: a rectangle test silently adopts and abandons nodes
-    /// as the box is dragged, so what the frame *said* it held changed without
-    /// anyone editing it. The **geometry** stays this application's — the
-    /// crate deliberately has no card extent (R1589) — so the padded bounding
-    /// box is written onto the frame node right after the relation is made.
+    /// R1596 — membership becomes a **fact** here ([`Document::enframe`],
+    /// which writes each member's [`Node::parent`]) where the editor
+    /// re-derived it from the rectangle on every read. That is the DCC's model
+    /// (`join`) and it is what makes a member survive a resize: a rectangle
+    /// test silently adopts and abandons nodes as the box is dragged, so what
+    /// the frame *said* it held changed without anyone editing it. The
+    /// **geometry** stays this application's — the crate deliberately has no
+    /// card extent (R1589) — so the padded bounding box is written onto the
+    /// frame node right after the relation is made.
     fn add_frame(&self) -> Option<FrameId> {
         let graph = self.graph();
         let selected = self.selection.get().nodes();
@@ -4195,12 +4198,12 @@ impl NodeGraphExternal {
     }
 
     /// R1234 — move comment frame `id` to a new `x` (`new_x`) and / or `y`
-    /// (`new_y`), carrying every node it CURRENTLY contains by the same clamped
-    /// delta as ONE undo step (`GraphEdit`, label "Move frame"). The
-    /// Blueprint move-with-contents contract — the membership is snapshotted at
-    /// the start of the move ([`frame_contains`]), so the moved set
-    /// is exactly what the paint + the `contains` query show. Nodes outside the
-    /// frame are untouched. `false` for an unknown id.
+    /// (`new_y`), carrying every node it CURRENTLY contains by the same
+    /// clamped delta as ONE undo step (`GraphEdit`, label "Move frame"). The
+    /// visual script move-with-contents contract — the membership is
+    /// snapshotted at the start of the move ([`frame_contains`]), so the moved
+    /// set is exactly what the paint + the `contains` query show. Nodes
+    /// outside the frame are untouched. `false` for an unknown id.
     fn translate_frame(&self, id: FrameId, new_x: Option<i32>, new_y: Option<i32>) -> bool {
         let graph = self.graph();
         let Some(frame) = frame_node(&graph, id) else {
@@ -4269,7 +4272,7 @@ impl NodeGraphExternal {
     }
 
     /// R1598 — swap what a node IS, keeping which node it is (the DCC's
-    /// `NODE_OT_swap_node`). Answers what the swap cost, as
+    /// `swap_node`). Answers what the swap cost, as
     /// `"<carried>|<severed>|<discarded>"` — three CSVs, so a client can tell
     /// "it worked" from "it worked and cost you a wire" without a second call.
     ///
@@ -4390,13 +4393,14 @@ impl NodeGraphExternal {
     /// `contains`. `None` when the path is not a frame path or the id / field is
     /// unknown.
     ///
-    /// R1596 — `contains` answers the **relation** ([`frame_members`]) where it used to answer a
-    /// rectangle test, and two reads join it: `parent` (the frame this frame is
-    /// inside, so a nest is readable from either end) and `contents` (every
-    /// descendant, which is what a drag actually carries). The DCC publishes
-    /// none of the three — `bNode::parent` reaches Python as `node.parent` and there is no accessor
-    /// for a frame's children at all, so its own UI code walks every node in
-    /// the tree comparing pointers.
+    /// R1596 — `contains` answers the **relation** ([`frame_members`]) where
+    /// it used to answer a rectangle test, and two reads join it: `parent`
+    /// (the frame this frame is inside, so a nest is readable from either end)
+    /// and `contents` (every descendant, which is what a drag actually
+    /// carries). The DCC publishes none of the three — `node::parent` reaches
+    /// Python as `node.parent` and there is no accessor for a frame's children
+    /// at all, so its own UI code walks every node in the tree comparing
+    /// pointers.
     fn query_frame(&self, path: &str) -> Option<IntrospectValue> {
         let rest = path.strip_prefix("frame.")?;
         let (id_str, field) = rest.split_once('.')?;
@@ -4694,25 +4698,27 @@ impl NodeGraphExternal {
     }
 
     /// R1236 — DISSOLVE node `id`: remove it and bridge its single upstream
-    /// source straight to its single downstream target, so the wire survives the
-    /// removed hop (the Blueprint "delete + reconnect" / `Alt`+`Delete` on a
-    /// reroute knot — the natural inverse of R1235's [`add_reroute`](Self::add_reroute)).
-    /// Requires EXACTLY one incident input edge (`A -> id`) and one output edge
-    /// (`id -> B`) plus a valid, non-duplicate bridge `A -> B` — always true for
-    /// a reroute, whose ports share the wire's type. ONE undoable [`GraphEdit`]:
-    /// the node + its two edges are removed and the bridge added together, so a
-    /// single `Ctrl`+`Z` restores the hop. `false` (a no-op) for an unknown id, a
-    /// non-passthrough wiring (zero or many edges either side), or a bridge that
-    /// would self-loop / mistype / duplicate an existing wire — the caller falls
-    /// back to a plain [`delete_node`](Self::delete_node).
-    /// R1241 — the eligibility + bridge plan for dissolving node `id`: the two
-    /// incident edges to remove (`A -> id`, `id -> B`) and the bridge endpoints
-    /// (`A -> B`) that replace them, or `None` when the node is not a dissolvable
-    /// passthrough (not exactly one incident edge on each side, or the bridge
-    /// would self-loop / mistype / duplicate an existing wire). SIDE-EFFECT FREE
-    /// (mints nothing), so the `dissolvable.<id>` READ and the `dissolve_node`
-    /// mutation share ONE predicate — the query can never disagree with what the
-    /// verb will do ([[setter-wire-returns-read-outcome]]).
+    /// source straight to its single downstream target, so the wire survives
+    /// the removed hop (the visual script "delete + reconnect" /
+    /// `Alt`+`Delete` on a reroute knot — the natural inverse of R1235's
+    /// [`add_reroute`](Self::add_reroute)). Requires EXACTLY one incident
+    /// input edge (`A -> id`) and one output edge (`id -> B`) plus a valid,
+    /// non-duplicate bridge `A -> B` — always true for a reroute, whose ports
+    /// share the wire's type. ONE undoable [`GraphEdit`]: the node + its two
+    /// edges are removed and the bridge added together, so a single `Ctrl`+`Z`
+    /// restores the hop. `false` (a no-op) for an unknown id, a
+    /// non-passthrough wiring (zero or many edges either side), or a bridge
+    /// that would self-loop / mistype / duplicate an existing wire — the
+    /// caller falls back to a plain [`delete_node`](Self::delete_node). R1241
+    /// — the eligibility + bridge plan for dissolving node `id`: the two
+    /// incident edges to remove (`A -> id`, `id -> B`) and the bridge
+    /// endpoints (`A -> B`) that replace them, or `None` when the node is not
+    /// a dissolvable passthrough (not exactly one incident edge on each side,
+    /// or the bridge would self-loop / mistype / duplicate an existing wire).
+    /// SIDE-EFFECT FREE (mints nothing), so the `dissolvable.<id>` READ and
+    /// the `dissolve_node` mutation share ONE predicate — the query can never
+    /// disagree with what the verb will do
+    /// ([[setter-wire-returns-read-outcome]]).
     fn dissolve_plan(&self, id: NodeId) -> Option<Rewired> {
         kind_node(&self.graph(), id)?;
         // §2 #3 — the plan IS the operation, run on a copy. `dissolve` is the
@@ -4731,9 +4737,9 @@ impl NodeGraphExternal {
     /// The predicate **widened** this round and the word it answers changed
     /// with it. The editor's own rule was "exactly one wire in and one out", a
     /// shape test that refused a two-input node whose dissolve is perfectly
-    /// well-defined; [`Document::dissolve`] is the general form (R1586, the DCC's `NODE_OT_delete_reconnect`), so what
-    /// is worth asking is no longer *can it* but **does it lose anything** —
-    /// [`Rewired::lossless`].
+    /// well-defined; [`Document::dissolve`] is the general form (R1586, the
+    /// DCC's `delete_reconnect`), so what is worth asking is no longer *can
+    /// it* but **does it lose anything** — [`Rewired::lossless`].
     fn dissolvable(&self, id: NodeId) -> bool {
         self.dissolve_plan(id).is_some_and(|r| r.lossless())
     }
@@ -4793,7 +4799,7 @@ impl NodeGraphExternal {
             .map(|f| f.id)
     }
 
-    /// R1596 — the DCC's `NODE_OT_attach`: put each selected node into the frame it is
+    /// R1596 — the DCC's `attach`: put each selected node into the frame it is
     /// sitting on, as one undo step. Answers the nodes that changed frame.
     ///
     /// This is where the geometric question ([`frame_contains`]) becomes the
@@ -4832,7 +4838,7 @@ impl NodeGraphExternal {
         attached
     }
 
-    /// R1596 — the DCC's `NODE_OT_detach`: take each selected node out of the frame
+    /// R1596 — the DCC's `detach`: take each selected node out of the frame
     /// immediately containing it, as one undo step. Answers the nodes that
     /// moved.
     ///
@@ -5002,14 +5008,15 @@ impl NodeGraphExternal {
     /// arrangement in ONE discrete undo step: data flows forward across
     /// columns with a crossing-reduced vertical order (see [`Layered`]). The
     /// AI-first peer of a node editor's "arrange" / "tidy" command (the engine
-    /// Blueprint, the DCC, Substance) — no selection needed (it lays out
+    /// visual script, the DCC, Substance) — no selection needed (it lays out
     /// everything), anchored at the graph's current top-left so the graph
-    /// stays roughly in place instead of jumping to the origin. A no-op `false` on
-    /// fewer than two nodes (a single node is already tidy) or when nothing
-    /// moves (the graph is already laid out — the pass is idempotent). Routes
-    /// through the same [`apply_node_moves`](Self::apply_node_moves) SSOT as align /
-    /// distribute / nudge, so a single `Ctrl+Z` reverts the whole arrangement;
-    /// comment frames are left in place (the align / distribute precedent).
+    /// stays roughly in place instead of jumping to the origin. A no-op
+    /// `false` on fewer than two nodes (a single node is already tidy) or when
+    /// nothing moves (the graph is already laid out — the pass is idempotent).
+    /// Routes through the same [`apply_node_moves`](Self::apply_node_moves)
+    /// SSOT as align / distribute / nudge, so a single `Ctrl+Z` reverts the
+    /// whole arrangement; comment frames are left in place (the align /
+    /// distribute precedent).
     fn auto_layout(&self) -> bool {
         // A stable snapshot pointer — the live signal is replaced wholesale by
         // `set_node_pos`, so this held copy stays valid while `apply_node_moves`
@@ -5601,16 +5608,18 @@ impl NodeGraphExternal {
                     self.begin_edit_source_value(n);
                 }
             }
-            // R1243 — a double-click on empty canvas that lands on a WIRE splices
-            // a reroute knot into it (the Blueprint double-click-to-reroute
-            // gesture; the AI-first twin of `invoke add_reroute <edge_id>`). The
-            // press carrying this `DoubleClick` just seeded the background
-            // edge-hit probe (`pending_edge_hit`) at the double-click point — the
-            // same probe a single background click reads to select a wire (r880
-            // (G)) — so it names the wire under the cursor. A double-click on
-            // truly empty canvas seeded `None` and no-ops. The probe is CONSUMED
+            // R1243 — a double-click on empty canvas that lands on a WIRE
+            // splices a reroute knot into it (the visual script
+            // double-click-to-reroute gesture; the AI-first twin of
+            // `invoke add_reroute <edge_id>`). The press carrying this
+            // `DoubleClick` just seeded the background edge-hit probe
+            // (`pending_edge_hit`) at the double-click point — the same probe
+            // a single background click reads to select a wire (r880 (G)) — so
+            // it names the wire under the cursor. A double-click on truly
+            // empty canvas seeded `None` and no-ops. The probe is CONSUMED
             // (the edge it named is about to be removed), so the gesture's
-            // trailing `PointerUp` reads `None` and cannot re-select a dead edge.
+            // trailing `PointerUp` reads `None` and cannot re-select a dead
+            // edge.
             (None, "DoubleClick") => {
                 // Arm the splice for the wire under the double-click (the probe
                 // the press just seeded). It FIRES on the trailing in-place
@@ -6289,7 +6298,7 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     // nothing is selected); `remove_frame` deletes a frame by id.
     SchemaField::action("add_frame", "int"),
     SchemaField::action("remove_frame", "int"),
-    // R1596 — the DCC's NODE_OT_attach / NODE_OT_detach: put the selection
+    // R1596 — the DCC's attach / detach: put the selection
     // into the frame it is sitting on, or take it out one level. Both answer
     // the CSV of nodes whose frame changed, where the DCC's operators report
     // only whether the operator ran at all. R1598 — swap what a node IS,
@@ -6305,7 +6314,7 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::action("dissolve_node", "int"),
     SchemaField::action("dissolve_selected", "json"),
     SchemaField::action("select_all", "json"),
-    // R1592 — the DCC's NODE_OT_select_lasso / _circle, in graph units.
+    // R1592 — the DCC's select_lasso / _circle, in graph units.
     // `select_lasso "x,y;x,y;..."` (three vertices or more, closed by
     // derivation); `select_circle "x,y,r"`. Both answer how many nodes the
     // shape took, and both are the SAME call the marquee makes — a

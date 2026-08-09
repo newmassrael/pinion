@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1569 §5.39 §5.20 KeySequenceEdit (Qt QKeySequenceEdit) — the focused widget shadows the window's accelerator layers"
+description = "R1569 §5.39 §5.20 KeySequenceEdit (the toolkit key-sequence editor) — the focused widget shadows the window's accelerator layers"
 publish = false
 
 [[bin]]

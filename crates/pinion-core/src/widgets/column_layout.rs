@@ -3475,7 +3475,7 @@ mod tests {
     #[test]
     fn r1510_the_rule_gates_the_highlight_not_the_selection() {
         let l = layout();
-        assert!(!l.highlight_sections(), "off by default, as in Qt");
+        assert!(!l.highlight_sections(), "off by default, as in the toolkit");
         assert!(l.set_section_selection(1, SectionSelection::Partial));
         assert!(l.set_section_selection(2, SectionSelection::Full));
 
@@ -3576,7 +3576,7 @@ mod tests {
         assert_eq!(
             saved.to_json().get("highlight_sections"),
             Some(&serde_json::Value::Bool(true)),
-            "Qt serialises this one as `highlightSelected`",
+            "the toolkit serialises this one as `highlightSelected`",
         );
 
         let other = layout();
@@ -3608,7 +3608,7 @@ mod tests {
         assert!(
             !decoded.highlight_sections,
             "absent decodes to `false` — the old header had no selection input \
-             at all, and Qt starts here too",
+             at all, and the toolkit starts here too",
         );
         assert_eq!(
             ColumnLayoutState::default().highlight_sections,
@@ -4023,7 +4023,7 @@ mod tests {
         let decoded = ColumnLayoutState::from_json(&older).expect("the older shape still decodes");
         assert!(
             decoded.sections_movable,
-            "not Qt's default: the old header's"
+            "not the toolkit's default: the old header's"
         );
         assert!(decoded.sections_clickable);
         assert_eq!(
@@ -4043,7 +4043,7 @@ mod tests {
             (fresh.sections_movable, fresh.sections_clickable),
             (d.sections_movable, d.sections_clickable),
         );
-        assert!(!d.sections_movable, "and both are Qt's `false`");
+        assert!(!d.sections_movable, "and both are the toolkit's `false`");
         assert!(!d.sections_clickable);
     }
 
@@ -4640,7 +4640,7 @@ mod tests {
         assert_eq!(
             l.resize_contents_precision(),
             DEFAULT_CONTENTS_PRECISION,
-            "Qt's default"
+            "the toolkit's default"
         );
         assert!(matches!(
             l.query("resize_contents_precision"),
@@ -4923,8 +4923,8 @@ mod tests {
         // one. The toolkit keeps `sectionsMovable` and `sectionsClickable` apart, and a sortable-but-pinned
         // header is the commoner of the two shapes.
         let l = layout();
-        assert!(!l.sections_movable(), "off by default, as in Qt");
-        assert!(!l.sections_clickable(), "off by default, as in Qt");
+        assert!(!l.sections_movable(), "off by default, as in the toolkit");
+        assert!(!l.sections_clickable(), "off by default, as in the toolkit");
 
         l.set_sections_clickable(true);
         l.invoke("send", &text("1:PointerDown"))
@@ -5296,7 +5296,7 @@ mod tests {
             "unbounded, said out loud rather than by omitting the slot"
         );
         l.intervene("max_section_size", &IntrospectValue::Int(120))
-            .expect("Qt's setMaximumSectionSize has a wire peer");
+            .expect("the toolkit's setMaximumSectionSize has a wire peer");
         assert_eq!(l.maximum_section_size(), 120);
         assert_eq!(
             l.invoke("resize_section", &text("3:900")),
@@ -5604,7 +5604,7 @@ mod tests {
         // The toolkit's default, and the toolkit's split: `resizeSection()` never cascades,
         // so with the property off the interactive path must be the same call.
         let l = layout();
-        assert!(!l.cascading_section_resizes(), "off, as in Qt");
+        assert!(!l.cascading_section_resizes(), "off, as in the toolkit");
         assert_eq!(l.interactive_resize_section(0, 200), 200);
         assert_eq!(
             l.save_state().sizes,
@@ -5788,7 +5788,7 @@ mod tests {
             Some(IntrospectValue::Bool(false))
         );
         l.intervene("cascading_section_resizes", &IntrospectValue::Bool(true))
-            .expect("Qt's property has a wire peer");
+            .expect("the toolkit's property has a wire peer");
         assert!(l.cascading_section_resizes());
         assert!(
             l.save_state().cascading_section_resizes,
@@ -5880,7 +5880,7 @@ mod tests {
     #[test]
     fn r1498_off_by_default_and_the_row_falls_short_of_its_viewport() {
         let l = filled();
-        assert!(!l.stretch_last_section(), "Qt's default");
+        assert!(!l.stretch_last_section(), "the toolkit's default");
         assert_eq!(
             l.visible_total(),
             520,
@@ -6091,7 +6091,7 @@ mod tests {
             Some(IntrospectValue::Bool(false))
         );
         l.intervene("stretch_last_section", &IntrospectValue::Bool(true))
-            .expect("Qt's property has a wire peer");
+            .expect("the toolkit's property has a wire peer");
         assert!(l.stretch_last_section());
         assert!(
             l.save_state().stretch_last_section,

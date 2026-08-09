@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1450 §5.27 §5.40 §5.51 column drag-to-reorder — Qt QHeaderView movable sections (moveSection / visualIndex / logicalIndex / restore) over the lifted ReorderModel, with the whole section permutation readable and writable as typed data instead of an opaque saveState blob"
+description = "R1450 §5.27 §5.40 §5.51 column drag-to-reorder — the toolkit header view movable sections (moveSection / visualIndex / logicalIndex / restore) over the lifted ReorderModel, with the whole section permutation readable and writable as typed data instead of an opaque saveState blob"
 publish = false
 
 [[bin]]

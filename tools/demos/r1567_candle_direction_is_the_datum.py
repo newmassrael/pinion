@@ -22,18 +22,18 @@ What this script checks, and why each check discriminates:
   and the wicks are required to hang off the body edges on the body's own
   centre line — six copies of the slot arithmetic that happened to agree would
   pass a per-mark check and fail this one.
-* **PAST the toolkit 6.11 (1): a doji has a NAME.** Wednesday closed exactly where it
+* **PAST THE 6.11 FLOOR (1): a doji has a NAME.** Wednesday closed exactly where it
   opened. The toolkit's documented rule paints `increasingColor` only when the close is
   *higher* than the open, so a toolkit doji silently takes the losing colour and
   candlestick set has no accessor to say otherwise. Here it is its own
   direction, its body has zero height on the wire, and the caption says so.
-* **PAST the toolkit 6.11 (2): the direction is encoded TWICE.** A rising body is
+* **PAST THE 6.11 FLOOR (2): the direction is encoded TWICE.** A rising body is
   hollow (`fill.a == 0`) and a falling one solid (`fill.a == 255`) — the
   traditional Japanese form, which predates colour. The "no hue" chip collapses
   all three strokes to one ink and the fill alphas do not move, which is the
   claim: a colour-blind reader keeps the direction. The toolkit encodes it in hue alone,
   and green-and-red is the worst pair for the commonest deficiency.
-* **PAST the toolkit 6.11 (3): one datum, two readings of the x-axis.** On the session
+* **PAST THE 6.11 FLOOR (3): one datum, two readings of the x-axis.** On the session
   axis the six bodies abut and the weekend takes no width; on the elapsed axis
   the same six sit over real UTC time and the weekend is three days wide. The toolkit
   reaches those two pictures by attaching two axis objects and handing the
@@ -41,7 +41,7 @@ What this script checks, and why each check discriminates:
   descriptions of when the sessions were, with nothing checking they agree.
   Here the slot names are DERIVED from the instants, and the script reads them
   back off the axis to prove it.
-* **PAST the toolkit 6.11 (4): the label CARDINALITY follows the reading.** One node
+* **PAST THE 6.11 FLOOR (4): the label CARDINALITY follows the reading.** One node
   per session on the ordinal axis, one per time tick on the elapsed one, under
   two different tags — two questions, not one tag that lies about what it
   counts.
@@ -200,7 +200,7 @@ def body() -> None:
         assert_eq(
             count_prefix(snap, "chart.cap."),
             0,
-            "the caps are opt-in, as Qt's capsVisible is",
+            "the caps are opt-in, as the toolkit's capsVisible is",
         )
         for i in range(n):
             b = rect(snap, f"chart.candle.{i}")
@@ -218,13 +218,13 @@ def body() -> None:
         centres = [centre_x(rect(snap, f"chart.candle.{i}")) for i in range(n)]
         assert centres == sorted(centres), f"sessions ascend left to right: {centres}"
 
-        # ── (B) PAST the toolkit: the doji has a name
+        # ── (B) PAST THE FLOOR: the doji has a name
         # ─────────────────────────
         assert_eq(
             body_span(snap, DOJI),
             0.0,
-            "PAST QT: Wednesday opened and closed at 106, so its body has NO "
-            "height — that is the glyph, not a rounding error. Qt paints it "
+            "PAST THE FLOOR: Wednesday opened and closed at 106, so its body has NO "
+            "height — that is the glyph, not a rounding error. The toolkit paints it "
             "with decreasingColor and no accessor can say otherwise",
         )
         for i in (0, 1, 2, 4, 5):
@@ -241,15 +241,15 @@ def body() -> None:
         assert "a doji" in caption(snap), f"and it is NAMED: {caption(snap)}"
         assert "solid body" in caption(snap), caption(snap)
 
-        # ── (C) PAST the toolkit: the direction is encoded twice
+        # ── (C) PAST THE FLOOR: the direction is encoded twice
         # ──────────────
         hued = [body_ink(snap, i) for i in range(n)]
         assert_eq(
             [a for a, _ in hued],
             [FILL_ALPHA[d] for d in DIRECTIONS],
-            "PAST QT (fill): a rising body is HOLLOW and a falling one SOLID "
+            "PAST THE FLOOR (fill): a rising body is HOLLOW and a falling one SOLID "
             "— the traditional Japanese form, which predates colour. "
-            "QCandlestickSeries has bodyOutlineVisible and no such thing",
+            "the toolkit's candlestick series has bodyOutlineVisible and no such thing",
         )
         hues = {h for _, h in hued}
         assert len(hues) >= 2, f"and the hues differ too: {hues}"
@@ -260,7 +260,7 @@ def body() -> None:
             "channel and not a per-session palette",
         )
         assert hued[DOJI][1] not in (hued[0][1], hued[1][1]), (
-            "PAST QT: the doji gets its own ink. Qt has exactly two colours "
+            "PAST THE FLOOR: the doji gets its own ink. The toolkit has exactly two colours "
             f"and the equal case falls into one of them: {hued[DOJI][1]}"
         )
 
@@ -276,8 +276,8 @@ def body() -> None:
         assert_eq(
             [a for a, _ in mono],
             [a for a, _ in hued],
-            "PAST QT: and the fill alphas do not move, so the direction is "
-            "still readable off the picture. This is the claim: Qt encodes it "
+            "PAST THE FLOOR: and the fill alphas do not move, so the direction is "
+            "still readable off the picture. This is the claim: the toolkit encodes it "
             "in hue alone, so the same reader is left with nothing",
         )
         text = caption(snap)
@@ -286,19 +286,19 @@ def body() -> None:
         toggle(tf, MONO_TAG)
         snap = snapshot(tf)
         assert "1.11:1" in caption(snap), (
-            "PAST QT: the measured contrast of the CONVENTIONAL green/red "
+            "PAST THE FLOOR: the measured contrast of the CONVENTIONAL green/red "
             "pair is published — the two are all but isoluminant, which is "
             f"why the shipped pair is separated in luminance: {caption(snap)}"
         )
 
-        # ── (D) PAST the toolkit: one datum, two readings of the x-axis
+        # ── (D) PAST THE FLOOR: one datum, two readings of the x-axis
         # ───────
         assert_eq(
             [node(snap, f"chart.xlabel.{i}")["content"] for i in range(n)],
             SLOT_NAMES,
-            "PAST QT: the slot names are DERIVED from the sessions' own "
-            "instants. Qt's QBarCategoryAxis takes a QStringList supplied "
-            "separately from the sets' timestamps, so a Qt chart holds two "
+            "PAST THE FLOOR: the slot names are DERIVED from the sessions' own "
+            "instants. The toolkit's bar category axis takes a string list supplied "
+            "separately from the sets' timestamps, so a toolkit chart holds two "
             "descriptions of when its sessions were and checks neither",
         )
         ordinal_gaps = [centres[k + 1] - centres[k] for k in range(n - 1)]
@@ -318,7 +318,7 @@ def body() -> None:
         e_centres = [centre_x(rect(snap, f"chart.candle.{i}")) for i in range(n)]
         elapsed_gaps = [e_centres[k + 1] - e_centres[k] for k in range(n - 1)]
         assert elapsed_gaps[AFTER_GAP - 1] > elapsed_gaps[0] * 2.5, (
-            "PAST QT: on the ELAPSED axis the SAME six sessions sit over real "
+            "PAST THE FLOOR: on the ELAPSED axis the SAME six sessions sit over real "
             "UTC time, so the weekend is three days wide. One datum, two "
             f"readings, one declaration: {elapsed_gaps}"
         )
@@ -337,7 +337,7 @@ def body() -> None:
                 f"bodies {i} and {i + 1} do not overlap on the elapsed axis"
             )
 
-        # ── (E) PAST the toolkit: the label cardinality follows the reading
+        # ── (E) PAST THE FLOOR: the label cardinality follows the reading
         # ───
         assert_eq(
             count_prefix(snap, "chart.xlabel."),
@@ -423,9 +423,9 @@ def body() -> None:
         assert_eq(
             status.get("name"),
             caption(snap),
-            "PAST QT: a screen reader is told the SAME doji, reading and "
-            "measured contrast a sighted reader sees. QtCharts draws into a "
-            "QGraphicsScene and implements no accessibility interface at all",
+            "PAST THE FLOOR: a screen reader is told the SAME doji, reading and "
+            "measured contrast a sighted reader sees. The toolkit's charting module draws into a "
+            "canvas scene and implements no accessibility interface at all",
         )
         assert "a doji" in (status.get("name") or ""), status.get("name")
 

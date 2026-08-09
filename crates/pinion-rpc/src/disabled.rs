@@ -204,8 +204,8 @@ mod tests {
         assert_eq!(rows[0]["ink"], "faded", "the declaring container's own box");
         assert_eq!(
             rows[1]["ink"], "opaque_content",
-            "an image's pixels are not the framework's to fade — Qt cannot \
-             grey a QOpenGLWidget either, and says nothing about it",
+            "an image's pixels are not the framework's to fade — the toolkit cannot \
+             grey a GL widget either, and says nothing about it",
         );
     }
 }

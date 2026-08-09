@@ -187,7 +187,7 @@ def body() -> None:
 
         open_persistent(tf, 3, COUNT_COL, "a SECOND persistent editor opens on 3_2")
         two = editors(tf)
-        assert_eq(two["count"], 2, "both are open — Qt cannot be asked this at all")
+        assert_eq(two["count"], 2, "both are open — the toolkit cannot be asked this at all")
         assert_eq(
             [(e["row"], e["col"]) for e in two["editors"]],
             [(1, NAME_COL), (3, COUNT_COL)],
@@ -245,7 +245,7 @@ def body() -> None:
             "this cell's tag showing another cell's buffer"
         )
         assert "77" in " ".join(texts_of(other_cell)), (
-            "which still paints its own parked text, as an unfocused QLineEdit "
+            "which still paints its own parked text, as an unfocused line edit "
             "shows its own with no caret"
         )
 
@@ -260,7 +260,7 @@ def body() -> None:
         assert_eq(
             after_escape["count"],
             2,
-            "and it is still open — Qt's closeEditor returns early for a "
+            "and it is still open — the toolkit's closeEditor returns early for a "
             "persistent editor, so Escape there does nothing at all",
         )
         assert_eq(by_cell(after_escape)[(1, NAME_COL)]["dirty"], False, "clean again")
@@ -322,8 +322,8 @@ def body() -> None:
         assert_eq(
             entry(tf, FAR_ROW, NAME_COL)["value"],
             "far",
-            "yet its in-flight value survives being scrolled out — Qt keeps a "
-            "live QWidget for it and repositions it on every scroll",
+            "yet its in-flight value survives being scrolled out — the toolkit keeps a "
+            "live widget for it and repositions it on every scroll",
         )
         assert_eq(editors(tf)["count"], 3, "and it is still in the set")
 
@@ -350,7 +350,7 @@ def body() -> None:
         assert_eq(
             editors(tf)["count"],
             3,
-            "and nothing opened — Qt's createEditor never consults "
+            "and nothing opened — the toolkit's createEditor never consults "
             "flags() & ItemIsEditable, so it opens a live editor there and "
             "drops every write the user makes into it in silence",
         )
@@ -400,7 +400,7 @@ def body() -> None:
         assert_eq(
             entry(tf, 6, NAME_COL)["value"],
             "half typed",
-            "keeping what was typed — Qt reaches the same end by inserting the "
+            "keeping what was typed — the toolkit reaches the same end by inserting the "
             "existing widget into its private set, and reports nothing",
         )
         snap = wait_snap(
@@ -430,19 +430,19 @@ def body() -> None:
         assert_eq(
             landed,
             "committed 3/4",
-            "three landed and the out-of-range one did not — the walk Qt "
+            "three landed and the out-of-range one did not — the walk the toolkit "
             "cannot make, because its editor hash is private",
         )
         survivors = editors(tf)
         assert_eq(
             survivors["count"],
             4,
-            "every persistent editor SURVIVED its commit, as Qt's do",
+            "every persistent editor SURVIVED its commit, as the toolkit's do",
         )
         assert_eq(
             by_cell(survivors)[(1, NAME_COL)]["dirty"],
             False,
-            "and a committed one is reseeded, so it is no longer dirty — Qt "
+            "and a committed one is reseeded, so it is no longer dirty — the toolkit "
             "keeps no seed at all, so a second commit has nothing to compare",
         )
         refused = by_cell(survivors)[(3, COUNT_COL)]

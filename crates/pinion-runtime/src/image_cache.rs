@@ -705,7 +705,11 @@ mod r1550_tests {
         cache.insert_decoded("b", &decoded(32, 32, 2));
         assert_eq!(cache.len(), 2);
         cache.set_budget_bytes(5_000);
-        assert_eq!(cache.len(), 1, "Qt's setCacheLimit, applied at once");
+        assert_eq!(
+            cache.len(),
+            1,
+            "the toolkit's setCacheLimit, applied at once"
+        );
     }
 
     #[test]

@@ -78,7 +78,7 @@ def arm_double(tf) -> None:
     """Deterministically prime a fresh left double-click at CENTER.
 
     The router's per-button double-click mark survives the sink's `clear` (the
-    Qt cycle is global per button, not per report log), so a prior CENTER press
+    the toolkit cycle is global per button, not per report log), so a prior CENTER press
     inside the window would make a `double_click`'s FIRST down read as a double.
     A FAR press (> 5 px away) plants a position-mismatched mark, so the next
     CENTER down can never pair with it — the double_click's first down is then a

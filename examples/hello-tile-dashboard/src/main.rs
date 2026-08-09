@@ -1,4 +1,4 @@
-//! `hello-tile-dashboard` — R1608 §5.21 — a **the dashboard tool-class tile dashboard** over the
+//! `hello-tile-dashboard` — R1608 §5.21 — a **monitoring-tool-class tile dashboard** over the
 //! R1560 CSS Grid, driven by a press-drag and by the wire.
 //!
 //! R1607 built the model ([`TileGrid`]) and measured that the existing grid
@@ -1365,7 +1365,7 @@ mod tests {
             assert_eq!(
                 reply,
                 IntrospectValue::Text("throughput:0>2, latency:1>3, alarms:2>4".to_owned()),
-                "the displaced cards are NAMED, which Grafana cannot answer"
+                "the displaced cards are NAMED, which the dashboard tool cannot answer"
             );
             assert_eq!(
                 text(oracle, "last_reflow"),
@@ -1646,7 +1646,7 @@ mod tests {
                 text(oracle, "editing"),
                 "topology",
                 "the first editing chord opened the session — no menu round trip, \
-                 which is how Qt enters interactive mode"
+                 which is how the toolkit enters interactive mode"
             );
             assert_ne!(text(oracle, "session_reflow"), "clean");
             assert_ne!(text(oracle, "tiles"), before);
@@ -1656,7 +1656,7 @@ mod tests {
                 text(oracle, "tiles"),
                 before,
                 "★ Escape restored the cards the edit DISPLACED as well as the one \
-                 being edited; Qt saves `oldGeometry` and never reads it back"
+                 being edited; the toolkit saves `oldGeometry` and never reads it back"
             );
             assert_eq!(text(oracle, "editing"), "");
             assert!(text(oracle, "announcement").contains("restored"));
@@ -1913,8 +1913,8 @@ mod tests {
             assert_eq!(
                 region.live,
                 Some(AccessLive::Polite),
-                "★ Qt has QAccessibleAnnouncementEvent and no widget in \
-                 qtbase/src/widgets fires one"
+                "★ the toolkit has accessible announcement event and no widget in \
+                 the toolkit's widget module/src/widgets fires one"
             );
             let Some(AccessValue::Text(said)) = &region.value else {
                 panic!("the region carries the sentence")

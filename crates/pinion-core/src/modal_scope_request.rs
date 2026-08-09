@@ -54,7 +54,7 @@
 //!   frame, which a single slot happens to survive.
 //! - *Handoff* closes A **and** opens B: a command palette or menu whose
 //!   destructive row hands off to a confirm dialog (the toolkit's menu action →
-//!   [`QMessageBox::question`]; every toolkit ships it). That is one user
+//!   `question`; every toolkit ships it). That is one user
 //!   action by definition, so it is one dispatch frame with two edits,
 //!   and "express it in separate frames" has nothing to apply to.
 //!
@@ -81,8 +81,6 @@
 //! The confinement is not overridable, though — a request naming a tag
 //! the topmost trap does not enumerate is refused, so an open dialog
 //! cannot be escaped by a stray request in the same frame.
-//!
-//! [`QMessageBox::question`]: https://doc.qt.io/qt-6/qmessagebox.html
 
 use std::cell::RefCell;
 

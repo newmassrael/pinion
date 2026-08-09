@@ -1212,8 +1212,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def pointer_pressure(self, value: float) -> None:
         """`scene/pointer_pressure` typed wrapper (R1423 §5.35 §5.15).
 
-        Set the pointer PRESSURE (W3C `PointerEvent.pressure` / Qt
-        `QTabletEvent::pressure()`), normalised `0.0..=1.0`. Positionless
+        Set the pointer PRESSURE (W3C `PointerEvent.pressure` / the toolkit
+        `pressure()`), normalised `0.0..=1.0`. Positionless
         (out-of-band, like `modifiers()`): the value is delivered to the surface
         under the pointer at once and rides subsequent moves. The AI-first source
         for a pressure-reactive surface (an ink brush, a DCC viewport), so a
@@ -1224,8 +1224,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def pointer_tilt(self, tilt_x: float, tilt_y: float) -> None:
         """`scene/pointer_tilt` typed wrapper (R1429 §5.35 §5.15).
 
-        Set the pointer TILT (W3C `PointerEvent.tiltX/tiltY` / Qt
-        `QTabletEvent::xTilt/yTilt`), each axis in degrees `-90.0..=90.0`.
+        Set the pointer TILT (W3C `PointerEvent.tiltX/tiltY` / the toolkit
+        `xTilt/yTilt`), each axis in degrees `-90.0..=90.0`.
         Positionless (out-of-band, like `pointer_pressure()`): the value is
         delivered to the surface under the pointer at once and rides subsequent
         moves. The AI-first source for a tilt-reactive surface (a calligraphy
@@ -1240,8 +1240,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def pointer_twist(self, twist: float) -> None:
         """`scene/pointer_twist` typed wrapper (R1430 §5.35 §5.15).
 
-        Set the pointer TWIST (W3C `PointerEvent.twist` / Qt
-        `QTabletEvent::rotation()`), the barrel rotation in degrees, wrapped to
+        Set the pointer TWIST (W3C `PointerEvent.twist` / the toolkit
+        `rotation()`), the barrel rotation in degrees, wrapped to
         `0.0..=360.0` at the router. Positionless (out-of-band), delivered to the
         surface under the pointer at once; winit exposes no barrel axis, so the
         RPC is the sole driver.
@@ -1252,8 +1252,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """`scene/pointer_tangential_pressure` typed wrapper (R1430 §5.35 §5.15).
 
         Set the airbrush finger-wheel position (W3C
-        `PointerEvent.tangentialPressure` / Qt
-        `QTabletEvent::tangentialPressure()`), clamped to `-1.0..=1.0` at the
+        `PointerEvent.tangentialPressure` / the toolkit
+        `tangentialPressure()`), clamped to `-1.0..=1.0` at the
         router. Positionless, out-of-band.
         """
         self.request(
@@ -1263,7 +1263,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def pointer_height(self, height: float) -> None:
         """`scene/pointer_height` typed wrapper (R1430 §5.35 §5.15).
 
-        Set the pointer HEIGHT (Qt `QTabletEvent::z()`), the hover distance above
+        Set the pointer HEIGHT (the toolkit `z()`), the hover distance above
         the surface, floored at `0.0` at the router. Positionless, out-of-band;
         no W3C peer.
         """
@@ -1272,8 +1272,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def pointer_type(self, kind: str) -> None:
         """`scene/pointer_type` typed wrapper (R1431 §5.35 §5.15).
 
-        Set the pointer DEVICE kind (W3C `PointerEvent.pointerType` / Qt
-        `QTabletEvent::pointerType()`): one of ``"mouse"`` / ``"pen"`` /
+        Set the pointer DEVICE kind (W3C `PointerEvent.pointerType` / the toolkit
+        `pointerType()`): one of ``"mouse"`` / ``"pen"`` /
         ``"eraser"`` / ``"touch"``. Positionless, out-of-band; lets a headless
         client present as a pen or eraser with no device.
         """
@@ -1551,7 +1551,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     ) -> None:
         """`scene/pinch_gesture` typed wrapper (R1432 §5.35 §5.15).
 
-        Drive a native PINCH (magnify) gesture — the Qt `QNativeGestureEvent`
+        Drive a native PINCH (magnify) gesture — the toolkit native gesture event
         `ZoomNativeGesture` peer — at the cursor target. Supply exactly one of
         `at = (x, y)` or `path = "<tag>"` (the widget under the cursor receives
         the offer). `magnification` is the INCREMENTAL scale delta (positive
@@ -1584,7 +1584,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     ) -> None:
         """`scene/rotation_gesture` typed wrapper (R1433 §5.35 §5.15).
 
-        Drive a native ROTATION gesture — the Qt `QNativeGestureEvent`
+        Drive a native ROTATION gesture — the toolkit native gesture event
         `RotateNativeGesture` peer, the `pinch_gesture` sibling — at the cursor
         target. Supply exactly one of `at = (x, y)` or `path = "<tag>"` (the
         widget under the cursor receives the offer). `rotation` is the
@@ -1619,7 +1619,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     ) -> None:
         """`scene/pan_gesture` typed wrapper (R1434 §5.35 §5.15).
 
-        Drive a native N-finger PAN gesture — the Qt `QNativeGestureEvent`
+        Drive a native N-finger PAN gesture — the toolkit native gesture event
         `PanNativeGesture` peer, the `pinch_gesture` sibling with a
         two-dimensional delta — at the cursor target. Supply exactly one of
         `at = (x, y)` or `path = "<tag>"` (the widget under the cursor receives
@@ -1654,8 +1654,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     ) -> None:
         """`scene/smart_zoom_gesture` typed wrapper (R1435 §5.35 §5.15).
 
-        Drive a native SMART-ZOOM — the two-finger double tap, Qt
-        `QNativeGestureEvent` `SmartZoomNativeGesture` / winit
+        Drive a native SMART-ZOOM — the two-finger double tap, the toolkit
+        native gesture event `SmartZoomNativeGesture` / winit
         `DoubleTapGesture` — at the cursor target. Supply exactly one of
         `at = (x, y)` or `path = "<tag>"`.
 
@@ -2806,7 +2806,7 @@ def sample_png_points(
     R640 §5.7 — pair with `PINION_SCREENSHOT` capture +
     `[[center-only-pixel-sample-anti-pattern]]` to verify both
     interior fill AND corner / edge roundness in one assertion batch.
-    The companion `figma_button_m3_r640.py` demo is the first client.
+    The companion `design_button_m3_r640.py` demo is the first client.
     """
     return [png_pixel(png, x, y) for (x, y) in points]
 

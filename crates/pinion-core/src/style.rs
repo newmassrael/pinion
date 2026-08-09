@@ -1817,7 +1817,7 @@ pub enum FontStyle {
     Oblique(Option<i16>),
 }
 
-/// Line-height policy (§5.36 R47.5 the design tool-fidelity).
+/// Line-height policy (§5.36 R47.5 design-tool-fidelity).
 ///
 /// `Normal` defers to the font's preferred line height (parley
 /// `MetricsRelative(1.0)` equivalent). `Px` pins absolute pixels;
@@ -2002,7 +2002,7 @@ impl UnderlineStyle {
     }
 }
 
-/// Inline text decoration (§5.36 R47.5 the design tool-fidelity; R1540
+/// Inline text decoration (§5.36 R47.5 design-tool-fidelity; R1540
 /// underline axis).
 ///
 /// A run may be underlined and struck through at once (the design tool allows
@@ -2133,8 +2133,8 @@ pub enum TextOverflow {
 }
 
 /// R1551 §5.36 — CSS `text-indent`: how far the *first* line of a paragraph
-/// starts from the paragraph's own start edge (the toolkit `QTextBlockFormat::
-/// setTextIndent`).
+/// starts from the paragraph's own start edge (the toolkit's block format
+/// spells it `setTextIndent`).
 ///
 /// This is a **paragraph-level** field: it describes the first line of the
 /// whole [`TextStyle`]-bearing node, so a per-run value is ignored exactly the
@@ -2266,8 +2266,9 @@ impl TextIndent {
 ///
 /// # Units
 ///
-/// Every length here is CSS px. The toolkit's is not one unit: `QTextBlockFormat:: indent()` is an `int`
-/// multiplied by the document-wide `indentWidth`, while `leftMargin()` and friends are `qreal` pixels —
+/// Every length here is CSS px. The toolkit's is not one unit: its block
+/// format's `indent()` is an `int` multiplied by the document-wide
+/// `indentWidth`, while `leftMargin()` and friends are `qreal` pixels —
 /// so a number read off a toolkit block format does not say what it measures.
 /// A single unit is why [`Self::left_indent_px`] can absorb both of the toolkit's left-side
 /// properties without a conversion table.
@@ -2548,7 +2549,7 @@ impl<'de> serde::Deserialize<'de> for FontFamily {
 
 /// Sidecar style for [`TextNode`](crate::scene::TextNode) per §5.3 R20.
 ///
-/// R47.5 §5.36 the design tool-fidelity expansion: `font_weight`, `font_style`, `line_height`, `letter_spacing`, `text_align`,
+/// R47.5 §5.36 design-tool-fidelity expansion: `font_weight`, `font_style`, `line_height`, `letter_spacing`, `text_align`,
 /// `decoration`, `overflow` join `font_family` / `font_size_px` / `fg_color` in the schema. All new fields are `Hash + Eq`
 /// (integer-based) so the `LayoutCache::LayoutKey` continues to deduplicate stable inputs; any
 /// field change (including weight / line-height / alignment) produces a fresh
@@ -2628,7 +2629,7 @@ pub struct TextStyle {
 }
 
 impl TextStyle {
-    /// v0 default: system font, 16px, opaque black, the design tool-fidelity
+    /// v0 default: system font, 16px, opaque black, design-tool-fidelity
     /// fields all at their CSS defaults (Normal weight, Normal style,
     /// Normal line height, 0 letter-spacing, Start align, no
     /// decoration, Visible overflow).
@@ -3582,7 +3583,7 @@ pub struct LayoutStyle {
     /// [`DropPoint`]: crate::external::DropPoint
     pub drop_target: bool,
     /// (R1554 §5.39 §5.35 §5.40) **This node and everything under it is
-    /// disabled** — Qt's [`QWidget::setEnabled(false)`], HTML's
+    /// disabled** — the toolkit's `setEnabled(false)`, HTML's
     /// `<fieldset disabled>`, WAI-ARIA's `aria-disabled`.
     ///
     /// The one interaction property on this sidecar that is **inherited**.
@@ -3613,8 +3614,6 @@ pub struct LayoutStyle {
     ///
     /// `false` (the default) is every pre-R1554 node — additive and
     /// bit-identical for existing bindings.
-    ///
-    /// [`QWidget::setEnabled(false)`]: https://doc.qt.io/qt-6/qwidget.html#enabled-prop
     pub disabled: bool,
     /// (R1554 §5.39) Derived: the cascade has resolved this node as disabled —
     /// by its own [`declaration`](Self::disabled) or by an ancestor's. The toolkit's
@@ -4839,7 +4838,7 @@ mod tests {
         assert!(s.font_family.is_none());
         assert_eq!(s.font_size_px, 16);
         assert_eq!(s.fg_color, Color::rgb(0, 0, 0));
-        // R47.5 the design tool-fidelity defaults — every new field at its CSS
+        // R47.5 design-tool-fidelity defaults — every new field at its CSS
         // default so that a freshly-constructed TextStyle behaves
         // identically to the pre-R47.5 shape.
         assert_eq!(s.font_weight, FontWeight::NORMAL);
@@ -5004,7 +5003,7 @@ mod tests {
 
     #[test]
     fn text_style_variant_styles_produce_distinct_hashes() {
-        // R47.5 — different the design tool-fidelity field values must produce
+        // R47.5 — different design-tool-fidelity field values must produce
         // distinct cache keys so LayoutCache shapes them independently.
         // R47.6 wires each into parley; the cache-key distinction is
         // the prereq.

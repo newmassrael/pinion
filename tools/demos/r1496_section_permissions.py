@@ -208,12 +208,12 @@ def body() -> None:
         assert_eq(_h(tf, "sections_movable"), True,
                   "the app declared its header movable")                   # 1
         assert_eq(_h(tf, "sections_clickable"), True,
-                  "and clickable, as setSortingEnabled does in Qt")        # 2
+                  "and clickable, as setSortingEnabled does in the toolkit")        # 2
         assert "| allows move+click" in _readout(tf), \
             f"the strip paints what it allows: {_readout(tf)}"             # 3
         state = _h(tf, "state")
         assert_eq(state["sections_movable"], True,
-                  "saveState carries the permission Qt calls movableSections") # 4
+                  "saveState carries the permission the toolkit calls movableSections") # 4
         assert_eq(state["sections_clickable"], True,
                   "and the one it calls clickableSections")                # 5
         assert_eq(state["resize_contents_precision"], BOOT_PRECISION,
@@ -283,7 +283,7 @@ def body() -> None:
                   "a pinned header refused the drag")                     # 19
         assert_eq(_h(tf, "sort_indicator"), "none",
                   "and it did not become a click either: the release landed on "
-                  "another section, and Qt's rule is that a click is a press "
+                  "another section, and the toolkit's rule is that a click is a press "
                   "and a release on the SAME one")                        # 20
         assert_eq(_seam_click(tf, 3), "3:ascending",
                   "but a press-release still sorts, which IS the independence "
@@ -310,7 +310,7 @@ def body() -> None:
         assert_eq(
             tf.invoke("/external/move_section", "0:2"),
             [1, 2, 0, 3, 4],
-            "moveSection reorders a header the user cannot drag, as in Qt",
+            "moveSection reorders a header the user cannot drag, as in the toolkit",
         )                                                                 # 30
         assert_eq(_h(tf, "sections_movable"), False,
                   "and the rule it ignored is still the rule")            # 31
@@ -344,7 +344,7 @@ def body() -> None:
         wait_until(lambda: _h(tf, "sections_movable") is True,
                    desc="a pre-R1496 snapshot restores the header it came from") # 38
         assert_eq(_h(tf, "sections_clickable"), True,
-                  "not Qt's `false`: what that older header actually did") # 39
+                  "not the toolkit's `false`: what that older header actually did") # 39
         assert_eq(_h(tf, "resize_contents_precision"), BOOT_PRECISION,
                   "the bound falls back to the constant, like the other scalars") # 40
 
@@ -382,6 +382,6 @@ def body() -> None:
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1496 §5.27 §5.51 §2#7 — QHeaderView permissions: movable, clickable",
+        "R1496 §5.27 §5.51 §2#7 — header view permissions: movable, clickable",
         body,
     ))

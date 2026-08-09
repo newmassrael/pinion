@@ -10,7 +10,7 @@
 //! [`Scene`] composition every button consumer
 //! re-implemented inline before R686.B.
 //!
-//! Pre-R686.B `hello-button`, `the design tool-button-m3`, and `hello-dock-panels-editor` each carried a near-identical `button_fill_*` helper +
+//! Pre-R686.B `hello-button`, `design-button-m3`, and `hello-dock-panels-editor` each carried a near-identical `button_fill_*` helper +
 //! button Container builder. The [[abstraction-needs-second-consumer]]
 //! Rule-of-Three was satisfied (3 paint consumers), and a canonical M3 button
 //! is a core Phase-B widget-catalog entry (the toolkit / another retained-mode
@@ -25,8 +25,8 @@
 //! text-in-a-box shape. They diverge on:
 //!
 //! * **Colour source** — `hello-button` + the editor resolve from
-//!   [`Theme`] roles; `the design tool-button-m3` uses hard-coded design tokens
-//!   (a deliberate the design tool-parity demo).
+//!   [`Theme`] roles; `design-button-m3` uses hard-coded design tokens
+//!   (a deliberate design-tool-parity demo).
 //! * **Disabled appearance** — some fade toward a background colour;
 //!   the editor switches to a different surface tier.
 //! * **Hover animation** — `hello-button` + the design tool drive a spring;
@@ -133,7 +133,7 @@ pub struct ButtonColors {
 
 impl ButtonColors {
     /// (R686.B §5.16) Explicit colours — the hard-coded-token path
-    /// (`the design tool-button-m3` design-parity demo). Theme-role callers
+    /// (`design-button-m3` design-parity demo). Theme-role callers
     /// prefer [`Self::filled_tonal`] / [`Self::accent`].
     #[must_use]
     pub const fn new(
@@ -403,7 +403,7 @@ pub fn view_button(
 ///
 /// Threads straight into [`view_button`]'s `hover_progress` argument.
 /// Lifted from the verbatim `drive_hover_progress` helper that
-/// `hello-button`, `the design tool-button-m3`, and `hello-button-tui` each
+/// `hello-button`, `design-button-m3`, and `hello-button-tui` each
 /// carried (R686.C, [[abstraction-needs-second-consumer]] Rule of
 /// Three). The `anim_key` stays per-binding so independent buttons
 /// own independent springs (cache slots keyed on

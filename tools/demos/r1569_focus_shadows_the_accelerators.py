@@ -212,7 +212,7 @@ def body() -> None:
             lambda: ks(tf, "pending") == "Ctrl+",
             timeout=4.0,
             interval=0.03,
-            desc="the held prefix is published — Qt discards this fact entirely",
+            desc="the held prefix is published — the toolkit discards this fact entirely",
         )
         assert_eq(ks(tf, "in_flight"), "r", "a prefix is not a chord")
         painted = find_by_tag(tf.snapshot(source="paint", viewport=VIEWPORT), "key_sequence#value")
@@ -268,7 +268,7 @@ def body() -> None:
             lambda: ks(tf, "state") == "Idle",
             timeout=4.0,
             interval=0.03,
-            desc="Escape cancels — the exit Qt's release timer does not have",
+            desc="Escape cancels — the exit the toolkit's release timer does not have",
         )
         assert_eq(
             ks(tf, "sequence"),
@@ -426,7 +426,7 @@ def body() -> None:
             lambda: read()[1] == "Idle",
             timeout=4.0,
             interval=0.03,
-            desc="a disabled field claims no chord (Qt gates on isReadOnly)",
+            desc="a disabled field claims no chord (the toolkit gates on isReadOnly)",
         )
 
 

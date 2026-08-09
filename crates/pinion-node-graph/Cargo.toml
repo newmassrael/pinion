@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1577 Phase-B node-graph substrate: the MECHANISM of a Blender/Blueprint-class node system, with the taxonomy left to the application. A typed socket model whose structural edits maintain their own invariants (type agreement, one link per input, in-tree acyclicity), re-usable group DEFINITIONS with an interface DERIVED from the selection boundary, instances, nesting acyclicity, an edit path, and a memoised evaluator that descends into groups and keys its memo by instance so two instances of one definition do not share a value. Pure data: no renderer, no reactive runtime, no window."
+description = "R1577 Phase-B node-graph substrate: the MECHANISM of a DCC/visual script-class node system, with the taxonomy left to the application. A typed socket model whose structural edits maintain their own invariants (type agreement, one link per input, in-tree acyclicity), re-usable group DEFINITIONS with an interface DERIVED from the selection boundary, instances, nesting acyclicity, an edit path, and a memoised evaluator that descends into groups and keys its memo by instance so two instances of one definition do not share a value. Pure data: no renderer, no reactive runtime, no window."
 publish = false
 
 [dependencies]

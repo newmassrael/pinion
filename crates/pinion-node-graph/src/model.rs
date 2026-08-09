@@ -87,11 +87,12 @@ impl Socket {
 /// nowhere.
 ///
 /// **the engine does not have this address at all**, because a macro instance
-/// is not an instance: `FKismetCompilerContext` expands one by calling `FEdGraphUtilities::CloneGraph(MacroGraph, ...)`, so N instances are N
-/// copies of the nodes and each copy is simply its own node. That is also why
-/// its recursion check has to exist (`FindMacroCycle`) — inlining cannot terminate on a
-/// cycle — where a group *instance* here is checked by [`Document::containment`] being acyclic and
-/// needs no expansion to run.
+/// is not an instance: compiler context expands one by calling
+/// `graph utilities::CloneGraph(MacroGraph, ...)`, so N instances are N copies
+/// of the nodes and each copy is simply its own node. That is also why its
+/// recursion check has to exist (`FindMacroCycle`) — inlining cannot terminate
+/// on a cycle — where a group *instance* here is checked by
+/// [`Document::containment`] being acyclic and needs no expansion to run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Instance(Vec<(TreeId, NodeId)>);
 
@@ -201,9 +202,9 @@ pub(crate) struct Sink {
 /// no type at all, and there is no slot left over to hold a meaningless one.
 ///
 /// **the engine spells the same distinction as a string in the type slot.** An
-/// execution pin there is an ordinary `UEdGraphPin` whose
+/// execution pin there is an ordinary graph pin whose
 /// `PinType.PinCategory` happens to equal the `FName` `"exec"`
-/// (`UEdGraphSchema_K2::PC_Exec`), so "is this pin control?" is a string
+/// (`graph schema K 2::PC_Exec`), so "is this pin control?" is a string
 /// comparison — written out **40 times** across `Editor` and `Runtime` at
 /// 5.8.1, beside the 70 uses of the `IsExecPin` helper that exists for it. A
 /// site that forgets is not a compile error there; here every read of a port's
@@ -217,7 +218,7 @@ pub enum Flow<T, V> {
         /// The application's socket type.
         ty: T,
         /// The value this port carries when nothing else supplies one — the
-        /// "pin default" of the DCC and Blueprint.
+        /// "pin default" of the DCC and visual script.
         ///
         /// On an **input** that means no link. On an **output** it means the
         /// kind computed nothing there, which is what lets a source node
@@ -278,7 +279,7 @@ impl<T, V> Flow<T, V> {
     ///
     /// The engine derives the same two rules and writes them as two
     /// independent booleans one line apart, each naming the *other* flow to
-    /// exclude it (`EdGraphSchema_K2.cpp`, 5.8.1):
+    /// exclude it (`graph schema K 2.cpp`, 5.8.1):
     ///
     /// ```text
     /// bBreakExistingDueToExecOutput = IsExecPin(*OutputPin) && OutputPin->LinkedTo.Num() > 0;
@@ -303,7 +304,6 @@ pub enum Multiplicity {
 }
 
 /// One socket in a node's signature.
-///
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Port<T, V> {
     /// Human-facing name. Not an identity — ports are addressed by index.
@@ -590,7 +590,7 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// is a property of the two types and of nothing else: an editor asks it
     /// while a wire is being dragged, before there is a value and often before
     /// there is a node at the far end. The DCC hangs the same question off the
-    /// *tree type* (`bNodeTreeType::validate_link`) for that reason.
+    /// *tree type* (`node tree type::validate_link`) for that reason.
     ///
     /// The default is the strictest relation there is — identical types cross
     /// unchanged and nothing else crosses at all — which is what this crate did
@@ -616,7 +616,7 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// any port, exactly as [`Port::with_default`] always has.
     ///
     /// The DCC does not need this because a socket's authored value is a
-    /// *different C struct per socket type* (`bNodeSocketValueFloat` and its
+    /// *different C struct per socket type* (node socket value float and its
     /// siblings), so a mismatch there is a type error at the call site. One
     /// `Value` type across the taxonomy is the price of this trait being
     /// generic, and this is how that price is paid back.
@@ -655,11 +655,13 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     ///   then the next — and writes nothing either.
     ///
     /// That second one is worth stating against the reference. The engine's
-    /// `Sequence` node is a whole `UK2Node_ExecutionSequence` class plus an `FKCHandler_ExecutionSequence` compile handler, which finds
-    /// its own output pins by testing whether each pin's name *starts with the
-    /// string* `"Then"` and carries the standing admission `//@TODO: Sort the pins by the number appended to the pin!` — so there, the
-    /// order control leaves a Sequence by is the order its pins happen to sit
-    /// in the array, and the node's own author noted that this is not the
+    /// `Sequence` node is a whole execution sequence node class plus an
+    /// `FKCHandler_ExecutionSequence` compile handler, which finds its own
+    /// output pins by testing whether each pin's name *starts with the string*
+    /// `"Then"` and carries the standing admission
+    /// `//@TODO: Sort the pins by the number appended to the pin!` — so there,
+    /// the order control leaves a Sequence by is the order its pins happen to
+    /// sit in the array, and the node's own author noted that this is not the
     /// order the user is reading off the screen. Here the order **is** the
     /// port order, because that is the only order a signature has.
     ///
@@ -823,14 +825,15 @@ pub enum NodeBody<K: NodeKind> {
     /// Simulation Zone), whose state does not live in the node tree at all but
     /// in the modifier's bake cache.
     ///
-    /// **the engine has no unit delay.** State there is a Blueprint
-    /// *variable*: a `UK2Node_VariableSet` writing a property on the object, read back by a `UK2Node_VariableGet`
-    /// — arbitrary mutable state, so which value a read sees depends on where
-    /// the execution wire happens to have gone, and the graph's meaning is not
-    /// a function of the graph. (Its `UK2Node_Delay` is a *latent time* delay, not this.)
-    /// The tradeoff is deliberate here: the only state is a delay, so a tick's
-    /// result is a function of the registers and the inputs, and that is what
-    /// makes [`Document::tick`] reproducible.
+    /// **the engine has no unit delay.** State there is a visual script
+    /// *variable*: a variable set node writing a property on the object, read
+    /// back by a variable get node — arbitrary mutable state, so which value a
+    /// read sees depends on where the execution wire happens to have gone, and
+    /// the graph's meaning is not a function of the graph. (Its delay node is
+    /// a *latent time* delay, not this.) The tradeoff is deliberate here: the
+    /// only state is a delay, so a tick's result is a function of the
+    /// registers and the inputs, and that is what makes [`Document::tick`]
+    /// reproducible.
     Delay(K::Type),
 }
 
@@ -937,10 +940,11 @@ pub struct Node<K: NodeKind> {
     /// operation that moves a node between trees has to say what happens to it.
     ///
     /// Read on its own this is one edge; read across a tree it is a
-    /// **forest**, and that is the invariant [`Document::set_parent`] maintains and [`Document::validate`] checks.
-    /// The DCC declares the same field as a bare `bNode *parent` and enforces its two
-    /// rules — parent is a frame, and no node contains itself — with `BLI_assert`,
-    /// which is compiled out of the build it ships.
+    /// **forest**, and that is the invariant [`Document::set_parent`]
+    /// maintains and [`Document::validate`] checks. The DCC declares the same
+    /// field as a bare `node *parent` and enforces its two rules — parent is a
+    /// frame, and no node contains itself — with `BLI_assert`, which is
+    /// compiled out of the build it ships.
     #[serde(default)]
     pub parent: Option<NodeId>,
     /// Values authored on **this node's** ports (R1594).
@@ -949,7 +953,7 @@ pub struct Node<K: NodeKind> {
     /// shares them. Its *value* does not: two `Swatch` nodes are two different
     /// colours, and the number a user typed into an unwired input belongs to
     /// that input and to no other node's. The DCC keeps exactly this, as
-    /// `bNodeSocket::default_value`, per socket per node.
+    /// `node socket::default_value`, per socket per node.
     ///
     /// The rule the evaluator applies is one sentence covering both sides:
     /// **an authored value is what the port carries when nothing else supplies
@@ -1824,13 +1828,13 @@ impl<K: NodeKind> Document<K> {
         // reported by `Document::control_loops` rather than refused.
         //
         // The engine reaches the same split and states it in a comment on the
-        // predicate that implements it — `FKismetCompilerContext::
+        // predicate that implements it — `compiler context::
         // PinIsImportantForDependancies` returns `PinCategory != PC_Exec`,
         // "the execution wires do not form data dependencies, they are only
         // important for final scheduling and that is handled thru gotos". What
         // it does NOT do is notice a control cycle: an execution loop with no
         // exit compiles, and is caught by counting iterations at run time
-        // (`EBlueprintExceptionType::InfiniteLoop`).
+        // (`visual script exception type::InfiniteLoop`).
         //
         // R1600 — and a value link leaving a DELAY adds no dependency at all,
         // so it can no more close a cycle than a control link can: what leaves
@@ -1908,7 +1912,7 @@ impl<K: NodeKind> Document<K> {
     /// two share one derivation so they cannot disagree.
     ///
     /// This is the same field [`Tree::node_mut`] reaches, not a second copy of
-    /// it. The DCC's `NODE_OT_mute_toggle`.
+    /// it. The DCC's `mute_toggle`.
     ///
     /// # Errors
     ///
@@ -1956,7 +1960,7 @@ impl<K: NodeKind> Document<K> {
     ///
     /// A muted link keeps its place in the structure and carries no value, so
     /// the port it feeds falls back to its own default. The DCC's
-    /// `NODE_OT_links_mute`.
+    /// `links_mute`.
     ///
     /// Narrower than a `link_mut` on purpose: mutedness is the only part of a
     /// link that may be changed in place, because the endpoints are what every
@@ -2191,10 +2195,13 @@ impl<K: NodeKind> Document<K> {
     /// ask which nodes are in it.
     ///
     /// **Nothing in the engine answers this.** An execution loop there
-    /// compiles — exec pins are excluded from the dependency sort by `PinIsImportantForDependancies`, so
-    /// no `Dependency cycle detected` can fire for one — and a loop with no exit is discovered at *run
-    /// time*, by a counter (`GMaximumScriptLoopIterations`) raising `EBlueprintExceptionType::InfiniteLoop` after the fact, in a build that
-    /// may be shipping. The nodes are named here before it runs, statically.
+    /// compiles — exec pins are excluded from the dependency sort by
+    /// `PinIsImportantForDependancies`, so no `Dependency cycle detected` can
+    /// fire for one — and a loop with no exit is discovered at *run time*, by
+    /// a counter (`GMaximumScriptLoopIterations`) raising
+    /// `visual script exception type::InfiniteLoop` after the fact, in a build
+    /// that may be shipping. The nodes are named here before it runs,
+    /// statically.
     ///
     /// Empty for a tree with no control loop, so `control_loops(tree).is_empty()`
     /// is the yes-or-no reading and no second walk is needed to get it.

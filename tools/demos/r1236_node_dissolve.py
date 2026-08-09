@@ -2,7 +2,7 @@
 """R1236 §5.38 §5.52 — node-graph DISSOLVE (delete + reconnect).
 
 The inverse of R1235's reroute splice: deleting a reroute knot should not orphan
-the wire, it should rejoin the endpoints (the Blueprint "delete + reconnect" /
+the wire, it should rejoin the endpoints (the visual script "delete + reconnect" /
 Alt+Delete). R1236 adds `dissolve_node`: remove a 1-in / 1-out node and bridge
 its upstream source straight to its downstream target, in ONE undoable step.
 All AI-first over the §5.12 plane (§2 #2), no pixels:
@@ -63,7 +63,7 @@ def body() -> None:
         assert_eq(q(tf, f"dissolvable.{rid}"), True, "the reroute reads as dissolvable")
         # ★R1596 — `dissolvable` widened from a SHAPE test ("exactly one wire
         # in and one out") to LOSSLESSNESS. `Document::dissolve` is the general
-        # form (the DCC's NODE_OT_delete_reconnect), so what is worth asking is
+        # form (the DCC's delete_reconnect), so what is worth asking is
         # no longer *can it* but *does it lose anything* -- and a Multiply
         # routes its output from input 0, so the wire past it is bridged and
         # nothing is cut.

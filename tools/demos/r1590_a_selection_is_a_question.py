@@ -12,13 +12,13 @@ other two are questions about the CANVAS (see the last bullet).
 What this script checks, and why each check discriminates:
 
 * **Every one of them is a pure query.** the DCC's set the `SELECT` bit on
-  `bNode` and carry `OPTYPE_UNDO`, because the selection lives in its document —
+  node and carry `OPTYPE_UNDO`, because the selection lives in its document —
   so "what would this select?" cannot be asked there without selecting it, and
   every answer costs an undo step. Here the document is untouched, which is what
   makes the question previewable (§2 #3); asserted by reading the whole graph
   back after every growth.
 * **PAST the DCC (1): the reach is a parameter, not a keystroke count.**
-  `NODE_OT_select_linked_to` walks `directly_linked_sockets()` — one hop — and
+  `select_linked_to` walks `directly_linked_sockets()` — one hop — and
   so does `..._from`. The question a person has is *what depends on this*, which
   is the closure, and the DCC answers it by having you press the key until the
   picture stops changing with nothing telling you when that has happened. Here
@@ -32,10 +32,10 @@ What this script checks, and why each check discriminates:
   `node_select_grouped_name` substitutes the WHOLE NAME for a missing suffix,
   conflating "no suffix" with "the suffix is the entire name".
 * **PAST the DCC (4): the affix is read off the name that is PAINTED.** the DCC
-  groups on `bNode::name`, the datablock id (`Mix.001`), which is not what its
+  groups on `node::name`, the datablock id (`Mix.001`), which is not what its
   own node header draws — the header shows the label or the type's ui name.
 * **PAST the DCC (5): the run is published.** `same_kind` answers "3 of 7" plus
-  the whole ordered run, so `NODE_OT_select_same_type_step` is one line over it.
+  the whole ordered run, so `select_same_type_step` is one line over it.
   That operator reports by moving the active node and says only whether it
   moved.
 * **The two relations cannot collide.** A frame has no ports, so no link reaches
@@ -148,8 +148,8 @@ def body() -> None:
             before,
             "A: the graph is untouched. This is the consistency check; the "
             "GUARANTEE is that `Document::grow` takes `&self` (the crate holds "
-            "a compile-time witness for it). Blender's select ops take the tree "
-            "mutably, set the SELECT bit on bNode and carry OPTYPE_UNDO, so the "
+            "a compile-time witness for it). The DCC's select ops take the tree "
+            "mutably, set the SELECT bit on node and carry OPTYPE_UNDO, so the "
             "question cannot be asked there without answering it (§2 #3)",
         )
 
@@ -165,7 +165,7 @@ def body() -> None:
         assert_eq(
             once["added"],
             f"{MIX},{FADE},{OUT}",
-            "B: PAST BLENDER — the whole closure in ONE call, where the reach "
+            "B: PAST the DCC — the whole closure in ONE call, where the reach "
             "is a keystroke count",
         )
         assert_eq(selection(tf), walked, "B: the same answer three keypresses gave")
@@ -210,8 +210,8 @@ def body() -> None:
         assert_eq(
             inv(tf, "same_kind", str(BASE)),
             f"at:1 of:2 run:{BASE},{BLEND}",
-            "E: PAST BLENDER — the RUN is published in evaluation order, with "
-            "the subject's place in it. NODE_OT_select_same_type_step answers "
+            "E: PAST the DCC — the RUN is published in evaluation order, with "
+            "the subject's place in it. select_same_type_step answers "
             "by moving the active node and reports only whether it moved",
         )
 
@@ -226,7 +226,7 @@ def body() -> None:
         assert_eq(
             grow(tf, "same_kind")["added"],
             "",
-            "F: PAST BLENDER — every group node in Blender is "
+            "F: PAST the DCC — every group node in the DCC is "
             "type_legacy == NODE_GROUP, so grouping by type sweeps in instances "
             "of unrelated definitions",
         )
@@ -247,7 +247,7 @@ def body() -> None:
             grow(tf, "prefix")["added"],
             "",
             "G: `Level` has no delimiter, so it has no prefix and offers no "
-            "criterion. PAST BLENDER — node_select_grouped_name substitutes the "
+            "criterion. PAST the DCC — node_select_grouped_name substitutes the "
             "WHOLE NAME for a missing suffix, conflating 'no suffix' with 'the "
             "suffix is the entire name'",
         )

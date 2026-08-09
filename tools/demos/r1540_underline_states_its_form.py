@@ -220,7 +220,7 @@ def body() -> None:
             fox["decoration"]["underline_color"],
             None,
             "D: with a null colour — `null` is the answer 'it tracks the text "
-            "colour' (Qt's default), and it is ANSWERED rather than omitted so "
+            "colour' (the toolkit's default), and it is ANSWERED rather than omitted so "
             "a client never guesses whether a missing key means no underline "
             "or no report",
         )

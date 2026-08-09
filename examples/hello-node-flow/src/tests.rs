@@ -190,7 +190,7 @@ fn r1600_a_register_is_forced_and_the_scenario_jumps_to_its_end() {
 #[test]
 fn r1599_the_taxonomy_overrides_control_exactly_once() {
     // The provided default is a BEHAVIOUR, not a silence: Fork takes it and
-    // gets Blueprint's Sequence semantics with no code at all.
+    // gets visual script's Sequence semantics with no code at all.
     let inputs = [None, None];
     assert!(matches!(
         Op::Fork(3).control(&inputs),

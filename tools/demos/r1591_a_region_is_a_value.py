@@ -8,7 +8,7 @@ diagram editor's rubber band. The framework had exactly one of the shapes —
 can mean by "covered": *touches*.
 
 R1590 measured the absence from the other end, against the DCC's
-`NODE_OT_select_circle` and `NODE_OT_select_lasso`, and recorded that those are
+`select_circle` and `select_lasso`, and recorded that those are
 NOT node-graph capabilities: they test a region against `node->runtime->draw_bounds`,
 the DRAWN rectangle, which is a question for the layer that knows what was
 painted where. This demo is that layer answering it, and the proof is the
@@ -23,11 +23,11 @@ What this script checks, and why each check discriminates:
 * **PAST the DCC / the toolkit (1): three shapes are one question.** the DCC answers them
   with three operators; the toolkit with three `items()` overloads. Here `shape` is a
   parameter of one method, so a client learns one call.
-* **PAST the toolkit (2): the fit is per query.** the toolkit takes it from
+* **PAST THE FLOOR (2): the fit is per query.** the toolkit takes it from
   `rubberBandSelectionMode`, a VIEW property — so two selections
   in one view cannot mean different things, and nothing records which mode a
   given selection used. Here it is an argument AND it is repeated in the answer.
-* **PAST the toolkit (3): the region can be asked from outside the process.** A
+* **PAST THE FLOOR (3): the region can be asked from outside the process.** A
   painter path is an opaque mutable object that can only be built in-process,
   so a toolkit application can be asked "what is under this lasso" over a wire. This
   script has no pointer at all.
@@ -35,7 +35,7 @@ What this script checks, and why each check discriminates:
   canvas whose nodes are on a diagonal; the bounding rectangle holds both and
   the lasso holds one. Without this the whole shape axis would be decorative.
 * **A degenerate shape is NAMED.** A two-point lasso is refused rather than
-  answered with an empty list — the toolkit's `items(polygon F, ..)` returns a list,
+  answered with an empty list — the toolkit's `items(<polygon>, ..)` returns a list,
   which is the same value it returns for an empty surface.
 * **The painted frame is what a canvas means.** `from: "paint"` asks the frame
   that is on screen; the STATE tree of a view-fn binding carries no geometry, so
@@ -123,8 +123,8 @@ def body() -> None:
         assert_eq(
             over_base["fit"],
             "intersects",
-            "B: PAST QT — the mode is part of the answer. Qt takes it from "
-            "QGraphicsView::rubberBandSelectionMode, a VIEW property that "
+            "B: PAST THE FLOOR — the mode is part of the answer. The toolkit takes it from "
+            "rubberBandSelectionMode, a VIEW property that "
             "nothing records per selection",
         )
         # The default is what it always was, so a caller written before R1591

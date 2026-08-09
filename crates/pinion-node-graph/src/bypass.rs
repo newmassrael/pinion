@@ -267,7 +267,7 @@ impl<K: NodeKind> Document<K> {
 
     /// Remove `node`, reconnecting what flowed through it.
     ///
-    /// The DCC's `NODE_OT_delete_reconnect`; the general form of the
+    /// The DCC's `delete_reconnect`; the general form of the
     /// "delete a reroute knot and keep the wire" gesture, which is the
     /// one-in-one-out special case of this.
     ///
@@ -292,8 +292,8 @@ impl<K: NodeKind> Document<K> {
     /// Unwire `node`, reconnecting what flowed through it, and leave it where
     /// it is.
     ///
-    /// The DCC's `NODE_OT_links_detach` and the drag half of
-    /// `NODE_OT_move_detach_links`: pull a node out of the flow it is sitting
+    /// The DCC's `links_detach` and the drag half of
+    /// `move_detach_links`: pull a node out of the flow it is sitting
     /// in, without deleting it. The same derivation and the same report as
     /// [`Self::dissolve`] — the node simply stays, wired to nothing.
     ///

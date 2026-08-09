@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(h.pointer, 0, "the mouse is pointer 0");
         assert_eq!(h.delay_secs, Some(AutoRepeat::DEFAULT_DELAY_SECS));
         assert_eq!(h.interval_secs, Some(AutoRepeat::DEFAULT_INTERVAL_SECS));
-        assert_eq!(h.accel, Some(1.0), "Qt's fixed cadence");
+        assert_eq!(h.accel, Some(1.0), "the toolkit's fixed cadence");
         assert_eq!(h.next_fire_in_secs, Some(0.05));
     }
 

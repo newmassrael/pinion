@@ -1696,10 +1696,11 @@ pub trait External: core::fmt::Debug {
     /// straight to `apply_key` instead, exactly as if no accelerator had been
     /// declared for it.
     ///
-    /// Qt spells this [`QEvent::ShortcutOverride`], an event offered to the
+    /// The toolkit spells this `ShortcutOverride`, an event offered to the
     /// focus widget which it `accept()`s to claim the key. The capability is
-    /// the toolkit's floor; the shape is chosen ([[the toolkit-is-the-floor-not-the-target]]),
-    /// and the choice is that this is a **question**, for two reasons:
+    /// the toolkit's floor; the shape is chosen ([[the
+    /// toolkit-is-the-floor-not-the-target]]), and the choice is that this is
+    /// a **question**, for two reasons:
     ///
     /// 1. The toolkit's override must be accepted on *every* press, so a widget that
     ///    handles a key in `keyPressEvent` and forgets the `ShortcutOverride`
@@ -1730,8 +1731,6 @@ pub trait External: core::fmt::Debug {
     ///
     /// Default `false` — the accelerator layers keep the precedence they had
     /// before R1569, so no existing widget changes behaviour by omission.
-    ///
-    /// [`QEvent::ShortcutOverride`]: https://doc.qt.io/qt-6/qevent.html
     fn shadows_accelerator(&self, _chord: &crate::accelerator::Chord) -> bool {
         false
     }

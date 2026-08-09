@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R685 §5.16 §5.41 §5.49 — 2nd dock consumer triggering Rule-of-Three substrate lift. 5-pane editor topology (toolbar + outliner + viewport + properties + console) composed via `pinion_widget_paint::dock::view_dock_surface` recursive walker over a declarative `DockTopology`. Mirror of every DCC / IDE shell (VSCode / IntelliJ / Photoshop / Unreal Editor) layout. Pairs with `hello-dock-panels` (1st consumer R683.C) to validate the R685 topology composition substrate."
+description = "R685 §5.16 §5.41 §5.49 — 2nd dock consumer triggering Rule-of-Three substrate lift. 5-pane editor topology (toolbar + outliner + viewport + properties + console) composed via `pinion_widget_paint::dock::view_dock_surface` recursive walker over a declarative `DockTopology`. Mirror of every DCC / IDE shell (the code editor / IntelliJ / the raster editor / the engine Editor) layout. Pairs with `hello-dock-panels` (1st consumer R683.C) to validate the R685 topology composition substrate."
 publish = false
 
 [[bin]]

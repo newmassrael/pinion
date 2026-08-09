@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1553 box-plot consumer — the forcing consumer for pinion-chart's Distribution, the crate's first datum that is not a point (Qt QBoxPlotSeries). Five endpoints' raw latency samples are summarised HERE rather than upstream, so the quantile definition is a runtime choice whose three standard answers visibly disagree, the whiskers stop at Tukey's 1.5*IQR fence with every sample beyond it drawn as its own mark, and the notch is available because the sample count survived the summary. Qt's QBoxSet is five doubles: it computes none of them, cannot draw an outlier, and does not carry the n a notch needs."
+description = "R1553 box-plot consumer — the forcing consumer for pinion-chart's Distribution, the crate's first datum that is not a point (the toolkit box plot series). Five endpoints' raw latency samples are summarised HERE rather than upstream, so the quantile definition is a runtime choice whose three standard answers visibly disagree, the whiskers stop at Tukey's 1.5*IQR fence with every sample beyond it drawn as its own mark, and the notch is available because the sample count survived the summary. The toolkit's box set is five doubles: it computes none of them, cannot draw an outlier, and does not carry the n a notch needs."
 publish = false
 
 [lints]

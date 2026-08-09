@@ -20,11 +20,11 @@
 //!
 //! That is the deliberate limit and it is what buys everything below. A tick's
 //! result is a function of the registers and the document; run the same
-//! document from the same [`Machine`] and the same thing happens. The engine takes
-//! the other road — state there is a Blueprint *variable*, arbitrary mutable
-//! memory written by a `UK2Node_VariableSet` — so which value a read sees depends on where the
-//! execution wire happened to go, and the graph's meaning is not a function of
-//! the graph.
+//! document from the same [`Machine`] and the same thing happens. The engine
+//! takes the other road — state there is a visual script *variable*, arbitrary
+//! mutable memory written by a variable set node — so which value a read sees
+//! depends on where the execution wire happened to go, and the graph's meaning
+//! is not a function of the graph.
 //!
 //! # Read, then commit
 //!

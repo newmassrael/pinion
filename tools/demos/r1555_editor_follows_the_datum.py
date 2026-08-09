@@ -141,7 +141,7 @@ def in_flight(snap: Any) -> Optional[str]:
 
 
 def open_editor_on(tf: Any, col: int, desc: str) -> Any:
-    """Double-click a cell (Qt `DoubleClicked`) and wait for its latch."""
+    """Double-click a cell (the toolkit `DoubleClicked`) and wait for its latch."""
     tf.double_click(path=cell_tag(ROW, col))
     return wait_snap(
         tf,
@@ -190,8 +190,8 @@ def body() -> None:
         assert_eq(
             by_kind["color"]["form"],
             "swatch",
-            "Qt's default factory has NO QColor creator, so a colour cell in a "
-            "plain QTableView is not editable at all",
+            "the toolkit's default factory has NO color creator, so a colour cell in a "
+            "plain table view is not editable at all",
         )
         # The behaviour that follows, which the toolkit keeps inside each
         # delegate's qobject_cast: where the in-flight value lives, and what
@@ -440,7 +440,7 @@ def body() -> None:
         assert_eq(
             cell_texts(snap, ROW, ACTIVE_COL),
             model_before,
-            "Escape reverted it — Qt's editorEvent had already written it",
+            "Escape reverted it — the toolkit's editorEvent had already written it",
         )
         # And committing it does reach the model.
         snap = open_editor_on(tf, ACTIVE_COL, "reopen the bool cell again")
@@ -476,7 +476,7 @@ def body() -> None:
         )
         moved = in_flight(snap)
         assert moved in TIERS, (
-            f"still an option OF THAT DOMAIN — a Qt combo built from a "
+            f"still an option OF THAT DOMAIN — a toolkit combo built from a "
             f"type-keyed factory has no options to move through: {moved!r}"
         )
         assert moved in cell_texts(snap, ROW, TIER_COL), (
@@ -512,7 +512,7 @@ def body() -> None:
             in_flight(snap),
             moved,
             "a move past the end is REFUSED, not silently cleared — "
-            "QComboBox::setCurrentIndex accepts an out-of-range index by "
+            "setCurrentIndex accepts an out-of-range index by "
             "clearing the selection",
         )
         tf.key(path=TABLE_TAG, name="ArrowUp")
@@ -541,7 +541,7 @@ def body() -> None:
             assert_eq(
                 node.get("role"),
                 role,
-                f"column {col} announces as {role} — Qt would announce a bool "
+                f"column {col} announces as {role} — the toolkit would announce a bool "
                 f"cell as a combobox and a colour cell as nothing",
             )
             host = access_node_by_tag(access, cell_tag(ROW, col))
@@ -571,7 +571,7 @@ def body() -> None:
         assert_eq(
             in_flight(snap),
             seeded,
-            "the datum is unchanged — Qt's default QDoubleSpinBox editor sits "
+            "the datum is unchanged — the toolkit's default double spin box editor sits "
             "at decimals()==2, so this round trip loses precision there",
         )
         # The stepper's arrows work on a float too, and its step is 1.
@@ -585,7 +585,7 @@ def body() -> None:
         assert_eq(
             float(in_flight(snap) or "0"),
             float(seeded) + 1.0,
-            "one step is 1, which is Qt's default single step",
+            "one step is 1, which is the toolkit's default single step",
         )
         close_editor(tf)
 

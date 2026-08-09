@@ -80,7 +80,7 @@
 //!   optional `state_flags(...)` clause; the macro derives a
 //!   single-node `WidgetA11y::access_node` body that matches the
 //!   `Button`-shaped widgets surveyed in the R642 audit
-//!   (`hello-button` / `the design tool-button-m3` / future `Slider` /
+//!   (`hello-button` / `design-button-m3` / future `Slider` /
 //!   `TextInput`). No inherent `fn access_node` is required when the
 //!   declarative path is taken.
 //! - **Inherent path (escape hatch)** — omit `role` and provide

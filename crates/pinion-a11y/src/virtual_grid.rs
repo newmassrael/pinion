@@ -1548,7 +1548,7 @@ mod tests {
             assert_eq!(
                 toggle.name.as_deref(),
                 Some("Select all"),
-                "Qt's `QTableCornerButton` has no text and no accessor to give \
+                "the toolkit's table corner button has no text and no accessor to give \
                  it one, so it announces as an unnamed button",
             );
             assert_eq!(toggle.state.checked, checked, "{extent:?}");

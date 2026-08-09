@@ -62,7 +62,7 @@ from rpc_verify import (  # noqa: E402
 # by their own demos.
 GUI_EXAMPLES = [
     "hello-button",
-    "figma-button-m3",
+    "design-button-m3",
     "hello-checkbox",
     "hello-toggle",
     "hello-slider",

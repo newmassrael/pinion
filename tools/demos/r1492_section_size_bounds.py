@@ -254,6 +254,6 @@ is that request clamped")                                                       
 
 if __name__ == "__main__":
     sys.exit(run_demo(
-        "R1492 §5.27 §2#7 — QHeaderView section size bounds: floor, ceiling, rule",
+        "R1492 §5.27 §2#7 — header view section size bounds: floor, ceiling, rule",
         body,
     ))

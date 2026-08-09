@@ -17,8 +17,8 @@
 //!   `Scene::Box` nodes, which already carry the full
 //!   §5.36 R47.5/6 `TextStyle` (`font_weight` × 11 const, `font_style`
 //!   italic / oblique, `line_height`, `letter_spacing`, `text_align`,
-//!   decoration underline / strikethrough, overflow clip) the design tool-
-//!   fidelity field set. Toggle imposes no rendering constraint;
+//!   decoration underline / strikethrough, overflow clip)
+//!   design-tool-fidelity field set. Toggle imposes no rendering constraint;
 //!   applications compose the visual the same way they would for any
 //!   Scene primitive.
 //! * **AI introspect**: `ToggleExternal` exposes the §5.15 8-item

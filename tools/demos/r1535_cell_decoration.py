@@ -218,11 +218,11 @@ def body() -> None:
         assert_eq(
             (kids[0].get("style") or {}).get("corner_radius"),
             2,
-            "the mark is a softened square (Qt paints a QColor decoration as a "
+            "the mark is a softened square (the toolkit paints a color decoration as a "
             "filled rectangle), not a disc — the shape must not editorialise",
         )
         assert kids[0]["rect"]["x"] < kids[-1]["rect"]["x"], (
-            "the mark is laid out BEFORE the label, as Qt's default delegate "
+            "the mark is laid out BEFORE the label, as the toolkit's default delegate "
             "places a decoration"
         )
         assert kids[-1]["rect"]["x"] >= kids[0]["rect"]["x"] + DECORATION_PX, (

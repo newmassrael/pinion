@@ -1,10 +1,10 @@
 //! R1599 §5.38 §5.52 — a **control** graph, composed from `pinion-node-graph`.
 //!
 //! Every other node-graph binding in this tree is a *dataflow* graph: a node's
-//! value is a function of its inputs, every node has one, and the only order is
-//! the one the dependencies force. This one is the other kind — the kind
-//! Blueprint is — where an edge can say **when** instead of **what**, a node
-//! can be skipped, and a cycle is a loop rather than a defect.
+//! value is a function of its inputs, every node has one, and the only order
+//! is the one the dependencies force. This one is the other kind — the kind
+//! visual script is — where an edge can say **when** instead of **what**, a
+//! node can be skipped, and a cycle is a loop rather than a defect.
 //!
 //! What is absent here is the argument. This file declares a taxonomy and paints
 //! it. It contains:
@@ -21,12 +21,12 @@
 //! * no branch machinery — [`NodeKind::control`] is one method, and the
 //!   taxonomy below overrides it exactly **once**, for `Branch`. A three-way
 //!   `Sequence` takes the provided default and writes nothing, where the engine
-//!   5.8.1 needs a `UK2Node_ExecutionSequence` class and an
+//!   5.8.1 needs a execution sequence node class and an
 //!   `FKCHandler_ExecutionSequence` compile handler for the same behaviour.
 //!
-//! The screen is the Blueprint debugger's question — *which nodes ran, in what
-//! order, and which never ran at all* — which is a question a dataflow graph
-//! cannot be asked, because there every node has a value.
+//! The screen is the visual script debugger's question — *which nodes ran, in
+//! what order, and which never ran at all* — which is a question a dataflow
+//! graph cannot be asked, because there every node has a value.
 
 use std::rc::Rc;
 
@@ -96,7 +96,7 @@ impl Val {
 enum Op {
     /// No control input, so it is an entry point — derivable rather than a
     /// class to know (the engine reaches the same set by testing for
-    /// `UK2Node_Event` / `UK2Node_FunctionEntry`).
+    /// event node / function entry node).
     Begin,
     /// One control in, one out, plus a value out: the ordinary statement.
     Task(String),

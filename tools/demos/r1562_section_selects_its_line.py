@@ -214,7 +214,7 @@ def body() -> None:
         # ── (G) the corner is tri-state and reversible ───────────────
         assert_eq(corner_marks(tf), [MARK_ALL], "everything selected: the check")
         chord_click(tf, CORNER_PRESS)
-        assert_eq(raw(tf), [], "a second press TAKES IT BACK — Qt's selectAll cannot")
+        assert_eq(raw(tf), [], "a second press TAKES IT BACK — the toolkit's selectAll cannot")
         wait_until(
             lambda: (corner_marks(tf) == []) or None,
             desc="an empty selection draws no mark, as an unchecked box does",
@@ -239,7 +239,7 @@ def body() -> None:
         toggle = access_node_by_tag(access, CORNER_PRESS)
         assert toggle is not None, "and it holds the control"
         assert_eq(toggle.get("role"), "checkbox", "which is a checkbox")
-        assert_eq(toggle.get("name"), "Select all", "with a NAME — Qt's has none")
+        assert_eq(toggle.get("name"), "Select all", "with a NAME — the toolkit's has none")
         assert_eq(
             (toggle.get("state") or {}).get("checked"),
             True,

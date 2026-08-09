@@ -23,8 +23,8 @@ What this script checks, and why each check discriminates:
   so a user who copies the middle of a chain is told nothing about the wires
   that went. Here `clipboard_severed` names every one, producer first.
 * **PAST the DCC (2): a paste can RESTORE the inputs.** the DCC has that as
-  `keep_inputs`, a boolean on `NODE_OT_duplicate` — and only there:
-  `NODE_OT_clipboard_paste` declares one property, `offset`.
+  `keep_inputs`, a boolean on `duplicate` — and only there:
+  `clipboard_paste` declares one property, `offset`.
 * **The asymmetry is DERIVED, not a missing boolean.** the DCC has
   `keep_inputs` and no `keep_outputs` and says nowhere why: an output may feed
   any number of consumers, so an inbound crossing costs the original nothing,
@@ -137,7 +137,7 @@ def body() -> None:
             q(tf, "clipboard_severed"),
             f"in:{BASE}.0>{MIX}.0;{BLEND}.0>{MIX}.1;{LEVEL}.0>{MIX}.2"
             f"|out:{MIX}.0>{FADE}.0",
-            "B: every severed wire is named, producer first. Blender's "
+            "B: every severed wire is named, producer first. The DCC's "
             "node_copy_local drops these and records them nowhere",
         )
         assert q(tf, "clipboard_bytes") > 0, (
@@ -190,7 +190,7 @@ def body() -> None:
             f"{MIX}.0>{FADE}.0",
             "D: the outbound crossing is PUBLISHED and never restored — an "
             "input takes one link, so restoring it would steal the "
-            "original's. Blender has keep_inputs, no keep_outputs, and no "
+            "original's. The DCC has keep_inputs, no keep_outputs, and no "
             "statement of why",
         )
         assert_eq(q(tf, "valid"), "ok", "D: still consistent")
@@ -234,7 +234,7 @@ def body() -> None:
             inv(tf, "instances", str(definition)),
             3,
             "G: three instances of ONE definition — which is what a group IS. "
-            "Blender matches a pasted definition by NAME",
+            "the DCC matches a pasted definition by NAME",
         )
         assert_eq(q(tf, "valid"), "ok", "G: consistent")
 
@@ -274,7 +274,7 @@ def body() -> None:
             q(tf, "valid"),
             "ok",
             "I: a refused paste leaves the document EXACTLY as it was. "
-            "Blender's skips the offending node and finishes the rest",
+            "the DCC's skips the offending node and finishes the rest",
         )
         assert_eq(inv(tf, "exit", ""), "0", "I: back out")
 

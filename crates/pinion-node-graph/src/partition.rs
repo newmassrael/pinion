@@ -25,7 +25,7 @@
 //! * **reconnects** every value whose crossing disappeared, so the graph goes
 //!   on computing what it computed.
 //!
-//! That last one is what the DCC does not do. Measured against `~/the DCC-ref` at `8cf50599`: `node_group_separate_selected`
+//! That last one is what the DCC does not do. Measured against the DCC reference tree at `8cf50599`: `node_group_separate_selected`
 //! copies the selected nodes into the parent tree and, for the Move arm,
 //! deletes them from the group. It does not touch the interface, so the group
 //! keeps sockets that reach nothing, and the separated nodes arrive wired only
@@ -274,10 +274,10 @@ impl<K: NodeKind> Document<K> {
 
     /// Move `selection` out of `tree` and into the definition `instance` names.
     ///
-    /// The DCC's `NODE_OT_group_insert`, with the interface re-derived rather than only appended
-    /// to: a value that already crosses at this instance keeps its port
-    /// instead of gaining a second, and a port whose feed ends up inside is
-    /// removed rather than left describing nothing.
+    /// The DCC's `group_insert`, with the interface re-derived rather than
+    /// only appended to: a value that already crosses at this instance keeps
+    /// its port instead of gaining a second, and a port whose feed ends up
+    /// inside is removed rather than left describing nothing.
     ///
     /// # Errors
     ///
@@ -299,11 +299,11 @@ impl<K: NodeKind> Document<K> {
 
     /// Move `selection` out of the definition `instance` names and into `tree`.
     ///
-    /// The DCC's `NODE_OT_group_separate` with `type='MOVE'`, except that the values which used to cross the
-    /// boundary are **reconnected**: a moved node fed from the group's input
-    /// is fed by whatever feeds that input here, and a moved node that fed the
-    /// group's output now feeds whatever that output fed. The graph goes on
-    /// computing what it computed.
+    /// The DCC's `group_separate` with `type='MOVE'`, except that the values
+    /// which used to cross the boundary are **reconnected**: a moved node fed
+    /// from the group's input is fed by whatever feeds that input here, and a
+    /// moved node that fed the group's output now feeds whatever that output
+    /// fed. The graph goes on computing what it computed.
     ///
     /// `selection` names nodes in the *definition*, not in `tree`.
     ///

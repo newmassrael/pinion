@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1529 time-axis chart consumer — the forcing consumer for pinion-chart's ValueScale::Time (Qt QDateTimeAxis / d3 scaleUtc). A four-hour incident window straddling midnight is plotted twice from one dataset: on the numeric x-axis every one of the nine gridlines prints the same string, because the nice-number step is decimal while time is mixed-radix and the SI label compacts an epoch millisecond by magnitude. One toggle switches the x-axis to UTC time, where ticks land on the half hour and each label names the finest calendar field that distinguishes it — so the date appears exactly once, at the midnight crossing."
+description = "R1529 time-axis chart consumer — the forcing consumer for pinion-chart's ValueScale::Time (the toolkit date time axis / d3 scaleUtc). A four-hour incident window straddling midnight is plotted twice from one dataset: on the numeric x-axis every one of the nine gridlines prints the same string, because the nice-number step is decimal while time is mixed-radix and the SI label compacts an epoch millisecond by magnitude. One toggle switches the x-axis to UTC time, where ticks land on the half hour and each label names the finest calendar field that distinguishes it — so the date appears exactly once, at the midnight crossing."
 publish = false
 
 [lints]
