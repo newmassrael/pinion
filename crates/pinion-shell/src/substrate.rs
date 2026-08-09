@@ -489,6 +489,30 @@ pub struct ShellCore<V: WidgetView> {
     /// two differ on exactly this axis.
     windowing_backend: RefCell<Option<pinion_core::window_level::WindowingBackend>>,
 
+    /// R1617 §5.16 §5.41 §2 #7 — per live window, the pair
+    /// `scene/windows`' `display_home` is derived from: the window's **actual**
+    /// outer rectangle in physical pixels, and the display the window system
+    /// itself says the window is on (`None` when it named none).
+    ///
+    /// Two raw readings rather than a resolved answer, on purpose. The
+    /// judgment — do they agree, and what is it called when they do not — is
+    /// [`pinion_core::display::DisplayHome`], a pure function of an
+    /// arrangement, and computing it here would move it into the one layer no
+    /// test can construct a monitor farm for. Same seam and same `None`
+    /// discipline as [`Self::display_topology`] beside it.
+    ///
+    /// A window absent from this map publishes `display_home: null`: nobody
+    /// looked, so nothing is claimed.
+    window_homes: RefCell<
+        std::collections::HashMap<
+            String,
+            (
+                pinion_core::display::DisplayRect,
+                Option<pinion_core::display::DisplayId>,
+            ),
+        >,
+    >,
+
     /// (R1193 §5.16 §5.28 §5.39) The per-window shell-side state store — one
     /// [`WindowState`] per window, keyed by canonical
     /// [`WindowSpec`](crate::WindowSpec) id. R1193 consolidated the 11
@@ -850,6 +874,7 @@ impl<V: WidgetView> ShellCore<V> {
             redraw_requested: false,
             display_topology: RefCell::new(None),
             windowing_backend: RefCell::new(None),
+            window_homes: RefCell::new(HashMap::new()),
             window_states: HashMap::new(),
             cross_preview_target: None,
             text_select_drag: None,
@@ -3104,6 +3129,47 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn windowing_backend(&self) -> Option<pinion_core::window_level::WindowingBackend> {
         *self.windowing_backend.borrow()
+    }
+
+    /// R1617 §5.16 §5.41 §2 #7 — stamp, per live window, its actual outer
+    /// rectangle and the display the window system says it is on.
+    ///
+    /// Replaces the whole map rather than merging: a window the surface no
+    /// longer reports is one whose home nobody can vouch for any more, and
+    /// leaving a stale entry behind would publish yesterday's answer as
+    /// today's. The same wholesale discipline
+    /// [`Self::set_live_window_origins`] uses.
+    pub fn set_window_homes(
+        &self,
+        homes: Vec<(
+            String,
+            pinion_core::display::DisplayRect,
+            Option<pinion_core::display::DisplayId>,
+        )>,
+    ) {
+        *self.window_homes.borrow_mut() = homes
+            .into_iter()
+            .map(|(id, rect, platform)| (id, (rect, platform)))
+            .collect();
+    }
+
+    /// R1617 — where `window_id` is, per both answerers, against the topology
+    /// stamped alongside. `None` when nobody looked: no surface stamped a
+    /// topology, or this window reported no outer position.
+    ///
+    /// Derived on every read rather than stored, so it cannot become a second,
+    /// stale copy of where the window is — the one-fact-one-source argument
+    /// `anchored` and `level_outcome` are both built on.
+    #[must_use]
+    pub fn window_display_home(
+        &self,
+        window_id: &str,
+    ) -> Option<pinion_core::display::DisplayHome> {
+        let topology = self.display_topology.borrow();
+        let topology = topology.as_ref()?;
+        let homes = self.window_homes.borrow();
+        let (rect, platform) = homes.get(window_id)?;
+        Some(topology.home_of(*rect, platform.clone()))
     }
 
     /// R1148 §5.51 §5.16 → R1151 — the stamped ACTUAL client origin of `window_id`
@@ -7261,6 +7327,18 @@ impl<V: WidgetView> ShellCore<V> {
                         let anchor = pinion_core::display::Anchor::new(declared, placement.offset);
                         pinion_rpc::AnchoredOutcome::from((&anchor, placement.resolve(topology)))
                     }),
+                // R1617 §5.16 §5.41 — where the window ACTUALLY is, per this
+                // framework's derivation from its live rectangle AND per the
+                // window system's own opinion. A different question from
+                // `anchored`, which is what became of the DECLARATION: a
+                // WM-placed window declares nothing and still has a home, and a
+                // window the user dragged has moved without the declaration
+                // changing. `None` when nobody looked. Read BEFORE `id`, which
+                // consumes the spec's own copy of it.
+                display_home: self
+                    .window_display_home(&spec.id)
+                    .as_ref()
+                    .map(pinion_rpc::dispatch::DisplayHomeWire::from),
                 id: spec.id.into_owned(),
                 title: spec.title,
                 position: spec.position,
@@ -9004,6 +9082,249 @@ mod r1104_cross_window_exclusion_tests {
                 .is_none(),
             "the declared-origin path misses main — the bug R1148 fixes",
         );
+    }
+
+    // ---- R1617 §5.16 §5.41 §2 #7 — the window's home, per both answerers ----
+
+    /// A two-panel desk: 1920x1080 primary, a second one abutting to its right.
+    /// The commonest arrangement there is, and the one where "which display is
+    /// this window on" has a seam to disagree about.
+    fn two_panel_desk() -> pinion_core::display::DisplayTopology {
+        use pinion_core::display::{DisplayInfo, DisplayRect, DisplayTopology};
+        DisplayTopology::new(vec![
+            DisplayInfo::new("DP-1", DisplayRect::new(0, 0, 1920, 1080)).as_primary(),
+            DisplayInfo::new("DP-2", DisplayRect::new(1920, 0, 1920, 1080)),
+        ])
+    }
+
+    fn homes_of(
+        sc: &ShellCore<CrossWindowFixture>,
+    ) -> std::collections::HashMap<String, Option<(String, String)>> {
+        sc.declared_window_specs()
+            .into_iter()
+            .map(|w| {
+                (
+                    w.id,
+                    w.display_home.map(|h| {
+                        (
+                            h.kind.to_owned(),
+                            format!("{:?}/{:?}", h.derived, h.platform),
+                        )
+                    }),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn r1617_a_window_with_no_stamp_claims_nothing() {
+        // Nobody looked, so nothing is claimed — the rule `anchored` and
+        // `level_outcome` already use. Distinct from "we looked and the answer
+        // is nowhere", which is the `nowhere` kind.
+        let sc = shell_with_two_dock_windows();
+        for (_, home) in homes_of(&sc) {
+            assert!(home.is_none(), "no topology and no window stamp yet");
+        }
+        // A topology alone is not enough: the per-window rectangle is the other
+        // half, and a window the surface could not read an outer position for
+        // stays absent rather than being derived from an invented rectangle.
+        sc.set_display_topology(two_panel_desk());
+        for (_, home) in homes_of(&sc) {
+            assert!(
+                home.is_none(),
+                "a desk without a window rectangle says nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn r1617_agreement_and_divergence_are_both_reported_per_window() {
+        use pinion_core::display::{DisplayId, DisplayRect};
+        let sc = shell_with_two_dock_windows();
+        sc.set_display_topology(two_panel_desk());
+        sc.set_window_homes(vec![
+            // Wholly on the left panel, and the platform agrees.
+            (
+                "main".to_owned(),
+                DisplayRect::new(100, 100, 800, 600),
+                Some(DisplayId::new("dp-1")),
+            ),
+            // Straddling the seam with the larger share on the RIGHT panel,
+            // while the window system names the left one. Both rules are
+            // legitimate — this is the case the wire has to be able to state.
+            (
+                FLOAT_WINDOW.to_owned(),
+                DisplayRect::new(1820, 0, 400, 100),
+                Some(DisplayId::new("dp-1")),
+            ),
+        ]);
+        let windows: std::collections::HashMap<String, pinion_rpc::DeclaredWindow> = sc
+            .declared_window_specs()
+            .into_iter()
+            .map(|w| (w.id.clone(), w))
+            .collect();
+
+        let main = windows["main"].display_home.as_ref().expect("stamped");
+        assert_eq!(main.kind, "agreed");
+        assert_eq!(main.derived.as_deref(), Some("dp-1"));
+        assert_eq!(main.platform.as_deref(), Some("dp-1"));
+
+        let float = windows[FLOAT_WINDOW]
+            .display_home
+            .as_ref()
+            .expect("stamped");
+        assert_eq!(float.kind, "diverged");
+        assert_eq!(
+            float.derived.as_deref(),
+            Some("dp-2"),
+            "300 of its 400 columns are on the right panel",
+        );
+        assert_eq!(
+            float.platform.as_deref(),
+            Some("dp-1"),
+            "and the window system's own answer survives beside ours",
+        );
+    }
+
+    #[test]
+    fn r1617_the_home_is_the_live_rect_not_the_declaration() {
+        use pinion_core::display::{DisplayId, DisplayRect};
+        // The whole reason this is a second field beside `anchored`: the
+        // floater DECLARES a position, and the user has since dragged it onto
+        // the other panel. `anchored` still reports the declaration; the home
+        // reports where the window is.
+        let sc = shell_with_two_dock_windows();
+        sc.set_display_topology(two_panel_desk());
+        // BOTH windows stamped first, so the re-stamp below actually removes
+        // something. A fixture whose first stamp is the only stamp cannot tell
+        // a wholesale replacement from a merge — the map is empty either way.
+        sc.set_window_homes(vec![
+            (
+                "main".to_owned(),
+                DisplayRect::new(10, 10, 400, 300),
+                Some(DisplayId::new("dp-1")),
+            ),
+            (
+                FLOAT_WINDOW.to_owned(),
+                DisplayRect::new(100, 100, 200, 200),
+                Some(DisplayId::new("dp-1")),
+            ),
+        ]);
+        assert!(
+            sc.declared_window_specs()
+                .into_iter()
+                .all(|w| w.display_home.is_some()),
+            "both windows have a home before the re-stamp",
+        );
+        sc.set_window_homes(vec![(
+            FLOAT_WINDOW.to_owned(),
+            DisplayRect::new(2400, 300, 200, 200),
+            Some(DisplayId::new("dp-2")),
+        )]);
+        let float = sc
+            .declared_window_specs()
+            .into_iter()
+            .find(|w| w.id == FLOAT_WINDOW)
+            .expect("declared");
+        assert_eq!(
+            float.position,
+            Some((FLOAT_X, FLOAT_Y)),
+            "the declaration is untouched",
+        );
+        // ...which names a place on the LEFT panel. Asked of the desk rather
+        // than compared against a literal, so the claim stays true of whatever
+        // arrangement the fixture builds.
+        assert_eq!(
+            two_panel_desk()
+                .display_at(FLOAT_X, FLOAT_Y)
+                .map(|d| d.id().as_str()),
+            Some("dp-1"),
+        );
+        let home = float.display_home.expect("stamped");
+        assert_eq!(home.kind, "agreed");
+        assert_eq!(
+            home.derived.as_deref(),
+            Some("dp-2"),
+            "while the window itself is on the right one — the two questions \
+             are different, which is why they are two fields",
+        );
+        // And `main`, which the latest stamp did NOT report, has stopped
+        // claiming a home: the map is replaced wholesale rather than merged, so
+        // a window the surface no longer vouches for cannot keep answering with
+        // where it used to be.
+        let main = sc
+            .declared_window_specs()
+            .into_iter()
+            .find(|w| w.id == "main")
+            .expect("declared");
+        assert!(
+            main.display_home.is_none(),
+            "a stale entry would report yesterday's monitor as today's",
+        );
+    }
+
+    #[test]
+    fn r1617_a_silent_platform_is_not_agreement() {
+        use pinion_core::display::DisplayRect;
+        // The trap this axis's own debt named: the backend's accessor is an
+        // `Option` and a hidden window may get `None` from it. That must read
+        // as `platform_silent` — reporting it as agreement would manufacture a
+        // cross-check that never happened.
+        let sc = shell_with_two_dock_windows();
+        sc.set_display_topology(two_panel_desk());
+        sc.set_window_homes(vec![(
+            "main".to_owned(),
+            DisplayRect::new(0, 0, 800, 600),
+            None,
+        )]);
+        let home = sc
+            .declared_window_specs()
+            .into_iter()
+            .find(|w| w.id == "main")
+            .and_then(|w| w.display_home)
+            .expect("stamped");
+        assert_eq!(home.kind, "platform_silent");
+        assert_eq!(home.derived.as_deref(), Some("dp-1"));
+        assert_eq!(home.platform, None);
+    }
+
+    #[test]
+    fn r1617_a_window_where_no_monitor_reaches_says_so_from_both_sides() {
+        use pinion_core::display::{DisplayId, DisplayRect};
+        let sc = shell_with_two_dock_windows();
+        sc.set_display_topology(two_panel_desk());
+        sc.set_window_homes(vec![
+            // Past the right edge of a 3840-wide desk: on no display at all,
+            // and the window system still hands back a monitor — which is what
+            // one of the backends underneath genuinely does.
+            (
+                "main".to_owned(),
+                DisplayRect::new(5000, 0, 200, 200),
+                Some(DisplayId::new("dp-1")),
+            ),
+            // Same place, and this time nobody names anything.
+            (
+                FLOAT_WINDOW.to_owned(),
+                DisplayRect::new(5000, 0, 200, 200),
+                None,
+            ),
+        ]);
+        let windows: std::collections::HashMap<String, pinion_rpc::DeclaredWindow> = sc
+            .declared_window_specs()
+            .into_iter()
+            .map(|w| (w.id.clone(), w))
+            .collect();
+        let main = windows["main"].display_home.as_ref().expect("stamped");
+        assert_eq!(main.kind, "derived_nowhere");
+        assert_eq!(main.derived, None);
+        assert_eq!(main.platform.as_deref(), Some("dp-1"));
+        let float = windows[FLOAT_WINDOW]
+            .display_home
+            .as_ref()
+            .expect("stamped");
+        assert_eq!(float.kind, "nowhere");
+        assert_eq!(float.derived, None);
+        assert_eq!(float.platform, None);
     }
 
     // (R1143 body-centre fallback test removed in R1146 — the VS Code redesign

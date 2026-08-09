@@ -57,7 +57,7 @@ use crate::{
     AppEvent, RenderState, SizeStrategy, VelloContext, VelloRenderer, WidgetRenderer, WidgetView,
     WindowPlacement, WindowSpec,
 };
-use pinion_core::display::{Anchored, DisplayInfo, DisplayRect, DisplayTopology};
+use pinion_core::display::{Anchored, DisplayId, DisplayInfo, DisplayRect, DisplayTopology};
 use pinion_core::window_level::{WindowLevel, WindowingBackend};
 
 /// R1576 §5.16 §5.41 — one winit monitor as a [`DisplayInfo`], field for field.
@@ -838,7 +838,81 @@ impl<V: WidgetView> AppShell<V> {
         if self.windows.len() > 1 {
             self.stamp_all_window_origins();
         }
-        self.publish_display_topology(self.display_topology());
+        self.stamp_window_homes();
+    }
+
+    /// R1617 §5.16 §5.41 §2 #7 — publish the desk and, against that same
+    /// reading, where every live window is according to both answerers.
+    ///
+    /// Called at every RPC dispatch (through [`Self::stamp_desktop_facts`]) and
+    /// at the two winit moments the answer can actually change: a window being
+    /// created and a window being moved. The second matters for the
+    /// binding-facing [`crate::use_window_home`] rather than for the wire — a
+    /// GUI-only session issues no dispatches at all, so a home stamped only
+    /// there would be permanently absent in exactly the sessions a painted
+    /// readout lives in.
+    ///
+    /// The cost is proportionate and was measured against the backend rather
+    /// than assumed: the monitor enumeration is cached behind a lock there, and
+    /// what is left is one outer-position read per window, which is what
+    /// [`Self::stamp_live_window_origins`] already pays on the far hotter
+    /// cursor path.
+    fn stamp_window_homes(&self) {
+        // ONE reading of the desk feeds both products. The topology's ids ARE
+        // positions in this enumeration, so resolving a window's own monitor
+        // against a second, later call would index into a topology it was not
+        // built from — and a hot-plug landing between the two calls would
+        // manufacture a divergence this process invented and then report it as
+        // if the window system had disagreed.
+        let (topology, monitors) = self.desk_reading();
+        let homes = self.collect_window_homes(&topology, &monitors);
+        self.publish_display_topology(topology, homes);
+    }
+
+    /// R1617 §5.16 §5.41 §2 #7 — per live window, its **actual** outer
+    /// rectangle and the display the window system itself says it is on.
+    ///
+    /// The third and last member of the display axis's untestable surface,
+    /// beside [`display_info_from`] and [`topology_from`], and it is kept to
+    /// the same standard: nothing here decides anything. The rectangle is a
+    /// field-for-field move, the platform's opinion is resolved to an id by its
+    /// position in the enumeration `topology` was built from, and the whole
+    /// judgment — do the two answers agree, and what is it called when they do
+    /// not — lives in [`pinion_core::display::DisplayHome`], where an
+    /// arrangement is an argument a test writes.
+    ///
+    /// A window whose outer position the platform declines to report is
+    /// **omitted**, so `scene/windows` publishes `null` for it rather than a
+    /// home derived from a rectangle nobody supplied. Nobody looked, so nothing
+    /// is claimed — the rule `anchored` and `level_outcome` already use.
+    ///
+    /// Resolving the monitor by enumeration POSITION rather than by name is
+    /// deliberate: a monitor's reported name is optional and routinely repeats
+    /// across identical panels, which is the whole reason
+    /// [`pinion_core::display::DisplayId`] is derived rather than taken. The
+    /// position is exact, and it is valid because `monitors` is the very list
+    /// `topology` was built from — which is why the two arrive together from
+    /// [`Self::desk_reading`] rather than being enumerated here.
+    fn collect_window_homes(
+        &self,
+        topology: &DisplayTopology,
+        monitors: &[MonitorHandle],
+    ) -> Vec<(String, DisplayRect, Option<DisplayId>)> {
+        self.windows
+            .values()
+            .filter_map(|slot| {
+                let window = Self::slot_window(slot)?;
+                let position = window.outer_position().ok()?;
+                let size = window.outer_size();
+                let rect = DisplayRect::new(position.x, position.y, size.width, size.height);
+                let platform = window
+                    .current_monitor()
+                    .and_then(|current| monitors.iter().position(|m| *m == current))
+                    .and_then(|index| topology.nth(index))
+                    .map(|display| display.id().clone());
+                Some((slot.spec_id.to_string(), rect, platform))
+            })
+            .collect()
     }
 
     /// R1610 §5.16 §2 #7 — stamp which windowing system this process is talking
@@ -868,11 +942,24 @@ impl<V: WidgetView> AppShell<V> {
     /// them to disagree about what the desk is, and "the wire says one thing
     /// and the binding sees another" is the exact class of defect the whole
     /// declared-placement design exists to prevent.
-    fn publish_display_topology(&self, topology: DisplayTopology) {
+    ///
+    /// R1617 — `homes` travels with the topology for the same reason and one
+    /// stronger: a window rectangle is only interpretable against the desk it
+    /// was measured on, so publishing the two separately would let a hot-plug
+    /// between the calls produce a divergence this process invented. Both
+    /// readers get one reading.
+    fn publish_display_topology(
+        &self,
+        topology: DisplayTopology,
+        homes: Vec<(String, DisplayRect, Option<DisplayId>)>,
+    ) {
         self.core.set_display_topology(topology.clone());
-        self.core
-            .root_owner()
-            .run(|| crate::displays::use_display_handle().set(topology));
+        self.core.set_window_homes(homes.clone());
+        self.core.root_owner().run(|| {
+            let handle = crate::displays::use_display_handle();
+            handle.set(topology);
+            handle.set_homes(homes);
+        });
     }
 
     /// R1576 §5.16 §5.41 §2 #7 — the monitors attached **right now**.
@@ -888,12 +975,26 @@ impl<V: WidgetView> AppShell<V> {
     /// `resume_spec` does not come through here: at create time there is no
     /// window and the `ActiveEventLoop` is the enumeration source.
     fn display_topology(&self) -> DisplayTopology {
+        self.desk_reading().0
+    }
+
+    /// R1617 — the desk, and the monitor enumeration it was built from.
+    ///
+    /// The two travel together because a [`pinion_core::display::DisplayId`] is
+    /// derived from a display's POSITION in this list, so the list is the only
+    /// thing that can turn a window system's monitor handle back into one of
+    /// those ids. Handing back the topology alone would leave a caller with no
+    /// way to do that except to enumerate again — against which the positions
+    /// are no longer guaranteed to line up.
+    fn desk_reading(&self) -> (DisplayTopology, Vec<MonitorHandle>) {
         let Some(window) = self.windows.values().find_map(Self::slot_window) else {
-            return DisplayTopology::empty();
+            return (DisplayTopology::empty(), Vec::new());
         };
-        topology_from(
-            window.available_monitors(),
-            window.primary_monitor().as_ref(),
+        let monitors: Vec<MonitorHandle> = window.available_monitors().collect();
+        let primary = window.primary_monitor();
+        (
+            topology_from(monitors.iter().cloned(), primary.as_ref()),
+            monitors,
         )
     }
 
@@ -3757,10 +3858,17 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // The `ActiveEventLoop` is the enumeration source here because there is
         // no window yet to ask; every later refresh goes through
         // `stamp_desktop_facts`.
-        self.publish_display_topology(topology_from(
-            event_loop.available_monitors(),
-            event_loop.primary_monitor().as_ref(),
-        ));
+        // R1617 — no windows exist yet, so there are no homes to stamp. The
+        // empty list is the honest value: `display_home` reads `null` until a
+        // window is there to have one, which is the same
+        // nobody-looked-so-nothing-is-claimed rule the rest of this axis uses.
+        self.publish_display_topology(
+            topology_from(
+                event_loop.available_monitors(),
+                event_loop.primary_monitor().as_ref(),
+            ),
+            Vec::new(),
+        );
         // R1610 §5.16 §2 #7 — and which windowing system that desk belongs to,
         // for the level outcome `scene/windows` reports. Same reason it goes
         // first: a binding declaring `level: AlwaysOnTop` in its own factory
@@ -3806,6 +3914,12 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 primary_assigned = true;
             }
         }
+        // R1617 §5.16 §5.41 — the windows exist NOW, so stamp where each of
+        // them is before the first paint reads it. The desk was published
+        // above, before any window existed, with an empty home list — which
+        // was the honest value then and would be a permanent one in a
+        // GUI-only session if nothing re-stamped it here.
+        self.stamp_window_homes();
         // R47.7.5 — winit does not auto-emit `RedrawRequested` on
         // `resumed` (platform-dependent). Explicitly request the
         // first redraw so every active window's first paint commits
@@ -4084,6 +4198,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // keep `window_event` under the 100-line ceiling.
             WindowEvent::Moved(position) => {
                 self.note_window_moved(window_id, position);
+                // R1617 — a move is the moment a window's display can change,
+                // and a GUI-only session issues no RPC dispatch to re-stamp it
+                // at. Without this the in-process `use_window_home` would
+                // answer with wherever the window was at boot, forever.
+                self.stamp_window_homes();
             }
             // R1027 §5.16 — DPI / scale change. Extracted to
             // `note_scale_factor_changed` to keep this dispatcher under the

@@ -596,9 +596,14 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("decorations", WireTy::Boolean, None),
                 WireField::new("display", WireTy::String, None).nullable(),
                 WireField::new("anchored", WireTy::Object, Some("AnchoredOutcome")).nullable(),
-                WireField::new("level", WireTy::String, None),
+                WireField::new("level", WireTy::String, None)
+                    .accepting(&crate::window_declare::LEVEL_WIRE_NAMES),
                 WireField::new("level_outcome", WireTy::Object, Some("LevelOutcomeWire"))
                     .nullable(),
+                // R1617 — which display the window is ACTUALLY on, per both
+                // answerers. `anchored` above is the declaration's fate; this
+                // is the window as it sits.
+                WireField::new("display_home", WireTy::Object, Some("DisplayHomeWire")).nullable(),
             ],
         },
     },
@@ -627,6 +632,21 @@ pub const WIRE_TYPES: &[WireType] = &[
         name: "DisplayAtOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("display", WireTy::String, None).nullable()],
+        },
+    },
+    WireType {
+        name: "DisplayHomeWire",
+        shape: WireShape::Object {
+            fields: &[
+                // R1617 — the vocabulary comes from the domain type that
+                // PRODUCES it, and that type's own test proves the list is
+                // exactly what its single constructor can emit. A hand list
+                // here would be a second copy of a closed set (R1616).
+                WireField::new("kind", WireTy::String, None)
+                    .accepting(&pinion_core::display::DisplayHome::KINDS),
+                WireField::new("derived", WireTy::String, None).nullable(),
+                WireField::new("platform", WireTy::String, None).nullable(),
+            ],
         },
     },
     WireType {
@@ -1116,9 +1136,18 @@ pub const WIRE_TYPES: &[WireType] = &[
         name: "LevelOutcomeWire",
         shape: WireShape::Object {
             fields: &[
-                WireField::new("kind", WireTy::String, None),
-                WireField::new("declared", WireTy::String, None),
-                WireField::new("backend", WireTy::String, None),
+                // R1617 — all three keys carry closed sets, and R1610 published
+                // none of them. R1616 closed exactly this gap for the level a
+                // caller WRITES; these are the three on the way back, and
+                // knowing a match is safe is worth nothing without knowing what
+                // to match. Every list is derived from the type that produces
+                // it, never retyped here.
+                WireField::new("kind", WireTy::String, None)
+                    .accepting(&pinion_core::window_level::LevelOutcome::KINDS),
+                WireField::new("declared", WireTy::String, None)
+                    .accepting(&crate::window_declare::LEVEL_WIRE_NAMES),
+                WireField::new("backend", WireTy::String, None)
+                    .accepting(&crate::window_declare::BACKEND_WIRE_NAMES),
             ],
         },
     },

@@ -47,7 +47,7 @@
 //! fires the reconcile effect and the OS calls land on the next event-loop
 //! iteration. Clients pair the write with `scene/windows` to confirm what took.
 
-use pinion_core::window_level::WindowLevel;
+use pinion_core::window_level::{WindowLevel, WindowingBackend};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// R1610 — what a patch says about ONE nullable axis: nothing, clear it, or
@@ -215,6 +215,28 @@ pub const LEVEL_WIRE_NAMES: [&str; WindowLevel::ALL.len()] = {
     let mut i = 0;
     while i < WindowLevel::ALL.len() {
         names[i] = WindowLevel::ALL[i].as_str();
+        i += 1;
+    }
+    names
+};
+
+/// R1617 §5.12 §2 #7 — every wire spelling a `level_outcome.backend` can
+/// carry, DERIVED from the domain enum's own census the same way
+/// [`LEVEL_WIRE_NAMES`] is.
+///
+/// The read side of R1616's question. A client told which windowing system
+/// decided its level's fate can only branch on that word if it knows the word
+/// list, and R1610 published the field without publishing the set — so
+/// "is this Wayland?" was answerable only by having read pinion's source.
+///
+/// Lives beside [`LEVEL_WIRE_NAMES`] rather than in the census, because a
+/// census that retyped a closed set would be the second copy this whole slot
+/// exists to prevent.
+pub const BACKEND_WIRE_NAMES: [&str; WindowingBackend::ALL.len()] = {
+    let mut names = [""; WindowingBackend::ALL.len()];
+    let mut i = 0;
+    while i < WindowingBackend::ALL.len() {
+        names[i] = WindowingBackend::ALL[i].as_str();
         i += 1;
     }
     names

@@ -2599,6 +2599,7 @@ fn r1087_windows_reports_id_title_and_position() {
             anchored: None,
             level: "normal".to_owned(),
             level_outcome: None,
+            display_home: None,
         },
         DeclaredWindow {
             id: "torn-inspector".to_owned(),
@@ -2612,6 +2613,7 @@ fn r1087_windows_reports_id_title_and_position() {
             anchored: None,
             level: "normal".to_owned(),
             level_outcome: None,
+            display_home: None,
         },
     ];
     let mut ctx =
@@ -2628,12 +2630,14 @@ fn r1087_windows_reports_id_title_and_position() {
                     "declared_size": [880, 600], "decorations": true,
                     "display": null, "anchored": null,
                     "level": "normal", "level_outcome": null,
+                    "display_home": null,
                 },
                 {
                     "id": "torn-inspector", "title": "Inspector",
                     "position": [120, 80], "declared_size": [360, 360],
                     "decorations": false, "display": null, "anchored": null,
                     "level": "normal", "level_outcome": null,
+                    "display_home": null,
                 },
             ]
         })),
@@ -2662,6 +2666,7 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
             anchored: None,
             level: "normal".to_owned(),
             level_outcome: None,
+            display_home: None,
         },
         DeclaredWindow {
             id: "intrinsic-popover".to_owned(),
@@ -2673,6 +2678,7 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
             anchored: None,
             level: "normal".to_owned(),
             level_outcome: None,
+            display_home: None,
         },
     ];
     let mut ctx =
@@ -2689,12 +2695,14 @@ fn r1092_windows_reports_declared_size_with_null_for_intrinsic() {
                     "position": [40, 40], "declared_size": [400, 300],
                     "decorations": true, "display": null, "anchored": null,
                     "level": "normal", "level_outcome": null,
+                    "display_home": null,
                 },
                 {
                     "id": "intrinsic-popover", "title": "Popover",
                     "position": null, "declared_size": null,
                     "decorations": true, "display": null, "anchored": null,
                     "level": "normal", "level_outcome": null,
+                    "display_home": null,
                 },
             ]
         })),

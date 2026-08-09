@@ -51,6 +51,29 @@
 //! with it, because on Wayland the answer is "nothing" — the core shell
 //! protocol has no stacking request.
 //!
+//! ## R1617 — and which display each window is *actually* on
+//!
+//! Everything above is about the DECLARATION: where a preset asked the panel to
+//! go, and what became of that request. A window also simply *is* somewhere —
+//! a WM-placed window declares nothing at all, and a window the user drags has
+//! moved without any declaration changing. That second question has two
+//! answerers, and until this round only one of them was ever consulted.
+//!
+//! This framework derives a window's home from its live rectangle: the display
+//! holding the largest share. The window system has its own opinion, and across
+//! the four desktop backends underneath there are four rules for it — two
+//! resolve by largest intersection, one caches an answer refreshed only when the
+//! window's scale factor changes, and one reports the first compositor output
+//! the surface entered, which is not geometric at all. One of them answers with
+//! the *first enumerated* monitor for a window that is on no monitor, where this
+//! framework answers "nowhere".
+//!
+//! So `scene/windows` now publishes `display_home` — `derived`, `platform`, and
+//! the relation between them (`agreed` / `diverged` / `platform_silent` /
+//! `derived_nowhere` / `nowhere`). The panel paints the same fact through
+//! [`pinion_shell::use_window_home`], so the binding and the wire are one
+//! derivation with two callers rather than two copies.
+//!
 //! ## What the usual desktop-toolkit shape cannot do
 //!
 //! 1. **A display has an address.** The conventional screen object has no id
@@ -84,6 +107,17 @@
 //!    program stored, so a stacking bit a platform backend never reads still
 //!    reads back as set. `scene/windows` publishes `level_outcome` beside
 //!    `level`.
+//! 9. **Both answers to "which display is this window on" are readable.** The
+//!    conventional shape has both too — a public accessor returning the platform
+//!    plugin's stored answer, and a geometric resolver that is **private**, is
+//!    consulted only when the application itself moves the window, and decides
+//!    by CENTRE POINT rather than by largest share. Nothing there puts the two
+//!    side by side, and an application cannot, because one of them is
+//!    unreachable. `display_home` reports both and names the relation.
+//! 10. **A silent platform is not agreement.** The backend accessor is an
+//!     option, and a hidden window can get nothing from it. That is
+//!     `platform_silent` here, distinct from `agreed` — folding them would
+//!     manufacture a cross-check that never happened.
 //!
 //! ## The AI surface (§2 #7)
 //!
@@ -102,7 +136,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
-use pinion_core::display::{DisplayId, DisplayRect, DisplayTopology};
+use pinion_core::display::{DisplayHome, DisplayId, DisplayRect, DisplayTopology};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
@@ -115,7 +149,7 @@ use pinion_core::window_level::WindowLevel;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{
     DisplayHandle, SizeStrategy, WidgetView, WindowPlacement, WindowSpec, use_display_handle,
-    vello_renderer_impl,
+    use_window_home, vello_renderer_impl,
 };
 
 // pinion-forge codegen output: `pub struct HelloDisplaysRenderer` + its
@@ -338,6 +372,32 @@ impl DesksState {
     }
 }
 
+/// R1617 — `kind:derived:platform` for one window's home, or `unstamped`.
+///
+/// A pure formatter over the answer, because the two readers here reach it
+/// through different doors and must not therefore describe it differently: a
+/// `view` runs under an `Owner` and calls [`use_window_home`], while the
+/// oracle's `query` does not and reads the handle it resolved at wiring time.
+/// One fact, one derivation, one description.
+///
+/// An answerer that named nothing contributes an empty field, which is a third
+/// thing again from `unstamped` — nobody looked at all — and the two must stay
+/// distinguishable.
+fn describe_home(home: Option<DisplayHome>) -> String {
+    home.map_or_else(
+        || "unstamped".to_string(),
+        |home| {
+            let name = |id: Option<&DisplayId>| id.map_or("", DisplayId::as_str).to_string();
+            format!(
+                "{}:{}:{}",
+                home.name(),
+                name(home.derived()),
+                name(home.platform()),
+            )
+        },
+    )
+}
+
 /// One line describing where a spec's placement lands on `desk`.
 ///
 /// Derived on every read from the declaration plus the desk, so it cannot
@@ -433,6 +493,16 @@ impl ExternalIntrospect for DeskOracle {
                     // flags word carry no enumeration of themselves.
                     SchemaField::new("panel_level", "string"),
                     SchemaField::new("level_names", "string"),
+                    // R1617 — which display each window is ACTUALLY on, per
+                    // BOTH answerers, read in-process through
+                    // `use_window_home`. The wire publishes the same fact on
+                    // `scene/windows`, so a demo can hold the two together —
+                    // and the conventional in-process API answers with the
+                    // platform's opinion ALONE, with its own geometric
+                    // derivation private.
+                    SchemaField::new("panel_home", "string"),
+                    SchemaField::new("main_home", "string"),
+                    SchemaField::new("home_kinds", "string"),
                     SchemaField::new("applied_preset", "string"),
                     SchemaField::new("preset_names", "string"),
                     SchemaField::new("last_event", "string"),
@@ -505,6 +575,13 @@ impl ExternalIntrospect for DeskOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             ),
+            // R1617 — `kind:derived:platform`, with an empty field for an
+            // answerer that named nothing, and `unstamped` when nobody looked
+            // at all. Flattened into one string because this surface's values
+            // are scalars; the wire carries the three as separate keys.
+            "panel_home" => text(describe_home(state.desk.home_of(PANEL_WINDOW))),
+            "main_home" => text(describe_home(state.desk.home_of(MAIN_WINDOW))),
+            "home_kinds" => text(DisplayHome::KINDS.join(",")),
             "applied_preset" => text(state.applied.get()),
             "preset_names" => text(
                 PRESETS
@@ -831,6 +908,18 @@ fn view_panel() -> Scene {
                     |s| format!("level: {}", s.level.as_str()),
                 ),
                 Rect::new(20, 48 + ROW_H, PANEL_W - 40, BODY_FONT_PX + 4),
+                TextStyle::new()
+                    .with_size_px(BODY_FONT_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )),
+            // R1617 — and where the panel ACTUALLY is, per both answerers. A
+            // `view` runs under an `Owner`, so this is the hook rather than the
+            // held handle; the oracle beside it reads the same fact through the
+            // handle because an `invoke` body does not. One fact, one
+            // derivation, two callers.
+            Scene::Text(TextNode::styled(
+                format!("home: {}", describe_home(use_window_home(PANEL_WINDOW))),
+                Rect::new(20, 48 + ROW_H * 2, PANEL_W - 40, BODY_FONT_PX + 4),
                 TextStyle::new()
                     .with_size_px(BODY_FONT_PX)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),

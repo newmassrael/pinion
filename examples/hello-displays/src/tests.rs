@@ -301,3 +301,89 @@ fn r1576_the_rectangle_argument_is_parsed_strictly() {
         assert_eq!(parse_rect(malformed), None, "{malformed:?} is refused");
     }
 }
+
+// ---- R1617 §5.16 §5.41 §2 #7 — the home the binding reads ----
+
+#[test]
+fn r1617_the_description_tells_three_kinds_of_nothing_apart() {
+    use super::describe_home;
+    use pinion_core::display::DisplayHome;
+
+    // Nobody looked at all.
+    assert_eq!(describe_home(None), "unstamped");
+    // Somebody looked and neither answerer named a display. Distinct from the
+    // above, and a demo that could not tell them apart would pass on a shell
+    // that had stopped stamping entirely.
+    assert_eq!(
+        describe_home(Some(DisplayHome::between(None, None))),
+        "nowhere::",
+    );
+    // We answered, the window system did not. Also distinct — silence is not
+    // concurrence, so this must not read like agreement.
+    assert_eq!(
+        describe_home(Some(DisplayHome::between(
+            Some(DisplayId::new("left")),
+            None
+        ))),
+        "platform_silent:left:",
+    );
+}
+
+#[test]
+fn r1617_a_divergence_is_described_with_both_names() {
+    use super::describe_home;
+    use pinion_core::display::DisplayHome;
+    assert_eq!(
+        describe_home(Some(DisplayHome::between(
+            Some(DisplayId::new("right")),
+            Some(DisplayId::new("left")),
+        ))),
+        "diverged:right:left",
+        "both answers survive the description — picking one would be this \
+         binding inventing a rule over the platform's",
+    );
+    assert_eq!(
+        describe_home(Some(DisplayHome::between(
+            Some(DisplayId::new("right")),
+            Some(DisplayId::new("right")),
+        ))),
+        "agreed:right:right",
+    );
+}
+
+#[test]
+fn r1617_the_binding_reads_the_home_through_the_handle_it_holds() {
+    use super::{MAIN_WINDOW, describe_home};
+    // The oracle's read path: a held handle, because an `invoke` / `query` body
+    // runs outside any `Owner` scope of this binding's own. The `view` uses the
+    // hook instead, and both funnel into one formatter.
+    let handle = std::sync::Arc::new(pinion_shell::DisplayHandle::new());
+    handle.set(two_panels());
+    assert_eq!(
+        describe_home(handle.home_of(PANEL_WINDOW)),
+        "unstamped",
+        "a desk without a window rectangle claims nothing",
+    );
+    handle.set_homes(vec![
+        (
+            PANEL_WINDOW.to_owned(),
+            // Straddling the seam with 300 of its 400 columns on the right.
+            DisplayRect::new(900, 0, 400, 100),
+            Some(DisplayId::new("right")),
+        ),
+        (
+            MAIN_WINDOW.to_owned(),
+            DisplayRect::new(10, 10, 200, 200),
+            Some(DisplayId::new("right")),
+        ),
+    ]);
+    assert_eq!(
+        describe_home(handle.home_of(PANEL_WINDOW)),
+        "agreed:right:right"
+    );
+    assert_eq!(
+        describe_home(handle.home_of(MAIN_WINDOW)),
+        "diverged:left:right",
+        "wholly on the left panel while the window system names the right one",
+    );
+}

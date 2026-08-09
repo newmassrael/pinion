@@ -86512,6 +86512,112 @@
         "the per-field truth check (published set == accepted set) lives with the axis, because only the axis knows its parse path. There is no general form, and the general gate only checks the SHAPE of a declaration."
       ]
     },
+    "Round 1617": {
+      "decision_summary": "R1617 — a window says whose answer it is.\n\nTwo questions look like one. \"Where was this window asked to go\" is the declaration, and R1576 answered it with `anchored`. \"Where is this window\" is a different fact: a window-manager-placed window declares nothing at all and is still somewhere, and a window the user drags has moved without any declaration changing. That second question has two answerers, and until this round only one of them was ever consulted. Registered by R1576's own close audit as debt-display-home-not-cross-checked; the analyzer-tool audit's plane-C pair closes with it.\n\nTHE TWO ANSWERS CAN DIFFER WITHOUT EITHER BEING WRONG, AND THAT IS MEASURED. This framework derives a home from the window's live rectangle — the display holding the largest share. Read from the window backend's own four desktop implementations rather than assumed, there are FOUR rules: two resolve by largest intersection, one caches an answer refreshed only inside a synthetic configure path when the scale factor changes, and one reports the first compositor output the surface entered, which is not geometric at all. One of them answers with the FIRST ENUMERATED monitor for a window that is on no monitor, where this framework answers nowhere. So this is a REPORT and not a gate: a gate would have to invent a rule that overrides a platform's own. The debt wrote down that observation \"seems right but the judgment is unverified\" — this is the verification.\n\nSILENCE IS NOT AGREEMENT. The backend's accessor is an option, so `platform_silent` is its own arm rather than being folded into `agreed`. Folding them would report a cross-check that never happened as one that concurred. `DisplayHome` is five arms over the product of two options, `between` is its only constructor, and its published vocabulary is proved by DRIVING that constructor over every combination and asserting set equality with the published list — a stronger claim than R1616's const-derived-from-a-census can make, because it pins what the code can EMIT rather than what the type declares.\n\nPAST THE TOOLKIT BY READING ITS SOURCE, NOT BY ASSERTION. It has both answers too and hides one. Its geometric resolver is declared in a private header so an application cannot call it; it decides by CENTRE POINT, so a window nine tenths on the right panel whose centre is on the left resolves left, with a fallback that keeps the LAST intersecting sibling it iterated; and it is consulted only when the application itself moves the window, short-circuiting whenever the current screen already contains the centre. A user dragging across a seam never runs it — only the platform plugin's own event does, which one backend delivers asynchronously. Nothing there puts the two side by side and an application cannot, because one of them is unreachable; the public screen-at query takes a POINT, which is the rectangle-shaped gap R1576 already recorded.\n\nTHE MODEL OF A VENDORED CRATE IS NOW CHECKED AGAINST IT. R1610 wrote the per-backend level table by reading the backend's source once, and nothing held the two together: the backend implementing Wayland stacking would leave the table saying unsupported forever, with neither the compiler nor any test noticing. That was registered as debt-level-support-models-a-vendored-crate, the same class as R1550's hash_table_bytes. The gate parses every set_window_level under platform_impl with a real parser rather than a regex (R1527) and classifies each from TWO INDEPENDENT SIGNALS that must agree: the parameter binding is underscore-prefixed, and its identifier does not occur in the body. When they disagree it FAILS rather than guesses. The claim is therefore exact in one direction and bounded in the other, and that is stated rather than papered over: every Unsupported verdict is proved to correspond to a deliberate no-op, every Applied verdict only to an implementation the level reaches. The census is keyed by PATH and an unrecognised path fails, because a version bump that moves or adds a backend is exactly the moment the model needs re-reading. It also states the under-report it makes on purpose: one unnamed backend genuinely drives levels and this adapter reports Unknown for it, and the test breaks if that stops being true. It lives in the shell crate because that is the crate the backend is a dependency of, so the source it reads is present by construction whenever the check can run at all.\n\nTHE BINDING GETS THE SAME READ. A window's screen accessor is ordinary application API in the toolkit, so leaving in-process code below that while the wire is past it is the wrong asymmetry — R1576's own argument for use_displays. One derivation, two callers: the view uses the hook, the oracle uses the handle it resolved at wiring time, and both funnel into one formatter. THE STAMP HAD TO MOVE FOR THAT TO MEAN ANYTHING: homes are stamped at window creation and on every Moved, not only at RPC dispatch, because a GUI-only session issues no dispatch and a painted readout would otherwise show where the window was at boot, forever. The cost was checked against the backend rather than assumed — its monitor enumeration is cached behind a lock, leaving one outer-position read per window, which is what the cursor path already pays. And ONE enumeration feeds both products, because a topology id IS a position in that enumeration: reading it twice would let a hot-plug land between the calls and produce a divergence this process invented, then report it as the window system's.\n\nR1616's values slot gains four more consumers. The level outcome's kind, declared and backend all carry closed sets and R1610 published none of them; the read side now speaks the vocabulary the write side accepts.\n\nTHREE FINDINGS, ALL FROM COUNTERFACTUALS. The substrate fixture could not tell a wholesale replacement of the home map from a merge, because its only stamp was the first one and the map was empty either way — the handle-side twin WAS caught, and that asymmetry is what named the gap. Nothing checked that a published value set is what its producer emits, only that it was well-formed, so the census could retype a closed set by hand and stay green: R1616's own second-copy failure reintroduced inside the census, now closed by a test that drives each producer and compares. And the round's scratch driver restored files with a metadata-preserving copy, so a restored file looked OLDER than the artifact built from the defect that had just been in it and cargo served that artifact to the next case — the concrete form of the standing rebuild-after-revert rule, and every verdict after the first restore was void until the whole run was redone through the committed driver.\n\nTHE COMMITTED DRIVER ALREADY EXISTED. tools/counterfactual.py has been there since R1600.1; this round built one in a scratchpad anyway, because the memory index still listed that debt as open when its own file says closed. The committed driver does not have the mtime bug and REFUSES a scoped gate, which is the other mistake the scratch run made (R1599's lesson, made again). The final run went through it with one unscoped whole-suite gate.",
+      "changes_bullets": [
+        "pinion-core display: DisplayHome, five arms over both answers, one constructor",
+        "DisplayHome::KINDS proved by DRIVING the constructor, not by declaration",
+        "DisplayTopology::nth + home_of -- the platform's handle resolves by POSITION",
+        "pinion-core window_level: WindowingBackend::ALL, LevelOutcome::KINDS",
+        "pinion-shell: collect_window_homes + desk_reading -- ONE enumeration, two uses",
+        "homes stamped at window create and on Moved, not only at RPC dispatch",
+        "ShellCore::window_display_home + DisplayHandle::set_homes / home_of",
+        "use_window_home -- the in-process peer of the wire's display_home",
+        "scene/windows publishes display_home: derived, platform, and the relation",
+        "wire census: DisplayHomeWire, and values on the level outcome's three keys",
+        "tests/winit_level_model.rs -- the level table checked against the backend AST",
+        "pinion-rpc test: a published value set is what its producer can emit",
+        "hello-displays: panel_home / main_home / home_kinds, and the panel paints it",
+        "tools/demos/r1617_a_window_says_whose_answer_it_is.py (new)"
+      ],
+      "verification_bullets": [
+        "11 new display tests, 2 window_level, 7 shell, 3 example, 5 winit-gate tests",
+        "17 counterfactuals through tools/counterfactual.py, 17 CAUGHT, ONE gate",
+        "CF-14 was a FINDING: the substrate fixture stamped once, so a merge and a",
+        "wholesale replace were indistinguishable; the handle-side twin was caught",
+        "CF-17 was a FINDING: nothing checked a published value set against its",
+        "producer, so the census could retype a closed set by hand and stay green",
+        "the scratch driver restored with copy2, preserving mtime, so cargo served",
+        "the defective build to the next case -- the run was void and was redone",
+        "Demo r1617: 46 assertions over 11 sections against two real windows",
+        "r1576, r1610 and r1616 demos re-pass unchanged: the wire only grew",
+        "cargo test on pinion-core, pinion-rpc, pinion-shell, hello-displays green",
+        "fmt --all, clippy -D pedantic on all three crates, cargo doc: clean",
+        "reference-names ratchet: 0 in 0 files, after four citations were restated"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "the display axis's other two R1576 gaps are untouched and both external: a",
+        "display's usable region (winit has no work-area accessor and EWMH's work",
+        "area is one rectangle for the whole desktop) and a hot-plug EVENT (winit",
+        "0.30 emits none), so the desk is re-read when something asks.",
+        "the level gate proves Unsupported exactly and Applied only as far as \"the",
+        "level reaches the body\". A body that took the level and discarded it would",
+        "satisfy it; no backend writes that shape today, and the error direction is",
+        "the one this axis already chose.",
+        "divergence itself is exercised only by fixtures. This host has one monitor,",
+        "and on it current_monitor() was NOT absent -- the debt's expected \"absence",
+        "is the first finding\" did not happen. A two-monitor host would exercise the",
+        "diverged arm live; the judgment is a pure function, so nothing waits on it."
+      ],
+      "publishable_decision_summary": "R1617 — a window says whose answer it is.\n\nTwo questions look like one. \"Where was this window asked to go\" is the declaration, and R1576 answered it with `anchored`. \"Where is this window\" is a different fact: a window-manager-placed window declares nothing at all and is still somewhere, and a window the user drags has moved without any declaration changing. That second question has two answerers, and until this round only one of them was ever consulted. Registered by R1576's own close audit as debt-display-home-not-cross-checked; the analyzer-tool audit's plane-C pair closes with it.\n\nTHE TWO ANSWERS CAN DIFFER WITHOUT EITHER BEING WRONG, AND THAT IS MEASURED. This framework derives a home from the window's live rectangle — the display holding the largest share. Read from the window backend's own four desktop implementations rather than assumed, there are FOUR rules: two resolve by largest intersection, one caches an answer refreshed only inside a synthetic configure path when the scale factor changes, and one reports the first compositor output the surface entered, which is not geometric at all. One of them answers with the FIRST ENUMERATED monitor for a window that is on no monitor, where this framework answers nowhere. So this is a REPORT and not a gate: a gate would have to invent a rule that overrides a platform's own. The debt wrote down that observation \"seems right but the judgment is unverified\" — this is the verification.\n\nSILENCE IS NOT AGREEMENT. The backend's accessor is an option, so `platform_silent` is its own arm rather than being folded into `agreed`. Folding them would report a cross-check that never happened as one that concurred. `DisplayHome` is five arms over the product of two options, `between` is its only constructor, and its published vocabulary is proved by DRIVING that constructor over every combination and asserting set equality with the published list — a stronger claim than R1616's const-derived-from-a-census can make, because it pins what the code can EMIT rather than what the type declares.\n\nPAST THE TOOLKIT BY READING ITS SOURCE, NOT BY ASSERTION. It has both answers too and hides one. Its geometric resolver is declared in a private header so an application cannot call it; it decides by CENTRE POINT, so a window nine tenths on the right panel whose centre is on the left resolves left, with a fallback that keeps the LAST intersecting sibling it iterated; and it is consulted only when the application itself moves the window, short-circuiting whenever the current screen already contains the centre. A user dragging across a seam never runs it — only the platform plugin's own event does, which one backend delivers asynchronously. Nothing there puts the two side by side and an application cannot, because one of them is unreachable; the public screen-at query takes a POINT, which is the rectangle-shaped gap R1576 already recorded.\n\nTHE MODEL OF A VENDORED CRATE IS NOW CHECKED AGAINST IT. R1610 wrote the per-backend level table by reading the backend's source once, and nothing held the two together: the backend implementing Wayland stacking would leave the table saying unsupported forever, with neither the compiler nor any test noticing. That was registered as debt-level-support-models-a-vendored-crate, the same class as R1550's hash_table_bytes. The gate parses every set_window_level under platform_impl with a real parser rather than a regex (R1527) and classifies each from TWO INDEPENDENT SIGNALS that must agree: the parameter binding is underscore-prefixed, and its identifier does not occur in the body. When they disagree it FAILS rather than guesses. The claim is therefore exact in one direction and bounded in the other, and that is stated rather than papered over: every Unsupported verdict is proved to correspond to a deliberate no-op, every Applied verdict only to an implementation the level reaches. The census is keyed by PATH and an unrecognised path fails, because a version bump that moves or adds a backend is exactly the moment the model needs re-reading. It also states the under-report it makes on purpose: one unnamed backend genuinely drives levels and this adapter reports Unknown for it, and the test breaks if that stops being true. It lives in the shell crate because that is the crate the backend is a dependency of, so the source it reads is present by construction whenever the check can run at all.\n\nTHE BINDING GETS THE SAME READ. A window's screen accessor is ordinary application API in the toolkit, so leaving in-process code below that while the wire is past it is the wrong asymmetry — R1576's own argument for use_displays. One derivation, two callers: the view uses the hook, the oracle uses the handle it resolved at wiring time, and both funnel into one formatter. THE STAMP HAD TO MOVE FOR THAT TO MEAN ANYTHING: homes are stamped at window creation and on every Moved, not only at RPC dispatch, because a GUI-only session issues no dispatch and a painted readout would otherwise show where the window was at boot, forever. The cost was checked against the backend rather than assumed — its monitor enumeration is cached behind a lock, leaving one outer-position read per window, which is what the cursor path already pays. And ONE enumeration feeds both products, because a topology id IS a position in that enumeration: reading it twice would let a hot-plug land between the calls and produce a divergence this process invented, then report it as the window system's.\n\nR1616's values slot gains four more consumers. The level outcome's kind, declared and backend all carry closed sets and R1610 published none of them; the read side now speaks the vocabulary the write side accepts.\n\nTHREE FINDINGS, ALL FROM COUNTERFACTUALS. The substrate fixture could not tell a wholesale replacement of the home map from a merge, because its only stamp was the first one and the map was empty either way — the handle-side twin WAS caught, and that asymmetry is what named the gap. Nothing checked that a published value set is what its producer emits, only that it was well-formed, so the census could retype a closed set by hand and stay green: R1616's own second-copy failure reintroduced inside the census, now closed by a test that drives each producer and compares. And the round's scratch driver restored files with a metadata-preserving copy, so a restored file looked OLDER than the artifact built from the defect that had just been in it and cargo served that artifact to the next case — the concrete form of the standing rebuild-after-revert rule, and every verdict after the first restore was void until the whole run was redone through the committed driver.\n\nTHE COMMITTED DRIVER ALREADY EXISTED. tools/counterfactual.py has been there since R1600.1; this round built one in a scratchpad anyway, because the memory index still listed that debt as open when its own file says closed. The committed driver does not have the mtime bug and REFUSES a scoped gate, which is the other mistake the scratch run made (R1599's lesson, made again). The final run went through it with one unscoped whole-suite gate.",
+      "publishable_changes_bullets": [
+        "pinion-core display: DisplayHome, five arms over both answers, one constructor",
+        "DisplayHome::KINDS proved by DRIVING the constructor, not by declaration",
+        "DisplayTopology::nth + home_of -- the platform's handle resolves by POSITION",
+        "pinion-core window_level: WindowingBackend::ALL, LevelOutcome::KINDS",
+        "pinion-shell: collect_window_homes + desk_reading -- ONE enumeration, two uses",
+        "homes stamped at window create and on Moved, not only at RPC dispatch",
+        "ShellCore::window_display_home + DisplayHandle::set_homes / home_of",
+        "use_window_home -- the in-process peer of the wire's display_home",
+        "scene/windows publishes display_home: derived, platform, and the relation",
+        "wire census: DisplayHomeWire, and values on the level outcome's three keys",
+        "tests/winit_level_model.rs -- the level table checked against the backend AST",
+        "pinion-rpc test: a published value set is what its producer can emit",
+        "hello-displays: panel_home / main_home / home_kinds, and the panel paints it",
+        "tools/demos/r1617_a_window_says_whose_answer_it_is.py (new)"
+      ],
+      "publishable_verification_bullets": [
+        "11 new display tests, 2 window_level, 7 shell, 3 example, 5 winit-gate tests",
+        "17 counterfactuals through tools/counterfactual.py, 17 CAUGHT, ONE gate",
+        "CF-14 was a FINDING: the substrate fixture stamped once, so a merge and a",
+        "wholesale replace were indistinguishable; the handle-side twin was caught",
+        "CF-17 was a FINDING: nothing checked a published value set against its",
+        "producer, so the census could retype a closed set by hand and stay green",
+        "the scratch driver restored with copy2, preserving mtime, so cargo served",
+        "the defective build to the next case -- the run was void and was redone",
+        "Demo r1617: 46 assertions over 11 sections against two real windows",
+        "r1576, r1610 and r1616 demos re-pass unchanged: the wire only grew",
+        "cargo test on pinion-core, pinion-rpc, pinion-shell, hello-displays green",
+        "fmt --all, clippy -D pedantic on all three crates, cargo doc: clean",
+        "reference-names ratchet: 0 in 0 files, after four citations were restated"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41",
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the display axis's other two R1576 gaps are untouched and both external: a",
+        "display's usable region (winit has no work-area accessor and EWMH's work",
+        "area is one rectangle for the whole desktop) and a hot-plug EVENT (winit",
+        "0.30 emits none), so the desk is re-read when something asks.",
+        "the level gate proves Unsupported exactly and Applied only as far as \"the",
+        "level reaches the body\". A body that took the level and discarded it would",
+        "satisfy it; no backend writes that shape today, and the error direction is",
+        "the one this axis already chose.",
+        "divergence itself is exercised only by fixtures. This host has one monitor,",
+        "and on it current_monitor() was NOT absent -- the debt's expected \"absence",
+        "is the first finding\" did not happen. A two-monitor host would exercise the",
+        "diverged arm live; the judgment is a pure function, so nothing waits on it."
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [

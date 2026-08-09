@@ -48,6 +48,24 @@
 //! backend that drops it — is the silent lie described above and nobody would
 //! ever notice it. Wrong-absent self-corrects; wrong-present inflates
 //! quietly (R1602).
+//!
+//! # R1617 — and the model is now checked against its subject
+//!
+//! Choosing the safe failure direction is not the same as noticing the failure.
+//! `pinion-shell`'s `tests/winit_level_model.rs` parses the window backend's
+//! own `set_window_level` for every platform it ships and holds the table
+//! below to it: an implementation that is a deliberate no-op must read
+//! [`LevelOutcome::Unsupported`] here, one that consumes the level must not,
+//! the platform dispatcher must forward it, and a backend appearing or moving
+//! fails the check rather than quietly falling outside it. It runs on any host
+//! — reading a Wayland implementation needs no Wayland session — which is what
+//! makes a model of somebody else's crate testable at all.
+//!
+//! It lives in that crate rather than this one because that is the crate the
+//! backend is a dependency of, so the source it reads is present by
+//! construction whenever the check can run. Editing the table below without
+//! running it is therefore possible, and the check's own limits are stated in
+//! its module doc.
 
 /// R1610 §5.16 — where a window sits in the window manager's front-to-back
 /// order.
@@ -144,6 +162,25 @@ pub enum WindowingBackend {
 }
 
 impl WindowingBackend {
+    /// R1617 — every backend this adapter names, in wire-spelling order.
+    ///
+    /// Enumerable for the same reason [`WindowLevel::ALL`] is: the set is
+    /// closed, so a client asking "what can the `backend` field say?" should
+    /// read the answer rather than collect spellings by observation. It is also
+    /// what lets a test range over the backends instead of hand-listing them —
+    /// which four tests in this module did, so a sixth backend would have been
+    /// added to the enum and exercised by none of them.
+    ///
+    /// [`Self::Other`] is a member: it is a real answer this adapter gives, and
+    /// leaving it out would publish a vocabulary the wire can step outside of.
+    pub const ALL: [Self; 5] = [
+        Self::X11,
+        Self::Wayland,
+        Self::MacOs,
+        Self::Windows,
+        Self::Other,
+    ];
+
     /// The wire spelling, matching the serde representation.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -230,6 +267,19 @@ pub enum LevelOutcome {
 }
 
 impl LevelOutcome {
+    /// R1617 — every spelling [`kind`](Self::kind) can answer with.
+    ///
+    /// Published so a client reading `level_outcome.kind` off the wire knows
+    /// what it may hold without guessing — the same gap R1616 closed for the
+    /// level a caller *writes*, one field over on the way back. Knowing that a
+    /// match is safe is worth nothing without knowing what to match.
+    ///
+    /// Proved exhaustive by construction rather than trusted:
+    /// [`WindowingBackend::outcome`] is the only constructor, so driving it
+    /// over [`WindowingBackend::ALL`] x [`WindowLevel::ALL`] produces every
+    /// reachable arm, and a test asserts the resulting set *equals* this list.
+    pub const KINDS: [&'static str; 3] = ["applied", "unsupported", "unknown"];
+
     /// The level the binding declared, whatever became of it.
     #[must_use]
     pub const fn declared(&self) -> WindowLevel {
@@ -344,13 +394,7 @@ mod tests {
     fn r1610_only_a_stacking_request_can_be_dropped() {
         // Normal asks the window manager for nothing, so every backend
         // honours it — including the one that can express nothing.
-        for backend in [
-            WindowingBackend::X11,
-            WindowingBackend::Wayland,
-            WindowingBackend::MacOs,
-            WindowingBackend::Windows,
-            WindowingBackend::Other,
-        ] {
+        for backend in WindowingBackend::ALL {
             let outcome = backend.outcome(WindowLevel::Normal);
             assert!(
                 outcome.is_honoured(),
@@ -431,13 +475,7 @@ mod tests {
 
     #[test]
     fn r1610_an_outcome_round_trips_through_serde() {
-        for backend in [
-            WindowingBackend::X11,
-            WindowingBackend::Wayland,
-            WindowingBackend::MacOs,
-            WindowingBackend::Windows,
-            WindowingBackend::Other,
-        ] {
+        for backend in WindowingBackend::ALL {
             for level in WindowLevel::ALL {
                 let outcome = backend.outcome(level);
                 let json = serde_json::to_string(&outcome).unwrap();
@@ -460,11 +498,7 @@ mod tests {
         // Two spellings of one fact, so a test holds them together: `kind()`
         // is what the wire layer reads and the serde tag is what the JSON
         // carries, and nothing else would notice them diverging.
-        for backend in [
-            WindowingBackend::X11,
-            WindowingBackend::Wayland,
-            WindowingBackend::Other,
-        ] {
+        for backend in WindowingBackend::ALL {
             for level in WindowLevel::ALL {
                 let outcome = backend.outcome(level);
                 let json: serde_json::Value =
@@ -479,17 +513,57 @@ mod tests {
     }
 
     #[test]
+    fn r1617_the_published_outcome_vocabulary_is_exactly_what_is_producible() {
+        // `outcome` is the only constructor, so this product enumerates every
+        // REACHABLE kind. Set equality catches both directions: a spelling
+        // published that nothing emits (a client branches on a case that never
+        // arrives) and a kind emitted that is not published (a client's match
+        // falls through).
+        let mut produced: Vec<&str> = Vec::new();
+        for backend in WindowingBackend::ALL {
+            for level in WindowLevel::ALL {
+                produced.push(backend.outcome(level).kind());
+            }
+        }
+        produced.sort_unstable();
+        produced.dedup();
+        let mut published: Vec<&str> = LevelOutcome::KINDS.to_vec();
+        published.sort_unstable();
+        assert_eq!(
+            produced, published,
+            "the producible outcome kinds and the published ones must be one set",
+        );
+    }
+
+    #[test]
+    fn r1617_all_enumerates_every_backend_the_adapter_can_report() {
+        // The enumeration must not be short of the type. `as_str` matches
+        // exhaustively, so a backend missing from ALL still HAS a spelling —
+        // the way to catch the omission is to check that every spelling the
+        // type can produce is reachable through ALL, which a non-member's
+        // absence from this set would break.
+        let spellings: Vec<&str> = WindowingBackend::ALL.iter().map(|b| b.as_str()).collect();
+        for expected in ["x11", "wayland", "macos", "windows", "other"] {
+            assert!(
+                spellings.contains(&expected),
+                "{expected} is a backend spelling that ALL cannot reach",
+            );
+        }
+        assert_eq!(
+            spellings.len(),
+            WindowingBackend::ALL.len(),
+            "no duplicates were introduced by the check above",
+        );
+        // And every member answers an outcome, which is what makes ranging
+        // over ALL a substitute for hand-listing in the tests that do.
+        for backend in WindowingBackend::ALL {
+            assert_eq!(backend.outcome(WindowLevel::Normal).backend(), backend);
+        }
+    }
+
+    #[test]
     fn r1610_backend_wire_spellings_are_distinct() {
-        let mut spellings: Vec<&str> = [
-            WindowingBackend::X11,
-            WindowingBackend::Wayland,
-            WindowingBackend::MacOs,
-            WindowingBackend::Windows,
-            WindowingBackend::Other,
-        ]
-        .iter()
-        .map(|b| b.as_str())
-        .collect();
+        let mut spellings: Vec<&str> = WindowingBackend::ALL.iter().map(|b| b.as_str()).collect();
         let n = spellings.len();
         spellings.sort_unstable();
         spellings.dedup();

@@ -85,7 +85,7 @@ pub mod window_control;
 pub mod test_fixtures;
 
 pub use app::{AppShell, ShellConfig, run, run_with_config, run_with_handlers};
-pub use displays::{DISPLAYS, DisplayHandle, use_display_handle, use_displays};
+pub use displays::{DISPLAYS, DisplayHandle, use_display_handle, use_displays, use_window_home};
 // R-PR47 §5.7 — re-export the winit-free transport seam so a consumer can
 // name the `on_rpc_ingress` hook argument without a direct pinion-rpc dep.
 pub use executor::{

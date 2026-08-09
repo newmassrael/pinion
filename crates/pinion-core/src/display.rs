@@ -599,6 +599,19 @@ impl DisplayTopology {
         self.displays.iter().find(|d| d.id == *id)
     }
 
+    /// R1617 — the display at this position in the platform's enumeration, or
+    /// `None` when the topology is shorter than that.
+    ///
+    /// Exists because the window system names a monitor with a *handle*, not
+    /// with one of this module's ids, and the only thing the two share is the
+    /// enumeration this topology was built from. Resolving that handle to its
+    /// position and asking here is what turns the platform's answer into
+    /// something comparable with a derived one — see [`DisplayHome`].
+    #[must_use]
+    pub fn nth(&self, index: usize) -> Option<&Display> {
+        self.displays.get(index)
+    }
+
     /// The primary display, or `None` on a headless desk. The toolkit
     /// `primaryScreen`.
     #[must_use]
@@ -699,6 +712,24 @@ impl DisplayTopology {
             total_px: rect.area(),
             suggestion: self.nearest_fitting(rect),
         }
+    }
+
+    /// R1617 §2 #7 — where a window with these physical bounds is, against
+    /// **both** answers: the one derived here and the one `platform` carries.
+    ///
+    /// The derivation is [`resolve`](Self::resolve)'s home — the display with
+    /// the largest share — and `platform` is whatever the window system said,
+    /// or `None` when it said nothing. Naming the question here rather than
+    /// leaving callers to pair the two means the surface that reads the
+    /// platform does not also have to know which field of a [`Placement`] the
+    /// derived home is.
+    ///
+    /// `platform` is used **verbatim**, not filtered against this topology: an
+    /// id the desk does not hold is a divergence worth reporting, and quietly
+    /// dropping it would report the platform as silent when it spoke.
+    #[must_use]
+    pub fn home_of(&self, rect: DisplayRect, platform: Option<DisplayId>) -> DisplayHome {
+        DisplayHome::between(self.resolve(rect).home, platform)
     }
 
     /// The origin nearest `rect`'s that would put it wholly inside a **single**
@@ -920,6 +951,189 @@ impl Anchored {
     }
 }
 
+/// R1617 §5.16 §5.41 §2 #7 — which display a window is on, according to
+/// **both** answerers: this framework's derivation and the window system's own
+/// opinion.
+///
+/// # Why there are two answers at all
+///
+/// [`DisplayTopology::resolve`] derives a window's home from its rectangle —
+/// the display holding the largest share of it. That derivation is deliberate
+/// (see the module docs): a second stored copy of "which screen is this on" is
+/// a second thing to go stale, so this framework keeps none.
+///
+/// But the window system has an opinion too, and it is not reached by the same
+/// rule. Measured across the window backend's four desktop implementations,
+/// there are four rules: two resolve by largest intersection, one caches an
+/// answer refreshed only when a window's scale factor changes, and one reports
+/// the first compositor output the surface entered, which is not geometric at
+/// all. One of them answers with the *first enumerated* monitor for a window
+/// that is on no monitor, where this module answers `None`.
+///
+/// So the two can differ **without either being wrong**, and a window
+/// straddling a seam is the ordinary case where they do. That is why this is a
+/// report and not a check: a gate would have to invent a rule that overrides a
+/// platform's own.
+///
+/// # Where this is past the toolkit 6.11
+///
+/// The toolkit has both answers too and **hides one of them**, read from its
+/// 6.11.1 window and application sources:
+///
+/// 1. Its derivation, a screen-for-geometry resolver, is **private** — declared
+///    in a private header, so an application cannot call it. What is public is
+///    the window's screen accessor, which returns the platform plugin's stored
+///    answer, and an application-level screen-at query that takes a *point* —
+///    the rectangle-shaped question R1576 already recorded as unaskable there.
+/// 2. That private derivation decides by **centre point**: a window nine
+///    tenths on the right panel whose centre is on the left one resolves to the
+///    left, and its fallback keeps the *last* intersecting sibling it iterated
+///    over. This module's rule is largest share, which is also what two of the
+///    four platform backends underneath use.
+/// 3. It is consulted **only when the application moves the window**
+///    (`setGeometry`), and even then it short-circuits to the current screen
+///    whenever that screen contains the centre. A user dragging a window across
+///    a seam never runs it; only the plugin's own event does.
+/// 4. Nothing anywhere puts the two side by side, so a divergence is not a
+///    fact the toolkit can hold — and since one of the two is private, an
+///    application cannot assemble one either.
+///
+/// Here both are published on `scene/windows`, and the *relation between them*
+/// is the value.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DisplayHome {
+    /// Both answerers name the same display. The overwhelmingly common case,
+    /// and the one worth being able to state.
+    Agreed {
+        /// The display they agree on.
+        display: DisplayId,
+    },
+    /// They name different displays. Legitimate for a window on a seam — see
+    /// the type docs for the four rules underneath — and a real finding
+    /// otherwise, which is exactly why it is reported rather than resolved.
+    Diverged {
+        /// What this framework derived from the window's rectangle.
+        derived: DisplayId,
+        /// What the window system says.
+        platform: DisplayId,
+    },
+    /// The derivation names a display and the platform names none.
+    ///
+    /// Ordinary rather than exceptional: the window backend's own accessor is
+    /// an `Option`, a hidden window may have never been assigned an output,
+    /// and one backend answers `None` for a window whose surface has entered no
+    /// output yet. Distinct from [`Self::Agreed`] on purpose — "the platform
+    /// concurs" and "the platform did not say" are different facts, and folding
+    /// them would turn silence into agreement.
+    PlatformSilent {
+        /// What this framework derived.
+        derived: DisplayId,
+    },
+    /// The rectangle is on no display at all, and the platform still names one.
+    ///
+    /// The unplugged-monitor case seen from the other side: a window restored
+    /// where a panel used to be covers nothing, while a platform that resolves
+    /// by nearest-or-first still hands back a monitor. Reporting it is how a
+    /// caller learns that the platform's answer is a fallback rather than a
+    /// location.
+    DerivedNowhere {
+        /// The display the window system names anyway.
+        platform: DisplayId,
+    },
+    /// Neither answerer names a display: a headless desk, or a window that is
+    /// nowhere and a platform that says so.
+    Nowhere,
+}
+
+impl DisplayHome {
+    /// Every spelling [`name`](Self::name) can answer with.
+    ///
+    /// Hand-written **and proved exhaustive by construction**: [`between`](Self::between)
+    /// is the only constructor, so driving it over every combination of its two
+    /// arguments produces every reachable arm, and
+    /// `r1617_the_published_home_vocabulary_is_exactly_what_is_producible`
+    /// asserts that the set of names so produced *equals* this list. That is a
+    /// stronger claim than a `const` derived from a data-less enum census
+    /// (R1616's `LEVEL_WIRE_NAMES`) can make: it pins what the code can
+    /// actually emit, not merely what the type declares.
+    pub const KINDS: [&'static str; 5] = [
+        "agreed",
+        "diverged",
+        "platform_silent",
+        "derived_nowhere",
+        "nowhere",
+    ];
+
+    /// The relation between the two answers. The **only** constructor, so the
+    /// arms cannot be assembled inconsistently — an `Agreed` naming two
+    /// different displays is not a value anyone can build.
+    #[must_use]
+    pub fn between(derived: Option<DisplayId>, platform: Option<DisplayId>) -> Self {
+        match (derived, platform) {
+            (Some(derived), Some(platform)) => {
+                if derived == platform {
+                    Self::Agreed { display: derived }
+                } else {
+                    Self::Diverged { derived, platform }
+                }
+            }
+            (Some(derived), None) => Self::PlatformSilent { derived },
+            (None, Some(platform)) => Self::DerivedNowhere { platform },
+            (None, None) => Self::Nowhere,
+        }
+    }
+
+    /// The one word this relation is called on the wire, matching the serde
+    /// tag. A closed vocabulary this crate owns — see [`Self::KINDS`].
+    ///
+    /// Lives here, next to the arms, so the match is exhaustive and a new arm
+    /// is a compile error rather than a wildcard's silent misreport (R1600).
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Agreed { .. } => "agreed",
+            Self::Diverged { .. } => "diverged",
+            Self::PlatformSilent { .. } => "platform_silent",
+            Self::DerivedNowhere { .. } => "derived_nowhere",
+            Self::Nowhere => "nowhere",
+        }
+    }
+
+    /// What this framework derived from the window's rectangle, or `None` when
+    /// the rectangle is on no display.
+    #[must_use]
+    pub const fn derived(&self) -> Option<&DisplayId> {
+        match self {
+            Self::Agreed { display } => Some(display),
+            Self::Diverged { derived, .. } | Self::PlatformSilent { derived } => Some(derived),
+            Self::DerivedNowhere { .. } | Self::Nowhere => None,
+        }
+    }
+
+    /// What the window system says, or `None` when it said nothing.
+    #[must_use]
+    pub const fn platform(&self) -> Option<&DisplayId> {
+        match self {
+            Self::Agreed { display } => Some(display),
+            Self::Diverged { platform, .. } | Self::DerivedNowhere { platform } => Some(platform),
+            Self::PlatformSilent { .. } | Self::Nowhere => None,
+        }
+    }
+
+    /// Did both answerers name the same display?
+    ///
+    /// `false` for every arm but [`Self::Agreed`], including the two where only
+    /// one of them answered: silence is not concurrence, the same conservatism
+    /// [`Anchored::is_declared`] and
+    /// [`crate::window_level::LevelOutcome::is_honoured`] apply.
+    #[must_use]
+    pub const fn agrees(&self) -> bool {
+        matches!(self, Self::Agreed { .. })
+    }
+}
+
 /// `u64 / u64` as a ratio, without repeating the lint exemption at each call.
 #[allow(
     clippy::cast_precision_loss,
@@ -951,7 +1165,8 @@ fn slug(label: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Anchor, Anchored, DisplayId, DisplayInfo, DisplayRect, DisplayTopology, slug, union_px,
+        Anchor, Anchored, DisplayHome, DisplayId, DisplayInfo, DisplayRect, DisplayTopology, slug,
+        union_px,
     };
 
     /// `(0, 0) 1920x1080`, the shape most of these arrangements are built from.
@@ -1486,6 +1701,170 @@ mod tests {
         let a = desk.anchor(&Anchor::new(id("gone"), (5, 5)));
         assert_eq!(a.display().map(DisplayId::as_str), Some("b"));
         assert_eq!(a.at(), Some((105, 5)));
+    }
+
+    // --- display home (R1617) ---------------------------------------------
+
+    #[test]
+    fn r1617_the_published_home_vocabulary_is_exactly_what_is_producible() {
+        // `between` is the only constructor, so driving it over every
+        // combination of its two arguments enumerates every REACHABLE arm.
+        // Asserting set EQUALITY against the published list catches both
+        // directions: a spelling published that nothing can emit (a client
+        // branches on a case that never arrives) and an arm emitted that is
+        // not published (a client's match falls through).
+        let a = Some(id("dp-1"));
+        let b = Some(id("dp-2"));
+        let mut produced: Vec<&str> = Vec::new();
+        for derived in [None, a.clone(), b.clone()] {
+            for platform in [None, a.clone(), b.clone()] {
+                produced.push(DisplayHome::between(derived.clone(), platform).name());
+            }
+        }
+        produced.sort_unstable();
+        produced.dedup();
+        let mut published: Vec<&str> = DisplayHome::KINDS.to_vec();
+        published.sort_unstable();
+        assert_eq!(
+            produced, published,
+            "the producible names and the published ones must be one set",
+        );
+        // And the spellings are distinct — an enumeration whose members
+        // collide is not one.
+        assert_eq!(published.len(), DisplayHome::KINDS.len());
+    }
+
+    #[test]
+    fn r1617_the_home_name_matches_its_serde_tag() {
+        // Two spellings of one fact: `name()` is what the wire layer reads and
+        // the serde tag is what the JSON carries. Nothing else would notice
+        // them diverging, exactly as R1610 found for the level outcome.
+        for home in [
+            DisplayHome::between(Some(id("a")), Some(id("a"))),
+            DisplayHome::between(Some(id("a")), Some(id("b"))),
+            DisplayHome::between(Some(id("a")), None),
+            DisplayHome::between(None, Some(id("b"))),
+            DisplayHome::between(None, None),
+        ] {
+            let json: serde_json::Value =
+                serde_json::from_str(&serde_json::to_string(&home).unwrap()).unwrap();
+            assert_eq!(json["kind"].as_str(), Some(home.name()), "{home:?}");
+        }
+    }
+
+    #[test]
+    fn r1617_agreement_needs_both_answers_and_silence_is_not_concurrence() {
+        let agreed = DisplayHome::between(Some(id("dp-1")), Some(id("dp-1")));
+        assert!(agreed.agrees());
+        assert_eq!(agreed.derived(), Some(&id("dp-1")));
+        assert_eq!(agreed.platform(), Some(&id("dp-1")));
+
+        // One answerer speaking is NOT agreement — the conservatism
+        // `Anchored::is_declared` and `LevelOutcome::is_honoured` share.
+        let silent = DisplayHome::between(Some(id("dp-1")), None);
+        assert!(!silent.agrees());
+        assert_eq!(silent.name(), "platform_silent");
+        assert_eq!(silent.derived(), Some(&id("dp-1")));
+        assert_eq!(silent.platform(), None, "the platform did not answer");
+
+        let nowhere_here = DisplayHome::between(None, Some(id("dp-2")));
+        assert!(!nowhere_here.agrees());
+        assert_eq!(nowhere_here.name(), "derived_nowhere");
+        assert_eq!(nowhere_here.derived(), None);
+        assert_eq!(nowhere_here.platform(), Some(&id("dp-2")));
+
+        let nothing = DisplayHome::between(None, None);
+        assert!(!nothing.agrees());
+        assert_eq!(nothing.derived(), None);
+        assert_eq!(nothing.platform(), None);
+    }
+
+    #[test]
+    fn r1617_a_divergence_keeps_both_names_rather_than_picking_one() {
+        let d = DisplayHome::between(Some(id("dp-1")), Some(id("dp-2")));
+        assert_eq!(d.name(), "diverged");
+        assert!(!d.agrees());
+        // BOTH survive. A report that resolved the disagreement would be a
+        // rule this framework invented over a platform's own, and the four
+        // backends underneath genuinely use four rules.
+        assert_eq!(d.derived(), Some(&id("dp-1")));
+        assert_eq!(d.platform(), Some(&id("dp-2")));
+        assert!(matches!(&d, DisplayHome::Diverged { derived, platform }
+                if derived.as_str() == "dp-1" && platform.as_str() == "dp-2"),);
+    }
+
+    #[test]
+    fn r1617_a_window_on_a_seam_is_the_ordinary_divergence() {
+        // 400 wide straddling x = 1920 with 100px on the left panel: the
+        // largest share is dp-2, and a platform resolving by, say, the corner
+        // or by which output the surface entered first can legitimately say
+        // dp-1. Neither is wrong; the RELATION is the fact.
+        let desk = side_by_side();
+        let rect = r(1820, 0, 400, 100);
+        assert_eq!(
+            desk.resolve(rect).home.as_ref().map(DisplayId::as_str),
+            Some("dp-2"),
+            "largest share",
+        );
+        let agreeing = desk.home_of(rect, Some(id("dp-2")));
+        assert!(agreeing.agrees());
+        let diverging = desk.home_of(rect, Some(id("dp-1")));
+        assert_eq!(diverging.name(), "diverged");
+        assert_eq!(diverging.derived(), Some(&id("dp-2")));
+        assert_eq!(diverging.platform(), Some(&id("dp-1")));
+    }
+
+    #[test]
+    fn r1617_home_of_reports_a_platform_id_the_desk_does_not_hold() {
+        // Verbatim, not filtered: a platform naming a display this topology
+        // has never heard of is a divergence, and folding it into "the
+        // platform said nothing" would report silence where there was speech.
+        let home = side_by_side().home_of(r(0, 0, 100, 100), Some(id("gone")));
+        assert_eq!(home.name(), "diverged");
+        assert_eq!(home.platform(), Some(&id("gone")));
+        assert!(side_by_side().get(&id("gone")).is_none());
+    }
+
+    #[test]
+    fn r1617_a_window_on_no_display_still_carries_the_platforms_answer() {
+        // The unplugged-monitor case from the other side. One of the window
+        // backend's own resolvers answers with the FIRST enumerated monitor
+        // for a window it finds nowhere, so this arm is the state that tells a
+        // caller the platform handed back a fallback rather than a location.
+        let one = DisplayTopology::new(vec![
+            DisplayInfo::new("DP-1", r(0, 0, 1920, 1080)).as_primary(),
+        ]);
+        let rect = r(2600, 40, 800, 600);
+        assert!(one.resolve(rect).home.is_none());
+        let home = one.home_of(rect, Some(id("dp-1")));
+        assert_eq!(home.name(), "derived_nowhere");
+        assert_eq!(home.derived(), None);
+        assert_eq!(home.platform(), Some(&id("dp-1")));
+        // And with the platform equally silent, the honest answer is neither.
+        assert_eq!(one.home_of(rect, None).name(), "nowhere");
+    }
+
+    #[test]
+    fn r1617_a_headless_desk_has_no_home_for_anything() {
+        let desk = DisplayTopology::empty();
+        assert_eq!(desk.home_of(r(0, 0, 800, 600), None).name(), "nowhere");
+        assert!(desk.nth(0).is_none());
+    }
+
+    #[test]
+    fn r1617_nth_is_the_platforms_enumeration_position() {
+        // The bridge from a window system's monitor HANDLE to one of this
+        // module's ids: the handle's position in the enumeration the topology
+        // was built from. Order-preserving is the property that makes it work,
+        // and it is asserted here rather than assumed at the winit seam.
+        let desk = side_by_side();
+        assert_eq!(desk.nth(0).map(|d| d.id().as_str()), Some("dp-1"));
+        assert_eq!(desk.nth(1).map(|d| d.id().as_str()), Some("dp-2"));
+        assert!(desk.nth(2).is_none(), "past the end is None, not a panic");
+        let ids: Vec<&str> = desk.iter().map(|d| d.id().as_str()).collect();
+        for (i, expected) in ids.iter().enumerate() {
+            assert_eq!(desk.nth(i).map(|d| d.id().as_str()), Some(*expected));
+        }
     }
 
     #[test]

@@ -1769,9 +1769,40 @@ AXES = [
         # binding that only paints will not see a monitor arrive until then);
         # and `Window::current_monitor()` is not cross-checked against the
         # derived home display.
-        "judged_at": 1576,
-        "completion": 63,
-        "evidence_snapshot": {"example-name": 14, "round-axis": 1},
+        #
+        # R1617 re-judged 63 -> 66, and the tool demanded it: `round-axis` went
+        # 1 -> 3, past the band, because R1610 and R1617 both declared here.
+        #
+        # ONLY +3, and the arithmetic is the gap list R1576 wrote down. Of the
+        # three things that audit named as still absent, R1617 closes exactly
+        # ONE — the cross-check — and it closes it properly rather than
+        # narrowly: `DisplayHome` publishes both answers and the relation
+        # between them on `scene/windows`, `use_window_home` gives a binding the
+        # same read in-process, and the whole judgment is a pure function of a
+        # topology so a two-monitor divergence is a fixture rather than
+        # hardware. The other two are untouched and are both platform probes:
+        # a display's USABLE REGION (winit has no work-area accessor; EWMH's
+        # `_NET_WORKAREA` is one rectangle for the whole desktop) and a hot-plug
+        # EVENT (winit 0.30 emits none).
+        #
+        # The +3 also absorbs R1610, which advanced this axis and attached no
+        # number to it — a window level is declared, its outcome is reported
+        # against the running backend, and `scene/window_declare` made every
+        # live axis writable where five were readable and one was writable. And
+        # R1617's second half is what makes that outcome trustworthy: the
+        # per-backend table was a reading of a vendored crate's source that
+        # nothing held to it, and `winit_level_model.rs` now parses that source
+        # and fails when the two disagree.
+        #
+        # It is not more because this axis is judged short on Mac/Win NATIVE
+        # SURFACES — native menus, native print dialogs — which need those OSes'
+        # runners and are exactly as untouched as they were at R1576. That is
+        # the gate, and no amount of Linux window-system depth moves it. Worth
+        # restating each time: display and window work IS buildable and testable
+        # here, and is what these three rounds did.
+        "judged_at": 1617,
+        "completion": 66,
+        "evidence_snapshot": {"example-name": 14, "round-axis": 3},
     },
     {
         "key": "api",

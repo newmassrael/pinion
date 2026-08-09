@@ -1533,6 +1533,76 @@ pub struct DeclaredWindow {
     /// Derived from the declaration and the stamped backend each dispatch,
     /// never stored, for the reason [`anchored`](Self::anchored) gives.
     pub level_outcome: Option<LevelOutcomeWire>,
+    /// R1617 §5.16 §5.41 §2 #7 — which display this window is **actually** on,
+    /// according to both answerers: the framework's derivation from the live
+    /// window rectangle, and the window system's own opinion.
+    ///
+    /// A different question from [`anchored`](Self::anchored), which is about
+    /// the *declaration* — where a preset asked for the window to go. This is
+    /// about the window as it sits right now, including a WM-placed window that
+    /// declares no placement at all and a window the user has dragged.
+    ///
+    /// `null` when nobody looked: a TUI surface, a fixture, a shell before its
+    /// first window, or a window whose outer position the platform declined to
+    /// report. The same nobody-looked-so-nothing-is-claimed rule
+    /// [`level_outcome`](Self::level_outcome) uses.
+    ///
+    /// **The two answers can differ without either being wrong.** Measured
+    /// across the window backend's four desktop implementations there are four
+    /// rules for "which monitor is this window on", so `diverged` is a report
+    /// and not an error — see
+    /// [`DisplayHome`](pinion_core::display::DisplayHome). Derived each
+    /// dispatch, never stored.
+    pub display_home: Option<DisplayHomeWire>,
+}
+
+/// R1617 §5.16 §2 #7 — which display a window is on per both answerers,
+/// projected to the wire.
+///
+/// Flattened rather than a tagged union, for the reason [`LevelOutcomeWire`]
+/// gives: every outcome carries the same two facts beside its `kind`, and a
+/// client branches on `kind` either way. `kind` is a closed vocabulary the
+/// domain crate owns — `agreed` / `diverged` / `platform_silent` /
+/// `derived_nowhere` / `nowhere` — and `rpc/schema` publishes the set, so a
+/// client learns what to match on rather than collecting spellings by
+/// observation (R1616).
+///
+/// Owned HERE rather than re-exported, because this crate owns the wire shape
+/// and the census that keeps `rpc/schema` honest reads only this crate — the
+/// same reason [`LevelOutcomeWire`] is.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DisplayHomeWire {
+    /// Which relation this is: one of
+    /// [`DisplayHome::KINDS`](pinion_core::display::DisplayHome::KINDS).
+    pub kind: &'static str,
+    /// The display this framework derived from the window's rectangle — the
+    /// one holding its largest share — or `null` when the rectangle is on no
+    /// display at all.
+    pub derived: Option<String>,
+    /// The display the window system itself names, or `null` when it named
+    /// none. Silence is a real answer here and is not folded into agreement.
+    pub platform: Option<String>,
+}
+
+impl From<&pinion_core::display::DisplayHome> for DisplayHomeWire {
+    fn from(home: &pinion_core::display::DisplayHome) -> Self {
+        Self {
+            // Asked of the type rather than matched here, for
+            // `LevelOutcomeWire`'s reason: the domain type is
+            // `#[non_exhaustive]` and lives in another crate, so a match
+            // written here would need a wildcard, and a wildcard at a wire
+            // boundary reports a NEW arm as an old one (R1600).
+            kind: home.name(),
+            derived: home
+                .derived()
+                .map(pinion_core::display::DisplayId::as_str)
+                .map(str::to_owned),
+            platform: home
+                .platform()
+                .map(pinion_core::display::DisplayId::as_str)
+                .map(str::to_owned),
+        }
+    }
 }
 
 /// R1610 §5.16 §2 #7 — what became of a window's declared level, projected to

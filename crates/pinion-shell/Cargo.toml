@@ -135,6 +135,15 @@ pinion-text-font = { path = "../pinion-text-font", version = "0.0.1" }
 # depends only on `pinion-core`, and nothing depends on `pinion-shell`.
 pinion-tui = { path = "../pinion-tui", version = "0.0.1" }
 pinion-pdf = { path = "../pinion-pdf", version = "0.0.1" }
+# R1617 — `tests/winit_level_model.rs` checks `WindowingBackend::outcome`'s
+# per-backend table against the window backend's OWN source, which is Rust and
+# therefore parsed with a parser rather than matched with a regex (R1527). This
+# crate is where the check belongs: it is the only one that depends on the
+# window backend, so the source it reads is present by construction whenever
+# the test binary exists at all.
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
 
 [lints]
 workspace = true

@@ -830,6 +830,114 @@ fn declared_value_vocabularies_are_well_formed() {
     );
 }
 
+/// R1617 — a published value set is what the producing type can actually emit.
+///
+/// [`declared_value_vocabularies_are_well_formed`] checks the SHAPE of a
+/// `values` list; nothing checked its CONTENT, so the census could retype a
+/// closed set by hand and stay green — which is precisely the second-copy
+/// failure R1616 built the slot to prevent, reintroduced in the census itself.
+/// A counterfactual replacing one of these lists with a plausible hand-written
+/// four-element version was caught by no Rust test at all.
+///
+/// So each list is compared against the set its own producer can emit, driven
+/// through that producer here rather than read from a constant the census also
+/// reads: a shared `const` would make this test tautological, and the point is
+/// to catch the census and the domain drifting apart.
+#[test]
+fn declared_value_vocabularies_are_what_their_producers_emit() {
+    use pinion_core::display::{DisplayHome, DisplayId};
+    use pinion_core::window_level::{WindowLevel, WindowingBackend};
+
+    fn values(type_name: &str, field_name: &str) -> Vec<String> {
+        for t in WIRE_TYPES {
+            if t.name != type_name {
+                continue;
+            }
+            let WireShape::Object { fields } = t.shape else {
+                panic!("{type_name} is not an object");
+            };
+            for f in fields {
+                if f.name == field_name {
+                    return f
+                        .values
+                        .unwrap_or_else(|| {
+                            panic!("{type_name}.{field_name} publishes no value set")
+                        })
+                        .iter()
+                        .map(|s| (*s).to_owned())
+                        .collect();
+                }
+            }
+            panic!("{type_name} has no field {field_name}");
+        }
+        panic!("the census holds no type {type_name}");
+    }
+
+    fn sorted(mut v: Vec<String>) -> Vec<String> {
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    // Every home relation `DisplayHome::between` — its only constructor — can
+    // produce, from the product of its two arguments.
+    let a = Some(DisplayId::new("a"));
+    let b = Some(DisplayId::new("b"));
+    let mut homes: Vec<String> = Vec::new();
+    for derived in [None, a.clone(), b.clone()] {
+        for platform in [None, a.clone(), b.clone()] {
+            homes.push(
+                DisplayHome::between(derived.clone(), platform)
+                    .name()
+                    .to_owned(),
+            );
+        }
+    }
+    assert_eq!(
+        sorted(values("DisplayHomeWire", "kind")),
+        sorted(homes),
+        "the published home vocabulary is not what the type emits",
+    );
+
+    // Every level outcome `WindowingBackend::outcome` — its only constructor —
+    // can produce, and the two vocabularies its payload carries.
+    let mut kinds: Vec<String> = Vec::new();
+    for backend in WindowingBackend::ALL {
+        for level in WindowLevel::ALL {
+            kinds.push(backend.outcome(level).kind().to_owned());
+        }
+    }
+    assert_eq!(
+        sorted(values("LevelOutcomeWire", "kind")),
+        sorted(kinds),
+        "the published outcome vocabulary is not what the type emits",
+    );
+    assert_eq!(
+        sorted(values("LevelOutcomeWire", "backend")),
+        sorted(
+            WindowingBackend::ALL
+                .iter()
+                .map(|b| b.as_str().to_owned())
+                .collect()
+        ),
+    );
+    let levels: Vec<String> = WindowLevel::ALL
+        .iter()
+        .map(|l| l.as_str().to_owned())
+        .collect();
+    for (type_name, field_name) in [
+        ("LevelOutcomeWire", "declared"),
+        ("DeclaredWindow", "level"),
+        ("WindowDeclareParams", "level"),
+    ] {
+        assert_eq!(
+            sorted(values(type_name, field_name)),
+            sorted(levels.clone()),
+            "{type_name}.{field_name} publishes a level set the domain does not",
+        );
+    }
+}
+
 #[test]
 fn the_census_describes_itself() {
     // §2 #7 applied to the description: the types that carry the census are
