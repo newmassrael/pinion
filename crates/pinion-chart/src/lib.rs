@@ -350,7 +350,8 @@ pub use scale::{
 };
 pub use scatter::ScatterChart;
 pub use series::{
-    Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, value_bounds, visible_data_bounds,
+    Bounds, DataPoint, Series, StackedBand, bounds_in_x_window, data_bounds, stack,
+    stacked_value_bounds, value_bounds, visible_data_bounds,
 };
 pub use sparkline::Sparkline;
 pub use style::{ChartStyle, Margin};

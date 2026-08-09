@@ -103,7 +103,7 @@ use crate::plot::{
     off_scale_points, tick_pixels,
 };
 use crate::scale::{AxisKind, Categories};
-use crate::series::{DataPoint, Series, value_bounds};
+use crate::series::{DataPoint, Series, StackedBand, stack, stacked_value_bounds, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::TickFormat;
 
@@ -111,12 +111,19 @@ use crate::ticks::TickFormat;
 /// axes, gridlines, labels, and a legend. Set [`filled`](Self::filled) to
 /// also paint a translucent area under each series (an area chart).
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "R1622 — four INDEPENDENT display modes (area fill, stacking, and               the two rescale axes), each set by its own builder call and each               meaningful alone. Grouping them behind a flags struct would               change no call site and hide which are related; the lint's real               target is a struct whose bools encode one state machine, and               these do not"
+)]
 pub struct LineChart {
     series: Vec<Series>,
     palette: CategoricalPalette,
     x_domain: Option<(f64, f64)>,
     y_domain: Option<(f64, f64)>,
     fill_area: bool,
+    /// R1622 §5.28 — draw the series **stacked**: each band sits on the
+    /// cumulative total of the visible ones before it.
+    stacked: bool,
     inspect: Option<f32>,
     legend_tags: Option<Vec<String>>,
     rescale_to_visible: bool,
@@ -138,6 +145,7 @@ impl LineChart {
             x_domain: None,
             y_domain: None,
             fill_area: false,
+            stacked: false,
             inspect: None,
             legend_tags: None,
             rescale_to_visible: false,
@@ -236,6 +244,90 @@ impl LineChart {
     pub fn filled(mut self, fill: bool) -> Self {
         self.fill_area = fill;
         self
+    }
+
+    /// R1622 §5.28 — draw the series **stacked**: each band sits on the
+    /// cumulative total of the visible ones before it, and the value axis is
+    /// scaled to the total rather than to any one series.
+    ///
+    /// This is the composition an application previously had to perform for
+    /// itself, by handing in a series whose `y` was already a running sum —
+    /// which threw the original measurement away before anything could ask for
+    /// it. Here [`Series::points`] keeps what was measured and the stacking is
+    /// the chart's ([`crate::stack`], usable on its own).
+    ///
+    /// Implies [`filled`](Self::filled): a stack of bare polylines shows the
+    /// cumulative totals and hides the bands, which is not what stacking is
+    /// for. The lines are still drawn, along each band's top edge.
+    #[must_use]
+    pub fn stacked(mut self, stacked: bool) -> Self {
+        self.stacked = stacked;
+        if stacked {
+            self.fill_area = true;
+        }
+        self
+    }
+
+    /// R1622 §5.28 — what the geometry loop iterates: `(palette index, the
+    /// series whose curve is drawn, the band's lower edge)`.
+    ///
+    /// One source for both modes. Stacking changes WHERE a series is drawn,
+    /// not what is done with it, so the polyline, the colour encoding, the
+    /// markers and the inspect overlay stay one code path instead of forking
+    /// into a stacked copy that could drift from the flat one.
+    fn drawn_series(&self) -> Vec<(usize, Series, Option<Vec<DataPoint>>)> {
+        // `bands()` is the one derivation this and the y-domain both read;
+        // recomputing it beats threading it through a signature several
+        // callers share.
+        let bands = self.bands();
+        if bands.is_empty() {
+            return self
+                .series
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(i, s)| (i, s, None))
+                .collect();
+        }
+        bands
+            .iter()
+            .map(|band| {
+                let mut top = band.series.clone();
+                top.points.clone_from(&band.upper);
+                (band.index, top, Some(band.lower.clone()))
+            })
+            .collect()
+    }
+
+    /// R1622 §5.28 — the value domain this chart will actually resolve with:
+    /// an explicit [`with_y_domain`](Self::with_y_domain) if one was set, else
+    /// the STACK's cumulative extent when stacked, else `None` (auto-fit per
+    /// series).
+    ///
+    /// Its own method so the choice is assertable. A counterfactual pinning
+    /// the domain to something other than the stack's extent — the defect that
+    /// runs the top band off the plot — was caught by nothing while this lived
+    /// inline in `build_body`: a test can compare two pictures, but it cannot
+    /// say which domain produced either.
+    #[must_use]
+    pub fn resolved_y_domain(&self, bands: &[StackedBand]) -> Option<(f64, f64)> {
+        self.y_domain.or_else(|| {
+            (!bands.is_empty())
+                .then(|| stacked_value_bounds(bands))
+                .flatten()
+        })
+    }
+
+    /// R1622 — the bands this chart would draw, or empty when it is not
+    /// stacked. Public so a binding can label, hit-test or tooltip a band
+    /// against the same composition the picture used, rather than repeating it.
+    #[must_use]
+    pub fn bands(&self) -> Vec<StackedBand> {
+        if self.stacked {
+            stack(&self.series)
+        } else {
+            Vec::new()
+        }
     }
 
     /// Show the inspect overlay (a vertical crosshair, per-series marker
@@ -548,11 +640,18 @@ impl LineChart {
     /// `rect` enters only as an additive origin, so callers pass a
     /// zero-origin rect to get a local-frame body.
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
+        // R1622 — a stack reaches the SUM of its series, so the value axis is
+        // scaled to the cumulative total. Scaling to the per-series maximum
+        // (which is what `resolve` measures) would run three 40-peak bands off
+        // the top of a plot that stops at 40. An explicit `with_y_domain`
+        // still wins, as it does for every other rescale.
+        let bands = self.bands();
+        let y_domain = self.resolved_y_domain(&bands);
         let plot = CartesianPlot::resolve(
             rect,
             &self.series,
             self.x_domain,
-            self.y_domain,
+            y_domain,
             style,
             self.rescale(),
             &self.kinds,
@@ -671,7 +770,14 @@ impl LineChart {
             .select_x_range
             .filter(|&(lo, hi)| lo > x_lo || hi < x_hi);
         let mut out = Vec::new();
-        for (i, s) in self.series.iter().enumerate() {
+        // R1622 — one iteration source for both modes: `(palette index, the
+        // series whose curve is drawn, the band's lower edge)`. Stacking
+        // changes WHERE a series is drawn, not what the loop below does, so
+        // the geometry, the colour encoding and the inspect overlay stay one
+        // code path rather than forking into a stacked copy that could drift.
+        let drawn = self.drawn_series();
+        for (i, s, lower) in &drawn {
+            let (i, s) = (*i, s);
             // A hidden series draws no area / polyline (R1379); it keeps its
             // palette index `i` so the visible series never re-colour.
             if !s.visible {
@@ -733,6 +839,18 @@ impl LineChart {
                         .map(|(&(px, _), enc)| (px, enc.unwrap_or(color).with_alpha(alpha)))
                         .collect();
                     out.push(area_path_along_x(&pts, baseline_y, &ramp, tag));
+                } else if let Some(lower) = lower {
+                    // R1622 — a band is filled between its own curve and the
+                    // cumulative total below it, which a scalar baseline
+                    // cannot express.
+                    let base: Vec<(f32, f32)> =
+                        lower.iter().filter_map(|p| plot.map_point(p)).collect();
+                    out.extend(crate::draw::area_between(
+                        &pts,
+                        &base,
+                        color.with_alpha(alpha),
+                        tag,
+                    ));
                 } else {
                     out.push(area_path(&pts, baseline_y, color.with_alpha(alpha), tag));
                 }
@@ -1194,6 +1312,121 @@ mod tests {
             }
         }
         n
+    }
+
+    /// R1622 §5.28 — the PICTURE stacks: the bands are drawn between curves,
+    /// the value axis is scaled to the total, and none of it happens unless
+    /// the caller asked.
+    #[test]
+    fn r1622_a_stacked_chart_draws_bands_and_scales_to_the_total() {
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        let flat = LineChart::new(two_series()).filled(true);
+        let stacked = LineChart::new(two_series()).stacked(true);
+
+        // Both draw one area per series, so the count alone proves nothing —
+        // which is why the geometry is compared below.
+        let a_flat = count_prefix(&flat.build(rect, &style), "chart.area.");
+        let a_stack = count_prefix(&stacked.build(rect, &style), "chart.area.");
+        assert_eq!(a_flat, a_stack, "one area per series either way");
+
+        // The top band's fill must differ from the unstacked one: stacked, it
+        // is lifted onto the series below. Identical paths would mean the
+        // switch did nothing.
+        let path_of = |scene: &Scene, tag: &str| match find(scene, tag) {
+            Some(Scene::Path(p)) => p.commands.clone(),
+            other => panic!("{tag} is not a path: {other:?}"),
+        };
+        let flat_top = path_of(&flat.build(rect, &style), "chart.area.1");
+        let stacked_top = path_of(&stacked.build(rect, &style), "chart.area.1");
+        assert_ne!(
+            flat_top, stacked_top,
+            "the second band is lifted onto the first — a stack that drew the \
+             same path as an overlap would be a stack in name only",
+        );
+        // The discriminating shape: an area closed onto a scalar baseline ends
+        // with two vertices at the SAME y (the baseline). A band ends on the
+        // curve below, so those two differ wherever the lower series does — a
+        // band that came out flat-bottomed would be an overlap wearing a new
+        // name.
+        let last_two_ys = |cmds: &[PathCommand]| -> Vec<f32> {
+            cmds.iter()
+                .filter_map(|c| match c {
+                    PathCommand::LineTo(p) | PathCommand::MoveTo(p) => Some(p.y),
+                    _ => None,
+                })
+                .rev()
+                .take(2)
+                .collect()
+        };
+        let flat_tail = last_two_ys(&flat_top);
+        let band_tail = last_two_ys(&stacked_top);
+        // Exact: both are the same baseline constant written twice by the
+        // same code path, so a tolerance would weaken the claim rather than
+        // make it robust.
+        assert!(
+            (flat_tail[0] - flat_tail[1]).abs() < f32::EPSILON,
+            "an unstacked area closes flat on the baseline: {flat_tail:?}",
+        );
+        assert!(
+            (band_tail[0] - band_tail[1]).abs() > 1.0,
+            "a band closes on the CURVE below it: {band_tail:?}",
+        );
+
+        // And the axis reaches the total. `two_series` peaks below the sum, so
+        // an unstacked domain would clip the top band off the plot.
+        let stacked_bands = stacked.bands();
+        let (_, top) = stacked_value_bounds(&stacked_bands).expect("bands exist");
+        let per_series = crate::series::data_bounds(&two_series())
+            .expect("points")
+            .y
+            .1;
+        assert!(
+            top > per_series,
+            "the stack reaches {top}, above any one series' {per_series}",
+        );
+
+        // ...and the BUILD must use those bounds, not merely be able to
+        // compute them. Pinning the domain to the per-series maximum is
+        // exactly the defect: if `build` ignored the stacked bounds the two
+        // pictures would be identical. A counterfactual found nothing
+        // catching this until here.
+        assert_eq!(
+            stacked.resolved_y_domain(&stacked_bands),
+            stacked_value_bounds(&stacked_bands),
+            "the chart RESOLVES with the stack's extent, not merely knows it",
+        );
+        assert_eq!(
+            LineChart::new(two_series())
+                .filled(true)
+                .resolved_y_domain(&[]),
+            None,
+            "an unstacked chart leaves the domain to the per-series auto-fit",
+        );
+        assert_eq!(
+            LineChart::new(two_series())
+                .stacked(true)
+                .with_y_domain(0.0, per_series)
+                .resolved_y_domain(&stacked_bands),
+            Some((0.0, per_series)),
+            "and an explicit domain still wins, as for every other rescale",
+        );
+
+        // NEGATIVE CONTROL — an unstacked chart reports no bands at all, so
+        // `bands()` is not answering unconditionally.
+        assert!(flat.bands().is_empty(), "nothing stacked, nothing to band");
+        assert!(!stacked.bands().is_empty());
+        // And `stacked(true)` implies a fill: a stack of bare polylines shows
+        // the cumulative totals and hides the bands.
+        assert_eq!(
+            count_prefix(
+                &LineChart::new(two_series())
+                    .stacked(true)
+                    .build(rect, &style),
+                "chart.area."
+            ),
+            2,
+        );
     }
 
     fn two_series() -> Vec<Series> {

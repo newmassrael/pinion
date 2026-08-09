@@ -99,6 +99,42 @@ pub(crate) fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag
     )
 }
 
+/// R1622 §5.28 — the area **between two curves**: a stacked band, filled.
+///
+/// [`area_path`] closes its shape onto a scalar baseline, which is the right
+/// shape for one area over zero and cannot express a band sitting on the
+/// cumulative total below it — the reason an application wanting a stack had
+/// to pre-sum its own data. `upper` is walked forwards and `lower` backwards,
+/// so the ring closes without a self-intersection wherever the two curves
+/// cross (a series dipping negative), which a naive forward-forward walk would
+/// draw as a bow tie.
+///
+/// Both slices are plot-space points and must be the same length; a mismatch
+/// draws nothing rather than a partial band, because half a band reads as data.
+pub(crate) fn area_between(
+    upper: &[(f32, f32)],
+    lower: &[(f32, f32)],
+    fill: Color,
+    tag: String,
+) -> Option<Scene> {
+    if upper.len() != lower.len() || upper.len() < 2 {
+        return None;
+    }
+    let ring: Vec<(f32, f32)> = upper
+        .iter()
+        .copied()
+        .chain(lower.iter().rev().copied())
+        .collect();
+    let bbox = bbox_of(&ring, 0);
+    let mut commands = polyline_commands(&rebased(&ring, bbox), false);
+    commands.push(PathCommand::Close);
+    Some(Scene::Path(
+        PathNode::new(bbox, commands, PathStyle::filled(fill))
+            .with_tag(tag)
+            .with_layout(absolute(bbox)),
+    ))
+}
+
 /// R1440 — the same area path filled with a gradient ALONG X, given `ramp` as
 /// `(x_px, colour)` samples in plot space.
 ///

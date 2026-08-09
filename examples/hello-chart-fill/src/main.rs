@@ -138,8 +138,13 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // lands; the same-frame re-pass then re-runs this view with the real size.
     let (cw, ch) = use_pane_viewport_size(CHART_TAG);
 
+    // R1622 — STACKED, because that is what an area chart of several series
+    // is for: overlapping translucent areas answer "how big is each" and hide
+    // "how big is the whole", which is the question a reader of a filled chart
+    // is usually asking. Before R1622 a binding wanting this had to pre-sum its
+    // own data, which threw away every series' own value on the way in.
     let chart = LineChart::new(sample_series())
-        .filled(true)
+        .stacked(true)
         .build_fill((cw, ch), &chart_style(&theme));
 
     // R1360.4 — AUTO height, not a constant. A definite width with an `auto`

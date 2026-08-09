@@ -181,6 +181,144 @@ fn bounds_of<'a>(
 /// The combined data bounds across ALL `series` (visible or not), or `None`
 /// when there is not a single point to measure. Non-finite coordinates are
 /// skipped. This is the default auto-domain source, so hiding a series never
+/// R1622 §5.28 — one band of a **stacked** area chart: a series' own curve
+/// sitting on the cumulative total of everything below it.
+///
+/// A band is two curves, not one. That is the whole reason this type exists:
+/// the crate's area fill takes a scalar baseline, so an application wanting a
+/// stack had to compute every cumulative total itself and hand in a series
+/// whose `y` was already a running sum — which meant the chart's tooltips,
+/// legend and value axis all reported the SUM where the reader sees a band,
+/// and the original measurement was gone by the time anything could ask.
+///
+/// Here the band keeps both: [`value`](Self::value) is what the series
+/// measured, [`upper`](Self::upper) and [`lower`](Self::lower) are where it is
+/// drawn. Nothing has to reconstruct one from the other.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StackedBand {
+    /// The series this band came from — its name, colour and visibility, with
+    /// its **original** measurements in `points`.
+    pub series: Series,
+    /// Its index in the input slice, so a palette colour and a legend row
+    /// still address it after hidden series are skipped.
+    pub index: usize,
+    /// The band's top edge: this series' value plus every visible one below.
+    pub upper: Vec<DataPoint>,
+    /// The band's bottom edge: the cumulative total below this series, which
+    /// is a flat zero line for the bottom-most band.
+    pub lower: Vec<DataPoint>,
+}
+
+impl StackedBand {
+    /// This series' own measurement at sample `i` — what a tooltip should say,
+    /// as distinct from the cumulative height the reader's eye lands on.
+    #[must_use]
+    pub fn value(&self, i: usize) -> Option<f64> {
+        self.series.points.get(i).map(|p| p.y)
+    }
+}
+
+/// R1622 §5.28 — **stack** a set of series: the composition an application had
+/// to do for itself.
+///
+/// Each visible series is placed on the cumulative total of the visible series
+/// before it, in slice order, so the first is the bottom band. Returns one
+/// [`StackedBand`] per **visible** series; a hidden one contributes nothing to
+/// the totals and produces no band, but the ones above it keep their palette
+/// index, so toggling a series in a legend re-stacks without re-colouring the
+/// rest ([`Series::visible`]'s existing rule, extended to the stack).
+///
+/// ## What it refuses to guess
+///
+/// Stacking is only defined when the series share an x grid: adding a value
+/// sampled at 10:00 to one sampled at 10:07 requires deciding what the second
+/// series was doing at 10:00, and every answer to that is an interpolation the
+/// chart would be inventing. So the x values are taken from the **first
+/// visible** series and every later one must match, position for position; a
+/// series that does not is returned unstacked, sitting on the baseline, rather
+/// than being silently resampled. The alternative — quietly interpolating —
+/// produces a picture whose totals are not the data's totals, which is the one
+/// failure a stacked chart must not have.
+///
+/// Negative values stack downward from the running total exactly as positives
+/// stack upward, so a series that dips below zero pulls its band below the one
+/// underneath instead of being clamped away.
+#[must_use]
+pub fn stack(series: &[Series]) -> Vec<StackedBand> {
+    let mut running: Vec<f64> = Vec::new();
+    let mut grid: Vec<f64> = Vec::new();
+    let mut bands = Vec::new();
+    for (index, s) in series.iter().enumerate() {
+        if !s.visible {
+            continue;
+        }
+        if running.is_empty() {
+            running = vec![0.0; s.points.len()];
+            grid = s.points.iter().map(|p| p.x).collect();
+        }
+        // The x grid must agree, position for position. `!=` on f64 is exact
+        // here on purpose: these are the SAME numbers a caller put in, not
+        // computed ones, so a tolerance would only let a genuinely different
+        // grid through.
+        #[expect(
+            clippy::float_cmp,
+            reason = "exact on purpose: these are the SAME f64s the caller put \
+                      in, not computed ones, so a tolerance would only admit a \
+                      genuinely different grid — and stacking against a grid \
+                      that is not this series' is the invented-total failure \
+                      this branch exists to refuse"
+        )]
+        let aligned =
+            s.points.len() == grid.len() && s.points.iter().zip(&grid).all(|(p, &x)| p.x == x);
+        let lower: Vec<DataPoint> = if aligned {
+            grid.iter()
+                .zip(&running)
+                .map(|(&x, &y)| DataPoint::new(x, y))
+                .collect()
+        } else {
+            s.points.iter().map(|p| DataPoint::new(p.x, 0.0)).collect()
+        };
+        let upper: Vec<DataPoint> = s
+            .points
+            .iter()
+            .zip(&lower)
+            .map(|(p, base)| DataPoint::new(p.x, base.y + p.y))
+            .collect();
+        if aligned {
+            for (total, point) in running.iter_mut().zip(&s.points) {
+                *total += point.y;
+            }
+        }
+        bands.push(StackedBand {
+            series: s.clone(),
+            index,
+            upper,
+            lower,
+        });
+    }
+    bands
+}
+
+/// R1622 §5.28 — the value bounds a **stacked** chart needs: the extent of the
+/// cumulative totals, not of any one series.
+///
+/// Its own function because the difference is a real defect if missed. A stack
+/// of three series each peaking at 40 reaches 120, and an axis scaled to the
+/// per-series maximum would clip two thirds of the picture — so a caller that
+/// stacked without rescaling would draw bands running off the top of the plot.
+#[must_use]
+pub fn stacked_value_bounds(bands: &[StackedBand]) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for band in bands {
+        for point in band.upper.iter().chain(&band.lower) {
+            lo = lo.min(point.y);
+            hi = hi.max(point.y);
+        }
+    }
+    (lo <= hi).then_some((lo, hi))
+}
+
 /// rescales the axes — see [`visible_data_bounds`] for the opt-in that does.
 #[must_use]
 pub fn data_bounds(series: &[Series]) -> Option<Bounds> {
@@ -289,6 +427,145 @@ pub(crate) fn in_domain(value: f64, lo: f64, hi: f64) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    /// R1622 §5.28 — the crate stacks. Each band sits on the cumulative total
+    /// of the visible ones below it, and the ORIGINAL measurement survives.
+    ///
+    /// That second half is the point. An application stacking for itself had
+    /// to hand in a series whose `y` was already a running sum, so a tooltip,
+    /// a legend or an axis readout reported the SUM where the reader sees a
+    /// band — the measurement was gone before anything could ask for it.
+    #[expect(
+        clippy::float_cmp,
+        reason = "every number here is a small integer exactly representable in \
+                  f64, and the sums of such are exact — a tolerance would let a \
+                  genuinely wrong total pass as near enough, which is the one \
+                  thing a stacked chart must not do"
+    )]
+    #[test]
+    fn r1622_bands_sit_on_the_running_total_and_keep_their_own_values() {
+        let s = |name: &str, ys: [f64; 3]| {
+            Series::new(
+                name,
+                ys.iter()
+                    .enumerate()
+                    .map(|(i, &y)| DataPoint::new(f64::from(u32::try_from(i).unwrap_or(0)), y))
+                    .collect(),
+            )
+        };
+        let bands = stack(&[s("a", [1.0, 2.0, 3.0]), s("b", [10.0, 20.0, 30.0])]);
+        assert_eq!(bands.len(), 2);
+        // The bottom band rests on zero.
+        assert_eq!(
+            bands[0].lower.iter().map(|p| p.y).collect::<Vec<_>>(),
+            vec![0.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            bands[0].upper.iter().map(|p| p.y).collect::<Vec<_>>(),
+            vec![1.0, 2.0, 3.0]
+        );
+        // The second sits on the first's total, and its TOP is the sum.
+        assert_eq!(
+            bands[1].lower.iter().map(|p| p.y).collect::<Vec<_>>(),
+            vec![1.0, 2.0, 3.0]
+        );
+        assert_eq!(
+            bands[1].upper.iter().map(|p| p.y).collect::<Vec<_>>(),
+            vec![11.0, 22.0, 33.0]
+        );
+        // ...while the series still reports what IT measured.
+        assert_eq!(bands[1].value(0), Some(10.0), "not the cumulative 11");
+        assert_eq!(bands[1].series.points[2].y, 30.0, "not 33");
+        // The axis must be scaled to the total, or the top band runs off the
+        // plot — the defect a caller hits the first time they stack.
+        assert_eq!(stacked_value_bounds(&bands), Some((0.0, 33.0)));
+        assert_eq!(
+            data_bounds(&[s("a", [1.0, 2.0, 3.0]), s("b", [10.0, 20.0, 30.0])])
+                .expect("both series have points")
+                .y,
+            (1.0, 30.0),
+            "the UNSTACKED y bounds stop at 30 — scaling a stack to them clips \
+             the top band clean off the plot, which is the defect a caller \
+             meets the first time they stack",
+        );
+    }
+
+    /// R1622 — a hidden series contributes nothing and produces no band, and
+    /// the ones above it keep their palette index, so a legend toggle
+    /// re-stacks without re-colouring the rest.
+    #[expect(clippy::float_cmp, reason = "small integers, exact in f64")]
+    #[test]
+    fn r1622_a_hidden_series_leaves_the_stack_and_the_palette_alone() {
+        let s = |name: &str, y: f64| Series::new(name, vec![DataPoint::new(0.0, y)]);
+        let all = vec![s("a", 1.0), s("b", 2.0).with_visible(false), s("c", 4.0)];
+        let bands = stack(&all);
+        assert_eq!(bands.len(), 2, "the hidden one draws no band");
+        assert_eq!(
+            (bands[0].index, bands[1].index),
+            (0, 2),
+            "palette indices kept"
+        );
+        assert_eq!(
+            bands[1].lower[0].y, 1.0,
+            "and `c` rests on `a` alone — the hidden series adds nothing",
+        );
+        assert_eq!(bands[1].upper[0].y, 5.0);
+    }
+
+    /// R1622 — negatives stack DOWNWARD from the running total rather than
+    /// being clamped, and a series whose x grid disagrees is left unstacked
+    /// rather than silently resampled.
+    #[expect(clippy::float_cmp, reason = "small integers, exact in f64")]
+    #[test]
+    fn r1622_negatives_stack_down_and_a_foreign_grid_is_refused() {
+        let at = |xs: &[f64], ys: &[f64]| {
+            Series::new(
+                "s",
+                xs.iter()
+                    .zip(ys)
+                    .map(|(&x, &y)| DataPoint::new(x, y))
+                    .collect(),
+            )
+        };
+        let bands = stack(&[at(&[0.0, 1.0], &[5.0, 5.0]), at(&[0.0, 1.0], &[-2.0, 3.0])]);
+        assert_eq!(bands[1].lower[0].y, 5.0);
+        assert_eq!(bands[1].upper[0].y, 3.0, "a negative pulls the band DOWN");
+        assert_eq!(bands[1].upper[1].y, 8.0, "and a positive still pushes up");
+        assert_eq!(stacked_value_bounds(&bands), Some((0.0, 8.0)));
+
+        // A series sampled on a different grid cannot be added to the one
+        // below without inventing what it was doing at the other's timestamps.
+        // It is drawn on the baseline instead of being resampled: a picture
+        // whose totals are not the data's totals is the one failure a stacked
+        // chart must not have.
+        let mixed = stack(&[at(&[0.0, 1.0], &[5.0, 5.0]), at(&[0.5, 1.5], &[1.0, 1.0])]);
+        assert_eq!(mixed.len(), 2);
+        assert_eq!(
+            mixed[1].lower.iter().map(|p| p.y).collect::<Vec<_>>(),
+            vec![0.0, 0.0],
+            "the foreign grid sits on the baseline, unstacked",
+        );
+        assert_eq!(
+            mixed[1].upper.iter().map(|p| p.y).collect::<Vec<_>>(),
+            vec![1.0, 1.0],
+            "carrying its own values, not a sum against a grid it is not on",
+        );
+        // NEGATIVE CONTROL — the SAME two series on a shared grid do stack, so
+        // the refusal above is about the grid and not about these numbers.
+        let shared = stack(&[at(&[0.0, 1.0], &[5.0, 5.0]), at(&[0.0, 1.0], &[1.0, 1.0])]);
+        assert_eq!(shared[1].lower[0].y, 5.0);
+    }
+
+    /// R1622 — an empty or all-hidden input produces no bands and no bounds,
+    /// rather than a zero-height axis a chart would divide by.
+    #[test]
+    fn r1622_nothing_to_stack_is_no_bands_and_no_bounds() {
+        assert!(stack(&[]).is_empty());
+        assert_eq!(stacked_value_bounds(&[]), None);
+        let hidden = vec![Series::new("a", vec![DataPoint::new(0.0, 1.0)]).with_visible(false)];
+        assert!(stack(&hidden).is_empty());
+        assert_eq!(stacked_value_bounds(&stack(&hidden)), None);
+    }
     use super::*;
 
     fn sample() -> Vec<Series> {

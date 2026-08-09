@@ -32814,6 +32814,72 @@
         "no concept of the WM's other virtual desktops to attribute the rest to."
       ]
     },
+    "R1622": {
+      "decision_summary": "R1622 — the crate stacks.\n\nThe chart residue's plainest item, and the one the standing directive names most directly: `pinion-chart` drew several areas over one another and left the ACCUMULATION to the application. A binding wanting a stacked area chart had to hand in a series whose `y` was already a running sum — so the chart's tooltips, its legend and its value axis all reported the TOTAL where the reader sees a band, and the original measurement was gone before anything could ask for it. The deliverable is a crate that composes, not an example that pre-computes.\n\nTHE AUDIT CAME FIRST, BECAUSE THE DEBT FILE DEMANDED IT, AND IT MOVED THE LIST. That file's own \"How to apply\" says every item is an R1568 judgment to re-check against the code, since its #1–#7 all went stale exactly that way. Measured: the CATEGORY AXIS IS PRESENT (`TickFormat::Category(Categories)` in `ticks.rs`) — that entry was stale. LABEL THINNING exists in some form (a whole-decade stride). LOCAL TIME is absent BY STATED DESIGN, `civil.rs` saying it needs a timezone database, which makes it an external dependency rather than a gap. And the per-mark a11y item is MIS-FRAMED: it names box / candle / polar as lacking what others have, but the whole crate has no `AccessNode` at all, so that is one axis-wide question and not three widget ones. Genuinely absent and correctly framed: OHLC, spline, stacked area, violin, and SVG `d` / Arc-Quad — the last of which the file itself says is a `Scene::Path` vocabulary axis rather than dataviz.\n\nSTACKING IS TWO CURVES, NOT ONE, which is exactly why `area_path` could not express it: it closes onto a SCALAR baseline. `area_between` walks the upper curve forwards and the lower backwards, so the ring closes without a bow tie wherever a negative series makes the two cross. And a band keeps both facts — `Series::points` is what was measured, `upper` / `lower` is where it is drawn — so nothing downstream has to reconstruct one from the other.\n\nIT REFUSES TO GUESS. Stacking is only defined when the series share an x grid: adding a value sampled at 10:00 to one sampled at 10:07 requires deciding what the second was doing at 10:00, and every answer to that is an interpolation the chart would be inventing. A series whose grid disagrees is drawn UNSTACKED on the baseline rather than resampled, because a picture whose totals are not the data's totals is the one failure a stacked chart must not have. The f64 grid comparison is exact on purpose and says so in an `expect` reason: these are the same numbers the caller put in, not computed ones, so a tolerance would only admit a genuinely different grid. Negatives stack DOWNWARD from the running total rather than being clamped away. A hidden series contributes nothing and draws no band, while the ones above it keep their palette index — `Series::visible`'s existing rule, extended to the stack, so a legend toggle re-stacks without re-colouring.\n\nTHE AXIS DEFECT IS THE ONE A CALLER MEETS FIRST. Three series each peaking at 40 reach 120, and a plot scaled to the per-series maximum clips two thirds of the picture. `stacked_value_bounds` is its own function for that reason, and `resolved_y_domain` was EXTRACTED out of `build_body` because a counterfactual proved the choice untestable while it lived inline: a test can compare two pictures, but it cannot say which domain produced either. That extraction is the round's second finding-driven structural change, after the four clippy signals — a four-bool struct, a 114-line function, and two deliberate exact float comparisons — were each answered with a reason rather than a silence.\n\nEight counterfactuals, eight caught, every run from a verified-green baseline. Two had to be rewritten after `cargo fmt` moved their anchors and one after it did not compile — the standing three, met again.",
+      "changes_bullets": [
+        "pinion-chart series: StackedBand, stack(), stacked_value_bounds(), re-exported",
+        "pinion-chart draw: area_between -- the ring between two curves, no bow tie",
+        "LineChart::stacked / bands() / resolved_y_domain(); drawn_series() extracted",
+        "hello-chart-fill draws stacked, which is what an area chart of several is for",
+        "tools/demos/r1622_the_crate_stacks.py (new)",
+        "docs: the residue list re-audited against the code, three entries corrected"
+      ],
+      "verification_bullets": [
+        "5 new tests: the running total, hidden series, negatives + a refused grid,",
+        "the empty case, and the picture (band shape, the resolved domain, controls)",
+        "8 counterfactuals, 8 caught, from a verified-green baseline",
+        "Demo r1622: 14 assertions on the real binary; bands share no baseline",
+        "the axis extent is asserted in Rust, not off SI-rounded tick text",
+        "3 chart-family demos re-pass; fmt, clippy -D pedantic and the suite green"
+      ],
+      "impact_refs": [
+        "5.28",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The chart residue is NOT fully paid, and the honest list is short now.",
+        "Closed here: stacked area. Corrected by audit: the category axis EXISTS (a",
+        "stale entry), local time is an external dependency (a timezone database), and",
+        "the per-mark a11y item is mis-framed -- the crate has no AccessNode anywhere,",
+        "so it is one axis-wide question rather than three widget ones.",
+        "Still open and correctly framed: OHLC (the cheapest -- candle already supplies",
+        "the coordinates), spline, violin, and SVG `d` / Arc-Quad, which the debt file",
+        "itself notes is a Scene::Path vocabulary axis rather than dataviz. The 3D",
+        "surface waits on Phase C's renderer and cannot advance here."
+      ],
+      "publishable_decision_summary": "R1622 — the crate stacks.\n\nThe chart residue's plainest item, and the one the standing directive names most directly: `pinion-chart` drew several areas over one another and left the ACCUMULATION to the application. A binding wanting a stacked area chart had to hand in a series whose `y` was already a running sum — so the chart's tooltips, its legend and its value axis all reported the TOTAL where the reader sees a band, and the original measurement was gone before anything could ask for it. The deliverable is a crate that composes, not an example that pre-computes.\n\nTHE AUDIT CAME FIRST, BECAUSE THE DEBT FILE DEMANDED IT, AND IT MOVED THE LIST. That file's own \"How to apply\" says every item is an R1568 judgment to re-check against the code, since its #1–#7 all went stale exactly that way. Measured: the CATEGORY AXIS IS PRESENT (`TickFormat::Category(Categories)` in `ticks.rs`) — that entry was stale. LABEL THINNING exists in some form (a whole-decade stride). LOCAL TIME is absent BY STATED DESIGN, `civil.rs` saying it needs a timezone database, which makes it an external dependency rather than a gap. And the per-mark a11y item is MIS-FRAMED: it names box / candle / polar as lacking what others have, but the whole crate has no `AccessNode` at all, so that is one axis-wide question and not three widget ones. Genuinely absent and correctly framed: OHLC, spline, stacked area, violin, and SVG `d` / Arc-Quad — the last of which the file itself says is a `Scene::Path` vocabulary axis rather than dataviz.\n\nSTACKING IS TWO CURVES, NOT ONE, which is exactly why `area_path` could not express it: it closes onto a SCALAR baseline. `area_between` walks the upper curve forwards and the lower backwards, so the ring closes without a bow tie wherever a negative series makes the two cross. And a band keeps both facts — `Series::points` is what was measured, `upper` / `lower` is where it is drawn — so nothing downstream has to reconstruct one from the other.\n\nIT REFUSES TO GUESS. Stacking is only defined when the series share an x grid: adding a value sampled at 10:00 to one sampled at 10:07 requires deciding what the second was doing at 10:00, and every answer to that is an interpolation the chart would be inventing. A series whose grid disagrees is drawn UNSTACKED on the baseline rather than resampled, because a picture whose totals are not the data's totals is the one failure a stacked chart must not have. The f64 grid comparison is exact on purpose and says so in an `expect` reason: these are the same numbers the caller put in, not computed ones, so a tolerance would only admit a genuinely different grid. Negatives stack DOWNWARD from the running total rather than being clamped away. A hidden series contributes nothing and draws no band, while the ones above it keep their palette index — `Series::visible`'s existing rule, extended to the stack, so a legend toggle re-stacks without re-colouring.\n\nTHE AXIS DEFECT IS THE ONE A CALLER MEETS FIRST. Three series each peaking at 40 reach 120, and a plot scaled to the per-series maximum clips two thirds of the picture. `stacked_value_bounds` is its own function for that reason, and `resolved_y_domain` was EXTRACTED out of `build_body` because a counterfactual proved the choice untestable while it lived inline: a test can compare two pictures, but it cannot say which domain produced either. That extraction is the round's second finding-driven structural change, after the four clippy signals — a four-bool struct, a 114-line function, and two deliberate exact float comparisons — were each answered with a reason rather than a silence.\n\nEight counterfactuals, eight caught, every run from a verified-green baseline. Two had to be rewritten after `cargo fmt` moved their anchors and one after it did not compile — the standing three, met again.",
+      "publishable_changes_bullets": [
+        "pinion-chart series: StackedBand, stack(), stacked_value_bounds(), re-exported",
+        "pinion-chart draw: area_between -- the ring between two curves, no bow tie",
+        "LineChart::stacked / bands() / resolved_y_domain(); drawn_series() extracted",
+        "hello-chart-fill draws stacked, which is what an area chart of several is for",
+        "tools/demos/r1622_the_crate_stacks.py (new)",
+        "docs: the residue list re-audited against the code, three entries corrected"
+      ],
+      "publishable_verification_bullets": [
+        "5 new tests: the running total, hidden series, negatives + a refused grid,",
+        "the empty case, and the picture (band shape, the resolved domain, controls)",
+        "8 counterfactuals, 8 caught, from a verified-green baseline",
+        "Demo r1622: 14 assertions on the real binary; bands share no baseline",
+        "the axis extent is asserted in Rust, not off SI-rounded tick text",
+        "3 chart-family demos re-pass; fmt, clippy -D pedantic and the suite green"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The chart residue is NOT fully paid, and the honest list is short now.",
+        "Closed here: stacked area. Corrected by audit: the category axis EXISTS (a",
+        "stale entry), local time is an external dependency (a timezone database), and",
+        "the per-mark a11y item is mis-framed -- the crate has no AccessNode anywhere,",
+        "so it is one axis-wide question rather than three widget ones.",
+        "Still open and correctly framed: OHLC (the cheapest -- candle already supplies",
+        "the coordinates), spline, violin, and SVG `d` / Arc-Quad, which the debt file",
+        "itself notes is a Scene::Path vocabulary axis rather than dataviz. The 3D",
+        "surface waits on Phase C's renderer and cannot advance here."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
