@@ -32944,6 +32944,62 @@
         "3D surface charting still waits on the Phase C renderer (external)"
       ]
     },
+    "R1624": {
+      "decision_summary": "R1624 one datum, two marks: pinion_chart::SessionMark plus CandlestickChart::with_mark adds the open-high-low-close bar as a MARK on the chart that already exists, so the sort, both axis readings, the log value axis, the window and the inspect readout are shared rather than reimplemented",
+      "changes_bullets": [
+        "pinion_chart::SessionMark {Candle, Ohlc} + ALL + tag_stem; with_mark / mark",
+        "ohlc_marks_for: spine over the range, open tick left, close tick right",
+        "a bar has NO single anchor — each mark is placed on the prices it needs",
+        "mark_bounds: one answer to \"where is this session drawn\"; the ring reads it",
+        "slot_geometry extracted — the horizontal extent, before any price",
+        "hello-candlestick gains a `bars` chip; OPTION_TAGS declared once",
+        "tools/demos/r1624_one_datum_two_marks.py"
+      ],
+      "verification_bullets": [
+        "6 new chart tests, 2 new binding tests; 385 + 10 green",
+        "6 counterfactuals, 6 caught, from a verified-green baseline",
+        "CF-5 PASSED first: the test asked a function, not the painted scene",
+        "the ring test failed on a fixture whose body IS its range — replaced",
+        "demo r1624_one_datum_two_marks.py PASS; r1567 demo re-passes unchanged",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "impact_refs": [
+        "5.28",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "the chart residue still holds the spline and the violin",
+        "3D surface charting waits on the Phase C renderer (external)",
+        "no chart publishes its marks to assistive tech — its own debt file"
+      ],
+      "publishable_decision_summary": "R1624 one datum, two marks: pinion_chart::SessionMark plus CandlestickChart::with_mark adds the open-high-low-close bar as a MARK on the chart that already exists, so the sort, both axis readings, the log value axis, the window and the inspect readout are shared rather than reimplemented",
+      "publishable_changes_bullets": [
+        "pinion_chart::SessionMark {Candle, Ohlc} + ALL + tag_stem; with_mark / mark",
+        "ohlc_marks_for: spine over the range, open tick left, close tick right",
+        "a bar has NO single anchor — each mark is placed on the prices it needs",
+        "mark_bounds: one answer to \"where is this session drawn\"; the ring reads it",
+        "slot_geometry extracted — the horizontal extent, before any price",
+        "hello-candlestick gains a `bars` chip; OPTION_TAGS declared once",
+        "tools/demos/r1624_one_datum_two_marks.py"
+      ],
+      "publishable_verification_bullets": [
+        "6 new chart tests, 2 new binding tests; 385 + 10 green",
+        "6 counterfactuals, 6 caught, from a verified-green baseline",
+        "CF-5 PASSED first: the test asked a function, not the painted scene",
+        "the ring test failed on a fixture whose body IS its range — replaced",
+        "demo r1624_one_datum_two_marks.py PASS; r1567 demo re-passes unchanged",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the chart residue still holds the spline and the violin",
+        "3D surface charting waits on the Phase C renderer (external)",
+        "no chart publishes its marks to assistive tech — its own debt file"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -132,6 +132,59 @@ impl SessionAxis {
     }
 }
 
+/// R1624 — which **mark** a session is drawn as.
+///
+/// A candlestick and an open-high-low-close bar are two renderings of one
+/// datum, not two datasets, so this is a property of the chart and everything
+/// else — the sort, both [`SessionAxis`] readings, the log value axis and its
+/// [`off_scale`](CandlestickChart::off_scale) report, the
+/// [`window`](CandlestickChart::window), the inspect readout, the direction
+/// colours and their published contrast — is shared unchanged. The reference
+/// toolkit has a candlestick series and no bar one at all, so there is nothing
+/// there to be a second series *of*.
+///
+/// # Why the choice is not cosmetic
+///
+/// The two marks disagree about what the session's ANCHOR is, and that is
+/// visible whenever the value axis cannot place part of a session. A candle
+/// hangs its wicks off its body, so a body the axis cannot place takes the
+/// whole session with it. A bar has **no single anchor** — spine, open tick
+/// and close tick are each placed from the prices they need — so it draws
+/// whatever the axis can carry. Neither is a repair of the other; they are
+/// the marks' own definitions, and
+/// [`off_scale`](CandlestickChart::off_scale) names what went missing either
+/// way.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionMark {
+    /// The Japanese candlestick: a body between open and close with a wick to
+    /// each extreme. The default, and what R1567 built.
+    #[default]
+    Candle,
+    /// The Western open-high-low-close bar: a vertical spine over the whole
+    /// range, an **open** tick to its left and a **close** tick to its right.
+    ///
+    /// Direction is legible here without any colour at all — the close tick
+    /// sits above the open tick on a rise and below it on a fall — which is
+    /// the same redundancy [`BodyFill`](crate::BodyFill) gives the candle, in
+    /// the form this mark has available.
+    Ohlc,
+}
+
+impl SessionMark {
+    /// Every mark, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; 2] = [Self::Candle, Self::Ohlc];
+
+    /// The tag stem this mark's primary node carries.
+    #[must_use]
+    pub const fn tag_stem(self) -> &'static str {
+        match self {
+            Self::Candle => "candle",
+            Self::Ohlc => "ohlc",
+        }
+    }
+}
+
 /// One value a candlestick chart's value axis cannot place (R1567) — the
 /// [`OffScale`](crate::OffScale) of a session.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -153,6 +206,7 @@ pub struct CandlestickChart {
     /// its own: rebuilding clones `n` heap strings on every paint.
     sessions: Categories,
     reading: SessionAxis,
+    mark: SessionMark,
     y_domain: Option<(f64, f64)>,
     y_kind: AxisKind,
     window: Option<CategoryWindow>,
@@ -187,6 +241,7 @@ impl CandlestickChart {
             candles,
             sessions,
             reading: SessionAxis::default(),
+            mark: SessionMark::default(),
             y_domain: None,
             y_kind: AxisKind::Linear,
             window: None,
@@ -216,6 +271,23 @@ impl CandlestickChart {
     #[must_use]
     pub const fn reading(&self) -> SessionAxis {
         self.reading
+    }
+
+    /// Which mark the sessions are drawn as. See [`SessionMark`].
+    #[must_use]
+    pub const fn mark(&self) -> SessionMark {
+        self.mark
+    }
+
+    /// Draw the sessions as `mark` instead of the default candlestick.
+    ///
+    /// Everything else is untouched — this is a rendering of the same data,
+    /// so the sort, both axis readings, the value axis, the window and the
+    /// inspect readout are shared rather than reimplemented.
+    #[must_use]
+    pub const fn with_mark(mut self, mark: SessionMark) -> Self {
+        self.mark = mark;
+        self
     }
 
     /// Draw the x-axis as real UTC time (the toolkit's date time axis) instead
@@ -496,6 +568,66 @@ impl CandlestickChart {
     /// plot's rule, applied to the datum whose anchor is its body rather than
     /// its quartiles.
     fn marks_for(&self, g: &CandleGeom, i: usize, style: &ChartStyle) -> Vec<Scene> {
+        match self.mark {
+            SessionMark::Ohlc => self.ohlc_marks_for(g, i, style),
+            _ => self.candle_marks_for(g, i, style),
+        }
+    }
+
+    /// R1624 — session `i` as an open-high-low-close bar: the spine over the
+    /// whole range, an open tick left of it and a close tick right of it.
+    ///
+    /// **A bar has no single anchor, and that is the difference from the
+    /// candle.** Each of its three marks is placed from the prices IT needs —
+    /// the spine from both extremes, each tick from its own price — so a bar
+    /// draws whatever the value axis can carry and drops only the rest. The
+    /// candle cannot work that way: its wicks hang off body edges, so a body
+    /// the axis refuses takes the whole session with it.
+    ///
+    /// That asymmetry is reachable, and the first draft of this function got
+    /// it backwards. On a logarithmic axis an unplaceable *open* implies an
+    /// unplaceable *low* (the low is at or below the open), so "the spine is
+    /// the anchor and the ticks are optional" describes a case that cannot
+    /// happen; the case that does happen is the reverse, and a bar that bailed
+    /// on its spine would have drawn nothing exactly where it has the most to
+    /// say. Nothing is ever clamped onto the plot floor —
+    /// [`off_scale`](Self::off_scale) names the price instead, because a mark
+    /// at an invented pixel is a price where no price is.
+    fn ohlc_marks_for(&self, g: &CandleGeom, i: usize, style: &ChartStyle) -> Vec<Scene> {
+        let Some(candle) = self.candles.get(i) else {
+            return Vec::new();
+        };
+        let Some(body) = self.slot_geometry(g, i) else {
+            return Vec::new();
+        };
+        let color = self.direction_color(candle.direction());
+        let stroke = Stroke::new(color, style.series_width.max(1));
+        let mut out = Vec::new();
+        if let (Some(high), Some(low)) = (g.y.map(candle.high()), g.y.map(candle.low())) {
+            out.push(stroke_path(
+                &[(body.center, high), (body.center, low)],
+                stroke,
+                format!("{}.ohlc.{i}.range", self.tag_prefix),
+            ));
+        }
+        // Open to the LEFT, close to the RIGHT. That order is the whole of
+        // how this mark says which way the session went without using
+        // colour: on a rise the right tick is the higher one.
+        for (price, from, to, tag) in [
+            (candle.open(), body.left, body.center, "open"),
+            (candle.close(), body.center, body.right, "close"),
+        ] {
+            let Some(y) = g.y.map(price) else { continue };
+            out.push(stroke_path(
+                &[(from, y), (to, y)],
+                stroke,
+                format!("{}.ohlc.{i}.{tag}", self.tag_prefix),
+            ));
+        }
+        out
+    }
+
+    fn candle_marks_for(&self, g: &CandleGeom, i: usize, style: &ChartStyle) -> Vec<Scene> {
         let Some(candle) = self.candles.get(i) else {
             return Vec::new();
         };
@@ -548,18 +680,60 @@ impl CandlestickChart {
     /// there is no body.
     fn body_geometry(&self, g: &CandleGeom, i: usize) -> Option<BodyRect> {
         let c = self.candles.get(i)?;
-        let center = self.center_px(g, i)?;
-        let half = g.body_w / 2.0;
+        let slot = self.slot_geometry(g, i)?;
         let (body_lo, body_hi) = c.body();
         let top = g.y.map(body_hi)?;
         let bottom = g.y.map(body_lo)?;
-        let cap_half = half * CAP_WIDTH_FRAC;
         Some(BodyRect {
+            center: slot.center,
+            left: slot.left,
+            right: slot.right,
+            top,
+            bottom,
+            cap_left: slot.cap_left,
+            cap_right: slot.cap_right,
+        })
+    }
+
+    /// R1624 — the pixel box session `i`'s mark occupies, or `None` when the
+    /// value axis can place neither of the prices that box needs.
+    ///
+    /// A candle's box is its body; a bar's is its full range. One question,
+    /// two answers, asked once so the inspect ring and anything else that
+    /// wants "where is this session drawn" cannot drift apart.
+    fn mark_bounds(&self, g: &CandleGeom, i: usize) -> Option<BodyRect> {
+        match self.mark {
+            SessionMark::Ohlc => {
+                let c = self.candles.get(i)?;
+                let slot = self.slot_geometry(g, i)?;
+                Some(BodyRect {
+                    center: slot.center,
+                    left: slot.left,
+                    right: slot.right,
+                    top: g.y.map(c.high())?,
+                    bottom: g.y.map(c.low())?,
+                    cap_left: slot.cap_left,
+                    cap_right: slot.cap_right,
+                })
+            }
+            _ => self.body_geometry(g, i),
+        }
+    }
+
+    /// R1624 — session `i`'s HORIZONTAL extent, which no price enters.
+    ///
+    /// Split out because the two marks need it at different moments: a candle
+    /// needs it only once the value axis has placed its body, and a bar needs
+    /// it before the axis has placed anything, since a bar can lose a tick and
+    /// still be a bar.
+    fn slot_geometry(&self, g: &CandleGeom, i: usize) -> Option<SlotRect> {
+        let center = self.center_px(g, i)?;
+        let half = g.body_w / 2.0;
+        let cap_half = half * CAP_WIDTH_FRAC;
+        Some(SlotRect {
             center,
             left: center - half,
             right: center + half,
-            top,
-            bottom,
             cap_left: center - cap_half,
             cap_right: center + cap_half,
         })
@@ -760,7 +934,11 @@ impl CandlestickChart {
     ) -> Option<CandleInspect> {
         let idx = self.resolve_focus(g, rect)?;
         let c = self.candles.get(idx)?;
-        let b = self.body_geometry(g, idx);
+        // R1624 — the ring outlines what the MARK occupies, which is the
+        // body for a candle and the whole range for a bar. Reading it off
+        // `body_geometry` for both would have ringed a bar's open-to-close
+        // span and left its spine sticking out of the highlight.
+        let b = self.mark_bounds(g, idx);
         let highlight = b.as_ref().map(|b| {
             outline_box(
                 Rect::new(
@@ -893,6 +1071,15 @@ impl CandleGeom {
 }
 
 /// One session's resolved pixel geometry.
+/// R1624 — a session's horizontal extent, before any price is placed.
+struct SlotRect {
+    center: f32,
+    left: f32,
+    right: f32,
+    cap_left: f32,
+    cap_right: f32,
+}
+
 struct BodyRect {
     center: f32,
     left: f32,
@@ -942,6 +1129,305 @@ mod tests {
 
     fn week_chart() -> CandlestickChart {
         CandlestickChart::new(week())
+    }
+
+    /// R1624 — the bar's spine spans the whole range and its two ticks sit
+    /// on the open and the close, left and right of it.
+    ///
+    /// Checked against the geometry rather than against a picture: the tick
+    /// prices are read back out of the painted y coordinates through the same
+    /// scale, so a mark that drew the close where the open belongs fails here.
+    #[test]
+    fn r1624_an_ohlc_bar_is_a_spine_with_an_open_tick_and_a_close_tick() {
+        let style = ChartStyle::default();
+        let chart = week_chart().with_mark(SessionMark::Ohlc);
+        let scene = chart.build(RECT, &style);
+        let g = chart.geom(RECT, &style);
+
+        assert_eq!(chart.mark(), SessionMark::Ohlc);
+        assert_eq!(
+            count_prefix(&scene, "chart.ohlc."),
+            18,
+            "3 nodes x 6 sessions"
+        );
+        assert_eq!(
+            count_prefix(&scene, "chart.candle."),
+            0,
+            "a bar is not a candle wearing a different tag",
+        );
+
+        for (i, c) in chart.candles().iter().enumerate() {
+            let range = find(&scene, &format!("chart.ohlc.{i}.range")).expect("spine");
+            let (top, bottom) = y_span(range);
+            assert!(
+                (top - g.y.map(c.high()).expect("high placed")).abs() < 0.5,
+                "session {i} spine starts at the high",
+            );
+            assert!(
+                (bottom - g.y.map(c.low()).expect("low placed")).abs() < 0.5,
+                "session {i} spine ends at the low",
+            );
+
+            let slot = chart.slot_geometry(&g, i).expect("placed");
+            for (tag, price, x_lo, x_hi) in [
+                ("open", c.open(), slot.left, slot.center),
+                ("close", c.close(), slot.center, slot.right),
+            ] {
+                let node = find(&scene, &format!("chart.ohlc.{i}.{tag}")).expect(tag);
+                let (y, _) = y_span(node);
+                assert!(
+                    (y - g.y.map(price).expect("price placed")).abs() < 0.5,
+                    "session {i} {tag} tick sits on its price",
+                );
+                let (left, right) = x_span(node);
+                assert!(
+                    (left - x_lo).abs() < 0.5 && (right - x_hi).abs() < 0.5,
+                    "session {i} {tag} tick is on its own side: {left}..{right}",
+                );
+            }
+        }
+    }
+
+    /// R1624 — direction survives the loss of colour, by SHAPE.
+    ///
+    /// The candle answers this with a hollow body; a bar has no body, so it
+    /// answers with the ticks' relative height. Two sessions with the same
+    /// prices in the opposite order must therefore differ geometrically, not
+    /// only in hue — and that is asserted here with the colours forced equal,
+    /// so a test that passed on colour alone cannot.
+    #[test]
+    fn r1624_a_bars_direction_is_legible_without_colour() {
+        let style = ChartStyle::default();
+        let one = Color::rgb(0x40, 0x40, 0x40);
+        let flat = |candles: Vec<Candle>| {
+            CandlestickChart::new(candles)
+                .with_mark(SessionMark::Ohlc)
+                .with_direction_colors(one, one, one)
+                .build(RECT, &style)
+        };
+        let up = flat(vec![
+            Candle::new(MON, 100.0, 110.0, 90.0, 105.0).expect("ok"),
+        ]);
+        let down = flat(vec![
+            Candle::new(MON, 105.0, 110.0, 90.0, 100.0).expect("ok"),
+        ]);
+
+        let tick_y = |scene: &Scene, tag: &str| {
+            let node = find(scene, &format!("chart.ohlc.0.{tag}")).expect(tag);
+            y_span(node).0
+        };
+        // On a rise the close tick is ABOVE the open tick (smaller y).
+        assert!(
+            tick_y(&up, "close") < tick_y(&up, "open"),
+            "a rising session's close tick is the higher one",
+        );
+        assert!(
+            tick_y(&down, "close") > tick_y(&down, "open"),
+            "a falling session's close tick is the lower one",
+        );
+        // ...and the spines are identical, so nothing but the ticks carries it.
+        let spine = |scene: &Scene| y_span(find(scene, "chart.ohlc.0.range").expect("spine"));
+        assert_eq!(spine(&up), spine(&down), "the range is the same range");
+    }
+
+    /// R1624 — the two marks disagree about the session's ANCHOR, and that
+    /// is the behaviour, not a bug in one of them.
+    ///
+    /// A candle hangs its wicks off its body, so a body the log axis cannot
+    /// place takes the whole session. A bar has no single anchor, so it keeps
+    /// the marks whose prices the axis CAN place.
+    ///
+    /// The fixture is the reachable case, and finding that out is what made
+    /// the rule honest: on a log axis an unplaceable open implies an
+    /// unplaceable low, so the asymmetry always arrives from the low side.
+    #[test]
+    fn r1624_a_bar_keeps_the_marks_the_axis_can_place() {
+        let style = ChartStyle::default();
+        // Open at zero: a logarithmic axis has no pixel for it.
+        let candles = vec![
+            Candle::new(MON, 0.0, 110.0, 0.0, 105.0).expect("ok"),
+            Candle::new(MON + DAY_MS, 100.0, 112.0, 99.0, 108.0).expect("ok"),
+        ];
+        let of = |mark| {
+            CandlestickChart::new(candles.clone())
+                .with_mark(mark)
+                .y_log()
+                .build(RECT, &style)
+        };
+        let candle = of(SessionMark::Candle);
+        assert!(
+            !has(&candle, "chart.candle.0"),
+            "the candle's anchor is its body, and the body has no pixel",
+        );
+
+        let bar = of(SessionMark::Ohlc);
+        assert!(
+            has(&bar, "chart.ohlc.0.close"),
+            "the bar keeps the close, which the axis CAN place",
+        );
+        assert!(
+            !has(&bar, "chart.ohlc.0.open"),
+            "and drops the open, whose price has no pixel",
+        );
+        assert!(
+            !has(&bar, "chart.ohlc.0.range"),
+            "and the spine too, because its low has none either",
+        );
+        // The unaffected session is whole under either mark.
+        assert!(has(&bar, "chart.ohlc.1.range"));
+        assert!(has(&bar, "chart.ohlc.1.open"));
+        assert!(has(&bar, "chart.ohlc.1.close"));
+        // And the omission is REPORTED rather than inferred from the picture.
+        let reported = CandlestickChart::new(candles).y_log().off_scale();
+        assert!(
+            reported.iter().any(|o| o.candle == 0),
+            "off_scale names the session: {reported:?}",
+        );
+    }
+
+    /// R1624 — the mark is a rendering, so everything else is shared.
+    ///
+    /// Both readings of the x-axis, the window, and the value axis are the
+    /// chart's, not the mark's: switching marks must move the session's
+    /// centre by exactly nothing.
+    ///
+    /// FOUND BY A COUNTERFACTUAL: the first draft asked `center_px` for both
+    /// marks, which is upstream of everything the mark touches — nudging the
+    /// slot geometry by two pixels for bars only was caught by nothing,
+    /// because no assertion here had looked at a painted node. It reads the
+    /// SCENE now, which is the thing the claim is about.
+    #[test]
+    fn r1624_the_mark_changes_the_glyph_and_nothing_else() {
+        let style = ChartStyle::default();
+        for reading in [SessionAxis::Ordinal, SessionAxis::Elapsed] {
+            let painted = |mark: SessionMark| {
+                let c = match reading {
+                    SessionAxis::Elapsed => week_chart().elapsed(),
+                    SessionAxis::Ordinal => week_chart().ordinal(),
+                }
+                .with_mark(mark);
+                let scene = c.build(RECT, &style);
+                (0..6)
+                    .map(|i| {
+                        let tag = match mark {
+                            SessionMark::Ohlc => format!("chart.ohlc.{i}.range"),
+                            _ => format!("chart.candle.{i}"),
+                        };
+                        let node = find(&scene, &tag).expect("painted");
+                        let (left, right) = x_span(node);
+                        f32::midpoint(left, right)
+                    })
+                    .collect::<Vec<f32>>()
+            };
+            let candle = painted(SessionMark::Candle);
+            let ohlc = painted(SessionMark::Ohlc);
+            for (i, (a, b)) in candle.iter().zip(ohlc.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 0.01,
+                    "{reading:?} session {i}: the mark moved it, {a} vs {b}",
+                );
+            }
+        }
+        // The window narrows both marks identically.
+        let windowed = |mark| {
+            week_chart()
+                .with_mark(mark)
+                .window(CategoryWindow::new(1, 3))
+                .build(RECT, &style)
+        };
+        assert_eq!(
+            count_prefix(&windowed(SessionMark::Candle), "chart.candle."),
+            3
+        );
+        assert_eq!(
+            count_prefix(&windowed(SessionMark::Ohlc), "chart.ohlc."),
+            9,
+            "3 sessions x 3 nodes",
+        );
+    }
+
+    /// R1624 — the inspect ring outlines what the MARK occupies.
+    ///
+    /// A bar's extent is its range; ringing its open-to-close span would
+    /// leave the spine sticking out of the highlight, which is what reading
+    /// the ring off `body_geometry` for both marks would do.
+    ///
+    /// **The fixture is the test.** The first draft focused the week
+    /// fixture's middle session, which happens to open at its low and close
+    /// at its high — so its body IS its range and both rings measured 69px
+    /// whatever the code did. A session whose body is strictly inside its
+    /// range is the only one that can tell the two apart.
+    #[test]
+    fn r1624_the_inspect_ring_outlines_the_mark_not_the_body() {
+        let style = ChartStyle::default();
+        let one = vec![Candle::new(MON, 100.0, 120.0, 80.0, 110.0).expect("ok")];
+        let ring = |mark: SessionMark| {
+            let scene = CandlestickChart::new(one.clone())
+                .with_mark(mark)
+                .inspect(Some(0.5))
+                .build(RECT, &style);
+            let node = find(&scene, "chart.inspect.highlight").expect("ring");
+            let Scene::Box(b) = node else {
+                panic!("expected a box, got {node:?}");
+            };
+            (b.rect.y, b.rect.h)
+        };
+        let (candle_y, candle_h) = ring(SessionMark::Candle);
+        let (bar_y, bar_h) = ring(SessionMark::Ohlc);
+        assert!(
+            bar_h > candle_h,
+            "a bar's ring covers the whole range, taller than the body: \
+             {candle_h} -> {bar_h}",
+        );
+        assert!(
+            bar_y < candle_y,
+            "and starts above the body's top: {bar_y} vs {candle_y}",
+        );
+        // The ring really does contain the spine it rings.
+        let scene = CandlestickChart::new(one)
+            .with_mark(SessionMark::Ohlc)
+            .inspect(Some(0.5))
+            .build(RECT, &style);
+        let (top, bottom) = y_span(find(&scene, "chart.ohlc.0.range").expect("spine"));
+        let (ry, rh) = (to_f32(bar_y), to_f32(bar_h));
+        assert!(
+            top >= ry - 1.0 && bottom <= ry + rh + 1.0,
+            "the spine {top}..{bottom} is inside the ring {ry}..{}",
+            ry + rh,
+        );
+    }
+
+    /// R1624 — every mark in the census draws something, so a new one cannot
+    /// be added and left unpainted.
+    #[test]
+    fn r1624_every_mark_in_the_census_paints() {
+        let style = ChartStyle::default();
+        for mark in SessionMark::ALL {
+            let scene = week_chart().with_mark(mark).build(RECT, &style);
+            let stem = mark.tag_stem();
+            assert!(
+                count_prefix(&scene, &format!("chart.{stem}.")) > 0,
+                "{mark:?} paints nodes under its own stem",
+            );
+        }
+    }
+
+    /// The y extent of a path node, as `(min_y, max_y)`.
+    fn y_span(scene: &Scene) -> (f32, f32) {
+        let Scene::Path(p) = scene else {
+            panic!("expected a path, got {scene:?}");
+        };
+        let b = pinion_core::path_data::bounds(&p.commands).expect("has bounds");
+        (b.min_y + to_f32(p.rect.y), b.max_y + to_f32(p.rect.y))
+    }
+
+    /// The x extent of a path node, as `(min_x, max_x)`.
+    fn x_span(scene: &Scene) -> (f32, f32) {
+        let Scene::Path(p) = scene else {
+            panic!("expected a path, got {scene:?}");
+        };
+        let b = pinion_core::path_data::bounds(&p.commands).expect("has bounds");
+        (b.min_x + to_f32(p.rect.x), b.max_x + to_f32(p.rect.x))
     }
 
     /// ★ The round's second claim: ONE datum, two readings, and the

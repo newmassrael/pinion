@@ -331,7 +331,7 @@ pub use brush::{Brush, BrushStripColors};
 pub use candle::{
     BodyFill, Candle, CandleError, CandlePosition, Direction, candle_bounds, positive_candle_bounds,
 };
-pub use candlestick::{CandlestickChart, OffScaleCandle, SessionAxis};
+pub use candlestick::{CandlestickChart, OffScaleCandle, SessionAxis, SessionMark};
 pub use color_scale::{ColorScale, contrast_ratio, readable_ink, relative_luminance};
 pub use distribution::{
     DEFAULT_FENCE, Distribution, DistributionError, DistributionSource, QuantileMethod,

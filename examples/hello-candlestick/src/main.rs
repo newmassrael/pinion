@@ -47,7 +47,7 @@ use pinion_a11y::{
     AccessFocus, AccessNode, AriaRole, RadioCell, ToggleSegment, WidgetA11y,
     radiogroup_radio_nodes, toggle_button_group_nodes,
 };
-use pinion_chart::{Candle, CandlestickChart, ChartStyle, SessionAxis};
+use pinion_chart::{Candle, CandlestickChart, ChartStyle, SessionAxis, SessionMark};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -80,6 +80,13 @@ const READING_TAG: &str = "reading";
 /// own Tab stop, unlike the radio group's single roving stop.
 const CAPS_TAG: &str = "caps";
 const MONO_TAG: &str = "mono";
+/// R1624 — draw the sessions as open-high-low-close BARS instead of candles.
+const BAR_TAG: &str = "bar";
+
+/// Every option toggle, in chip order. R1624 added the third, and the two
+/// hand-written copies of this list (the keymap and the a11y count) were what
+/// made adding it a three-site edit — so the list is declared once.
+const OPTION_TAGS: [&str; 3] = [CAPS_TAG, MONO_TAG, BAR_TAG];
 
 /// The WAI-ARIA `group` label parent for the two option toggles.
 const OPTIONS_GROUP_TAG: &str = "options";
@@ -99,6 +106,7 @@ const READING_LABELS: [&str; 2] = ["Sessions (category)", "Elapsed (datetime)"];
 const BOOT_READING: usize = 0;
 const BOOT_CAPS: bool = false;
 const BOOT_MONO: bool = false;
+const BOOT_BAR: bool = false;
 
 const TITLE_FONT_PX: u32 = 17;
 const CAPTION_FONT_PX: u32 = 12;
@@ -147,7 +155,13 @@ fn sessions() -> Vec<Candle> {
 /// The chart for one set of options — the ONE place the reading, the caps and
 /// the monochrome choice are applied.
 fn chart_for(state: &Options) -> CandlestickChart {
-    let chart = CandlestickChart::new(sessions()).with_caps(state.caps);
+    let chart = CandlestickChart::new(sessions())
+        .with_caps(state.caps)
+        .with_mark(if state.bar {
+            SessionMark::Ohlc
+        } else {
+            SessionMark::Candle
+        });
     let chart = match state.reading() {
         SessionAxis::Ordinal => chart.ordinal(),
         SessionAxis::Elapsed => chart.elapsed(),
@@ -265,8 +279,17 @@ fn option_row(state: &Options, theme: &Theme) -> Scene {
         state.mono_row.0,
         theme,
     );
+    let bar = option_chip(
+        BAR_TAG.to_string(),
+        "bars",
+        state.bar,
+        true,
+        88,
+        state.bar_row.0,
+        theme,
+    );
     Scene::Container(
-        ContainerNode::new(vec![caps, mono])
+        ContainerNode::new(vec![caps, mono, bar])
             .with_tag(OPTIONS_GROUP_TAG.to_string())
             .with_layout(
                 LayoutStyle::new()
@@ -344,8 +367,10 @@ struct Options {
     reading_focused: Option<usize>,
     caps_row: (ToggleState, bool),
     mono_row: (ToggleState, bool),
+    bar_row: (ToggleState, bool),
     caps: bool,
     mono: bool,
+    bar: bool,
 }
 
 impl Options {
@@ -356,8 +381,10 @@ impl Options {
             reading_focused: None,
             caps_row: (ToggleState::Idle, BOOT_CAPS),
             mono_row: (ToggleState::Idle, BOOT_MONO),
+            bar_row: (ToggleState::Idle, BOOT_BAR),
             caps: BOOT_CAPS,
             mono: BOOT_MONO,
+            bar: BOOT_BAR,
         }
     }
 
@@ -404,6 +431,10 @@ impl WidgetCore for CandlestickView {
                 MONO_TAG,
                 Box::new(toggle_group::boot_toggle(BOOT_MONO)) as Box<dyn External>,
             ),
+            ExtraExternal::new(
+                BAR_TAG,
+                Box::new(toggle_group::boot_toggle(BOOT_BAR)) as Box<dyn External>,
+            ),
         ]
     }
 
@@ -422,8 +453,10 @@ impl WidgetCore for CandlestickView {
         }
         out.caps_row = toggle_group::read_toggle(scene, CAPS_TAG);
         out.mono_row = toggle_group::read_toggle(scene, MONO_TAG);
+        out.bar_row = toggle_group::read_toggle(scene, BAR_TAG);
         out.caps = out.caps_row.1;
         out.mono = out.mono_row.1;
+        out.bar = out.bar_row.1;
         out
     }
 
@@ -449,7 +482,7 @@ impl WidgetCore for CandlestickView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        if toggle_group::apply_key(scene, focused, key, &[CAPS_TAG, MONO_TAG]) {
+        if toggle_group::apply_key(scene, focused, key, &OPTION_TAGS) {
             return true;
         }
         if focused != Some(READING_TAG) {
@@ -470,10 +503,11 @@ impl WidgetCore for CandlestickView {
 
     fn fmt_state_log(state: &Options) -> String {
         format!(
-            "{}{}{}",
+            "{}{}{}{}",
             state.reading().name(),
             if state.caps { " caps" } else { "" },
-            if state.mono { " mono" } else { " hue" }
+            if state.mono { " mono" } else { " hue" },
+            if state.bar { " bars" } else { " candles" }
         )
     }
 }
@@ -527,6 +561,12 @@ impl WidgetA11y for CandlestickView {
                 label: "no hue",
                 state: state.mono_row.0,
                 on: state.mono,
+            },
+            ToggleSegment {
+                tag: BAR_TAG,
+                label: "bars",
+                state: state.bar_row.0,
+                on: state.bar,
             },
         ];
         nodes.extend(toggle_button_group_nodes(
@@ -589,6 +629,93 @@ mod tests {
 
     fn render(reading: usize, caps: bool, mono: bool) -> Scene {
         Owner::new().run(|| view(options(reading, caps, mono), &Frame::new()))
+    }
+
+    /// A pixel row as `f32`. Written once because the lint that forbids the
+    /// bare cast is right in general and noise here: a plot row is a small
+    /// integer with an exact `f32`.
+    #[allow(clippy::cast_precision_loss, reason = "a pixel row is small and exact")]
+    fn f32_of(v: u32) -> f32 {
+        v as f32
+    }
+
+    fn render_bars(reading: usize, mono: bool) -> Scene {
+        let mut opts = options(reading, false, mono);
+        opts.bar = true;
+        opts.bar_row = (ToggleState::Idle, true);
+        Owner::new().run(|| view(opts, &Frame::new()))
+    }
+
+    /// R1624 — the chip swaps the MARK and nothing else: the same six
+    /// sessions, the same axis, a different glyph.
+    #[test]
+    fn r1624_the_bars_chip_swaps_the_glyph_for_the_same_sessions() {
+        let candles = render(0, false, false);
+        let bars = render_bars(0, false);
+
+        assert_eq!(count_prefix(&candles, "chart.candle."), SESSIONS.len());
+        assert_eq!(count_prefix(&bars, "chart.candle."), 0);
+        assert_eq!(
+            count_prefix(&bars, "chart.ohlc."),
+            SESSIONS.len() * 3,
+            "spine, open tick and close tick for every session",
+        );
+        // The axis furniture is untouched — the mark is not a second chart.
+        for tag in ["chart.axis.x", "chart.axis.y"] {
+            assert_eq!(
+                find(&candles, tag).is_some(),
+                find(&bars, tag).is_some(),
+                "{tag} is the chart's, not the mark's",
+            );
+        }
+    }
+
+    /// R1624 — with the hue stripped, a bar still says which way the session
+    /// went. The candle answers with its fill; the bar answers with the
+    /// height of its two ticks, which is the redundancy this mark has.
+    #[test]
+    fn r1624_a_bar_says_its_direction_with_the_hue_removed() {
+        let bars = render_bars(0, true);
+        let tick_top = |tag: &str| {
+            let Some(Scene::Path(p)) = find(&bars, tag) else {
+                panic!("missing {tag}");
+            };
+            pinion_core::path_data::bounds(&p.commands)
+                .expect("has bounds")
+                .min_y
+                + f32_of(p.rect.y)
+        };
+        let mut rising = 0;
+        let mut falling = 0;
+        for (i, c) in CandlestickChart::new(sessions())
+            .candles()
+            .iter()
+            .enumerate()
+        {
+            let open = tick_top(&format!("chart.ohlc.{i}.open"));
+            let close = tick_top(&format!("chart.ohlc.{i}.close"));
+            match c.direction() {
+                Direction::Rising => {
+                    assert!(
+                        close < open,
+                        "session {i} rises, so its close tick is higher"
+                    );
+                    rising += 1;
+                }
+                Direction::Falling => {
+                    assert!(
+                        close > open,
+                        "session {i} falls, so its close tick is lower"
+                    );
+                    falling += 1;
+                }
+                // A doji's ticks are level, which is the correct glyph.
+                Direction::Doji => {
+                    assert!((close - open).abs() < 0.5, "session {i} is a doji");
+                }
+            }
+        }
+        assert!(rising > 0 && falling > 0, "the fixture exercises both");
     }
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
@@ -758,7 +885,7 @@ mod tests {
             };
             assert!(!cell.layout.focusable, "a radio cell is not its own stop");
         }
-        for tag in [CAPS_TAG, MONO_TAG] {
+        for tag in OPTION_TAGS {
             let Some(Scene::Container(c)) = find(&scene, tag) else {
                 panic!("{tag} is a container")
             };
@@ -780,7 +907,11 @@ mod tests {
             .iter()
             .filter(|n| matches!(n.role, AriaRole::Button))
             .count();
-        assert_eq!(buttons, 2, "one aria-pressed button per option");
+        assert_eq!(
+            buttons,
+            OPTION_TAGS.len(),
+            "one aria-pressed button per option",
+        );
         let status = nodes
             .iter()
             .find(|n| matches!(n.role, AriaRole::Status))
