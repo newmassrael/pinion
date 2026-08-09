@@ -141,6 +141,29 @@ pub struct WireField {
     /// [`WireTy::Any`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub of: Option<&'static str>,
+    /// R1616 — the CLOSED SET of strings this key accepts, when it takes one.
+    ///
+    /// A string-typed key whose value vocabulary is closed is not the same
+    /// contract as one that takes any string, and a client cannot tell them
+    /// apart from `ty` alone. Without this, the only way to learn a spelling
+    /// is to guess one, be refused, and guess again — which is the shape
+    /// R1566 already fixed for error payloads and R1610 immediately
+    /// reintroduced one field over: an `UnknownLevel` refusal told a caller
+    /// that its spelling was wrong and never what a right one looks like.
+    ///
+    /// **Not the same slot as [`Self::of`].** `of` names a censused TYPE and
+    /// only a typed Rust field can carry one, so a key deliberately typed
+    /// `String` — because its own parse must run before anything else in the
+    /// message is applied, rather than aborting the whole frame at
+    /// deserialization — has no way to reference an enum. This is the value
+    /// half of the same question.
+    ///
+    /// The list must be **derived** from whatever owns the vocabulary, never
+    /// retyped here: a second copy of a closed set is a second copy that goes
+    /// stale silently. See `window_declare::LEVEL_WIRE_NAMES`, which is a
+    /// `const` computed from the domain enum's own census.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values: Option<&'static [&'static str]>,
 }
 
 impl WireField {
@@ -154,6 +177,18 @@ impl WireField {
             patch: false,
             ty,
             of,
+            values: None,
+        }
+    }
+
+    /// R1616 — declare the closed set of strings this key accepts. See
+    /// [`Self::values`]; pass a `const` derived from whatever owns the
+    /// vocabulary rather than a list retyped here.
+    #[must_use]
+    pub const fn accepting(self, values: &'static [&'static str]) -> Self {
+        Self {
+            values: Some(values),
+            ..self
         }
     }
 
@@ -1813,7 +1848,9 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("position", WireTy::Array, None).patch(),
                 WireField::new("display", WireTy::String, None).patch(),
                 WireField::new("decorations", WireTy::Boolean, None).optional(),
-                WireField::new("level", WireTy::String, None).optional(),
+                WireField::new("level", WireTy::String, None)
+                    .optional()
+                    .accepting(&crate::window_declare::LEVEL_WIRE_NAMES),
             ],
         },
     },
@@ -1848,6 +1885,10 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("patch", WireTy::Boolean, None).optional(),
                 WireField::new("ty", WireTy::String, Some("WireTy")),
                 WireField::new("of", WireTy::String, None).optional(),
+                // R1616 — the census describes itself, so the value-vocabulary
+                // slot is on the wire the same way every other key it
+                // publishes is.
+                WireField::new("values", WireTy::Array, None).optional(),
             ],
         },
     },

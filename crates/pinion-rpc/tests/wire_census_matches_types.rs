@@ -768,6 +768,68 @@ fn every_reference_resolves() {
     );
 }
 
+/// R1616 — a declared value vocabulary is well-formed, and only where one can
+/// mean anything.
+///
+/// The list itself is checked against the *accepting* code by whoever owns the
+/// axis (`window_declare::r1616_the_published_level_vocabulary_is_exactly_what_the_axis_accepts`
+/// drives every published spelling through the real parse path), because only
+/// that owner knows the parse path. What is general — and therefore lives
+/// here — is the shape: a closed value set is a set of distinct non-empty
+/// strings on a key that carries strings. A `values` on an integer key, or one
+/// holding a duplicate, is a declaration a client would act on and be wrong.
+#[test]
+fn declared_value_vocabularies_are_well_formed() {
+    let mut declaring = 0;
+    for t in WIRE_TYPES {
+        let fields: Vec<(&str, &[pinion_rpc::wire_census::WireField])> = match t.shape {
+            WireShape::Object { fields } => vec![(t.name, fields)],
+            WireShape::Union { variants, .. } => {
+                variants.iter().map(|v| (v.name, v.fields)).collect()
+            }
+            WireShape::Enum { .. } | WireShape::Scalar { .. } => Vec::new(),
+        };
+        for (owner, fs) in fields {
+            for f in fs {
+                let Some(values) = f.values else { continue };
+                declaring += 1;
+                assert!(
+                    matches!(f.ty, WireTy::String | WireTy::Array),
+                    "{owner}.{} declares a value vocabulary on a {:?} key — a \
+                     closed set of strings only means something where strings go",
+                    f.name,
+                    f.ty
+                );
+                assert!(
+                    !values.is_empty(),
+                    "{owner}.{} declares an EMPTY vocabulary, which says the key \
+                     accepts nothing",
+                    f.name
+                );
+                let unique: BTreeSet<&&str> = values.iter().collect();
+                assert_eq!(
+                    unique.len(),
+                    values.len(),
+                    "{owner}.{} lists a spelling twice",
+                    f.name
+                );
+                for v in values {
+                    assert!(
+                        !v.is_empty(),
+                        "{owner}.{} publishes an empty spelling",
+                        f.name
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        declaring > 0,
+        "no field declares a value vocabulary — the slot has no consumer, and \
+         a census field nothing fills is a promise to a client nobody keeps",
+    );
+}
+
 #[test]
 fn the_census_describes_itself() {
     // §2 #7 applied to the description: the types that carry the census are

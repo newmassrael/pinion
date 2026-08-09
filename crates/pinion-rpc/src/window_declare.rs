@@ -194,6 +194,32 @@ pub struct WindowDeclareParams {
     pub level: Option<String>,
 }
 
+/// R1616 §5.12 §2 #7 — every wire spelling `WindowDeclareParams::level`
+/// accepts, DERIVED from the domain enum's own census.
+///
+/// The valid set had no home on the framework wire. R1610.1 projected the
+/// level onto a `String` for good reasons — this crate owns the wire shape,
+/// and the axis must be parsed before any other axis in the same message is
+/// applied, which a deserialization-time enum cannot do without aborting the
+/// whole frame — and the cost it named in its own carry was exactly this: the
+/// earlier `Option<WindowLevel>` draft got serde's unknown-variant error,
+/// which lists the valid values, and the projection threw that away. An agent
+/// was left with `UnknownLevel` and no way to ask what a right spelling looks
+/// like short of reading pinion's source.
+///
+/// Computed rather than retyped. A hand list here would be a second copy of a
+/// closed set, and a second copy of a closed set goes stale in silence — the
+/// failure this whole census exists to make impossible.
+pub const LEVEL_WIRE_NAMES: [&str; WindowLevel::ALL.len()] = {
+    let mut names = [""; WindowLevel::ALL.len()];
+    let mut i = 0;
+    while i < WindowLevel::ALL.len() {
+        names[i] = WindowLevel::ALL[i].as_str();
+        i += 1;
+    }
+    names
+};
+
 impl WindowDeclareParams {
     /// The axes this patch actually names, in wire spelling.
     ///
@@ -516,5 +542,48 @@ mod tests {
         let json = serde_json::to_string(&clearing).unwrap();
         assert_eq!(json, r#"{"window_id":"panel","position":null}"#);
         assert_eq!(parse(&json), clearing);
+    }
+
+    #[test]
+    fn r1616_the_published_level_vocabulary_is_exactly_what_the_axis_accepts() {
+        // ★ The point of publishing a value set is that a client can act on
+        // it without guessing. That only holds if the published set and the
+        // accepted set are one set, so every published spelling is driven
+        // through the real parse path and a non-member is refused by it.
+        assert_eq!(
+            LEVEL_WIRE_NAMES.len(),
+            WindowLevel::ALL.len(),
+            "derived from the domain census, so it cannot go short",
+        );
+        for (name, level) in LEVEL_WIRE_NAMES.iter().zip(WindowLevel::ALL) {
+            assert_eq!(*name, level.as_str());
+        }
+
+        for name in LEVEL_WIRE_NAMES {
+            let params = parse(&format!(r#"{{"window_id":"main","level":"{name}"}}"#));
+            let mut seen = false;
+            let mut closure = |_: &WindowDeclareParams| {
+                seen = true;
+                true
+            };
+            let outcome = window_declare(params, Some(&mut closure))
+                .unwrap_or_else(|e| panic!("published level {name:?} refused: {e:?}"));
+            assert_eq!(outcome.applied, vec!["level".to_owned()]);
+            assert!(seen, "{name:?} reached the closure");
+        }
+
+        // ...and a spelling outside the published set is refused by NAME, so
+        // a client that matched the word learns the axis and reads the set
+        // from `rpc/schema` rather than guessing again.
+        let bad = parse(r#"{"window_id":"main","level":"floating"}"#);
+        let mut closure = |_: &WindowDeclareParams| panic!("must not reach the closure");
+        assert_eq!(
+            window_declare(bad, Some(&mut closure)),
+            Err(WindowDeclareError::UnknownLevel),
+        );
+        assert!(
+            !LEVEL_WIRE_NAMES.contains(&"floating"),
+            "the negative control is genuinely outside the set",
+        );
     }
 }

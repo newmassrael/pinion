@@ -208,7 +208,11 @@ fn entries() -> Vec<ErrorEntry> {
                  two failures answer the word with the offending name appended \
                  after a colon — a window prefix that did not resolve, and a \
                  malformed scene/displays parameter, which names the parameter \
-                 path (R1576). Both stay matchable by prefix",
+                 path (R1576). Both stay matchable by prefix. A refusal that \
+                 names a CLOSED value set — UnknownLevel is the one — does not \
+                 carry the set: rpc/schema does, as the field's `values`, so a \
+                 client reads what is accepted BEFORE it asks rather than \
+                 guessing and being refused again (R1616)",
                 false,
                 true,
             ),
@@ -586,6 +590,32 @@ mod tests {
                 entry.code,
             );
         }
+    }
+
+    #[test]
+    fn r1616_a_word_that_names_a_closed_set_says_where_the_set_is() {
+        // A refusal word is only half an answer. `UnknownLevel` tells a client
+        // its spelling was wrong; the accepted spellings live in `rpc/schema`
+        // as the field's `values`, and this entry is the one place a client
+        // meeting the word is already reading. Without the pointer the word
+        // leads to pinion's source, which is the loop R1566 exists to end.
+        let entry = rpc_errors()
+            .errors
+            .into_iter()
+            .find(|e| e.code == -32602)
+            .expect("-32602 is published");
+        assert!(
+            entry.data_vocabulary.iter().any(|w| w == "UnknownLevel"),
+            "the word is in the closed vocabulary",
+        );
+        assert!(
+            entry.meaning.contains("rpc/schema"),
+            "and the entry points at where the accepted values are published",
+        );
+        assert!(
+            entry.meaning.contains("values"),
+            "by the name of the slot that carries them, not vaguely",
+        );
     }
 
     #[test]
