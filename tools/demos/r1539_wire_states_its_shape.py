@@ -227,9 +227,21 @@ def body() -> None:
         for t in types:
             for f in t["shape"].get("fields", []):
                 assert f["ty"] in JSON_TYPES, f"A: {t['name']}.{f['name']} ty={f['ty']}"
-                assert not (f["optional"] and f["nullable"]), (
-                    f"A: {t['name']}.{f['name']} is declared both absent-able and "
-                    f"null-able; serde makes exactly one of those true"
+                # R1612.2 — a BICONDITIONAL, not a prohibition. Absent and
+                # `null` are different answers and a field is normally one or
+                # the other, but a three-state patch (absent leaves the axis
+                # alone, `null` clears it, a value sets it) is legitimately
+                # both -- and then it must SAY so, because a client seeing both
+                # flags cannot otherwise tell a deliberate patch from a field
+                # declared two contradictory ways. Checking it both ways round
+                # catches the mistake in either direction; the one-way version
+                # went red the first time a real patch was published, and it
+                # went red in CI rather than here because the crate-side census
+                # had been taught about patches and this reader had not.
+                assert (f["optional"] and f["nullable"]) == f.get("patch", False), (
+                    f"A: {t['name']}.{f['name']} is absent-able={f['optional']} "
+                    f"null-able={f['nullable']} patch={f.get('patch', False)} — "
+                    f"both of the first two iff the third"
                 )
 
         census = Census(types)

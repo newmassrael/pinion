@@ -115,8 +115,23 @@ pub struct WireField {
     /// treats them alike breaks on exactly one of them. serde makes them look
     /// alike in Rust — both are `Option<T>` — which is why this census was
     /// initially wrong about twelve fields until the gate compared it with the
-    /// source. The two are mutually exclusive for every field here.
+    /// source. The two are mutually exclusive UNLESS [`Self::patch`] says
+    /// otherwise, and that exception is the reason the flag exists.
     pub nullable: bool,
+    /// `true` when the key carries a THREE-state patch: absent leaves the axis
+    /// alone, `null` clears it, and a value sets it.
+    ///
+    /// R1612.2 — the one shape that is legitimately both
+    /// [`Self::optional`] and [`Self::nullable`], and it has to say so on the
+    /// wire. A client reading both flags on a field cannot otherwise tell a
+    /// deliberate three-state patch from someone having declared the same key
+    /// two contradictory ways, and the invariant a reader checks becomes
+    /// "either flag, never both" — which is exactly the check that went red
+    /// when the first patch was published. Declaring it turns the rule from a
+    /// prohibition into a BICONDITIONAL: both flags iff a patch, which catches
+    /// the mistake in both directions instead of one.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub patch: bool,
     /// The JSON type of the value at this key. For a [`Self::nullable`] key,
     /// the type its value takes when it is not `null`.
     pub ty: WireTy,
@@ -136,6 +151,7 @@ impl WireField {
             name,
             optional: false,
             nullable: false,
+            patch: false,
             ty,
             of,
         }
@@ -155,6 +171,21 @@ impl WireField {
     pub const fn nullable(self) -> Self {
         Self {
             nullable: true,
+            ..self
+        }
+    }
+
+    /// Mark the key as a three-state patch: absent, `null`, or a value.
+    ///
+    /// Sets all three flags, because a patch IS both of the other two and
+    /// leaving a caller to remember that is how the two readers of this census
+    /// came to disagree.
+    #[must_use]
+    pub const fn patch(self) -> Self {
+        Self {
+            optional: true,
+            nullable: true,
+            patch: true,
             ..self
         }
     }
@@ -1740,12 +1771,8 @@ pub const WIRE_TYPES: &[WireType] = &[
             fields: &[
                 WireField::new("window_id", WireTy::String, None),
                 WireField::new("title", WireTy::String, None).optional(),
-                WireField::new("position", WireTy::Array, None)
-                    .optional()
-                    .nullable(),
-                WireField::new("display", WireTy::String, None)
-                    .optional()
-                    .nullable(),
+                WireField::new("position", WireTy::Array, None).patch(),
+                WireField::new("display", WireTy::String, None).patch(),
                 WireField::new("decorations", WireTy::Boolean, None).optional(),
                 WireField::new("level", WireTy::String, None).optional(),
             ],
@@ -1779,6 +1806,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("name", WireTy::String, None),
                 WireField::new("optional", WireTy::Boolean, None),
                 WireField::new("nullable", WireTy::Boolean, None),
+                WireField::new("patch", WireTy::Boolean, None).optional(),
                 WireField::new("ty", WireTy::String, Some("WireTy")),
                 WireField::new("of", WireTy::String, None).optional(),
             ],
