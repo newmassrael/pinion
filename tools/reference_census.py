@@ -136,6 +136,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import contextlib
+import io
 import os
 import re
 import sys
@@ -997,7 +999,15 @@ def coverage(pinned: dict, surface: str | None = None) -> tuple[int, int, list[s
 def report(census: Census, pin: dict, strict: bool) -> int:
     problems = 0
     for tree, live in census.all().items():
-        pinned = pin.get(tree, {})
+        # R1614.1 -- the pin is keyed by the PUBLIC tree name and by the PUBLIC
+        # operator id; `emit` learned that in R1612 and this reader did not, so
+        # `pin.get(tree)` missed every time. The report then said `0/0` coverage
+        # and called all 679 live operators NEW, while `--check-pin` -- which
+        # reads the pin directly and never touches a live tree -- went on saying
+        # 679 judged, 0 problems. Two readers of one census, one taught. The
+        # same shape as R1612.3, in the tool that recorded it.
+        pinned = pin.get(PUBLIC_TREE.get(tree, tree), {})
+        live = {public_id(tree, name): op for name, op in live.items()}
         present = bool(live)
         print(f"\n=== {tree} ===")
         if not present:
@@ -1096,7 +1106,8 @@ def report(census: Census, pin: dict, strict: bool) -> int:
             diff["unregistered"] = [
                 name
                 for name in census.blender_unregistered
-                if name not in pinned or pinned[name].get("mechanism", "").startswith("cpp")
+                if public_id(tree, name) not in pinned
+                or pinned[public_id(tree, name)].get("mechanism", "").startswith("cpp")
             ]
         for kind, names in diff.items():
             if not names:
@@ -1229,6 +1240,57 @@ def selftest() -> int:
     )
     check(diff["new"] == ["NODE_OT_a"], "an operator the pin lacks is NEW")
     check(diff["gone"] == ["NODE_OT_z"], "an operator the tree lacks is GONE")
+
+    print("the report reads the pin under the PUBLIC names emit writes")
+    # R1614.1 -- this runs `report` itself over a synthetic tree and pin,
+    # because the round's FIRST version of this check asserted the PIN's shape
+    # instead, and a counterfactual that restored the broken lookup passed it.
+    # A test of the artifact is not a test of the reader.
+    synthetic = Census(
+        blender={"NODE_OT_probe": Operator("NODE_OT_probe", "cpp")},
+        unreal={"UEdGraphSchema::Probe": Operator("UEdGraphSchema::Probe", "UEdGraphSchema")},
+    )
+    synthetic_pin = {
+        "dcc": {"probe": {"mechanism": "cpp", "verdict": "have",
+                          "proven_by": "pinion-core::probe"}},
+        "engine": {"schema::Probe": {"mechanism": "graph-schema", "verdict": "have",
+                                     "proven_by": "pinion-core::probe"}},
+    }
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        report(synthetic, synthetic_pin, strict=False)
+    printed = buffer.getvalue()
+    check(
+        "1/1 = 100%" in printed,
+        "★ report() finds the pin: a live id is mapped to its public spelling "
+        "and the tree to its public name BEFORE the lookup",
+    )
+    check(
+        "NEW (" not in printed,
+        "and a judged operator is not reported as one the pin lacks",
+    )
+
+    # R1614.1 -- the defect this closes: `report` looked the pin up under the
+    # LIVE tree name and compared LIVE operator ids, while `emit` had written
+    # both in their public spelling since R1612. Every lookup missed, coverage
+    # printed 0/0, and 679 judged operators were reported as unjudged -- while
+    # `--check-pin`, which never touches a live tree, kept saying 679 judged and
+    # 0 problems. The two checks below are what tells the fixed reader from the
+    # broken one.
+    pin_now = load_pin()
+    if pin_now:
+        for tree, public in PUBLIC_TREE.items():
+            _, total, _ = coverage(pin_now.get(public, {}))
+            check(total > 0, f"the pin answers under `{public}`")
+            check(
+                not pin_now.get(tree),
+                f"and NOT under `{tree}` -- a reader keyed on the live name "
+                f"silently measures nothing",
+            )
+        check(
+            not any(k.startswith("NODE_OT_") for k in pin_now.get("dcc", {})),
+            "and its ids are public, so a live id must be mapped before lookup",
+        )
 
     print("an unjudged operator is neither covered nor missing")
     pinned = {

@@ -86346,6 +86346,46 @@
         "a demo's string literals are now rewritable, and what makes that safe is that the caller runs the demo. Nothing enforces the second half."
       ]
     },
+    "Round 1614.1": {
+      "decision_summary": "R1614.1 — the census reads its own pin again, and the node-coverage numbers come back.\n\nR1612 renamed the reference census's committed pin — its tree names and its operator ids — into a spelling that does not name a vendor, and taught `emit` to write them that way. It did not teach `report` to read them that way. So `pin.get(tree)` looked up a live tree name in a file keyed by public ones and missed every time.\n\nThe consequence was silent in the worst direction. Coverage printed **nothing at all**: the denominator was zero, so the line that reports it was skipped rather than printing `0/0`, and a number that is absent does not look wrong. Meanwhile all 679 judged operators came back as unmeasured, which reads as \"the reference grew\" rather than \"the reader broke\". And `--check-pin`, which reads the pin directly and never touches a live tree, went on reporting 679 judged and 0 problems — so the tool passed its own check while its headline output said nothing.\n\n**Two readers of one census, one taught.** That is the shape R1612.3 recorded a week ago about the wire census, and R1611 before it. This one is inside the tool that recorded the class.\n\nThe fix is two lines: resolve the tree through the public-name table, and map each live id through the same `public_id` the writer uses, before the lookup.\n\nTHE NUMBERS ARE BACK AND THEY MOVED. The DCC reads 54/76 = 71% where the last recorded audit said 54/72 = 75% — four operators appeared in the reference, so the denominator grew while the numerator did not. The engine reads 85/211 = 40%, unchanged in rate. 301 live operators are unjudged, and that is the real state the node-coverage campaign works against; the broken reader had been calling it 679.\n\nAND THE ROUND'S FIRST TEST WAS THE WRONG TEST. It asserted the **pin's** shape — that its keys are public — and a counterfactual that restored the broken lookup **passed** it, because the artifact was never what broke. A test of an artifact is not a test of its reader. Replaced with one that runs `report` over a synthetic tree and a synthetic pin and asserts the coverage line it prints; both halves of the fix now have a counterfactual that catches them.",
+      "changes_bullets": [
+        "tools/reference_census.py: report() resolves the tree through PUBLIC_TREE and maps every live operator id through public_id before looking it up in the pin.",
+        "tools/reference_census.py: the unregistered-name check maps through public_id too, so a sixth registration mechanism is still reported.",
+        "tools/reference_census.py selftest: report() is run over a synthetic tree and pin and its coverage line asserted, replacing a check that asserted the pin's shape and could not tell the fixed reader from the broken one."
+      ],
+      "verification_bullets": [
+        "the live census now prints coverage again: the DCC 54/76 = 71 percent, the engine 85/211 = 40, with 301 operators unjudged.",
+        "reference census --selftest: all checks passed; --check-pin unchanged at 679 judged, 0 problems.",
+        "two counterfactuals, both CAUGHT: restoring the live-tree lookup, and dropping the id mapping. The first version of the test passed the first of them, which is why it was replaced.",
+        "cargo test -p pinion-core -p pinion-node-graph --test reference_census: 4 + 99 green, so the bijection between the pin and each crate's proof table is unaffected."
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "301 unjudged operators is now visible and is not yet judged. That is the node-coverage campaign's actual denominator problem and it is a round of its own, not this one.",
+        "the DCC denominator moved 72 -> 76 while the numerator held, so the recorded 75 percent was stale as well as unreadable. The figure in CLAUDE.md is a tool output and is not hand-edited here; the next re-judgment reads it from the tool."
+      ],
+      "publishable_decision_summary": "R1614.1 — the census reads its own pin again, and the node-coverage numbers come back.\n\nR1612 renamed the reference census's committed pin — its tree names and its operator ids — into a spelling that does not name a vendor, and taught `emit` to write them that way. It did not teach `report` to read them that way. So `pin.get(tree)` looked up a live tree name in a file keyed by public ones and missed every time.\n\nThe consequence was silent in the worst direction. Coverage printed **nothing at all**: the denominator was zero, so the line that reports it was skipped rather than printing `0/0`, and a number that is absent does not look wrong. Meanwhile all 679 judged operators came back as unmeasured, which reads as \"the reference grew\" rather than \"the reader broke\". And `--check-pin`, which reads the pin directly and never touches a live tree, went on reporting 679 judged and 0 problems — so the tool passed its own check while its headline output said nothing.\n\n**Two readers of one census, one taught.** That is the shape R1612.3 recorded a week ago about the wire census, and R1611 before it. This one is inside the tool that recorded the class.\n\nThe fix is two lines: resolve the tree through the public-name table, and map each live id through the same `public_id` the writer uses, before the lookup.\n\nTHE NUMBERS ARE BACK AND THEY MOVED. The DCC reads 54/76 = 71% where the last recorded audit said 54/72 = 75% — four operators appeared in the reference, so the denominator grew while the numerator did not. The engine reads 85/211 = 40%, unchanged in rate. 301 live operators are unjudged, and that is the real state the node-coverage campaign works against; the broken reader had been calling it 679.\n\nAND THE ROUND'S FIRST TEST WAS THE WRONG TEST. It asserted the **pin's** shape — that its keys are public — and a counterfactual that restored the broken lookup **passed** it, because the artifact was never what broke. A test of an artifact is not a test of its reader. Replaced with one that runs `report` over a synthetic tree and a synthetic pin and asserts the coverage line it prints; both halves of the fix now have a counterfactual that catches them.",
+      "publishable_changes_bullets": [
+        "tools/reference_census.py: report() resolves the tree through PUBLIC_TREE and maps every live operator id through public_id before looking it up in the pin.",
+        "tools/reference_census.py: the unregistered-name check maps through public_id too, so a sixth registration mechanism is still reported.",
+        "tools/reference_census.py selftest: report() is run over a synthetic tree and pin and its coverage line asserted, replacing a check that asserted the pin's shape and could not tell the fixed reader from the broken one."
+      ],
+      "publishable_verification_bullets": [
+        "the live census now prints coverage again: the DCC 54/76 = 71 percent, the engine 85/211 = 40, with 301 operators unjudged.",
+        "reference census --selftest: all checks passed; --check-pin unchanged at 679 judged, 0 problems.",
+        "two counterfactuals, both CAUGHT: restoring the live-tree lookup, and dropping the id mapping. The first version of the test passed the first of them, which is why it was replaced.",
+        "cargo test -p pinion-core -p pinion-node-graph --test reference_census: 4 + 99 green, so the bijection between the pin and each crate's proof table is unaffected."
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "301 unjudged operators is now visible and is not yet judged. That is the node-coverage campaign's actual denominator problem and it is a round of its own, not this one.",
+        "the DCC denominator moved 72 -> 76 while the numerator held, so the recorded 75 percent was stale as well as unreadable. The figure in CLAUDE.md is a tool output and is not hand-edited here; the next re-judgment reads it from the tool."
+      ]
+    },
     "Round 17": {
       "decision_summary": "Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)",
       "changes_bullets": [
