@@ -48,6 +48,7 @@
 
 pub mod action;
 pub mod assemble;
+pub mod chart;
 pub mod described;
 pub mod focus;
 pub mod grid;

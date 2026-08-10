@@ -47,6 +47,7 @@
 //! the resolved `lo` / `hi` / `visible` and any lookup `error`. See
 //! `tools/demos/r1545_category_axis.py`.
 
+use pinion_a11y::chart::chart_table_nodes;
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_chart::{
     Bar, BarChart, Categories, CategoryWindow, ChartStyle, DataPoint, LineChart, Series,
@@ -728,20 +729,37 @@ impl WidgetA11y for CategoryAxisView {
     /// reader is told which categories are in view — a thing the toolkit's
     /// category axis cannot report to anyone, sighted or not.
     fn access_node(state: &WindowState, _focused: Option<&str>) -> Vec<AccessNode> {
+        let names = axis_names(state.dense);
         let name = match (state.unresolved, state.window) {
-            (true, _) => "category window: not applied, all 12 months shown".to_string(),
-            (false, None) => "category window: all 12 months".to_string(),
+            (true, _) => format!(
+                "category window: not applied, all {} categories shown",
+                names.len()
+            ),
+            (false, None) => format!("category window: all {} categories", names.len()),
             (false, Some(w)) => format!(
-                "category window: {} to {}, {} of {} months",
-                MONTHS[w.lo()],
-                MONTHS[w.hi()],
+                "category window: {} to {}, {} of {} categories",
+                names[w.lo()],
+                names[w.hi()],
                 w.len(),
-                MONTHS.len()
+                names.len()
             ),
         };
         // The `focused` flag is stamped by the assembler (R1518), so this
         // binding does not compute one.
-        vec![AccessNode::new(WINDOW_TAG, AriaRole::Group).with_name(name)]
+        let mut nodes = vec![AccessNode::new(WINDOW_TAG, AriaRole::Group).with_name(name)];
+        // R1634 — and the CHART itself, one node per datum. The binding states
+        // the two names and the crate builds the topology: what was a single
+        // string to a screen reader is now a table a reader navigates, with a
+        // row for every category the picture may have had no room to label.
+        nodes.extend(chart_table_nodes(
+            &bar_chart(state.window, state.dense).access_table(
+                "Revenue by category",
+                "Category",
+                BAR_RECT,
+                &ChartStyle::default(),
+            ),
+        ));
+        nodes
     }
 }
 
@@ -948,7 +966,6 @@ mod tests {
     fn r1545_a11y_names_the_categories_in_view() {
         let nodes =
             CategoryAxisView::access_node(&state(Some(CategoryWindow::new(3, 5)), false), None);
-        assert_eq!(nodes.len(), 1);
         let name = nodes[0].name.clone().unwrap_or_default();
         assert!(name.contains("Apr to Jun"), "got {name}");
         assert!(name.contains("3 of 12"), "got {name}");
@@ -961,6 +978,34 @@ mod tests {
                 .unwrap_or_default()
                 .contains("all 12"),
             "the unwindowed axis says so too"
+        );
+
+        // ★ R1634 — and the CHART is here too, as a table rather than as a
+        // sentence. The windowed tree is strictly smaller because the window is
+        // the bound, and it still claims twelve rows because `aria-rowcount`
+        // states the whole extent the window is a window onto.
+        let windowed_rows = nodes.iter().filter(|n| n.role == AriaRole::Row).count();
+        let all_rows = all.iter().filter(|n| n.role == AriaRole::Row).count();
+        assert_eq!(all_rows, 13, "twelve months and a header row");
+        assert_eq!(windowed_rows, 4, "three months and a header row");
+        let table = nodes
+            .iter()
+            .find(|n| n.role == AriaRole::Table)
+            .expect("the chart publishes a table");
+        assert_eq!(
+            table.row_count,
+            Some(13),
+            "★ the window presents three and DECLARES twelve"
+        );
+        let cells: Vec<&str> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::Cell)
+            .filter_map(|n| n.name.as_deref())
+            .collect();
+        assert_eq!(cells.len(), 3, "one datum per visible month");
+        assert!(
+            cells[0].starts_with("Revenue by category: "),
+            "a cell names its series with its value: {cells:?}"
         );
     }
 }

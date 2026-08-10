@@ -6039,6 +6039,7 @@ dependencies = [
 name = "pinion-chart"
 version = "0.0.1"
 dependencies = [
+ "pinion-a11y",
  "pinion-core",
  "pinion-derive",
  "pinion-runtime",

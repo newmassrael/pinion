@@ -20,6 +20,10 @@ pinion-core = { path = "../pinion-core", version = "0.0.1" }
 # R1630 — `#[derive(VariantCensus)]`: the compile-time check that a
 # hand-written `ALL` vocabulary list still has one entry per variant.
 pinion-derive = { path = "../pinion-derive" }
+# R1634 — a chart answers its own AT tree (`access_table`). Pure data like
+# this crate: pinion-a11y depends on pinion-core and nothing else, so the
+# leaf-peer posture is unchanged and no cycle is possible.
+pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
 
 [dev-dependencies]
 # R1360 — TEST-ONLY. `build_fill` is layout-native: its root fills its slot

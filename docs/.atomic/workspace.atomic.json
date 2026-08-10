@@ -33536,6 +33536,62 @@
         "debt-axis-labels-are-never-thinned is CLOSED by this round; the analyzer audit table row that said only the 3D surface remained has been corrected"
       ]
     },
+    "R1634": {
+      "decision_summary": "a chart is a table to a reader who does not read pixels: `pinion_a11y::chart` projects a chart as `table` / `row` / `columnheader` / `rowheader` / `cell`, and `BarChart::access_table` / `ScatterChart::access_table` answer it -- so what was ONE `AccessNode` carrying whatever string the inspect readout happened to build is now a structure a screen reader navigates. THE REFERENCES HAVE NOTHING HERE, AND IT WAS MEASURED RATHER THAN ASSUMED: the toolkit's three charting modules at 6.11 -- its 2D charts, the newer graphs module replacing them, and the 3D data visualisation one -- contain no accessibility integration at all between them, not one call into the platform layer the rest of that toolkit is wired through, and a chart view there reaches the platform as a single scroll-area object. The DCC and the engine have no charting. So for once there was no floor to clear and the shape had to be ARGUED. It is a TABLE for three reasons: that is what a chart's data is (points down, series across); WAI-ARIA has no chart role and its graphics module's roles are dropped by the platform bridges, so a role nothing maps announces nothing; and `table`/`row`/`cell` are already in this crate's vocabulary, already lowered by the tree builder, and already navigable with commands users know. Rows are points and columns are series because a chart usually has many points and few series -- that keeps the COLUMN count small, which is what a table reader moves across, and makes reading down a column reading one series in order. THE HEADLINE IS THE CONTRAST WITH R1633. That round thins axis labels when there are more of them than room; this one names every row from the DATA, and the demo asserts both numbers in the same frame: 8 labels painted, 30 rows announced. Thinning is a fact about pixels and a reader who is not reading pixels is not subject to it -- the two reports are consistent rather than in conflict, because `labels_omitted` says what the PICTURE left off and the table says what the DATA has. HOW MANY NODES was the question the debt file said had to be settled first, and its own answer -- that ten thousand marks would collapse the tree -- was an untested guess, so it is not designed around. The bound is the chart's own window and nothing else: `aria-rowcount` and `aria-setsize` state the full extent while the present rows are what was drawn, which is exactly the model `virtual_list` established for a windowed list, and the tree's standing rule is that the AT tree exposes what the paint exposes. A cell carries its series name WITH its value, because a number announced alone has no subject and a reader crossing a row of four series must hear which one each figure belongs to; and it resolves its bounds to the MARK it was drawn as, so a touch explorer or a magnifier lands on the bar rather than on the chart. A datum drawn inside a shared path -- a line chart's samples -- carries no tag rather than borrowing one, which is stated as the reason line charts are not among the two consumers here. The assembler sits in `pinion-a11y` beside `grid` and `virtual_list` because that is where a11y topology lives in this tree, not because two consumers had duplicated it; bar and scatter are its first two, and scatter is there specifically because a single-series bar chart cannot exercise the column axis at all.",
+      "changes_bullets": [
+        "pinion_a11y::chart — ChartTable / ChartColumn / ChartRow / ChartCell + chart_table_nodes",
+        "BarChart::access_table — one row per visible slot, the window as the bound, the extent declared",
+        "ScatterChart::access_table — the multi-series case: points joined across series by their x",
+        "a cell names its series with its value and resolves its bounds to the mark it was drawn as",
+        "row names come from the DATA, so an axis R1633 thinned still announces every category",
+        "hello-category-axis emits the chart's table beside its window group",
+        "tools/demos/r1634_a_chart_is_a_table_to_a_reader.py — 8 painted names, 30 announced rows"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 286+17 pass (5 new); pinion-chart 440 pass (2 new)",
+        "blast radius 230 packages, 261 test targets: all pass",
+        "cargo clippy over pinion-a11y / pinion-chart / hello-category-axis --all-targets: clean",
+        "cargo doc --no-deps --document-private-items: clean; reference-names ratchet 0 after restating two vendor names as roles",
+        "demo r1634 PASS; r1633 and r1545 (the neighbouring rounds on the same example) PASS",
+        "five counterfactuals, all CAUGHT: rowcount is the window, a cell drops its series name, a cell never points at its mark, rows lose their names, a window declares no extent",
+        "scene/access over the wire: 41 nodes for twelve months, 95 for thirty endpoints, one table each"
+      ],
+      "impact_refs": [
+        "5.40",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "carry 0 for the code. One new debt registered as a file: debt-a-line-chart-has-no-per-sample-mark -- a line chart draws its samples as one path, so a per-sample cell would have no rectangle to point at; the two consumers here are the charts whose data IS drawn per datum, and the reason line/timeline/donut are not among them is structural rather than unfinished",
+        "debt-a-chart-is-one-node-to-assistive-tech is CLOSED by this round"
+      ],
+      "publishable_decision_summary": "a chart is a table to a reader who does not read pixels: `pinion_a11y::chart` projects a chart as `table` / `row` / `columnheader` / `rowheader` / `cell`, and `BarChart::access_table` / `ScatterChart::access_table` answer it -- so what was ONE `AccessNode` carrying whatever string the inspect readout happened to build is now a structure a screen reader navigates. THE REFERENCES HAVE NOTHING HERE, AND IT WAS MEASURED RATHER THAN ASSUMED: the toolkit's three charting modules at 6.11 -- its 2D charts, the newer graphs module replacing them, and the 3D data visualisation one -- contain no accessibility integration at all between them, not one call into the platform layer the rest of that toolkit is wired through, and a chart view there reaches the platform as a single scroll-area object. The DCC and the engine have no charting. So for once there was no floor to clear and the shape had to be ARGUED. It is a TABLE for three reasons: that is what a chart's data is (points down, series across); WAI-ARIA has no chart role and its graphics module's roles are dropped by the platform bridges, so a role nothing maps announces nothing; and `table`/`row`/`cell` are already in this crate's vocabulary, already lowered by the tree builder, and already navigable with commands users know. Rows are points and columns are series because a chart usually has many points and few series -- that keeps the COLUMN count small, which is what a table reader moves across, and makes reading down a column reading one series in order. THE HEADLINE IS THE CONTRAST WITH R1633. That round thins axis labels when there are more of them than room; this one names every row from the DATA, and the demo asserts both numbers in the same frame: 8 labels painted, 30 rows announced. Thinning is a fact about pixels and a reader who is not reading pixels is not subject to it -- the two reports are consistent rather than in conflict, because `labels_omitted` says what the PICTURE left off and the table says what the DATA has. HOW MANY NODES was the question the debt file said had to be settled first, and its own answer -- that ten thousand marks would collapse the tree -- was an untested guess, so it is not designed around. The bound is the chart's own window and nothing else: `aria-rowcount` and `aria-setsize` state the full extent while the present rows are what was drawn, which is exactly the model `virtual_list` established for a windowed list, and the tree's standing rule is that the AT tree exposes what the paint exposes. A cell carries its series name WITH its value, because a number announced alone has no subject and a reader crossing a row of four series must hear which one each figure belongs to; and it resolves its bounds to the MARK it was drawn as, so a touch explorer or a magnifier lands on the bar rather than on the chart. A datum drawn inside a shared path -- a line chart's samples -- carries no tag rather than borrowing one, which is stated as the reason line charts are not among the two consumers here. The assembler sits in `pinion-a11y` beside `grid` and `virtual_list` because that is where a11y topology lives in this tree, not because two consumers had duplicated it; bar and scatter are its first two, and scatter is there specifically because a single-series bar chart cannot exercise the column axis at all.",
+      "publishable_changes_bullets": [
+        "pinion_a11y::chart — ChartTable / ChartColumn / ChartRow / ChartCell + chart_table_nodes",
+        "BarChart::access_table — one row per visible slot, the window as the bound, the extent declared",
+        "ScatterChart::access_table — the multi-series case: points joined across series by their x",
+        "a cell names its series with its value and resolves its bounds to the mark it was drawn as",
+        "row names come from the DATA, so an axis R1633 thinned still announces every category",
+        "hello-category-axis emits the chart's table beside its window group",
+        "tools/demos/r1634_a_chart_is_a_table_to_a_reader.py — 8 painted names, 30 announced rows"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 286+17 pass (5 new); pinion-chart 440 pass (2 new)",
+        "blast radius 230 packages, 261 test targets: all pass",
+        "cargo clippy over pinion-a11y / pinion-chart / hello-category-axis --all-targets: clean",
+        "cargo doc --no-deps --document-private-items: clean; reference-names ratchet 0 after restating two vendor names as roles",
+        "demo r1634 PASS; r1633 and r1545 (the neighbouring rounds on the same example) PASS",
+        "five counterfactuals, all CAUGHT: rowcount is the window, a cell drops its series name, a cell never points at its mark, rows lose their names, a window declares no extent",
+        "scene/access over the wire: 41 nodes for twelve months, 95 for thirty endpoints, one table each"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry 0 for the code. One new debt registered as a file: debt-a-line-chart-has-no-per-sample-mark -- a line chart draws its samples as one path, so a per-sample cell would have no rectangle to point at; the two consumers here are the charts whose data IS drawn per datum, and the reason line/timeline/donut are not among them is structural rather than unfinished",
+        "debt-a-chart-is-one-node-to-assistive-tech is CLOSED by this round"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -42,6 +42,7 @@
 
 use core::fmt::Write as _;
 
+use pinion_a11y::chart::{ChartCell, ChartColumn, ChartRow, ChartTable};
 use pinion_core::Scene;
 use pinion_core::derivation::DerivationSet;
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
@@ -62,6 +63,7 @@ use crate::scale::{AxisKind, Categories};
 use crate::series::{DataPoint, Series, in_domain, value_bounds};
 use crate::style::ChartStyle;
 use crate::ticks::TickFormat;
+use crate::ticks::format_si;
 
 /// A scatter chart: one or more [`Series`] drawn as filled point marks with
 /// nice axes, gridlines, labels, and a legend, plus an optional scrub inspector.
@@ -144,6 +146,80 @@ impl ScatterChart {
     pub fn with_color_domain(mut self, lo: f64, hi: f64) -> Self {
         self.color.pin_domain(lo, hi);
         self
+    }
+
+    /// R1634 §5.40 — this chart's data as an accessible **table**: one row per
+    /// x position, one column per series.
+    ///
+    /// The multi-series case the bar chart cannot exercise. Points are joined
+    /// across series by their **x**, so a reader moving across a row hears
+    /// every series' value at one position — which is the comparison a scatter
+    /// is drawn for and the one a per-series list of numbers cannot make.
+    ///
+    /// A series with no sample at a position leaves that cell **absent** rather
+    /// than zero: the two are different facts and a table that conflated them
+    /// would announce a measurement nobody took.
+    ///
+    /// `x_name` names the x axis (the corner header). Hidden series are left
+    /// out entirely — a series whose marks are not drawn has nothing for a
+    /// cell to point at, and announcing it would disagree with the picture.
+    #[must_use]
+    pub fn access_table(&self, name: &str, x_name: &str, y_name: &str) -> ChartTable {
+        let shown: Vec<(usize, &Series)> = self
+            .series
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.visible)
+            .collect();
+        // The x positions any shown series takes, ascending and deduplicated —
+        // the row axis. Sorted by value rather than by first appearance so the
+        // table reads in the order the picture does.
+        let mut xs: Vec<f64> = shown
+            .iter()
+            .flat_map(|(_, s)| s.points.iter().map(|p| p.x))
+            .filter(|x| x.is_finite())
+            .collect();
+        xs.sort_by(f64::total_cmp);
+        xs.dedup_by(|a, b| (*a - *b).abs() < f64::EPSILON);
+
+        let rows = xs
+            .iter()
+            .enumerate()
+            .map(|(row, &x)| ChartRow {
+                tag: format!("{}.a11y.r{row}", self.tag_prefix),
+                name: format_si(x),
+                cells: shown
+                    .iter()
+                    .map(|(index, series)| {
+                        let at = series
+                            .points
+                            .iter()
+                            .position(|p| (p.x - x).abs() < f64::EPSILON);
+                        ChartCell {
+                            tag: at.map(|j| format!("{}.point.{index}.{j}", self.tag_prefix)),
+                            value: at.map_or_else(String::new, |j| {
+                                format!("{y_name} {}", format_si(series.points[j].y))
+                            }),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        ChartTable {
+            tag: self.tag_prefix.clone(),
+            name: name.to_owned(),
+            axis_name: x_name.to_owned(),
+            columns: shown
+                .iter()
+                .map(|(index, series)| ChartColumn {
+                    tag: format!("{}.a11y.series.{index}", self.tag_prefix),
+                    name: series.name.clone(),
+                })
+                .collect(),
+            rows,
+            set_size: None,
+        }
     }
 
     /// Override the categorical series palette.

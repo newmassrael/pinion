@@ -83,6 +83,7 @@
 //! the crate-level "Known limitations": the `build_fill` measured-rect seam is
 //! Vello-only, and `Scene::Path` (the axes / gridlines) does not render on TUI.
 
+use pinion_a11y::chart::{ChartCell, ChartColumn, ChartRow, ChartTable};
 use pinion_core::Scene;
 use pinion_core::derivation::DerivationSet;
 use pinion_core::scene::{ContainerNode, Rect};
@@ -98,6 +99,7 @@ use crate::palette::CategoricalPalette;
 use crate::plot::{axis_format, axis_ticks};
 use crate::scale::{Categories, CategoryScale, CategoryWindow, LinearScale, ValueScale};
 use crate::style::ChartStyle;
+use crate::ticks::format_si;
 use crate::ticks::{TickFormat, format_axis_tick, nice_ticks, tick_step};
 
 /// The fraction of each bar's slot left empty as the inter-bar gap (so
@@ -249,6 +251,60 @@ impl BarChart {
     #[must_use]
     pub fn visible_categories(&self, rect: Rect, style: &ChartStyle) -> Option<CategoryWindow> {
         self.geom(rect, style).x.visible()
+    }
+
+    /// R1634 §5.40 — this chart's data as an accessible **table**: one row per
+    /// visible slot, one column for the series.
+    ///
+    /// The `pinion-a11y` assembler turns it into the `table` / `row` /
+    /// `columnheader` / `rowheader` / `cell` nodes an AT navigates, so a
+    /// consumer states its two names and composes rather than building a
+    /// topology by hand. `name` is what the chart is called and `axis_name`
+    /// what its categories ARE ("Month", "Endpoint") — the corner header, so a
+    /// reader hears the subject before hearing thirty of them.
+    ///
+    /// ★ The row names come from the **bars**, not from the painted labels:
+    /// R1633 draws fewer names than there are slots when they do not fit, and
+    /// that is a fact about pixels. A reader who is not reading pixels hears
+    /// every one. The window is the only thing that bounds this, and when one
+    /// is set [`ChartTable::set_size`] carries the full count.
+    #[must_use]
+    pub fn access_table(
+        &self,
+        name: &str,
+        axis_name: &str,
+        rect: Rect,
+        style: &ChartStyle,
+    ) -> ChartTable {
+        let window = self.visible_categories(rect, style);
+        let visible: Vec<usize> = window.as_ref().map_or_else(
+            || (0..self.bars.len()).collect(),
+            |w| (w.lo()..=w.hi()).filter(|i| *i < self.bars.len()).collect(),
+        );
+        ChartTable {
+            tag: self.tag_prefix.clone(),
+            name: name.to_owned(),
+            axis_name: axis_name.to_owned(),
+            // One series, and it is the chart: a bar chart has no second column
+            // to tell this one from, so naming it anything else would announce
+            // a distinction that is not there.
+            columns: vec![ChartColumn {
+                tag: format!("{}.a11y.series", self.tag_prefix),
+                name: name.to_owned(),
+            }],
+            rows: visible
+                .iter()
+                .map(|&i| ChartRow {
+                    tag: format!("{}.a11y.r{i}", self.tag_prefix),
+                    name: self.bars[i].label.clone(),
+                    cells: vec![ChartCell {
+                        tag: Some(format!("{}.bar.{i}", self.tag_prefix)),
+                        value: format_si(self.bars[i].value),
+                    }],
+                })
+                .collect(),
+            set_size: (visible.len() < self.bars.len()).then_some(self.bars.len()),
+        }
     }
 
     /// Override the default bar-colour palette (a bar's own
@@ -826,6 +882,74 @@ mod tests {
     use crate::scale::index_value;
     use crate::scene_probe::{find, tags, text_of};
     use pinion_core::scene::Rect;
+
+    /// ★ R1634 — the projection names every VISIBLE slot from the data and
+    /// points each cell at the bar it was drawn as.
+    ///
+    /// Asserted against a window as well as without one, because an unwindowed
+    /// fixture would pass whether or not the window was read at all.
+    #[test]
+    fn r1634_the_access_table_is_the_visible_slots_named_from_the_data() {
+        let bars: Vec<Bar> = (0..10)
+            .map(|i| Bar::new(format!("/endpoint-{i}"), f64::from(i) * 10.0))
+            .collect();
+        let chart = BarChart::new(bars).with_tag_prefix("bars");
+        let style = ChartStyle::default();
+        let rect = Rect::new(0, 0, 600, 300);
+
+        let all = chart.access_table("Errors", "Endpoint", rect, &style);
+        assert_eq!(all.rows.len(), 10, "every slot is a row");
+        assert_eq!(all.set_size, None, "and nothing is a window onto anything");
+        assert_eq!(all.rows[0].name, "/endpoint-0");
+        assert_eq!(all.rows[9].name, "/endpoint-9");
+        assert_eq!(
+            all.rows[3].cells[0].tag.as_deref(),
+            Some("bars.bar.3"),
+            "the cell points at the bar it was drawn as"
+        );
+        assert_eq!(all.columns.len(), 1);
+        assert_eq!(all.axis_name, "Endpoint");
+
+        let windowed = chart
+            .x_window(CategoryWindow::new(2, 5))
+            .access_table("Errors", "Endpoint", rect, &style);
+        assert_eq!(windowed.rows.len(), 4, "the window is the bound");
+        assert_eq!(windowed.rows[0].name, "/endpoint-2");
+        assert_eq!(
+            windowed.set_size,
+            Some(10),
+            "★ and the whole extent is declared, so an AT does not announce \
+             four endpoints where there are ten"
+        );
+    }
+
+    /// ★ R1634 — a THINNED axis loses labels and keeps rows.
+    ///
+    /// The discriminator is in the same test: the painted label count is read
+    /// off the scene and is strictly smaller, so "the table has thirty" is a
+    /// statement about the two disagreeing on purpose rather than about a
+    /// fixture where nothing was thinned.
+    #[test]
+    fn r1634_a_thinned_axis_loses_labels_and_keeps_rows() {
+        let bars: Vec<Bar> = (0..30)
+            .map(|i| Bar::new(format!("/endpoint-{i}"), f64::from(i) + 1.0))
+            .collect();
+        let chart = BarChart::new(bars).with_tag_prefix("bars");
+        let style = ChartStyle::default();
+        let rect = Rect::new(0, 0, 500, 300);
+
+        let scene = chart.build(rect, &style);
+        let painted = crate::scene_probe::count_prefix(&scene, "bars.xlabel.");
+        assert!(painted < 30, "the picture thinned: {painted}");
+
+        let table = chart.access_table("Errors", "Endpoint", rect, &style);
+        assert_eq!(
+            table.rows.len(),
+            30,
+            "★ and the table did not: {painted} names drawn, 30 announced"
+        );
+        assert_eq!(table.rows[29].name, "/endpoint-29");
+    }
 
     fn three() -> Vec<Bar> {
         vec![
