@@ -845,6 +845,18 @@ impl ExternalIntrospect for TreeSelectExternal {
                     SchemaField::new("selection", "json"),
                     SchemaField::new("count", "int"),
                     SchemaField::new("anchor", "string"),
+                    // R1637 — the nine verbs the comment above already lists.
+                    // Prose in a doc comment is not a declaration: the three
+                    // reads were discoverable and the whole write half was not.
+                    SchemaField::action("select", "json"),
+                    SchemaField::action("toggle", "json"),
+                    SchemaField::action("extend_to", "json"),
+                    SchemaField::action("select_all", "json"),
+                    SchemaField::action("clear", "json"),
+                    SchemaField::action("delete_selected", "int"),
+                    SchemaField::action("rename_selected", "int"),
+                    SchemaField::action("undo", "bool"),
+                    SchemaField::action("redo", "bool"),
                 ]
             },
         )

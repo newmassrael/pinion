@@ -154,9 +154,9 @@ impl ExternalIntrospect for StatusBarExternal {
                     SchemaField::new("mode_index", "int"),
                     SchemaField::new("encoding", "string"),
                     SchemaField::new("message", "string"),
-                    SchemaField::new("cycle_mode", "json"),
-                    SchemaField::new("cycle_encoding", "json"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("cycle_mode", "json"),
+                    SchemaField::action("cycle_encoding", "json"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

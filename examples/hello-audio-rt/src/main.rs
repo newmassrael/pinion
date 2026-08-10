@@ -125,6 +125,7 @@ use pinion_audio::{
     AudioClip, AudioControllerExternal, AudioEngine, AudioEngineExternal, AudioRenderer,
     decode_compressed, realtime_channel,
 };
+use pinion_core::external::SchemaField;
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
     forward_intents,
@@ -259,10 +260,25 @@ impl RtAudioDemoExternal {
     }
 }
 
+/// The one verb this harness adds: pump exactly N render blocks synchronously.
+const OWN_SCHEMA_FIELDS: [SchemaField; 1] = [SchemaField::action("render", "null")];
+
+/// R1637 — composed with the RT surface's own declaration rather than
+/// forwarding it, so the harness verb is on the wire with everything else.
+static SCHEMA_FIELDS: [SchemaField;
+    OWN_SCHEMA_FIELDS.len() + pinion_audio::external::RT_EXTERNAL_FIELDS.len()] =
+    SchemaField::concat(
+        &OWN_SCHEMA_FIELDS,
+        pinion_audio::external::RT_EXTERNAL_FIELDS,
+    );
+
 impl ExternalIntrospect for RtAudioDemoExternal {
     fn schema(&self) -> IntrospectSchema {
-        // The wire contract is the inner RT surface's, verbatim.
-        self.inner.schema()
+        // R1637 — the inner RT surface's contract PLUS this harness's own verb.
+        // It used to forward the inner schema verbatim, which made `render` —
+        // the verb the whole deterministic demo is built on — callable and
+        // undiscoverable.
+        IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -358,9 +374,19 @@ impl EngineDemoExternal {
     }
 }
 
+/// R1637 — the retained engine's contract PLUS this harness's `render` verb,
+/// the mirror of [`SCHEMA_FIELDS`] on the RT side. Forwarding `inner.schema()`
+/// verbatim left the verb the demo is stepped by undeclared.
+static ENGINE_SCHEMA_FIELDS: [SchemaField;
+    OWN_SCHEMA_FIELDS.len() + pinion_audio::external::ENGINE_EXTERNAL_FIELDS.len()] =
+    SchemaField::concat(
+        &OWN_SCHEMA_FIELDS,
+        pinion_audio::external::ENGINE_EXTERNAL_FIELDS,
+    );
+
 impl ExternalIntrospect for EngineDemoExternal {
     fn schema(&self) -> IntrospectSchema {
-        self.inner.schema()
+        IntrospectSchema::new(&ENGINE_SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

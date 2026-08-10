@@ -354,8 +354,8 @@ impl ExternalIntrospect for SelRowExternal {
                         "int",
                         const { &[SchemaArg::index("i", "count")] },
                     ),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("key", "string"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("key", "string"),
                 ]
             },
         )

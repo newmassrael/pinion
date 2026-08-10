@@ -196,37 +196,52 @@ struct RtVoiceInfo<'a> {
 // intents — the RPC-only read-write introspection skeleton.
 pinion_core::intent_query_external_impl!(AudioEngineExternal);
 
+/// R1637 §5.15 — every path the retained single-thread engine answers, as a
+/// `const` a WRAPPER can compose with [`SchemaField::concat`].
+///
+/// The RT surface next door has had [`RT_EXTERNAL_FIELDS`] since R1501 for
+/// exactly this reason; this one did not, so `hello-audio-rt`'s harness could
+/// only forward the declaration verbatim and its own `render` verb — the one
+/// the whole deterministic demo is stepped by — was callable and unpublished.
+pub const ENGINE_EXTERNAL_FIELDS: &[SchemaField] = &[
+    SchemaField::new("voice_count", "int"),
+    SchemaField::new("sample_rate", "int"),
+    SchemaField::new("master_gain", "float"),
+    SchemaField::new("voices", "json"),
+    SchemaField::new("clips", "json"),
+    SchemaField::new("listener", "json"),
+    SchemaField::new("attenuation", "json"),
+    // R1637 — the action channel, declared. These four answered
+    // over the wire from R1274 onward while `$schema` listed
+    // only the reads, so an agent could observe this engine and
+    // had to be TOLD how to drive it. `send` is the keybinding
+    // forwarder's verb (a clip name, or the reserved
+    // `stop_all`); it is on the wire, so it is declared here.
+    SchemaField::action("send", "int"),
+    SchemaField::action("play", "int"),
+    SchemaField::action("stop", "bool"),
+    SchemaField::action("stop_all", "null"),
+    // Per-voice writes (the read twins are the `voices` array fields).
+    SchemaField::parametric(
+        "voice.<id>.gain",
+        "float",
+        const { &[SchemaArg::key("id", "int", "voices")] },
+    ),
+    SchemaField::parametric(
+        "voice.<id>.pan",
+        "float",
+        const { &[SchemaArg::key("id", "int", "voices")] },
+    ),
+    SchemaField::parametric(
+        "voice.<id>.position",
+        "json",
+        const { &[SchemaArg::key("id", "int", "voices")] },
+    ),
+];
+
 impl ExternalIntrospect for AudioEngineExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(
-            const {
-                &[
-                    SchemaField::new("voice_count", "int"),
-                    SchemaField::new("sample_rate", "int"),
-                    SchemaField::new("master_gain", "float"),
-                    SchemaField::new("voices", "json"),
-                    SchemaField::new("clips", "json"),
-                    SchemaField::new("listener", "json"),
-                    SchemaField::new("attenuation", "json"),
-                    // Per-voice writes (the read twins are the `voices` array fields).
-                    SchemaField::parametric(
-                        "voice.<id>.gain",
-                        "float",
-                        const { &[SchemaArg::key("id", "int", "voices")] },
-                    ),
-                    SchemaField::parametric(
-                        "voice.<id>.pan",
-                        "float",
-                        const { &[SchemaArg::key("id", "int", "voices")] },
-                    ),
-                    SchemaField::parametric(
-                        "voice.<id>.position",
-                        "json",
-                        const { &[SchemaArg::key("id", "int", "voices")] },
-                    ),
-                ]
-            },
-        )
+        IntrospectSchema::new(ENGINE_EXTERNAL_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -512,6 +527,24 @@ pub const RT_EXTERNAL_FIELDS: &[SchemaField] = &[
     // The full-pool policy, read from the control-thread mirror; driven
     // via `invoke set_voice_policy`.
     SchemaField::new("voice_policy", "text"),
+    // R1637 — the driving verbs, declared. The type doc above this list
+    // described all ten of them in PROSE ("**invoke** drives the audio thread
+    // over the command queue: `play` a named clip, `stop` a voice id, …") while
+    // the declaration listed only the reads — so the one surface §2 #2 makes an
+    // agent's primary path published half the contract, and the other half was
+    // readable only by opening this file. A queued command answers `null`
+    // rather than a matched-bool: the control thread cannot know synchronously
+    // whether the audio thread will match, and a full ring is `Rejected`.
+    SchemaField::action("play", "int"),
+    SchemaField::action("stop", "null"),
+    SchemaField::action("stop_all", "null"),
+    SchemaField::action("set_master_gain", "null"),
+    SchemaField::action("set_voice_gain", "null"),
+    SchemaField::action("set_voice_pan", "null"),
+    SchemaField::action("set_voice_position", "null"),
+    SchemaField::action("set_listener", "null"),
+    SchemaField::action("set_attenuation", "null"),
+    SchemaField::action("set_voice_policy", "null"),
 ];
 
 impl ExternalIntrospect for AudioControllerExternal {

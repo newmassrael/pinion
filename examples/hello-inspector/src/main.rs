@@ -1575,6 +1575,13 @@ impl ExternalIntrospect for InspectorExternal {
                     // "details"); `prop_cursor` reads the active Details row (clamped);
                     // `focus_property` places the cursor at a row (and focuses Details).
                     SchemaField::new("focus_region", "string"),
+                    // R1637 — the SETTER has its own address. One name held
+                    // a readable slot and a verb, and a schema field carries
+                    // one channel, so whichever was declared made the other
+                    // undiscoverable. The reference splits the same way (a
+                    // property and its `setX()` live in different meta-object
+                    // namespaces).
+                    SchemaField::action("set_focus_region", "string"),
                     SchemaField::new("prop_cursor", "int"),
                     SchemaField::action("focus_property", "int"),
                     // R1249 — the inline absolute type-in editor surface (§2 #2: the
@@ -1801,7 +1808,7 @@ impl ExternalIntrospect for InspectorExternal {
             },
             // R1224 — move the keyboard cursor to a pane (the `Tab`-toggle twin);
             // an unknown token is a typed Rejected, never a silent default.
-            "focus_region" => match args {
+            "set_focus_region" => match args {
                 IntrospectValue::Text(token) => {
                     let region = FocusRegion::from_wire(&token).ok_or_else(|| {
                         InvokeError::rejected(format!(
@@ -2681,7 +2688,7 @@ impl InspectorView {
         if key == "Tab" {
             if let Some(intro) = node.handle.introspect_mut() {
                 let token = region.toggled().wire().to_owned();
-                let _ = intro.invoke("focus_region", IntrospectValue::Text(token));
+                let _ = intro.invoke("set_focus_region", IntrospectValue::Text(token));
             }
             return true;
         }
@@ -4238,8 +4245,11 @@ mod tests {
             "boot pane is the object list"
         );
         assert_eq!(
-            e.invoke("focus_region", IntrospectValue::Text("details".to_owned()))
-                .unwrap(),
+            e.invoke(
+                "set_focus_region",
+                IntrospectValue::Text("details".to_owned())
+            )
+            .unwrap(),
             IntrospectValue::Text("details".to_owned()),
             "the setter returns the read-back region"
         );
@@ -4248,12 +4258,16 @@ mod tests {
             Some(IntrospectValue::Text("details".to_owned()))
         );
         assert!(
-            e.invoke("focus_region", IntrospectValue::Text("bogus".to_owned()))
-                .is_err(),
+            e.invoke(
+                "set_focus_region",
+                IntrospectValue::Text("bogus".to_owned())
+            )
+            .is_err(),
             "an unknown region token is a typed Rejected, not a silent default"
         );
         assert!(
-            e.invoke("focus_region", IntrospectValue::Int(1)).is_err(),
+            e.invoke("set_focus_region", IntrospectValue::Int(1))
+                .is_err(),
             "a non-string region arg is a TypeMismatch"
         );
     }
@@ -4292,8 +4306,11 @@ mod tests {
         let mut e = ext();
         // Boot: object 0 selected, region Objects, no property cursor yet.
         assert_eq!(e.query("prop_cursor"), Some(IntrospectValue::Null));
-        e.invoke("focus_region", IntrospectValue::Text("details".to_owned()))
-            .unwrap();
+        e.invoke(
+            "set_focus_region",
+            IntrospectValue::Text("details".to_owned()),
+        )
+        .unwrap();
         assert_eq!(
             e.query("prop_cursor"),
             Some(IntrospectValue::Int(0)),

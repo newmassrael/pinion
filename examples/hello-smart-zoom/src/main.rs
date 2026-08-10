@@ -236,7 +236,7 @@ impl ExternalIntrospect for PageView {
                     // The modifiers held at the last gesture, as a wire token.
                     SchemaField::new("last_mods", "string"),
                     // Restore fit-to-page — the AI-first peer of a zoom reset.
-                    SchemaField::new("reset", "string"),
+                    SchemaField::action("reset", "string"),
                 ]
             },
         )

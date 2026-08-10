@@ -386,7 +386,7 @@ impl ExternalIntrospect for PlotZoomExternal {
                     SchemaField::new("low", "float"),
                     SchemaField::new("high", "float"),
                     SchemaField::new("span", "float"),
-                    SchemaField::new("reset", "bool"),
+                    SchemaField::action("reset", "bool"),
                 ]
             },
         )

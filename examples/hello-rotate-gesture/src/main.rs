@@ -253,7 +253,7 @@ impl ExternalIntrospect for RotationGizmo {
                     // The modifiers held at the last rotation, as a wire token (e.g. "s").
                     SchemaField::new("last_mods", "string"),
                     // Reset the rotation — the AI-first peer of a snap-to-zero.
-                    SchemaField::new("reset", "string"),
+                    SchemaField::action("reset", "string"),
                 ]
             },
         )

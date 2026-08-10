@@ -405,9 +405,9 @@ impl ExternalIntrospect for TrayExternal {
                         "bool",
                         const { &[SchemaArg::open("id", "int")] },
                     ),
-                    SchemaField::new("activate", "json"),
-                    SchemaField::new("menu_item", "string"),
-                    SchemaField::new("republish", "json"),
+                    SchemaField::action("activate", "json"),
+                    SchemaField::action("menu_item", "string"),
+                    SchemaField::action("republish", "json"),
                 ]
             },
         )

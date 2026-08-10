@@ -57,7 +57,7 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    forward_intents,
+    SchemaField, forward_intents,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
@@ -219,9 +219,27 @@ fn slot_name(args: &IntrospectValue) -> Result<String, InvokeError> {
     }
 }
 
+/// The two verbs this wrapper adds on top of the crate surface.
+const OWN_SCHEMA_FIELDS: [SchemaField; 2] = [
+    SchemaField::action("save_slot", "json"),
+    SchemaField::action("load_slot", "json"),
+];
+
+/// R1637 — the wrapper's contract, composed. `schema()` used to forward
+/// `self.inner.schema()` unchanged, so the two verbs this file exists for were
+/// callable and absent from the declaration — the shape R1501 gave
+/// [`SchemaField::concat`] to end, here in its purest form: a wrapper whose own
+/// reason for existing was undiscoverable.
+static SCHEMA_FIELDS: [SchemaField;
+    OWN_SCHEMA_FIELDS.len() + pinion_narrative::vn::external::SCHEMA_FIELDS.len()] =
+    SchemaField::concat(
+        &OWN_SCHEMA_FIELDS,
+        pinion_narrative::vn::external::SCHEMA_FIELDS,
+    );
+
 impl ExternalIntrospect for VnSaveDemoExternal {
     fn schema(&self) -> IntrospectSchema {
-        self.inner.schema()
+        IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

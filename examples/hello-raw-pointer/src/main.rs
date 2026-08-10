@@ -786,9 +786,9 @@ impl ExternalIntrospect for RawPointerSink {
                     SchemaField::new("log", "string"),
                     // The router pointer boundary (Leave / Cancel clear the live
                     // position when the pointer leaves the pane).
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                     // Reset the log — the AI-first peer of clearing the pane.
-                    SchemaField::new("clear", "string"),
+                    SchemaField::action("clear", "string"),
                 ]
             },
         )

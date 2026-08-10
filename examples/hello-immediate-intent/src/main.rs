@@ -304,7 +304,7 @@ impl ExternalIntrospect for BouncingBallDriver {
                     SchemaField::new("velocity", "float"),
                     SchemaField::new("bounces", "int"),
                     SchemaField::new("clicked", "bool"),
-                    SchemaField::new("reset", "int"),
+                    SchemaField::action("reset", "int"),
                     SchemaField::new("last_click_x", "float"),
                     SchemaField::new("last_click_y", "float"),
                 ]
@@ -723,7 +723,10 @@ mod r827_immediate_intent_tests {
                 SchemaField::new("clicked", "bool"),
                 // R1481 — the action channel is declared, not just implemented:
                 // a channel an agent cannot discover is one it cannot use.
-                SchemaField::new("reset", "int"),
+                // R1637 — and declared ON that channel: until R1504 there
+                // was no constructor that could say so, so this said
+                // "readable" while meaning "callable".
+                SchemaField::action("reset", "int"),
                 SchemaField::new("last_click_x", "float"),
                 SchemaField::new("last_click_y", "float"),
             ],

@@ -470,8 +470,8 @@ impl ExternalIntrospect for ChipDeleteExternal {
                         "string",
                         const { &[SchemaArg::open("id", "int")] },
                     ),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("delete", "int"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("delete", "int"),
                 ]
             },
         )

@@ -60,25 +60,40 @@ pub const SCHEMA_PATH: &str = "$schema";
 /// any other path reads the value, or fails [`QueryError::UnknownIntrospectPath`].
 /// One site so the two branches cannot diverge on discovery support — a
 /// new reserved path is handled for both at once.
+/// R1637 §2 #2 §2 #7 — and the declaration is asked **first**, exactly as it is
+/// on the action channel ([`mod@crate::invoke`]'s `invoke_declared`).
+///
+/// R1566 consulted it only after the read came back empty, so it could explain
+/// a miss and could not prevent a hit: a path the surface answered and never
+/// published was readable, and nothing in the workspace could tell it apart
+/// from one that had been declared. Measured across the tree at R1637 the
+/// read channel had drifted far less than the action channel had — two paths,
+/// against 123 — but one of the two was
+/// `pinion_widget_paint::dock`'s `lifecycle`, whose own doc calls it "surfaced
+/// as scene-as-data via `query("lifecycle")` (§2 #7)" while `$schema` did not
+/// mention it. A surface cannot be scene-as-data through a path the scene's
+/// own contract omits.
+///
+/// The asymmetry R1566 named is preserved and now falls out of the order rather
+/// than being special-cased: a declared parametric family whose index addresses
+/// nothing is still `UnknownIntrospectPath`, because the gate passes (the
+/// template matches) and the surface then answers `None`.
 fn introspect_or_schema(
     intro: &dyn ExternalIntrospect,
     introspect_path: &str,
 ) -> Result<IntrospectValue, QueryError> {
     if introspect_path == SCHEMA_PATH {
-        Ok(schema_value(intro))
-    } else {
-        intro.query(introspect_path).ok_or_else(|| {
-            // R1566 — a read that found nothing asks the declaration ONE
-            // question before it is allowed to say the path does not exist:
-            // is this name an action? Only that arm, because a declared
-            // *readable* family whose index addresses nothing is genuinely
-            // unknown, and answering otherwise would trade one false statement
-            // for its mirror image.
-            match intro.schema().field_for(introspect_path).map(|f| f.channel) {
-                Some(SchemaChannel::Invoke) => QueryError::PathIsAnAction,
-                _ => QueryError::UnknownIntrospectPath,
-            }
-        })
+        return Ok(schema_value(intro));
+    }
+    match intro.schema().field_for(introspect_path).map(|f| f.channel) {
+        Some(SchemaChannel::Read) => intro
+            .query(introspect_path)
+            .ok_or(QueryError::UnknownIntrospectPath),
+        Some(SchemaChannel::Invoke) => Err(QueryError::PathIsAnAction),
+        // `None` — undeclared. The wildcard is `SchemaChannel` being
+        // `#[non_exhaustive]`: a channel this transport has not been taught is
+        // not one it may claim answers a read.
+        _ => Err(QueryError::UnknownIntrospectPath),
     }
 }
 
@@ -604,13 +619,23 @@ mod tests {
         );
     }
 
+    /// The whole contract this fixture publishes — both channels. R1637 added
+    /// the second row: `increment` answered from R17 onward and `$schema` had
+    /// never mentioned it.
+    fn counted_contract() -> serde_json::Value {
+        serde_json::json!([
+            { "path": "count", "type": "int" },
+            { "path": "increment", "type": "int", "channel": "invoke" },
+        ])
+    }
+
     #[test]
     fn schema_path_returns_declared_fields_as_json() {
         // `$schema` returns the contract (paths + types), not a value.
         let scene = counted_scene(3);
         assert_eq!(
             query(&scene, "/external/$schema").unwrap(),
-            IntrospectValue::Json(serde_json::json!([{ "path": "count", "type": "int" }])),
+            IntrospectValue::Json(counted_contract()),
         );
     }
 
@@ -619,7 +644,7 @@ mod tests {
         let scene = counted_scene(0);
         assert_eq!(
             query(&scene, "/window[main]/external/$schema").unwrap(),
-            IntrospectValue::Json(serde_json::json!([{ "path": "count", "type": "int" }])),
+            IntrospectValue::Json(counted_contract()),
         );
     }
 
@@ -638,6 +663,65 @@ mod tests {
 
     use pinion_core::external::{InterveneError, IntrospectSchema, SchemaField};
     use pinion_core::scene::{ContainerNode, ImmediateMode, ImmediateModeNode};
+
+    /// A surface whose `query` answers a path its `schema` never publishes —
+    /// the read channel's version of the defect R1637 closed on the action
+    /// channel.
+    #[derive(Debug)]
+    struct Smuggler;
+
+    impl ExternalIntrospect for Smuggler {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(const { &[SchemaField::new("declared", "int")] })
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            match path {
+                "declared" => Some(IntrospectValue::Int(1)),
+                "smuggled" => Some(IntrospectValue::Int(2)),
+                _ => None,
+            }
+        }
+        fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
+            Err(InterveneError::ReadOnly)
+        }
+    }
+
+    impl ImmediateMode for Smuggler {
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+    }
+
+    /// R1637 §2 #7 — a value the surface answers and never published is not on
+    /// the wire, the mirror of the action channel's rule.
+    ///
+    /// Before this round the read consulted the declaration only after the
+    /// surface came back empty, so it could explain a miss and could not
+    /// prevent a hit: `smuggled` answered `2` here, and no gate in the
+    /// workspace could tell it from `declared`.
+    #[test]
+    fn r1637_an_undeclared_value_is_not_on_the_wire() {
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(Smuggler, pinion_core::scene::Rect::default())
+                .with_tag("s".to_owned()),
+        )]));
+        assert_eq!(
+            query(&scene, "/s/external/declared").unwrap(),
+            IntrospectValue::Int(1),
+        );
+        assert_eq!(
+            query(&scene, "/s/external/smuggled").unwrap_err(),
+            QueryError::UnknownIntrospectPath,
+        );
+        // ...and the declaration is what a client reads to know which is which.
+        let IntrospectValue::Json(serde_json::Value::Array(fields)) =
+            query(&scene, "/s/external/$schema").unwrap()
+        else {
+            panic!("$schema renders an array");
+        };
+        assert_eq!(fields.len(), 1, "one declared path: {fields:?}");
+        assert_eq!(fields[0]["path"], "declared");
+    }
 
     /// Read-only immediate-mode driver exposing one `pos` float — the
     /// query peer of `CountedExternal`.

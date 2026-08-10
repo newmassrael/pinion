@@ -302,11 +302,11 @@ impl ExternalIntrospect for DeviationOracle {
                     // The worst WCAG contrast over the grid (>= 4.5 = legible).
                     SchemaField::new("min_contrast", "float"),
                     // Per-cell oracles, arg `"r,c"`.
-                    SchemaField::new("value_at", "string"),
-                    SchemaField::new("color_at", "string"),
-                    SchemaField::new("linear_color_at", "string"),
-                    SchemaField::new("ink_at", "string"),
-                    SchemaField::new("contrast_at", "string"),
+                    SchemaField::action("value_at", "string"),
+                    SchemaField::action("color_at", "string"),
+                    SchemaField::action("linear_color_at", "string"),
+                    SchemaField::action("ink_at", "string"),
+                    SchemaField::action("contrast_at", "string"),
                 ]
             },
         )

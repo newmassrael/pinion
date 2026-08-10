@@ -323,12 +323,14 @@ def body() -> None:
         )
 
         # ── 13. and the two verbs are DECLARED on the surface ───────────
-        # ★ Only half-checkable from here, and saying which half is the point:
-        # an `External`'s declared action list does not reach the wire at all
-        # (measured this round — it is in neither snapshot source, and there is
-        # no `scene/schema`), so what a client can observe is that the declared
-        # name is ACCEPTED and an undeclared one is not. The gap is registered
-        # rather than papered over.
+        # ★ R1637 correction: the sentence that stood here said an External's
+        # declared action list "does not reach the wire at all". It does, and
+        # has since R825 — as the reserved `$schema` introspect path, which
+        # this round looked for as a `scene/*` METHOD, did not find, and
+        # concluded was absent. What was actually missing was the ORDER: the
+        # transport dispatched before consulting the declaration, so an
+        # undeclared name worked. It no longer does, and the full bidirectional
+        # check lives in `r1637_a_call_must_be_declared_first.py`.
         assert_eq(item(tf, "add:in:1")["items"], "3", "`item` is accepted")
         refused(tf, "kern", "in:0")
         print("[demo] item answers where an undeclared verb does not")

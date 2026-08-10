@@ -343,7 +343,7 @@ impl ExternalIntrospect for MemoryImageOracle {
                     SchemaField::new("registered", "int"),
                     SchemaField::new("width", "int"),
                     SchemaField::new("height", "int"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

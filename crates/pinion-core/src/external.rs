@@ -2678,7 +2678,18 @@ impl External for CountedExternal {
 
 impl ExternalIntrospect for CountedExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(const { &[SchemaField::new("count", "int")] })
+        IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("count", "int"),
+                    // R1637 — the fixture's action, declared. It answered over
+                    // the wire from R17 to R1636 while `$schema` never
+                    // mentioned it, which is the defect the transport now makes
+                    // unreachable rather than merely documentable.
+                    SchemaField::action("increment", "int"),
+                ]
+            },
+        )
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -3490,7 +3501,13 @@ mod tests {
     fn counted_schema_lists_count_field() {
         let counted = CountedExternal::new(0);
         let schema = counted.schema();
-        assert_eq!(schema.fields, &[SchemaField::new("count", "int")]);
+        assert_eq!(
+            schema.fields,
+            &[
+                SchemaField::new("count", "int"),
+                SchemaField::action("increment", "int"),
+            ],
+        );
     }
 
     #[test]

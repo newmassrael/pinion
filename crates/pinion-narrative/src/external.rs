@@ -94,6 +94,16 @@ impl ExternalIntrospect for NarrativeExternal {
                     SchemaField::new("disclosures", "json"),
                     SchemaField::new("world_ids", "json"),
                     SchemaField::new("fork_tree", "json"),
+                    // R1637 — the navigation verbs, declared. The `invoke` arm
+                    // that carries them calls them "Semantic verbs an AI agent
+                    // / RPC client invokes directly", and until now the agent
+                    // had to be told they existed.
+                    SchemaField::action("send", "json"),
+                    SchemaField::action("next_scene", "json"),
+                    SchemaField::action("prev_scene", "json"),
+                    SchemaField::action("next_world", "json"),
+                    SchemaField::action("prev_world", "json"),
+                    SchemaField::action("goto", "json"),
                 ]
             },
         )

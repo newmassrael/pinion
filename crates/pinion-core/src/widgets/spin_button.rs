@@ -374,6 +374,14 @@ impl ExternalIntrospect for SpinButtonExternal {
                     SchemaField::new("dec_state", "string"),
                     SchemaField::new("inc_state", "string"),
                     SchemaField::action("send", "string"),
+                    // R1637 — the four step verbs, declared. The comment above
+                    // this list called them "AI-first step actions" and the
+                    // declaration named none of them, so the AI they were built
+                    // for could not find them.
+                    SchemaField::action("increment", "float"),
+                    SchemaField::action("decrement", "float"),
+                    SchemaField::action("page_up", "float"),
+                    SchemaField::action("page_down", "float"),
                 ]
             },
         )

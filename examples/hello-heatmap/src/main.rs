@@ -427,9 +427,9 @@ impl ExternalIntrospect for HeatmapOracle {
                     SchemaField::new("hovered_row", "int"),
                     SchemaField::new("hovered_col", "int"),
                     SchemaField::new("hovered_value", "int"),
-                    SchemaField::new("value_at", "string"),
+                    SchemaField::action("value_at", "string"),
                     SchemaField::new("hovered_cell", "string"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

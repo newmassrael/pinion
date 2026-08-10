@@ -133,6 +133,8 @@ impl ExternalIntrospect for FrameSource {
                     SchemaField::new("frame_via_dom", "json"),
                     SchemaField::new("rows", "int"),
                     SchemaField::new("bytes", "int"),
+                    // R1637 — the verb this example exists to demonstrate.
+                    SchemaField::action("encode", "json"),
                 ]
             },
         )

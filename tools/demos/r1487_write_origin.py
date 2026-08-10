@@ -72,8 +72,11 @@ MODEL = "/external"
 SIM = "/sim/external"
 PROBE = "/probe/external"
 
-# Each surface's own action, and the slot reporting how many times it has run.
+# Each surface's own action, and — R1637 — the SEPARATE slot reporting how many
+# times it has run. One name used to carry both, which a schema field cannot
+# state: it declares one channel, so whichever was declared hid the other.
 ACTION = {MODEL: "bump", SIM: "boost", PROBE: "restamp"}
+TALLY = {MODEL: "bumps", SIM: "boosts", PROBE: "restamps"}
 
 # An action no surface declares, so each refuses it for a reason of its own.
 UNDECLARED = "nope"
@@ -127,7 +130,7 @@ def body():
         # against what the action DID, read back through a separate call.
         # ---------------------------------------------------------------
         g.intervene(f"{MODEL}/ticks", 100)
-        bumps_before = g.query(f"{MODEL}/{ACTION[MODEL]}")
+        bumps_before = g.query(f"{MODEL}/{TALLY[MODEL]}")
         acted = assert_disclosed(
             g.invoke(f"{MODEL}/{ACTION[MODEL]}", 5, with_origin=True), "model action"
         )
@@ -135,13 +138,13 @@ def body():
         assert_eq(acted["value"], 105, "the action returned the new value")
         assert_eq(g.query(f"{MODEL}/ticks"), 105, "and the state scene holds it")
         assert_eq(
-            g.query(f"{MODEL}/{ACTION[MODEL]}"),
+            g.query(f"{MODEL}/{TALLY[MODEL]}"),
             bumps_before + 1,
             "the surface named as `state` is the surface that ran the action",
         )
 
         g.intervene(f"{SIM}/speed", 20)
-        boosts_before = g.query(f"{SIM}/{ACTION[SIM]}")
+        boosts_before = g.query(f"{SIM}/{TALLY[SIM]}")
         acted = assert_disclosed(
             g.invoke(f"{SIM}/{ACTION[SIM]}", 3, with_origin=True), "driver action"
         )
@@ -149,7 +152,7 @@ def body():
         assert_eq(acted["value"], 23, "the action returned the new value")
         assert_eq(g.query(f"{SIM}/speed"), 23, "and the driver holds it")
         assert_eq(
-            g.query(f"{SIM}/{ACTION[SIM]}"),
+            g.query(f"{SIM}/{TALLY[SIM]}"),
             boosts_before + 1,
             "the surface named as `paint_driver` is the one that ran the action",
         )
@@ -274,7 +277,7 @@ def body():
         )
         assert_eq(data["origin"], "paint_frame", "and by the same surface")
         assert_eq(
-            g.query(f"{PROBE}/{ACTION[PROBE]}"),
+            g.query(f"{PROBE}/{TALLY[PROBE]}"),
             0,
             "the refusal was real: the action never ran",
         )

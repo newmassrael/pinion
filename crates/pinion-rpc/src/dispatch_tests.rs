@@ -8432,6 +8432,9 @@ impl pinion_core::external::ExternalIntrospect for EncodedExternal {
                 &[
                     pinion_core::external::SchemaField::new("raw", "json"),
                     pinion_core::external::SchemaField::new("dom", "json"),
+                    // R1637 — the action, declared. The wire refuses what
+                    // `$schema` does not publish.
+                    pinion_core::external::SchemaField::action("encode", "json"),
                 ]
             },
         )
@@ -8583,7 +8586,12 @@ impl pinion_core::scene::ImmediateMode for SpeedDriver {
 impl pinion_core::external::ExternalIntrospect for SpeedDriver {
     fn schema(&self) -> pinion_core::external::IntrospectSchema {
         pinion_core::external::IntrospectSchema::new(
-            const { &[pinion_core::external::SchemaField::new("speed", "int")] },
+            const {
+                &[
+                    pinion_core::external::SchemaField::new("speed", "int"),
+                    pinion_core::external::SchemaField::action("halve", "int"),
+                ]
+            },
         )
     }
     fn query(&self, path: &str) -> Option<IntrospectValue> {

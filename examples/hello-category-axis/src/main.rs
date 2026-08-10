@@ -309,10 +309,19 @@ impl ExternalIntrospect for CategoryWindowExternal {
                     SchemaField::new("hi", "int"),
                     SchemaField::new("visible", "int"),
                     SchemaField::new("error", "string"),
-                    SchemaField::new("range", "string"),
-                    SchemaField::new("reset", "bool"),
-                    SchemaField::new("pan", "bool"),
+                    SchemaField::action("range", "string"),
+                    SchemaField::action("reset", "bool"),
+                    SchemaField::action("pan", "bool"),
                     SchemaField::new("dense", "bool"),
+                    // R1637 — the VERB has its own address. `dense` was
+                    // declared readable and dispatched as an action, so
+                    // one name carried two channels and the declaration
+                    // could only ever state one of them. The reference
+                    // splits the same way (a property and a `setDense()`
+                    // live in different meta-object namespaces), and so
+                    // does the rest of this tree (`set_sort`,
+                    // `set_background`, `set_voice_gain`).
+                    SchemaField::action("set_dense", "int"),
                 ]
             },
         )
@@ -364,7 +373,7 @@ impl ExternalIntrospect for CategoryWindowExternal {
             // than left holding one that cannot resolve — the same refusal
             // discipline the range verb has, applied to the state change that
             // would invalidate it.
-            "dense" => {
+            "set_dense" => {
                 let IntrospectValue::Bool(on) = args else {
                     return Err(InvokeError::TypeMismatch);
                 };

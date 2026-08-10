@@ -167,11 +167,11 @@ impl ExternalIntrospect for GridPointerExternal {
                     SchemaField::new("cell_row", "int"),
                     SchemaField::new("cols", "int"),
                     SchemaField::new("rows", "int"),
-                    SchemaField::new("cell_at", "string"),
+                    SchemaField::action("cell_at", "string"),
                     // R1009 — the last key apply_key forwarded (read) + the record
                     // channel apply_key writes through (invoke).
                     SchemaField::new("last_key", "string"),
-                    SchemaField::new("key", "string"),
+                    SchemaField::action("key", "string"),
                 ]
             },
         )

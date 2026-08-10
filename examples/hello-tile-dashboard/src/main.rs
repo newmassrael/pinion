@@ -738,14 +738,14 @@ impl ExternalIntrospect for DashboardOracle {
                     SchemaField::new("handles", "string"),
                     SchemaField::new("neighbours", "string"),
                     // The gestures, as verbs.
-                    SchemaField::new("move_to", "string"),
-                    SchemaField::new("resize", "string"),
-                    SchemaField::new("compact", "string"),
-                    SchemaField::new("remove", "string"),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("key", "string"),
-                    SchemaField::new("select", "string"),
-                    SchemaField::new("drag_handle", "string"),
+                    SchemaField::action("move_to", "string"),
+                    SchemaField::action("resize", "string"),
+                    SchemaField::action("compact", "string"),
+                    SchemaField::action("remove", "string"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("key", "string"),
+                    SchemaField::action("select", "string"),
+                    SchemaField::action("drag_handle", "string"),
                 ]
             },
         )

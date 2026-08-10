@@ -121,8 +121,8 @@ def body() -> None:
         # ── (C) RPC focus verbs: place + clamp the cursor ────────────
         tf.invoke("/external/select_all", None)
         assert_eq(q(tf, "row_count"), 3, "select_all -> 3 common rows")
-        assert_eq(tf.invoke("/external/focus_region", "objects"), "objects",
-                  "focus_region returns the read-back region")
+        assert_eq(tf.invoke("/external/set_focus_region", "objects"), "objects",
+                  "set_focus_region returns the read-back region")
         assert_eq(q(tf, "focus_region"), "objects", "region set to Objects over RPC")
         # focus_property clamps a too-large index to the last row AND focuses Details.
         assert_eq(tf.invoke("/external/focus_property", 99), 2,

@@ -1425,8 +1425,8 @@ impl ExternalIntrospect for TodoDeleteExternal {
                 &[
                     SchemaField::new("count", "int"),
                     SchemaField::new("ids", "json"),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("delete", "int"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("delete", "int"),
                 ]
             },
         )
@@ -1573,8 +1573,8 @@ impl ExternalIntrospect for TodoToggleExternal {
                     SchemaField::new("count", "int"),
                     SchemaField::new("completed_count", "int"),
                     SchemaField::new("ids_completed", "json"),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("toggle", "int"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("toggle", "int"),
                 ]
             },
         )
@@ -1804,8 +1804,8 @@ impl ExternalIntrospect for TodoEditExternal {
             const {
                 &[
                     SchemaField::new("editing_id", "json"),
-                    SchemaField::new("send", "string"),
-                    SchemaField::new("begin", "int"),
+                    SchemaField::action("send", "string"),
+                    SchemaField::action("begin", "int"),
                 ]
             },
         )

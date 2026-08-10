@@ -409,9 +409,9 @@ impl ExternalIntrospect for HyperlinkOracle {
                     // The last activated link.
                     SchemaField::new("activated_index", "int"),
                     SchemaField::new("activated_uri", "string"),
-                    SchemaField::new("activate", "int"),
+                    SchemaField::action("activate", "int"),
                     // The router's pointer press / release symbolic events.
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

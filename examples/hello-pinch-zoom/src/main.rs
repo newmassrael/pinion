@@ -234,7 +234,7 @@ impl ExternalIntrospect for PinchViewport {
                     // The modifiers held at the last pinch, as a wire token (e.g. "c").
                     SchemaField::new("last_mods", "string"),
                     // Reset the zoom — the AI-first peer of a double-tap fit.
-                    SchemaField::new("reset", "string"),
+                    SchemaField::action("reset", "string"),
                 ]
             },
         )

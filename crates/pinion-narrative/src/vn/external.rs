@@ -241,37 +241,60 @@ impl VnExternal {
 // `self.pending_intents` — the RPC-only read-write introspection skeleton.
 pinion_core::intent_query_external_impl!(VnExternal);
 
+/// R1637 §5.15 — every path this surface answers, as a `const` a WRAPPER can
+/// compose with [`SchemaField::concat`] instead of restating.
+///
+/// It lived as an inline `const` block inside `schema()`, so a consumer
+/// layering its own verbs over this one (`hello-vn-tide` adds `save_slot` /
+/// `load_slot`) could only forward the declaration UNCHANGED — publishing a
+/// contract that omitted its own two verbs while the wire happily ran them.
+/// R1501 made composition the answer to that shape; this is what makes
+/// composition reachable here.
+pub const SCHEMA_FIELDS: &[SchemaField] = &[
+    SchemaField::new("mode", "text"),
+    SchemaField::new("step", "int"),
+    SchemaField::new("step_count", "int"),
+    SchemaField::new("speaker", "text"),
+    SchemaField::new("line", "text"),
+    SchemaField::new("revealed", "text"),
+    SchemaField::new("revealed_chars", "int"),
+    SchemaField::new("line_len", "int"),
+    SchemaField::new("fully_revealed", "bool"),
+    SchemaField::new("prompt", "text"),
+    SchemaField::new("options", "json"),
+    SchemaField::new("option_count", "int"),
+    SchemaField::new("timeout_ms", "int"),
+    SchemaField::new("remaining_ms", "int"),
+    SchemaField::new("expired", "bool"),
+    SchemaField::new("resolved", "bool"),
+    SchemaField::new("outcome", "text"),
+    SchemaField::new("outcome_label", "text"),
+    SchemaField::new("timed_out", "bool"),
+    SchemaField::new("script", "json"),
+    SchemaField::new("background", "text"),
+    SchemaField::new("sprites", "json"),
+    SchemaField::new("sprite_count", "int"),
+    // R1637 — the runner's and the stage director's verbs,
+    // declared. The module doc above lists all eleven in prose
+    // and the declaration listed none, so the surface built
+    // "so an AI agent drives the whole set-piece as data"
+    // published only the half an agent can read.
+    SchemaField::action("tick", "json"),
+    SchemaField::action("advance", "json"),
+    SchemaField::action("choose", "json"),
+    SchemaField::action("save", "json"),
+    SchemaField::action("load", "json"),
+    SchemaField::action("set_background", "json"),
+    SchemaField::action("clear_background", "json"),
+    SchemaField::action("show", "json"),
+    SchemaField::action("hide", "json"),
+    SchemaField::action("move", "json"),
+    SchemaField::action("set_sprite_source", "json"),
+];
+
 impl ExternalIntrospect for VnExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(
-            const {
-                &[
-                    SchemaField::new("mode", "text"),
-                    SchemaField::new("step", "int"),
-                    SchemaField::new("step_count", "int"),
-                    SchemaField::new("speaker", "text"),
-                    SchemaField::new("line", "text"),
-                    SchemaField::new("revealed", "text"),
-                    SchemaField::new("revealed_chars", "int"),
-                    SchemaField::new("line_len", "int"),
-                    SchemaField::new("fully_revealed", "bool"),
-                    SchemaField::new("prompt", "text"),
-                    SchemaField::new("options", "json"),
-                    SchemaField::new("option_count", "int"),
-                    SchemaField::new("timeout_ms", "int"),
-                    SchemaField::new("remaining_ms", "int"),
-                    SchemaField::new("expired", "bool"),
-                    SchemaField::new("resolved", "bool"),
-                    SchemaField::new("outcome", "text"),
-                    SchemaField::new("outcome_label", "text"),
-                    SchemaField::new("timed_out", "bool"),
-                    SchemaField::new("script", "json"),
-                    SchemaField::new("background", "text"),
-                    SchemaField::new("sprites", "json"),
-                    SchemaField::new("sprite_count", "int"),
-                ]
-            },
-        )
+        IntrospectSchema::new(SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

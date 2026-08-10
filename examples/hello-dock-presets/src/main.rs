@@ -320,9 +320,9 @@ impl ExternalIntrospect for PresetCommandExternal {
                     // actually applied, independent of the painted rects.
                     SchemaField::new("active_blob", "text"),
                     // Command surface: `apply` / `save` / `delete` a named preset.
-                    SchemaField::new("apply", "string"),
-                    SchemaField::new("save", "string"),
-                    SchemaField::new("delete", "string"),
+                    SchemaField::action("apply", "string"),
+                    SchemaField::action("save", "string"),
+                    SchemaField::action("delete", "string"),
                 ]
             },
         )

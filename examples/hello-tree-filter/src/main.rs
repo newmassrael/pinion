@@ -349,8 +349,8 @@ impl ExternalIntrospect for TreeSortExternal {
             const {
                 &[
                     SchemaField::new("sort", "string"),
-                    SchemaField::new("cycle_sort", "string"),
-                    SchemaField::new("set_sort", "string"),
+                    SchemaField::action("cycle_sort", "string"),
+                    SchemaField::action("set_sort", "string"),
                 ]
             },
         )

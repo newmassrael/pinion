@@ -311,24 +311,35 @@ impl External for ReorderableTabsExternal {
     }
 }
 
+/// The tab strip's own slots — everything the reorder model does not already
+/// declare.
+const OWN_SCHEMA_FIELDS: [SchemaField; 5] = [
+    SchemaField::new("labels", "json"),
+    SchemaField::new("selected_id", "int"),
+    SchemaField::new("selected_visual", "int"),
+    // The strip's own keyboard verbs, layered over the reorder model's: these
+    // move a CURSOR (and activate the tab under it), where the model's `move`
+    // moves the tab itself.
+    SchemaField::action("navigate", "int"),
+    SchemaField::action("navigate_to", "int"),
+];
+
+/// R1637 — composed, not restated. This surface used to hand-copy seven of
+/// [`ReorderModel::SCHEMA_FIELDS`], which is exactly the drift R1501 introduced
+/// [`SchemaField::concat`] to end — and it had already drifted three ways: it
+/// lost `send` entirely, and it declared `move` and `grab_cancel` as READ
+/// slots although both are dispatched through `invoke`. The model one crate
+/// away declares all three correctly, so composing makes that the only copy.
+static SCHEMA_FIELDS: [SchemaField;
+    OWN_SCHEMA_FIELDS.len() + pinion_core::widgets::reorder::ReorderModel::SCHEMA_FIELDS.len()] =
+    SchemaField::concat(
+        &OWN_SCHEMA_FIELDS,
+        pinion_core::widgets::reorder::ReorderModel::SCHEMA_FIELDS,
+    );
+
 impl ExternalIntrospect for ReorderableTabsExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(
-            const {
-                &[
-                    SchemaField::new("order", "json"),
-                    SchemaField::new("labels", "json"),
-                    SchemaField::new("selected_id", "int"),
-                    SchemaField::new("selected_visual", "int"),
-                    SchemaField::new("preview", "json"),
-                    SchemaField::new("focused_index", "int"),
-                    SchemaField::new("grabbed", "bool"),
-                    SchemaField::new("move", "int"),
-                    SchemaField::new("grab", "bool"),
-                    SchemaField::new("grab_cancel", "null"),
-                ]
-            },
-        )
+        IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {

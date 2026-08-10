@@ -256,9 +256,9 @@ impl ExternalIntrospect for PaletteExternal {
                     SchemaField::new("selected", "int"),
                     SchemaField::new("selected_command", "string"),
                     SchemaField::new("last_executed", "string"),
-                    SchemaField::new("select", "int"),
-                    SchemaField::new("execute", "json"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("select", "int"),
+                    SchemaField::action("execute", "json"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

@@ -481,7 +481,7 @@ impl ExternalIntrospect for OutlinerExternal {
                     ),
                     SchemaField::new("preview", "json"),
                     SchemaField::new("focused", "string"),
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

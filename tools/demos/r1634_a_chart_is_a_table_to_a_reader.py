@@ -57,7 +57,7 @@ from rpc_verify import (  # noqa: E402
 BARS = "bars"
 
 #: The external the axis mode hangs off.
-DENSE = "/category_window/external/dense"
+DENSE = "/category_window/external/set_dense"
 
 #: The window this example opens at.
 WIN = (720, 560)

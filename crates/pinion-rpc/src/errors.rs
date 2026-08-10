@@ -117,6 +117,9 @@ const VOCABULARY_32602: &[&str] = &[
     // matches by PREFIX; the entry's `meaning` says so.
     "CapacityFull",
     "ClosureUnavailable",
+    // R1637 — the surface published the name and then did not answer it. Split
+    // out of `UnknownInvokePath`, which now means only "no such declaration".
+    "DeclaredButUnhandled",
     "EmptySteps",
     "EmptyWindowId",
     "InitialQueryFailed",

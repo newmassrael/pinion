@@ -123,7 +123,10 @@ impl ExternalIntrospect for Model {
             const {
                 &[
                     SchemaField::new("ticks", "int"),
-                    SchemaField::new("bump", "int"),
+                    // R1637 — the tally and the verb are two facts, so they
+                    // are two addresses (see `restamps` / `restamp`).
+                    SchemaField::new("bumps", "int"),
+                    SchemaField::action("bump", "int"),
                 ]
             },
         )
@@ -132,7 +135,7 @@ impl ExternalIntrospect for Model {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "ticks" => Some(IntrospectValue::Int(self.ticks)),
-            "bump" => Some(IntrospectValue::Int(self.bumps)),
+            "bumps" => Some(IntrospectValue::Int(self.bumps)),
             _ => None,
         }
     }
@@ -222,7 +225,10 @@ impl ExternalIntrospect for Sim {
                 &[
                     SchemaField::new("frames", "int"),
                     SchemaField::new("speed", "int"),
-                    SchemaField::new("boost", "int"),
+                    // R1637 — the tally and the verb are two facts, so they
+                    // are two addresses (see `restamps` / `restamp`).
+                    SchemaField::new("boosts", "int"),
+                    SchemaField::action("boost", "int"),
                 ]
             },
         )
@@ -232,7 +238,7 @@ impl ExternalIntrospect for Sim {
         match path {
             "frames" => Some(IntrospectValue::Int(self.frames)),
             "speed" => Some(IntrospectValue::Int(self.speed)),
-            "boost" => Some(IntrospectValue::Int(self.boosts)),
+            "boosts" => Some(IntrospectValue::Int(self.boosts)),
             _ => None,
         }
     }
@@ -301,7 +307,12 @@ impl ExternalIntrospect for Probe {
             const {
                 &[
                     SchemaField::new("stamped", "int"),
-                    SchemaField::new("restamp", "int"),
+                    // R1637 — the tally and the verb are two facts, so they
+                    // are two addresses. One name held both, and a schema
+                    // field carries one channel, so whichever was declared
+                    // made the other undiscoverable.
+                    SchemaField::new("restamps", "int"),
+                    SchemaField::action("restamp", "int"),
                 ]
             },
         )
@@ -310,7 +321,7 @@ impl ExternalIntrospect for Probe {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "stamped" => Some(IntrospectValue::Int(self.stamped)),
-            "restamp" => Some(IntrospectValue::Int(self.restamps)),
+            "restamps" => Some(IntrospectValue::Int(self.restamps)),
             _ => None,
         }
     }
@@ -671,7 +682,7 @@ mod tests {
             probe.invoke("restamp", IntrospectValue::Null),
             Ok(IntrospectValue::Int(1)),
         );
-        assert_eq!(probe.query("restamp"), Some(IntrospectValue::Int(1)));
+        assert_eq!(probe.query("restamps"), Some(IntrospectValue::Int(1)));
     }
 
     #[test]
@@ -685,7 +696,7 @@ mod tests {
             model.invoke("bump", IntrospectValue::Int(4)),
             Ok(IntrospectValue::Int(4)),
         );
-        assert_eq!(model.query("bump"), Some(IntrospectValue::Int(1)));
+        assert_eq!(model.query("bumps"), Some(IntrospectValue::Int(1)));
         assert_eq!(model.query("ticks"), Some(IntrospectValue::Int(4)));
 
         let mut sim = Sim::default();
@@ -693,7 +704,7 @@ mod tests {
             sim.invoke("boost", IntrospectValue::Int(2)),
             Ok(IntrospectValue::Int(2)),
         );
-        assert_eq!(sim.query("boost"), Some(IntrospectValue::Int(1)));
+        assert_eq!(sim.query("boosts"), Some(IntrospectValue::Int(1)));
     }
 
     #[test]

@@ -3905,6 +3905,12 @@ impl ExternalIntrospect for DockReorganizeExternal {
                     SchemaField::new("drop_preview", "json"),
                     SchemaField::action("drop", "json"),
                     SchemaField::action("reorganize", "json"),
+                    // R1637 — the outer-edge dock verb, declared. It sat
+                    // between two declared neighbours in the same `match`
+                    // and was the only one of the six missing from this
+                    // list, which is exactly how an omission survives:
+                    // nothing compares the two.
+                    SchemaField::action("dock_outer", "json"),
                     // (R1085 §5.51) Tab-well navigation: make tab `index` of well
                     // `well_id` visible (`{"well_id": "...", "index": N}`). The
                     // AI-first primary for tab activation — discoverable here so an
@@ -4641,7 +4647,11 @@ impl ExternalIntrospect for TabWellExternal {
                     // the well is gone (a reorganize collapsed it) / the surface is
                     // empty.
                     SchemaField::new("active", "int"),
-                    SchemaField::new("send", "string"),
+                    // R1637 — the composite pointer channel is a VERB. It was
+                    // declared readable, so `$schema` said "query me" about a
+                    // name only `invoke` answers; the new test that walks a
+                    // declaration against the wire found it on its first run.
+                    SchemaField::action("send", "string"),
                 ]
             },
         )
@@ -7715,6 +7725,12 @@ impl ExternalIntrospect for DockPanelExternal {
                     // escaped every tagged region (the tear-off case `drop_preview`
                     // goes null on).
                     SchemaField::new("drag_cursor", "json"),
+                    // R1637 — the persistent dock-lifecycle state. Its own doc
+                    // calls it "surfaced as scene-as-data via
+                    // `query(\"lifecycle\")` (§2 #7)", and this declaration did
+                    // not carry it, so the surface §2 #2 makes an agent's
+                    // primary path answered a path it never published.
+                    SchemaField::new("lifecycle", "string"),
                     // R1094 §5.16 §5.41 §5.51 — whether the in-flight/last drag
                     // tore the panel into a live floating follower (escaped a drop
                     // target). Paired with `scene/windows` (the floating window's
@@ -7732,14 +7748,21 @@ impl ExternalIntrospect for DockPanelExternal {
                     // R1107 §5.51 §2 #7 — the window the last follow-drag move was
                     // measured in (`"main"` / a `torn-<panel>` id / null).
                     SchemaField::new("source_window", "string"),
-                    SchemaField::new("send", "string"),
+                    // R1637 — the composite pointer channel is a VERB. It was
+                    // declared readable, so `$schema` said "query me" about a
+                    // name only `invoke` answers; the new test that walks a
+                    // declaration against the wire found it on its first run.
+                    SchemaField::action("send", "string"),
+                    // R1637 — and so are these two. Their own comments call
+                    // them "invoke channel" and the constructor said READ,
+                    // because until R1504 there was no other one.
                     // R683.C §5.16 §5.49 — direct tear-off invoke channel.
                     // See `invoke` rustdoc.
-                    SchemaField::new(TEAR_OFF_EVENT, "string"),
+                    SchemaField::action(TEAR_OFF_EVENT, "string"),
                     // R1103 §5.51 §2 #7 PR-33 — direct cross-window redock invoke
                     // (the AI-primary driver for the executable floater→slot-window
                     // case). JSON payload `{window, target, x_rel, y_rel}`.
-                    SchemaField::new(TEAR_OFF_REDOCK_AT_EVENT, "json"),
+                    SchemaField::action(TEAR_OFF_REDOCK_AT_EVENT, "json"),
                 ]
             },
         )

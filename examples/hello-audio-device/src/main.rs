@@ -199,6 +199,13 @@ const DEVICE_FIELDS: &[SchemaField] = &[
     // hides and `intervene` calls UnknownPath tells an agent three different
     // things about one path.
     SchemaField::new("frame_ticks", "int"),
+    // R1637 — the two verbs this binding adds on top of the RT surface. The
+    // doc above already calls `set_device` "a verb, and the reads report the
+    // outcome"; saying so in prose is not declaring it, and until now the
+    // §2 #2 primary path could call it and could not find it.
+    SchemaField::action("set_device", "text"),
+    SchemaField::action("set_camera", "null"),
+    SchemaField::action("set_emitter", "null"),
 ];
 
 /// Length of the composed schema.

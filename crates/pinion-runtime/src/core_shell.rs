@@ -7055,7 +7055,14 @@ mod tests {
 
     impl ExternalIntrospect for SendSpyExternal {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(const { &[SchemaField::new("last_send", "string")] })
+            IntrospectSchema::new(
+                const {
+                    &[
+                        SchemaField::new("last_send", "string"),
+                        SchemaField::action("send", "null"),
+                    ]
+                },
+            )
         }
         fn query(&self, path: &str) -> Option<IntrospectValue> {
             match path {

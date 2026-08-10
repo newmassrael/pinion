@@ -270,7 +270,7 @@ impl ExternalIntrospect for CrosshairExternal {
                     SchemaField::new("has_crosshair", "bool"),
                     // The router's pointer boundary events (Leave / Cancel clear
                     // the crosshair when the pointer leaves the plot).
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

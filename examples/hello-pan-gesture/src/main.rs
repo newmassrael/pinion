@@ -249,7 +249,7 @@ impl ExternalIntrospect for MapViewport {
                     // The modifiers held at the last pan, as a wire token (e.g. "s").
                     SchemaField::new("last_mods", "string"),
                     // Recentre the map — the AI-first peer of a snap-to-home.
-                    SchemaField::new("reset", "string"),
+                    SchemaField::action("reset", "string"),
                 ]
             },
         )

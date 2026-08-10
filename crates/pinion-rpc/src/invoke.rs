@@ -14,7 +14,7 @@
 //!      first External.
 //!   3. **§5.15 item 8 invoke dispatch** — descend through
 //!      [`External::introspect_mut`](pinion_core::external::External::introspect_mut) and consult the
-//!      [`ExternalIntrospect::invoke`](pinion_core::external::ExternalIntrospect::invoke) action channel.
+//!      [`ExternalIntrospect::invoke`] action channel.
 //!
 //! v1 scene-path syntax accepted:
 //!
@@ -34,7 +34,7 @@
 
 use pinion_core::Scene;
 use pinion_core::external::{
-    IntrospectSchema, IntrospectValue, InvokeError as TraitInvokeError, RefusalReason,
+    ExternalIntrospect, IntrospectValue, InvokeError as TraitInvokeError, RefusalReason,
     SchemaChannel,
 };
 
@@ -60,9 +60,13 @@ pub enum InvokeError {
     /// (so the invoke channel is unreachable).
     IntrospectionOptedOut,
     /// The action path is not declared in the `External`'s schema **on any
-    /// channel** — or is declared on the invoke channel and the surface's own
-    /// dispatch then did not recognise it (R1566; see the crate-private
-    /// `InvokeError::from_declined` for why that stays here).
+    /// channel**, so the call was refused without reaching the surface
+    /// (R1637 — see the crate-private `invoke_declared`).
+    ///
+    /// R1566 also answered this for a name the schema declared as an action
+    /// and the surface's own dispatch then did not recognise. That is a
+    /// different fact about a different surface, and it now has its own word
+    /// ([`DeclaredButUnhandled`](Self::DeclaredButUnhandled)).
     UnknownInvokePath,
     /// R1566 §2 #7 — the path is declared, on the **read** channel: it is a
     /// slot to `query` and `intervene`, not an action to call.
@@ -106,6 +110,25 @@ pub enum InvokeError {
     /// is exactly its purpose: the round that adds a variant upstream finds
     /// this arm instead of shipping through it.
     UnmappedSurfaceError,
+    /// R1637 §2 #2 §2 #7 — the schema declared this name on the **invoke**
+    /// channel and the surface's own dispatch then did not recognise it.
+    ///
+    /// A statement about the *surface*, not about the caller: the caller read
+    /// `$schema`, asked for exactly what it published, and the publisher did
+    /// not answer. Before R1637 this shared [`Self::UnknownInvokePath`] with "you
+    /// made that name up", so an agent doing the right thing and an agent
+    /// guessing were told the same word — and only one of them had found a
+    /// bug.
+    ///
+    /// **The reference cannot represent this case, and cannot report it
+    /// either.** The toolkit's meta-object is generated from the definitions, so a
+    /// declared
+    /// method is dispatchable by construction; the mirror-image inconsistency —
+    /// hand-writing a declaration beside a hand-written dispatch — is a shape
+    /// it does not have. pinion's surfaces do hand-write both, so the
+    /// disagreement is real here, and naming it is what lets a client
+    /// distinguish "this surface is inconsistent" from "I asked wrong".
+    DeclaredButUnhandled,
     /// R1487 §2 #7 — the address named a **retained** `External` reached
     /// through the shared ([`invoke_shared`]) walk, which cannot act on it.
     ///
@@ -140,39 +163,102 @@ impl From<ResolveExternalError> for InvokeError {
 }
 
 impl InvokeError {
-    /// R1566 §2 #7 §5.12 — the wire refusal for a surface that declined a
-    /// call, judged **against that surface's own declaration**. The read-write
-    /// channel's peer of
-    /// [`InterveneError::from_declined`](crate::InterveneError::from_declined);
-    /// see it for why this is not a `From` impl.
+    /// R1566 §2 #7 §5.12 — the wire refusal for a surface that declined a call
+    /// its **own declaration had already admitted** (R1637 moved that judgement
+    /// ahead of dispatch — see [`invoke_declared`], which is this function's
+    /// only caller).
     ///
-    /// The asymmetry with that peer is the schema's: a path declared on the
-    /// **read** channel is a slot, so calling it is a channel error this can
-    /// name. A path declared on the **invoke** channel that the impl then does
-    /// not recognise is a surface whose declaration and dispatch disagree, and
-    /// `UnknownInvokePath` is the honest report of that — inventing a friendlier
-    /// word would hide a real inconsistency behind a nicer one.
+    /// It takes neither the schema nor the path any more, and that is the
+    /// point: by the time a surface can decline, the channel question is
+    /// settled. `UnknownPath` from here therefore cannot mean "no such name" —
+    /// the name was published — so it lands on
+    /// [`DeclaredButUnhandled`](InvokeError::DeclaredButUnhandled) rather than
+    /// sharing a word with the caller's own mistake.
     #[must_use]
-    pub(crate) fn from_declined(
-        err: TraitInvokeError,
-        schema: &IntrospectSchema,
-        path: &str,
-    ) -> Self {
+    fn from_dispatched(err: TraitInvokeError) -> Self {
         // `TraitInvokeError` is `#[non_exhaustive]`, so the wildcard is
         // mandatory here. R1564 — it no longer answers `InvokeRejected`: see
         // [`UnmappedSurfaceError`](InvokeError::UnmappedSurfaceError) for why a
         // reason-carrying variant must not be the wildcard's landing site.
         match err {
-            TraitInvokeError::UnknownPath => {
-                match schema.field_for(path).map(|field| field.channel) {
-                    Some(SchemaChannel::Read) => InvokeError::PathIsAReadSlot,
-                    _ => InvokeError::UnknownInvokePath,
-                }
-            }
+            TraitInvokeError::UnknownPath => InvokeError::DeclaredButUnhandled,
             TraitInvokeError::TypeMismatch => InvokeError::InvokeTypeMismatch,
             TraitInvokeError::Rejected(reason) => InvokeError::InvokeRejected(reason),
             _ => InvokeError::UnmappedSurfaceError,
         }
+    }
+}
+
+/// R1637 §2 #2 §5.12 §5.15 — dispatch an action **only if the surface declared
+/// it**, and classify what comes back.
+///
+/// The one place either branch of this module reaches a surface's `invoke`, for
+/// the reason R828 gave `introspect_or_schema`: two call sites that each decide
+/// what is callable are two definitions of the wire contract, and they drift.
+///
+/// # Why the declaration is a precondition and not a diagnosis
+///
+/// Until R1637 the declaration was consulted **after** the surface declined, so
+/// it could only ever explain a refusal. That left the dangerous direction —
+/// implemented but never declared — with no channel able to observe it at all:
+/// the action worked, and nothing in the workspace could tell it apart from one
+/// that had been published. It is not hypothetical. R1631 added an `arrange`
+/// verb to `hello-node-groups` and did not add it to the schema; for a full
+/// round it was callable and undiscoverable, and `cargo test`, clippy, the demo
+/// and the push gate all passed, because none of them had anything to compare.
+///
+/// Ordering the check first turns that into an impossibility rather than a
+/// warning. §2 #2 makes RPC the AI's primary path, so the surface an agent can
+/// *find* has to be the surface it can *reach*; a name absent from `$schema` is
+/// now absent from the wire, and the round that forgets to declare one finds
+/// out from its own demo.
+///
+/// **This is the reference's floor, not a pinion invention.** The toolkit's
+/// meta-object is the only route to an object's action channel, and it is
+/// generated from the
+/// declarations, so an implemented-but-undeclared method is unreachable by
+/// construction. Measured on the toolkit at 6.4.2 with a class carrying one
+/// `slots:` method
+/// and one plain one: `invokeMethod` answered `true` for the declared name and
+/// ran it, answered `false` for the undeclared one and did **not** run it
+/// (`indexOfMethod` = -1), and its 6.11.1 source still emits the same
+/// `"No such method"` warning from the meta-object's own translation unit.
+/// pinion reaches the same
+/// guarantee by gate rather than by codegen, because its surfaces are
+/// hand-written — and gets one report out of it the meta-object cannot express,
+/// [`DeclaredButUnhandled`](InvokeError::DeclaredButUnhandled).
+///
+/// # What it costs
+///
+/// One linear scan of a `&'static [SchemaField]` per call — the schema is
+/// `Copy` over a static slice, so nothing is allocated or cloned. R1566's note
+/// that "a call that fired must not pay for a judgement it does not need" no
+/// longer applies: the judgement IS the contract, and it is paid at RPC
+/// cadence, not per frame.
+///
+/// # What it does not cover
+///
+/// In-process dispatch. A binding that calls `ExternalIntrospect::invoke`
+/// directly — a keybinding forwarding a verb, say — does not pass through here,
+/// and the framework has no seam that could intercept it. The contract this
+/// enforces is the **wire** contract: what is callable over RPC is exactly what
+/// `$schema` publishes.
+fn invoke_declared(
+    intro: &mut dyn ExternalIntrospect,
+    action_path: &str,
+    args: IntrospectValue,
+) -> Result<IntrospectValue, InvokeError> {
+    match intro.schema().field_for(action_path).map(|f| f.channel) {
+        Some(SchemaChannel::Invoke) => intro
+            .invoke(action_path, args)
+            .map_err(InvokeError::from_dispatched),
+        Some(SchemaChannel::Read) => Err(InvokeError::PathIsAReadSlot),
+        // `None` is the undeclared name. The wildcard is `SchemaChannel` being
+        // `#[non_exhaustive]`: a channel this transport has not been taught is
+        // one it cannot claim admits a call, so it refuses rather than guessing
+        // — the same direction `UnmappedSurfaceError` chose for its own
+        // unknown.
+        _ => Err(InvokeError::UnknownInvokePath),
     }
 }
 
@@ -234,18 +320,9 @@ pub fn invoke_from(
     let origin = AnswerOrigin::of(source, false);
     let (intro, action_path) = resolve_external_introspect_mut(scene, raw_path)
         .map_err(|e| InvokeRefusal::from_resolve(e, origin))?;
-    match intro.invoke(&action_path, args) {
-        Ok(value) => Ok((value, origin)),
-        // R1566 — the declaration is consulted only on the refusal path; a
-        // call that fired must not pay for a judgement it does not need.
-        Err(err) => {
-            let declared = intro.schema();
-            Err(InvokeRefusal::from_surface(
-                InvokeError::from_declined(err, &declared, &action_path),
-                origin,
-            ))
-        }
-    }
+    invoke_declared(intro, &action_path, args)
+        .map(|value| (value, origin))
+        .map_err(|err| InvokeRefusal::from_surface(err, origin))
 }
 
 /// R1481 §2 #4 §5.12 — the immediate-mode half of [`invoke`], reachable
@@ -290,16 +367,11 @@ fn invoke_immediate_at(
             origin,
         )));
     };
-    Some(match intro.invoke(&action_path, args.clone()) {
-        Ok(value) => Ok((value, origin)),
-        Err(err) => {
-            let declared = intro.schema();
-            Err(InvokeRefusal::from_surface(
-                InvokeError::from_declined(err, &declared, &action_path),
-                origin,
-            ))
-        }
-    })
+    Some(
+        invoke_declared(intro, &action_path, args.clone())
+            .map(|value| (value, origin))
+            .map_err(|err| InvokeRefusal::from_surface(err, origin)),
+    )
 }
 
 /// R1481 §2 #4 §5.12 — invoke against a scene held by shared reference.
@@ -380,7 +452,7 @@ mod tests {
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
 
-    use pinion_core::external::{SchemaArg, SchemaField};
+    use pinion_core::external::{InterveneError, IntrospectSchema, SchemaArg, SchemaField};
 
     /// A surface declaring BOTH channels plus a parametric family — the peer of
     /// `intervene`'s fixture, restated here because a test that shared it would
@@ -395,30 +467,151 @@ mod tests {
                     const { &[SchemaArg::index("row", "depth")] },
                 ),
                 SchemaField::action("reset", "string"),
+                // Declared and deliberately NOT dispatched — the surface
+                // inconsistency R1637 gave its own word to. A fixture rather
+                // than a real widget because the whole point of the round is
+                // that no real one may stay in this state.
+                SchemaField::action("promised", "string"),
             ]
         },
     );
 
+    /// The `MIXED` surface, wired the way a real one is: a hand-written `match`
+    /// beside a hand-written declaration, disagreeing in **both** directions.
+    #[derive(Debug, Default)]
+    struct MixedSurface {
+        fired: Vec<String>,
+        verdict: Option<TraitInvokeError>,
+    }
+
+    impl ExternalIntrospect for MixedSurface {
+        fn schema(&self) -> IntrospectSchema {
+            MIXED
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            (path == "depth").then_some(IntrospectValue::Int(3))
+        }
+        fn intervene(&mut self, _path: &str, _v: IntrospectValue) -> Result<(), InterveneError> {
+            Err(InterveneError::UnknownPath)
+        }
+        fn invoke(
+            &mut self,
+            path: &str,
+            _args: IntrospectValue,
+        ) -> Result<IntrospectValue, TraitInvokeError> {
+            if let Some(err) = self.verdict.clone() {
+                return Err(err);
+            }
+            match path {
+                // Declared, and answers.
+                "reset" => {
+                    self.fired.push(path.to_owned());
+                    Ok(IntrospectValue::Text("reset".to_owned()))
+                }
+                // R1631's shape: implemented, never declared. Before R1637 this
+                // arm was reachable over the wire and nothing could see it.
+                "smuggled" => {
+                    self.fired.push(path.to_owned());
+                    Ok(IntrospectValue::Text("smuggled".to_owned()))
+                }
+                _ => Err(TraitInvokeError::UnknownPath),
+            }
+        }
+    }
+
+    impl pinion_core::external::External for MixedSurface {
+        fn backends(&self) -> pinion_core::external::BackendSupport {
+            pinion_core::external::BackendSupport::new(
+                &[pinion_core::external::Backend::Rpc],
+                pinion_core::external::BackendFallback::Skip,
+            )
+        }
+        fn repaint_ownership(&self) -> pinion_core::external::RepaintOwner {
+            pinion_core::external::RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> pinion_core::external::ThreadOwnership {
+            pinion_core::external::ThreadOwnership::UiThreadSync
+        }
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+        fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+            Some(self)
+        }
+    }
+
+    fn mixed_scene() -> Scene {
+        Scene::External(ExternalNode::new(Box::new(MixedSurface::default())))
+    }
+
     /// R1566 §2 #7 — a call addressed at a declared SLOT is told what the name
-    /// is, not that it is absent.
+    /// is, not that it is absent. R1637 — judged **before** dispatch, so the
+    /// surface never sees the call.
     #[test]
     fn r1566_a_declared_slot_is_named_as_one_to_a_caller() {
-        let judge = |path| InvokeError::from_declined(TraitInvokeError::UnknownPath, &MIXED, path);
-        assert_eq!(judge("depth"), InvokeError::PathIsAReadSlot);
-        assert_eq!(judge("cell.3"), InvokeError::PathIsAReadSlot);
-        assert_eq!(judge("nothing_declared"), InvokeError::UnknownInvokePath);
-        // The asymmetry with the write channel, asserted so it stays chosen:
-        // a name declared as an ACTION that the impl then does not recognise is
-        // a surface whose declaration and dispatch disagree, and saying so
-        // plainly beats a friendlier word that would hide it.
-        assert_eq!(judge("reset"), InvokeError::UnknownInvokePath);
+        let mut surface = MixedSurface::default();
+        let judge = |s: &mut MixedSurface, path: &str| {
+            invoke_declared(s, path, IntrospectValue::Null).unwrap_err()
+        };
+        assert_eq!(judge(&mut surface, "depth"), InvokeError::PathIsAReadSlot);
+        assert_eq!(judge(&mut surface, "cell.3"), InvokeError::PathIsAReadSlot);
+        assert_eq!(
+            judge(&mut surface, "nothing_declared"),
+            InvokeError::UnknownInvokePath
+        );
+        // R1637 — the two facts R1566 fused now differ: a name the surface
+        // published and did not answer is a bug in the SURFACE, and a name
+        // nobody published is a mistake by the CALLER.
+        assert_eq!(
+            judge(&mut surface, "promised"),
+            InvokeError::DeclaredButUnhandled
+        );
+        // None of the four reached the impl.
+        assert!(surface.fired.is_empty(), "fired: {:?}", surface.fired);
+    }
+
+    /// R1637 §2 #2 — the round's whole point: an action a surface implements and
+    /// never declares is **not callable**, and the impl is not even reached.
+    ///
+    /// The counterfactual is the pre-R1637 tree, where this call succeeded.
+    #[test]
+    fn r1637_an_undeclared_action_is_not_on_the_wire() {
+        let mut scene = mixed_scene();
+        // Declared: it answers.
+        assert_eq!(
+            invoke(&mut scene, "/external/reset", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Text("reset".to_owned()),
+        );
+        // Implemented, undeclared: refused with the caller's word.
+        assert_eq!(
+            invoke(&mut scene, "/external/smuggled", IntrospectValue::Null).unwrap_err(),
+            InvokeError::UnknownInvokePath,
+        );
+        // And `$schema` agrees with the wire — which is the property that makes
+        // the refusal actionable rather than merely restrictive.
+        let schema = crate::query::query(&scene, "/external/$schema").unwrap();
+        let IntrospectValue::Json(serde_json::Value::Array(fields)) = schema else {
+            panic!("$schema must render an array");
+        };
+        let names: Vec<&str> = fields
+            .iter()
+            .filter(|f| f["channel"] == "invoke")
+            .filter_map(|f| f["path"].as_str())
+            .collect();
+        assert_eq!(names, ["reset", "promised"]);
     }
 
     /// The surface's own verdicts survive the re-judgement — including R1564's
     /// sentence, which is the one payload this transport does not author.
     #[test]
     fn r1566_a_surface_that_judged_the_call_keeps_its_verdict() {
-        let judge = |err| InvokeError::from_declined(err, &MIXED, "reset");
+        let judge = |err: TraitInvokeError| {
+            let mut surface = MixedSurface {
+                verdict: Some(err),
+                ..MixedSurface::default()
+            };
+            invoke_declared(&mut surface, "reset", IntrospectValue::Null).unwrap_err()
+        };
         assert_eq!(
             judge(TraitInvokeError::TypeMismatch),
             InvokeError::InvokeTypeMismatch
@@ -453,7 +646,12 @@ mod tests {
     impl pinion_core::external::ExternalIntrospect for SpeedDriver {
         fn schema(&self) -> pinion_core::external::IntrospectSchema {
             pinion_core::external::IntrospectSchema::new(
-                const { &[pinion_core::external::SchemaField::new("speed", "int")] },
+                const {
+                    &[
+                        pinion_core::external::SchemaField::new("speed", "int"),
+                        pinion_core::external::SchemaField::action("halve", "int"),
+                    ]
+                },
             )
         }
         fn query(&self, path: &str) -> Option<IntrospectValue> {

@@ -646,14 +646,14 @@ impl ExternalIntrospect for HexDumpOracle {
                     SchemaField::new("selection_end", "int"),
                     SchemaField::new("selection_len", "int"),
                     SchemaField::new("selection_hex", "string"),
-                    SchemaField::new("hex_cell", "string"),
-                    SchemaField::new("ascii_cell", "string"),
-                    SchemaField::new("byte_at_cell", "string"),
-                    SchemaField::new("select_range", "string"),
-                    SchemaField::new("byte_window", "string"),
+                    SchemaField::action("hex_cell", "string"),
+                    SchemaField::action("ascii_cell", "string"),
+                    SchemaField::action("byte_at_cell", "string"),
+                    SchemaField::action("select_range", "string"),
+                    SchemaField::action("byte_window", "string"),
                     // R1613 — why a byte is lit: the named runs covering it.
                     // The router's pointer press / release symbolic events.
-                    SchemaField::new("send", "string"),
+                    SchemaField::action("send", "string"),
                 ]
             },
         )

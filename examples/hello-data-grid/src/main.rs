@@ -3001,6 +3001,11 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("cell_selection", "string"),
     SchemaField::new("cell_selection_count", "int"),
     SchemaField::new("cell_selection_tsv", "string"),
+    // R1637 — the three cell-range verbs the reads above describe the result
+    // of. Their `"row,col"` argument rides the args channel, not the path.
+    SchemaField::action("select-cell", "bool"),
+    SchemaField::action("extend-cell", "bool"),
+    SchemaField::action("clear-cell-selection", "bool"),
     // R1372.2 — what Ctrl+C copies (range TSV, or the lone focused cell).
     SchemaField::new("copy_tsv", "string"),
     SchemaField::parametric(

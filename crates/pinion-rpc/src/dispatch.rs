@@ -9082,6 +9082,9 @@ fn invoke_error_reason(err: &InvokeError) -> WireFault {
         InvokeError::NoExternalAtPath => WireFault::params("NoExternalAtPath"),
         InvokeError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
         InvokeError::UnknownInvokePath => WireFault::params("UnknownInvokePath"),
+        // R1637 — a statement about the surface rather than about the caller;
+        // see the variant for why it must not share a word with the one above.
+        InvokeError::DeclaredButUnhandled => WireFault::params("DeclaredButUnhandled"),
         InvokeError::PathIsAReadSlot => WireFault::params("PathIsAReadSlot"),
         InvokeError::InvokeTypeMismatch => WireFault::params("InvokeTypeMismatch"),
         // R1564 — the producer's own sentence, verbatim, under its own code.
