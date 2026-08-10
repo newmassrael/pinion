@@ -1672,8 +1672,8 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     // This test pins them in sync (R743.1: decode is the inverse of
     // encode; R615 from_hex/to_hex precedent).
     use pinion_core::style::{
-        Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow,
-        TextStyle,
+        Color, FontStyle, FontWeight, LetterSpacing, LineHeight, TextAlign, TextDecoration,
+        TextOverflow, TextStyle,
     };
     use pinion_core::widgets::text_field::json_to_text_style;
 
@@ -1686,7 +1686,7 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     let mut b = TextStyle::new();
     b.font_style = FontStyle::Oblique(Some(-14));
     b.line_height = LineHeight::Px(30);
-    b.letter_spacing = 3;
+    b.letter_spacing = LetterSpacing::PxX100(350);
     b.text_align = TextAlign::Center;
     b.decoration = TextDecoration::none()
         .with_underline(true)
@@ -1714,7 +1714,21 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
         .with_underline_style(pinion_core::style::UnderlineStyle::Curly)
         .with_underline_color(Some(Color::rgba(0xE1, 0x1D, 0x1D, 0xFF)));
 
-    for sample in [TextStyle::new(), a, b, c, d] {
+    // R1641 — a fractional tracking value, which the pre-rescale wire could
+    // not carry at all. `b`'s 350 is whole-px-expressible; this one is not, so
+    // the pair is exercised on a value that only exists after the rescale.
+    let mut fractional = TextStyle::new();
+    fractional.letter_spacing = LetterSpacing::PxX100(-150);
+
+    // R1641 — and the em-relative unit, which is the half of this axis the
+    // reference toolkit has (its font-relative spacing mode) and pinion did not
+    // until now. A wire that carried only the absolute form would make a scale
+    // authored in em unrepresentable without resolving it first, which is the
+    // resolution this type exists to defer.
+    let mut em_relative = TextStyle::new();
+    em_relative.letter_spacing = LetterSpacing::EmX1000(-20);
+
+    for sample in [TextStyle::new(), a, b, c, d, fractional, em_relative] {
         let encoded = text_style_to_json(&sample);
         let decoded = json_to_text_style(encoded.as_object().unwrap());
         assert_eq!(
@@ -1722,6 +1736,44 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
             "json_to_text_style must invert text_style_to_json"
         );
     }
+}
+
+/// R1641 §5.36 §5.49 — the retired `letter_spacing` spelling still means px.
+///
+/// The unit under this key changed, so the KEY changed with it: the encoder
+/// publishes `letter_spacing_x100` and never emits the old name. A client
+/// written against the pre-R1641 wire is still out there sending whole px, and
+/// the two ways of not handling that are both silent — dropping the key zeroes
+/// their tracking, reading it as hundredths divides it by a hundred. Neither
+/// shows up as an error; both show up as type that looks slightly wrong.
+///
+/// The canonical spelling wins when both appear, because the declaration names
+/// what a client should send and the legacy form is not a contract (R1639).
+#[test]
+fn r1641_the_retired_letter_spacing_key_is_read_as_whole_px() {
+    use pinion_core::style::{LetterSpacing, TextStyle};
+    use pinion_core::widgets::text_field::json_to_text_style;
+
+    let legacy: serde_json::Value = serde_json::json!({ "letter_spacing": -2 });
+    assert_eq!(
+        json_to_text_style(legacy.as_object().unwrap()).letter_spacing,
+        LetterSpacing::PxX100(-200),
+        "a pre-R1641 client's bare -2 is still -2px",
+    );
+
+    let encoded =
+        text_style_to_json(&TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-150)));
+    let published = encoded.as_object().unwrap().get("letter_spacing").unwrap();
+    assert!(
+        published.is_object(),
+        "the encoder publishes a TAGGED value, never the bare number the \
+         retired form used: {published}",
+    );
+    assert_eq!(
+        published.get("kind").and_then(serde_json::Value::as_str),
+        Some("PxX100"),
+        "and the tag names the unit, so the two units cannot be confused",
+    );
 }
 
 /// R1540 §5.36 — the TWO writers of a `TextDecoration` agree about the
@@ -3944,11 +3996,13 @@ fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
     // decoration / overflow round-trip through the wire alongside
     // the visual-axis fields landed by R55.G.8.
     use pinion_core::scene::{Rect, TextNode};
-    use pinion_core::style::{LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle};
+    use pinion_core::style::{
+        LetterSpacing, LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
+    };
     let mut node = TextNode::new("hi", Rect::default());
     node.style = TextStyle::new()
         .with_line_height(LineHeight::MultiplierX100(150))
-        .with_letter_spacing(2)
+        .with_letter_spacing(LetterSpacing::PxX100(200))
         .with_align(TextAlign::Center)
         .with_decoration(TextDecoration::underline())
         .with_overflow(TextOverflow::Ellipsis);
@@ -3964,8 +4018,11 @@ fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
         Some(&Value::String("MultiplierX100".into())),
     );
     assert_eq!(lh.get("value"), Some(&Value::Number(150.into())));
-    // letter_spacing is a bare signed integer.
-    assert_eq!(style.get("letter_spacing"), Some(&Value::Number(2.into())));
+    // letter_spacing is a tagged value since R1641: the unit is on the wire,
+    // so this assertion cannot be read two ways.
+    let ls = style.get("letter_spacing").unwrap().as_object().unwrap();
+    assert_eq!(ls.get("kind"), Some(&Value::String("PxX100".into())));
+    assert_eq!(ls.get("value"), Some(&Value::Number(200.into())));
     assert_eq!(
         style.get("text_align"),
         Some(&Value::String("Center".into())),

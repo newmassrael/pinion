@@ -2568,6 +2568,28 @@ pub fn effective_style_at<'a>(
 /// spans for rich (multi-style) text; empty (the default) is the
 /// single-style fast path. See [`StyleRun`] for range semantics.
 ///
+/// # Two styles on one line: use `runs`, not two nodes
+///
+/// The reflex when part of a line needs a different colour or weight is to
+/// place two `TextNode`s side by side in a row. That is not what this
+/// primitive is for, and it does not behave like an inline span:
+///
+/// * each node is its own flex item, laid out and measured independently, so
+///   nothing keeps them on one line or on one baseline; and
+/// * **a node's measured box excludes trailing whitespace.** The intrinsic
+///   width comes from the shaper's "width excluding trailing whitespace"
+///   (the same rule CSS applies to a flex item), so `"최소 "` followed by
+///   `"1회"` renders as `최소1회`. Leading whitespace *is* measured — the two
+///   ends of a string are not one fact. Asserted by
+///   `r1641_a_measured_box_excludes_trailing_but_not_leading_space` in
+///   `pinion-text`.
+///
+/// [`Self::runs`] is the primitive for this: one node, one layout, one
+/// baseline, whitespace preserved verbatim, and spans that carry a fully
+/// resolved [`TextStyle`] each. R1641 added this paragraph because the first
+/// consumer outside this workspace reported that `runs`' own documentation is
+/// excellent *to someone who already found `runs`*.
+///
 /// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
@@ -3074,6 +3096,11 @@ impl TextNode {
 /// rasterizers (vello, lyon, cosmic-text glyph outlines) all operate
 /// in sub-pixel space; the integer-pixel [`Rect`] still serves as
 /// the layout / hit-test bounding box.
+///
+/// **Build one with [`PathPoint::new`].** The type is `#[non_exhaustive]`, so
+/// a struct literal is rejected (`E0639`) and rustc's message does not name the
+/// constructor — a cost each new consumer pays once, and the first one outside
+/// this workspace reported paying it (R1641).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct PathPoint {

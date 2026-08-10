@@ -235,6 +235,10 @@ mod tests {
                     width: (cols.min(budget) * 8) as f32,
                     height: (rows * 16) as f32,
                     line_count: rows,
+                    // A fixture measure over a uniform cell grid: it has no
+                    // font metrics to report a baseline from, and on a uniform
+                    // grid top-alignment already puts first rows level.
+                    baseline: None,
                 };
                 Some(measured)
             }

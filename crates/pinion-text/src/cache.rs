@@ -1255,13 +1255,21 @@ fn style_properties(
         reason = "font_size_px <= 2^24 px in practice"
     )]
     let font_size = style.font_size_px as f32;
-    // letter_spacing i32 → f32 px (signed). Realistic UI ranges
-    // (-32..=32) fit f32 exactly; the cast is loss-free.
+    // letter_spacing → f32 px (signed). R1641: the authored value may be
+    // absolute or em-relative, and `resolved_px_x100` is the ONE place that
+    // difference collapses — so a caller reasoning about the resulting geometry
+    // and the shaper being fed here cannot disagree about what an em is.
+    //
+    // Fixed point rather than a float field because `TextStyle` is `Eq + Hash`
+    // for the §5.16 cache key, which a float takes away. Realistic UI ranges
+    // (|v| <= 3200 hundredths) fit f32 exactly; the cast is loss-free and the
+    // division by a power of ten is the only rounding in the path.
     #[allow(
         clippy::cast_precision_loss,
-        reason = "letter_spacing |v| <= 2^24 in practice"
+        reason = "resolved letter spacing |v| <= 2^24 in practice"
     )]
-    let letter_spacing_px = style.letter_spacing as f32;
+    let letter_spacing_px =
+        style.letter_spacing.resolved_px_x100(style.font_size_px) as f32 / 100.0;
     let mut props = vec![
         StyleProperty::FontSize(font_size),
         StyleProperty::Brush(style.fg_color),
@@ -2074,6 +2082,54 @@ mod tests {
             (warm_width - fresh_width).abs() < f32::EPSILON,
             "same input shapes the same whether the context was just built \
              or already warm: warm={warm_width} fresh={fresh_width}",
+        );
+    }
+
+    /// R1641 §5.36 — which whitespace a measured box contains, stated rather
+    /// than inherited.
+    ///
+    /// A consumer placing three `Scene::Text` leaves in one flex row to
+    /// emphasise the middle span reported that the spaces between them
+    /// vanished, and filed it as a documentation gap. Half of it is not: the
+    /// intrinsic width this crate reports comes from parley's `width()`, which
+    /// that API documents as *"the computed width of the layout **excluding**
+    /// the width of trailing whitespace"* — `full_width()` is the including
+    /// one. So a leaf whose content ends in a space is measured as if it did
+    /// not, and the following flex item butts against the last glyph.
+    ///
+    /// Leading whitespace is a different fact and is measured, which is why
+    /// this asserts both: the report described one symptom with two causes,
+    /// and a fix aimed at `width()` would have closed only one of them.
+    ///
+    /// This is a REPORT, not a complaint about parley. Excluding trailing
+    /// whitespace from a box is what CSS does with a flex item (white-space
+    /// processing removes it) and what a text engine must do for alignment to
+    /// look right. What was missing is that pinion never wrote the choice
+    /// down, so the first consumer to meet it had to infer it from a gap
+    /// between two words. `StyleRun` is the answer for styling inside one
+    /// line — see `TextNode::runs`.
+    #[test]
+    fn r1641_a_measured_box_excludes_trailing_but_not_leading_space() {
+        let s = style(16);
+        let mut cache = crate::test_font::own_font_cache();
+        let bare = cache.layout("ab", &s, None).width();
+        let trailing = cache.layout("ab ", &s, None).width();
+        let leading = cache.layout(" ab", &s, None).width();
+
+        assert!(
+            (trailing - bare).abs() < f32::EPSILON,
+            "a trailing space does not widen the measured box: \
+             bare={bare} trailing={trailing}",
+        );
+        assert!(
+            leading > bare,
+            "a leading space DOES widen it, so the two ends of one string are \
+             not the same fact: bare={bare} leading={leading}",
+        );
+        assert!(
+            cache.layout("ab ", &s, None).full_width() > bare,
+            "and the trailing advance exists — `width()` declines to count it, \
+             `full_width()` reports it",
         );
     }
 

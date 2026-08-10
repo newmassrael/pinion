@@ -381,12 +381,26 @@ impl TextMeasure for SelfHostedTextEngine {
             reason = "a single line box height is a small positive px value — fits f32"
         )]
         let height = metrics.height_px as f32;
+        // R1641 §5.21 — the baseline this arm reports is the SAME
+        // `LineBoxMetrics::baseline_px` its paint arm draws on, so a row
+        // aligning baselines aligns against where the glyphs actually land. An
+        // engine that measured a box and declined to say where its baseline is
+        // would take its leaves out of `AlignItems::Baseline` silently, and the
+        // symptom — one item in a row not moving — points at the row, not here.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a first-baseline offset is a small positive px value — fits f32"
+        )]
+        let baseline = metrics.baseline_px as f32;
         // R1344 §5.12 — single-line BY CONSTRUCTION: `self_hosted_text_eligible`
         // rejects hard breaks and the `single_line_overflows` check above
         // declines anything that would soft-wrap, so this arm only ever measures
         // one line. That premise now travels WITH the impl that holds it rather
         // than being assumed by the layout caller.
-        Some(TextBox::single_line(shaped.advance, height))
+        Some(TextBox {
+            baseline: Some(baseline),
+            ..TextBox::single_line(shaped.advance, height)
+        })
     }
 }
 

@@ -1839,6 +1839,91 @@ pub enum LineHeight {
     MultiplierX100(u16),
 }
 
+/// Letter-spacing (tracking) policy (§5.36 R47.5, widened R1641).
+///
+/// Absolute or font-relative, the same either-or [`LineHeight`] draws one type
+/// above, and for the same reason: a type scale states some of its values in
+/// pixels and some as a fraction of the size, and a field that can only hold
+/// one of those makes the other unrepresentable.
+///
+/// # Why it stopped being a bare `i32`
+///
+/// It was whole signed px until R1641, when the first consumer to port a
+/// production type scale reported that **four of its five tracking values were
+/// not representable** (−1.5 / −0.5 / −0.3 / +1.5 px; only −1px survived). That
+/// is not cosmetic for them: the Korean face they ship has no 500 weight — the
+/// family steps 400 → 700 — so the hierarchy the scale assigns to weight is
+/// carried by tracking instead, and tracking precision *is* hierarchy
+/// precision.
+///
+/// The obvious repair is `f32`, and it is wrong. [`TextStyle`] derives
+/// `Eq + Hash`, and that participates in the §5.16 paint-fragment cache key
+/// (see [`SizeValue`] for the same argument on the layout side); a float field
+/// takes both away. Fixed point keeps them and represents every value that
+/// scale asks for exactly.
+///
+/// # Why there are two units and not just a finer one
+///
+/// Precision was the reported symptom; it was not the whole gap. The reference
+/// toolkit's font takes a spacing MODE beside the value — a percentage of each
+/// glyph's own natural advance, or an absolute length — so spacing there is
+/// *specifiable relative to the font*, not only in device units, and a scale
+/// that must be restated for every size is the thing a scale exists to avoid.
+///
+/// [`Self::EmX1000`] is pinion's relative form and it is **em-relative (CSS
+/// `letter-spacing: -0.02em`), not advance-relative**. That is a deliberate
+/// difference from the reference, whose percentage form scales each glyph's own
+/// natural advance: the shaper this crate feeds takes one absolute per-cluster
+/// spacing, so an advance-proportional form cannot be expressed by resolving to
+/// a single number, while the em form can and is what a design system writes
+/// down.
+///
+/// Thousandths rather than [`LineHeight::MultiplierX100`]'s hundredths because
+/// the two quantities live at different magnitudes: a line-height multiplier is
+/// 1.0–2.0 and two digits resolve it, while tracking is 0.01–0.1 em and two
+/// digits would quantise a scale to steps coarser than its own values.
+#[non_exhaustive]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum LetterSpacing {
+    /// The font's own spacing, unmodified. Default.
+    #[default]
+    Normal,
+    /// Absolute, in 1/100 CSS px, signed (e.g. `-150` = `-1.5px`).
+    PxX100(i32),
+    /// A fraction of the font size, in 1/1000 em, signed (e.g. `-20` =
+    /// `-0.02em`). Resolved against `font_size_px` at the shaping wire.
+    EmX1000(i32),
+}
+
+impl LetterSpacing {
+    /// The absolute spacing this policy resolves to at `font_size_px`.
+    ///
+    /// One resolution, used by the shaper and by anything that needs to reason
+    /// about the resulting geometry, so the two cannot drift. Returns
+    /// hundredths of a px — the finer of the two authored units, so an
+    /// [`Self::PxX100`] value passes through exactly and only the em form
+    /// rounds.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "a font size past 2^31 px is not a font size; the multiply \
+                  below saturates either way"
+    )]
+    pub const fn resolved_px_x100(self, font_size_px: u32) -> i32 {
+        match self {
+            Self::Normal => 0,
+            Self::PxX100(hundredths) => hundredths,
+            // em/1000 × px × 100/1 → (em_x1000 × px) / 10. The multiply is
+            // saturating because a caller can name any i32; realistic tracking
+            // (|em| < 1) cannot approach the bound at any font size that fits
+            // a u32 line box.
+            Self::EmX1000(thousandths) => thousandths.saturating_mul(font_size_px as i32) / 10,
+        }
+    }
+}
+
 /// Inline text alignment along the writing-mode main axis (§5.36 R47.5).
 ///
 /// `Start` / `End` resolve to left / right in LTR text (and reverse in
@@ -2607,8 +2692,9 @@ pub struct TextStyle {
     pub font_style: FontStyle,
     /// CSS `line-height` (R47.5). Default = [`LineHeight::Normal`].
     pub line_height: LineHeight,
-    /// CSS `letter-spacing` in px (signed) (R47.5). Default = `0`.
-    pub letter_spacing: i32,
+    /// CSS `letter-spacing` (R47.5; widened from a whole-px `i32` to
+    /// [`LetterSpacing`] at R1641). Default = [`LetterSpacing::Normal`].
+    pub letter_spacing: LetterSpacing,
     /// CSS `text-align` (R47.5). Default = [`TextAlign::Start`].
     pub text_align: TextAlign,
     /// CSS `text-indent` (R1551) — the first line's own start offset, and the only field
@@ -2644,7 +2730,7 @@ impl TextStyle {
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: LineHeight::Normal,
-            letter_spacing: 0,
+            letter_spacing: LetterSpacing::Normal,
             text_align: TextAlign::Start,
             text_indent: TextIndent::none(),
             decoration: TextDecoration::none(),
@@ -2741,10 +2827,23 @@ impl TextStyle {
         self
     }
 
-    /// Builder: override the letter-spacing (px, signed) (R47.5).
+    /// Builder: override the letter-spacing (R47.5; takes [`LetterSpacing`]
+    /// since R1641).
+    ///
+    /// Shaped like [`Self::with_line_height`] rather than taking a bare number,
+    /// because the policy now has two units and a bare number cannot say which
+    /// one it is:
+    ///
+    /// ```
+    /// # use pinion_core::style::{LetterSpacing, TextStyle};
+    /// let display = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-150));
+    /// let scale = TextStyle::new().with_letter_spacing(LetterSpacing::EmX1000(-20));
+    /// # assert_eq!(display.letter_spacing.resolved_px_x100(64), -150);
+    /// # assert_eq!(scale.letter_spacing.resolved_px_x100(64), -128);
+    /// ```
     #[must_use]
-    pub const fn with_letter_spacing(mut self, px: i32) -> Self {
-        self.letter_spacing = px;
+    pub const fn with_letter_spacing(mut self, spacing: LetterSpacing) -> Self {
+        self.letter_spacing = spacing;
         self
     }
 
@@ -2903,6 +3002,10 @@ impl Dash {
 /// Stroke description for [`PathNode`](crate::scene::PathNode). Width
 /// is in pixels matching the [`Rect`](crate::scene::Rect) coordinate
 /// space.
+///
+/// **Build one with [`Stroke::new`]**, then the builders. The type is
+/// `#[non_exhaustive]`, so a struct literal is rejected (`E0639`) and rustc's
+/// message does not name the constructor (R1641).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Stroke {
@@ -3255,6 +3358,38 @@ pub enum AlignItems {
     Start,
     Center,
     End,
+    /// R1641 — align participating items so their **first text baselines
+    /// coincide**.
+    ///
+    /// A number beside its unit (`92.5` `kg`), a heading beside a badge, a
+    /// label beside its value: whenever two runs of text at different sizes sit
+    /// on one line, this is the alignment they want, and it is the one CSS
+    /// flexbox, the layout engine underneath, and the reference toolkit
+    /// (a first-class flag in its alignment set) all carry. pinion did not,
+    /// and the first consumer
+    /// outside this workspace hit it on the first screen they drew — the
+    /// closest available answer, [`Self::End`], drops the smaller run by the
+    /// larger one's descender, so they pinned it back with a hand-measured
+    /// bottom margin that nothing keeps true across a font change.
+    ///
+    /// # What participates
+    ///
+    /// A [`Scene::Text`](crate::scene::Scene::Text) child, because a measured
+    /// text box is the only thing in the tree that can currently report where
+    /// its baseline is. Every other child keeps [`Self::Start`] behaviour and
+    /// is **not** moved.
+    ///
+    /// CSS instead *synthesizes* a baseline for a non-participating item from
+    /// its bottom margin edge. pinion does not do that yet, and the difference
+    /// is deliberate rather than pending: a synthesized baseline needs the
+    /// item's laid-out height, while the shift here is computed BEFORE layout
+    /// precisely so the row's own height comes out of the layout engine instead
+    /// of being corrected afterwards. Under-aligning is the error direction
+    /// that shows up as "this did not move"; the other one moves things by a
+    /// number derived from a box that was not final.
+    ///
+    /// With fewer than two participants the alignment is a no-op, matching CSS.
+    Baseline,
 }
 
 /// Length value for [`Size`] / `flex_basis` / etc. per §5.21.
@@ -4845,7 +4980,7 @@ mod tests {
         assert_eq!(s.font_weight, FontWeight::NORMAL);
         assert_eq!(s.font_style, FontStyle::Normal);
         assert_eq!(s.line_height, LineHeight::Normal);
-        assert_eq!(s.letter_spacing, 0);
+        assert_eq!(s.letter_spacing, LetterSpacing::Normal);
         assert_eq!(s.text_align, TextAlign::Start);
         assert_eq!(s.decoration, TextDecoration::none());
         assert_eq!(s.overflow, TextOverflow::Visible);
@@ -4955,10 +5090,85 @@ mod tests {
 
     #[test]
     fn text_style_with_letter_spacing_accepts_signed_values() {
-        let s = TextStyle::new().with_letter_spacing(-2);
-        assert_eq!(s.letter_spacing, -2);
-        let s = TextStyle::new().with_letter_spacing(4);
-        assert_eq!(s.letter_spacing, 4);
+        let s = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-200));
+        assert_eq!(s.letter_spacing, LetterSpacing::PxX100(-200));
+        let s = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(400));
+        assert_eq!(s.letter_spacing, LetterSpacing::PxX100(400));
+    }
+
+    /// R1641 §5.36 — the five tracking values of the type scale that forced
+    /// this, each representable EXACTLY.
+    ///
+    /// The consumer report is what makes this a list rather than one
+    /// fractional value: of the scale's five steps only `-1px` fit the old
+    /// whole-px field, so four of five had to be rounded to a neighbour. A
+    /// test that asserted one fraction would prove the type changed; this
+    /// asserts the thing that was broken.
+    #[test]
+    fn r1641_a_production_type_scale_is_representable_exactly() {
+        // (display name, hundredths) — -1.5px / -1px / -0.5px / -0.3px / +1.5px
+        for (step, hundredths) in [
+            ("display-xl", -150),
+            ("display-lg", -100),
+            ("display-md", -50),
+            ("display-sm", -30),
+            ("caption-upper", 150),
+        ] {
+            let s = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(hundredths));
+            assert_eq!(
+                s.letter_spacing.resolved_px_x100(64),
+                hundredths,
+                "{step} survives the builder and the resolve unrounded",
+            );
+        }
+
+        // And the property that made a float the wrong answer: `Eq + Hash` are
+        // what the §5.16 paint-fragment cache key derives from, so two styles
+        // differing by three hundredths of a px must be distinguishable AND
+        // hashable. A float field would have cost both.
+        let a = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-30));
+        let b = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-33));
+        assert_ne!(a, b, "a 0.03px difference is a difference");
+        let mut set = std::collections::HashSet::new();
+        set.insert(a);
+        set.insert(b);
+        assert_eq!(set.len(), 2, "and both are usable as a cache key");
+    }
+
+    /// R1641 §5.36 — the em unit answers the half of this axis the ABSOLUTE
+    /// form cannot: one authored value that holds across the whole scale.
+    ///
+    /// The reference toolkit's font has had two spacing modes all along
+    /// (an absolute mode and a font-relative one, chosen per value), so the
+    /// existence of a font-relative form is a floor, not a preference. What is
+    /// chosen here is the reference QUANTITY: em, as CSS writes it, rather than
+    /// the reference's per-glyph natural advance — see [`LetterSpacing`] on why
+    /// the shaper this feeds cannot express the latter as one number.
+    #[test]
+    fn r1641_em_relative_tracking_scales_with_the_font() {
+        let tracking = LetterSpacing::EmX1000(-20); // -0.02em
+
+        // The same authored value, three sizes, three resolved widths — which
+        // is the entire point: an absolute value would have to be restated.
+        assert_eq!(tracking.resolved_px_x100(16), -32, "-0.32px at 16px");
+        assert_eq!(tracking.resolved_px_x100(48), -96, "-0.96px at 48px");
+        assert_eq!(tracking.resolved_px_x100(64), -128, "-1.28px at 64px");
+
+        // An absolute value is size-invariant, and the two forms are only
+        // interchangeable at the size where they happen to meet.
+        let absolute = LetterSpacing::PxX100(-128);
+        assert_eq!(absolute.resolved_px_x100(16), -128);
+        assert_eq!(
+            absolute.resolved_px_x100(64),
+            tracking.resolved_px_x100(64),
+            "they agree at 64px and nowhere else, which is why both exist",
+        );
+
+        // `Normal` is not `PxX100(0)` as a value even though it resolves the
+        // same: the default is "the font's own spacing", and a style that says
+        // so is distinguishable from one that pins zero.
+        assert_eq!(LetterSpacing::Normal.resolved_px_x100(64), 0);
+        assert_ne!(LetterSpacing::Normal, LetterSpacing::PxX100(0));
     }
 
     #[test]
@@ -5014,7 +5224,7 @@ mod tests {
         s.insert(TextStyle::new().with_weight(FontWeight::BOLD));
         s.insert(TextStyle::new().with_style(FontStyle::Italic));
         s.insert(TextStyle::new().with_line_height(LineHeight::MultiplierX100(120)));
-        s.insert(TextStyle::new().with_letter_spacing(2));
+        s.insert(TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(200)));
         s.insert(TextStyle::new().with_align(TextAlign::Center));
         s.insert(TextStyle::new().with_decoration(TextDecoration::underline()));
         s.insert(TextStyle::new().with_overflow(TextOverflow::Ellipsis));

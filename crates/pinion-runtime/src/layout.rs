@@ -124,16 +124,38 @@ pub struct TextBox {
     /// [`TextNode::line_count`](pinion_core::scene::TextNode::line_count)
     /// semantic (soft breaks induced by the width count; hard breaks count).
     pub line_count: u32,
+    /// R1641 §5.21 — distance from the box's top edge down to the **first
+    /// line's alphabetic baseline**, or `None` when this measure does not
+    /// report one.
+    ///
+    /// [`AlignItems::Baseline`] is
+    /// the consumer: a row aligning baselines needs, per item, the one number
+    /// only the thing that shaped it knows. It joins `line_count` here for the
+    /// reason `line_count` was added at R1344 — a fact the caller cannot
+    /// re-derive from `(width, height)` and would otherwise have to guess.
+    ///
+    /// `Option` rather than a synthesized fallback: an impl that has no
+    /// baseline says so, and its item then does not participate in the
+    /// alignment. The alternative — reporting `height` and calling it a
+    /// baseline — is indistinguishable at this type from a real one, so a
+    /// measure that quietly stopped reporting would align every row slightly
+    /// wrong instead of visibly not at all.
+    pub baseline: Option<f32>,
 }
 
 impl TextBox {
     /// A single-line box — the shape an impl that never wraps always returns.
+    ///
+    /// Reports no baseline. An impl that knows one should build the struct and
+    /// fill [`Self::baseline`]; this constructor stays the "size and nothing
+    /// else" shortcut rather than inventing a number for it.
     #[must_use]
     pub const fn single_line(width: f32, height: f32) -> Self {
         Self {
             width,
             height,
             line_count: 1,
+            baseline: None,
         }
     }
 }
@@ -478,7 +500,7 @@ fn compute_layout_inner(
     let width_unbounded = matches!(unbounded, Some(ScrollAxis::Horizontal | ScrollAxis::Both));
     let height_unbounded = matches!(unbounded, Some(ScrollAxis::Vertical | ScrollAxis::Both));
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
-    let layout_tree = build(scene, &mut tree);
+    let layout_tree = build(scene, &mut tree, cache, text_measure);
     // Force the root to fill the viewport. The user's declared size
     // on the root is ignored at the top level; child sizing is the
     // user's domain. This mirrors how browsers treat `<html>`.
@@ -948,14 +970,126 @@ struct LayoutShadow {
     children: Vec<LayoutShadow>,
 }
 
-fn build(scene: &Scene, tree: &mut TaffyTree<NodeContext>) -> LayoutShadow {
+/// R1641 §5.21 §5.36 — where a child's first text baseline sits, measured from
+/// the top of its own box, or `None` when it has none to report.
+///
+/// A [`Scene::Text`] leaf only. A container's baseline would be its first text
+/// descendant's, offset by wherever layout put that descendant — a number that
+/// does not exist yet at the point this is asked, which is before the layout
+/// pass. See [`AlignItems::Baseline`] on why the shift is computed here rather
+/// than as a correction afterwards.
+///
+/// Measured at unbounded width because a first line's baseline is a function of
+/// the font metrics and the line-height policy, not of where the text wraps.
+fn text_baseline_of(
+    scene: &Scene,
+    cache: &mut LayoutCache,
+    text_measure: Option<&dyn TextMeasure>,
+) -> Option<f32> {
+    let Scene::Text(t) = scene else {
+        return None;
+    };
+    // The §5.37 override owns the box when it claims the leaf, so it owns the
+    // baseline too — asking parley here would align against a box the engine
+    // did not produce.
+    if let Some(measured) = text_measure
+        .and_then(|tm| tm.measure_text(&t.content, &t.style, &t.runs, None, t.caret_bearing))
+    {
+        return measured.baseline;
+    }
+    let layout = cache.layout_with_runs(&t.content, &t.style, &t.runs, None);
+    layout.lines().next().map(|line| line.metrics().baseline)
+}
+
+/// R1641 §5.21 — push each participating child down so the row's first text
+/// baselines coincide.
+///
+/// Injected as extra taffy `margin.top` BEFORE `compute_layout`, so the row's
+/// own height is the layout engine's answer about the shifted children rather
+/// than a number this function would otherwise have to correct afterwards —
+/// and so a parent sizing itself around this row sees the true height on the
+/// same pass.
+///
+/// The largest baseline wins, so every delta is `>= 0` and no child is lifted
+/// above the row's content box.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a declared margin is a small px value; the same cast every other \
+              margin in `to_taffy_style` already makes"
+)]
+fn apply_baseline_offsets(
+    children: &[Scene],
+    shadows: &[LayoutShadow],
+    tree: &mut TaffyTree<NodeContext>,
+    cache: &mut LayoutCache,
+    text_measure: Option<&dyn TextMeasure>,
+) {
+    let baselines: Vec<Option<f32>> = children
+        .iter()
+        .map(|child| text_baseline_of(child, cache, text_measure))
+        .collect();
+    // One participant has nothing to align WITH; zero has nothing to align.
+    // CSS reaches the same no-op, and stating it here keeps the common
+    // single-text row off the `set_style` path entirely.
+    if baselines.iter().filter(|b| b.is_some()).count() < 2 {
+        return;
+    }
+    let deepest = baselines
+        .iter()
+        .flatten()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    for ((child, shadow), baseline) in children.iter().zip(shadows).zip(&baselines) {
+        let Some(baseline) = baseline else { continue };
+        // Rounded because every rect this feeds is snapped to integer pixels
+        // downstream; a sub-pixel delta would only be truncated there, and
+        // truncation is what makes two equal baselines land a pixel apart.
+        let delta = (deepest - baseline).round();
+        if delta <= 0.0 {
+            continue;
+        }
+        let mut style = tree
+            .style(shadow.node)
+            .expect("taffy style query failed")
+            .clone();
+        // Added to the child's DECLARED margin, not substituted for it: the
+        // application's own spacing is still its own.
+        style.margin.top = length(layout_style_of(child).margin.y as f32 + delta);
+        tree.set_style(shadow.node, style)
+            .expect("taffy set_style failed");
+    }
+}
+
+fn build(
+    scene: &Scene,
+    tree: &mut TaffyTree<NodeContext>,
+    cache: &mut LayoutCache,
+    text_measure: Option<&dyn TextMeasure>,
+) -> LayoutShadow {
     // R55.G.4 §5.45 — Scroll's `layout` field now carries its
     // taffy style (seeded with `viewport.{w,h}` by
     // `ScrollNode::new`); the pre-R55.G.4 build-site size override
     // is retired in favour of the unified `layout_style_of` path.
     let style = to_taffy_style(layout_style_of(scene));
     let children = match scene {
-        Scene::Container(c) => c.children.iter().map(|s| build(s, tree)).collect(),
+        Scene::Container(c) => {
+            let shadows: Vec<LayoutShadow> = c
+                .children
+                .iter()
+                .map(|s| build(s, tree, cache, text_measure))
+                .collect();
+            // R1641 — baseline alignment is a CROSS-axis rule, so it applies
+            // only where the cross axis is vertical. `to_taffy_style` maps
+            // every direction but `Column` onto a row, and this mirrors that
+            // so the two cannot disagree about which container is a row.
+            if matches!(c.layout.align_items, AlignItems::Baseline)
+                && !matches!(c.layout.flex_direction, FlexDirection::Column)
+            {
+                apply_baseline_offsets(&c.children, &shadows, tree, cache, text_measure);
+            }
+            shadows
+        }
         _ => Vec::new(),
     };
     let child_ids: Vec<NodeId> = children.iter().map(|c| c.node).collect();
@@ -1231,6 +1365,20 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         AlignItems::Start => TaffyAlign::Start,
         AlignItems::Center => TaffyAlign::Center,
         AlignItems::End => TaffyAlign::End,
+        // R1641 — `AlignItems::Baseline` lowers to taffy's START, and the
+        // shift is pinion's own (see `apply_baseline_offsets`).
+        //
+        // NOT `TaffyAlign::Baseline`, which would look like the obvious
+        // mapping and would be a no-op alias for `End` on exactly the items
+        // this exists for. taffy takes a leaf's size through a measure
+        // function typed `FnOnce(..) -> Size<f32>` — there is no channel for a
+        // baseline — so every measured leaf returns `first_baselines:
+        // Point::NONE`, and flexbox then does `baseline.unwrap_or(height)`.
+        // For a text leaf that synthesized baseline IS the box's bottom edge.
+        // Shipping the one-line mapping would have published a variant that
+        // moves nothing, which is the error direction that inflates a
+        // capability silently.
+        AlignItems::Baseline => TaffyAlign::Start,
         _ => TaffyAlign::Stretch,
     });
     s.gap = TaffySize {
@@ -2946,6 +3094,219 @@ mod tests {
         assert_eq!(c.len(), 0, "fresh cache is empty");
         compute_layout(&mut scene, &mut c, 320, 200);
         assert!(!c.is_empty(), "measure pass populates LayoutCache");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1641 §5.21 — `AlignItems::Baseline`.
+    //
+    // The consumer case verbatim: a 56px numeral with its 20px unit beside
+    // it. `End` drops the unit by the numeral's descender, and the workaround
+    // is a hand-measured bottom margin that nothing keeps true.
+    //
+    // Every assertion here is RELATIVE — "these two baselines coincide", not
+    // "this baseline is at 45px" — because the face a bare `LayoutCache`
+    // resolves is the host's. Each test also asserts the pair it aligns is a
+    // pair that STARTS apart, so a fixture that stopped discriminating fails
+    // instead of passing.
+    // ─────────────────────────────────────────────────────────────────
+    mod r1641_baseline_alignment {
+        use super::*;
+        use pinion_core::style::{AlignItems, BoxStyle};
+
+        const BIG: u32 = 56;
+        const SMALL: u32 = 20;
+
+        fn text(content: &str, size: u32) -> Scene {
+            Scene::Text(TextNode::styled(
+                content,
+                Rect::default(),
+                TextStyle::new().with_size_px(size),
+            ))
+        }
+
+        fn row(align: AlignItems, children: Vec<Scene>) -> Scene {
+            Scene::Container(
+                ContainerNode::new(children).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(align),
+                ),
+            )
+        }
+
+        /// Where a laid-out text leaf's first baseline sits in window space.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a laid-out y within a 200px viewport is exact in f32"
+        )]
+        fn absolute_baseline(scene: &Scene, cache: &mut LayoutCache) -> f32 {
+            let Scene::Text(t) = scene else {
+                panic!("not a text leaf")
+            };
+            let within = cache
+                .layout_with_runs(&t.content, &t.style, &t.runs, None)
+                .lines()
+                .next()
+                .expect("a non-empty string lays out at least one line")
+                .metrics()
+                .baseline;
+            t.rect.y as f32 + within
+        }
+
+        fn children_of(scene: &Scene) -> &[Scene] {
+            let Scene::Container(c) = scene else {
+                panic!("not a container")
+            };
+            &c.children
+        }
+
+        #[test]
+        fn r1641_a_baseline_row_puts_both_baselines_on_one_line() {
+            let mut c = cache();
+            let mut aligned = row(
+                AlignItems::Baseline,
+                vec![text("92.5", BIG), text("kg", SMALL)],
+            );
+            let mut top = row(
+                AlignItems::Start,
+                vec![text("92.5", BIG), text("kg", SMALL)],
+            );
+            compute_layout(&mut aligned, &mut c, 400, 200);
+            compute_layout(&mut top, &mut c, 400, 200);
+
+            // Non-vacuity first: the same pair top-aligned has baselines that
+            // do NOT meet. Without this the alignment assertion below would
+            // also pass on a row where the two sizes happened to agree.
+            let untouched = children_of(&top);
+            let apart = (absolute_baseline(&untouched[0], &mut c)
+                - absolute_baseline(&untouched[1], &mut c))
+            .abs();
+            assert!(
+                apart > 1.0,
+                "the fixture must state a difference to remove: {apart}px apart under Start",
+            );
+
+            let items = children_of(&aligned);
+            let gap =
+                (absolute_baseline(&items[0], &mut c) - absolute_baseline(&items[1], &mut c)).abs();
+            assert!(
+                gap <= 1.0,
+                "the baselines coincide (within the integer-pixel snap): {gap}px",
+            );
+        }
+
+        #[test]
+        fn r1641_the_shifted_item_moves_down_and_the_row_still_contains_it() {
+            let mut c = cache();
+            let mut scene = row(
+                AlignItems::Baseline,
+                vec![text("92.5", BIG), text("kg", SMALL)],
+            );
+            compute_layout(&mut scene, &mut c, 400, 200);
+
+            let items = children_of(&scene);
+            let (big, small) = (items[0].rect(), items[1].rect());
+            assert_eq!(big.y, 0, "the deepest baseline does not move");
+            assert!(
+                small.y > 0,
+                "the shallower one is pushed DOWN, never the other lifted up",
+            );
+
+            // The payoff of injecting the shift as margin BEFORE layout: the
+            // row's own height is taffy's answer about the shifted children,
+            // so nothing overflows a box that was sized without them.
+            let container = scene.rect();
+            assert!(
+                small.y + small.h <= container.h,
+                "the row contains the shifted item: {} + {} vs {}",
+                small.y,
+                small.h,
+                container.h,
+            );
+            assert!(
+                big.y + big.h <= container.h,
+                "and still contains the unshifted one",
+            );
+        }
+
+        #[test]
+        fn r1641_one_participant_is_a_no_op() {
+            // CSS reaches the same place: there is nothing to align with. The
+            // Box sibling is not a participant, so this row has exactly one.
+            let mut c = cache();
+            let sized = Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::default())
+                    .with_layout(LayoutStyle::new().with_size(Size::px(30, 30))),
+            );
+            let mut scene = row(AlignItems::Baseline, vec![text("92.5", BIG), sized]);
+            compute_layout(&mut scene, &mut c, 400, 200);
+
+            let items = children_of(&scene);
+            assert_eq!(items[0].rect().y, 0, "the text is not moved");
+            assert_eq!(
+                items[1].rect().y,
+                0,
+                "and the non-text child keeps Start behaviour rather than \
+                 being aligned to a baseline it cannot report",
+            );
+        }
+
+        #[test]
+        fn r1641_a_column_is_untouched() {
+            // Baseline is a CROSS-axis rule; a column's cross axis is
+            // horizontal, where it has no meaning.
+            let mut c = cache();
+            let mut scene = Scene::Container(
+                ContainerNode::new(vec![text("92.5", BIG), text("kg", SMALL)]).with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Column)
+                        .with_align_items(AlignItems::Baseline),
+                ),
+            );
+            compute_layout(&mut scene, &mut c, 400, 200);
+            let items = children_of(&scene);
+            assert_eq!(items[0].rect().y, 0, "first child at the top");
+            assert_eq!(
+                items[1].rect().y,
+                items[0].rect().h,
+                "second stacks directly below, with no baseline shift injected",
+            );
+        }
+
+        #[test]
+        fn r1641_a_declared_margin_survives_the_shift() {
+            // The injected offset is ADDED to the application's own margin,
+            // not substituted for it.
+            let mut c = cache();
+            let unmargined = {
+                let mut s = row(
+                    AlignItems::Baseline,
+                    vec![text("92.5", BIG), text("kg", SMALL)],
+                );
+                compute_layout(&mut s, &mut c, 400, 200);
+                children_of(&s)[1].rect().y
+            };
+            let mut margined = row(
+                AlignItems::Baseline,
+                vec![
+                    text("92.5", BIG),
+                    Scene::Text(
+                        TextNode::styled(
+                            "kg",
+                            Rect::default(),
+                            TextStyle::new().with_size_px(SMALL),
+                        )
+                        .with_layout(LayoutStyle::new().with_margin(Rect::new(0, 7, 0, 0))),
+                    ),
+                ],
+            );
+            compute_layout(&mut margined, &mut c, 400, 200);
+            assert_eq!(
+                children_of(&margined)[1].rect().y,
+                unmargined + 7,
+                "the declared 7px top margin is still 7px of the application's",
+            );
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────

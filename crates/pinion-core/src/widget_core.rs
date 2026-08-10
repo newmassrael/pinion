@@ -167,6 +167,28 @@ impl core::fmt::Debug for PrimarySurface {
 /// &frame)`. Default impls make the trait shape conservative — bindings
 /// without keyboard affordances or composite focus enumerate exactly
 /// the required methods.
+///
+/// # Most bindings should not write this block by hand
+///
+/// The `#[widget]` attribute macro in the `pinion-derive` crate emits the
+/// mechanical half of the impl — [`Self::tag`], [`Self::title`],
+/// [`Self::create_external`], and (with the `event_name_derive` /
+/// `state_name_derive` flags) [`Self::read_state`] and [`Self::event_name`]:
+///
+/// ```ignore
+/// #[widget(tag = "button", title = "hello-button", state_name_derive)]
+/// struct HelloButton;
+/// ```
+///
+/// 57 of the bindings in `examples/` use it. It is a separate crate, so a
+/// consumer must add `pinion-derive` to its own `[dependencies]` — and until
+/// R1641 nothing on this trait said the macro existed, so the first consumer
+/// outside this workspace hand-wrote the whole impl and reported the required
+/// [`Self::event_name`] / [`Self::title`] pair as boilerplate that ought to
+/// have defaults. It does have them; the type that leads you here did not say
+/// so. (A default [`Self::event_name`] is not currently available either way:
+/// [`Self::Event`] is bound by `Copy` alone, and deriving a name from a value
+/// would need [`WidgetEventName`] in that bound.)
 pub trait WidgetCore: 'static {
     /// Cached projection of the live state scene. `Copy` so the shell
     /// can clone it into the paint closure without lifetime

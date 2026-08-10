@@ -593,6 +593,13 @@ impl TextMeasure for CellTextLayout {
             // hardcoded 1 would make a 5-row node report "1 line" to every
             // `scene/layout` client.
             line_count: rows,
+            // R1641 §5.21 — no baseline, and that is a statement rather than a
+            // gap. Every cell in this grid is the same height, so every first
+            // row already sits at the same offset from its box's top; the
+            // top-alignment an absent baseline falls back to is the SAME
+            // placement `AlignItems::Baseline` would produce. Reporting a
+            // number here would claim a font metric this measure never took.
+            baseline: None,
         };
         Some(measured)
     }

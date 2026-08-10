@@ -33916,6 +33916,92 @@
         "carry 0 on this round's subject: the walk's population is now the whole widget directory and is held there by a gate. What it still does not reach is stated rather than left implicit -- pinion-widget-paint's surfaces (dock has its own test; splitter, tree_view and devtools have none) and every example binding, neither of which lives in the directory this gate scans"
       ]
     },
+    "R1641": {
+      "decision_summary": "a number and its unit sit on one line. A field report from a repo that git-rev-pins pinion ported a production design system to an all-Korean product UI and reported three gaps; two of them were mis-scoped here before the reference was read, and the correction is the round. LETTER SPACING was filed as a precision bug -- four of its five tracking values (-1.5 / -0.5 / -0.3 / +1.5 px) were unrepresentable in a whole-px i32 -- and the obvious repair, f32, is wrong: TextStyle derives Eq + Hash and that participates in the 5.16 paint-fragment cache key. But precision was only the symptom. The reference font carries SpacingType { PercentageSpacing, AbsoluteSpacing }, so spacing specifiable RELATIVE TO THE FONT is the existence floor, and the field is now LetterSpacing { Normal, PxX100, EmX1000 } -- the same either-or shape LineHeight already had one type above it. BASELINE ALIGNMENT looks like a missing enum arm and is not: taffy types its measure callback with no channel for a baseline, so a measured leaf's synthesized baseline IS its bottom edge and mapping to TaffyAlign::Baseline would have published a variant identical to End. Measured, not read -- the naive mapping leaves the pair 10px apart at exactly End's offset. The shift is computed BEFORE layout and injected as taffy margin, so the row's height is the layout engine's answer about the shifted children. WHITESPACE was one symptom with two causes: the trailing half reproduces (the intrinsic measure is parley's width(), which excludes trailing whitespace) and the leading half does not. A fix aimed at full_width() would have closed one of two things filed as one.",
+      "changes_bullets": [
+        "pinion-core/style.rs: LetterSpacing { Normal, PxX100, EmX1000 } with one resolve, replacing a whole-px i32",
+        "pinion-core/style.rs: AlignItems::Baseline, with what participates and what does not stated on the variant",
+        "pinion-runtime/layout.rs: baselines measured before layout and injected as taffy margin.top; TextBox gains baseline",
+        "pinion-rpc + text_field: letter spacing is a tagged wire value; a bare number is read as the retired whole-px form",
+        "pinion-core/scene.rs + widget_core.rs: TextNode points at runs, PathPoint/Stroke name their constructors, WidgetCore names the widget macro",
+        "tools/pin_sync.py: --check-dual-pin gates pinion's own SCE pin (manifest = lock = vendor/sce gitlink), with its own tests in pre-push"
+      ],
+      "verification_bullets": [
+        "cargo test: pinion-core / pinion-text / pinion-rpc / pinion-runtime / pinion-tui / pinion-narrative all pass (21 suites)",
+        "cargo check --workspace --all-targets clean; clippy --workspace --all-targets --features pinion-runtime/vello clean; fmt clean",
+        "2 counterfactuals from a verified-green baseline, 2/2 caught; one re-authored because deleting the call left dead code and did not compile",
+        "the taffy claim is measured rather than argued: TaffyAlign::Baseline places the pair at End's exact relative offset (53px), baselines 10px apart",
+        "reference read from installed Qt6 headers, not memory: qfont.h:103/196-201, qnamespace.h:145, qtextlayout.h:189-190",
+        "tools/test_pin_sync.py: 41 checks, 0 failures; pin_sync.py --check-dual-pin and --check both green on the real tree"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.21",
+        "5.12",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "four debts registered rather than closed: no word_spacing at all (CSS, the reference and parley all have it), advance-relative tracking (blocked upstream -- parley takes one absolute per-cluster spacing), a measured box cannot report the trailing advance it excluded (the reference publishes both numbers), and baseline alignment skips non-text items where CSS synthesizes from the bottom margin edge (needs a second pass, which the tree has precedent for in harvest_measured_rows)"
+      ],
+      "publishable_decision_summary": "a number and its unit sit on one line. A field report from a repo that git-rev-pins pinion ported a production design system to an all-Korean product UI and reported three gaps; two of them were mis-scoped here before the reference was read, and the correction is the round. LETTER SPACING was filed as a precision bug -- four of its five tracking values (-1.5 / -0.5 / -0.3 / +1.5 px) were unrepresentable in a whole-px i32 -- and the obvious repair, f32, is wrong: TextStyle derives Eq + Hash and that participates in the 5.16 paint-fragment cache key. But precision was only the symptom. The reference font carries SpacingType { PercentageSpacing, AbsoluteSpacing }, so spacing specifiable RELATIVE TO THE FONT is the existence floor, and the field is now LetterSpacing { Normal, PxX100, EmX1000 } -- the same either-or shape LineHeight already had one type above it. BASELINE ALIGNMENT looks like a missing enum arm and is not: taffy types its measure callback with no channel for a baseline, so a measured leaf's synthesized baseline IS its bottom edge and mapping to TaffyAlign::Baseline would have published a variant identical to End. Measured, not read -- the naive mapping leaves the pair 10px apart at exactly End's offset. The shift is computed BEFORE layout and injected as taffy margin, so the row's height is the layout engine's answer about the shifted children. WHITESPACE was one symptom with two causes: the trailing half reproduces (the intrinsic measure is parley's width(), which excludes trailing whitespace) and the leading half does not. A fix aimed at full_width() would have closed one of two things filed as one.",
+      "publishable_changes_bullets": [
+        "pinion-core/style.rs: LetterSpacing { Normal, PxX100, EmX1000 } with one resolve, replacing a whole-px i32",
+        "pinion-core/style.rs: AlignItems::Baseline, with what participates and what does not stated on the variant",
+        "pinion-runtime/layout.rs: baselines measured before layout and injected as taffy margin.top; TextBox gains baseline",
+        "pinion-rpc + text_field: letter spacing is a tagged wire value; a bare number is read as the retired whole-px form",
+        "pinion-core/scene.rs + widget_core.rs: TextNode points at runs, PathPoint/Stroke name their constructors, WidgetCore names the widget macro",
+        "tools/pin_sync.py: --check-dual-pin gates pinion's own SCE pin (manifest = lock = vendor/sce gitlink), with its own tests in pre-push"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test: pinion-core / pinion-text / pinion-rpc / pinion-runtime / pinion-tui / pinion-narrative all pass (21 suites)",
+        "cargo check --workspace --all-targets clean; clippy --workspace --all-targets --features pinion-runtime/vello clean; fmt clean",
+        "2 counterfactuals from a verified-green baseline, 2/2 caught; one re-authored because deleting the call left dead code and did not compile",
+        "the taffy claim is measured rather than argued: TaffyAlign::Baseline places the pair at End's exact relative offset (53px), baselines 10px apart",
+        "reference read from installed Qt6 headers, not memory: qfont.h:103/196-201, qnamespace.h:145, qtextlayout.h:189-190",
+        "tools/test_pin_sync.py: 41 checks, 0 failures; pin_sync.py --check-dual-pin and --check both green on the real tree"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.21",
+        "5.12",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "four debts registered rather than closed: no word_spacing at all (CSS, the reference and parley all have it), advance-relative tracking (blocked upstream -- parley takes one absolute per-cluster spacing), a measured box cannot report the trailing advance it excluded (the reference publishes both numbers), and baseline alignment skips non-text items where CSS synthesizes from the bottom margin edge (needs a second pass, which the tree has precedent for in harvest_measured_rows)"
+      ]
+    },
+    "R1641.1": {
+      "decision_summary": "R1641's own entry carries another project's names, and this is the correction the ledger admits. The reference-name ratchet excludes docs/.atomic/ with a stated reason -- the ledger is frozen by construction, so occurrences already in it are unreachable -- and that exclusion ends with the sentence NEW ENTRIES ARE THE ROUND'S OWN RESPONSIBILITY. R1641 wrote header paths and a product name into its verification bullets anyway, and found out only when the ratchet failed on the source files, which it does gate. The ledger is append-only, so the remedy is an append rather than an amend: the capability statements R1641 should have written are restated here, and the fact that its entry does not is recorded rather than left for a later reader to notice. WHAT THE REFERENCE ACTUALLY ESTABLISHED, in capability terms: its alignment set carries baseline as a first-class flag, so baseline alignment is an existence floor rather than a preference; its font takes a spacing MODE beside the spacing value -- a percentage of each glyph's own natural advance, or an absolute length -- so font-relative tracking is likewise a floor; its font also has word spacing, which pinion has none of; and its text line publishes BOTH the width excluding trailing whitespace and the advance including it, where pinion picks one internally and reports neither. Those four statements are the evidence R1641's decisions rest on, and none of them needs a name to be checkable.",
+      "changes_bullets": [
+        "the four reference findings behind R1641 restated as capabilities, with no name carried",
+        "R1641's entry is recorded as carrying names the standing directive forbids; frozen, so appended not amended"
+      ],
+      "verification_bullets": [
+        "tools/reference_names.py --check: 0 in 0 files, ratchet OK across the source tree",
+        "the exclusion's own text is the authority for why this is an append: docs/.atomic/ is frozen by construction"
+      ],
+      "impact_refs": [
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "the residue is stated rather than closed: R1641's entry still contains the names, because the ledger cannot be amended. What is fixed is every artifact the ratchet does gate, and what is recorded is that a round writing its own changelog is the one place this directive has no mechanism -- the exclusion says so in its reason string, and this round is the proof that a stated responsibility without a gate gets forgotten"
+      ],
+      "publishable_decision_summary": "R1641's own entry carries another project's names, and this is the correction the ledger admits. The reference-name ratchet excludes docs/.atomic/ with a stated reason -- the ledger is frozen by construction, so occurrences already in it are unreachable -- and that exclusion ends with the sentence NEW ENTRIES ARE THE ROUND'S OWN RESPONSIBILITY. R1641 wrote header paths and a product name into its verification bullets anyway, and found out only when the ratchet failed on the source files, which it does gate. The ledger is append-only, so the remedy is an append rather than an amend: the capability statements R1641 should have written are restated here, and the fact that its entry does not is recorded rather than left for a later reader to notice. WHAT THE REFERENCE ACTUALLY ESTABLISHED, in capability terms: its alignment set carries baseline as a first-class flag, so baseline alignment is an existence floor rather than a preference; its font takes a spacing MODE beside the spacing value -- a percentage of each glyph's own natural advance, or an absolute length -- so font-relative tracking is likewise a floor; its font also has word spacing, which pinion has none of; and its text line publishes BOTH the width excluding trailing whitespace and the advance including it, where pinion picks one internally and reports neither. Those four statements are the evidence R1641's decisions rest on, and none of them needs a name to be checkable.",
+      "publishable_changes_bullets": [
+        "the four reference findings behind R1641 restated as capabilities, with no name carried",
+        "R1641's entry is recorded as carrying names the standing directive forbids; frozen, so appended not amended"
+      ],
+      "publishable_verification_bullets": [
+        "tools/reference_names.py --check: 0 in 0 files, ratchet OK across the source tree",
+        "the exclusion's own text is the authority for why this is an append: docs/.atomic/ is frozen by construction"
+      ],
+      "publishable_impact_refs": [
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the residue is stated rather than closed: R1641's entry still contains the names, because the ledger cannot be amended. What is fixed is every artifact the ratchet does gate, and what is recorded is that a round writing its own changelog is the one place this directive has no mechanism -- the exclusion says so in its reason string, and this round is the proof that a stated responsibility without a gate gets forgotten"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -181,6 +181,7 @@ footprint_is_zero!(
     crate::style::FontWeight,
     crate::style::GenericFontFamily,
     crate::style::LineHeight,
+    crate::style::LetterSpacing,
     crate::style::BlockFormat,
     crate::style::TextAlign,
     crate::style::TextDecoration,

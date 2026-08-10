@@ -5977,6 +5977,29 @@ fn line_height_to_json(lh: pinion_core::style::LineHeight) -> Value {
     }
 }
 
+/// R1641 §5.36 §5.49 — wire serialization for `LetterSpacing`.
+///
+/// The `{kind, value}` shape [`line_height_to_json`] already publishes, because
+/// this is the same either-or: absolute device units or a fraction of the font.
+/// The `Normal` case is a bare string for the same reason it is there — a
+/// payloadless variant with a `value` key would have to invent one.
+fn letter_spacing_to_json(ls: pinion_core::style::LetterSpacing) -> Value {
+    use pinion_core::style::LetterSpacing;
+    let (kind, value) = match ls {
+        LetterSpacing::Normal => return Value::String("Normal".to_string()),
+        LetterSpacing::PxX100(v) => ("PxX100", v),
+        LetterSpacing::EmX1000(v) => ("EmX1000", v),
+        // `LetterSpacing` is `#[non_exhaustive]`; a variant added without a
+        // wire decision reaches here rather than failing to compile, and says
+        // so instead of picking a spelling.
+        _ => return Value::String("Unknown".to_string()),
+    };
+    let mut obj = serde_json::Map::new();
+    obj.insert("kind".to_string(), Value::String(kind.to_string()));
+    obj.insert("value".to_string(), Value::Number(value.into()));
+    Value::Object(obj)
+}
+
 /// R55.G.10 §5.49 — wire serialization for `TextAlign`.
 ///
 /// R1504 — the table this used to hold by hand now lives at
@@ -6124,9 +6147,13 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
         "line_height".to_string(),
         line_height_to_json(style.line_height),
     );
+    // R1641 — the letter-spacing wire is a TAGGED value, not a bare number,
+    // because the policy now has two units. The tag is what keeps the old and
+    // new forms distinguishable by inspection: pre-R1641 clients wrote a JSON
+    // number meaning whole px, and a number is exactly what this never emits.
     obj.insert(
         "letter_spacing".to_string(),
-        Value::Number(style.letter_spacing.into()),
+        letter_spacing_to_json(style.letter_spacing),
     );
     obj.insert(
         "text_align".to_string(),
