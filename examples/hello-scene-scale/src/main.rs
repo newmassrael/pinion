@@ -562,7 +562,7 @@ impl ExternalIntrospect for SceneScaleExternal {
                     // rather than discovering it by being refused.
                     SchemaField::new("max_eager_rows", "int"),
                     // The R51.42 composite pointer channel.
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                 ]
             },
         )

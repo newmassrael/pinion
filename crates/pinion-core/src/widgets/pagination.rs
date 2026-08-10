@@ -305,7 +305,7 @@ impl ExternalIntrospect for PaginationExternal {
                     SchemaField::new("can_next", "bool"),
                     SchemaField::new("prev.state", "string"),
                     SchemaField::new("next.state", "string"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                 ]
             },
         )

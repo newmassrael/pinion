@@ -24,7 +24,7 @@
 
 use pinion_core::Scene;
 use pinion_core::external::{ExternalIntrospect, IntrospectValue, SchemaChannel};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::origin::{AnswerOrigin, QueryRefusal, SceneSource};
 use crate::path::PathError;
@@ -116,42 +116,64 @@ fn introspect_or_schema(
 /// `total`, so an agent had to guess that an argument existed at all. See
 /// [`pinion_core::external::SchemaField`] for what that guess cost.
 fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
-    let fields: Vec<Value> = intro
-        .schema()
-        .fields
-        .iter()
-        .map(|f| {
-            // R1504 — the channel, present only where it is not the default.
-            // A reader that does not know the key sees the shape it always saw;
-            // one that does can tell `set_section_alignment` from a path it can
-            // read, which before this was a guess from the name's prefix.
-            let channel = match f.channel {
-                SchemaChannel::Invoke => Some("invoke"),
-                _ => None,
-            };
-            if f.args.is_empty() {
-                return match channel {
-                    Some(c) => json!({ "path": f.path, "type": f.ty, "channel": c }),
-                    None => json!({ "path": f.path, "type": f.ty }),
-                };
-            }
-            let args: Vec<Value> = f
-                .args
-                .iter()
-                .map(|a| {
-                    json!({
-                        "name": a.name,
-                        "type": a.ty,
-                        // Rendered by the enum itself — see `ArgDomain::to_wire`
-                        // for why the match does not live here.
-                        "domain": a.domain.to_wire(),
-                    })
-                })
-                .collect();
-            json!({ "path": f.path, "type": f.ty, "args": args })
-        })
-        .collect();
+    let fields: Vec<Value> = intro.schema().fields.iter().map(field_value).collect();
     IntrospectValue::Json(Value::Array(fields))
+}
+
+/// One field's wire object, built by **adding to** the two keys every field
+/// has rather than by choosing between hand-written shapes.
+///
+/// R1638 — it was two literals, one for the argument-free case and one for the
+/// parametric case, and the second had quietly dropped `channel`. Nothing
+/// noticed because nothing could reach it: no constructor produced a field that
+/// was both parametric and an action, so the arm that lost the key had no
+/// inhabitants. [`SchemaField::action_with`](pinion_core::external::SchemaField::action_with) gives it inhabitants, and an action
+/// that says what it takes would have rendered as a path a client may read.
+///
+/// Deriving the object instead is the R1623 / R1630 rule applied to this
+/// surface: a shape written out per case is a census of cases, and it goes
+/// stale the round a new case appears.
+fn field_value(f: &pinion_core::external::SchemaField) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("path".to_owned(), Value::from(f.path));
+    obj.insert("type".to_owned(), Value::from(f.ty));
+    // R1504 — the channel, present only where it is not the default. A reader
+    // that does not know the key sees the shape it always saw; one that does can
+    // tell `set_section_alignment` from a path it can read, which before this
+    // was a guess from the name's prefix.
+    if f.channel == SchemaChannel::Invoke {
+        obj.insert("channel".to_owned(), Value::from("invoke"));
+    }
+    // R1638 — the form and the arguments travel together or not at all: `args`
+    // cannot be interpreted without knowing where they go, and an
+    // `ArgForm::Undeclared` field has said nothing, which the wire states by
+    // publishing neither key (see `ArgForm::to_wire`).
+    if let Some(form) = f.form.to_wire() {
+        if f.form != pinion_core::external::ArgForm::Path || !f.args.is_empty() {
+            obj.insert("arg_form".to_owned(), form);
+            obj.insert(
+                "args".to_owned(),
+                Value::Array(f.args.iter().map(arg_value).collect()),
+            );
+        }
+    }
+    Value::Object(obj)
+}
+
+/// One argument's wire object. `optional` is present only when true, for the
+/// same reason `channel` is: the absent key is the common case and a reader
+/// that predates it must keep seeing the shape it knew.
+fn arg_value(a: &pinion_core::external::SchemaArg) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("name".to_owned(), Value::from(a.name));
+    obj.insert("type".to_owned(), Value::from(a.ty));
+    // Rendered by the enum itself — see `ArgDomain::to_wire` for why the match
+    // does not live here.
+    obj.insert("domain".to_owned(), a.domain.to_wire());
+    if a.optional {
+        obj.insert("optional".to_owned(), Value::Bool(true));
+    }
+    Value::Object(obj)
 }
 
 /// Reasons the typed [`query`] dispatcher can fail.
@@ -661,7 +683,9 @@ mod tests {
 
     // ---- R828 §2 #4 §5.12 — immediate-mode driver introspect ----
 
-    use pinion_core::external::{InterveneError, IntrospectSchema, SchemaField};
+    use pinion_core::external::{
+        ArgForm, InterveneError, IntrospectSchema, SchemaArg, SchemaField,
+    };
     use pinion_core::scene::{ContainerNode, ImmediateMode, ImmediateModeNode};
 
     /// A surface whose `query` answers a path its `schema` never publishes —
@@ -690,6 +714,147 @@ mod tests {
         fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
             Some(self)
         }
+    }
+
+    /// A surface whose actions span every declaration state: silent, nullary,
+    /// scalar-with-a-closed-vocabulary, and a delimited form with an optional
+    /// trailing argument.
+    #[derive(Debug)]
+    struct Speaker;
+
+    const VERBS: &[&str] = &["up", "down"];
+
+    impl ExternalIntrospect for Speaker {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(
+                const {
+                    &[
+                        SchemaField::new("total", "int"),
+                        SchemaField::parametric(
+                            "cell.<row>",
+                            "int",
+                            const { &[SchemaArg::index("row", "total")] },
+                        ),
+                        SchemaField::action("silent", "null"),
+                        SchemaField::action_with("nothing", "null", ArgForm::Nullary, &[]),
+                        SchemaField::action_with(
+                            "step",
+                            "int",
+                            ArgForm::Scalar,
+                            const { &[SchemaArg::one_of("way", "string", VERBS)] },
+                        ),
+                        SchemaField::action_with(
+                            "send",
+                            "null",
+                            ArgForm::Delimited(':'),
+                            const {
+                                &[
+                                    SchemaArg::open("key", "string"),
+                                    SchemaArg::open("event", "string").optional(),
+                                ]
+                            },
+                        ),
+                    ]
+                },
+            )
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            (path == "total").then_some(IntrospectValue::Int(1))
+        }
+        fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
+            Err(InterveneError::ReadOnly)
+        }
+    }
+
+    impl ImmediateMode for Speaker {
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+    }
+
+    fn speaker_schema() -> Vec<serde_json::Value> {
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(Speaker, pinion_core::scene::Rect::default())
+                .with_tag("s".to_owned()),
+        )]));
+        let IntrospectValue::Json(serde_json::Value::Array(fields)) =
+            query(&scene, "/s/external/$schema").unwrap()
+        else {
+            panic!("$schema renders an array");
+        };
+        fields
+    }
+
+    /// R1638 — an action that has NOT said what it takes publishes no `args`,
+    /// and one that has said publishes both the form and the arguments.
+    ///
+    /// Silence and "takes nothing" are different claims, and the wire keeps
+    /// them apart: `silent` carries neither key, `nothing` carries a nullary
+    /// form with an empty list.
+    #[test]
+    fn r1638_an_action_publishes_what_it_takes_or_says_nothing() {
+        let fields = speaker_schema();
+        let by = |name: &str| {
+            fields
+                .iter()
+                .find(|f| f["path"] == name)
+                .unwrap_or_else(|| panic!("{name} is declared"))
+                .clone()
+        };
+        let silent = by("silent");
+        assert_eq!(silent["channel"], "invoke");
+        assert!(silent.get("args").is_none(), "silence publishes nothing");
+        assert!(silent.get("arg_form").is_none());
+
+        let nothing = by("nothing");
+        assert_eq!(nothing["arg_form"]["kind"], "nullary");
+        assert_eq!(nothing["args"], serde_json::json!([]));
+
+        // A scalar argument carries its closed vocabulary, which the reference
+        // can only do for an enum-typed parameter.
+        let step = by("step");
+        assert_eq!(step["arg_form"]["kind"], "scalar");
+        assert_eq!(step["args"][0]["domain"]["kind"], "one_of");
+        assert_eq!(
+            step["args"][0]["domain"]["values"],
+            serde_json::json!(VERBS)
+        );
+
+        // A delimited form publishes the separator a client splits on, and
+        // `optional` marks the segments that may be elided.
+        let send = by("send");
+        assert_eq!(send["arg_form"]["kind"], "delimited");
+        assert_eq!(send["arg_form"]["separator"], ":");
+        assert!(
+            send["args"][0].get("optional").is_none(),
+            "required is silent"
+        );
+        assert_eq!(send["args"][1]["optional"], true);
+    }
+
+    /// R1638 — an action that declares arguments still says it is an action.
+    ///
+    /// The regression this pins was unreachable until this round: the render
+    /// chose between two hand-written shapes, and the one carrying `args` had
+    /// no `channel` key. No constructor could produce a field that was both, so
+    /// the arm had no inhabitants — and `action_with` gives it inhabitants.
+    #[test]
+    fn r1638_an_action_that_says_what_it_takes_is_still_an_action() {
+        for name in ["nothing", "step", "send"] {
+            let f = speaker_schema()
+                .into_iter()
+                .find(|f| f["path"] == name)
+                .unwrap();
+            assert_eq!(f["channel"], "invoke", "{name} must stay callable");
+        }
+        // ...and a parametric READ, which travels the same code path, still
+        // does not claim the invoke channel.
+        let cell = speaker_schema()
+            .into_iter()
+            .find(|f| f["path"] == "cell.<row>")
+            .unwrap();
+        assert!(cell.get("channel").is_none());
+        assert_eq!(cell["arg_form"]["kind"], "path");
     }
 
     /// R1637 §2 #7 — a value the surface answers and never published is not on

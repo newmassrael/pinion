@@ -1211,7 +1211,7 @@ impl ExternalIntrospect for MenuBarExternal {
                         "bool",
                         const { &[SchemaArg::open("path", "string")] },
                     ),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     SchemaField::action("key", "string"),
                 ]
             },
@@ -1997,7 +1997,7 @@ mod tests {
                     "bool",
                     const { &[SchemaArg::open("path", "string")] }
                 ),
-                SchemaField::action("send", "string"),
+                SchemaField::send("string"),
                 SchemaField::action("key", "string"),
             ]
         );

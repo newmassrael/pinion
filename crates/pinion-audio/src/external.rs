@@ -22,8 +22,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, int_of, read_only_or_unknown,
+    ArgForm, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    SchemaArg, SchemaField, int_of, read_only_or_unknown,
 };
 use pinion_core::intent::Intent;
 use serde::Serialize;
@@ -217,10 +217,38 @@ pub const ENGINE_EXTERNAL_FIELDS: &[SchemaField] = &[
     // had to be TOLD how to drive it. `send` is the keybinding
     // forwarder's verb (a clip name, or the reserved
     // `stop_all`); it is on the wire, so it is declared here.
-    SchemaField::action("send", "int"),
-    SchemaField::action("play", "int"),
-    SchemaField::action("stop", "bool"),
-    SchemaField::action("stop_all", "null"),
+    // R1638 — and what each takes. ★`send` here is NOT the composite pointer
+    // wire despite sharing the name: it carries a CLIP NAME, or the reserved
+    // `stop_all`. That collision is why this round refused to attach the
+    // composite grammar by name — a blanket substitution had briefly claimed it
+    // here, on the strength of a `split_send_payload` mention in a doc comment.
+    SchemaField::action_with(
+        "send",
+        "int",
+        ArgForm::Scalar,
+        const { &[SchemaArg::key("clip_or_stop_all", "string", "clips")] },
+    ),
+    SchemaField::action_with(
+        "play",
+        "int",
+        ArgForm::Object,
+        const {
+            &[
+                SchemaArg::key("name", "string", "clips"),
+                SchemaArg::open("gain", "float").optional(),
+                SchemaArg::open("pan", "float").optional(),
+                SchemaArg::open("looping", "bool").optional(),
+                SchemaArg::open("position", "json").optional(),
+            ]
+        },
+    ),
+    SchemaField::action_with(
+        "stop",
+        "bool",
+        ArgForm::Scalar,
+        const { &[SchemaArg::key("id", "int", "voices")] },
+    ),
+    SchemaField::action_with("stop_all", "null", ArgForm::Nullary, &[]),
     // Per-voice writes (the read twins are the `voices` array fields).
     SchemaField::parametric(
         "voice.<id>.gain",
@@ -535,16 +563,108 @@ pub const RT_EXTERNAL_FIELDS: &[SchemaField] = &[
     // readable only by opening this file. A queued command answers `null`
     // rather than a matched-bool: the control thread cannot know synchronously
     // whether the audio thread will match, and a full ring is `Rejected`.
-    SchemaField::action("play", "int"),
-    SchemaField::action("stop", "null"),
-    SchemaField::action("stop_all", "null"),
-    SchemaField::action("set_master_gain", "null"),
-    SchemaField::action("set_voice_gain", "null"),
-    SchemaField::action("set_voice_pan", "null"),
-    SchemaField::action("set_voice_position", "null"),
-    SchemaField::action("set_listener", "null"),
-    SchemaField::action("set_attenuation", "null"),
-    SchemaField::action("set_voice_policy", "null"),
+    // R1638 — and what each one TAKES. Every argument's domain points at the
+    // path that owns the answer (`clips`, `voices`) rather than at a literal,
+    // so an agent enumerates a valid call instead of guessing one; the policy
+    // verb is the exception the rule allows, because its two spellings are a
+    // property of the code and its list is tied to the enum's arm count.
+    SchemaField::action_with(
+        "play",
+        "int",
+        ArgForm::Object,
+        const {
+            &[
+                SchemaArg::key("name", "string", "clips"),
+                SchemaArg::open("gain", "float").optional(),
+                SchemaArg::open("pan", "float").optional(),
+                SchemaArg::open("looping", "bool").optional(),
+                SchemaArg::open("position", "json").optional(),
+            ]
+        },
+    ),
+    SchemaField::action_with(
+        "stop",
+        "null",
+        ArgForm::Scalar,
+        const { &[SchemaArg::key("id", "int", "voices")] },
+    ),
+    SchemaField::action_with("stop_all", "null", ArgForm::Nullary, &[]),
+    SchemaField::action_with(
+        "set_master_gain",
+        "null",
+        ArgForm::Scalar,
+        const { &[SchemaArg::open("gain", "float")] },
+    ),
+    SchemaField::action_with(
+        "set_voice_gain",
+        "null",
+        ArgForm::Object,
+        const {
+            &[
+                SchemaArg::key("id", "int", "voices"),
+                SchemaArg::open("gain", "float"),
+            ]
+        },
+    ),
+    SchemaField::action_with(
+        "set_voice_pan",
+        "null",
+        ArgForm::Object,
+        const {
+            &[
+                SchemaArg::key("id", "int", "voices"),
+                SchemaArg::open("pan", "float"),
+            ]
+        },
+    ),
+    SchemaField::action_with(
+        "set_voice_position",
+        "null",
+        ArgForm::Object,
+        const {
+            &[
+                SchemaArg::key("id", "int", "voices"),
+                SchemaArg::open("position", "json"),
+            ]
+        },
+    ),
+    SchemaField::action_with(
+        "set_listener",
+        "null",
+        ArgForm::Object,
+        const {
+            &[
+                SchemaArg::open("position", "json").optional(),
+                SchemaArg::open("forward", "json").optional(),
+                SchemaArg::open("up", "json").optional(),
+            ]
+        },
+    ),
+    SchemaField::action_with(
+        "set_attenuation",
+        "null",
+        ArgForm::Object,
+        const {
+            &[
+                SchemaArg::open("model", "string").optional(),
+                SchemaArg::open("reference", "float").optional(),
+                SchemaArg::open("rolloff", "float").optional(),
+                SchemaArg::open("max_distance", "float").optional(),
+            ]
+        },
+    ),
+    SchemaField::action_with(
+        "set_voice_policy",
+        "null",
+        ArgForm::Scalar,
+        const {
+            &[SchemaArg::one_of(
+                "policy",
+                "string",
+                &VoicePolicy::WIRE_NAMES,
+            )]
+        },
+    ),
 ];
 
 impl ExternalIntrospect for AudioControllerExternal {

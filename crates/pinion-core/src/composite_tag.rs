@@ -75,6 +75,7 @@ use core::str::FromStr;
 /// (*what was held while it happened*). A drag-select is exactly the
 /// conjunction: `PointerEnter` **with** [`buttons`](Self::buttons) non-empty
 /// is a range extension, the same event with an empty set is a hover.
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SendPayload<'a> {
     /// The raw `<key>` segment — the `'#'` sub-index the paint tag carried,
@@ -100,6 +101,42 @@ impl SendPayload<'_> {
         self.key.parse().ok()
     }
 }
+
+/// R1638 §5.12 §2 #2 — the `send` payload's grammar, as a **declaration**,
+/// beside the parser that defines it.
+///
+/// [`split_send_payload`] is the only thing that decides what a send payload
+/// means, and until R1638 the only thing that could *tell* you was its rustdoc.
+/// Sixty-seven surfaces declare a `send` action and not one of them said what to
+/// pass, so every client learned this grammar by reading pinion's source — the
+/// exact defect §2 #2 exists to prevent, repeated sixty-seven times.
+///
+/// It lives here rather than at each declaration for the reason the parser does:
+/// the wire has grown a segment three times (R51.42, R781, R1619), and a
+/// declaration copied per widget would have gone stale on each. Every site
+/// spells it [`SchemaField::send`](crate::external::SchemaField::send), so a
+/// fifth axis lands in one place.
+///
+/// The trailing two are [`optional`](crate::external::SchemaArg::optional)
+/// because the encoder elides trailing empty segments — and only trailing ones,
+/// which is why the modifier slot can be present-and-empty while the button slot
+/// is filled (`"3:PointerEnter::l"`).
+pub const SEND_ARGS: &[crate::external::SchemaArg] = &[
+    // Required, and may be EMPTY — R880's bare-target wire is
+    // `":<Event>:<token>"`, in which the key segment is present and blank
+    // rather than elided. `optional` means the segment may be ABSENT, which
+    // only a trailing one can be; declaring it here made `event` follow an
+    // optional argument, and `r1638_optional_arguments_are_a_suffix` said so
+    // on its first run.
+    crate::external::SchemaArg::open("key", "string"),
+    crate::external::SchemaArg::open("event", "string"),
+    crate::external::SchemaArg::open("modifiers", "string").optional(),
+    crate::external::SchemaArg::open("buttons", "string").optional(),
+];
+
+/// The separator [`split_send_payload`] splits on, published so a client builds
+/// the payload from the declaration instead of from prose.
+pub const SEND_SEPARATOR: char = ':';
 
 /// R781 §5.35 §5.41 — split a composite-tag send payload
 /// `"<key>:<EventName>[:<mods>[:<buttons>]]"` into its wire segments: the raw

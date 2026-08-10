@@ -209,7 +209,9 @@ mod swap;
 mod tests;
 
 pub use appearance::{Appearance, VisiblePorts};
-pub use arrange::{Align, Axis, Distribute, Edge, Stack, Straighten, Straightened};
+pub use arrange::{
+    Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
+};
 pub use bypass::{Bridge, Passthrough, Rewired, Route};
 pub use eval::{Descent, Evaluator};
 pub use fragment::{

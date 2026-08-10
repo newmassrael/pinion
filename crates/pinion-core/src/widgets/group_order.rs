@@ -934,7 +934,7 @@ impl ExternalIntrospect for GroupOrderExternal {
                     SchemaField::action("toggle_group", "int"),
                     SchemaField::action("collapse_all", "int"),
                     SchemaField::action("expand_all", "int"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                 ]
             },
         )

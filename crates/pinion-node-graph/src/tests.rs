@@ -10162,3 +10162,43 @@ fn r1632_validate_names_a_run_past_its_ceiling() {
         "and the ports are still all there, because a link may address them"
     );
 }
+
+/// R1638 — the pass vocabulary published to a client is exactly the one
+/// [`ArrangePass::from_wire`] admits, in both directions.
+///
+/// The published list is projected from `ALL`, so this is not checking a copy
+/// against a copy: it checks that the projection and the parser agree, which is
+/// the pair a `OneOf` domain promises a caller.
+#[test]
+fn r1638_every_arrange_pass_name_parses_back() {
+    use crate::{ArrangePass, ArrangeTail};
+    assert_eq!(ArrangePass::WIRE_NAMES.len(), ArrangePass::ALL.len());
+    for (i, name) in ArrangePass::WIRE_NAMES.iter().enumerate() {
+        assert_eq!(
+            ArrangePass::from_wire(name),
+            Some(ArrangePass::ALL[i]),
+            "{name:?} is published and must parse back to its own pass",
+        );
+    }
+    assert_eq!(ArrangePass::from_wire("straightn"), None, "and only those");
+    // The tail is what a caller cannot read off the name, so it is stated.
+    assert_eq!(ArrangePass::Align.tail(), ArrangeTail::Edge);
+    assert_eq!(ArrangePass::Stack.tail(), ArrangeTail::Gap);
+    assert_eq!(ArrangePass::Distribute.tail(), ArrangeTail::None);
+    assert_eq!(ArrangePass::Straighten.tail(), ArrangeTail::None);
+}
+
+/// R1638 — the axis and edge vocabularies are the same projection, so a
+/// declaration pointing at them cannot drift from the names the code answers.
+#[test]
+fn r1638_the_axis_and_edge_vocabularies_are_their_own_names() {
+    use crate::{Axis, Edge};
+    assert_eq!(Axis::WIRE_NAMES.to_vec(), vec!["horizontal", "vertical"]);
+    assert_eq!(Edge::WIRE_NAMES.to_vec(), vec!["start", "center", "end"]);
+    for (i, n) in Axis::WIRE_NAMES.iter().enumerate() {
+        assert_eq!(*n, Axis::ALL[i].name());
+    }
+    for (i, n) in Edge::WIRE_NAMES.iter().enumerate() {
+        assert_eq!(*n, Edge::ALL[i].name());
+    }
+}

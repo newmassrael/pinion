@@ -3029,7 +3029,7 @@ const GRID_SCHEMA_FIELDS: &[SchemaField] = &[
         const { &[SchemaArg::open("group", "string")] },
     ),
     SchemaField::new("scrubbing", "bool"),
-    SchemaField::action("send", "string"),
+    SchemaField::send("string"),
     SchemaField::action("toggle", "json"),
     SchemaField::action("begin", "json"),
     SchemaField::action("cycle_sort", "json"),

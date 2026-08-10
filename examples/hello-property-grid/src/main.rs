@@ -2364,7 +2364,7 @@ impl ExternalIntrospect for PropertyGridExternal {
                     // R875 — live numeric-scrub flag (true between the first drag move
                     // and the release); the AI-first witness of a scrub in flight.
                     SchemaField::new("scrubbing", "bool"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     SchemaField::action("toggle", "int"),
                     SchemaField::action("begin", "int"),
                     SchemaField::action("choose", "int"),

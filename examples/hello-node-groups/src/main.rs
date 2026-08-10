@@ -46,8 +46,9 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{
@@ -61,10 +62,10 @@ use std::collections::BTreeSet;
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Align, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge, EditPath,
-    Enframed, Extent, Fragment, Grow, Inserted, InterfaceSide, Item, LinkId, Node, NodeBody,
-    NodeId, NodeKind, Orphaned, Port, PortChange, PortRef, ROOT, Reach, Repartitioned, Rewired,
-    Severed, Sharing, Side, Socket, Stack, Straighten, TreeId, Variadic,
+    Align, ArrangePass, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge,
+    EditPath, Enframed, Extent, Fragment, Grow, Inserted, InterfaceSide, Item, LinkId, Node,
+    NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, PortRef, ROOT, Reach, Repartitioned,
+    Rewired, Severed, Sharing, Side, Socket, Stack, Straighten, TreeId, Variadic,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -1459,7 +1460,26 @@ impl ExternalIntrospect for GroupsOracle {
                     // like every other, so a client discovers them the same way
                     // (`arrange` was added in R1631 and this list was not, which
                     // left it callable and undiscoverable).
-                    SchemaField::action("arrange", "string"),
+                    // R1638 — and what it takes. The reference spells these
+                    // arguments into eleven command NAMES (R1631), so its
+                    // vocabulary cannot be enumerated at all; here the pass, the
+                    // axis and the edge-or-gap are three declared segments whose
+                    // vocabularies are projected from the crate's own enums.
+                    SchemaField::action_with(
+                        "arrange",
+                        "string",
+                        ArgForm::Delimited(':'),
+                        const {
+                            &[
+                                SchemaArg::one_of("pass", "string", &ArrangePass::WIRE_NAMES),
+                                SchemaArg::one_of("axis", "string", &Axis::WIRE_NAMES),
+                                // `align` reads an edge, `stack` an integer gap,
+                                // and the other two read nothing — one slot, and
+                                // the pass says how to fill it.
+                                SchemaArg::open("edge_or_gap", "string").optional(),
+                            ]
+                        },
+                    ),
                     SchemaField::action("item", "string"),
                 ]
             },
@@ -1944,16 +1964,22 @@ impl GroupsOracle {
                 "arrange edge {other:?} is not \"start\", \"center\" or \"end\""
             ))),
         };
+        let Some(pass) = ArrangePass::from_wire(pass) else {
+            return Err(InvokeError::rejected(format!(
+                "arrange pass {pass:?} is not one of {:?}",
+                ArrangePass::WIRE_NAMES
+            )));
+        };
         let (placement, report) = match pass {
-            "align" => (
+            ArrangePass::Align => (
                 Align::to(axis, edge(tail)?).run(&document, tree, &selection, extent),
                 String::new(),
             ),
-            "distribute" => (
+            ArrangePass::Distribute => (
                 Distribute::along(axis).run(&document, tree, &selection, extent),
                 String::new(),
             ),
-            "stack" => {
+            ArrangePass::Stack => {
                 let gap: i32 = tail
                     .unwrap_or("0")
                     .parse()
@@ -1963,7 +1989,7 @@ impl GroupsOracle {
                     String::new(),
                 )
             }
-            "straighten" => {
+            ArrangePass::Straighten => {
                 let done = Straighten::along(axis).run(&document, tree, &selection);
                 let bent = done
                     .bent()
@@ -1975,11 +2001,6 @@ impl GroupsOracle {
                     done.placement().clone(),
                     format!("|straight:{}|bent:{bent}", done.straight().len()),
                 )
-            }
-            other => {
-                return Err(InvokeError::rejected(format!(
-                    "arrange pass {other:?} is not align / distribute / stack / straighten"
-                )));
             }
         };
         drop(document);

@@ -1557,7 +1557,7 @@ impl ExternalIntrospect for InspectorExternal {
                     SchemaField::action("extend_to", "int"),
                     SchemaField::action("select_all", "null"),
                     SchemaField::action("clear", "null"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     SchemaField::action("reset", "int"),
                     SchemaField::action("reset_all", "null"),
                     // R1221 — the Details inline-edit verbs (the AI-first peers of the

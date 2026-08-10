@@ -519,7 +519,7 @@ impl ExternalIntrospect for ViewSortFilterExternal {
                     ),
                     SchemaField::action("cycle_sort", "string"),
                     SchemaField::action("set_filter", "int"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                 ]
             },
         )

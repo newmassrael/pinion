@@ -111,8 +111,11 @@ fn r1637_every_declared_read_on_a_real_widget_answers_over_the_wire() {
 /// Scoped to the externals a test can construct with no model. That is a stated
 /// limit, not a coverage claim: a surface needing a `Signal`, a row model or a
 /// tag is absent here and its declaration is unchecked.
-#[test]
-fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
+/// Every widget external a test can build with no model, boxed to the trait.
+///
+/// One list, because two tests now walk it and a second copy would let them
+/// drift into checking different populations while reporting the same coverage.
+fn catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
     use pinion_core::widgets::{
         badge::BadgeExternal, button::ButtonExternal, checkbox::CheckboxExternal,
         color_area::ColorAreaExternal, context_menu::ContextMenuExternal,
@@ -122,10 +125,7 @@ fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
         scrollbar::ScrollBarExternal, slider::SliderExternal, spin_button::SpinButtonExternal,
         text_field::TextFieldExternal, toggle::ToggleExternal, tooltip::TooltipExternal,
     };
-
-    // (label, one boxed surface). Boxed per entry because each is a different
-    // type and the walk only needs the trait.
-    let surfaces: Vec<(&str, Box<dyn pinion_core::external::External>)> = vec![
+    vec![
         ("badge", ext_scene(BadgeExternal::new())),
         ("button", ext_scene(ButtonExternal::new())),
         ("checkbox", ext_scene(CheckboxExternal::new())),
@@ -150,11 +150,14 @@ fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
         ("text_field", ext_scene(TextFieldExternal::new())),
         ("toggle", ext_scene(ToggleExternal::new())),
         ("tooltip", ext_scene(TooltipExternal::new())),
-    ];
+    ]
+}
 
+#[test]
+fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0_usize;
-    for (label, handle) in surfaces {
+    for (label, handle) in catalog() {
         let mut handle = handle;
         let intro = handle
             .introspect_mut()
@@ -188,4 +191,50 @@ fn ext_scene<E: pinion_core::external::External + 'static>(
     ext: E,
 ) -> Box<dyn pinion_core::external::External> {
     Box::new(ext)
+}
+
+/// R1638 — an **optional** argument may not precede a required one.
+///
+/// The rule is forced by the only form that can elide anything: a delimited
+/// payload drops trailing segments, so a gap in the middle would be
+/// unrepresentable — `"3::l"` cannot say "no event, buttons `l`" because the
+/// decoder counts positions. An object form does not need the rule, and obeying
+/// it there costs nothing while keeping one statement true of every form.
+///
+/// Checked over every surface this test can construct, plus the send grammar
+/// itself, which is the declaration the rule was written for and the one every
+/// composite widget points at.
+#[test]
+fn r1638_optional_arguments_are_a_suffix() {
+    use pinion_core::composite_tag::SEND_ARGS;
+
+    fn suffix_ok(args: &[pinion_core::external::SchemaArg]) -> bool {
+        let first_optional = args.iter().position(|a| a.optional);
+        match first_optional {
+            None => true,
+            Some(i) => args[i..].iter().all(|a| a.optional),
+        }
+    }
+
+    assert!(suffix_ok(SEND_ARGS), "the send grammar: {SEND_ARGS:?}");
+
+    let mut checked = 0_usize;
+    let mut wrong: Vec<String> = Vec::new();
+    let mut surfaces: Vec<(&str, Box<dyn pinion_core::external::External>)> =
+        vec![("dock_panel", Box::new(DockPanelExternal::new("a")))];
+    surfaces.extend(catalog());
+    for (label, handle) in surfaces {
+        let intro = handle.introspect().expect("opts into introspection");
+        for field in intro.schema().fields {
+            checked += 1;
+            if !suffix_ok(field.args) {
+                wrong.push(format!("{label}.{}", field.path));
+            }
+        }
+    }
+    assert!(checked > 100, "the walk must be non-trivial, saw {checked}");
+    assert!(
+        wrong.is_empty(),
+        "an optional argument precedes a required one: {wrong:?}",
+    );
 }

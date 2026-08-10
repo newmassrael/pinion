@@ -77,6 +77,24 @@ impl Axis {
     /// Both axes, for a consumer that must cover the vocabulary.
     pub const ALL: [Self; 2] = [Self::Horizontal, Self::Vertical];
 
+    /// R1638 — every [`name`](Self::name), in declaration order, as the closed
+    /// vocabulary an argument's `ArgDomain::OneOf`
+    /// points at.
+    ///
+    /// Projected from [`ALL`](Self::ALL) rather than written out, so it cannot
+    /// disagree with the names; `ALL` is itself held to the variant count by
+    /// `#[variant_census(all)]`, which makes a new variant a build failure here
+    /// instead of a vocabulary that is quietly one short on the wire.
+    pub const WIRE_NAMES: [&'static str; Self::ARMS] = {
+        let mut out = [""; Self::ARMS];
+        let mut i = 0;
+        while i < Self::ARMS {
+            out[i] = Self::ALL[i].name();
+            i += 1;
+        }
+        out
+    };
+
     /// A stable name, for a caption or a wire form.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -123,9 +141,110 @@ pub enum Edge {
     End,
 }
 
+/// R1638 — which arrangement pass to run, as a **value**.
+///
+/// R1631 made the eleven commands of the reference into an axis, an edge and a
+/// gap, and left the fourth parameter — *which pass* — as four string literals
+/// matched at the call site. That is the same shape one level up: a vocabulary
+/// spelled at every consumer cannot be enumerated, offered in a menu, or
+/// published to a client, and each consumer re-writes the four-way match.
+///
+/// The passes keep their own types ([`Align`], [`Distribute`], [`Stack`],
+/// [`Straighten`]) because they take different parameters and answer different
+/// reports; this names the CHOICE between them, which is what a caller sends
+/// over a wire and what a schema declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
+pub enum ArrangePass {
+    /// Bring the selection to one edge of its own bounding box.
+    Align,
+    /// Even the gaps between the selection's members.
+    Distribute,
+    /// Pack them against each other with a fixed gap.
+    Stack,
+    /// Put linked nodes on one line where the links allow it.
+    Straighten,
+}
+
+impl ArrangePass {
+    /// Every pass, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; 4] = [Self::Align, Self::Distribute, Self::Stack, Self::Straighten];
+
+    /// A stable name, for a caption or a wire form.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Align => "align",
+            Self::Distribute => "distribute",
+            Self::Stack => "stack",
+            Self::Straighten => "straighten",
+        }
+    }
+
+    /// Parse a wire name back to the pass, or `None` — the inverse of
+    /// [`name`](Self::name), which `r1638_every_arrange_pass_name_parses_back`
+    /// holds it to.
+    #[must_use]
+    pub fn from_wire(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.name() == name)
+    }
+
+    /// The closed vocabulary, projected from [`ALL`](Self::ALL) — see
+    /// [`Axis::WIRE_NAMES`].
+    pub const WIRE_NAMES: [&'static str; Self::ARMS] = {
+        let mut out = [""; Self::ARMS];
+        let mut i = 0;
+        while i < Self::ARMS {
+            out[i] = Self::ALL[i].name();
+            i += 1;
+        }
+        out
+    };
+
+    /// Whether this pass reads the trailing argument, and what it means there —
+    /// the one fact a caller needs that the pass name alone does not carry.
+    #[must_use]
+    pub const fn tail(self) -> ArrangeTail {
+        match self {
+            Self::Align => ArrangeTail::Edge,
+            Self::Stack => ArrangeTail::Gap,
+            Self::Distribute | Self::Straighten => ArrangeTail::None,
+        }
+    }
+}
+
+/// What an [`ArrangePass`] reads from its trailing argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+pub enum ArrangeTail {
+    /// Nothing — the pass is fully determined by its axis.
+    None,
+    /// An [`Edge`].
+    Edge,
+    /// An integer gap, in graph units.
+    Gap,
+}
+
 impl Edge {
     /// Every edge, for a consumer that must cover the vocabulary.
     pub const ALL: [Self; 3] = [Self::Start, Self::Center, Self::End];
+
+    /// R1638 — every [`name`](Self::name), in declaration order, as the closed
+    /// vocabulary an argument's `ArgDomain::OneOf`
+    /// points at.
+    ///
+    /// Projected from [`ALL`](Self::ALL) rather than written out, so it cannot
+    /// disagree with the names; `ALL` is itself held to the variant count by
+    /// `#[variant_census(all)]`, which makes a new variant a build failure here
+    /// instead of a vocabulary that is quietly one short on the wire.
+    pub const WIRE_NAMES: [&'static str; Self::ARMS] = {
+        let mut out = [""; Self::ARMS];
+        let mut i = 0;
+        while i < Self::ARMS {
+            out[i] = Self::ALL[i].name();
+            i += 1;
+        }
+        out
+    };
 
     /// A stable name, for a caption or a wire form.
     #[must_use]

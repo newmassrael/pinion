@@ -143,6 +143,31 @@ pub enum ArgDomain {
     /// Valid arguments are the values the surface lists at `<values_path>` —
     /// the argument is a key, not an offset (a panel id, a voice id).
     ValuesOf(&'static str),
+    /// R1638 — the argument's valid values are this **closed literal set**.
+    ///
+    /// The one case the "never a literal bound" rule above does not cover, and
+    /// the distinction is worth stating precisely because the rule is otherwise
+    /// right. That rule is about bounds derived from the **model**: a column
+    /// count, a row set, a voice list. Those are live, so a literal baked into a
+    /// schema is stale the moment the model moves.
+    ///
+    /// A **verb vocabulary is not a fact about the model** — it is a fact about
+    /// the code, it changes only when the code changes, and the schema is code,
+    /// so the two move in the same commit. `set_voice_policy` accepts exactly
+    /// the two spellings `VoicePolicy::from_wire` admits and no model can add a
+    /// third.
+    ///
+    /// **Tie the set to its definition rather than hand-writing it.** The
+    /// in-tree form is a `const WIRE_NAMES: [&str; Self::ARMS]` beside the enum,
+    /// whose length comes from `#[derive(VariantCensus)]`, so a new variant is a
+    /// build failure rather than a silently short list — R1630's ratchet, which
+    /// exists because a hand-written vocabulary is a census disconnected from
+    /// its definition. A bare literal here would be exactly that census.
+    ///
+    /// The reference constrains an argument this way only when it is a C++
+    /// enum-typed parameter (its meta-enum); this constrains any argument,
+    /// including a string one.
+    OneOf(&'static [&'static str]),
     /// The surface publishes nothing a client can enumerate the argument from.
     ///
     /// **Worth suspicion at every use, and common enough to matter**: this is
@@ -184,6 +209,7 @@ impl ArgDomain {
             Self::ValuesOf(values_path) => {
                 serde_json::json!({ "kind": "values_of", "values_path": values_path })
             }
+            Self::OneOf(values) => serde_json::json!({ "kind": "one_of", "values": values }),
             Self::Open => serde_json::json!({ "kind": "open" }),
         }
     }
@@ -204,6 +230,17 @@ pub struct SchemaArg {
     pub ty: &'static str,
     /// Where the answerable arguments come from.
     pub domain: ArgDomain,
+    /// R1638 — the call is well-formed without this argument.
+    ///
+    /// Only meaningful on the action channel: a parametric READ's placeholders
+    /// are all required by the template's own shape (a missing segment makes a
+    /// different path, or none). On an action it is the difference between
+    /// `invoke("send", "3:PointerUp")` and `invoke("send", "3:PointerUp::l")`,
+    /// which the send wire elides only from the END — so an optional argument
+    /// may not precede a required one, and
+    /// `r1638_optional_arguments_are_a_suffix` holds every declaration in the
+    /// workspace to that.
+    pub optional: bool,
 }
 
 impl SchemaArg {
@@ -215,6 +252,7 @@ impl SchemaArg {
             name,
             ty: "int",
             domain: ArgDomain::IndexOf(count_path),
+            optional: false,
         }
     }
 
@@ -226,6 +264,24 @@ impl SchemaArg {
             name,
             ty,
             domain: ArgDomain::ValuesOf(values_path),
+            optional: false,
+        }
+    }
+
+    /// R1638 — an argument drawn from a closed literal vocabulary
+    /// ([`ArgDomain::OneOf`]). Pass a `const` tied to the definition that owns
+    /// the set, never a literal spelled at the call site.
+    #[must_use]
+    pub const fn one_of(
+        name: &'static str,
+        ty: &'static str,
+        values: &'static [&'static str],
+    ) -> Self {
+        Self {
+            name,
+            ty,
+            domain: ArgDomain::OneOf(values),
+            optional: false,
         }
     }
 
@@ -236,6 +292,110 @@ impl SchemaArg {
             name,
             ty,
             domain: ArgDomain::Open,
+            optional: false,
+        }
+    }
+
+    /// R1638 — the same argument, marked as one a well-formed call may omit.
+    ///
+    /// A builder rather than a fourth constructor because optionality is
+    /// orthogonal to where the values come from: every domain can be optional,
+    /// and three more constructors would be the product of two axes spelled out.
+    #[must_use]
+    pub const fn optional(self) -> Self {
+        Self {
+            optional: true,
+            ..self
+        }
+    }
+}
+
+/// R1638 §5.12 §2 #2 — **how** a declared field's arguments are carried, and
+/// whether it has said.
+///
+/// [`SchemaArg`] says what an argument means and where its values come from. It
+/// cannot say where the argument *goes*, and until R1638 nothing did: a read's
+/// arguments ride the path, an action's ride `scene/invoke`'s `args`, and the
+/// action channel carries them three different ways in this tree alone. A
+/// client handed `{"path": "arrange", "args": [{"name": "axis"}, …]}` with no
+/// form has to guess between a bare string, a JSON object and a delimited
+/// command — and R1352 already measured what a guess about the argument channel
+/// costs.
+///
+/// # Why silence is an arm rather than an absent field
+///
+/// [`Undeclared`](Self::Undeclared) is the default, and it is the honest state
+/// of most of this workspace: 487 actions are declared and the overwhelming
+/// majority take an argument no declaration describes. Making an empty `args`
+/// mean "takes nothing" would have converted every one of those into an
+/// affirmative false statement — the error direction R1602 records as the
+/// expensive one, because a wrong `have` inflates silently while a wrong
+/// `absent` self-corrects the moment somebody reaches for it.
+///
+/// So an action that has not said publishes no `args` at all, and one that has
+/// said publishes both the form and the arguments. [`Nullary`](Self::Nullary) is
+/// how a surface says "takes nothing" *affirmatively*, which is a different
+/// claim from having not said.
+///
+/// **The reference distinguishes these two by construction and cannot express
+/// the first**: a meta-method's parameter list is generated from the signature,
+/// so `parameterCount() == 0` is always a claim and "undeclared" is not a state
+/// it has. It is a state a hand-written declaration very much has, and pretending
+/// otherwise is what R1637 spent a round undoing on the neighbouring axis.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ArgForm {
+    /// The field has not described its arguments. No `args` reaches the wire,
+    /// so a client learns nothing rather than something false.
+    #[default]
+    Undeclared,
+    /// The arguments ride the **path**, in the template's placeholder order —
+    /// the read channel's only shape ([`SchemaField::parametric`]). A scalar
+    /// read declares this with an empty `args`, which is the affirmative "reads
+    /// as spelled".
+    Path,
+    /// The action takes no argument. `scene/invoke` may still be handed
+    /// `null`; anything else is the caller's mistake.
+    Nullary,
+    /// The single declared argument **is** the whole `args` value
+    /// (`invoke("stop", 7)`).
+    Scalar,
+    /// The arguments are the members of a JSON object, keyed by
+    /// [`SchemaArg::name`] (`invoke("arrange", {"axis": "horizontal", …})`).
+    Object,
+    /// The arguments are the segments of a delimited string, in declared order
+    /// (`invoke("send", "3:PointerUp::l")`, `invoke("item", "add:in:1")`).
+    ///
+    /// A form rather than a spelled-out template because the delimiter is what
+    /// a client needs to split on, and the segment meanings are already the
+    /// `args` list. Trailing segments may be elided when the arguments that
+    /// carry them are [`optional`](SchemaArg::optional) — which is exactly the
+    /// send wire's rule, stated once instead of per widget.
+    Delimited(char),
+}
+
+impl ArgForm {
+    /// The `$schema` wire form, or `None` for [`Undeclared`](Self::Undeclared)
+    /// — which publishes nothing at all rather than the word "undeclared",
+    /// because a reader that does not know this key sees the shape it always
+    /// saw and a reader that does can tell silence from a claim by the key's
+    /// absence.
+    ///
+    /// Rendered here rather than in `pinion-rpc` for the reason
+    /// [`ArgDomain::to_wire`] gives: this enum is `#[non_exhaustive]`, so a
+    /// match anywhere else needs a `_` arm that would quietly render a future
+    /// form as some existing one.
+    #[must_use]
+    pub fn to_wire(self) -> Option<serde_json::Value> {
+        match self {
+            Self::Undeclared => None,
+            Self::Path => Some(serde_json::json!({ "kind": "path" })),
+            Self::Nullary => Some(serde_json::json!({ "kind": "nullary" })),
+            Self::Scalar => Some(serde_json::json!({ "kind": "scalar" })),
+            Self::Object => Some(serde_json::json!({ "kind": "object" })),
+            Self::Delimited(sep) => {
+                Some(serde_json::json!({ "kind": "delimited", "separator": sep }))
+            }
         }
     }
 }
@@ -318,6 +478,13 @@ pub struct SchemaField {
     /// [`parametric`](Self::parametric) declare reads; [`action`](Self::action)
     /// declares a call.
     pub channel: SchemaChannel,
+    /// R1638 — how [`args`](Self::args) are carried, or
+    /// [`Undeclared`](ArgForm::Undeclared) when this field has not said.
+    ///
+    /// The pair is read together: `args` alone cannot be interpreted, so a
+    /// consumer that finds `Undeclared` must treat `args` as absent rather than
+    /// as empty. The wire enforces that by rendering neither.
+    pub form: ArgForm,
 }
 
 impl SchemaField {
@@ -342,6 +509,8 @@ impl SchemaField {
             ty,
             args: &[],
             channel: SchemaChannel::Read,
+            // A scalar read HAS declared its arity: zero, riding the path.
+            form: ArgForm::Path,
         }
     }
 
@@ -356,7 +525,81 @@ impl SchemaField {
             ty,
             args: &[],
             channel: SchemaChannel::Invoke,
+            // R1638 — silence, not "takes nothing". See `ArgForm::Undeclared`
+            // for why the two must stay distinguishable, and `action_with` for
+            // how a surface says either one.
+            form: ArgForm::Undeclared,
         }
+    }
+
+    /// R1638 — an `invoke` channel that **says what it takes**: the form the
+    /// arguments arrive in, and one [`SchemaArg`] per argument in wire order.
+    ///
+    /// The peer of [`action`](Self::action), which stays silent. Both are
+    /// truthful; this one is useful. A surface that takes nothing says so with
+    /// [`ArgForm::Nullary`] and an empty slice, which is a claim rather than the
+    /// absence of one — see [`ArgForm`] for why that distinction is load-bearing
+    /// in a tree whose declarations are hand-written.
+    ///
+    /// # What this gives that the reference cannot
+    ///
+    /// A meta-method publishes each parameter's **name and type**, which is
+    /// where the toolkit stops. A [`SchemaArg`] additionally carries its
+    /// [`domain`](SchemaArg::domain) — *where the answerable values come from* —
+    /// so `set_voice_gain`'s `id` says "the ids listed at `voices`" instead of
+    /// only "int", and an agent enumerates a valid call instead of guessing one.
+    /// The reference's nearest equivalent constrains C++ enum-typed parameters
+    /// alone; this constrains any argument.
+    ///
+    /// ```
+    /// # use pinion_core::external::{ArgForm, SchemaArg, SchemaField};
+    /// const ARRANGE: SchemaField = SchemaField::action_with(
+    ///     "arrange",
+    ///     "string",
+    ///     ArgForm::Object,
+    ///     const {
+    ///         &[
+    ///             SchemaArg::open("axis", "string"),
+    ///             SchemaArg::open("gap", "int").optional(),
+    ///         ]
+    ///     },
+    /// );
+    /// assert_eq!(ARRANGE.form, ArgForm::Object);
+    /// ```
+    #[must_use]
+    pub const fn action_with(
+        path: &'static str,
+        ty: &'static str,
+        form: ArgForm,
+        args: &'static [SchemaArg],
+    ) -> Self {
+        Self {
+            path,
+            ty,
+            args,
+            channel: SchemaChannel::Invoke,
+            form,
+        }
+    }
+
+    /// R1638 — the composite pointer channel every widget declares, with the
+    /// send wire's grammar attached: `"<key>:<Event>[:<mods>[:<buttons>]]"`.
+    ///
+    /// `returns` because the widgets differ there and only there — a button
+    /// answers its new state name, a toggle answers a formatted pair, several
+    /// answer nothing — while the *argument* grammar is one thing owned by
+    /// [`split_send_payload`](crate::composite_tag::split_send_payload). Sixty-seven
+    /// sites spell this instead of restating four arguments each, which is the
+    /// same reason the parser is not copied either: the wire has grown a segment
+    /// three times, and a per-site copy would have gone stale on each.
+    #[must_use]
+    pub const fn send(returns: &'static str) -> Self {
+        Self::action_with(
+            "send",
+            returns,
+            ArgForm::Delimited(crate::composite_tag::SEND_SEPARATOR),
+            crate::composite_tag::SEND_ARGS,
+        )
     }
 
     /// A **parametric** path: `path` is the wire template with a `<name>`
@@ -385,6 +628,7 @@ impl SchemaField {
             ty,
             args,
             channel: SchemaChannel::Read,
+            form: ArgForm::Path,
         }
     }
 
@@ -472,7 +716,12 @@ impl SchemaField {
     /// unknown.
     #[must_use]
     pub fn addresses(&self, probe: &str) -> bool {
-        if self.args.is_empty() {
+        // R1638 — only a PATH-form field's arguments are part of its address.
+        // An action's are carried by `scene/invoke`, so its path is exact
+        // however many it declares; keying this off `args.is_empty()` (as it did
+        // before actions could declare any) would have started template-matching
+        // `arrange` the moment it said what it takes.
+        if self.form != ArgForm::Path || self.args.is_empty() {
             return self.path == probe;
         }
         // Walk the template's literal segments across `probe`, requiring a
@@ -3495,6 +3744,37 @@ mod tests {
         let introspect = counted.introspect().expect("opt-in declared");
         assert_eq!(introspect.query("count"), Some(IntrospectValue::Int(7)),);
         assert!(introspect.query("missing").is_none());
+    }
+
+    /// R1638 — an ACTION's path is exact however many arguments it declares.
+    ///
+    /// `addresses` used to read "has arguments" as "is a template", which was
+    /// true while only a parametric read could have any. An action carries its
+    /// arguments on `scene/invoke`, so a name that merely LOOKS like a template
+    /// is still one exact path — and getting this wrong would make
+    /// `scene/invoke cell.3` resolve to a field the surface never dispatches.
+    #[test]
+    fn r1638_an_actions_path_is_exact_however_many_arguments_it_takes() {
+        const LOOKS_PARAMETRIC: SchemaField = SchemaField::action_with(
+            "cell.<row>",
+            "null",
+            ArgForm::Object,
+            const { &[SchemaArg::open("row", "int")] },
+        );
+        assert!(LOOKS_PARAMETRIC.addresses("cell.<row>"), "spelled exactly");
+        assert!(
+            !LOOKS_PARAMETRIC.addresses("cell.3"),
+            "an action is not addressed by a member of a family it does not have",
+        );
+        // The read channel's peer, unchanged: a template IS addressed by its
+        // members and not by itself.
+        let real: SchemaField = SchemaField::parametric(
+            "cell.<row>",
+            "int",
+            const { &[SchemaArg::open("row", "int")] },
+        );
+        assert!(real.addresses("cell.3"));
+        assert!(!real.addresses("cell."));
     }
 
     #[test]

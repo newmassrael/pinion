@@ -6280,7 +6280,7 @@ const NODE_GRAPH_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("viewport.x", "float"),
     SchemaField::new("viewport.y", "float"),
     SchemaField::new("viewport.zoom", "float"),
-    SchemaField::action("send", "string"),
+    SchemaField::send("string"),
     SchemaField::action("add_node", "string"),
     SchemaField::action("frame_all", "json"),
     SchemaField::action("add_edge", "string"),

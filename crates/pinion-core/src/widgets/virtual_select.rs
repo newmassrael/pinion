@@ -1736,7 +1736,7 @@ impl ExternalIntrospect for VirtualSelectExternal {
                     SchemaField::action("select_column", "json"),
                     SchemaField::action("toggle_column", "json"),
                     SchemaField::action("extend_to_column", "json"),
-                    SchemaField::action("send", "int"),
+                    SchemaField::send("int"),
                 ]
             },
         )

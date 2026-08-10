@@ -82,7 +82,7 @@ impl PlayOptions {
 }
 
 /// What happens when a play arrives at a full bounded voice pool.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, pinion_derive::VariantCensus)]
 pub enum VoicePolicy {
     /// Refuse the newcomer, keeping every live voice — the real-time voice
     /// budget's v1 default. The refused play is counted in
@@ -99,9 +99,33 @@ pub enum VoicePolicy {
 }
 
 impl VoicePolicy {
+    /// Every policy, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; Self::ARMS] = [Self::RejectNewest, Self::StealOldest];
+
+    /// R1638 — every spelling [`from_wire`](Self::from_wire) admits, in
+    /// declaration order, as a `const` the schema can point an argument's
+    /// domain at.
+    ///
+    /// **Projected from [`ALL`](Self::ALL) through [`as_wire`](Self::as_wire)**
+    /// rather than written out, so the published vocabulary and the encoder
+    /// cannot disagree — and `ALL`'s length is the derived `ARMS`, so a new
+    /// policy is a build failure here instead of a vocabulary that is quietly
+    /// one short on the wire. That projection is what makes a literal domain
+    /// defensible at all; a hand-written list would be the disconnected census
+    /// R1630 exists to end.
+    pub const WIRE_NAMES: [&'static str; Self::ARMS] = {
+        let mut out = [""; Self::ARMS];
+        let mut i = 0;
+        while i < Self::ARMS {
+            out[i] = Self::ALL[i].as_wire();
+            i += 1;
+        }
+        out
+    };
+
     /// The stable wire string for RPC introspection (`query`/`invoke`).
     #[must_use]
-    pub fn as_wire(self) -> &'static str {
+    pub const fn as_wire(self) -> &'static str {
         match self {
             VoicePolicy::RejectNewest => "reject_newest",
             VoicePolicy::StealOldest => "steal_oldest",
@@ -537,6 +561,32 @@ impl AudioEngine {
 
 #[cfg(test)]
 mod tests {
+    /// R1638 — the vocabulary published to a client is exactly the one
+    /// [`VoicePolicy::from_wire`] admits, in BOTH directions.
+    ///
+    /// One direction alone is not enough and the asymmetry is the reason: a
+    /// list that is too SHORT passes a "every published name parses" check
+    /// while leaving a real spelling undiscoverable, and a list that is too
+    /// LONG passes a "every spelling is published" check while promising a
+    /// value the parser refuses. Only the pair pins the set.
+    #[test]
+    fn r1638_the_policy_vocabulary_is_exactly_what_from_wire_admits() {
+        for (i, name) in VoicePolicy::WIRE_NAMES.iter().enumerate() {
+            assert_eq!(
+                VoicePolicy::from_wire(name),
+                Some(VoicePolicy::ALL[i]),
+                "{name:?} is published, so it must be accepted",
+            );
+        }
+        for policy in VoicePolicy::ALL {
+            assert!(
+                VoicePolicy::WIRE_NAMES.contains(&policy.as_wire()),
+                "{policy:?} is accepted, so it must be published",
+            );
+        }
+        assert_eq!(VoicePolicy::from_wire("steal_newest"), None);
+    }
+
     use super::*;
 
     fn tone(frames: usize) -> Arc<AudioClip> {

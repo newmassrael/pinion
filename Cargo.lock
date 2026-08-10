@@ -6029,6 +6029,7 @@ version = "0.0.1"
 dependencies = [
  "cpal",
  "pinion-core",
+ "pinion-derive",
  "rtrb",
  "serde",
  "serde_json",

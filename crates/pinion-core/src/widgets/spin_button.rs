@@ -373,7 +373,7 @@ impl ExternalIntrospect for SpinButtonExternal {
                     // AI-observable hover / pressed feedback).
                     SchemaField::new("dec_state", "string"),
                     SchemaField::new("inc_state", "string"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     // R1637 — the four step verbs, declared. The comment above
                     // this list called them "AI-first step actions" and the
                     // declaration named none of them, so the AI they were built

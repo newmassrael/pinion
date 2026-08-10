@@ -12,6 +12,9 @@ publish = false
 # The introspectable External surface (§2 #7 / §5.15) — the audio graph is
 # queryable over RPC, NOT hidden behind an opaque handle.
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# R1638 — `VariantCensus` ties `VoicePolicy::WIRE_NAMES` to the enum, so a
+# new policy is a build failure rather than a short published vocabulary.
+pinion-derive = { path = "../pinion-derive" }
 # JSON-valued introspection of the voice graph.
 serde = { workspace = true }
 serde_json = { workspace = true }

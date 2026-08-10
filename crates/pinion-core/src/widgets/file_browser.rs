@@ -923,7 +923,7 @@ impl ExternalIntrospect for DirectoryExternal {
                     SchemaField::action("up", "string"),
                     SchemaField::action("select", "string"),
                     SchemaField::action("open", "string"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     // R789 write surface (file-manager mutations).
                     SchemaField::action("mkdir", "bool"),
                     SchemaField::action("touch", "bool"),

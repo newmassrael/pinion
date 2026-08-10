@@ -1142,7 +1142,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
                 &[
                     SchemaField::new("pressed_id", "string"),
                     SchemaField::new("hovered_id", "string"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     SchemaField::action("click", "string"),
                     SchemaField::action("hover", "string"),
                 ]

@@ -243,7 +243,7 @@ impl ExternalIntrospect for TooltipExternal {
                     SchemaField::new("hovered", "bool"),
                     SchemaField::new("focused", "bool"),
                     SchemaField::new("dismissed", "bool"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     SchemaField::action("dismiss", "string"),
                 ]
             },
@@ -532,7 +532,7 @@ mod tests {
                 SchemaField::new("hovered", "bool"),
                 SchemaField::new("focused", "bool"),
                 SchemaField::new("dismissed", "bool"),
-                SchemaField::action("send", "string"),
+                SchemaField::send("string"),
                 SchemaField::action("dismiss", "string"),
             ]
         );

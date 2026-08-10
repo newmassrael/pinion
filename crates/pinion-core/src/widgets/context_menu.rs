@@ -391,7 +391,7 @@ impl ExternalIntrospect for ContextMenuExternal {
                     SchemaField::new("open_x", "float"),
                     SchemaField::new("open_y", "float"),
                     SchemaField::new("active", "int"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     SchemaField::action("key", "string"),
                     SchemaField::action("open_at", "string"),
                 ]

@@ -4651,7 +4651,7 @@ impl ExternalIntrospect for TabWellExternal {
                     // declared readable, so `$schema` said "query me" about a
                     // name only `invoke` answers; the new test that walks a
                     // declaration against the wire found it on its first run.
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                 ]
             },
         )
@@ -7752,7 +7752,7 @@ impl ExternalIntrospect for DockPanelExternal {
                     // declared readable, so `$schema` said "query me" about a
                     // name only `invoke` answers; the new test that walks a
                     // declaration against the wire found it on its first run.
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     // R1637 — and so are these two. Their own comments call
                     // them "invoke channel" and the constructor said READ,
                     // because until R1504 there was no other one.
