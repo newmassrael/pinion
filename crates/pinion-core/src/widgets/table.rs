@@ -1309,7 +1309,7 @@ impl ExternalIntrospect for TableExternal {
                         "bool",
                         const { &[SchemaArg::index("row", "rows")] },
                     ),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     // R730 §5.40 — sort surface. `sort_col` is the sort key column
                     // (`-1` when unsorted); `sort_dir` is "none"/"ascending"/
                     // "descending"; `order.<visual>` is the data-row index painted

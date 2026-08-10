@@ -55,9 +55,9 @@
 
 use crate::WidgetStateName;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
-    ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, CaptureNormalize, External,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::slider::{SliderAxis, SliderEvent, SliderPolicy, SliderState};
@@ -496,7 +496,12 @@ impl ExternalIntrospect for RangeSliderExternal {
                     // Which thumb a value mutation last landed on ("low"/"high").
                     SchemaField::new("active", "string"),
                     SchemaField::new("orientation", "string"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&SliderEvent::DRIVABLE_NAMES)] },
+                    ),
                 ]
             },
         )

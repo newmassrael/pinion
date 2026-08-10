@@ -1328,7 +1328,7 @@ impl ExternalIntrospect for TextFieldExternal {
                     // without walking the paint tree.
                     SchemaField::new("style_runs", "json"),
                     SchemaField::new("preedit", "string"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                     SchemaField::action("key", "string"),
                     SchemaField::action("composition", "string"),
                     // R56.2.e §5.22 — middle-mouse PRIMARY paste action.
@@ -3022,7 +3022,7 @@ mod tests {
                 SchemaField::new("selection", "object"),
                 SchemaField::new("style_runs", "json"),
                 SchemaField::new("preedit", "string"),
-                SchemaField::action("send", "string"),
+                SchemaField::send("string"),
                 SchemaField::action("key", "string"),
                 SchemaField::action("composition", "string"),
                 SchemaField::action("paste-primary", "boolean"),

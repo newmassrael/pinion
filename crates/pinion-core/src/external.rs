@@ -296,6 +296,36 @@ impl SchemaArg {
         }
     }
 
+    /// R1639 — the argument a **bare-event `send`** takes: one statechart
+    /// event name, from that widget's own closed vocabulary.
+    ///
+    /// Eleven widgets in this tree spell `send` that way — a plain
+    /// `invoke("send", "PointerDown")` decoded by
+    /// [`require_event`](crate::widget_core::require_event) — and R1638 could
+    /// describe none of them, because the set of names is per widget and was
+    /// reachable only as a runtime `Vec`. `#[derive(WidgetEventName)]` now
+    /// emits it as `DRIVABLE_NAMES`, projected from the very const `from_name`
+    /// gates on, so what a client discovers IS what the parser admits.
+    ///
+    /// A named helper rather than a whole `SchemaField` constructor because a
+    /// `const fn` cannot build the `&'static [SchemaArg]` a field needs out of
+    /// its own parameter — a function argument is not promotable. The call site
+    /// writes the one-element slice in a `const` block, which is where the
+    /// promotion is legal:
+    ///
+    /// ```ignore
+    /// SchemaField::action_with(
+    ///     "send",
+    ///     "string",
+    ///     ArgForm::Scalar,
+    ///     const { &[SchemaArg::event(&ButtonEvent::DRIVABLE_NAMES)] },
+    /// )
+    /// ```
+    #[must_use]
+    pub const fn event(names: &'static [&'static str]) -> Self {
+        Self::one_of("event", "string", names)
+    }
+
     /// R1638 — the same argument, marked as one a well-formed call may omit.
     ///
     /// A builder rather than a fourth constructor because optionality is
@@ -588,10 +618,27 @@ impl SchemaField {
     /// `returns` because the widgets differ there and only there — a button
     /// answers its new state name, a toggle answers a formatted pair, several
     /// answer nothing — while the *argument* grammar is one thing owned by
-    /// [`split_send_payload`](crate::composite_tag::split_send_payload). Sixty-seven
+    /// [`split_send_payload`](crate::composite_tag::split_send_payload). The
     /// sites spell this instead of restating four arguments each, which is the
     /// same reason the parser is not copied either: the wire has grown a segment
     /// three times, and a per-site copy would have gone stale on each.
+    ///
+    /// # Six surfaces accept a shorthand this does not describe
+    ///
+    /// R1639 — `datepicker`, `disclosure_group`, `listbox`, `radio_group`,
+    /// `table` and `text_field` decode a composite payload AND fall back to a
+    /// bare event name, so they take either. `ArgForm` has no "one or the
+    /// other" arm and deliberately gains none here: what a declaration states
+    /// is **what a client should send**, and a shorthand the surface also
+    /// happens to accept is a convenience rather than a contract. Declaring the
+    /// composite form is the choice that stays true if the shorthand is ever
+    /// retired, and it is the same call `pinion_audio`'s `play` made for its
+    /// bare-string form. The alternative — a union arm — is left to
+    /// [[debt-send-is-four-grammars-under-one-name]], which is also where the
+    /// question of whether these four grammars should share a name lives.
+    ///
+    /// A surface whose `send` is ONLY a bare event uses
+    /// [`SchemaArg::event`] instead.
     #[must_use]
     pub const fn send(returns: &'static str) -> Self {
         Self::action_with(

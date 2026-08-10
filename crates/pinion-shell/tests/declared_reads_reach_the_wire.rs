@@ -238,3 +238,52 @@ fn r1638_optional_arguments_are_a_suffix() {
         "an optional argument precedes a required one: {wrong:?}",
     );
 }
+
+/// R1639 — no `send` in the widget catalog is left saying nothing.
+///
+/// `send` is the most-declared action in the tree and, until R1638/R1639, the
+/// least described: sixty-seven surfaces published the name and none published
+/// its grammar. The two grammars a catalog widget can use are now both
+/// expressible — the composite pointer wire (delimited, four segments) and the
+/// bare statechart event (scalar, from that widget's own closed vocabulary) —
+/// so a silent one here is an omission rather than an honest absence.
+///
+/// Deliberately scoped to the catalog this test can build, and deliberately NOT
+/// asserting WHICH form: that is the surface's fact, and a test that pinned it
+/// would have to restate the decoder's choice, which is the copy
+/// `composite_tag::SEND_ARGS` exists to avoid.
+#[test]
+fn r1639_no_catalog_send_is_left_undeclared() {
+    use pinion_core::external::{ArgDomain, ArgForm};
+
+    let mut silent: Vec<String> = Vec::new();
+    let mut seen = 0_usize;
+    for (label, handle) in catalog() {
+        let intro = handle.introspect().expect("opts into introspection");
+        for field in intro.schema().fields.iter().filter(|f| f.path == "send") {
+            seen += 1;
+            match field.form {
+                ArgForm::Undeclared => silent.push(label.to_owned()),
+                // A bare-event send must name a NON-EMPTY vocabulary: an empty
+                // one is the promise that cannot be kept, and it is what a
+                // widget whose chart drives nothing externally would publish.
+                ArgForm::Scalar => {
+                    let ArgDomain::OneOf(values) = field.args[0].domain else {
+                        silent.push(format!("{label} (scalar, no vocabulary)"));
+                        continue;
+                    };
+                    assert!(!values.is_empty(), "{label}: an empty vocabulary");
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        seen >= 10,
+        "the walk must find real send actions, saw {seen}"
+    );
+    assert!(
+        silent.is_empty(),
+        "these declare `send` and do not say what it takes: {silent:?}",
+    );
+}

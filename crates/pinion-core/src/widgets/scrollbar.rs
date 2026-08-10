@@ -357,8 +357,9 @@ use std::rc::Rc;
 
 use crate::WidgetStateName;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::reactive::{Owner, Signal};
@@ -878,7 +879,12 @@ impl ExternalIntrospect for ScrollBarExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("orientation", "string"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&ScrollBarEvent::DRIVABLE_NAMES)] },
+                    ),
                 ]
             },
         )
@@ -1101,6 +1107,7 @@ mod r55_d2_tests {
     //! initial state + four-state transition graph + drag-end
     //! commit semantics + cancel-on-leave + introspect surface +
     //! orientation immutability.
+    use crate::external::{ArgForm, SchemaArg};
     use crate::test_fixtures::assert_refused_saying;
 
     use super::{
@@ -1368,7 +1375,12 @@ mod r55_d2_tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("orientation", "string"),
-                SchemaField::action("send", "string"),
+                SchemaField::action_with(
+                    "send",
+                    "string",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::event(&ScrollBarEvent::DRIVABLE_NAMES)] },
+                ),
             ],
         );
     }

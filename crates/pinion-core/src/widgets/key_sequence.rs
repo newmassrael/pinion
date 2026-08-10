@@ -73,8 +73,9 @@ pub use sm::{KeySequenceEvent, KeySequenceState};
 use crate::WidgetStateName;
 use crate::accelerator::{Chord, KeySequence, QT_MAX_SEQUENCE_LENGTH, SequenceFull};
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::Modifiers;
 use crate::intent::Intent;
@@ -547,7 +548,12 @@ impl ExternalIntrospect for KeySequenceEditExternal {
                     SchemaField::new("pending", "string"),
                     SchemaField::new("max_len", "number"),
                     SchemaField::new("revision", "number"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&KeySequenceEvent::DRIVABLE_NAMES)] },
+                    ),
                     SchemaField::action("record", "string"),
                 ]
             },

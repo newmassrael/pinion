@@ -57,8 +57,9 @@ pub use sm::{ColorAreaEvent, ColorAreaState};
 
 use crate::WidgetStateName;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -317,7 +318,12 @@ impl ExternalIntrospect for ColorAreaExternal {
                     SchemaField::new("state", "string"),
                     SchemaField::new("x", "float"),
                     SchemaField::new("y", "float"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&ColorAreaEvent::DRIVABLE_NAMES)] },
+                    ),
                 ]
             },
         )

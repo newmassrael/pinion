@@ -673,6 +673,43 @@ fn expand_widget_event_name(input: &DeriveInput) -> syn::Result<TokenStream2> {
     }
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
+        impl #impl_generics #name #ty_generics #where_clause {
+            /// R1639 — the same name [`as_name`] gives, as a `const fn` so a
+            /// `const` can be folded out of it.
+            ///
+            /// A trait method cannot be `const` on stable, and
+            /// [`DRIVABLE_NAMES`](Self::DRIVABLE_NAMES) has to be a `const` —
+            /// an argument's declared domain is a `&'static [&'static str]`
+            /// evaluated at compile time. So the arms are emitted twice by the
+            /// same macro from the same variant list, which is duplication a
+            /// generator does and an author never sees.
+            #[must_use]
+            pub const fn wire_name(self) -> &'static str {
+                match self { #(#as_name_arms,)* }
+            }
+
+            /// R1639 §5.12 §2 #2 — every name an RPC caller may `send`, as a
+            /// `const` a schema can point an argument's domain at.
+            ///
+            /// **Projected from `EXTERNALLY_DRIVABLE_EVENTS`** — the const the
+            /// statechart codegen emits and `from_name` gates on — so the
+            /// vocabulary a client discovers, the vocabulary a refusal
+            /// advertises, and the vocabulary the parser admits are one list.
+            /// Before this the set was reachable only as a `Vec` at runtime, so
+            /// a declaration could mention it and never *be* it: eleven widgets
+            /// declared a `send` action whose whole argument is one of these
+            /// names, and published none of them.
+            pub const DRIVABLE_NAMES: [&'static str; Self::EXTERNALLY_DRIVABLE_EVENTS.len()] = {
+                let mut out = [""; Self::EXTERNALLY_DRIVABLE_EVENTS.len()];
+                let mut i = 0;
+                while i < out.len() {
+                    out[i] = Self::EXTERNALLY_DRIVABLE_EVENTS[i].wire_name();
+                    i += 1;
+                }
+                out
+            };
+        }
+
         impl #impl_generics ::pinion_core::WidgetEventName for #name #ty_generics #where_clause {
             fn as_name(&self) -> &'static str {
                 match self { #(#as_name_arms,)* }

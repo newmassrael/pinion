@@ -64,8 +64,9 @@ use sm::ListboxItemPolicy;
 
 use crate::WidgetStateName;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -284,7 +285,12 @@ impl ExternalIntrospect for ListBoxItemExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("selected", "bool"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&ListboxItemEvent::DRIVABLE_NAMES)] },
+                    ),
                 ]
             },
         )

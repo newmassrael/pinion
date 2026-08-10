@@ -65,8 +65,9 @@ pub use sm::SliderPolicy;
 use crate::WidgetStateName;
 use crate::event::WheelStepper;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::Modifiers;
 use crate::intent::Intent;
@@ -570,7 +571,12 @@ impl ExternalIntrospect for SliderExternal {
                     // R737 §5.38 — discrete snap increment (normalised units);
                     // `0.0` is the continuous-slider sentinel.
                     SchemaField::new("step", "float"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&SliderEvent::DRIVABLE_NAMES)] },
+                    ),
                 ]
             },
         )
@@ -851,7 +857,12 @@ mod tests {
                 SchemaField::new("value", "float"),
                 SchemaField::new("orientation", "string"),
                 SchemaField::new("step", "float"),
-                SchemaField::action("send", "string"),
+                SchemaField::action_with(
+                    "send",
+                    "string",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::event(&SliderEvent::DRIVABLE_NAMES)] },
+                ),
             ]
         );
     }

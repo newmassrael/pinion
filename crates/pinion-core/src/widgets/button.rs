@@ -35,8 +35,9 @@ pub use sm::{ButtonEvent, ButtonState};
 
 use crate::WidgetStateName;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::AutoRepeat;
 use crate::intent::Intent;
@@ -274,7 +275,12 @@ impl ExternalIntrospect for ButtonExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("focused", "bool"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&ButtonEvent::DRIVABLE_NAMES)] },
+                    ),
                 ]
             },
         )
@@ -418,6 +424,62 @@ impl ExternalIntrospect for ButtonStateSnapshot {
 
 #[cfg(test)]
 mod tests {
+    /// R1639 — the vocabulary a client discovers is exactly the one
+    /// [`WidgetEventName::from_name`] admits, in BOTH directions.
+    ///
+    /// `DRIVABLE_NAMES` is a `const` projected from `EXTERNALLY_DRIVABLE_EVENTS`
+    /// and `drivable_names()` is the runtime `Vec` a refusal is built from; they
+    /// are two renderings of one list and this holds them to it. A list that is
+    /// too SHORT leaves a real event undiscoverable while every published name
+    /// still parses, and one that is too LONG promises an event the parser
+    /// refuses — only the pair pins the set.
+    #[test]
+    fn r1639_the_published_event_vocabulary_is_what_from_name_admits() {
+        use crate::WidgetEventName;
+        for name in ButtonEvent::DRIVABLE_NAMES {
+            assert!(
+                ButtonEvent::from_name(name).is_some(),
+                "{name:?} is published, so it must be accepted",
+            );
+        }
+        for name in ButtonEvent::drivable_names() {
+            assert!(
+                ButtonEvent::DRIVABLE_NAMES.contains(&name),
+                "{name:?} is accepted, so it must be published",
+            );
+        }
+        // An INTERNAL event is neither. `ButtonActivate` is raised by the chart
+        // and must not be forgeable over RPC, which is the whole reason the
+        // vocabulary is the drivable const rather than the variant list.
+        assert!(!ButtonEvent::DRIVABLE_NAMES.contains(&"ButtonActivate"));
+        assert!(ButtonEvent::from_name("ButtonActivate").is_none());
+    }
+
+    /// R1639 — and the widget's `send` DECLARES that vocabulary, so an agent
+    /// reads it instead of provoking a refusal to learn it.
+    #[test]
+    fn r1639_send_declares_the_events_it_accepts() {
+        use crate::external::{ArgDomain, ArgForm, ExternalIntrospect};
+        let ext = ButtonExternal::new();
+        let field = ext
+            .schema()
+            .fields
+            .iter()
+            .find(|f| f.path == "send")
+            .copied()
+            .expect("the widget declares its composite channel");
+        assert_eq!(field.form, ArgForm::Scalar, "one argument, sent bare");
+        assert_eq!(field.args.len(), 1);
+        let ArgDomain::OneOf(values) = field.args[0].domain else {
+            panic!(
+                "the event argument names its vocabulary: {:?}",
+                field.args[0]
+            );
+        };
+        assert_eq!(values, ButtonEvent::DRIVABLE_NAMES);
+        assert!(!values.is_empty(), "and it is not the empty promise");
+    }
+
     use super::*;
     use crate::WidgetEventName;
     use crate::test_fixtures::assert_refused_saying;
@@ -783,7 +845,12 @@ mod tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("focused", "bool"),
-                SchemaField::action("send", "string")
+                SchemaField::action_with(
+                    "send",
+                    "string",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::event(&ButtonEvent::DRIVABLE_NAMES)] },
+                )
             ]
         );
     }

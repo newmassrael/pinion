@@ -52,8 +52,9 @@ pub use sm::{DisclosureEvent, DisclosureState};
 
 use crate::WidgetStateName;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -258,7 +259,12 @@ impl ExternalIntrospect for DisclosureExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("expanded", "bool"),
-                    SchemaField::action("send", "string"),
+                    SchemaField::action_with(
+                        "send",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::event(&DisclosureEvent::DRIVABLE_NAMES)] },
+                    ),
                 ]
             },
         )
@@ -457,7 +463,12 @@ mod tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("expanded", "bool"),
-                SchemaField::action("send", "string")
+                SchemaField::action_with(
+                    "send",
+                    "string",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::event(&DisclosureEvent::DRIVABLE_NAMES)] },
+                )
             ]
         );
     }

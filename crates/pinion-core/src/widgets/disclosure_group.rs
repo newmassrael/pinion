@@ -340,7 +340,7 @@ impl ExternalIntrospect for DisclosureGroupExternal {
                         "bool",
                         const { &[SchemaArg::index("index", "count")] },
                     ),
-                    SchemaField::action("send", "string"),
+                    SchemaField::send("string"),
                 ]
             },
         )
