@@ -34194,6 +34194,50 @@
         "the workspace declaration walk still reaches pinion-core only; this surface's own test module applies the same predicate to its two real declarations, which is a second gate rather than a wider one"
       ]
     },
+    "R1642.1": {
+      "decision_summary": "the census R1642 demanded, run, and the two false names it found. R1642 registered a debt saying an argument's DOMAIN still cannot depend on a sibling argument, and wrote that the census had not been run. The standing rule is that an un-run census is not a legal carry, so it was run in the same session, over the wire: the three surfaces that declare arguments publish 36 of them, 19 are open, and SIBLING DEPENDENCE IS EXACTLY ONE SITE -- item's index and its per-case peer to. That number is the finding, and it argues AGAINST the branch the debt file listed first: parameterising a domain path would make the schema a small grammar for a single consumer, so the measurement supplies the reason to wait for a second one rather than a preference. What the census DID find is a defect one crate over, and it is the same failure R1642 had just removed from arrange: set_attenuation declared two names the surface does not read. model was published and never read, because there is exactly one distance model and Attenuation has no field for it; reference was the wrong spelling of reference_distance, so a client that followed the declaration had its value silently dropped and the mirror's kept. Accepted and silently ignored, on the one surface an agent is told to trust. The gate is a negative control the declaration never had: every declared name is driven and the READ must move, so a name that reaches nothing cannot survive here, and it fails before the fix by naming both wrong spellings.",
+      "changes_bullets": [
+        "pinion-audio/external.rs: set_attenuation declares reference_distance, rolloff and max_distance -- the three keys attenuation_from_partial actually reads -- replacing a published model that was never read and a reference that was the wrong spelling",
+        "pinion-audio/external.rs: r1642_every_declared_attenuation_name_is_one_the_surface_reads drives each declared name off RT_EXTERNAL_FIELDS and requires the read to move, with a guard that each probe value differs from the current one so the assertion cannot pass vacuously",
+        "memory: the sibling-dependence census recorded in the debt file with its result, so the round that picks it up starts from a number rather than from a question"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-audio: 95 pass across five suites; clippy -p pinion-audio --all-targets clean; fmt --all --check clean",
+        "the new test FAILS before the fix, naming both wrong spellings: left [\"model\", \"reference\", \"rolloff\", \"max_distance\"] against right [\"reference_distance\", \"rolloff\", \"max_distance\"]",
+        "hello_audio_rt and hello_audio_engine demos pass -- neither had ever sent the two false names, which is why nothing noticed; R1638's demo re-passes since it follows the declared names off the wire",
+        "census method: query $schema on hello-node-groups and on hello-audio-rt's two externals, enumerate every declared argument and classify by domain kind, so the count is the wire's rather than a source grep's"
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.15",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "the sibling-dependence debt stays open and is now narrow rather than unmeasured: one consumer, so the parameterised-path branch waits for a second one rather than being built for this one",
+        "the census covered the three surfaces that declare arguments at all; the 460-odd actions that publish no args are outside it by construction, which is the coverage residue debt-an-action-cannot-declare-its-arguments already owns"
+      ],
+      "publishable_decision_summary": "the census R1642 demanded, run, and the two false names it found. R1642 registered a debt saying an argument's DOMAIN still cannot depend on a sibling argument, and wrote that the census had not been run. The standing rule is that an un-run census is not a legal carry, so it was run in the same session, over the wire: the three surfaces that declare arguments publish 36 of them, 19 are open, and SIBLING DEPENDENCE IS EXACTLY ONE SITE -- item's index and its per-case peer to. That number is the finding, and it argues AGAINST the branch the debt file listed first: parameterising a domain path would make the schema a small grammar for a single consumer, so the measurement supplies the reason to wait for a second one rather than a preference. What the census DID find is a defect one crate over, and it is the same failure R1642 had just removed from arrange: set_attenuation declared two names the surface does not read. model was published and never read, because there is exactly one distance model and Attenuation has no field for it; reference was the wrong spelling of reference_distance, so a client that followed the declaration had its value silently dropped and the mirror's kept. Accepted and silently ignored, on the one surface an agent is told to trust. The gate is a negative control the declaration never had: every declared name is driven and the READ must move, so a name that reaches nothing cannot survive here, and it fails before the fix by naming both wrong spellings.",
+      "publishable_changes_bullets": [
+        "pinion-audio/external.rs: set_attenuation declares reference_distance, rolloff and max_distance -- the three keys attenuation_from_partial actually reads -- replacing a published model that was never read and a reference that was the wrong spelling",
+        "pinion-audio/external.rs: r1642_every_declared_attenuation_name_is_one_the_surface_reads drives each declared name off RT_EXTERNAL_FIELDS and requires the read to move, with a guard that each probe value differs from the current one so the assertion cannot pass vacuously",
+        "memory: the sibling-dependence census recorded in the debt file with its result, so the round that picks it up starts from a number rather than from a question"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-audio: 95 pass across five suites; clippy -p pinion-audio --all-targets clean; fmt --all --check clean",
+        "the new test FAILS before the fix, naming both wrong spellings: left [\"model\", \"reference\", \"rolloff\", \"max_distance\"] against right [\"reference_distance\", \"rolloff\", \"max_distance\"]",
+        "hello_audio_rt and hello_audio_engine demos pass -- neither had ever sent the two false names, which is why nothing noticed; R1638's demo re-passes since it follows the declared names off the wire",
+        "census method: query $schema on hello-node-groups and on hello-audio-rt's two externals, enumerate every declared argument and classify by domain kind, so the count is the wire's rather than a source grep's"
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.15",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the sibling-dependence debt stays open and is now narrow rather than unmeasured: one consumer, so the parameterised-path branch waits for a second one rather than being built for this one",
+        "the census covered the three surfaces that declare arguments at all; the 460-odd actions that publish no args are outside it by construction, which is the coverage residue debt-an-action-cannot-declare-its-arguments already owns"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

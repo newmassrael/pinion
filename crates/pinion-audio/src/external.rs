@@ -646,8 +646,17 @@ pub const RT_EXTERNAL_FIELDS: &[SchemaField] = &[
         ArgForm::Object,
         const {
             &[
-                SchemaArg::open("model", "string").optional(),
-                SchemaArg::open("reference", "float").optional(),
+                // R1642 — these are the three keys `attenuation_from_partial`
+                // reads, and they were not what this declared. `model` was
+                // published and never read (there is exactly one distance
+                // model — see `Attenuation`'s own doc), and `reference` was the
+                // wrong spelling of `reference_distance`, so a client following
+                // the declaration had its value silently dropped and the
+                // mirror's kept. Both are the failure R1642 removed from
+                // `arrange` one crate over — a call accepted and silently
+                // ignored — and `r1642_every_declared_attenuation_name_is_one_the_surface_reads`
+                // now drives each declared name and requires the read to move.
+                SchemaArg::open("reference_distance", "float").optional(),
                 SchemaArg::open("rolloff", "float").optional(),
                 SchemaArg::open("max_distance", "float").optional(),
             ]
@@ -1455,6 +1464,64 @@ mod tests {
             (near - 1.0).abs() < 1e-2,
             "on top of the source → full gain: {near}"
         );
+    }
+
+    /// R1642 — every name `set_attenuation` DECLARES is a name it reads.
+    ///
+    /// Found by the census R1642's own debt file demanded: of 36 declared
+    /// arguments across three surfaces, 19 are `open`, and two of them on this
+    /// one were **false**. `model` was declared and never read — there is exactly
+    /// one distance model (see [`Attenuation`]'s own doc) — and `reference` was
+    /// the wrong spelling of `reference_distance`, so a client following the
+    /// declaration had its value silently dropped and the mirror's kept.
+    ///
+    /// That is the same failure R1642 removed from `arrange` one crate over: a
+    /// call accepted and silently ignored, which an author reads as a broken tool
+    /// rather than as a rejected call. This test is the negative control the
+    /// declaration never had — it drives each declared name and requires the read
+    /// to move, so a name that reaches nothing cannot survive here.
+    #[test]
+    fn r1642_every_declared_attenuation_name_is_one_the_surface_reads() {
+        let (mut ext, _renderer) = rt_director(4);
+        let read = |ext: &mut AudioControllerExternal, key: &str| -> f64 {
+            match ext.query("attenuation") {
+                Some(IntrospectValue::Json(v)) => v[key].as_f64().expect("a number"),
+                other => panic!("expected attenuation json, got {other:?}"),
+            }
+        };
+        // The declaration's own argument names, read off the schema rather than
+        // spelled here, so a name added later is covered without an edit.
+        let field = RT_EXTERNAL_FIELDS
+            .iter()
+            .find(|f| f.path == "set_attenuation")
+            .expect("declared");
+        let names: Vec<&str> = field.args.iter().map(|a| a.name).collect();
+        assert_eq!(
+            names,
+            vec!["reference_distance", "rolloff", "max_distance"],
+            "the declared names are the ones the partial patch reads",
+        );
+        for (name, probe) in [
+            ("reference_distance", 3.5_f64),
+            ("rolloff", 0.25),
+            ("max_distance", 77.0),
+        ] {
+            let before = read(&mut ext, name);
+            assert!(
+                (before - probe).abs() > 1e-6,
+                "{name}'s probe must differ from its current value, or the \
+                 assertion below passes whatever the surface does",
+            );
+            ext.invoke(
+                "set_attenuation",
+                IntrospectValue::Json(serde_json::json!({ name: probe })),
+            )
+            .expect("set attenuation");
+            assert!(
+                (read(&mut ext, name) - probe).abs() < 1e-6,
+                "{name} is declared, so sending it must move the read",
+            );
+        }
     }
 
     #[test]
